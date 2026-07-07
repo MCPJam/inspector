@@ -17,7 +17,7 @@ describe("readOpenAiCompatOverride", () => {
     expect(readOpenAiCompatOverride({})).toBeUndefined();
     expect(readOpenAiCompatOverride({ mcpProfile: {} })).toBeUndefined();
     expect(
-      readOpenAiCompatOverride({ mcpProfile: { apps: {} } }),
+      readOpenAiCompatOverride({ mcpProfile: { apps: {} } })
     ).toBeUndefined();
   });
 
@@ -61,6 +61,14 @@ describe("compatPresetForHostStyle", () => {
     expect(compatPresetForHostStyle(42)).toBeUndefined();
     expect(compatPresetForHostStyle(null)).toBeUndefined();
   });
+
+  it("returns undefined for styles colliding with Object.prototype keys", () => {
+    // Must not read the inherited function — resolveOpenAiCompatForHostConfig
+    // treats any non-undefined preset as authoritative.
+    expect(compatPresetForHostStyle("toString")).toBeUndefined();
+    expect(compatPresetForHostStyle("constructor")).toBeUndefined();
+    expect(compatPresetForHostStyle("hasOwnProperty")).toBeUndefined();
+  });
 });
 
 describe("resolveOpenAiCompatForHostConfig — resolution order", () => {
@@ -75,7 +83,7 @@ describe("resolveOpenAiCompatForHostConfig — resolution order", () => {
       {
         hostStyle: "chatgpt",
         mcpProfile: { apps: { compatRuntime: { openaiApps: false } } },
-      },
+      }
     );
     expect(result).toBe(false);
   });
@@ -86,7 +94,7 @@ describe("resolveOpenAiCompatForHostConfig — resolution order", () => {
         hostStyle: "chatgpt",
         mcpProfile: { apps: { compatRuntime: { openaiApps: true } } },
       },
-      { hostStyle: "claude" },
+      { hostStyle: "claude" }
     );
     expect(result).toBe(false);
   });
@@ -100,23 +108,25 @@ describe("resolveOpenAiCompatForHostConfig — resolution order", () => {
   });
 
   it("4. base hostStyle preset applies when nothing else set", () => {
-    expect(
-      resolveOpenAiCompatForHostConfig({ hostStyle: "chatgpt" }),
-    ).toBe(true);
-    expect(
-      resolveOpenAiCompatForHostConfig({ hostStyle: "claude" }),
-    ).toBe(false);
+    expect(resolveOpenAiCompatForHostConfig({ hostStyle: "chatgpt" })).toBe(
+      true
+    );
+    expect(resolveOpenAiCompatForHostConfig({ hostStyle: "claude" })).toBe(
+      false
+    );
   });
 
   it("5. defaults to false when nothing matches", () => {
     expect(resolveOpenAiCompatForHostConfig(null)).toBe(false);
     expect(resolveOpenAiCompatForHostConfig({})).toBe(false);
-    expect(resolveOpenAiCompatForHostConfig({ hostStyle: "custom" })).toBe(false);
+    expect(resolveOpenAiCompatForHostConfig({ hostStyle: "custom" })).toBe(
+      false
+    );
   });
 
   it("treats override absent the same as no override", () => {
     expect(
-      resolveOpenAiCompatForHostConfig({ hostStyle: "mcpjam" }, undefined),
+      resolveOpenAiCompatForHostConfig({ hostStyle: "mcpjam" }, undefined)
     ).toBe(true);
   });
 });
@@ -152,7 +162,7 @@ describe("HostJson shape (public API) compatibility", () => {
       resolveOpenAiCompatForHostConfig({
         style: "claude",
         mcp: { apps: { compatRuntime: { openaiApps: true } } },
-      }),
+      })
     ).toBe(true);
   });
 
@@ -183,8 +193,8 @@ describe("HostJson shape (public API) compatibility", () => {
     expect(
       resolveOpenAiCompatForHostConfig(
         { hostStyle: "claude" },
-        { style: "chatgpt" },
-      ),
+        { style: "chatgpt" }
+      )
     ).toBe(true);
   });
 });
