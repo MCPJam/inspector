@@ -50,7 +50,14 @@ export function useHostCatalog(): HostCatalogState {
   const [state, setState] = useState<HostCatalogState>(cached);
 
   useEffect(() => {
-    if (cached) return;
+    if (cached) {
+      // The cache may have been populated by another consumer's in-flight
+      // fetch between this component's render (which seeded `state` from a
+      // then-null `cached`) and this effect. Sync so we don't stay stuck on
+      // the bundled catalog while other consumers show live data.
+      setState(cached);
+      return;
+    }
     let mounted = true;
     if (!inflight) {
       const startedGeneration = generation;
