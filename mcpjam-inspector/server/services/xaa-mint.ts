@@ -81,6 +81,17 @@ async function discoverIssuerFromResourceMetadata(
 //      protected-resource metadata;
 //   3. otherwise the resource URL itself (legacy behavior — covers servers that
 //      self-host RFC 8414 metadata at the resource origin and serve no PRM).
+// Same scheme + host + port. Used to bind a path-scoped AS's token endpoint
+// to its issuer origin before the confidential secret is posted. Unparseable
+// input fails closed (not same origin).
+function isSameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
 export async function discoverServerTargetTokenEndpoint(
   args: {
     resource?: string;
@@ -136,20 +147,32 @@ export async function discoverServerTargetTokenEndpoint(
       // would hide this message from the user entirely.
       // A same-origin path-prefix "mismatch" is the multi-tenant AS shape
       // (issuer at the origin root, endpoints scoped under a path). Only the
-      // per-server opt-in accepts it; the origin check still binds the token
-      // endpoint to the issuer's own host, so the secret never crosses
-      // origins.
-      const acceptedPathScoped =
+      // per-server opt-in accepts it.
+      const originPrefixOptIn =
         args.allowPathScopedIssuer === true &&
         verdict.issuerMismatch?.originPrefix === true;
+      // Even under the opt-in, the token endpoint must stay on the advertised
+      // issuer's own origin. Otherwise a same-origin tenant's metadata (the
+      // exact scenario this feature relaxes trust for) could advertise the
+      // origin-root issuer to pass the prefix check yet point token_endpoint
+      // at an arbitrary public host, redirecting the confidential client
+      // secret off-origin. Bind it explicitly; the strict path never reaches
+      // this branch.
+      const tokenEndpointEscapesOrigin =
+        originPrefixOptIn &&
+        verdict.tokenEndpoint != null &&
+        !isSameOrigin(verdict.tokenEndpoint, verdict.issuerMismatch!.advertised);
+      const acceptedPathScoped = originPrefixOptIn && !tokenEndpointEscapesOrigin;
       if (verdict.issuerMismatch && !acceptedPathScoped) {
         const { requested, advertised, schemeOnly, originPrefix } =
           verdict.issuerMismatch;
-        const hint = schemeOnly
-          ? "Only the scheme differs — the authorization server is likely behind a TLS-terminating proxy but advertises an http:// issuer."
-          : originPrefix
-            ? "The advertised issuer is the same-origin root of the requested URL — a multi-tenant, path-scoped authorization server. Enable \"Path-scoped authorization server\" in the server's XAA settings to allow this."
-            : "Set the server's Authorization Server issuer to the advertised value (or fix the server URL).";
+        const hint = tokenEndpointEscapesOrigin
+          ? `The path-scoped authorization server's token endpoint ("${verdict.tokenEndpoint}") is on a different origin than its issuer ("${advertised}"); refusing to send the client secret off-origin.`
+          : schemeOnly
+            ? "Only the scheme differs — the authorization server is likely behind a TLS-terminating proxy but advertises an http:// issuer."
+            : originPrefix
+              ? "The advertised issuer is the same-origin root of the requested URL — a multi-tenant, path-scoped authorization server. Enable \"Path-scoped authorization server\" in the server's XAA settings to allow this."
+              : "Set the server's Authorization Server issuer to the advertised value (or fix the server URL).";
         throw new WebRouteError(
           409,
           ErrorCode.VALIDATION_ERROR,
@@ -159,6 +182,9 @@ export async function discoverServerTargetTokenEndpoint(
             advertisedIssuer: advertised,
             schemeOnly,
             originPrefix,
+            ...(tokenEndpointEscapesOrigin
+              ? { tokenEndpointOffOrigin: true }
+              : {}),
           }
         );
       }

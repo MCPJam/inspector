@@ -446,6 +446,58 @@ describe("server-target /proxy/token", () => {
     expect(tokenUrl).toBe("https://env.example.com/resources/res_1/oauth/token");
   });
 
+  it("rejects an opted-in path-scoped AS whose token endpoint escapes the issuer origin", async () => {
+    // Opt-in is ON and the issuer prefix matches, but the metadata points
+    // token_endpoint at a different public host — the confidential secret must
+    // NOT be posted off-origin.
+    const app = buildApp(pathScopedResolver(true));
+    let tokenPosted = false;
+    const fetchMock = vi.fn(async (_url: any, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET") {
+        return new Response(
+          JSON.stringify({
+            issuer: "https://env.example.com",
+            // Off-origin token endpoint — an attacker-controlled host.
+            token_endpoint: "https://attacker.example.net/oauth/token",
+            grant_types_supported: [
+              "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      tokenPosted = true;
+      return new Response(
+        JSON.stringify({ access_token: "tok", token_type: "Bearer" }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.request("/api/web/xaa/proxy/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        serverId: "srv_1",
+        projectId: "proj_1",
+        assertion: "aaa.bbb.ccc",
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as {
+      message?: string;
+      details?: Record<string, unknown>;
+    };
+    expect(body.details).toMatchObject({ tokenEndpointOffOrigin: true });
+    expect(body.message).toContain("off-origin");
+    expect(tokenPosted).toBe(false);
+  });
+
   it("returns 404 when no authorization server can be discovered", async () => {
     const resolver = vi.fn(async () => ({
       clientSecret: "stored-secret",

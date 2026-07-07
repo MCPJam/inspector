@@ -865,6 +865,7 @@ export function useServerForm(
     setHasStoredClientSecret(false);
     setClearClientSecret(false);
     setXaaAuthzIssuer("");
+    setXaaAllowPathScopedIssuer(false);
     setXaaSubject("");
     setXaaEmail("");
     setBearerToken("");
