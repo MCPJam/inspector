@@ -49,22 +49,28 @@ export function readOpenAiCompatOverride(value: unknown): boolean | undefined {
     : undefined;
 }
 
+/**
+ * OpenAI Apps compat preset per host style — the data behind
+ * `compatPresetForHostStyle`. Exported as a record so the host-compat catalog
+ * (`host-compat/catalog.ts`) can ship the same facts as data (backend catalog
+ * publishes override these at runtime; this record is the bundled fallback).
+ */
+export const OPENAI_COMPAT_PRESET_BY_STYLE: Readonly<Record<string, boolean>> =
+  Object.freeze({
+    chatgpt: true,
+    copilot: true,
+    mcpjam: true,
+    claude: false,
+    cursor: false,
+    codex: false,
+    goose: false,
+  });
+
 export function compatPresetForHostStyle(
   hostStyle: unknown,
 ): boolean | undefined {
-  switch (hostStyle) {
-    case "chatgpt":
-    case "copilot":
-    case "mcpjam":
-      return true;
-    case "claude":
-    case "cursor":
-    case "codex":
-    case "goose":
-      return false;
-    default:
-      return undefined;
-  }
+  if (typeof hostStyle !== "string") return undefined;
+  return OPENAI_COMPAT_PRESET_BY_STYLE[hostStyle];
 }
 
 export function resolveOpenAiCompatForHostConfig(

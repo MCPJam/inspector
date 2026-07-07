@@ -23,6 +23,24 @@ export {
   evaluateMarketHosts,
 } from "./market-hosts.js";
 export {
+  bundledHostCompatCatalog,
+  buildHostProfilesFromCatalog,
+  type EvaluateMarketHostsOptions,
+  type HostCompatCatalog,
+  type HostCompatCatalogHost,
+} from "./catalog.js";
+export {
+  hostCompatCatalogSchema,
+  hostCompatCatalogEnvelopeSchema,
+  mcpAppsCapabilitiesSchema,
+  type HostCompatCatalogEnvelope,
+} from "./catalog-schema.js";
+export {
+  fetchHostCompatCatalog,
+  type FetchHostCompatCatalogOptions,
+  type FetchHostCompatCatalogResult,
+} from "./catalog-fetch.js";
+export {
   MCP_APPS_FULL,
   MCP_APPS_CHATGPT,
   MCP_APPS_MISTRAL,
