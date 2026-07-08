@@ -3279,6 +3279,7 @@ export function useServerState({
         expiresIn?: number;
         clientId?: string;
         clientSecret?: string;
+        authorizationServerUrl?: string;
       },
       serverUrl: string
     ): Promise<{ success: boolean; error?: string }> => {
@@ -3336,6 +3337,13 @@ export function useServerState({
         serverUrl,
         ...(storedOAuthConfig.resourceUrl
           ? { oauthResourceUrl: storedOAuthConfig.resourceUrl }
+          : {}),
+        // Forward the AS URL discovered by the debugger flow so the hosted
+        // backend can refresh without re-discovering against a resource it
+        // can't reach itself (e.g. localhost). Mirrors the live OAuth path in
+        // MCPOAuthProvider.saveTokens.
+        ...(tokens.authorizationServerUrl
+          ? { authorizationServerUrl: tokens.authorizationServerUrl }
           : {}),
         kind: isRegistry ? "registry" : "generic",
         ...(isRegistry
@@ -3433,6 +3441,7 @@ export function useServerState({
         expiresIn?: number;
         clientId?: string;
         clientSecret?: string;
+        authorizationServerUrl?: string;
       },
       serverUrl: string
     ) => {
@@ -3471,6 +3480,7 @@ export function useServerState({
         expiresIn?: number;
         clientId?: string;
         clientSecret?: string;
+        authorizationServerUrl?: string;
       },
       serverUrl: string
     ) => {

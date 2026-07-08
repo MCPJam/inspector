@@ -957,6 +957,37 @@ describe("useServerState OAuth callback failures", () => {
     expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
   });
 
+  it("forwards the discovered authorization server url so the hosted backend can refresh unreachable (e.g. localhost) targets", async () => {
+    mockHostedMode.mockReturnValue(true);
+    reconnectServerMock.mockResolvedValueOnce({
+      success: true,
+      initInfo: null,
+    });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnectWithTokensFromOAuthFlow(
+        "demo-server",
+        {
+          accessToken: "hosted-access-token",
+          tokenType: "Bearer",
+          expiresIn: 300,
+          clientId: "hosted-client-id",
+          authorizationServerUrl: "http://127.0.0.1:8000",
+        },
+        "http://127.0.0.1:8000/mcp"
+      );
+    });
+
+    expect(importHostedOAuthTokensMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverUrl: "http://127.0.0.1:8000/mcp",
+        authorizationServerUrl: "http://127.0.0.1:8000",
+      })
+    );
+  });
+
   it("marks the pending server as failed when authorization is denied", async () => {
     localStorage.setItem("mcp-oauth-pending", "demo-server");
     localStorage.setItem("mcp-oauth-return-hash", "#demo-server");
