@@ -36,8 +36,8 @@ export interface ApiKeyReadiness {
 
 /**
  * Carries the backend HTTP status so the mint handler can map a
- * not-a-member (403) or malformed-id (400) rejection to the right client
- * status instead of flattening everything to a 502.
+ * not-a-member (403), org-not-found (404), or malformed-id (400) rejection
+ * to the right client status instead of flattening everything to a 502.
  */
 export class ApiKeyReadinessError extends Error {
   readonly status: number;
@@ -48,12 +48,16 @@ export class ApiKeyReadinessError extends Error {
   }
 }
 
+// The readiness check runs on the user's synchronous key-mint request path —
+// a hung backend must not hang that request indefinitely.
+const READINESS_TIMEOUT_MS = 5_000;
+
 /**
  * Ask the backend whether `mcpjamUserId` can mint a WorkOS-backed API key
  * scoped to `mcpjamOrganizationId` right now. Throws `ApiKeyReadinessError`
  * with the backend's status (403 not-a-member, 404 org-not-found, 400
  * malformed ids) so the route can translate it; throws a plain `Error` on
- * transport failures or an undeployed route.
+ * transport failures, a timeout, or an undeployed route.
  */
 export async function resolveApiKeyReadiness(
   mcpjamOrganizationId: string,
@@ -63,10 +67,24 @@ export async function resolveApiKeyReadiness(
   const url = `${convexUrl}${READINESS_PATH}?organizationId=${encodeURIComponent(
     mcpjamOrganizationId,
   )}&userId=${encodeURIComponent(mcpjamUserId)}`;
-  const response = await fetch(url, {
-    method: "GET",
-    headers: { "x-inspector-service-token": serviceToken },
-  });
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), READINESS_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "GET",
+      headers: { "x-inspector-service-token": serviceToken },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("API key readiness check timed out");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (response.status === 404) {
     if (await isEntityNotFound(response, "Organization not found")) {
@@ -78,6 +96,9 @@ export async function resolveApiKeyReadiness(
   }
   if (response.status === 403) {
     throw new ApiKeyReadinessError(403, "Not a member of this organization");
+  }
+  if (response.status === 400) {
+    throw new ApiKeyReadinessError(400, "Invalid organization or user id");
   }
   if (!response.ok) {
     throw new Error(`API key readiness check failed (${response.status})`);

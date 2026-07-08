@@ -252,6 +252,10 @@ describe("web routes — API key mint readiness", () => {
       workosOrganizationId: "org_workos_1",
       reason: "membership_pending",
     });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => workosJson({ message: "should not be called" }, 500)),
+    );
 
     const { status, data } = await expectJson(await mintKey(app));
 
@@ -285,5 +289,58 @@ describe("web routes — API key mint readiness", () => {
 
     expect(status).toBe(404);
     expect(data).toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("400s when the readiness check reports malformed ids", async () => {
+    const { ApiKeyReadinessError } = await import(
+      "../../../services/organizations.js"
+    );
+    mockResolveApiKeyReadiness.mockRejectedValue(
+      new ApiKeyReadinessError(400, "Invalid organization or user id"),
+    );
+
+    const { status, data } = await expectJson(await mintKey(app));
+
+    expect(status).toBe(400);
+    expect(data).toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+});
+
+describe("web routes — API key listing is not scoped by session org", () => {
+  const { app } = createWebTestApp();
+
+  beforeEach(() => {
+    vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("lists all of the user's keys without an organization_id filter", async () => {
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = new URL(String(input));
+      expect(url.pathname).toBe(USER_KEYS_PATH);
+      // Regression guard: a key minted under org B while the session is
+      // scoped to org A must not be filtered out of this list.
+      expect(url.searchParams.has("organization_id")).toBe(false);
+      return workosJson({
+        object: "list",
+        data: [keyRecord("api_key_org_a"), keyRecord("api_key_org_b")],
+        list_metadata: { before: null, after: null },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { status, data } = await expectJson(
+      await app.request("/api/web/api-keys", {
+        method: "GET",
+        headers: { Authorization: "Bearer session-jwt" },
+      }),
+    );
+
+    expect(status).toBe(200);
+    expect(data.items).toHaveLength(2);
   });
 });

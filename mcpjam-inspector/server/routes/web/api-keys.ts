@@ -91,13 +91,12 @@ function getWorkOSRestKey(): string {
 
 interface SessionContext {
   userId: string;
-  organizationId?: string;
 }
 
 /**
  * Authenticate a key-management request by VERIFYING the WorkOS AuthKit access
  * token (signature, issuer, audience, exp/nbf) and returning only the trusted
- * `sub` / `org_id`.
+ * `sub`.
  *
  * These routes act on the caller's behalf using the server's admin
  * `WORKOS_API_KEY` and write Convex org bindings, so the token MUST be verified
@@ -127,7 +126,7 @@ async function resolveSessionContext(c: any): Promise<SessionContext> {
       "Invalid or expired session token",
     );
   }
-  return { userId: session.sub, organizationId: session.orgId };
+  return { userId: session.sub };
 }
 
 async function callWorkOS(
@@ -313,11 +312,13 @@ apiKeys.post("/", async (c) =>
       workosOrgId = await resolveWorkosOrgId(organizationId, mcpjamUser._id);
     } catch (error) {
       if (error instanceof ApiKeyReadinessError) {
-        throw new WebRouteError(
-          error.status,
-          error.status === 403 ? ErrorCode.FORBIDDEN : ErrorCode.NOT_FOUND,
-          error.message,
-        );
+        const code =
+          error.status === 403
+            ? ErrorCode.FORBIDDEN
+            : error.status === 400
+              ? ErrorCode.VALIDATION_ERROR
+              : ErrorCode.NOT_FOUND;
+        throw new WebRouteError(error.status, code, error.message);
       }
       if (error instanceof OrganizationNotReadyError) {
         throw new WebRouteError(
@@ -434,16 +435,17 @@ apiKeys.post("/", async (c) =>
 apiKeys.get("/", async (c) =>
   handleRoute(c, async () => {
     const session = await resolveSessionContext(c);
-    const params = new URLSearchParams();
-    if (session.organizationId) {
-      params.set("organization_id", session.organizationId);
-    }
-    const qs = params.toString();
+    // Deliberately NOT filtered by `session.organizationId`: a key is now
+    // minted into whichever MCPJam org the caller selected in the dialog
+    // (see POST above), which can differ from the WorkOS org the session
+    // happens to be scoped to. Filtering here caused a minted key to vanish
+    // from this list (and become unrevokeable from the UI) whenever those
+    // two orgs didn't match. WorkOS keys are already user-scoped by this
+    // endpoint; the MCPJam-org boundary is enforced at USE time via the
+    // workosApiKeyBindings lookup in bearer-auth.ts, not at listing time.
     const { status, body } = await callWorkOS(
       "GET",
-      `/user_management/users/${encodeURIComponent(session.userId)}/api_keys${
-        qs ? `?${qs}` : ""
-      }`,
+      `/user_management/users/${encodeURIComponent(session.userId)}/api_keys`,
     );
 
     if (status < 200 || status >= 300) {
