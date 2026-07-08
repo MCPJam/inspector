@@ -100,6 +100,13 @@ const CASES: Case[] = [
     expectRawCode: -32004,
   },
   {
+    name: "-32022 protocol version rejected",
+    build: () =>
+      makeError("Unsupported protocol version: 2025-11-25", { code: -32022 }),
+    expectSlug: "jsonrpc/protocol_version_rejected",
+    expectRawCode: -32022,
+  },
+  {
     name: "-32042 url elicitation required",
     build: () => makeError("URL elicitation required", { code: -32042 }),
     expectSlug: "jsonrpc/url_elicitation_required",
@@ -239,6 +246,59 @@ describe("describeError — table-driven", () => {
       expect(out.rawMessage.length).toBeGreaterThan(0);
     });
   }
+});
+
+describe("describeError — -32022 protocol version rejected enrichment", () => {
+  it("names the server's supported versions and the requested version", () => {
+    const out = describeError(
+      makeError("Unsupported protocol version: 2025-11-25", {
+        code: -32022,
+        data: { supported: ["2026-07-28"], requested: "2025-11-25" },
+      }),
+    );
+    expect(out.slug).toBe("jsonrpc/protocol_version_rejected");
+    expect(out.oneLine).toContain("2025-11-25");
+    expect(out.oneLine).toContain("2026-07-28");
+    // Points the user at the actionable fix (Auto / protocol setting).
+    expect(out.oneLine.toLowerCase()).toContain("auto");
+    expect(out.nextSteps.join(" ").toLowerCase()).toContain("auto");
+  });
+
+  it("reads JSON-RPC data nested under .error.data", () => {
+    const out = describeError({
+      error: {
+        code: -32022,
+        message: "Unsupported protocol version: 2025-06-18",
+        data: { supported: ["2026-07-28", "2025-11-25"], requested: "2025-06-18" },
+      },
+    });
+    expect(out.slug).toBe("jsonrpc/protocol_version_rejected");
+    expect(out.oneLine).toContain("2025-06-18");
+    expect(out.oneLine).toContain("2026-07-28, 2025-11-25");
+  });
+
+  it("falls back to the static catalog copy when data is absent", () => {
+    const out = describeError(
+      makeError("Unsupported protocol version", { code: -32022 }),
+    );
+    expect(out.slug).toBe("jsonrpc/protocol_version_rejected");
+    expect(out.oneLine).toBe(
+      ERROR_CATALOG["jsonrpc/protocol_version_rejected"].oneLine,
+    );
+  });
+
+  it("ignores malformed data (non-array supported / non-string requested)", () => {
+    const out = describeError(
+      makeError("Unsupported protocol version", {
+        code: -32022,
+        data: { supported: "nope", requested: 7 },
+      }),
+    );
+    expect(out.slug).toBe("jsonrpc/protocol_version_rejected");
+    expect(out.oneLine).toBe(
+      ERROR_CATALOG["jsonrpc/protocol_version_rejected"].oneLine,
+    );
+  });
 });
 
 describe("describeError — fallback shapes (>= 8)", () => {

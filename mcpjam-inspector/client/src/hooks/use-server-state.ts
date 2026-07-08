@@ -6,7 +6,10 @@ import type {
   MCPServerConfig,
   NormalizedError,
 } from "@mcpjam/sdk/browser";
-import { isKnownProtocolVersionPin } from "@mcpjam/sdk/browser";
+import {
+  isKnownProtocolVersionPin,
+  MCP_PROTOCOL_VERSION_AUTO,
+} from "@mcpjam/sdk/browser";
 import type {
   AppAction,
   AppState,
@@ -1046,9 +1049,14 @@ export function useServerState({
         serverOverride,
         hostPin
       );
-      if (effective !== undefined) {
-        defaults.mcpProtocolVersion = effective;
-      }
+      // Auto is the host default: when neither the per-server override nor the
+      // host pin has an opinion, connect with the `"auto"` sentinel so the SDK
+      // probes for the stateless RC and falls back to the legacy `initialize`
+      // handshake per server. Auto's legacy fallback negotiates with the same
+      // SDK defaults the old "no pin" path used, so this changes behavior for
+      // unpinned hosts only by adding the probe — no stored-config migration
+      // needed (undefined rows resolve to auto here at connect time).
+      defaults.mcpProtocolVersion = effective ?? MCP_PROTOCOL_VERSION_AUTO;
       return Object.keys(defaults).length > 0 ? defaults : undefined;
     },
     [activeHostConfig]
@@ -1760,7 +1768,12 @@ export function useServerState({
         hostPin
       );
       // Gate removed — stateless-mcp-enabled goes permanent 2026-05-27.
-      const effective: McpProtocolVersionPin | undefined = resolvedPin;
+      // Mirror `buildResolverConnectionDefaults`: an unpinned server resolves
+      // to the `"auto"` default on the wire, so normalize here too. Otherwise
+      // change-detection would compare `undefined` against the `"auto"` that
+      // actually gets sent and either miss or spuriously trigger a re-test.
+      const effective: McpProtocolVersionPin =
+        resolvedPin ?? MCP_PROTOCOL_VERSION_AUTO;
 
       const seenBefore = lastAppliedProtocolVersionRef.current.has(name);
       const previous = lastAppliedProtocolVersionRef.current.get(name);

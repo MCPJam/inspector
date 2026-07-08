@@ -7,7 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { useFeatureFlagEnabled } from "posthog-js/react";
+import { useStatelessMcpEnabled } from "@/hooks/use-stateless-mcp-enabled";
 import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSettingsSection";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
@@ -44,7 +44,7 @@ export function EditServerFormContent({
   onMcpProtocolVersionOverrideChange,
 }: EditServerFormContentProps) {
   const hostedUrlPlaceholder = "https://example.com/mcp";
-  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
+  const statelessMcpEnabled = useStatelessMcpEnabled();
   const [revealingEnv, setRevealingEnv] = useState(false);
   const [revealingHeaders, setRevealingHeaders] = useState(false);
   const [envRevealError, setEnvRevealError] = useState<string | null>(null);

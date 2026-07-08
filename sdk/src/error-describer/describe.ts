@@ -153,6 +153,66 @@ function maybePromoteRawMessage(
   return { ...entry, oneLine: truncateOneLine(rawMessage) };
 }
 
+/**
+ * Extract the `{ supported, requested }` payload a `-32022` JSON-RPC error
+ * carries in its `data` field. The upstream `McpError` exposes it at
+ * `error.data`; some wrappers nest the JSON-RPC error under `.error`, so we
+ * check `error.error.data` too. Everything is defensively shape-guarded — a
+ * malformed `data` yields `undefined` and the caller keeps the static copy.
+ */
+function extractProtocolVersionData(
+  error: unknown,
+): { supported?: string[]; requested?: string } | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const container = error as Record<string, unknown>;
+  const nestedErr = container.error as { data?: unknown } | undefined;
+  const rawData =
+    container.data && typeof container.data === "object"
+      ? container.data
+      : nestedErr && typeof nestedErr === "object" && nestedErr.data &&
+          typeof nestedErr.data === "object"
+        ? nestedErr.data
+        : undefined;
+  if (!rawData || typeof rawData !== "object") return undefined;
+  const d = rawData as Record<string, unknown>;
+  const supported = Array.isArray(d.supported)
+    ? d.supported.filter((v): v is string => typeof v === "string" && v !== "")
+    : undefined;
+  const requested = typeof d.requested === "string" ? d.requested : undefined;
+  if ((!supported || supported.length === 0) && !requested) return undefined;
+  return { supported, requested };
+}
+
+/**
+ * `-32022` promotes the server's own `supported` / `requested` version data
+ * into the visible one-line so the user reads exactly which versions the
+ * server speaks and can act — the static catalog copy can't name the list
+ * because it's per-server. Falls back to the catalog `oneLine` when the
+ * error carries no usable `data`.
+ */
+function maybeEnrichProtocolVersionRejected(
+  entry: ErrorCatalogEntry,
+  slug: string,
+  error: unknown,
+): ErrorCatalogEntry {
+  if (slug !== "jsonrpc/protocol_version_rejected") return entry;
+  const data = extractProtocolVersionData(error);
+  if (!data) return entry;
+  const parts: string[] = [];
+  parts.push(
+    data.requested
+      ? `The server does not support MCP protocol version "${data.requested}".`
+      : "The server does not support the pinned MCP protocol version.",
+  );
+  if (data.supported && data.supported.length > 0) {
+    parts.push(`It supports: ${data.supported.join(", ")}.`);
+  }
+  parts.push(
+    "Set this server's protocol version to Auto (or pin a supported version) in the connection settings.",
+  );
+  return { ...entry, oneLine: truncateOneLine(parts.join(" ")) };
+}
+
 function inspectorSentinelSlug(message: string): string | undefined {
   if (/NotYetSupportedInStateless/i.test(message)) {
     return "sdk/not_yet_supported_in_stateless";
@@ -174,6 +234,7 @@ const JSONRPC_SLUG_BY_CODE: Record<number, string> = {
   [-32603]: "jsonrpc/internal_error",
   [-32000]: "jsonrpc/connection_closed",
   [-32004]: "jsonrpc/unsupported_protocol_version",
+  [-32022]: "jsonrpc/protocol_version_rejected",
   [-32042]: "jsonrpc/url_elicitation_required",
 };
 
@@ -437,10 +498,10 @@ export function describeError(error: unknown): NormalizedError {
   try {
     const rawMessage = redactString(getErrorMessage(error));
     const { slug, rawCode } = resolveSlug(error);
-    const entry = maybePromoteRawMessage(
-      lookupCatalog(slug),
+    const entry = maybeEnrichProtocolVersionRejected(
+      maybePromoteRawMessage(lookupCatalog(slug), slug, rawMessage),
       slug,
-      rawMessage,
+      error,
     );
     const cause = captureCause(error);
     return {

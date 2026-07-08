@@ -8,7 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { useFeatureFlagEnabled } from "posthog-js/react";
+import { useStatelessMcpEnabled } from "@/hooks/use-stateless-mcp-enabled";
 import {
   isKnownProtocolVersion,
   isKnownProtocolVersionPin,
@@ -280,22 +280,24 @@ export function ProtocolTab({
     applyParsedToDraft: applyJsonToDraft,
     onDraftChange,
   });
-  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
-  // Stored stateful literals (legacy carry-over) collapse to "Latest"
-  // since they route to the same code path; saving normalizes back to
-  // undefined.
+  const statelessMcpEnabled = useStatelessMcpEnabled();
+  // Auto is the host default: an absent pin (`undefined`) means "detect per
+  // server at connect" and is shown — and behaves — as Auto. `"auto"` maps to
+  // it explicitly. Any concrete stateful literal (2025-*, legacy carry-over)
+  // surfaces as "Latest"; the 2026 RC surfaces as its own option.
+  const storedPin = draft.mcpProfile?.mcpProtocolVersion;
   const selectedDropdownValue: HostProtocolDropdownValue =
-    draft.mcpProfile?.mcpProtocolVersion === "2026-07-28"
+    storedPin === "2026-07-28"
       ? "rc"
-      : draft.mcpProfile?.mcpProtocolVersion === "auto"
+      : storedPin === "auto" || storedPin === undefined
       ? "auto"
       : "latest";
 
   // Dropdown handler. Writes through to `draft.mcpProfile.mcpProtocolVersion`
   // directly (parallel to the JSON editor's applyJsonToDraft path) so the
-  // JSON view round-trips immediately. Maps the UI-only "default" sentinel
-  // to `undefined` — preserves canonical-hash stability so the SDK can
-  // upgrade its default version without churning every stored host config.
+  // JSON view round-trips immediately. Auto is written as the `"auto"`
+  // sentinel; unpinned rows (`undefined`) also resolve to Auto at connect, so
+  // the two are equivalent and the dropdown never needs to write `undefined`.
   const setProtocolVersion = (next: McpProtocolVersionPin | undefined) => {
     onDraftChange((prev) => {
       const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
@@ -363,7 +365,11 @@ export function ProtocolTab({
                     ? "2026-07-28"
                     : next === "auto"
                     ? "auto"
-                    : undefined
+                    : // "Latest" pins the current stable wire version
+                      // explicitly. It must NOT map to `undefined` any more:
+                      // absence now means Auto (the default), so an explicit
+                      // "Latest" choice has to carry a concrete version.
+                      "2025-11-25"
                 );
               }}
               disabled={readOnly}
