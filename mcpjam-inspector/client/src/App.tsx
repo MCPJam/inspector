@@ -212,6 +212,7 @@ import {
   buildEvalsPath,
   getInvalidOrganizationRouteNavigationTarget,
   getProjectSwitchNavigationTarget,
+  isDebugOAuthCallbackPath,
   navigationTargetToPath,
   navigateApp,
   pathnameToActiveTab,
@@ -1579,9 +1580,7 @@ export default function App() {
   // Set up Electron OAuth callback handling
   useElectronOAuth();
 
-  const isDebugCallback = window.location.pathname.startsWith(
-    "/oauth/callback/debug"
-  );
+  const isDebugCallback = isDebugOAuthCallbackPath(window.location.pathname);
   const isOAuthCallback = window.location.pathname === "/callback";
   const electronMcpCallbackUrl = buildElectronMcpCallbackUrl();
 
