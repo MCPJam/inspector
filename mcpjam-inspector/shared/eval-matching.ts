@@ -71,6 +71,63 @@ export function hasSkillTools(toolNames: Iterable<string>): boolean {
   return false;
 }
 
+/** Per-iteration skill-adherence verdict (PR-E5). */
+export type SkillAdherence = {
+  /** The case's expected skills (names). */
+  expectedSkills: string[];
+  /** Skill names the agent loaded at any point (via loadSkill). */
+  loadedSkills: string[];
+  /** Expected skills loaded BEFORE the first non-skill action. */
+  loadedBeforeFirstAction: string[];
+  /** True ⟺ every expected skill was loaded before the first action. */
+  adherent: boolean;
+};
+
+/**
+ * Skill-adherence: did the agent load each EXPECTED skill before taking its
+ * first real (non-skill) action? Adherence is about "consult the skill before
+ * acting", so a `loadSkill` that happens AFTER the first task action doesn't
+ * count. `firstActionIdx` = the first non-skill-tool call (skill discovery/load
+ * is housekeeping, not an action). Returns `undefined` when the case has no
+ * expected skills (never fabricate a verdict).
+ *
+ * `toolCalls` must be in EXECUTION order (flattened across turns).
+ */
+export function computeSkillAdherence(
+  expectedSkills: string[] | undefined,
+  toolCalls: ReadonlyArray<{ toolName: string; arguments?: unknown }>,
+): SkillAdherence | undefined {
+  if (!expectedSkills || expectedSkills.length === 0) return undefined;
+
+  // First non-skill call bounds "before the agent acted". No action ⇒ end.
+  let firstActionIdx = toolCalls.length;
+  for (let i = 0; i < toolCalls.length; i++) {
+    if (!isSkillToolName(toolCalls[i].toolName)) {
+      firstActionIdx = i;
+      break;
+    }
+  }
+
+  // First load index per skill name (from loadSkill calls).
+  const firstLoadIdx = new Map<string, number>();
+  for (let i = 0; i < toolCalls.length; i++) {
+    const call = toolCalls[i];
+    if (call.toolName !== "loadSkill") continue;
+    const name = (call.arguments as { name?: unknown } | undefined)?.name;
+    if (typeof name === "string" && !firstLoadIdx.has(name)) {
+      firstLoadIdx.set(name, i);
+    }
+  }
+
+  const loadedSkills = [...firstLoadIdx.keys()];
+  const loadedBeforeFirstAction = expectedSkills.filter((name) => {
+    const idx = firstLoadIdx.get(name);
+    return idx !== undefined && idx < firstActionIdx;
+  });
+  const adherent = loadedBeforeFirstAction.length === expectedSkills.length;
+  return { expectedSkills, loadedSkills, loadedBeforeFirstAction, adherent };
+}
+
 /**
  * Zod schema mirroring `EvalMatchOptions` for transport boundaries
  * (HTTP request bodies, Convex args). Keep field names + value enums in
