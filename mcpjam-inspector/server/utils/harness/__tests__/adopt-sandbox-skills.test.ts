@@ -151,6 +151,37 @@ describe("adoptSandboxSkills", () => {
     expect(out.adopted).toEqual([]);
   });
 
+  it("skips a dir whose supporting-file scan errored (non-zero find exit)", async () => {
+    // `find` exits non-zero (permission denied / dir vanished mid-scan) → we
+    // can't prove the dir is SKILL.md-only, so it's treated conservatively as
+    // file-backed and skipped (adopting it stripped could later delete its
+    // un-adopted files under managed reconciliation).
+    const session = {
+      run: vi.fn(async ({ command }: { command: string }) => {
+        if (command.startsWith("ls -1")) {
+          return { exitCode: 0, stdout: "maybe-file-skill", stderr: "" };
+        }
+        if (command.startsWith("find")) {
+          return { exitCode: 1, stdout: "", stderr: "Permission denied" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+      readTextFile: vi.fn(async ({ path }: { path: string }) =>
+        path === `${SKILLS_BASE}/maybe-file-skill/SKILL.md`
+          ? skillMd("maybe-file-skill")
+          : null,
+      ),
+    };
+    const out = await adoptSandboxSkills({
+      session,
+      authHeader: "Bearer x",
+      projectId: "proj_1",
+      managedNames: new Set(),
+    });
+    expect(convexAdoptComputerSkills).not.toHaveBeenCalled();
+    expect(out.adopted).toEqual([]);
+  });
+
   it("skips dirs with no SKILL.md and caps the batch at 5", async () => {
     vi.mocked(convexAdoptComputerSkills).mockResolvedValue({ results: [] });
     const dirs = ["a", "b", "c", "d", "e", "f", "g", "no-md"];

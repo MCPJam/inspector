@@ -81,7 +81,15 @@ async function dirHasSupportingFiles(
         `${SKILLS_BASE}/${name}`
       )} -mindepth 1 -type f ! -name SKILL.md -print -quit`,
     });
-    return res.exitCode === 0 && res.stdout.trim().length > 0;
+    // A non-zero `find` exit means the scan errored (permission denied, dir
+    // disappeared mid-scan, …) — we CAN'T be sure the dir is SKILL.md-only.
+    // Adoption is SKILL.md-only by design, and managed reconciliation may
+    // later delete un-adopted files, so treat an undetermined scan
+    // conservatively as file-backed → return true so the candidate is
+    // skipped rather than adopted stripped. (Mirrors the base-dir `ls`
+    // `exitCode !== 0` guard below.)
+    if (res.exitCode !== 0) return true;
+    return res.stdout.trim().length > 0;
   } catch {
     // Can't tell → be conservative and treat as file-backed (skip adoption).
     return true;
