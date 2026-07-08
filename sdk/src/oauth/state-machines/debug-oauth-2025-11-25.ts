@@ -1182,14 +1182,18 @@ export const createDebugOAuthStateMachine = (
             }
             // CIMD support gates the CIMD registration strategy (see the
             // client_id_metadata_document_supported check below), so surface it
-            // in the summary. Guard on typeof to distinguish "not advertised"
-            // from an explicit `false`.
+            // in the summary. Per draft-parecki-oauth-client-id-metadata-document
+            // an omitted field defaults to false, so absence is still reported —
+            // with provenance, to distinguish it from an advertised boolean.
             if (
               typeof authServerMetadata.client_id_metadata_document_supported ===
               "boolean"
             ) {
               metadata["CIMD Supported"] =
                 authServerMetadata.client_id_metadata_document_supported;
+            } else {
+              metadata["CIMD Supported"] =
+                "false (not advertised, defaults to false per spec)";
             }
             if (authServerMetadata.code_challenge_methods_supported) {
               metadata["PKCE Methods"] =
