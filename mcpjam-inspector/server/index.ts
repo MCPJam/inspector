@@ -238,6 +238,9 @@ initXAAIdpKeyPair();
 
 startGuestAuthProvisioningInBackground();
 startLocalBrowserRenderingSetupInBackground();
+// Mirror of the call in server/app.ts::createHonoApp — both production
+// entries must wire this up. Memoized, so it's harmless if a process ever
+// ran both.
 void initComputersRemoteDataPlaneDiscovery();
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);

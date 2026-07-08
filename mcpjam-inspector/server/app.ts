@@ -60,6 +60,7 @@ import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair.js";
 import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
 import { registerSelfFetch } from "./utils/self-app.js";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url.js";
+import { initComputersRemoteDataPlaneDiscovery } from "./utils/computers/remote-data-plane.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -81,6 +82,10 @@ export function createHonoApp() {
 
   startGuestAuthProvisioningInBackground();
   startLocalBrowserRenderingSetupInBackground();
+  // Mirror of the call in server/index.ts — both production entries must
+  // wire this up so the Electron/embedded path also gets a working Computer
+  // tab. Memoized, so it's harmless if a process ever ran both.
+  void initComputersRemoteDataPlaneDiscovery();
 
   const app = new Hono();
   const strictModeResponse = (c: any, path: string) =>
