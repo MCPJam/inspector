@@ -116,6 +116,15 @@ export interface IssuerMismatch {
   requested: string;
   advertised: string;
   schemeOnly: boolean;
+  /**
+   * The advertised issuer is a same-origin path-prefix ancestor of the
+   * requested URL (e.g. requested https://env.example.com/resources/res_x,
+   * advertised https://env.example.com). The shape of multi-tenant
+   * authorization servers that scope endpoints under a path while issuing
+   * from the origin root — acceptable only under the per-server
+   * path-scoped-issuer opt-in.
+   */
+  originPrefix: boolean;
 }
 
 export interface DiscoveryVerdict {
@@ -150,6 +159,27 @@ function fullIdentity(value: string): string {
   } catch {
     return stripTrailingSlash(value);
   }
+}
+
+// True when `advertised` is the origin root or a path-prefix ancestor of
+// `requested` on the SAME origin (scheme + host + port). Segment-aware:
+// /resources is an ancestor of /resources/res_x but not of /resources-evil.
+function isOriginPrefix(advertised: string, requested: string): boolean {
+  let adv: URL;
+  let req: URL;
+  try {
+    adv = new URL(advertised);
+    req = new URL(requested);
+  } catch {
+    return false;
+  }
+  if (adv.origin !== req.origin) return false;
+  const advPath = stripTrailingSlash(adv.pathname);
+  const reqPath = stripTrailingSlash(req.pathname);
+  if (advPath === reqPath) return false;
+  return advPath === "" || advPath === "/"
+    ? reqPath.length > 0
+    : reqPath.startsWith(`${advPath}/`);
 }
 
 /**
@@ -202,6 +232,7 @@ export function evaluateDiscovery(
       // Same host/path, different scheme → almost always a proxy that
       // terminates TLS but advertises an http:// issuer.
       schemeOnly: hostAndPath(issuer) === hostAndPath(context.requestedIssuer),
+      originPrefix: isOriginPrefix(issuer, context.requestedIssuer),
     };
   }
 

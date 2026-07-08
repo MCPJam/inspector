@@ -47,6 +47,29 @@ describe("buildHostProfilesFromCatalog", () => {
     );
   });
 
+  it("carries per-host imageSupport (incl. model-vs-ui splits)", () => {
+    const by = (id: string) =>
+      buildMarketHostProfiles().find((p) => p.id === id)?.imageSupport;
+    // ChatGPT renders all three inline.
+    expect(by("chatgpt")).toMatchObject({
+      toolImageContent: { model: true, ui: true },
+      resourceLinkImages: { model: true, ui: true },
+      placement: "inline",
+    });
+    // Cursor: model sees images but the UI shows none.
+    expect(by("cursor")).toMatchObject({
+      toolImageContent: { model: true, ui: false },
+      placement: "none",
+    });
+    // Notion: UI shows the tool image (collapsed) even though the model doesn't.
+    expect(by("notion")).toMatchObject({
+      toolImageContent: { model: false, ui: true },
+      placement: "collapsed",
+    });
+    // Slackbot: nothing.
+    expect(by("slack")?.placement).toBe("none");
+  });
+
   it("keeps rendersOpenAiApps independent of rendersMcpApps (NOT &&-gated)", () => {
     const catalog: HostCompatCatalog = {
       marketHosts: [

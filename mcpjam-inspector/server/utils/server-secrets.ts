@@ -268,6 +268,10 @@ export interface ServerClientSecretResult {
   serverUrl: string | null;
   /** Optional issuer override; takes precedence over serverUrl for discovery. */
   xaaAuthzIssuer: string | null;
+  /** Per-server opt-in: accept a same-origin path-scoped authorization server
+   * whose metadata advertises the origin root as issuer. Absent/false =
+   * strict; the guard only relaxes on an explicit true. */
+  xaaAllowPathScopedIssuer?: boolean;
 }
 
 /**
@@ -350,5 +354,8 @@ export async function fetchServerClientSecret(args: {
     serverUrl: typeof body.serverUrl === "string" ? body.serverUrl : null,
     xaaAuthzIssuer:
       typeof body.xaaAuthzIssuer === "string" ? body.xaaAuthzIssuer : null,
+    // Strict by default: only an explicit true from the stored config relaxes
+    // the issuer check (older backends simply omit the field).
+    xaaAllowPathScopedIssuer: body.xaaAllowPathScopedIssuer === true,
   };
 }

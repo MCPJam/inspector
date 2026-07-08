@@ -18,7 +18,17 @@ import {
 } from "./lib/electron-hosted-auth";
 import { useUnifiedConvexAuth } from "./lib/unified-convex-auth";
 import { getRuntimeConvexUrl } from "./lib/runtime-config";
-import { normalizeInitialLegacyHashBookmark } from "./lib/app-navigation";
+import {
+  isDebugOAuthCallbackPath,
+  normalizeInitialLegacyHashBookmark,
+} from "./lib/app-navigation";
+import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
+import {
+  getInitialThemeMode,
+  getInitialThemePreset,
+  updateThemeMode,
+  updateThemePreset,
+} from "./lib/theme-utils";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 import { DbUserReadyProvider } from "./contexts/db-user-ready-context";
 import {
@@ -85,6 +95,18 @@ if (isInIframe) {
   root.render(
     <StrictMode>
       <IframeRouterError />
+    </StrictMode>
+  );
+} else if (isDebugOAuthCallbackPath(window.location.pathname)) {
+  // Throwaway popup: render without <AuthKitProvider>/Convex so it can't fire a
+  // WorkOS refresh that logs the opener window out. See isDebugOAuthCallbackPath.
+  // App's theme bootstrap doesn't run here, so apply the stored theme directly.
+  updateThemeMode(getInitialThemeMode());
+  updateThemePreset(getInitialThemePreset());
+  const root = createRoot(document.getElementById("root")!);
+  root.render(
+    <StrictMode>
+      <OAuthDebugCallback />
     </StrictMode>
   );
 } else {
