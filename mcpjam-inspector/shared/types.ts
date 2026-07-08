@@ -896,7 +896,7 @@ export interface ServerFormData {
   /**
    * Opt-in: accept a path-scoped authorization server whose metadata
    * advertises the same-origin root as issuer (multi-tenant AS deployments
-   * like Scalekit). Off = strict RFC 8414 issuer match.
+   * with path-scoped issuers). Off = strict RFC 8414 issuer match.
    */
   xaaAllowPathScopedIssuer?: boolean;
   /**

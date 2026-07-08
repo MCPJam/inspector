@@ -7,30 +7,19 @@
           "type": "patch"
         }
       ],
-      "summary": "Persist OAuth debugger registration settings through project serialization and surface actionable XAA issuer-mismatch errors.",
-      "id": "oauth-xaa-debugger-fixes"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Stop advertising inspector-driving WebMCP `ui_*` tools on chatbox surfaces (published, share-link, and owner preview) — end-user chatbox turns no longer see or trigger inspector UI actions, on the client snapshot, the standalone chatbox route's tool registration, and both chat-v2 server boundaries.",
-      "id": "webmcp-gate-ui-tools-off-chatbox-surfaces"
+      "summary": "xaa: remove vendor name from path-scoped authorization server help text and internal docs/comments/test fixtures; behavior unchanged.",
+      "id": "xaa-remove-vendor-name-references"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "2.23.0",
+      "oldVersion": "2.23.2",
       "changesets": [
-        "oauth-xaa-debugger-fixes",
-        "webmcp-gate-ui-tools-off-chatbox-surfaces"
+        "xaa-remove-vendor-name-references"
       ],
-      "newVersion": "2.23.1"
+      "newVersion": "2.23.3"
     }
   ]
 }

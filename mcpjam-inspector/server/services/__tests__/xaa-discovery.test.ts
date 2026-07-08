@@ -157,8 +157,8 @@ describe("evaluateDiscovery", () => {
   });
 
   it("classifies a same-origin root issuer over a path-scoped AS as originPrefix", () => {
-    // The Scalekit shape: endpoints scoped under /resources/res_x, issuer at
-    // the origin root.
+    // A path-scoped AS shape: endpoints scoped under /resources/res_x, issuer
+    // at the origin root.
     const verdict = evaluateDiscovery(
       { issuer: "https://env.example.com" },
       {

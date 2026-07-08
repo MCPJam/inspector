@@ -24,7 +24,7 @@ describe("isPrivateNetworkUrl", () => {
 
   it.each([
     "https://auth.example.com",
-    "https://tenant.scalekit.dev/resources/res_123",
+    "https://tenant.auth-provider.example/resources/res_123",
     "http://172.15.0.1", // just below the RFC 1918 172.16/12 block
     "http://172.32.0.1", // just above it
     "http://11.0.0.1",
