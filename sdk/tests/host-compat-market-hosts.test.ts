@@ -11,7 +11,7 @@ import {
 } from "../src/host-config/templates/seed-host-template";
 
 const toolsWith = (
-  toolsMetadata: Record<string, Record<string, unknown>>,
+  toolsMetadata: Record<string, Record<string, unknown>>
 ): HostCompatToolsInput => ({
   tools: Object.keys(toolsMetadata).map((name) => ({ name })),
   toolsMetadata,
@@ -25,12 +25,13 @@ const profileFor = (id: string) =>
 const verdictFor = (
   id: string,
   tools: HostCompatToolsInput,
-  options?: Parameters<typeof evaluateMarketHosts>[1],
-) => evaluateMarketHosts(tools, options).reports.find((r) => r.hostId === id)
-  ?.verdict;
+  options?: Parameters<typeof evaluateMarketHosts>[1]
+) =>
+  evaluateMarketHosts(tools, options).reports.find((r) => r.hostId === id)
+    ?.verdict;
 
 describe("buildMarketHostProfiles", () => {
-  it("includes the 10 market hosts (logo-free)", () => {
+  it("includes the market hosts (logo-free)", () => {
     const profiles = buildMarketHostProfiles();
     expect(profiles.map((p) => p.id).sort()).toEqual(
       [
@@ -44,7 +45,8 @@ describe("buildMarketHostProfiles", () => {
         "mistral",
         "n8n",
         "perplexity",
-      ].sort(),
+        "slack",
+      ].sort()
     );
     expect(profiles.every((p) => !("logoSrc" in p))).toBe(true);
   });
@@ -88,7 +90,7 @@ describe("buildMarketHostProfiles", () => {
         | { supportedProtocolVersions?: string[] }
         | undefined;
       expect(profile.supportedProtocolVersions).toEqual(
-        initialize?.supportedProtocolVersions,
+        initialize?.supportedProtocolVersions
       );
     }
   });
@@ -121,6 +123,7 @@ describe("buildMarketHostProfiles", () => {
       "n8n",
       "perplexity",
       "cline",
+      "slack",
     ]);
     expect(b.find((p) => p.id === "claude")?.capabilities?.message).toBe(true);
   });
@@ -148,18 +151,18 @@ describe("evaluateMarketHosts (real catalog verdicts)", () => {
 
   it("Goose works clean but degrades when a widget uses an unsupported API", () => {
     expect(verdictFor("goose", widget, clean)).toBe("works");
-    expect(verdictFor("goose", widget, { widgetUsage: { message: ["w"] } })).toBe(
-      "degraded",
-    );
+    expect(
+      verdictFor("goose", widget, { widgetUsage: { message: ["w"] } })
+    ).toBe("degraded");
   });
 
   it("Cursor degrades a widget that uses ui/message (Cursor lacks it)", () => {
-    expect(verdictFor("cursor", widget, { widgetUsage: { message: ["w"] } })).toBe(
-      "degraded",
-    );
+    expect(
+      verdictFor("cursor", widget, { widgetUsage: { message: ["w"] } })
+    ).toBe("degraded");
     // Claude supports message → still works for the same widget.
-    expect(verdictFor("claude", widget, { widgetUsage: { message: ["w"] } })).toBe(
-      "works",
-    );
+    expect(
+      verdictFor("claude", widget, { widgetUsage: { message: ["w"] } })
+    ).toBe("works");
   });
 });
