@@ -3,8 +3,10 @@ import { Button } from "@mcpjam/design-system/button";
 import { ChevronLeft } from "lucide-react";
 import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
+import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
 import { SupportChip } from "./support-chip";
 import { buildPresetCompareEntries } from "./host-compare-presets";
 import {
@@ -29,21 +31,23 @@ export function CaniuseCapabilityPage({
   const capability = getCaniuseCapabilityBySlug(capabilitySlug);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
+  const catalogState = useHostCatalog();
+  const compareCatalog = catalogState.catalog ?? bundledHostCompatCatalog();
   const excludedPresetTemplateIds = useMemo(() => {
-    const excluded = new Set<"claude-code">();
+    const excluded = new Set<string>();
     if (!claudeCodeEnabled) excluded.add("claude-code");
     return excluded;
   }, [claudeCodeEnabled]);
   const presets = useMemo(
     () =>
-      buildPresetCompareEntries(themeMode, {
+      buildPresetCompareEntries(compareCatalog, {
         excludedTemplateIds: excludedPresetTemplateIds,
       }),
-    [themeMode, excludedPresetTemplateIds],
+    [compareCatalog, excludedPresetTemplateIds]
   );
   const hosts = useMemo(
     () => sortCaniusePresetHosts(presets.hosts),
-    [presets.hosts],
+    [presets.hosts]
   );
 
   if (!capability) {
@@ -115,13 +119,13 @@ export function CaniuseCapabilityPage({
             if (!subject) return null;
             const level = getCaniuseSupportLevel(
               capability.field,
-              subject.config,
+              subject.config
             );
             const label = getCaniuseSupportLabel(level);
             const logoSrc = getChatboxHostLogo(
               subject.hostStyle,
               subject.config.chatUiOverride,
-              themeMode,
+              themeMode
             );
             return (
               <div
@@ -158,7 +162,7 @@ function PageShell({ children }: { children: ReactNode }) {
     <main
       className={cn(
         "min-h-[100dvh] bg-background px-4 py-5 text-foreground",
-        "sm:px-6 sm:py-8",
+        "sm:px-6 sm:py-8"
       )}
     >
       <div className="mx-auto w-full max-w-5xl">{children}</div>
