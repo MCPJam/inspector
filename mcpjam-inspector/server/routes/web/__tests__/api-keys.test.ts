@@ -347,6 +347,8 @@ describe("web routes — API key listing is not scoped by session org", () => {
   it("pages through a multi-page key list instead of returning only the first page", async () => {
     const fetchMock = vi.fn(async (input: string | URL) => {
       const url = new URL(String(input));
+      expect(url.pathname).toBe(USER_KEYS_PATH);
+      expect(url.searchParams.has("organization_id")).toBe(false);
       const after = url.searchParams.get("after");
       if (!after) {
         return workosJson({

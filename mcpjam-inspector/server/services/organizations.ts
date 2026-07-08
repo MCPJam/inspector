@@ -34,6 +34,13 @@ export interface ApiKeyReadiness {
   reason?: ApiKeyReadinessReason;
 }
 
+const API_KEY_READINESS_REASONS = new Set<ApiKeyReadinessReason>([
+  "org_pending",
+  "org_failed",
+  "membership_pending",
+  "membership_failed",
+]);
+
 /**
  * Carries the backend HTTP status so the mint handler can map a
  * not-a-member (403), org-not-found (404), or malformed-id (400) rejection
@@ -114,10 +121,9 @@ export async function resolveApiKeyReadiness(
         typeof body.workosOrganizationId === "string"
           ? body.workosOrganizationId
           : null,
-      reason:
-        typeof body.reason === "string"
-          ? (body.reason as ApiKeyReadinessReason)
-          : undefined,
+      reason: API_KEY_READINESS_REASONS.has(body.reason as ApiKeyReadinessReason)
+        ? (body.reason as ApiKeyReadinessReason)
+        : undefined,
     };
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {

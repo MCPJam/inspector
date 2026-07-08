@@ -476,6 +476,17 @@ apiKeys.get("/", async (c) =>
       if (!after) {
         break;
       }
+      if (page === 9) {
+        // Page cap hit with more pages remaining — unlike `userOwnsApiKey`
+        // below (a correctness-critical ownership check, where this must
+        // hard-fail), a listing endpoint degrades better by returning what
+        // it has than by failing the whole Settings page. Still log it: a
+        // silent truncation here is exactly the "key vanished" failure mode
+        // this file has been fixing, just capped rather than unconditional.
+        logger.warn("API key listing exhausted page cap", {
+          workos_user_id: session.userId,
+        });
+      }
     }
     return { items };
   }),
