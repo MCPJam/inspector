@@ -28,7 +28,7 @@ export type SkillsSource =
 export type SkillSharing = "user" | "project";
 
 function isCloud(
-  source?: SkillsSource,
+  source?: SkillsSource
 ): source is { kind: "cloud"; projectId: string } {
   return source?.kind === "cloud";
 }
@@ -79,7 +79,9 @@ function parseSkillMd(text: string): { description: string; body: string } {
   const body = (m[2] ?? "").trim();
   const desc = front.match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? "";
   // Strip surrounding quotes if present.
-  const description = desc.replace(/^"(.*)"$/s, "$1").replace(/^'(.*)'$/s, "$1");
+  const description = desc
+    .replace(/^"(.*)"$/s, "$1")
+    .replace(/^'(.*)'$/s, "$1");
   return { description, body };
 }
 
@@ -100,12 +102,12 @@ async function sha256Hex(buf: ArrayBuffer): Promise<string> {
 
 async function resolveCloudSkillId(
   projectId: string,
-  name: string,
+  name: string
 ): Promise<string> {
-  const body = await webPost<{ projectId: string }, { skills: CloudSkillWire[] }>(
-    "/api/web/skills/list",
-    { projectId },
-  );
+  const body = await webPost<
+    { projectId: string },
+    { skills: CloudSkillWire[] }
+  >("/api/web/skills/list", { projectId });
   const match = (body?.skills ?? []).find((s) => s.name === name);
   if (!match) throw new Error(`Skill '${name}' not found`);
   return match.skillId;
@@ -116,7 +118,7 @@ export interface ListSkillsResponse {
 }
 
 export async function listSkills(
-  source?: SkillsSource,
+  source?: SkillsSource
 ): Promise<SkillListItem[]> {
   if (isCloud(source)) {
     const body = await webPost<
@@ -153,7 +155,7 @@ export async function listSkills(
 
 export async function getSkill(
   name: string,
-  source?: SkillsSource,
+  source?: SkillsSource
 ): Promise<Skill> {
   if (isCloud(source)) {
     const body = await webPost<
@@ -172,14 +174,15 @@ export async function getSkill(
   try {
     body = await res.json();
   } catch {}
-  if (!res.ok) throw new Error(body?.error || `Get skill failed (${res.status})`);
+  if (!res.ok)
+    throw new Error(body?.error || `Get skill failed (${res.status})`);
   return body.skill as Skill;
 }
 
 export async function uploadSkill(
   data: { name: string; description: string; content: string },
   source?: SkillsSource,
-  sharing: SkillSharing = "user",
+  sharing: SkillSharing = "user"
 ): Promise<Skill> {
   if (isCloud(source)) {
     const body = await webPost<
@@ -208,7 +211,8 @@ export async function uploadSkill(
   try {
     body = await res.json();
   } catch {}
-  if (!res.ok) throw new Error(body?.error || `Upload skill failed (${res.status})`);
+  if (!res.ok)
+    throw new Error(body?.error || `Upload skill failed (${res.status})`);
   return body.skill as Skill;
 }
 
@@ -216,21 +220,23 @@ export async function uploadSkillFolder(
   files: File[],
   skillName: string,
   source?: SkillsSource,
-  sharing: SkillSharing = "user",
+  sharing: SkillSharing = "user"
 ): Promise<Skill> {
   if (isCloud(source)) {
     const skillMdFile = files.find(
       (f) =>
         f.name === "SKILL.md" ||
-        ((f as any).webkitRelativePath || "").endsWith("/SKILL.md"),
+        ((f as any).webkitRelativePath || "").endsWith("/SKILL.md")
     );
     if (!skillMdFile) throw new Error("No SKILL.md found in the folder");
     // 1. Create the skill from SKILL.md (name/description/body). IDEMPOTENT on
     // retry ONLY for the retry-after-partial-upload case: a prior attempt already
-    // created the skill but some files failed, so re-running 409s on the name AND
-    // there ARE supporting files to (re-)attach (attach is upsert-by-path). Any
-    // other create failure — validation / permission / server, OR a genuine
-    // SKILL.md-only duplicate (nothing to retry) — rethrows so the user sees it.
+    // created the skill but some files failed, so re-running 409s on the name,
+    // there ARE supporting files to (re-)attach (attach is upsert-by-path), AND
+    // the existing SKILL.md still MATCHES what we're uploading. Any other create
+    // failure — validation / permission / server, a SKILL.md-only duplicate
+    // (nothing to retry), OR a same-name upload with CHANGED instructions —
+    // rethrows so the user sees the conflict instead of a false success.
     const { description, body } = parseSkillMd(await skillMdFile.text());
     const supporting = files.filter((f) => f !== skillMdFile);
     let skill: Skill;
@@ -238,18 +244,23 @@ export async function uploadSkillFolder(
       skill = await uploadSkill(
         { name: skillName, description, content: body },
         source,
-        sharing,
+        sharing
       );
     } catch (createErr) {
       const isConflict =
         createErr instanceof WebApiError && createErr.status === 409;
       if (!isConflict || supporting.length === 0) throw createErr;
-      const existingId = await resolveCloudSkillId(
-        source.projectId,
-        skillName,
-      ).catch(() => null);
-      if (!existingId) throw createErr;
-      skill = await getSkill(skillName, source);
+      // Only RESUME when the existing skill's body/description match what we're
+      // uploading. A changed SKILL.md is a genuine name clash with different
+      // instructions — surface it rather than attaching new files to the stale
+      // skill and reporting success while the old cloud instructions persist.
+      const existing = await getSkill(skillName, source).catch(() => null);
+      if (!existing) throw createErr;
+      const sameContent =
+        existing.content.trim() === body.trim() &&
+        existing.description.trim() === description.trim();
+      if (!sameContent) throw createErr;
+      skill = existing;
     }
 
     // 2. Upload supporting files DIRECTLY to Convex (bypasses inspector body
@@ -316,7 +327,7 @@ export async function uploadSkillFolder(
       throw new Error(
         `Skill created; ${failed} supporting file(s) failed to upload ` +
           `(${failedPaths.join(", ")}). ` +
-          `Re-upload the folder to add them.`,
+          `Re-upload the folder to add them.`
       );
     }
     return skill;
@@ -341,7 +352,7 @@ export async function uploadSkillFolder(
   } catch {}
   if (!res.ok) {
     throw new Error(
-      body?.error || body?.message || `Upload skill failed (${res.status})`,
+      body?.error || body?.message || `Upload skill failed (${res.status})`
     );
   }
   return body.skill as Skill;
@@ -355,7 +366,7 @@ export async function uploadSkillFolder(
 export async function updateSkill(
   skillId: string,
   data: { name?: string; description?: string; content?: string },
-  source?: SkillsSource,
+  source?: SkillsSource
 ): Promise<Skill> {
   if (!isCloud(source)) {
     throw new Error("Editing is only supported for cloud skills.");
@@ -379,14 +390,14 @@ export async function updateSkill(
 
 export async function deleteSkill(
   name: string,
-  source?: SkillsSource,
+  source?: SkillsSource
 ): Promise<void> {
   if (isCloud(source)) {
     const skillId = await resolveCloudSkillId(source.projectId, name);
-    await webPost<
-      { projectId: string; skillId: string },
-      { success: boolean }
-    >("/api/web/skills/delete", { projectId: source.projectId, skillId });
+    await webPost<{ projectId: string; skillId: string }, { success: boolean }>(
+      "/api/web/skills/delete",
+      { projectId: source.projectId, skillId }
+    );
     return;
   }
 
@@ -399,18 +410,19 @@ export async function deleteSkill(
   try {
     body = await res.json();
   } catch {}
-  if (!res.ok) throw new Error(body?.error || `Delete skill failed (${res.status})`);
+  if (!res.ok)
+    throw new Error(body?.error || `Delete skill failed (${res.status})`);
 }
 
 /** Cloud only: promote a personal skill to project-shared (admin). */
 export async function promoteSkill(
   name: string,
-  projectId: string,
+  projectId: string
 ): Promise<void> {
   const skillId = await resolveCloudSkillId(projectId, name);
   await webPost<{ projectId: string; skillId: string }, { success: boolean }>(
     "/api/web/skills/promote",
-    { projectId, skillId },
+    { projectId, skillId }
   );
 }
 
@@ -429,7 +441,12 @@ interface CloudSkillFileWire {
  */
 export function buildSkillFileTree(files: CloudSkillFileWire[]): SkillFile[] {
   const root: SkillFile[] = [
-    { path: "SKILL.md", name: "SKILL.md", type: "file", mimeType: "text/markdown" },
+    {
+      path: "SKILL.md",
+      name: "SKILL.md",
+      type: "file",
+      mimeType: "text/markdown",
+    },
   ];
   const dirIndex = new Map<string, SkillFile>(); // dir path → node
 
@@ -440,7 +457,12 @@ export function buildSkillFileTree(files: CloudSkillFileWire[]): SkillFile[] {
     const parts = dirPath.split("/");
     const name = parts[parts.length - 1];
     const parentChildren = ensureDir(parts.slice(0, -1).join("/"));
-    const node: SkillFile = { path: dirPath, name, type: "directory", children: [] };
+    const node: SkillFile = {
+      path: dirPath,
+      name,
+      type: "directory",
+      children: [],
+    };
     dirIndex.set(dirPath, node);
     parentChildren.push(node);
     return node.children!;
@@ -464,7 +486,7 @@ export function buildSkillFileTree(files: CloudSkillFileWire[]): SkillFile[] {
 
 export async function listSkillFiles(
   name: string,
-  source?: SkillsSource,
+  source?: SkillsSource
 ): Promise<SkillFile[]> {
   if (isCloud(source)) {
     const skillId = await resolveCloudSkillId(source.projectId, name);
@@ -493,7 +515,7 @@ export async function listSkillFiles(
 export async function readSkillFile(
   name: string,
   filePath: string,
-  source?: SkillsSource,
+  source?: SkillsSource
 ): Promise<SkillFileContent> {
   if (isCloud(source)) {
     // SKILL.md is the skill body (not a stored file); everything else is a
@@ -530,6 +552,7 @@ export async function readSkillFile(
   try {
     body = await res.json();
   } catch {}
-  if (!res.ok) throw new Error(body?.error || `Read skill file failed (${res.status})`);
+  if (!res.ok)
+    throw new Error(body?.error || `Read skill file failed (${res.status})`);
   return body.file as SkillFileContent;
 }

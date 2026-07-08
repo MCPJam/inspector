@@ -69,14 +69,25 @@ function byteLength(value: string): number {
   return new TextEncoder().encode(value).length;
 }
 
+/**
+ * POSIX single-quote a shell argument (defense-in-depth). Dir names come off the
+ * box `ls`, so quote before interpolating into `find` — a name with a space or a
+ * shell metacharacter must never break out of its argument.
+ */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 /** Whether a skill dir contains any file other than SKILL.md (fail-soft). */
 async function dirHasSupportingFiles(
   session: AdoptSession,
-  name: string,
+  name: string
 ): Promise<boolean> {
   try {
     const res = await session.run({
-      command: `find ${SKILLS_BASE}/${name} -mindepth 1 -type f ! -name SKILL.md -print -quit`,
+      command: `find ${shellQuote(
+        `${SKILLS_BASE}/${name}`
+      )} -mindepth 1 -type f ! -name SKILL.md -print -quit`,
     });
     return res.exitCode === 0 && res.stdout.trim().length > 0;
   } catch {
@@ -87,7 +98,7 @@ async function dirHasSupportingFiles(
 
 /** Extract the preserved optional spec frontmatter (best-effort, lenient). */
 function extractExtraFrontmatter(
-  data: Record<string, unknown>,
+  data: Record<string, unknown>
 ): SkillExtraFrontmatterInput | undefined {
   const out: SkillExtraFrontmatterInput = {};
   if (typeof data.license === "string") out.license = data.license;
@@ -106,9 +117,15 @@ function extractExtraFrontmatter(
     const list = allowed.filter((t): t is string => typeof t === "string");
     if (list.length > 0) out.allowedTools = list;
   }
-  if (data.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)) {
+  if (
+    data.metadata &&
+    typeof data.metadata === "object" &&
+    !Array.isArray(data.metadata)
+  ) {
     const md: Record<string, string> = {};
-    for (const [k, v] of Object.entries(data.metadata as Record<string, unknown>)) {
+    for (const [k, v] of Object.entries(
+      data.metadata as Record<string, unknown>
+    )) {
       md[k] = typeof v === "string" ? v : String(v);
     }
     if (Object.keys(md).length > 0) out.metadata = md;
@@ -124,7 +141,7 @@ function extractExtraFrontmatter(
  */
 function parseAdoptCandidate(
   raw: string,
-  dirName: string,
+  dirName: string
 ): AdoptSkillInput | null {
   let parsed: matter.GrayMatterFile<string>;
   try {
@@ -139,10 +156,13 @@ function parseAdoptCandidate(
   const data = parsed.data as Record<string, unknown>;
   const name = typeof data.name === "string" ? data.name : undefined;
   if (!name || !isValidSkillName(name)) {
-    logger.info("[adopt-sandbox-skills] skip: missing/invalid frontmatter name", {
-      dir: dirName,
-      name,
-    });
+    logger.info(
+      "[adopt-sandbox-skills] skip: missing/invalid frontmatter name",
+      {
+        dir: dirName,
+        name,
+      }
+    );
     return null;
   }
   if (name !== dirName) {
@@ -155,7 +175,9 @@ function parseAdoptCandidate(
   let description =
     typeof data.description === "string" ? data.description.trim() : "";
   if (!description) {
-    logger.info("[adopt-sandbox-skills] skip: missing description", { dir: dirName });
+    logger.info("[adopt-sandbox-skills] skip: missing description", {
+      dir: dirName,
+    });
     return null;
   }
   // Lenient: truncate rather than reject an overlong description.
@@ -219,7 +241,9 @@ export async function adoptSandboxSkills(args: {
       if (candidates.length >= MAX_ADOPT_PER_TURN) break;
       if (name === MANIFEST_BASENAME) continue;
       if (!isValidSkillName(name)) {
-        logger.info("[adopt-sandbox-skills] skip: invalid dir name", { dir: name });
+        logger.info("[adopt-sandbox-skills] skip: invalid dir name", {
+          dir: name,
+        });
         continue;
       }
       // Already a cloud skill (the adapter wrote this dir) → not an adoption.
@@ -236,10 +260,13 @@ export async function adoptSandboxSkills(args: {
       // Bound the raw file BEFORE parsing so an oversized/bad SKILL.md can't
       // spend time+memory in gray-matter before we'd reject it anyway.
       if (byteLength(raw) > MAX_RAW_SKILL_MD_BYTES) {
-        logger.info("[adopt-sandbox-skills] skip: SKILL.md too large to parse", {
-          dir: name,
-          bytes: byteLength(raw),
-        });
+        logger.info(
+          "[adopt-sandbox-skills] skip: SKILL.md too large to parse",
+          {
+            dir: name,
+            bytes: byteLength(raw),
+          }
+        );
         continue;
       }
       const candidate = parseAdoptCandidate(raw, name);
@@ -252,7 +279,7 @@ export async function adoptSandboxSkills(args: {
       if (await dirHasSupportingFiles(args.session, name)) {
         logger.info(
           "[adopt-sandbox-skills] skip: dir has supporting files (SKILL.md-only adoption)",
-          { dir: name },
+          { dir: name }
         );
         continue;
       }
@@ -265,7 +292,7 @@ export async function adoptSandboxSkills(args: {
     const { results } = await convexAdoptComputerSkills(
       args.authHeader,
       args.projectId,
-      candidates,
+      candidates
     );
 
     const adopted: AdoptedSkillEntry[] = [];

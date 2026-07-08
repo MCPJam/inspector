@@ -8,14 +8,16 @@
  * `~/.claude/skills/<name>/<path>` via `writeBinaryFile` (no 16k exec cap).
  *
  * Invariants:
- *  - Zero-cost fast path: returns immediately when no skill has files.
  *  - Fail-soft ALWAYS: a bad URL / write error skips that file, never the turn.
  *  - Every target path is RE-VALIDATED with `isPathWithinDirectory` against its
  *    skill dir (defense-in-depth over the backend's path validation).
  *  - A 20MB per-turn byte budget bounds the write; files beyond it are skipped
  *    with a logged reason (never silent).
- *  - `rm -rf` of a managed skill dir (in reconcile) already removes stale files,
- *    so no manifest change is needed.
+ *  - Stale-file prune covers EVERY delivered skill dir — including a skill whose
+ *    file set became empty (reconcile only removes deleted/renamed dirs, so an
+ *    existing skill's orphaned files would otherwise linger). One global `find`
+ *    scopes the sweep to delivered dirs; the caller must NOT invoke this on a
+ *    fetch failure (an empty file set would then delete every skill's files).
  */
 import { isPathWithinDirectory } from "../skill-parser.js";
 import type { RuntimeSkillFile } from "./runtime-skills.js";
@@ -24,6 +26,16 @@ import { logger } from "../logger.js";
 const SKILLS_BASE = "/home/user/.claude/skills";
 /** Per-turn write budget across ALL skills (matches the backend per-skill cap). */
 const MATERIALIZE_BUDGET_BYTES = 20 * 1024 * 1024;
+
+/**
+ * POSIX single-quote a shell argument (defense-in-depth). Paths reaching `run`
+ * are cloud-managed + `isPathWithinDirectory`-validated, but path containment
+ * does NOT neutralize spaces / `;` / `$()`, so we still quote before interpolating
+ * into `find`/`rm` — a managed filename must never be able to break out of its arg.
+ */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
 
 /** Minimal live-session surface: binary write + exec (for stale-file prune). */
 export interface MaterializeSession {
@@ -37,36 +49,48 @@ export interface MaterializeSession {
 }
 
 /**
- * Remove supporting files a skill dir has ON BOX that are no longer in Convex
- * (deleted/renamed), so the materialized dir doesn't diverge. Precise: lists the
- * dir's files and removes only those NOT in `keepAbsPaths` (never SKILL.md). Only
- * runs for dirs that receive files this turn — a skill whose files were ALL
- * removed isn't in the materialize set, so its residuals are cleaned by the next
- * whole-dir reconcile; that's an accepted tail. Fail-soft.
+ * Remove supporting files ON BOX that are no longer in Convex (deleted/renamed,
+ * or a skill whose file set became empty), so a delivered dir doesn't diverge.
+ *
+ * ONE global `find` over the skills base lists every supporting file across all
+ * skills — cheaper than a `find` per dir, and (crucially) it also reaches skills
+ * that received NO file this turn, which a per-dir sweep keyed on the write set
+ * would miss. Removal is scoped to `deliveredDirs` so an unmanaged / hand-placed
+ * skill's files are never touched; SKILL.md is never removed. `keepByDir` maps a
+ * skill dir → the abs paths it should still hold (empty ⇒ prune all its files).
+ * Fail-soft.
  */
 async function pruneStaleSkillFiles(
   session: MaterializeSession,
-  skillDir: string,
-  keepAbsPaths: Set<string>,
+  deliveredDirs: Set<string>,
+  keepByDir: Map<string, Set<string>>
 ): Promise<void> {
+  if (deliveredDirs.size === 0) return;
   try {
-    // `find` prints one absolute path per line; -mindepth 1 excludes the dir.
+    // One sweep: every file under a skill dir, excluding each dir's SKILL.md.
     const ls = await session.run({
-      command: `find ${skillDir} -mindepth 1 -type f`,
+      command: `find ${shellQuote(
+        SKILLS_BASE
+      )} -mindepth 2 -type f ! -name SKILL.md`,
     });
     if (ls.exitCode !== 0) return;
     const onBox = ls.stdout
       .split("\n")
       .map((s) => s.trim())
       .filter(Boolean);
-    const stale = onBox.filter(
-      (p) => p !== `${skillDir}/SKILL.md` && !keepAbsPaths.has(p),
-    );
-    for (const p of stale) {
-      // Paths are cloud-managed + validated (isPathWithinDirectory); no shell
-      // metacharacters reach here (Convex paths are POSIX-relative).
+    for (const p of onBox) {
+      if (!p.startsWith(`${SKILLS_BASE}/`)) continue;
+      const rel = p.slice(SKILLS_BASE.length + 1);
+      const name = rel.split("/")[0];
+      const skillDir = `${SKILLS_BASE}/${name}`;
+      // Only prune dirs we delivered this turn — never a foreign/hand-placed skill.
+      if (!deliveredDirs.has(skillDir)) continue;
+      if (p === `${skillDir}/SKILL.md`) continue; // belt-and-suspenders
+      if (keepByDir.get(skillDir)?.has(p)) continue; // still current
+      // Paths are cloud-managed + validated, but quote anyway (defense-in-depth)
+      // so a space / metacharacter can't break out of the argument.
       try {
-        await session.run({ command: `rm -f -- ${p}` });
+        await session.run({ command: `rm -f -- ${shellQuote(p)}` });
       } catch {
         // best-effort per-file removal
       }
@@ -78,8 +102,12 @@ async function pruneStaleSkillFiles(
 
 /**
  * Write every runtime skill file onto the box under its skill dir. `skillNamesById`
- * maps skillId → on-box dir name (from the already-fetched runtime skills); a file
- * whose skill isn't in the map is skipped (its dir wouldn't exist).
+ * maps skillId → on-box dir name for ALL skills delivered this turn (not only
+ * those with files); a file whose skill isn't in the map is skipped (its dir
+ * wouldn't exist). The prune sweep uses every delivered dir so a skill whose file
+ * set became empty still has its orphaned files removed. The CALLER must only
+ * invoke this after a SUCCESSFUL file fetch — an empty `files` from a failed
+ * fetch would otherwise prune every delivered skill's files.
  */
 export async function materializeSkillFiles(args: {
   session: MaterializeSession;
@@ -87,16 +115,17 @@ export async function materializeSkillFiles(args: {
   skillNamesById: Map<string, string>;
   signal?: AbortSignal;
 }): Promise<{ written: number; skipped: number }> {
-  // Zero-cost fast path — the overwhelmingly common case (no supporting files).
-  if (args.files.length === 0) return { written: 0, skipped: 0 };
-
   let written = 0;
   let skipped = 0;
   let budget = MATERIALIZE_BUDGET_BYTES;
 
-  // Prune stale on-box files per skill dir BEFORE writing, so a file removed or
-  // renamed in Convex doesn't linger. Precompute each dir's keep-set (the valid
-  // target paths) once.
+  // Every delivered skill dir is a prune candidate (even with zero files this
+  // turn). Build the keep-set (valid target paths) per dir from the file list;
+  // a delivered dir absent from `keepByDir` prunes all its supporting files.
+  const deliveredDirs = new Set<string>();
+  for (const name of args.skillNamesById.values()) {
+    deliveredDirs.add(`${SKILLS_BASE}/${name}`);
+  }
   const keepByDir = new Map<string, Set<string>>();
   for (const file of args.files) {
     const skillName = args.skillNamesById.get(file.skillId);
@@ -110,9 +139,8 @@ export async function materializeSkillFiles(args: {
     }
     keep.add(`${skillDir}/${file.path}`);
   }
-  for (const [skillDir, keep] of keepByDir) {
-    if (args.signal?.aborted) break;
-    await pruneStaleSkillFiles(args.session, skillDir, keep);
+  if (!args.signal?.aborted) {
+    await pruneStaleSkillFiles(args.session, deliveredDirs, keepByDir);
   }
 
   for (const file of args.files) {
@@ -180,7 +208,9 @@ export async function materializeSkillFiles(args: {
     }
   }
   if (written > 0) {
-    logger.info("[materialize-skill-files] wrote supporting files", { written });
+    logger.info("[materialize-skill-files] wrote supporting files", {
+      written,
+    });
   }
   return { written, skipped };
 }

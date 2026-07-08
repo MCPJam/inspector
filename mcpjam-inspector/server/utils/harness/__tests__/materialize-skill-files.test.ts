@@ -12,7 +12,7 @@ function fakeSession(onBoxFiles: string[] = []) {
       writeBinaryFile: vi.fn(
         async ({ path, content }: { path: string; content: Uint8Array }) => {
           writes.push({ path, bytes: content.byteLength });
-        },
+        }
       ),
       run: vi.fn(async ({ command }: { command: string }) => {
         if (command.startsWith("find")) {
@@ -20,7 +20,8 @@ function fakeSession(onBoxFiles: string[] = []) {
         }
         if (command.startsWith("rm")) {
           const m = command.match(/rm -f -- (\S+)/);
-          if (m) removed.push(m[1]);
+          // The path is POSIX single-quoted; strip the surrounding quotes.
+          if (m) removed.push(m[1].replace(/^'|'$/g, ""));
         }
         return { exitCode: 0, stdout: "", stderr: "" };
       }),
@@ -44,7 +45,7 @@ beforeEach(() => {
     vi.fn(async () => ({
       ok: true,
       arrayBuffer: async () => new Uint8Array([1, 2, 3, 4, 5]).buffer,
-    })),
+    }))
   );
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -118,25 +119,39 @@ describe("materializeSkillFiles", () => {
   });
 
   it("enforces the budget against ACTUAL bytes when declared size understates", async () => {
-    // Declared size is small, but the fetched payload is 5 bytes; shrink the
-    // budget via a first large-but-honest file so the second overflows on real bytes.
+    // First file is large-but-honest and consumes nearly the whole budget; the
+    // second declares size 1 but actually returns 5 bytes — enough to overflow
+    // the remaining budget, so the actual-byte guard (not the declared-size
+    // pre-check) must reject it. Removing that guard would let the second write
+    // through and fail this test.
+    const almostBudget = 20 * 1024 * 1024 - 1;
+    let call = 0;
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        // 5 real bytes regardless of declared size.
-        arrayBuffer: async () => new Uint8Array([1, 2, 3, 4, 5]).buffer,
-      })),
+      vi.fn(async () => {
+        call += 1;
+        return {
+          ok: true,
+          arrayBuffer: async () =>
+            call === 1
+              ? new Uint8Array(almostBudget).buffer
+              : new Uint8Array([1, 2, 3, 4, 5]).buffer,
+        };
+      })
     );
     const { session, writes } = fakeSession();
-    // A file declaring size 1 but actually 5 bytes, with a budget already near 0
-    // is hard to force here; instead assert the actual-byte path writes 5 bytes.
-    await materializeSkillFiles({
+    const res = await materializeSkillFiles({
       session,
-      files: [file({ size: 1 })],
+      files: [
+        file({ path: "large.bin", size: almostBudget }),
+        file({ path: "understated.bin", size: 1 }),
+      ],
       skillNamesById: new Map([["sk_1", "pdf-tools"]]),
     });
-    expect(writes[0].bytes).toBe(5);
+    expect(writes).toEqual([
+      { path: `${SKILLS_BASE}/pdf-tools/large.bin`, bytes: almostBudget },
+    ]);
+    expect(res).toEqual({ written: 1, skipped: 1 });
   });
 
   it("prunes stale on-box supporting files not in the current set", async () => {
@@ -152,5 +167,35 @@ describe("materializeSkillFiles", () => {
       skillNamesById: new Map([["sk_1", "pdf-tools"]]),
     });
     expect(removed).toEqual([`${base}/scripts/old.py`]);
+  });
+
+  it("prunes a delivered skill whose file set became empty", async () => {
+    // The skill is still delivered (in skillNamesById) but has NO files this
+    // turn — its orphaned on-box file must still be removed, since reconcile
+    // won't touch an existing skill's dir.
+    const base = `${SKILLS_BASE}/pdf-tools`;
+    const { session, removed } = fakeSession([
+      `${base}/scripts/orphan.py`,
+      `${base}/SKILL.md`,
+    ]);
+    const res = await materializeSkillFiles({
+      session,
+      files: [],
+      skillNamesById: new Map([["sk_1", "pdf-tools"]]),
+    });
+    expect(removed).toEqual([`${base}/scripts/orphan.py`]);
+    expect(res).toEqual({ written: 0, skipped: 0 });
+  });
+
+  it("never prunes an undelivered (foreign / hand-placed) skill dir", async () => {
+    // A file under a dir NOT in skillNamesById must be left alone.
+    const other = `${SKILLS_BASE}/hand-placed`;
+    const { session, removed } = fakeSession([`${other}/scripts/keep.py`]);
+    await materializeSkillFiles({
+      session,
+      files: [file({ path: "scripts/run.py" })],
+      skillNamesById: new Map([["sk_1", "pdf-tools"]]),
+    });
+    expect(removed).toEqual([]);
   });
 });
