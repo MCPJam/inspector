@@ -51,6 +51,7 @@ import { requestLogContextMiddleware } from "./middleware/request-log-context";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url";
 import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal";
 import { createComputerUploadHandler } from "./routes/web/computer-upload";
+import { initComputersRemoteDataPlaneDiscovery } from "./utils/computers/remote-data-plane";
 import { registerSelfFetch } from "./utils/self-app";
 
 const sysLogger = getSystemLogger("process");
@@ -237,6 +238,7 @@ initXAAIdpKeyPair();
 
 startGuestAuthProvisioningInBackground();
 startLocalBrowserRenderingSetupInBackground();
+void initComputersRemoteDataPlaneDiscovery();
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
 

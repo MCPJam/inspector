@@ -18,6 +18,16 @@
  *
  * Local configuration (real secrets) always wins over the remote URL — a
  * deployed data plane never delegates, so there is no forwarding loop.
+ *
+ * `COMPUTERS_REMOTE_DATA_PLANE_URL` is an explicit override, not the primary
+ * path — hand-setting it per environment (per dev laptop, per PR preview) is
+ * exactly the manual-config problem this module exists to avoid. When it's
+ * unset, `initComputersRemoteDataPlaneDiscovery` (called once at server
+ * startup) asks THIS deployment's own Convex for the answer via the
+ * non-secret `/computers/data-plane-url` route (`mcpjam-backend
+ * convex/computersDataPlane.ts`) and caches it — every server pointed at the
+ * same Convex deployment auto-discovers the same data plane with zero
+ * per-environment config.
  */
 import { logger } from "../logger.js";
 import {
@@ -25,10 +35,12 @@ import {
   type RunComputerCommandResult,
 } from "./run-command.js";
 import { type ExecutionScope } from "../execution-scope.js";
+import {
+  getConvexHttpUrl,
+  isComputersDataPlaneConfigured,
+} from "./control-plane-client.js";
 
-/** Origin of the deployed data plane, or null when unset/invalid. */
-export function getComputersRemoteDataPlaneUrl(): string | null {
-  const raw = process.env.COMPUTERS_REMOTE_DATA_PLANE_URL?.trim();
+function normalizeDataPlaneUrl(raw: string | null | undefined): string | null {
   if (!raw) return null;
   try {
     const url = new URL(raw);
@@ -36,6 +48,57 @@ export function getComputersRemoteDataPlaneUrl(): string | null {
     return url.origin;
   } catch {
     return null;
+  }
+}
+
+/** Populated once by `initComputersRemoteDataPlaneDiscovery`; null until then
+ *  (or forever, if discovery is skipped/fails — same as today's unconfigured
+ *  state). */
+let discoveredRemoteUrl: string | null = null;
+
+/** Origin of the deployed data plane, or null when unset/undiscovered.
+ *  Stays synchronous — some callers (the harness pre-flight check) need a
+ *  cheap, non-network check — by reading a value resolved ahead of time
+ *  rather than fetching on every call. */
+export function getComputersRemoteDataPlaneUrl(): string | null {
+  const explicit = normalizeDataPlaneUrl(
+    process.env.COMPUTERS_REMOTE_DATA_PLANE_URL?.trim()
+  );
+  return explicit ?? discoveredRemoteUrl;
+}
+
+export function resetComputersRemoteDataPlaneDiscoveryForTests(): void {
+  discoveredRemoteUrl = null;
+}
+
+/**
+ * Resolves the auto-discovered data-plane URL once at server startup so
+ * `getComputersRemoteDataPlaneUrl` can stay synchronous everywhere else.
+ * Call once during boot, before the server starts accepting requests.
+ *
+ * Skips the network call entirely when an explicit override is already set,
+ * or when this server holds real secrets itself (`isComputersDataPlaneConfigured`)
+ * — a deployed data plane never delegates, so it has nothing to discover.
+ * Never throws: a failed or skipped lookup just leaves Computers
+ * unconfigured, same as today's behavior with no env var set.
+ */
+export async function initComputersRemoteDataPlaneDiscovery(): Promise<void> {
+  if (process.env.COMPUTERS_REMOTE_DATA_PLANE_URL?.trim()) return;
+  if (isComputersDataPlaneConfigured()) return;
+  const base = getConvexHttpUrl();
+  if (!base) return;
+  try {
+    const response = await fetch(
+      new URL("/computers/data-plane-url", base).toString(),
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (!response.ok) return;
+    const payload = (await response.json()) as { url?: unknown };
+    discoveredRemoteUrl = normalizeDataPlaneUrl(
+      typeof payload.url === "string" ? payload.url : null
+    );
+  } catch (error) {
+    logger.error("[computers] data-plane auto-discovery failed", error);
   }
 }
 
