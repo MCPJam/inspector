@@ -60,6 +60,7 @@ import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
 import {
   captureCurrentReturnPath,
+  isDebugOAuthCallbackPath,
   navigateApp,
   normalizeReturnTargetPath,
   routePaths,
@@ -2558,7 +2559,7 @@ export function useServerState({
   );
 
   useEffect(() => {
-    if (window.location.pathname.startsWith("/oauth/callback/debug")) {
+    if (isDebugOAuthCallbackPath(window.location.pathname)) {
       return;
     }
 
