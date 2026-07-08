@@ -108,6 +108,10 @@ import type {
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import { emitPinnedTurnSse } from "./evals/pinned-turn-sse.js";
 import {
+  emitPinnedTurnSse,
+  type PinnedTurnSsePayload,
+} from "./evals/pinned-turn-sse.js";
+import {
   finalizeEvalIteration,
   buildIterationFinishParams,
 } from "./evals/finalize-iteration.js";
@@ -1221,10 +1225,21 @@ async function resolveOrgByokEvalRuntime(args: {
 const runHostedIteration = async (
   params: RunIterationBackendParams & { emit?: StreamEmit }
 ): Promise<EvalIterationOutcome> => {
+  // First pinned turn's per-call render-budget override (mirrors the local
+  // runner's harness creation).
+  const pinnedRenderTimeoutMs = resolveEvalTestCase(
+    params.test
+  ).promptTurns.find(
+    (t) =>
+      isPinnedTurn(t) && typeof t.pinnedToolCall?.renderTimeoutMs === "number"
+  )?.pinnedToolCall?.renderTimeoutMs;
   const browser = await createBrowserSessionContext({
     model: params.test.model,
     mcpClientManager: params.mcpClientManager,
     injectOpenAiCompat: params.injectOpenAiCompat,
+    ...(pinnedRenderTimeoutMs
+      ? { renderTimeoutMs: pinnedRenderTimeoutMs }
+      : {}),
   });
   try {
     return await runHostedIterationWithBrowser(params, browser);
@@ -1396,10 +1411,10 @@ const executeTestCase = async (params: {
   /** Raw suite hostConfig record. PR 4d — see RunIterationBaseParams. */
   suiteHostConfig?: Record<string, unknown> | null;
   /**
-   * Run environment snapshot (servers + serverBindings). Only consulted by
-   * the widget-probe fork below to resolve the probe's pinned server
-   * reference to a manager key; the LLM path receives its servers
-   * pre-resolved via `selectedServers`.
+   * Run environment snapshot (servers + serverBindings). Consulted to resolve
+   * pinned (`toolCall`) server references to a manager key — by the model-free
+   * fork below and by both iteration paths' step handlers; the LLM path
+   * receives its servers pre-resolved via `selectedServers`.
    */
   environment?: RunEvalSuiteOptions["config"]["environment"];
 }) => {
@@ -1525,16 +1540,6 @@ const executeTestCase = async (params: {
     return outcomes;
   }
 
-  // Hybrid (model turns + pinned turns) on a hosted model is not yet wired:
-  // the backend engine drives turns server-side and cannot interleave a
-  // locally-executed pinned turn. Local BYOK hybrids work (the pinned branch
-  // lives in runIterationWithAiSdk). Fail loudly rather than silently send a
-  // pinned turn's empty prompt to the model.
-  // Steps-aware: resolveEvalTestCase bridges `steps` → turns, so a `toolCall`
-  // step is correctly seen as a pinned turn here.
-  const caseHasPinnedTurn =
-    resolveEvalTestCase(normalizedTest).promptTurns.some(isPinnedTurn);
-
   const modelDefinition = buildModelDefinition(test);
   const resolvedModelId = getCanonicalModelId(
     String(modelDefinition.id),
@@ -1559,12 +1564,6 @@ const executeTestCase = async (params: {
   const jamBillingTarget = isJamModel
     ? resolveOrgTargetForEval(test, orgModelConfigTarget)
     : undefined;
-
-  if (caseHasPinnedTurn && (isJamModel || orgByokRuntime?.kind === "cloud")) {
-    throw new Error(
-      "Pinned tool-call turns are not yet supported with hosted models. Use a BYOK (local) model for cases that pin a tool call."
-    );
-  }
 
   const outcomes: EvalIterationOutcome[] = [];
 
@@ -3392,6 +3391,10 @@ const runHostedIterationWithBrowser = async (
   let hostedStepSkippedSteps: unknown[] = [];
   let hostedStepResults: unknown[] = [];
   let hostedStepScriptedFailures: { toolName: string; reason: string }[] = [];
+  // Pinned (`toolCall`) steps run model-free inspector-side; their tool
+  // failures accumulate here for the verdict's `failOnToolError` gate (the
+  // hosted analogue of `LocalEvalTurnAcc.pinnedToolErrors`).
+  const pinnedToolErrors: ToolErrorRecord[] = [];
   // Hosted unify: drive the iteration through executeSteps; the handlers wrap
   // driveHostedEvalTurn (which mutates the acc), so the post-loop verdict +
   // finishParams below consume `acc` + the executor's StepExecutionState.
@@ -3426,6 +3429,24 @@ const runHostedIterationWithBrowser = async (
       toolsCalledByPrompt,
     },
     buildSinks: hostedBuildSinks,
+    // Same closure shape the local step handlers use (see runLocalIteration).
+    resolvePinnedServerKey: (pinned) =>
+      resolvePinnedServerKey(
+        pinned,
+        environment,
+        selectedServers,
+        mcpClientManager
+      ),
+    pinnedToolErrors,
+    ...(emit
+      ? {
+          emitPinnedTurn: (payload: PinnedTurnSsePayload) =>
+            emitPinnedTurnSse(
+              { emit, withSystemPrefix, buildTraceSnapshotEvent },
+              payload
+            ),
+        }
+      : {}),
   });
   const stepState = createStepExecutionState();
   let result: Awaited<ReturnType<typeof executeSteps>>;
@@ -3460,6 +3481,9 @@ const runHostedIterationWithBrowser = async (
     iterationError = result.iterationError;
     iterationErrorDetails = result.iterationErrorDetails;
   }
+  // Pinned setup failure (server not connected) — drives status:"failed" below,
+  // mirroring the local runner.
+  const pinnedSetupFailure = result.setupFailure;
   hostedStepSkippedSteps = stepState.skippedSteps;
   hostedStepResults = buildStepResultRecords(stepState, steps);
   hostedStepScriptedFailures = buildStepScriptedCheckFailures(stepState);
@@ -3510,9 +3534,10 @@ const runHostedIterationWithBrowser = async (
     renderObservations: summarizeRenderObservations(
       browser.widgetRenderObservations
     ),
+    toolErrors: pinnedToolErrors,
     iterationError,
     failOnToolError,
-    pinnedToolErrors: [],
+    pinnedToolErrors,
     // §2: legacy push-model failures + executeSteps interact/widget-assert failures.
     scriptedCheckFailures: [
       ...browser.scriptedCheckFailures,
@@ -3554,7 +3579,10 @@ const runHostedIterationWithBrowser = async (
     // (see the non-stream backend runner).
     widgetRenderObservations: browser.widgetRenderObservations,
     browserInteractionSteps: browser.browserInteractionSteps,
-    status: "completed",
+    // A model-free pinned setup failure (server not connected) records as
+    // "failed"; everything else completes (a failed verdict is still a
+    // completed run). Mirrors the local runner.
+    status: pinnedSetupFailure ? "failed" : "completed",
     startedAt: runStartedAt,
     ...(iterationError ? { error: iterationError } : {}),
     ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),
