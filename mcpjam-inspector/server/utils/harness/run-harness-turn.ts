@@ -88,7 +88,11 @@ import {
   skillsFingerprint,
   claudeCodeSafeSkills,
 } from "./runtime-skills.js";
-import { reconcileSkillDirs } from "./reconcile-skill-dirs.js";
+import {
+  reconcileSkillDirs,
+  appendManagedSkills,
+} from "./reconcile-skill-dirs.js";
+import { adoptSandboxSkills } from "./adopt-sandbox-skills.js";
 import {
   claimHarnessSessionState,
   commitHarnessSessionState,
@@ -383,6 +387,22 @@ export async function runHarnessTurn(
   const promptIndex = getPromptIndex(messages);
   let aborted = false;
   let runSucceeded = false;
+  // The file-capable sandbox session, captured from `onSandboxSession` so the
+  // turn-end adoption pass (in the finally, before the box is released) can read
+  // `~/.claude/skills` and write the managed-skills manifest. The finally's own
+  // `session` is the AI-SDK AGENT session (detach/destroy), which has no file I/O.
+  let sandboxFileSession:
+    | {
+        readTextFile(args: { path: string }): PromiseLike<string | null>;
+        writeTextFile(args: {
+          path: string;
+          content: string;
+        }): PromiseLike<unknown>;
+        run(args: {
+          command: string;
+        }): PromiseLike<{ exitCode: number; stdout: string; stderr: string }>;
+      }
+    | undefined;
   // WS3: the turn paused awaiting a tool approval (a third terminal alongside
   // success/abort). Treated like a clean end that happens to await input — the
   // continuation is committed with `awaitingApproval` and the next request
@@ -827,6 +847,10 @@ export async function runHarnessTurn(
             }
           : {}),
         onSandboxSession: async ({ session, sessionWorkDir }) => {
+          // Capture the file-capable sandbox session for the turn-end adoption
+          // pass (the finally's agent session has no file I/O). Stays valid until
+          // the box is detached/destroyed, which happens AFTER adoption.
+          sandboxFileSession = session;
           // Deliver the host's MCP servers into the session before the runtime
           // starts, via the adapter's own strategy (Claude Code writes a
           // `.mcp.json`). Codex v1 has no delivery (`supportsSelectedMcpServers:
@@ -1636,6 +1660,45 @@ export async function runHarnessTurn(
       } finally {
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         try {
+          // Turn-end adoption: sync filesystem-installed skills up into Convex
+          // while the session is still LIVE (before detach/destroy below). Only on
+          // a clean success — never on abort/error/pausedForApproval — and only
+          // for a skills-capable adapter with a healthy fetch (`runtimeSkills`),
+          // outside guest/swarm scopes (v1 skips `executionScope`). Fully
+          // fail-soft. NOTE: a fresh adoption adds a new skillId to the runtime set
+          // NEXT turn, so the runtime fingerprint intentionally forks then (the
+          // adapter (re)writes on the fresh start) — expected, not a bug.
+          if (
+            runSucceeded &&
+            !aborted &&
+            !pausedForApproval &&
+            harnessAdapter.supportsSkills &&
+            runtimeSkills !== null &&
+            !executionScope &&
+            authHeader &&
+            projectId &&
+            sandboxFileSession &&
+            process.env.HARNESS_SKILL_ADOPTION_DISABLED !== "1"
+          ) {
+            const fileSession = sandboxFileSession;
+            const { adopted } = await adoptSandboxSkills({
+              session: fileSession,
+              authHeader,
+              projectId,
+              // Names already delivered as cloud skills this turn are the adapter's
+              // own dirs — not adoptions.
+              managedNames: new Set(runtimeSkills.map((s) => s.name)),
+              ...(abortSignal ? { signal: abortSignal } : {}),
+            }).catch(() => ({ adopted: [] as { skillId: string; name: string }[] }));
+            // Only TRUE 'adopted' dirs become managed (decision 3b): never convert
+            // a hand-placed dir into a cloud-deletable cache.
+            if (adopted.length > 0) {
+              await appendManagedSkills({
+                session: fileSession,
+                skills: adopted,
+              }).catch(() => {});
+            }
+          }
           // On a clean turn with continuity: detach to park the live bridge and
           // get a warm resume payload, then BUILD the commit (don't send it
           // here). The commit rides /ingest-chat atomically with the transcript

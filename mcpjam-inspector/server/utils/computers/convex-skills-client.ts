@@ -67,6 +67,30 @@ export interface CloudSkillRuntimeItem {
   aggregateHash: string;
 }
 
+/** Preserved Agent-Skills-spec frontmatter (backend re-validates + size-caps). */
+export interface SkillExtraFrontmatterInput {
+  license?: string;
+  compatibility?: string;
+  allowedTools?: string[];
+  metadata?: Record<string, string>;
+}
+
+/** One skill discovered on a Computer, submitted for adoption. */
+export interface AdoptSkillInput {
+  name: string;
+  description: string;
+  content: string;
+  extraFrontmatter?: SkillExtraFrontmatterInput;
+}
+
+/** Per-entry adoption outcome mirrored from the backend mutation. */
+export interface AdoptSkillResult {
+  name: string;
+  status: "adopted" | "exists" | "conflict" | "invalid";
+  skillId?: string;
+  message?: string;
+}
+
 /** Convex query/mutation names — kept in one place so a rename is one edit. */
 const FN = {
   list: "projectSkills:listSkills",
@@ -81,6 +105,7 @@ const FN = {
   update: "projectSkills:updateSkill",
   del: "projectSkills:deleteSkill",
   promote: "projectSkills:promoteSkillToProject",
+  adopt: "projectSkills:adoptComputerSkills",
 } as const;
 
 function stripBearer(token: string): string {
@@ -199,5 +224,21 @@ export async function convexPromoteSkill(
   return await makeClient(bearer).mutation(FN.promote as any, {
     projectId,
     skillId,
+  });
+}
+
+/**
+ * Adopt filesystem-installed skills discovered on a Computer into durable Convex
+ * storage (batch ≤5, backend-enforced). Per-entry fail-soft results; the backend
+ * recomputes the hash and never trusts the client's.
+ */
+export async function convexAdoptComputerSkills(
+  bearer: string,
+  projectId: string,
+  skills: AdoptSkillInput[],
+): Promise<{ results: AdoptSkillResult[] }> {
+  return await makeClient(bearer).mutation(FN.adopt as any, {
+    projectId,
+    skills,
   });
 }

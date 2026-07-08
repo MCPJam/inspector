@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  appendManagedSkills,
   reconcileSkillDirs,
   type ReconcileSession,
 } from "../reconcile-skill-dirs";
@@ -116,5 +117,41 @@ describe("reconcileSkillDirs (cleanup-only)", () => {
     await expect(
       reconcileSkillDirs({ session, skills: [], skillsHash: "" }),
     ).resolves.toBeDefined();
+  });
+});
+
+describe("appendManagedSkills", () => {
+  it("merges adopted entries into the manifest, preserving prior entries + hash", async () => {
+    const { session, files } = makeSession({
+      [MANIFEST]: manifest({ s1: "pdf" }, "existing-hash"),
+    });
+    const res = await appendManagedSkills({
+      session,
+      skills: [{ skillId: "s2", name: "adopted-one" }],
+    });
+    expect(res.appended).toBe(1);
+    const written = JSON.parse(files.get(MANIFEST)!);
+    expect(written.skills.s1).toEqual({ skillId: "s1", name: "pdf" });
+    expect(written.skills.s2).toEqual({ skillId: "s2", name: "adopted-one" });
+    // skillsHash is untouched (append is not a delivery).
+    expect(written.skillsHash).toBe("existing-hash");
+  });
+
+  it("is a no-op for an empty list (no manifest write)", async () => {
+    const { session, files } = makeSession();
+    const res = await appendManagedSkills({ session, skills: [] });
+    expect(res.appended).toBe(0);
+    expect(files.get(MANIFEST)).toBeUndefined();
+  });
+
+  it("starts a fresh manifest when none exists", async () => {
+    const { session, files } = makeSession();
+    await appendManagedSkills({
+      session,
+      skills: [{ skillId: "s1", name: "from-box" }],
+    });
+    const written = JSON.parse(files.get(MANIFEST)!);
+    expect(written.schemaVersion).toBe(1);
+    expect(written.skills.s1).toEqual({ skillId: "s1", name: "from-box" });
   });
 });
