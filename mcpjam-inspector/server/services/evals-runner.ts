@@ -106,6 +106,7 @@ import type {
   LocalEvalTurnSinks,
 } from "./evals/drive-local-eval-turn.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
+import { emitPinnedTurnSse } from "./evals/pinned-turn-sse.js";
 import {
   finalizeEvalIteration,
   buildIterationFinishParams,
@@ -2608,65 +2609,11 @@ const runLocalIteration = async ({
               status: "ok",
             });
           },
-          onPinnedTurn: ({
-            prompt: pinnedPrompt,
-            messages,
-            spans,
-            usage,
-            toolCall,
-            toolCallId,
-            toolResult,
-            toolResultIsError,
-            toolError,
-            iterationError: pinnedErr,
-          }) => {
-            const failureDetail =
-              pinnedErr ??
-              toolError?.message ??
-              (toolResultIsError ? "Pinned tool call failed" : undefined);
-            emit({ type: "turn_start", turnIndex, prompt: pinnedPrompt });
-            emit({
-              type: "step_status",
-              turnIndex,
-              kind: "toolCall",
-              status: "running",
-            });
-            if (toolCall && toolCallId) {
-              emit({
-                type: "tool_call",
-                toolName: toolCall.toolName,
-                toolCallId,
-                args: toolCall.arguments,
-              });
-              emit({
-                type: "tool_result",
-                toolCallId,
-                result: toolResult,
-                ...(toolResultIsError ? { isError: true } : {}),
-              });
-            }
-            emit(
-              buildTraceSnapshotEvent({
-                turnIndex,
-                snapshotKind: failureDetail ? "failure" : "turn_finish",
-                messages: withSystemPrefix(messages),
-                spans,
-                actualToolCalls: toolCall ? [toolCall] : [],
-                usage,
-              })
-            );
-            emit({ type: "turn_finish", turnIndex });
-            emit({
-              type: "step_status",
-              turnIndex,
-              kind: "toolCall",
-              status: failureDetail ? "fail" : "ok",
-              ...(failureDetail ? { detail: failureDetail } : {}),
-            });
-            if (failureDetail) {
-              emit({ type: "error", message: failureDetail });
-            }
-          },
+          onPinnedTurn: (ctx) =>
+            emitPinnedTurnSse(
+              { emit, withSystemPrefix, buildTraceSnapshotEvent },
+              { turnIndex, ...ctx }
+            ),
         })
       : undefined;
 
