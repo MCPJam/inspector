@@ -18,11 +18,17 @@ The key for the **[MCPJam API](/reference/public-api)** — programmatic access 
 
 **When it's used:** Every `Authorization: Bearer sk_…` request to `/api/v1/*` — validating servers, running the doctor, listing tools/prompts/resources, reading resources, exporting snapshots, and **saving `@mcpjam/sdk` eval results** (set `MCPJAM_API_KEY` to this key; see [Saving Results](/sdk/concepts/saving-results)).
 
-**Errors you might see**
+**Errors you might see when using a key**
 - `401 UNAUTHORIZED` → invalid or revoked key.
 - `401` with `details.reason: "ORPHANED_KEY"` → the key lost its organization binding; create a new one from Settings.
 - `403 FORBIDDEN` ("API keys cannot manage other API keys") → you pointed an `sk_…` key at the key-management endpoints; key management is UI-only.
 - `429 RATE_LIMITED` → per-key rate limit (60/min, burst 10); honor `Retry-After`.
+
+**Errors you might see when creating a key**
+- `403 FORBIDDEN` → your account is not a member of the selected organization.
+- `404 NOT_FOUND` → the selected organization does not exist.
+- `409 VALIDATION_ERROR` ("still being set up" / "still syncing") → the organization or your membership is still being provisioned; wait a moment and try again.
+- `400 VALIDATION_ERROR` → the organization or user identifier is malformed.
 
 Full surface in the [MCPJam API reference](/reference/public-api).
 
