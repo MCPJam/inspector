@@ -3,101 +3,23 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "host-compat: add Slack (Slackbot) to the market-host catalog. New `MCP_APPS_SLACK` capability matrix (probe-captured from Slackbot's `ui/initialize`), a `slack` market host (renders MCP Apps, no OpenAI shim, protocol `2025-06-18`), and its bundled-catalog + OpenAI-compat-preset entries. Kept in lockstep with the backend seed.",
-      "id": "add-slack-host"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        }
-      ],
-      "summary": "`mcpjam compat` now fetches the live host-compat catalog (silent bundled fallback), reports `catalogSource`/`catalogVersion` in the structured result, and adds `--offline` (zero MCPJam network) and `--catalog-url` flags. Verdicts pick up backend catalog publishes without a CLI release.",
-      "id": "cli-compat-live-catalog"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "host-compat: split the market-host catalog data from the derivation engine. New exports — `bundledHostCompatCatalog()`, `buildHostProfilesFromCatalog(catalog)`, `hostCompatCatalogSchema` / `hostCompatCatalogEnvelopeSchema`, and `fetchHostCompatCatalog()` — let surfaces evaluate against the live backend-published catalog (`evaluateMarketHosts(tools, { catalog })`) with the bundled constants as offline/OSS fallback. No existing export signatures change.",
-      "id": "host-compat-live-catalog"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "host-compat: add VS Code and Notion as market hosts, and a new per-host `imageSupport` dimension (tool-result image handling: model-sees / ui-shows per source + inline/collapsed/none placement) across all hosts. New `MCP_APPS_VSCODE` matrix (inherits Cursor, inline-only) and `HostImageSupport`/`ImagePlacement` types. Kept in lockstep with the backend seed.",
-      "id": "image-support-hosts"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        }
-      ],
-      "summary": "The OAuth Debugger's Authorization Server Metadata summary now shows \"CIMD Supported\" even when the AS omits `client_id_metadata_document_supported`, rendering it as `false (not advertised, defaults to false per spec)` — the common case for servers without CIMD support, which previously showed no row at all.",
-      "id": "oauth-cimd-absence-row"
-    },
-    {
-      "releases": [
-        {
           "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Fixed the API key readiness check hanging past its configured timeout when WorkOS sent response headers but stalled the body — the abort signal now stays armed through body consumption, not just until `fetch()` resolves. Also fixed `/api/web/api-keys` returning only the first page of a user's WorkOS API keys; it now walks `list_metadata.after` across pages instead of silently dropping keys past page one.",
-      "id": "workos-readiness-timeout-pagination"
+      "summary": "xaa: remove vendor name from path-scoped authorization server help text and internal docs/comments/test fixtures; behavior unchanged.",
+      "id": "xaa-remove-vendor-name-references"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "1.28.0",
-      "changesets": [
-        "add-slack-host",
-        "host-compat-live-catalog",
-        "image-support-hosts",
-        "oauth-cimd-absence-row"
-      ],
-      "newVersion": "1.29.0"
-    },
-    {
-      "name": "@mcpjam/cli",
-      "type": "minor",
-      "oldVersion": "3.12.0",
-      "changesets": [
-        "cli-compat-live-catalog"
-      ],
-      "newVersion": "3.13.0"
-    },
-    {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "2.23.1",
+      "oldVersion": "2.23.2",
       "changesets": [
-        "workos-readiness-timeout-pagination"
+        "xaa-remove-vendor-name-references"
       ],
-      "newVersion": "2.23.2"
-    },
-    {
-      "name": "@mcpjam/mcp",
-      "type": "none",
-      "oldVersion": "0.0.1",
-      "changesets": [],
-      "newVersion": "0.0.1"
+      "newVersion": "2.23.3"
     }
   ]
 }
