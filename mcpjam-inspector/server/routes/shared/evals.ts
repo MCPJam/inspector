@@ -1351,6 +1351,67 @@ export async function authorEvalSuite(args: {
   };
 }
 
+/** Backoff schedule for {@link fetchRunPinnedSkillsWithRetry} (2 retries). */
+const RUN_PINNED_SKILLS_RETRY_DELAYS_MS = [250, 1_000] as const;
+
+/**
+ * Fetch a suite run's pinned skills, retrying transient Convex failures with a
+ * short backoff. A persistent failure THROWS — failing run preparation — because
+ * the run record's configSnapshot and the judge both assert the pinned skills
+ * were in play; silently executing without them would grade a run against
+ * skills it never had. Returns `undefined` when the run has no pins.
+ * `sleep` is injectable for tests.
+ */
+export async function fetchRunPinnedSkillsWithRetry(
+  // Structural: satisfied by ConvexHttpClient (whose `query` takes a typed
+  // FunctionReference) and by a plain fake in tests.
+  convexClient: {
+    query: (name: any, ...args: any[]) => Promise<any>;
+  },
+  runId: string,
+  sleep: (ms: number) => Promise<void> = (ms) =>
+    new Promise((resolve) => setTimeout(resolve, ms))
+): Promise<PinnableSkill[] | undefined> {
+  const attempts = RUN_PINNED_SKILLS_RETRY_DELAYS_MS.length + 1;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      const res = (await convexClient.query(
+        "testSuites:getRunPinnedSkills" as any,
+        { runId }
+      )) as {
+        pinnedSkills?: Array<{
+          name: string;
+          description: string;
+          content: string;
+          contentHash: string;
+        }>;
+      };
+      const list = res?.pinnedSkills ?? [];
+      if (list.length === 0) return undefined;
+      return list.map((s) => ({
+        name: s.name,
+        description: s.description,
+        content: s.content,
+        contentHash: s.contentHash,
+      }));
+    } catch (error) {
+      logger.warn("[evals] getRunPinnedSkills failed", {
+        runId,
+        attempt: attempt + 1,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (attempt < RUN_PINNED_SKILLS_RETRY_DELAYS_MS.length) {
+        await sleep(RUN_PINNED_SKILLS_RETRY_DELAYS_MS[attempt]);
+      }
+    }
+  }
+  throw new Error(
+    `Failed to load this run's pinned skills after ${attempts} attempts — ` +
+      "aborting so the run doesn't silently execute without its skills. " +
+      "Retry the run."
+  );
+}
+
 /**
  * Prepare phase of a suite run: validate, upsert suite + cases, create the
  * run record (status 'running'), store replay configs, and resolve model
@@ -1579,37 +1640,13 @@ export async function prepareEvalRun(
   }
 
   // Pinned skills for this run (PR-E3). Suite runs only — quick-run (runId null)
-  // has no run row to carry pins, so it stays skill-free. Tolerant: any failure
-  // degrades to no skills (never live), so a skills fetch blip can't fail a run.
+  // has no run row to carry pins, so it stays skill-free. STRICT: the fetch is
+  // retried (250ms/1s backoff) and a persistent failure FAILS run preparation.
+  // Silently degrading to "no skills" would let the run execute while the
+  // configSnapshot and the judge still claim the pinned skills were available.
   let runPinnedSkills: PinnableSkill[] | undefined;
   if (runId) {
-    try {
-      const res = (await convexClient.query(
-        "testSuites:getRunPinnedSkills" as any,
-        { runId },
-      )) as {
-        pinnedSkills?: Array<{
-          name: string;
-          description: string;
-          content: string;
-          contentHash: string;
-        }>;
-      };
-      const list = res?.pinnedSkills ?? [];
-      if (list.length > 0) {
-        runPinnedSkills = list.map((s) => ({
-          name: s.name,
-          description: s.description,
-          content: s.content,
-          contentHash: s.contentHash,
-        }));
-      }
-    } catch (error) {
-      logger.warn("[evals] getRunPinnedSkills failed; running without skills", {
-        runId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    runPinnedSkills = await fetchRunPinnedSkillsWithRetry(convexClient, runId);
   }
 
   const execute = async () => {
