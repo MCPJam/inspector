@@ -191,6 +191,26 @@ skills.post("/create", async (c) =>
           `SKILL.md frontmatter name '${parsed.name}' does not match the skill name '${body.name}'.`,
         );
       }
+      // Server-parsed content bypasses the Zod `skillContentSchema` preflight
+      // that guards `body.content`, so re-apply the same non-empty + byte-cap
+      // checks to the authoritative parsed body before accepting it.
+      if (parsed.content.length === 0) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          "SKILL.md body must not be empty.",
+        );
+      }
+      if (
+        new TextEncoder().encode(parsed.content).length >
+        MAX_SKILL_CONTENT_BYTES
+      ) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          `Skill content must be at most ${MAX_SKILL_CONTENT_BYTES} bytes`,
+        );
+      }
       description = parsed.description;
       content = parsed.content;
       extraFrontmatter = parsed.extraFrontmatter;
