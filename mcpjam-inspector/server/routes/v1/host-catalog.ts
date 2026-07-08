@@ -34,7 +34,7 @@ type CatalogEnvelope = Omit<HostCompatCatalogEnvelope, "catalog"> & {
 
 const hostCatalog = new Hono();
 
-const UPSTREAM_TIMEOUT_MS = 2_500;
+const UPSTREAM_TIMEOUT_MS = 6_500;
 const CACHE_TTL_MS = 300_000;
 
 type CachedEnvelope = { envelope: CatalogEnvelope; fetchedAt: number };

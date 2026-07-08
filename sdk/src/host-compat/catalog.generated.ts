@@ -1,0 +1,1859 @@
+// Generated SDK fallback snapshot copied from the backend host catalog seed.
+// Run `npm run generate:host-catalog-fallback -w @mcpjam/sdk` after backend
+// host catalog/template changes. Product UI should fetch the live backend
+// catalog instead of treating this fallback as canonical.
+
+import type { HostCompatCatalog } from "./catalog.js";
+
+export const BUNDLED_HOST_COMPAT_CATALOG = {
+  marketHosts: [
+    {
+      id: "claude",
+      label: "Claude",
+      provenance: "assumed",
+      rendersMcpApps: true,
+      imageSupport: {
+        toolImageContent: {
+          model: true,
+          ui: true,
+        },
+        embeddedResourceImages: {
+          model: true,
+          ui: true,
+        },
+        resourceLinkImages: {
+          model: false,
+          ui: false,
+        },
+        placement: "inline",
+      },
+    },
+    {
+      id: "chatgpt",
+      label: "ChatGPT",
+      provenance: "vendor-doc",
+      rendersMcpApps: true,
+      imageSupport: {
+        toolImageContent: {
+          model: true,
+          ui: true,
+        },
+        embeddedResourceImages: {
+          model: true,
+          ui: true,
+        },
+        resourceLinkImages: {
+          model: true,
+          ui: true,
+        },
+        placement: "inline",
+      },
+    },
+    {
+      id: "mistral",
+      label: "Mistral",
+      provenance: "probe",
+      rendersMcpApps: true,
+      supportedProtocolVersions: ["2025-11-25"],
+      imageSupport: {
+        toolImageContent: {
+          model: false,
+          ui: false,
+        },
+        embeddedResourceImages: {
+          model: false,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: false,
+          ui: false,
+        },
+        placement: "none",
+      },
+    },
+    {
+      id: "goose",
+      label: "Goose",
+      provenance: "probe",
+      rendersMcpApps: true,
+      supportedProtocolVersions: ["2025-03-26"],
+      imageSupport: {
+        toolImageContent: {
+          model: true,
+          ui: true,
+        },
+        embeddedResourceImages: {
+          model: false,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: false,
+          ui: false,
+        },
+        placement: "collapsed",
+      },
+    },
+    {
+      id: "cursor",
+      label: "Cursor",
+      provenance: "probe",
+      rendersMcpApps: true,
+      imageSupport: {
+        toolImageContent: {
+          model: true,
+          ui: false,
+        },
+        embeddedResourceImages: {
+          model: true,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: true,
+          ui: false,
+        },
+        placement: "none",
+      },
+    },
+    {
+      id: "copilot",
+      label: "Copilot",
+      provenance: "vendor-doc",
+      rendersMcpApps: true,
+      imageSupport: {
+        toolImageContent: {
+          model: true,
+          ui: false,
+        },
+        embeddedResourceImages: {
+          model: true,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: true,
+          ui: false,
+        },
+        placement: "none",
+      },
+    },
+    {
+      id: "codex",
+      label: "Codex",
+      provenance: "assumed",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-06-18"],
+      imageSupport: {
+        toolImageContent: {
+          model: true,
+          ui: true,
+        },
+        embeddedResourceImages: {
+          model: true,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: true,
+          ui: false,
+        },
+        placement: "collapsed",
+      },
+    },
+    {
+      id: "n8n",
+      label: "n8n",
+      provenance: "probe",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-11-25"],
+      imageSupport: {
+        toolImageContent: {
+          model: false,
+          ui: false,
+        },
+        embeddedResourceImages: {
+          model: false,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: false,
+          ui: false,
+        },
+        placement: "none",
+      },
+    },
+    {
+      id: "perplexity",
+      label: "Perplexity",
+      provenance: "probe",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-06-18"],
+      imageSupport: {
+        toolImageContent: {
+          model: false,
+          ui: false,
+        },
+        embeddedResourceImages: {
+          model: false,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: false,
+          ui: false,
+        },
+        placement: "none",
+      },
+    },
+    {
+      id: "cline",
+      label: "Cline",
+      provenance: "probe",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-11-25"],
+      imageSupport: {
+        toolImageContent: {
+          model: true,
+          ui: false,
+        },
+        embeddedResourceImages: {
+          model: false,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: false,
+          ui: false,
+        },
+        placement: "none",
+      },
+    },
+    {
+      id: "slack",
+      label: "Slackbot",
+      provenance: "probe",
+      rendersMcpApps: true,
+      supportedProtocolVersions: ["2025-06-18"],
+      imageSupport: {
+        toolImageContent: {
+          model: false,
+          ui: false,
+        },
+        embeddedResourceImages: {
+          model: false,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: false,
+          ui: false,
+        },
+        placement: "none",
+      },
+    },
+    {
+      id: "vscode",
+      label: "VS Code",
+      provenance: "probe",
+      rendersMcpApps: true,
+      imageSupport: {
+        toolImageContent: {
+          model: true,
+          ui: true,
+        },
+        embeddedResourceImages: {
+          model: true,
+          ui: true,
+        },
+        resourceLinkImages: {
+          model: true,
+          ui: true,
+        },
+        placement: "inline",
+      },
+    },
+    {
+      id: "notion",
+      label: "Notion",
+      provenance: "probe",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-11-25"],
+      imageSupport: {
+        toolImageContent: {
+          model: false,
+          ui: true,
+        },
+        embeddedResourceImages: {
+          model: false,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: false,
+          ui: false,
+        },
+        placement: "collapsed",
+      },
+    },
+  ],
+  openAiCompatByStyle: {
+    chatgpt: true,
+    copilot: true,
+    mcpjam: true,
+    claude: false,
+    cursor: false,
+    codex: false,
+    goose: false,
+    slack: false,
+    vscode: false,
+    notion: false,
+  },
+  templatesById: {
+    mcpjam: {
+      hostStyle: "mcpjam",
+      modelId: "anthropic/claude-haiku-4.5",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {
+        extensions: {
+          "io.modelcontextprotocol/ui": {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+        },
+      },
+      hostContext: {
+        theme: "dark",
+        displayMode: "inline",
+        availableDisplayModes: ["inline", "fullscreen", "pip"],
+        containerDimensions: {
+          width: 720,
+          maxHeight: 5000,
+        },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent: "mcpjam-inspector",
+        platform: "web",
+        deviceCapabilities: {
+          touch: false,
+          hover: true,
+        },
+        safeAreaInsets: {
+          top: 0,
+          right: 0,
+          bottom: 0,
+          left: 0,
+        },
+        styles: {
+          variables: {
+            "--color-background-primary": "oklch(0.2679 0.0036 106.6427)",
+            "--color-background-secondary": "oklch(0.2213 0.0038 106.707)",
+            "--color-background-tertiary": "oklch(0.213 0.0078 95.4245)",
+            "--color-background-inverse": "oklch(0.9818 0.0054 95.0986)",
+            "--color-background-ghost": "oklch(0.2679 0.0036 106.6427 / 0)",
+            "--color-background-info": "oklch(0.28 0.06 259)",
+            "--color-background-danger": "oklch(0.32 0.08 25.331)",
+            "--color-background-success": "oklch(0.3 0.07 152)",
+            "--color-background-warning": "oklch(0.3 0.09 55)",
+            "--color-background-disabled":
+              "oklch(0.2679 0.0036 106.6427 / 0.5)",
+            "--color-text-primary": "oklch(0.8074 0.0142 93.0137)",
+            "--color-text-secondary": "oklch(0.7713 0.0169 99.0657)",
+            "--color-text-tertiary": "oklch(0.7713 0.0169 99.0657 / 0.8)",
+            "--color-text-inverse": "oklch(0.2679 0.0036 106.6427)",
+            "--color-text-ghost": "oklch(0.7713 0.0169 99.0657 / 0.5)",
+            "--color-text-info": "oklch(0.7 0.18 259)",
+            "--color-text-danger": "oklch(0.74 0.18 25.331)",
+            "--color-text-success": "oklch(0.78 0.16 152)",
+            "--color-text-warning": "oklch(0.83 0.17 85.3)",
+            "--color-text-disabled": "oklch(0.8074 0.0142 93.0137 / 0.5)",
+            "--color-border-primary": "oklch(0.4336 0.0113 100.2195)",
+            "--color-border-secondary": "oklch(0.3618 0.0101 106.8928)",
+            "--color-border-tertiary": "oklch(0.3618 0.0101 106.8928 / 0.6)",
+            "--color-border-inverse": "oklch(0.2679 0.0036 106.6427 / 0.15)",
+            "--color-border-ghost": "oklch(0.3618 0.0101 106.8928 / 0)",
+            "--color-border-info": "oklch(0.7 0.18 259)",
+            "--color-border-danger": "oklch(0.74 0.18 25.331)",
+            "--color-border-success": "oklch(0.78 0.16 152)",
+            "--color-border-warning": "oklch(0.6724 0.1308 38.7559)",
+            "--color-border-disabled": "oklch(0.4336 0.0113 100.2195 / 0.4)",
+            "--color-ring-primary": "oklch(0.6724 0.1308 38.7559)",
+            "--color-ring-secondary": "oklch(0.7713 0.0169 99.0657 / 0.5)",
+            "--color-ring-inverse": "oklch(0.2679 0.0036 106.6427 / 0.7)",
+            "--color-ring-info": "oklch(0.7 0.18 259 / 0.5)",
+            "--color-ring-danger": "oklch(0.74 0.18 25.331 / 0.5)",
+            "--color-ring-success": "oklch(0.78 0.16 152 / 0.5)",
+            "--color-ring-warning": "oklch(0.83 0.17 85.3 / 0.5)",
+            "--font-sans":
+              'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"',
+            "--font-mono":
+              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+            "--font-weight-normal": "400",
+            "--font-weight-medium": "500",
+            "--font-weight-semibold": "600",
+            "--font-weight-bold": "700",
+            "--font-text-xs-size": "12px",
+            "--font-text-sm-size": "14px",
+            "--font-text-md-size": "15px",
+            "--font-text-lg-size": "18px",
+            "--font-heading-xs-size": "12px",
+            "--font-heading-sm-size": "14px",
+            "--font-heading-md-size": "16px",
+            "--font-heading-lg-size": "20px",
+            "--font-heading-xl-size": "24px",
+            "--font-heading-2xl-size": "30px",
+            "--font-heading-3xl-size": "36px",
+            "--font-text-xs-line-height": "1.4",
+            "--font-text-sm-line-height": "1.5",
+            "--font-text-md-line-height": "1.5",
+            "--font-text-lg-line-height": "1.4",
+            "--font-heading-xs-line-height": "1.4",
+            "--font-heading-sm-line-height": "1.4",
+            "--font-heading-md-line-height": "1.3",
+            "--font-heading-lg-line-height": "1.25",
+            "--font-heading-xl-line-height": "1.2",
+            "--font-heading-2xl-line-height": "1.15",
+            "--font-heading-3xl-line-height": "1.1",
+            "--border-radius-xs": "4px",
+            "--border-radius-sm": "6px",
+            "--border-radius-md": "8px",
+            "--border-radius-lg": "10px",
+            "--border-radius-xl": "12px",
+            "--border-radius-full": "9999px",
+            "--border-width-regular": "1px",
+            "--shadow-hairline": "0 1px 2px 0 rgba(0, 0, 0, 0.04)",
+            "--shadow-sm":
+              "0 1px 2px 0 rgba(0, 0, 0, 0.06), 0 1px 3px 0 rgba(0, 0, 0, 0.04)",
+            "--shadow-md":
+              "0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.06)",
+            "--shadow-lg":
+              "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.05)",
+          },
+        },
+      },
+      hostCapabilitiesOverride: {
+        experimental: {},
+        openLinks: {},
+        downloadFile: {},
+        serverTools: {},
+        serverResources: {},
+        logging: {},
+        updateModelContext: {
+          text: {},
+          image: {},
+        },
+        message: {
+          text: {},
+        },
+      },
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          clientInfo: {
+            name: "mcpjam-inspector",
+            version: "0.0.0",
+          },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: {
+              name: "MCPJam",
+              version: "0.0.0",
+            },
+          },
+          compatRuntime: {
+            openaiApps: true,
+          },
+          sandbox: {
+            csp: {
+              mode: "declared",
+            },
+            permissions: {
+              mode: "custom",
+              allow: {
+                camera: true,
+                microphone: true,
+                geolocation: true,
+                clipboardWrite: true,
+              },
+            },
+          },
+        },
+      },
+    },
+    claude: {
+      hostStyle: "claude",
+      modelId: "anthropic/claude-haiku-4.5",
+      systemPrompt: "",
+      temperature: 1,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {
+        extensions: {
+          "io.modelcontextprotocol/ui": {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+        },
+      },
+      hostContext: {
+        theme: "dark",
+        displayMode: "inline",
+        availableDisplayModes: ["inline", "fullscreen"],
+        containerDimensions: {
+          width: 720,
+          maxHeight: 5000,
+        },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent:
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+        platform: "web",
+        deviceCapabilities: {
+          touch: false,
+          hover: true,
+        },
+        safeAreaInsets: {
+          top: 0,
+          right: 0,
+          bottom: 0,
+          left: 0,
+        },
+        styles: {
+          variables: {
+            "--color-background-primary":
+              "light-dark(rgba(255, 255, 255, 1), rgba(48, 48, 46, 1))",
+            "--color-background-secondary":
+              "light-dark(rgba(245, 244, 237, 1), rgba(38, 38, 36, 1))",
+            "--color-background-tertiary":
+              "light-dark(rgba(250, 249, 245, 1), rgba(20, 20, 19, 1))",
+            "--color-background-inverse":
+              "light-dark(rgba(20, 20, 19, 1), rgba(250, 249, 245, 1))",
+            "--color-background-ghost":
+              "light-dark(rgba(255, 255, 255, 0), rgba(48, 48, 46, 0))",
+            "--color-background-info":
+              "light-dark(rgba(214, 228, 246, 1), rgba(37, 62, 95, 1))",
+            "--color-background-danger":
+              "light-dark(rgba(247, 236, 236, 1), rgba(96, 42, 40, 1))",
+            "--color-background-success":
+              "light-dark(rgba(233, 241, 220, 1), rgba(27, 70, 20, 1))",
+            "--color-background-warning":
+              "light-dark(rgba(246, 238, 223, 1), rgba(72, 58, 15, 1))",
+            "--color-background-disabled":
+              "light-dark(rgba(255, 255, 255, 0.5), rgba(48, 48, 46, 0.5))",
+            "--color-text-primary":
+              "light-dark(rgba(20, 20, 19, 1), rgba(250, 249, 245, 1))",
+            "--color-text-secondary":
+              "light-dark(rgba(61, 61, 58, 1), rgba(194, 192, 182, 1))",
+            "--color-text-tertiary":
+              "light-dark(rgba(115, 114, 108, 1), rgba(156, 154, 146, 1))",
+            "--color-text-inverse":
+              "light-dark(rgba(255, 255, 255, 1), rgba(20, 20, 19, 1))",
+            "--color-text-ghost":
+              "light-dark(rgba(115, 114, 108, 0.5), rgba(156, 154, 146, 0.5))",
+            "--color-text-info":
+              "light-dark(rgba(50, 102, 173, 1), rgba(128, 170, 221, 1))",
+            "--color-text-danger":
+              "light-dark(rgba(127, 44, 40, 1), rgba(238, 136, 132, 1))",
+            "--color-text-success":
+              "light-dark(rgba(38, 91, 25, 1), rgba(122, 185, 72, 1))",
+            "--color-text-warning":
+              "light-dark(rgba(90, 72, 21, 1), rgba(209, 160, 65, 1))",
+            "--color-text-disabled":
+              "light-dark(rgba(20, 20, 19, 0.5), rgba(250, 249, 245, 0.5))",
+            "--color-border-primary":
+              "light-dark(rgba(31, 30, 29, 0.4), rgba(222, 220, 209, 0.4))",
+            "--color-border-secondary":
+              "light-dark(rgba(31, 30, 29, 0.3), rgba(222, 220, 209, 0.3))",
+            "--color-border-tertiary":
+              "light-dark(rgba(31, 30, 29, 0.15), rgba(222, 220, 209, 0.15))",
+            "--color-border-inverse":
+              "light-dark(rgba(255, 255, 255, 0.3), rgba(20, 20, 19, 0.15))",
+            "--color-border-ghost":
+              "light-dark(rgba(31, 30, 29, 0), rgba(222, 220, 209, 0))",
+            "--color-border-info":
+              "light-dark(rgba(70, 130, 213, 1), rgba(70, 130, 213, 1))",
+            "--color-border-danger":
+              "light-dark(rgba(167, 61, 57, 1), rgba(205, 92, 88, 1))",
+            "--color-border-success":
+              "light-dark(rgba(67, 116, 38, 1), rgba(89, 145, 48, 1))",
+            "--color-border-warning":
+              "light-dark(rgba(128, 92, 31, 1), rgba(168, 120, 41, 1))",
+            "--color-border-disabled":
+              "light-dark(rgba(31, 30, 29, 0.1), rgba(222, 220, 209, 0.1))",
+            "--color-ring-primary":
+              "light-dark(rgba(20, 20, 19, 0.7), rgba(250, 249, 245, 0.7))",
+            "--color-ring-secondary":
+              "light-dark(rgba(61, 61, 58, 0.7), rgba(194, 192, 182, 0.7))",
+            "--color-ring-inverse":
+              "light-dark(rgba(255, 255, 255, 0.7), rgba(20, 20, 19, 0.7))",
+            "--color-ring-info":
+              "light-dark(rgba(50, 102, 173, 0.5), rgba(128, 170, 221, 0.5))",
+            "--color-ring-danger":
+              "light-dark(rgba(167, 61, 57, 0.5), rgba(205, 92, 88, 0.5))",
+            "--color-ring-success":
+              "light-dark(rgba(67, 116, 38, 0.5), rgba(89, 145, 48, 0.5))",
+            "--color-ring-warning":
+              "light-dark(rgba(128, 92, 31, 0.5), rgba(168, 120, 41, 0.5))",
+            "--font-sans": "Anthropic Sans, sans-serif",
+            "--font-mono": "ui-monospace, monospace",
+            "--font-weight-normal": "400",
+            "--font-weight-medium": "500",
+            "--font-weight-semibold": "600",
+            "--font-weight-bold": "700",
+            "--font-text-xs-size": "12px",
+            "--font-text-sm-size": "14px",
+            "--font-text-md-size": "16px",
+            "--font-text-lg-size": "20px",
+            "--font-heading-xs-size": "12px",
+            "--font-heading-sm-size": "14px",
+            "--font-heading-md-size": "16px",
+            "--font-heading-lg-size": "20px",
+            "--font-heading-xl-size": "24px",
+            "--font-heading-2xl-size": "28px",
+            "--font-heading-3xl-size": "36px",
+            "--font-text-xs-line-height": "1.4",
+            "--font-text-sm-line-height": "1.4",
+            "--font-text-md-line-height": "1.4",
+            "--font-text-lg-line-height": "1.25",
+            "--font-heading-xs-line-height": "1.4",
+            "--font-heading-sm-line-height": "1.4",
+            "--font-heading-md-line-height": "1.4",
+            "--font-heading-lg-line-height": "1.25",
+            "--font-heading-xl-line-height": "1.25",
+            "--font-heading-2xl-line-height": "1.1",
+            "--font-heading-3xl-line-height": "1",
+            "--border-radius-xs": "4px",
+            "--border-radius-sm": "6px",
+            "--border-radius-md": "8px",
+            "--border-radius-lg": "10px",
+            "--border-radius-xl": "12px",
+            "--border-radius-full": "9999px",
+            "--border-width-regular": "0.5px",
+            "--shadow-hairline": "0 1px 2px 0 rgba(0, 0, 0, 0.05)",
+            "--shadow-sm":
+              "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1)",
+            "--shadow-md":
+              "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1)",
+            "--shadow-lg":
+              "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1)",
+          },
+          css: {
+            fonts:
+              '\n@font-face {\n  font-family: "Anthropic Sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Regular-Static.otf") format("opentype");\n  font-weight: 400;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "Anthropic Sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-RegularItalic-Static.otf") format("opentype");\n  font-weight: 400;\n  font-style: italic;\n  font-display: swap;\n}\n@font-face {\n  font-family: "Anthropic Sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Medium-Static.otf") format("opentype");\n  font-weight: 500;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "Anthropic Sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-MediumItalic-Static.otf") format("opentype");\n  font-weight: 500;\n  font-style: italic;\n  font-display: swap;\n}\n@font-face {\n  font-family: "Anthropic Sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Semibold-Static.otf") format("opentype");\n  font-weight: 600;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "Anthropic Sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-SemiboldItalic-Static.otf") format("opentype");\n  font-weight: 600;\n  font-style: italic;\n  font-display: swap;\n}\n@font-face {\n  font-family: "Anthropic Sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Bold-Static.otf") format("opentype");\n  font-weight: 700;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "Anthropic Sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-BoldItalic-Static.otf") format("opentype");\n  font-weight: 700;\n  font-style: italic;\n  font-display: swap;\n}\n',
+          },
+        },
+      },
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          clientInfo: {
+            name: "claude-ai",
+            version: "0.1.0",
+          },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: {
+              name: "Claude",
+              version: "1.0.0",
+            },
+          },
+          sandbox: {
+            csp: {
+              mode: "declared",
+              cspDirectives: {
+                "script-src": [
+                  "'self'",
+                  "'unsafe-eval'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "style-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "img-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "connect-src": ["'self'", "https://esm.sh"],
+                "font-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "media-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "worker-src": [
+                  "'self'",
+                  "blob:",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "frame-src": ["'self'"],
+                "base-uri": ["'self'"],
+                "form-action": ["'self'"],
+              },
+            },
+            permissions: {
+              mode: "custom",
+              allow: {
+                clipboardWrite: true,
+              },
+            },
+            sandboxAttrs: ["allow-forms"],
+            allowFeatures: {
+              fullscreen: "*",
+            },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen", "pip"],
+            toolInputPartial: true,
+            toolCancelled: true,
+            hostContextChanged: true,
+            resourceTeardown: true,
+            toolInfo: true,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: true,
+            message: true,
+            sandboxPermissions: true,
+            cspFrameDomains: true,
+            cspBaseUriDomains: true,
+            resourcePrefersBorder: true,
+            downloadFile: true,
+            requestTeardown: true,
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      },
+    },
+    "claude-code": {
+      hostStyle: "claude-code",
+      modelId: "anthropic/claude-haiku-4.5",
+      systemPrompt: "",
+      temperature: 1,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      computer: {
+        kind: "personal",
+      },
+      harness: "claude-code",
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {
+        roots: {},
+        elicitation: {},
+      },
+      hostContext: {},
+      hostCapabilitiesOverride: {},
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: {
+            name: "claude-code",
+            title: "Claude Code",
+            version: "2.1.176",
+            description: "Anthropic's agentic coding tool",
+            websiteUrl: "https://claude.com/claude-code",
+          },
+        },
+      },
+    },
+    chatgpt: {
+      hostStyle: "chatgpt",
+      modelId: "openai/gpt-5-nano",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {
+        extensions: {
+          "io.modelcontextprotocol/ui": {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+        },
+        experimental: {
+          "openai/visibility": {
+            enabled: true,
+          },
+        },
+      },
+      hostContext: {
+        theme: "dark",
+        displayMode: "inline",
+        availableDisplayModes: ["inline", "fullscreen", "pip"],
+        containerDimensions: {
+          height: 400,
+          maxWidth: 768,
+        },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent: "chatgpt",
+        platform: "desktop",
+        deviceCapabilities: {
+          touch: false,
+          hover: true,
+        },
+        safeAreaInsets: {
+          top: 0,
+          right: 0,
+          bottom: 0,
+          left: 0,
+        },
+      },
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          clientInfo: {
+            name: "openai-mcp",
+            version: "1.0.0",
+          },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: {
+              name: "chatgpt",
+              version: "0.0.1",
+            },
+          },
+          compatRuntime: {
+            openaiApps: true,
+          },
+          sandbox: {
+            csp: {
+              mode: "declared",
+              cspDirectives: {
+                "frame-src": ["'self'", "https:", "data:", "blob:"],
+              },
+            },
+            permissions: {
+              mode: "custom",
+              allow: {
+                microphone: true,
+                clipboardWrite: true,
+              },
+            },
+            sandboxAttrs: [
+              "allow-forms",
+              "allow-popups",
+              "allow-popups-to-escape-sandbox",
+            ],
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen", "pip"],
+            toolInputPartial: true,
+            toolCancelled: true,
+            hostContextChanged: true,
+            resourceTeardown: true,
+            toolInfo: true,
+            openLinks: true,
+            serverTools: true,
+            serverResources: false,
+            logging: false,
+            updateModelContext: true,
+            message: true,
+            sandboxPermissions: true,
+            cspFrameDomains: true,
+            cspBaseUriDomains: true,
+            resourcePrefersBorder: true,
+            downloadFile: true,
+            requestTeardown: true,
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      },
+    },
+    mistral: {
+      hostStyle: "mistral",
+      modelId: "mistralai/mistral-large-2512",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {
+        extensions: {
+          "io.modelcontextprotocol/ui": {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+        },
+      },
+      hostContext: {
+        theme: "dark",
+        displayMode: "fullscreen",
+        availableDisplayModes: ["inline", "fullscreen"],
+        containerDimensions: {
+          width: 1130.5,
+        },
+        locale: "en",
+        timeZone: "America/Los_Angeles",
+        userAgent: "Le Chat/1.0.0",
+        platform: "web",
+        deviceCapabilities: {
+          touch: false,
+          hover: true,
+        },
+        safeAreaInsets: {
+          top: 0,
+          right: 0,
+          bottom: 0,
+          left: 0,
+        },
+        styles: {
+          variables: {
+            "--color-background-primary": "#111115",
+            "--color-background-secondary": "#18181b",
+            "--color-background-tertiary": "#09090b",
+            "--color-background-inverse": "#fff",
+            "--color-text-primary": "#fff",
+            "--color-text-secondary": "#ffffffb2",
+            "--color-text-tertiary": "#ffffff7f",
+            "--color-text-inverse": "#111115",
+            "--color-text-info": "#48bfff",
+            "--color-text-danger": "#ff5d59",
+            "--color-text-success": "#7af526",
+            "--color-text-warning": "#fc783b",
+            "--color-border-primary": "#ffffff19",
+            "--color-border-secondary": "#ffffff26",
+            "--color-border-tertiary": "#ffffff3f",
+            "--bg-badge-orange": "#53330f",
+            "--bg-basic-orange-strong": "#ff8a00",
+            "--bg-brand-500": "#fa500f",
+            "--text-white-default": "#fff",
+          },
+        },
+      },
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: {
+            name: "mcp",
+            version: "0.1.0",
+          },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: {
+              name: "Le Chat",
+              version: "1.0.0",
+            },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen"],
+            toolInputPartial: true,
+            toolCancelled: false,
+            hostContextChanged: true,
+            resourceTeardown: false,
+            toolInfo: false,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: true,
+            message: true,
+            sandboxPermissions: true,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: false,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+          compatRuntime: {
+            openaiApps: false,
+          },
+          sandbox: {
+            csp: {
+              mode: "declared",
+            },
+            permissions: {
+              mode: "custom",
+              allow: {
+                clipboardWrite: true,
+              },
+            },
+            sandboxAttrs: ["allow-forms"],
+          },
+        },
+      },
+    },
+    goose: {
+      hostStyle: "goose",
+      modelId: "openai/gpt-5-nano",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: true,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {
+        extensions: {
+          "io.modelcontextprotocol/ui": {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+        },
+        roots: {},
+        sampling: {},
+        elicitation: {},
+      },
+      hostContext: {
+        theme: "dark",
+        displayMode: "inline",
+        availableDisplayModes: ["inline", "fullscreen", "pip"],
+        containerDimensions: {
+          width: 1274,
+        },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent:
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Goose/1.38.0 Chrome/146.0.7680.65 Electron/41.0.0 Safari/537.36",
+        platform: "desktop",
+        deviceCapabilities: {
+          touch: false,
+          hover: true,
+        },
+        safeAreaInsets: {
+          top: 0,
+          right: 0,
+          bottom: 0,
+          left: 0,
+        },
+        styles: {
+          variables: {
+            "--color-background-primary": "light-dark(#ffffff, #22252a)",
+            "--color-background-secondary": "light-dark(#f4f6f7, #3f434b)",
+            "--color-background-tertiary": "light-dark(#e3e6ea, #474e57)",
+            "--color-background-inverse": "light-dark(#000000, #cbd1d6)",
+            "--color-background-ghost": "light-dark(transparent, transparent)",
+            "--color-background-info": "light-dark(#5c98f9, #7cacff)",
+            "--color-background-danger": "light-dark(#f94b4b, #ff6b6b)",
+            "--color-background-success": "light-dark(#91cb80, #a3d795)",
+            "--color-background-warning": "light-dark(#fbcd44, #ffd966)",
+            "--color-background-disabled": "light-dark(#e3e6ea, #474e57)",
+            "--color-text-primary": "light-dark(#3f434b, #ffffff)",
+            "--color-text-secondary": "light-dark(#878787, #878787)",
+            "--color-text-tertiary": "light-dark(#a7b0b9, #606c7a)",
+            "--color-text-inverse": "light-dark(#ffffff, #000000)",
+            "--color-text-ghost": "light-dark(#878787, #878787)",
+            "--color-text-info": "light-dark(#5c98f9, #7cacff)",
+            "--color-text-danger": "light-dark(#f94b4b, #ff6b6b)",
+            "--color-text-success": "light-dark(#91cb80, #a3d795)",
+            "--color-text-warning": "light-dark(#fbcd44, #ffd966)",
+            "--color-text-disabled": "light-dark(#cbd1d6, #525b68)",
+            "--color-border-primary": "light-dark(#e3e6ea, #3f434b)",
+            "--color-border-secondary": "light-dark(#e3e6ea, #525b68)",
+            "--color-border-tertiary": "light-dark(#cbd1d6, #474e57)",
+            "--color-border-inverse": "light-dark(#000000, #ffffff)",
+            "--color-border-ghost": "light-dark(transparent, transparent)",
+            "--color-border-info": "light-dark(#5c98f9, #7cacff)",
+            "--color-border-danger": "light-dark(#f94b4b, #ff6b6b)",
+            "--color-border-success": "light-dark(#91cb80, #a3d795)",
+            "--color-border-warning": "light-dark(#fbcd44, #ffd966)",
+            "--color-border-disabled": "light-dark(#e3e6ea, #3f434b)",
+            "--color-ring-primary": "light-dark(#e3e6ea, #525b68)",
+            "--color-ring-secondary": "light-dark(#cbd1d6, #474e57)",
+            "--color-ring-inverse": "light-dark(#ffffff, #000000)",
+            "--color-ring-info": "light-dark(#5c98f9, #7cacff)",
+            "--color-ring-danger": "light-dark(#f94b4b, #ff6b6b)",
+            "--color-ring-success": "light-dark(#91cb80, #a3d795)",
+            "--color-ring-warning": "light-dark(#fbcd44, #ffd966)",
+            "--font-sans": "'Cash Sans', sans-serif",
+            "--font-mono": "monospace",
+            "--font-weight-normal": "400",
+            "--font-weight-medium": "500",
+            "--font-weight-semibold": "600",
+            "--font-weight-bold": "700",
+            "--font-text-xs-size": "0.75rem",
+            "--font-text-sm-size": "0.875rem",
+            "--font-text-md-size": "1rem",
+            "--font-text-lg-size": "1.125rem",
+            "--font-heading-xs-size": "1rem",
+            "--font-heading-sm-size": "1.125rem",
+            "--font-heading-md-size": "1.25rem",
+            "--font-heading-lg-size": "1.5rem",
+            "--font-heading-xl-size": "1.875rem",
+            "--font-heading-2xl-size": "2.25rem",
+            "--font-heading-3xl-size": "3rem",
+            "--font-text-xs-line-height": "1rem",
+            "--font-text-sm-line-height": "1.25rem",
+            "--font-text-md-line-height": "1.5rem",
+            "--font-text-lg-line-height": "1.75rem",
+            "--font-heading-xs-line-height": "1.5rem",
+            "--font-heading-sm-line-height": "1.75rem",
+            "--font-heading-md-line-height": "1.75rem",
+            "--font-heading-lg-line-height": "2rem",
+            "--font-heading-xl-line-height": "2.25rem",
+            "--font-heading-2xl-line-height": "2.5rem",
+            "--font-heading-3xl-line-height": "3.5rem",
+            "--border-radius-xs": "2px",
+            "--border-radius-sm": "4px",
+            "--border-radius-md": "8px",
+            "--border-radius-lg": "12px",
+            "--border-radius-xl": "16px",
+            "--border-radius-full": "9999px",
+            "--border-width-regular": "1px",
+            "--shadow-hairline": "0 0 0 1px rgba(0, 0, 0, 0.05)",
+            "--shadow-sm": "0 1px 2px 0 rgba(0, 0, 0, 0.05)",
+            "--shadow-md":
+              "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1)",
+            "--shadow-lg":
+              "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1)",
+          },
+          css: {
+            fonts:
+              "\n@font-face {\n  font-family: 'Cash Sans';\n  src: url(https://cash-f.squarecdn.com/static/fonts/cashsans/woff2/CashSans-Light.woff2) format('woff2'),\n       url(https://cash-f.squarecdn.com/static/fonts/cashsans/woff/CashSans-Light.woff) format('woff');\n  font-weight: 300;\n  font-style: normal;\n}\n@font-face {\n  font-family: 'Cash Sans';\n  src: url(https://cash-f.squarecdn.com/static/fonts/cashsans/woff2/CashSans-Regular.woff2) format('woff2'),\n       url(https://cash-f.squarecdn.com/static/fonts/cashsans/woff/CashSans-Regular.woff) format('woff');\n  font-weight: 400;\n  font-style: normal;\n}\n@font-face {\n  font-family: 'Cash Sans';\n  src: url(https://cash-f.squarecdn.com/static/fonts/cashsans/woff2/CashSans-Medium.woff2) format('woff2'),\n       url(https://cash-f.squarecdn.com/static/fonts/cashsans/woff/CashSans-Medium.woff) format('woff');\n  font-weight: 500;\n  font-style: normal;\n}\n@font-face {\n  font-family: 'Cash Sans';\n  src: url(https://cash-f.squarecdn.com/static/fonts/cashsans/woff2/CashSans-Bold.woff2) format('woff2'),\n       url(https://cash-f.squarecdn.com/static/fonts/cashsans/woff/CashSans-Bold.woff) format('woff');\n  font-weight: 700;\n  font-style: normal;\n}\n",
+          },
+        },
+      },
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-03-26"],
+          clientInfo: {
+            name: "goose-desktop",
+            version: "1.38.0",
+          },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: {
+              name: "MCP-UI Host",
+              version: "1.0.0",
+            },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen", "pip"],
+            toolInputPartial: false,
+            toolCancelled: false,
+            hostContextChanged: false,
+            resourceTeardown: false,
+            toolInfo: true,
+            openLinks: true,
+            serverTools: false,
+            serverResources: false,
+            logging: false,
+            updateModelContext: false,
+            message: false,
+            sandboxPermissions: false,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: false,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+          compatRuntime: {
+            openaiApps: false,
+          },
+          sandbox: {
+            csp: {
+              mode: "declared",
+              cspDirectives: {
+                "font-src": ["https://cash-f.squarecdn.com"],
+              },
+            },
+            permissions: {
+              mode: "custom",
+              allow: {},
+            },
+            sandboxAttrs: ["allow-forms"],
+          },
+        },
+      },
+    },
+    slack: {
+      hostStyle: "slack",
+      modelId: "openai/gpt-5-nano",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {
+        extensions: {
+          "io.modelcontextprotocol/ui": {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+        },
+      },
+      hostContext: {
+        theme: "dark",
+        displayMode: "inline",
+        availableDisplayModes: ["inline", "fullscreen"],
+        containerDimensions: {
+          maxWidth: 598,
+        },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        platform: "web",
+        deviceCapabilities: {
+          touch: false,
+          hover: true,
+        },
+        styles: {
+          variables: {
+            "--color-background-primary": "#1a1d21",
+            "--color-background-secondary": "#1a1d21",
+            "--color-background-tertiary": "#212428",
+            "--color-background-inverse": "#212428",
+            "--color-background-info": "#001a2d",
+            "--color-background-danger": "#300005",
+            "--color-background-success": "#05241b",
+            "--color-background-warning": "#2f1e00",
+            "--color-background-disabled": "#f8f8f80f",
+            "--color-text-primary": "#f8f8f8",
+            "--color-text-secondary": "#b9babd",
+            "--color-text-tertiary": "#9a9b9e",
+            "--color-text-inverse": "#f8f8f8",
+            "--color-text-info": "#2ba5ce",
+            "--color-text-danger": "#de678a",
+            "--color-text-success": "#3daa7c",
+            "--color-text-warning": "#dea700",
+            "--color-text-disabled": "#9a9b9e",
+            "--color-border-primary": "#797c81",
+            "--color-border-secondary": "#797c8180",
+            "--color-border-tertiary": "#797c814d",
+            "--color-border-inverse": "#797c81",
+            "--color-border-info": "#2ba5ce",
+            "--color-border-danger": "#d94c75",
+            "--color-border-success": "#259b69",
+            "--color-border-warning": "#d29c00",
+            "--color-border-disabled": "#797c814d",
+            "--color-ring-primary": "#797c81",
+            "--color-ring-secondary": "#797c8180",
+            "--color-ring-inverse": "#797c81",
+            "--color-ring-info": "#2ba5ce",
+            "--color-ring-danger": "#d94c75",
+            "--color-ring-success": "#259b69",
+            "--color-ring-warning": "#d29c00",
+            "--color-background-ghost": "transparent",
+            "--color-text-ghost": "transparent",
+            "--color-border-ghost": "transparent",
+            "--font-sans":
+              '"Slack-Lato", "Slack-Fractions", "appleLogo", sans-serif',
+            "--font-mono":
+              '"Monaco", "Menlo", "Consolas", "Courier New", monospace',
+            "--font-weight-normal": "400",
+            "--font-weight-medium": "500",
+            "--font-weight-semibold": "600",
+            "--font-weight-bold": "700",
+            "--font-text-xs-size": "12px",
+            "--font-text-sm-size": "13px",
+            "--font-text-md-size": "15px",
+            "--font-text-lg-size": "18px",
+            "--font-heading-xs-size": "18px",
+            "--font-heading-sm-size": "22px",
+            "--font-heading-md-size": "28px",
+            "--font-heading-lg-size": "32px",
+            "--font-heading-xl-size": "36px",
+            "--font-heading-2xl-size": "42px",
+            "--font-heading-3xl-size": "48px",
+            "--font-text-xs-line-height": "1.25",
+            "--font-text-sm-line-height": "1.25",
+            "--font-text-md-line-height": "1.5",
+            "--font-text-lg-line-height": "1.5",
+            "--font-heading-xs-line-height": "1.25",
+            "--font-heading-sm-line-height": "1.25",
+            "--font-heading-md-line-height": "1.25",
+            "--font-heading-lg-line-height": "1.25",
+            "--font-heading-xl-line-height": "1.2",
+            "--font-heading-2xl-line-height": "1.2",
+            "--font-heading-3xl-line-height": "1.15",
+            "--border-radius-xs": "0px",
+            "--border-radius-sm": "2px",
+            "--border-radius-md": "4px",
+            "--border-radius-lg": "8px",
+            "--border-radius-xl": "12px",
+            "--border-radius-full": "9999px",
+            "--border-width-regular": "1px",
+            "--shadow-hairline": "0 0 0 1px currentColor",
+            "--shadow-sm": "0 1px 2px 0 #0000000c",
+            "--shadow-md": "0 2px 4px -2px #00000019, 0 4px 6px -1px #00000019",
+            "--shadow-lg":
+              "0 4px 6px -4px #00000019, 0 10px 15px -3px #00000019",
+          },
+          css: {
+            fonts:
+              'body { font-family: "Slack-Lato", "Slack-Fractions", "appleLogo", sans-serif; }',
+          },
+        },
+      },
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-06-18"],
+          clientInfo: {
+            name: "Slackbot MCP Client",
+            version: "1.0.0",
+          },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: {
+              name: "Slackbot",
+              version: "1.0.0",
+            },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen"],
+            toolInputPartial: false,
+            toolCancelled: false,
+            hostContextChanged: false,
+            resourceTeardown: false,
+            toolInfo: true,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: false,
+            message: false,
+            sandboxPermissions: false,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: false,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+          compatRuntime: {
+            openaiApps: false,
+          },
+          sandbox: {
+            csp: {
+              mode: "declared",
+            },
+            permissions: {
+              mode: "custom",
+              allow: {},
+            },
+            sandboxAttrs: ["allow-forms"],
+          },
+        },
+      },
+    },
+    cursor: {
+      hostStyle: "cursor",
+      modelId: "anthropic/claude-sonnet-4.5",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      respectToolVisibility: false,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {
+        extensions: {
+          "io.modelcontextprotocol/ui": {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+        },
+        elicitation: {
+          form: {},
+        },
+        roots: {
+          listChanged: false,
+        },
+      },
+      hostContext: {
+        theme: "dark",
+        displayMode: "inline",
+        availableDisplayModes: ["inline"],
+        containerDimensions: {
+          width: 649,
+          maxHeight: 800,
+        },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent: "cursor",
+        platform: "desktop",
+      },
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          clientInfo: {
+            name: "cursor-vscode",
+            version: "1.0.0",
+          },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: {
+              name: "Cursor",
+              version: "3.4.20",
+            },
+          },
+          sandbox: {
+            csp: {
+              mode: "declared",
+            },
+            permissions: {
+              mode: "custom",
+              allow: {
+                clipboardWrite: true,
+              },
+            },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen", "pip"],
+            toolInputPartial: true,
+            toolCancelled: true,
+            hostContextChanged: true,
+            resourceTeardown: true,
+            toolInfo: true,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: false,
+            message: false,
+            sandboxPermissions: true,
+            cspFrameDomains: true,
+            cspBaseUriDomains: true,
+            resourcePrefersBorder: true,
+            downloadFile: true,
+            requestTeardown: true,
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      },
+    },
+    codex: {
+      hostStyle: "codex",
+      modelId: "openai/gpt-5-nano",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      computer: {
+        kind: "personal",
+      },
+      harness: "codex",
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {
+        elicitation: {},
+      },
+      hostContext: {},
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-06-18"],
+          clientInfo: {
+            name: "codex-mcp-client",
+            title: "Codex",
+            version: "0.131.0-alpha.9",
+          },
+        },
+      },
+    },
+    copilot: {
+      hostStyle: "copilot",
+      modelId: "openai/gpt-5.3-chat",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {
+        extensions: {
+          "io.modelcontextprotocol/ui": {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+        },
+        experimental: {
+          "microsoft/copilot": {
+            enabled: true,
+          },
+        },
+      },
+      hostContext: {
+        theme: "dark",
+        displayMode: "inline",
+        availableDisplayModes: ["inline", "fullscreen"],
+        containerDimensions: {
+          maxHeight: 400,
+          maxWidth: 768,
+        },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent: "ms-copilot",
+        platform: "desktop",
+        deviceCapabilities: {
+          touch: false,
+          hover: true,
+        },
+        safeAreaInsets: {
+          top: 0,
+          right: 0,
+          bottom: 0,
+          left: 0,
+        },
+      },
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          clientInfo: {
+            name: "ms-copilot",
+            version: "1.0.0",
+          },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: {
+              name: "Copilot",
+              version: "1.0.0",
+            },
+          },
+          compatRuntime: {
+            openaiApps: true,
+          },
+          sandbox: {
+            csp: {
+              mode: "declared",
+              restrictTo: {
+                frameDomains: [],
+              },
+            },
+            permissions: {
+              mode: "custom",
+              allow: {},
+            },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen"],
+            toolInputPartial: false,
+            toolCancelled: false,
+            hostContextChanged: false,
+            resourceTeardown: false,
+            toolInfo: false,
+            openLinks: true,
+            serverTools: true,
+            serverResources: false,
+            logging: false,
+            updateModelContext: true,
+            message: true,
+            sandboxPermissions: false,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: false,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      },
+    },
+    vscode: {
+      hostStyle: "vscode",
+      modelId: "anthropic/claude-sonnet-4.5",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      respectToolVisibility: false,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {
+        extensions: {
+          "io.modelcontextprotocol/ui": {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+        },
+        elicitation: {
+          form: {},
+        },
+        roots: {
+          listChanged: true,
+        },
+      },
+      hostContext: {
+        theme: "dark",
+        displayMode: "inline",
+        availableDisplayModes: ["inline"],
+        containerDimensions: {
+          width: 649,
+          maxHeight: 800,
+        },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent: "vscode",
+        platform: "desktop",
+      },
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          clientInfo: {
+            name: "Visual Studio Code",
+            version: "1.105.0",
+          },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: {
+              name: "Visual Studio Code",
+              version: "1.105.0",
+            },
+          },
+          sandbox: {
+            csp: {
+              mode: "declared",
+            },
+            permissions: {
+              mode: "custom",
+              allow: {
+                clipboardWrite: true,
+              },
+            },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen", "pip"],
+            toolInputPartial: true,
+            toolCancelled: true,
+            hostContextChanged: true,
+            resourceTeardown: true,
+            toolInfo: true,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: false,
+            message: false,
+            sandboxPermissions: true,
+            cspFrameDomains: true,
+            cspBaseUriDomains: true,
+            resourcePrefersBorder: true,
+            downloadFile: true,
+            requestTeardown: true,
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      },
+    },
+    agentcore: {
+      hostStyle: "agentcore",
+      modelId: "anthropic/claude-haiku-4.5",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {
+        elicitation: {},
+      },
+      hostContext: {},
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-06-18"],
+          clientInfo: {
+            name: "bedrock-agentcore",
+            title: "AgentCore",
+            version: "1.0.0",
+            description: "AWS Bedrock AgentCore agent runtime",
+            websiteUrl: "https://aws.amazon.com/bedrock/agentcore/",
+          },
+        },
+      },
+    },
+    n8n: {
+      hostStyle: "n8n",
+      modelId: "openai/gpt-5-nano",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {},
+      hostContext: {},
+      hostCapabilitiesOverride: {},
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: {
+            name: "@n8n/n8n-nodes-langchain.mcpClientTool",
+            version: "1.3",
+          },
+        },
+      },
+    },
+    perplexity: {
+      hostStyle: "perplexity",
+      modelId: "openai/gpt-5-nano",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {},
+      hostContext: {},
+      hostCapabilitiesOverride: {},
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-06-18"],
+          clientInfo: {
+            name: "mcp",
+            version: "0.1.0",
+          },
+        },
+      },
+    },
+    cline: {
+      hostStyle: "cline",
+      modelId: "anthropic/claude-haiku-4.5",
+      systemPrompt: "",
+      temperature: 1,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {},
+      hostContext: {},
+      hostCapabilitiesOverride: {},
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: {
+            name: "Cline",
+            version: "3.89.2",
+          },
+        },
+      },
+    },
+    notion: {
+      hostStyle: "notion",
+      modelId: "anthropic/claude-haiku-4.5",
+      systemPrompt: "",
+      temperature: 1,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {},
+      hostContext: {},
+      hostCapabilitiesOverride: {},
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: {
+            name: "notion",
+            version: "1.0.0",
+          },
+        },
+      },
+    },
+  },
+} satisfies HostCompatCatalog;

@@ -6,9 +6,10 @@ import { useHostMutations } from "@/hooks/useClients";
 import {
   getHostTemplateLogoSrc,
   HOST_TEMPLATES,
-  seedFromHostTemplate,
   type HostTemplateId,
 } from "@/lib/client-templates";
+import type { HostConfigInputV2 } from "@/lib/client-config-v2";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 const RECOMMENDED_HOST_IDS: readonly HostTemplateId[] = [
@@ -21,10 +22,15 @@ interface RecommendedHostsProps {
   projectId: string | null;
 }
 
+function cloneHostTemplateInput(value: unknown): HostConfigInputV2 {
+  return JSON.parse(JSON.stringify(value)) as HostConfigInputV2;
+}
+
 export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
   const { createHost } = useHostMutations();
   const navigate = useAppNavigate();
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  const catalogState = useHostCatalog();
   const [creatingId, setCreatingId] = useState<HostTemplateId | null>(null);
 
   const recommended = HOST_TEMPLATES.filter((t) =>
@@ -36,9 +42,18 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
       toast.error("Select a project before creating a host.");
       return;
     }
+    const template =
+      catalogState.status === "live" &&
+      Object.hasOwn(catalogState.catalog.templatesById, templateId)
+        ? catalogState.catalog.templatesById[templateId]
+        : undefined;
+    if (!template) {
+      toast.error("Could not load live host templates.");
+      return;
+    }
     setCreatingId(templateId);
     try {
-      const seed = seedFromHostTemplate(templateId, { theme: themeMode });
+      const seed = cloneHostTemplateInput(template);
       const { hostId } = await createHost({
         projectId,
         name: label,
@@ -66,6 +81,9 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
         {recommended.map((template, i) => {
           const isCreating = creatingId === template.id;
           const isLast = i === recommended.length - 1;
+          const canCreateFromLiveTemplate =
+            catalogState.status === "live" &&
+            Object.hasOwn(catalogState.catalog.templatesById, template.id);
           return (
             <li
               key={template.id}
@@ -73,8 +91,15 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
             >
               <button
                 type="button"
-                disabled={isCreating || !projectId}
+                disabled={
+                  isCreating || !projectId || !canCreateFromLiveTemplate
+                }
                 onClick={() => handleCreate(template.id, template.label)}
+                title={
+                  canCreateFromLiveTemplate
+                    ? `Create ${template.label}`
+                    : "Live host template unavailable"
+                }
                 className="group flex w-full items-center gap-2.5 px-4 py-2 text-left transition-colors hover:bg-accent/40 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <div className="grid size-6 shrink-0 place-items-center rounded bg-muted/60">

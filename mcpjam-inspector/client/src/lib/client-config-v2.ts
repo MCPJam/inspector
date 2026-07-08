@@ -700,6 +700,52 @@ export function hostCapabilitiesOverrideToMatrix(
 }
 
 /**
+ * Set/clear the sparse MCP Apps capability override matrix on a host draft.
+ * Preserves sibling `mcpProfile.apps` fields and collapses an otherwise empty
+ * profile back to `undefined`, matching the JSON editor's draft cleanup.
+ */
+export function setMcpAppsOverridesOnDraft(
+  prev: HostConfigInputV2,
+  next: McpAppsCapabilities | undefined
+): HostConfigInputV2 {
+  const hasKeys = next !== undefined && Object.keys(next).length > 0;
+  const prevProfile = prev.mcpProfile;
+  const prevApps = prevProfile?.apps ?? {};
+
+  const nextApps: NonNullable<HostConfigMcpProfileV1["apps"]> = {};
+  for (const [key, value] of Object.entries(prevApps)) {
+    if (key === "mcpAppsOverrides") continue;
+    if (value !== undefined) {
+      (nextApps as Record<string, unknown>)[key] = value;
+    }
+  }
+  if (hasKeys) nextApps.mcpAppsOverrides = next;
+  const appsEmpty = Object.keys(nextApps).length === 0;
+
+  if (prevProfile === undefined && appsEmpty) {
+    return prev;
+  }
+
+  const baseProfile: HostConfigMcpProfileV1 = prevProfile ?? {
+    profileVersion: 1,
+  };
+  const hasInitialize =
+    baseProfile.initialize !== undefined &&
+    (baseProfile.initialize.clientInfo !== undefined ||
+      (baseProfile.initialize.supportedProtocolVersions &&
+        baseProfile.initialize.supportedProtocolVersions.length > 0));
+  const hasExtensions = baseProfile.extensions !== undefined;
+  const profileEmpty = appsEmpty && !hasInitialize && !hasExtensions;
+
+  return {
+    ...prev,
+    mcpProfile: profileEmpty
+      ? undefined
+      : { ...baseProfile, apps: appsEmpty ? undefined : nextApps },
+  };
+}
+
+/**
  * Deep-clone an mcpProfile so editor mutations can't alias the source.
  * Goes through deepCloneJsonValue, but preserves the
  * `HostConfigMcpProfileV1` type at the boundary.

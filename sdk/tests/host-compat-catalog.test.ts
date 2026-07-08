@@ -5,6 +5,7 @@ import {
   bundledHostCompatCatalog,
   evaluateMarketHosts,
   fetchHostCompatCatalog,
+  getTemplateMcpAppsCapabilities,
   hostCompatCatalogEnvelopeSchema,
   hostCompatCatalogSchema,
   type HostCompatCatalog,
@@ -27,8 +28,13 @@ describe("bundledHostCompatCatalog", () => {
     expect(catalog).toBe(bundledHostCompatCatalog());
     expect(Object.isFrozen(catalog)).toBe(true);
     expect(Object.isFrozen(catalog.marketHosts[0])).toBe(true);
-    expect(Object.isFrozen(catalog.capabilitiesById.claude)).toBe(true);
     expect(Object.isFrozen(catalog.openAiCompatByStyle)).toBe(true);
+    expect(Object.isFrozen(catalog.templatesById.mcpjam)).toBe(true);
+    expect(
+      Object.isFrozen(
+        catalog.templatesById.claude.mcpProfile?.apps?.mcpAppsOverrides
+      )
+    ).toBe(true);
   });
 
   it("parses under the catalog schema (lockstep guard: bundled ⊆ wire shape)", () => {
@@ -37,6 +43,21 @@ describe("bundledHostCompatCatalog", () => {
       clone(bundledHostCompatCatalog())
     );
     expect(parsed.success).toBe(true);
+  });
+
+  it("includes full creation templates for market and non-market hosts", () => {
+    const catalog = bundledHostCompatCatalog();
+    expect(catalog.templatesById.claude.hostStyle).toBe("claude");
+    expect(catalog.templatesById.mcpjam.hostStyle).toBe("mcpjam");
+    expect(catalog.templatesById["claude-code"].hostStyle).toBe("claude-code");
+    expect(getTemplateMcpAppsCapabilities(catalog, "mcpjam")).toMatchObject({
+      serverTools: true,
+      message: true,
+    });
+    expect(getTemplateMcpAppsCapabilities(catalog, "claude")).toMatchObject({
+      serverTools: true,
+      message: true,
+    });
   });
 });
 
@@ -82,8 +103,8 @@ describe("buildHostProfilesFromCatalog", () => {
           rendersMcpApps: false,
         },
       ],
-      capabilitiesById: {},
       openAiCompatByStyle: { ghostwriter: true },
+      templatesById: {},
     };
     const [profile] = buildHostProfilesFromCatalog(catalog);
     expect(profile.rendersMcpApps).toBe(false);
@@ -103,8 +124,8 @@ describe("buildHostProfilesFromCatalog", () => {
           rendersMcpApps: false,
         },
       ],
-      capabilitiesById: {},
       openAiCompatByStyle: {},
+      templatesById: {},
     };
     expect(
       buildHostProfilesFromCatalog(catalog)[0].capabilities
@@ -121,10 +142,10 @@ describe("buildHostProfilesFromCatalog", () => {
           rendersMcpApps: true,
         },
       ],
-      // No own entry for "constructor" — the lookup must NOT read
+      // No own template entry for "constructor" — the lookup must NOT read
       // Object.prototype.constructor.
-      capabilitiesById: {},
       openAiCompatByStyle: {},
+      templatesById: {},
     };
     const [profile] = buildHostProfilesFromCatalog(catalog);
     expect(profile.capabilities).toBeDefined();
@@ -142,9 +163,9 @@ describe("buildHostProfilesFromCatalog", () => {
           rendersMcpApps: false,
         },
       ],
-      capabilitiesById: {},
       // No own "toString" entry — the lookup must not read the inherited fn.
       openAiCompatByStyle: {},
+      templatesById: {},
     };
     const [profile] = buildHostProfilesFromCatalog(catalog);
     expect(profile.rendersOpenAiApps).toBe(false);
@@ -158,7 +179,11 @@ describe("buildHostProfilesFromCatalog", () => {
     const catalog = clone(bundledHostCompatCatalog()) as HostCompatCatalog;
     buildHostProfilesFromCatalog(catalog);
     expect(Object.isFrozen(catalog)).toBe(false);
-    expect(Object.isFrozen(catalog.capabilitiesById.claude)).toBe(false);
+    expect(
+      Object.isFrozen(
+        catalog.templatesById.claude.mcpProfile?.apps?.mcpAppsOverrides
+      )
+    ).toBe(false);
     expect(Object.isFrozen(catalog.marketHosts[0])).toBe(false);
   });
 
@@ -185,8 +210,8 @@ describe("evaluateMarketHosts with a catalog", () => {
           rendersMcpApps: true,
         },
       ],
-      capabilitiesById: {},
       openAiCompatByStyle: {},
+      templatesById: {},
     };
     const { reports } = evaluateMarketHosts({ tools: [] }, { catalog });
     expect(reports.map((r) => r.hostId)).toEqual(["solo"]);
@@ -230,28 +255,16 @@ describe("hostCompatCatalogEnvelopeSchema forward-compat", () => {
     }
   });
 
-  it("filters unknown display modes and absorbs widened enums", () => {
+  it("absorbs widened provenance enums", () => {
     const catalog = bundled();
-    (catalog.capabilitiesById.claude.availableDisplayModes as string[]).push(
-      "holodeck"
-    );
     (catalog.marketHosts[0] as Record<string, unknown>).provenance =
       "future-source";
-    (
-      catalog.capabilitiesById.claude as Record<string, unknown>
-    ).widgetDisplayModeRequests = "future-policy";
     const parsed = hostCompatCatalogEnvelopeSchema.safeParse(
       envelopeFor(catalog)
     );
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(
-        parsed.data.catalog.capabilitiesById.claude.availableDisplayModes
-      ).toEqual(["inline", "fullscreen", "pip"]);
       expect(parsed.data.catalog.marketHosts[0].provenance).toBe("assumed");
-      expect(
-        parsed.data.catalog.capabilitiesById.claude.widgetDisplayModeRequests
-      ).toBeUndefined();
     }
   });
 

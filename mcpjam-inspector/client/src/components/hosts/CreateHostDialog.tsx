@@ -22,9 +22,10 @@ import {
   DEFAULT_HOST_TEMPLATE_ID,
   getHostTemplateLogoSrc,
   HOST_TEMPLATES,
-  seedFromHostTemplate,
   type HostTemplateId,
 } from "@/lib/client-templates";
+import type { HostConfigInputV2 } from "@/lib/client-config-v2";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
 
@@ -34,6 +35,10 @@ interface CreateHostDialogProps {
   projectId: string;
   onCreated: (hostId: string) => void;
   initialTemplateId?: HostTemplateId;
+}
+
+function cloneHostTemplateInput(value: unknown): HostConfigInputV2 {
+  return JSON.parse(JSON.stringify(value)) as HostConfigInputV2;
 }
 
 export function CreateHostDialog({
@@ -48,6 +53,7 @@ export function CreateHostDialog({
   const { isAuthenticated } = useConvexAuth();
   const { servers } = useProjectServers({ isAuthenticated, projectId });
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  const catalogState = useHostCatalog();
   // The Claude Code and Codex host templates each run a real CLI harness and are
   // gated behind a PostHog flag while their host profiles are iterated on. Off ⇒
   // drop from the picker grid. Neither is a default or `initialTemplateId` (no
@@ -68,13 +74,32 @@ export function CreateHostDialog({
     initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID
   );
   const [isSaving, setIsSaving] = useState(false);
+  const liveTemplates =
+    catalogState.status === "live" ? catalogState.catalog.templatesById : null;
+  const selectedTemplateInput =
+    liveTemplates && Object.hasOwn(liveTemplates, selectedTemplateId)
+      ? liveTemplates[selectedTemplateId]
+      : undefined;
+  const templatesUnavailableMessage =
+    catalogState.status === "loading"
+      ? "Loading host templates..."
+      : catalogState.status === "fallback" || catalogState.status === "error"
+      ? "Could not load live host templates."
+      : !selectedTemplateInput
+      ? "Selected host template is unavailable."
+      : null;
+  const canCreate =
+    Boolean(name.trim()) &&
+    !isSaving &&
+    catalogState.status === "live" &&
+    Boolean(selectedTemplateInput);
 
   useEffect(() => {
     if (!isOpen) return;
     // Clamp the selection to a visible template. This enforces the
     // flag at the selection source, not just in the grid render: a
     // gated template (e.g. claude-code) can never become
-    // `selectedTemplateId`, so it can't flow into `seedFromHostTemplate`
+    // `selectedTemplateId`, so it can't flow into backend template lookup
     // — even if a future caller passes it as `initialTemplateId` or the
     // flag flips off after the dialog opened (claudeCodeEnabled is in
     // the dep list so a flip-off re-clamps a stranded selection).
@@ -97,7 +122,12 @@ export function CreateHostDialog({
 
   const handleCreate = async () => {
     const trimmed = name.trim();
-    if (!trimmed) return;
+    if (!trimmed || !selectedTemplateInput || catalogState.status !== "live") {
+      if (trimmed && catalogState.status !== "loading") {
+        toast.error("Could not load live host templates");
+      }
+      return;
+    }
     setIsSaving(true);
     try {
       // New hosts start with no seeded servers: keeps creation deliberate.
@@ -107,14 +137,7 @@ export function CreateHostDialog({
       // storm. The current auto-connect toggle is project-scoped (see
       // preferences-store.ts:40), so the original storm risk is gone,
       // but the deliberate-creation framing stays.
-      //
-      // Thread MCPJam's current global theme into the seed so the new
-      // host opens matching the inspector chrome instead of always
-      // defaulting to dark — user can still flip it later from the host
-      // editor.
-      const seed = seedFromHostTemplate(selectedTemplateId, {
-        theme: themeMode,
-      });
+      const seed = cloneHostTemplateInput(selectedTemplateInput);
       // Capture available-server count for analytics (we don't attach
       // them — see above — but knowing the count at creation time is
       // useful signal for onboarding funnels).
@@ -160,16 +183,24 @@ export function CreateHostDialog({
             <div className="grid grid-cols-3 gap-2">
               {visibleTemplates.map((template) => {
                 const isSelected = template.id === selectedTemplateId;
+                const templateAvailable =
+                  catalogState.status === "live" &&
+                  Object.hasOwn(
+                    catalogState.catalog.templatesById,
+                    template.id
+                  );
                 return (
                   <button
                     key={template.id}
                     type="button"
                     onClick={() => setSelectedTemplateId(template.id)}
+                    disabled={!templateAvailable}
                     className={cn(
                       "flex flex-col items-start gap-2 rounded-md border p-3 text-left transition-colors",
                       isSelected
                         ? "border-primary ring-2 ring-primary/30 bg-accent"
-                        : "border-border hover:bg-accent/50"
+                        : "border-border hover:bg-accent/50",
+                      !templateAvailable && "cursor-not-allowed opacity-50"
                     )}
                     aria-pressed={isSelected}
                   >
@@ -185,6 +216,11 @@ export function CreateHostDialog({
                 );
               })}
             </div>
+            {templatesUnavailableMessage && (
+              <p className="text-xs text-muted-foreground">
+                {templatesUnavailableMessage}
+              </p>
+            )}
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="host-name">Name</Label>
@@ -193,7 +229,9 @@ export function CreateHostDialog({
               placeholder="My Host"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+              onKeyDown={(e) =>
+                e.key === "Enter" && canCreate && handleCreate()
+              }
               autoFocus
             />
           </div>
@@ -202,7 +240,7 @@ export function CreateHostDialog({
           <Button variant="outline" onClick={handleClose} disabled={isSaving}>
             Cancel
           </Button>
-          <Button onClick={handleCreate} disabled={!name.trim() || isSaving}>
+          <Button onClick={handleCreate} disabled={!canCreate}>
             {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Create
           </Button>

@@ -64,6 +64,7 @@ describe("GET /api/v1/host-catalog", () => {
     expect(body.catalog.marketHosts).toHaveLength(
       bundledHostCompatCatalog().marketHosts.length
     );
+    expect(body.catalog.templatesById.mcpjam.hostStyle).toBe("mcpjam");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toBe(
       "https://convex-http.example.com/public/host-catalog"
@@ -89,6 +90,9 @@ describe("GET /api/v1/host-catalog", () => {
     expect(body.version).toBe(0);
     expect(body.catalog.marketHosts).toHaveLength(
       bundledHostCompatCatalog().marketHosts.length
+    );
+    expect(body.catalog.templatesById["claude-code"].hostStyle).toBe(
+      "claude-code"
     );
     expect(fetchMock).not.toHaveBeenCalled();
   });

@@ -8,6 +8,7 @@ import {
   mergeMcpAppsCapabilities,
   resolveEffectiveHostCapabilities,
   resolveEffectiveMcpAppsCapabilities,
+  setMcpAppsOverridesOnDraft,
   type HostConfigDtoV2,
   type HostConfigInputV2,
 } from "../client-config-v2";
@@ -300,9 +301,9 @@ describe("harness (real agent runtime)", () => {
   });
 
   it("hostConfigDtoToInput round-trips the harness selector", () => {
-    expect(hostConfigDtoToInput(makeDto({ harness: "claude-code" })).harness).toBe(
-      "claude-code"
-    );
+    expect(
+      hostConfigDtoToInput(makeDto({ harness: "claude-code" })).harness
+    ).toBe("claude-code");
     expect(hostConfigDtoToInput(makeDto({})).harness).toBeUndefined();
   });
 });
@@ -714,6 +715,49 @@ describe("hostCapabilitiesOverrideToMatrix", () => {
       message: true,
       downloadFile: true,
     });
+  });
+});
+
+describe("setMcpAppsOverridesOnDraft", () => {
+  it("writes the matrix override while preserving sibling profile fields", () => {
+    const draft = makeInput({
+      hostCapabilitiesOverride: { openLinks: {} },
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: { clientInfo: { name: "custom", version: "1" } },
+        apps: {
+          uiInitialize: { hostInfo: { name: "Host" } },
+        },
+      },
+    });
+    const next = setMcpAppsOverridesOnDraft(
+      { ...draft, hostCapabilitiesOverride: undefined },
+      { serverTools: true, logging: false }
+    );
+    expect(next.hostCapabilitiesOverride).toBeUndefined();
+    expect(next.mcpProfile?.initialize?.clientInfo).toEqual({
+      name: "custom",
+      version: "1",
+    });
+    expect(next.mcpProfile?.apps?.uiInitialize?.hostInfo).toEqual({
+      name: "Host",
+    });
+    expect(next.mcpProfile?.apps?.mcpAppsOverrides).toEqual({
+      serverTools: true,
+      logging: false,
+    });
+  });
+
+  it("collapses an otherwise empty profile when the override is cleared", () => {
+    const draft = makeInput({
+      mcpProfile: {
+        profileVersion: 1,
+        apps: { mcpAppsOverrides: { serverTools: true } },
+      },
+    });
+    expect(
+      setMcpAppsOverridesOnDraft(draft, undefined).mcpProfile
+    ).toBeUndefined();
   });
 });
 

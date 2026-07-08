@@ -40,11 +40,8 @@ import { routePaths } from "@/lib/app-navigation";
 import { useHostMutations } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import {
-  HOST_TEMPLATES,
-  seedFromHostTemplate,
-  type HostTemplateId,
-} from "@/lib/client-templates";
+import { HOST_TEMPLATES, type HostTemplateId } from "@/lib/client-templates";
+import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 
 /** Compat profile ids (`claude`, `chatgpt`, …) are the same string literals
  * as the host template ids, so a verdict maps to a template with no lookup
@@ -56,6 +53,10 @@ const COMPAT_TEMPLATE_LABEL = new Map<string, string>(
 
 const isHostTemplateId = (id: string): id is HostTemplateId =>
   COMPAT_TEMPLATE_LABEL.has(id);
+
+function cloneHostTemplateInput(value: unknown): HostConfigInputV2 {
+  return JSON.parse(JSON.stringify(value)) as HostConfigInputV2;
+}
 
 const PROVENANCE_LABEL: Record<CompatProvenance, string> = {
   observed: "Observed from a live run",
@@ -169,6 +170,15 @@ export function HostCompatContent({
   const handleTestInHost = async (report: HostCompatReport) => {
     const templateId = report.hostId;
     if (!projectId || !serverId || !isHostTemplateId(templateId)) return;
+    const template =
+      catalogState.status === "live" &&
+      Object.hasOwn(catalogState.catalog.templatesById, templateId)
+        ? catalogState.catalog.templatesById[templateId]
+        : undefined;
+    if (!template) {
+      toast.error("Could not load live host templates");
+      return;
+    }
     const label = COMPAT_TEMPLATE_LABEL.get(templateId) ?? report.hostLabel;
 
     posthog.capture("compat_cta_clicked", {
@@ -181,7 +191,7 @@ export function HostCompatContent({
 
     setCreatingTemplateId(templateId);
     try {
-      const seed = seedFromHostTemplate(templateId, { theme: themeMode });
+      const seed = cloneHostTemplateInput(template);
       const { hostId, hostConfigId } = await createHost({
         projectId,
         name: label,
@@ -238,6 +248,9 @@ export function HostCompatContent({
                   : ""
               }`
             : "";
+          const canCreateFromLiveTemplate =
+            catalogState.status === "live" &&
+            Object.hasOwn(catalogState.catalog.templatesById, report.hostId);
           return (
             <div key={report.hostId} className="py-2.5 first:pt-1.5">
               <div className="flex items-center gap-2">
@@ -290,33 +303,41 @@ export function HostCompatContent({
                   {live.available &&
                     report.rendersWidgets &&
                     live.widgetTool && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-                      disabled={live.runningHostId !== null}
-                      onClick={() => live.run(report)}
-                    >
-                      {live.runningHostId === report.hostId ? (
-                        <>
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                          Rendering…
-                        </>
-                      ) : (
-                        <>
-                          <MonitorPlay className="h-3 w-3" />
-                          Run live
-                        </>
-                      )}
-                    </Button>
-                  )}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+                        disabled={live.runningHostId !== null}
+                        onClick={() => live.run(report)}
+                      >
+                        {live.runningHostId === report.hostId ? (
+                          <>
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            Rendering…
+                          </>
+                        ) : (
+                          <>
+                            <MonitorPlay className="h-3 w-3" />
+                            Run live
+                          </>
+                        )}
+                      </Button>
+                    )}
                   {canCreateHosts && isHostTemplateId(report.hostId) && (
                     <Button
                       size="sm"
                       variant="ghost"
                       className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-                      disabled={creatingTemplateId !== null}
+                      disabled={
+                        creatingTemplateId !== null ||
+                        !canCreateFromLiveTemplate
+                      }
                       onClick={() => handleTestInHost(report)}
+                      title={
+                        canCreateFromLiveTemplate
+                          ? "Test in host"
+                          : "Live host template unavailable"
+                      }
                     >
                       {creatingTemplateId === report.hostId ? (
                         <>
@@ -345,13 +366,12 @@ export function HostCompatContent({
                       (f) => f.lane === lane
                     );
                     if (laneFindings.length === 0) return null;
-                    const laneDot = VERDICT_META[report.lanes[lane].verdict].dot;
+                    const laneDot =
+                      VERDICT_META[report.lanes[lane].verdict].dot;
                     return (
                       <div key={lane}>
                         <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                          <span
-                            className={`h-1 w-1 rounded-full ${laneDot}`}
-                          />
+                          <span className={`h-1 w-1 rounded-full ${laneDot}`} />
                           {LANE_LABEL[lane]}
                         </div>
                         <ul className="space-y-1.5">

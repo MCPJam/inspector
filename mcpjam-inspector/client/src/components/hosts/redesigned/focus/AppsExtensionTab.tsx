@@ -5,6 +5,7 @@ import {
   hostCapabilitiesOverrideToMatrix,
   resolveEffectiveHostCapabilities,
   resolveEffectiveMcpAppsCapabilities,
+  setMcpAppsOverridesOnDraft,
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
 } from "@/lib/client-config-v2";
@@ -33,10 +34,7 @@ import {
   type DisplayMode,
   type McpAppsDimensionKey,
 } from "@/lib/apps-capability-dimensions";
-import {
-  hostSupportsWidgetRendering,
-  isRecord,
-} from "@/lib/host-capabilities";
+import { hostSupportsWidgetRendering, isRecord } from "@/lib/host-capabilities";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
@@ -1014,9 +1012,7 @@ function OpenaiAppsCapabilityMatrix({
           className="flex flex-1 items-center justify-between gap-2 px-3.5 py-2.5 text-left hover:bg-muted/40"
         >
           <div className="flex flex-col gap-0.5">
-            <span className="text-[12px] font-medium">
-              {fInjectShim.label}
-            </span>
+            <span className="text-[12px] font-medium">{fInjectShim.label}</span>
           </div>
           <ChevronDown
             className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
@@ -1171,81 +1167,6 @@ function WidgetDisplayModeRequestsControl({
   );
 }
 
-/**
- * Update `mcpProfile.apps.mcpAppsOverrides` while preserving sibling
- * fields (`sandbox`, `uiInitialize`, `compatRuntime`) and collapsing
- * empties on the way out:
- *
- *   - empty override object → omit `mcpAppsOverrides` from `apps`
- *   - empty `apps` block (no other siblings) → omit `apps` from profile
- *   - profile that's now content-less (only `profileVersion`) →
- *     `mcpProfile: undefined`
- *
- * Mirrors the collapse the bottom of `applyJsonToDraft` already does.
- * Without it, toggling a row and toggling it back leaves a dirty
- * `{ profileVersion: 1, apps: {} }` shell on the draft —
- * `optionalMcpProfileEq` treats that as distinct from `undefined`, so
- * the save button stays armed and the matrix says "Matches host style
- * preset" while the draft is silently dirty.
- *
- * Trade-off: a user who deliberately opted into a content-less
- * `{ profileVersion: 1 }` envelope (by hand-editing the JSON) will
- * see that stub dropped when they touch the matrix. We accept that:
- * the typed-in `{ profileVersion: 1 }` carries no semantic content
- * the resolver consumes, and the common case (user toggles via
- * matrix UI, expects clean revert) is overwhelmingly more frequent.
- * If we ever model the matrix and the openai shim's
- * `setCompatRuntimeOnDraft` consistently, we can revisit by tracking
- * "synthesized vs opted-in" provenance — but that's bigger than this
- * PR.
- */
-function setMcpAppsOverridesOnDraft(
-  prev: HostConfigInputV2,
-  next: McpAppsCapabilities | undefined
-): HostConfigInputV2 {
-  const hasKeys = next !== undefined && Object.keys(next).length > 0;
-  const prevProfile = prev.mcpProfile;
-  const prevApps = prevProfile?.apps ?? {};
-
-  // Rebuild `apps` explicitly so the spread doesn't leak
-  // `mcpAppsOverrides: undefined` into `Object.keys` when we're
-  // clearing the override. Sibling fields (`sandbox`, `uiInitialize`,
-  // `compatRuntime`, future additions) round-trip verbatim.
-  const nextApps: NonNullable<HostConfigMcpProfileV1["apps"]> = {};
-  for (const [key, value] of Object.entries(prevApps)) {
-    if (key === "mcpAppsOverrides") continue;
-    if (value !== undefined) {
-      (nextApps as Record<string, unknown>)[key] = value;
-    }
-  }
-  if (hasKeys) nextApps.mcpAppsOverrides = next;
-  const appsEmpty = Object.keys(nextApps).length === 0;
-
-  // Fast path: no envelope before, no content now → leave draft alone
-  // (no envelope ever synthesized just to immediately collapse it).
-  if (prevProfile === undefined && appsEmpty) {
-    return prev;
-  }
-
-  const baseProfile: HostConfigMcpProfileV1 = prevProfile ?? {
-    profileVersion: 1,
-  };
-  const hasInitialize =
-    baseProfile.initialize !== undefined &&
-    (baseProfile.initialize.clientInfo !== undefined ||
-      (baseProfile.initialize.supportedProtocolVersions &&
-        baseProfile.initialize.supportedProtocolVersions.length > 0));
-  const hasExtensions = baseProfile.extensions !== undefined;
-  const profileEmpty = appsEmpty && !hasInitialize && !hasExtensions;
-
-  return {
-    ...prev,
-    mcpProfile: profileEmpty
-      ? undefined
-      : { ...baseProfile, apps: appsEmpty ? undefined : nextApps },
-  };
-}
-
 const DISPLAY_MODE_LABELS: Record<DisplayMode, string> = {
   inline: "Inline",
   fullscreen: "Fullscreen",
@@ -1397,7 +1318,9 @@ function McpAppsCapabilityMatrix({
   // turning off support clears overrides the same way the window.openai
   // master toggle clears per-method overrides. Shared by the master Switch
   // and the "last capability off" auto-disable.
-  const withoutMcpUiExtension = (prev: HostConfigInputV2): HostConfigInputV2 => {
+  const withoutMcpUiExtension = (
+    prev: HostConfigInputV2
+  ): HostConfigInputV2 => {
     const nextCaps: Record<string, unknown> = {
       ...(prev.clientCapabilities ?? {}),
     };
@@ -1422,7 +1345,10 @@ function McpAppsCapabilityMatrix({
     if (prev.hostStyle === "mistral" && Object.keys(nextCaps).length === 0) {
       nextCaps.extensions = {};
     }
-    let nextDraft: HostConfigInputV2 = { ...prev, clientCapabilities: nextCaps };
+    let nextDraft: HostConfigInputV2 = {
+      ...prev,
+      clientCapabilities: nextCaps,
+    };
     nextDraft = setMcpAppsOverridesOnDraft(nextDraft, undefined);
     if (nextDraft.hostCapabilitiesOverride !== undefined) {
       nextDraft = { ...nextDraft, hostCapabilitiesOverride: undefined };
@@ -1730,7 +1656,9 @@ function McpAppsCapabilityMatrix({
                 key={key}
                 dimensionKey={key}
                 description={description}
-                effective={advertised ? Boolean(effectiveCapabilities[key]) : false}
+                effective={
+                  advertised ? Boolean(effectiveCapabilities[key]) : false
+                }
                 onToggle={(next) =>
                   advertised
                     ? setBooleanOverride(key, next)
@@ -1803,7 +1731,10 @@ export function AppsExtensionTab({
     // control fieldset can reach.
     <fieldset disabled={readOnly} className="contents">
       <div className="flex h-full min-h-[480px] flex-col gap-3">
-        <OpenaiAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
+        <OpenaiAppsCapabilityMatrix
+          draft={draft}
+          onDraftChange={onDraftChange}
+        />
         {/* Two-matrix architecture: window.openai (shim) and app.* (spec
             bridge) are independent surfaces and never cross-gate. The
             subtitle on each section makes this explicit so users don't

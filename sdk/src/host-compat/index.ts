@@ -25,6 +25,7 @@ export {
 export {
   bundledHostCompatCatalog,
   buildHostProfilesFromCatalog,
+  getTemplateMcpAppsCapabilities,
   type EvaluateMarketHostsOptions,
   type HostCompatCatalog,
   type HostCompatCatalogHost,

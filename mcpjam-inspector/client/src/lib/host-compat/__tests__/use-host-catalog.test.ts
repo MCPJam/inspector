@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, waitFor, act } from "@testing-library/react";
+import { renderHook, waitFor } from "@testing-library/react";
 
 // Partial-mock the SDK module so `fetchHostCompatCatalog` is controllable while
 // the real `bundledHostCompatCatalog`/profiles/engine keep working.
@@ -106,39 +106,38 @@ describe("useHostCatalog", () => {
     resetHostCatalogForTests();
   });
 
-  it("starts null, then exposes the live catalog once the fetch resolves", async () => {
+  it("starts loading, then exposes the live catalog once the fetch resolves", async () => {
     fetchMock.mockResolvedValue(liveResult(5));
     const { result } = renderHook(() => useHostCatalog());
-    expect(result.current).toBeNull();
-    await waitFor(() => expect(result.current).not.toBeNull());
-    expect(result.current?.source).toBe("live");
-    expect(result.current?.version).toBe(5);
+    expect(result.current.status).toBe("loading");
+    await waitFor(() => expect(result.current.status).toBe("live"));
+    expect(result.current.source).toBe("live");
+    expect(result.current.version).toBe(5);
   });
 
-  it("stays null when the proxy served its bundled fallback", async () => {
+  it("exposes fallback status when the proxy served its bundled fallback", async () => {
     fetchMock.mockResolvedValue({ ...liveResult(0), source: "bundled" });
     const { result } = renderHook(() => useHostCatalog());
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(result.current).toBeNull();
+    await waitFor(() => expect(result.current.status).toBe("fallback"));
+    expect(result.current.source).toBe("bundled");
+    expect(result.current.catalog?.templatesById.mcpjam.hostStyle).toBe(
+      "mcpjam"
+    );
   });
 
-  it("stays null when the fetch fails", async () => {
+  it("exposes error status when the fetch fails", async () => {
     fetchMock.mockResolvedValue({ ok: false, reason: "network" });
     const { result } = renderHook(() => useHostCatalog());
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(result.current).toBeNull();
+    await waitFor(() => expect(result.current.status).toBe("error"));
+    expect(result.current.catalog).toBeNull();
   });
 
   it("dedupes the fetch across concurrent consumers", async () => {
     fetchMock.mockResolvedValue(liveResult(5));
     const a = renderHook(() => useHostCatalog());
     const b = renderHook(() => useHostCatalog());
-    await waitFor(() => expect(a.result.current).not.toBeNull());
-    await waitFor(() => expect(b.result.current).not.toBeNull());
+    await waitFor(() => expect(a.result.current.status).toBe("live"));
+    await waitFor(() => expect(b.result.current.status).toBe("live"));
     // Module-level in-flight dedup: one fetch served both consumers.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -146,22 +145,22 @@ describe("useHostCatalog", () => {
   it("a consumer mounting after the cache is populated sees live immediately", async () => {
     fetchMock.mockResolvedValue(liveResult(7));
     const first = renderHook(() => useHostCatalog());
-    await waitFor(() => expect(first.result.current).not.toBeNull());
+    await waitFor(() => expect(first.result.current.status).toBe("live"));
     // Second mount reads the populated module cache synchronously.
     const second = renderHook(() => useHostCatalog());
-    expect(second.result.current?.version).toBe(7);
+    expect(second.result.current.version).toBe(7);
   });
 
   it("resetHostCatalogForTests clears the memo between cases", async () => {
     fetchMock.mockResolvedValue(liveResult(5));
     const first = renderHook(() => useHostCatalog());
-    await waitFor(() => expect(first.result.current).not.toBeNull());
+    await waitFor(() => expect(first.result.current.status).toBe("live"));
 
     resetHostCatalogForTests();
-    // A fresh mount after reset starts from null again (memo cleared) rather
+    // A fresh mount after reset starts from loading again (memo cleared) rather
     // than leaking the prior catalog.
     fetchMock.mockResolvedValue({ ok: false, reason: "network" });
     const second = renderHook(() => useHostCatalog());
-    expect(second.result.current).toBeNull();
+    expect(second.result.current.status).toBe("loading");
   });
 });
