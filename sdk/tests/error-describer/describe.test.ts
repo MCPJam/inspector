@@ -274,7 +274,39 @@ describe("describeError — -32022 protocol version rejected enrichment", () => 
     });
     expect(out.slug).toBe("jsonrpc/protocol_version_rejected");
     expect(out.oneLine).toContain("2025-06-18");
-    expect(out.oneLine).toContain("2026-07-28, 2025-11-25");
+    expect(out.oneLine).toContain("2026-07-28");
+    expect(out.oneLine.toLowerCase()).toContain("auto");
+  });
+
+  it("keeps the actionable fix even when the supported list is huge", () => {
+    const many = Array.from(
+      { length: 40 },
+      (_, i) => `2099-12-${String((i % 28) + 1).padStart(2, "0")}`,
+    );
+    const out = describeError(
+      makeError("Unsupported protocol version", {
+        code: -32022,
+        data: { supported: many, requested: "2025-11-25" },
+      }),
+    );
+    // The fix text is placed before the server-controlled list, so the 200-char
+    // truncation drops the list — never the "set to Auto" guidance.
+    expect(out.oneLine.toLowerCase()).toContain("auto");
+    expect(out.oneLine).toContain("2025-11-25");
+  });
+
+  it("redacts secrets echoed back in server-supplied version data", () => {
+    const out = describeError(
+      makeError("Unsupported protocol version", {
+        code: -32022,
+        data: {
+          supported: ["2026-07-28"],
+          requested: "Bearer sk-live-deadbeef.secret.value",
+        },
+      }),
+    );
+    expect(out.slug).toBe("jsonrpc/protocol_version_rejected");
+    expect(out.oneLine).not.toContain("sk-live-deadbeef.secret.value");
   });
 
   it("falls back to the static catalog copy when data is absent", () => {

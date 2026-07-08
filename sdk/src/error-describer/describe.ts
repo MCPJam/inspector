@@ -190,6 +190,11 @@ function extractProtocolVersionData(
  * because it's per-server. Falls back to the catalog `oneLine` when the
  * error carries no usable `data`.
  */
+/** Max chars kept per server-supplied version value before ellipsizing. */
+const PV_VALUE_MAX = 24;
+/** Max number of `supported` versions listed before collapsing to "+N more". */
+const PV_SUPPORTED_MAX = 6;
+
 function maybeEnrichProtocolVersionRejected(
   entry: ErrorCatalogEntry,
   slug: string,
@@ -198,18 +203,37 @@ function maybeEnrichProtocolVersionRejected(
   if (slug !== "jsonrpc/protocol_version_rejected") return entry;
   const data = extractProtocolVersionData(error);
   if (!data) return entry;
+
+  // `requested` / `supported` are server-controlled. Redact (a hostile or
+  // misconfigured server could echo a bearer token / secret back in `data`)
+  // and clamp length so one pathological value can't blow the one-line budget.
+  const clamp = (v: string): string => {
+    const redacted = redactString(v);
+    return redacted.length > PV_VALUE_MAX
+      ? `${redacted.slice(0, PV_VALUE_MAX - 1)}…`
+      : redacted;
+  };
+
+  const requested = data.requested ? clamp(data.requested) : undefined;
+  const allSupported = data.supported ?? [];
+  const supported = allSupported.slice(0, PV_SUPPORTED_MAX).map(clamp);
+  const overflow = allSupported.length - supported.length;
+
   const parts: string[] = [];
   parts.push(
-    data.requested
-      ? `The server does not support MCP protocol version "${data.requested}".`
+    requested
+      ? `The server does not support MCP protocol version "${requested}".`
       : "The server does not support the pinned MCP protocol version.",
   );
-  if (data.supported && data.supported.length > 0) {
-    parts.push(`It supports: ${data.supported.join(", ")}.`);
-  }
+  // Actionable fix goes BEFORE the server-controlled list so truncation of a
+  // long/numerous `supported` list can never drop the "set to Auto" guidance.
   parts.push(
     "Set this server's protocol version to Auto (or pin a supported version) in the connection settings.",
   );
+  if (supported.length > 0) {
+    const suffix = overflow > 0 ? `, +${overflow} more` : "";
+    parts.push(`Server supports: ${supported.join(", ")}${suffix}.`);
+  }
   return { ...entry, oneLine: truncateOneLine(parts.join(" ")) };
 }
 
