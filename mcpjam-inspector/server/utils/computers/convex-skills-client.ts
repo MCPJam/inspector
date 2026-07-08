@@ -217,6 +217,8 @@ export async function convexCreateSkill(
     description: string;
     content: string;
     sharing?: SkillSharing;
+    /** Preserved spec frontmatter (backend re-validates + size-caps). */
+    extraFrontmatter?: SkillExtraFrontmatterInput;
   },
 ): Promise<CloudSkillDetail> {
   return await makeClient(bearer).mutation(FN.create as any, args);

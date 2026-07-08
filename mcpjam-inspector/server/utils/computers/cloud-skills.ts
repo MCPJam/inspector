@@ -33,6 +33,7 @@ import {
   type CloudSkillDetail,
   type CloudSkillFileMeta,
   type CloudSkillListItem,
+  type SkillExtraFrontmatterInput,
   type SkillSharing,
 } from "./convex-skills-client.js";
 import { getMimeType, isTextMimeType } from "../skill-parser.js";
@@ -156,6 +157,8 @@ export function createCloudSkill(
     description: string;
     content: string;
     sharing?: SkillSharing;
+    /** Preserved spec frontmatter (backend re-validates + size-caps). */
+    extraFrontmatter?: SkillExtraFrontmatterInput;
   }
 ): Promise<CloudSkillDetail> {
   return run(() =>

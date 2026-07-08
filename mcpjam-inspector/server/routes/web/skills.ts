@@ -37,6 +37,10 @@ import {
   MAX_SKILL_CONTENT_BYTES,
   type CloudSkillsContext,
 } from "../../utils/computers/cloud-skills.js";
+import {
+  parseSkillMdWithExtras,
+  type ParsedSkillMdWithExtras,
+} from "../../utils/skill-extra-frontmatter.js";
 
 const skills = new Hono();
 
@@ -99,6 +103,19 @@ const skillContentSchema = z
     `Skill content must be at most ${MAX_SKILL_CONTENT_BYTES} bytes`,
   );
 
+/**
+ * Raw SKILL.md cap: the body cap plus headroom for frontmatter (mirrors the
+ * sandbox-adoption scanner's bound-before-parse rule).
+ */
+const MAX_RAW_SKILL_MD_BYTES = MAX_SKILL_CONTENT_BYTES + 64 * 1024;
+const skillMdSchema = z
+  .string()
+  .min(1)
+  .refine(
+    (s) => new TextEncoder().encode(s).length <= MAX_RAW_SKILL_MD_BYTES,
+    `SKILL.md must be at most ${MAX_RAW_SKILL_MD_BYTES} bytes`,
+  );
+
 skills.post("/list", async (c) =>
   handleRoute(c, async () => {
     const body = parseWithSchema(projectOnly, await readJsonBody(c));
@@ -147,15 +164,44 @@ skills.post("/create", async (c) =>
         description: z.string().min(1),
         content: skillContentSchema,
         sharing: sharingSchema,
+        // Optional RAW SKILL.md. When present it is parsed SERVER-SIDE and its
+        // description/content/extraFrontmatter become authoritative (the
+        // client's naive frontmatter parse drops preserved fields like
+        // `allowed-tools`). Absent ⇒ legacy behavior, unchanged.
+        skillMd: skillMdSchema.optional(),
       }),
       await readJsonBody(c),
     );
+    let description = body.description;
+    let content = body.content;
+    let extraFrontmatter: ParsedSkillMdWithExtras["extraFrontmatter"];
+    if (body.skillMd !== undefined) {
+      const parsed = parseSkillMdWithExtras(body.skillMd, "uploaded SKILL.md");
+      if (!parsed) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          "Invalid SKILL.md — frontmatter must include a valid 'name' and a 'description' (max 1024 characters).",
+        );
+      }
+      if (parsed.name !== body.name) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          `SKILL.md frontmatter name '${parsed.name}' does not match the skill name '${body.name}'.`,
+        );
+      }
+      description = parsed.description;
+      content = parsed.content;
+      extraFrontmatter = parsed.extraFrontmatter;
+    }
     const skill = await run(async () =>
       createCloudSkill(await ctxFrom(c, body.projectId), {
         name: body.name,
-        description: body.description,
-        content: body.content,
+        description,
+        content,
         ...(body.sharing ? { sharing: body.sharing } : {}),
+        ...(extraFrontmatter ? { extraFrontmatter } : {}),
       }),
     );
     return { success: true, skill };

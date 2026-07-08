@@ -180,10 +180,22 @@ export async function getSkill(
 }
 
 export async function uploadSkill(
-  data: { name: string; description: string; content: string },
+  data: {
+    name: string;
+    description: string;
+    content: string;
+    /**
+     * The RAW SKILL.md text, when the caller has it. Cloud create parses it
+     * SERVER-SIDE so preserved frontmatter (`allowed-tools` / `license` / …)
+     * survives the upload — the local `parseSkillMd` here only extracts
+     * description/body. Ignored by the local-FS path.
+     */
+    skillMd?: string;
+  },
   source?: SkillsSource,
   sharing: SkillSharing = "user"
 ): Promise<Skill> {
+  const { skillMd, ...fields } = data;
   if (isCloud(source)) {
     const body = await webPost<
       {
@@ -192,12 +204,14 @@ export async function uploadSkill(
         description: string;
         content: string;
         sharing: SkillSharing;
+        skillMd?: string;
       },
       { skill: CloudSkillWire }
     >("/api/web/skills/create", {
       projectId: source.projectId,
-      ...data,
+      ...fields,
       sharing,
+      ...(skillMd !== undefined ? { skillMd } : {}),
     });
     return cloudToSkill(body.skill);
   }
@@ -205,7 +219,7 @@ export async function uploadSkill(
   const res = await authFetch("/api/mcp/skills/upload", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
+    body: JSON.stringify(fields),
   });
   let body: any = null;
   try {
@@ -237,12 +251,16 @@ export async function uploadSkillFolder(
     // failure — validation / permission / server, a SKILL.md-only duplicate
     // (nothing to retry), OR a same-name upload with CHANGED instructions —
     // rethrows so the user sees the conflict instead of a false success.
-    const { description, body } = parseSkillMd(await skillMdFile.text());
+    // Send the RAW SKILL.md too: the server parses it authoritatively so
+    // preserved frontmatter (allowed-tools / license / …) survives; the local
+    // parse below only feeds the legacy description/content fields.
+    const rawSkillMd = await skillMdFile.text();
+    const { description, body } = parseSkillMd(rawSkillMd);
     const supporting = files.filter((f) => f !== skillMdFile);
     let skill: Skill;
     try {
       skill = await uploadSkill(
-        { name: skillName, description, content: body },
+        { name: skillName, description, content: body, skillMd: rawSkillMd },
         source,
         sharing
       );

@@ -28,8 +28,8 @@ import { isValidSkillName } from "../../../shared/skill-types.js";
 import {
   convexAdoptComputerSkills,
   type AdoptSkillInput,
-  type SkillExtraFrontmatterInput,
 } from "../computers/convex-skills-client.js";
+import { extractExtraFrontmatter } from "../skill-extra-frontmatter.js";
 import { logger } from "../logger.js";
 
 const SKILLS_BASE = "/home/user/.claude/skills";
@@ -94,43 +94,6 @@ async function dirHasSupportingFiles(
     // Can't tell → be conservative and treat as file-backed (skip adoption).
     return true;
   }
-}
-
-/** Extract the preserved optional spec frontmatter (best-effort, lenient). */
-function extractExtraFrontmatter(
-  data: Record<string, unknown>
-): SkillExtraFrontmatterInput | undefined {
-  const out: SkillExtraFrontmatterInput = {};
-  if (typeof data.license === "string") out.license = data.license;
-  if (typeof data.compatibility === "string") {
-    out.compatibility = data.compatibility;
-  }
-  // `allowed-tools` may be a comma-separated string (Claude Code) or a YAML list.
-  const allowed = data["allowed-tools"] ?? data.allowedTools;
-  if (typeof allowed === "string") {
-    const list = allowed
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (list.length > 0) out.allowedTools = list;
-  } else if (Array.isArray(allowed)) {
-    const list = allowed.filter((t): t is string => typeof t === "string");
-    if (list.length > 0) out.allowedTools = list;
-  }
-  if (
-    data.metadata &&
-    typeof data.metadata === "object" &&
-    !Array.isArray(data.metadata)
-  ) {
-    const md: Record<string, string> = {};
-    for (const [k, v] of Object.entries(
-      data.metadata as Record<string, unknown>
-    )) {
-      md[k] = typeof v === "string" ? v : String(v);
-    }
-    if (Object.keys(md).length > 0) out.metadata = md;
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**
