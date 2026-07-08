@@ -6,7 +6,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import posthog from "posthog-js";
 import {
   Circle,
@@ -124,6 +124,9 @@ import {
   getEffectiveSuiteServers,
   getSelectedSuiteHostRunPlan,
 } from "./helpers";
+import { useHost } from "@/hooks/useClients";
+import { useHarnessBuiltinToolCatalog } from "@/hooks/useHarnessBuiltinTools";
+import { mergeSystemToolsIntoAvailableTools } from "./harness-system-tools";
 import { parseDraftTestCaseId } from "./draft-test-case";
 import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
 import { computeIterationResult } from "./pass-criteria";
@@ -1079,6 +1082,31 @@ export function TestTemplateEditor({
     return map;
   }, [suite?.hostAttachments]);
   const hasHostAttachments = (suite?.hostAttachments?.length ?? 0) > 0;
+
+  // ── Harness system tools (assertable built-ins) ──────────────────────────
+  // Mirror the server's `loadSuiteHostConfig` precedence: with host
+  // attachments the run executes under the SELECTED attached host's config;
+  // only an attachment-less suite runs under the suite hostConfig. Gate the
+  // system-tool merge on whichever of those actually carries a harness, so
+  // emulated suites never see bash/read/… in the assertion dropdowns.
+  const { isAuthenticated } = useConvexAuth();
+  const { host: selectedQuickRunHost } = useHost({
+    isAuthenticated,
+    hostId: hasHostAttachments ? (selectedQuickRunHostId ?? null) : null,
+  });
+  const suiteRunHarnessId = hasHostAttachments
+    ? (selectedQuickRunHost?.config?.harness ?? null)
+    : (hostConfigBaseline?.harness ?? null);
+  const { tools: harnessBuiltinCatalog } =
+    useHarnessBuiltinToolCatalog(suiteRunHarnessId);
+  // MCP-server tools plus the harness's native built-ins — what the expected
+  // tool calls / check pickers offer. Pickers needing an MCPJam-invokable tool
+  // (pinned tool calls, widget selects) filter `source === "system"` back out.
+  const assertableTools = useMemo(
+    () =>
+      mergeSystemToolsIntoAvailableTools(availableTools, harnessBuiltinCatalog),
+    [availableTools, harnessBuiltinCatalog],
+  );
 
   const missingServers = useMemo(
     () =>
@@ -2995,7 +3023,7 @@ export function TestTemplateEditor({
                       <StepListEditor
                         steps={editForm.steps}
                         onStepsChange={setSteps}
-                        availableTools={availableTools}
+                        availableTools={assertableTools}
                         // Thread the effective argumentMatching mode (suite
                         // default merged with case override) so the per-leaf
                         // placeholder picker offers the right options and
