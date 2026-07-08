@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-vi.mock("../../computers/convex-skills-client", () => ({
+vi.mock("../../computers/convex-skills-client", async (importOriginal) => ({
+  // Keep the real pure helpers (e.g. normalizeProvenance); only the two network
+  // query fns are stubbed below.
+  ...(await importOriginal<
+    typeof import("../../computers/convex-skills-client")
+  >()),
   convexListSkillsForRuntime: vi.fn(),
   convexListSkillsForRuntimeExecution: vi.fn(),
 }));
@@ -9,6 +14,7 @@ import {
   fetchRuntimeSkills,
   skillsFingerprint,
   toHarnessSkills,
+  toPinnableSkill,
   claudeCodeSafeSkills,
   toYamlDoubleQuoted,
   type RuntimeSkill,
@@ -116,6 +122,50 @@ describe("skillsFingerprint", () => {
       skillsFingerprint([skill({ skillId: "s1", name: "renamed" })]),
     ).not.toBe(base); // rename
     expect(skillsFingerprint([])).not.toBe(base); // delete
+  });
+
+  it("is UNCHANGED for a provenance-only difference (metadata, not box state)", () => {
+    const base = skillsFingerprint([
+      skill({ skillId: "s1", provenance: "authored" }),
+    ]);
+    const adopted = skillsFingerprint([
+      skill({ skillId: "s1", provenance: "computer-adopted" }),
+    ]);
+    expect(adopted).toBe(base);
+  });
+});
+
+describe("toPinnableSkill", () => {
+  it("maps aggregateHash → contentHash and normalizes provenance", () => {
+    expect(
+      toPinnableSkill(
+        skill({
+          skillId: "s1",
+          name: "pdf",
+          description: "Process PDFs",
+          content: "body",
+          aggregateHash: "agg",
+          provenance: "computer-adopted",
+        }),
+      ),
+    ).toEqual({
+      name: "pdf",
+      description: "Process PDFs",
+      content: "body",
+      contentHash: "agg",
+      provenance: "computer-adopted",
+    });
+  });
+
+  it("defaults an absent/unknown provenance to 'authored'", () => {
+    expect(toPinnableSkill(skill({ skillId: "s1" })).provenance).toBe(
+      "authored",
+    );
+    expect(
+      toPinnableSkill(
+        skill({ skillId: "s1", provenance: "future-value" as never }),
+      ).provenance,
+    ).toBe("authored");
   });
 });
 

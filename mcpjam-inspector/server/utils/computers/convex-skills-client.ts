@@ -12,9 +12,20 @@
  * materializer passes the turn's `authHeader`.
  */
 import { ConvexHttpClient } from "convex/browser";
+import type { SkillProvenance } from "../../../shared/skill-types.js";
 import type { ExecutionScope } from "../execution-scope.js";
 
 export type SkillSharing = "user" | "project";
+
+/**
+ * Normalize a wire `provenance` value (typed as a plain `string` on DTOs so an
+ * enum value a shipped inspector doesn't know can't break deserialization) to a
+ * known {@link SkillProvenance}. Absent / unknown ⇒ 'authored' — the legacy
+ * default, matching the backend `rowProvenance` read-normalizer.
+ */
+export function normalizeProvenance(value: string | undefined): SkillProvenance {
+  return value === "computer-adopted" ? "computer-adopted" : "authored";
+}
 
 export interface CloudSkillListItem {
   skillId: string;
@@ -24,6 +35,8 @@ export interface CloudSkillListItem {
   sharing: SkillSharing;
   isOwner: boolean;
   aggregateHash: string;
+  /** Wire-tolerant (see {@link normalizeProvenance}); absent ⇒ 'authored'. */
+  provenance?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -49,6 +62,8 @@ export interface CloudSkillRuntimeItem {
   name: string;
   description: string;
   content: string;
+  /** Wire-tolerant (see {@link normalizeProvenance}); absent ⇒ 'authored'. */
+  provenance?: string;
   aggregateHash: string;
 }
 

@@ -125,3 +125,86 @@ describe("evaluateMultiTurnResults — pinned exclusion", () => {
     expect(result.missing).toEqual([{ toolName: "save", arguments: {} }]);
   });
 });
+
+describe("evaluateMultiTurnResults — skill-tool exemption (PR-E1)", () => {
+  const zeroExpectTurn = { id: "t1", prompt: "answer me", expectedToolCalls: [] };
+  const noExtras = { maxExtraToolCalls: 0 } as const;
+  const load = { toolName: "loadSkill", arguments: { name: "pdf" } };
+  const list = { toolName: "listSkills", arguments: {} };
+
+  it("exempts skill-tool calls from a maxExtraToolCalls:0 turn when active", () => {
+    const result = evaluateMultiTurnResults(
+      [zeroExpectTurn],
+      [[list, load]],
+      false,
+      noExtras,
+      { skillToolsActive: true },
+    );
+    expect(result.passed).toBe(true);
+    expect(result.unexpected).toEqual([]);
+    // ...but the loads STAY visible in the summary for trace/judge/adherence.
+    expect(result.toolsCalled).toEqual([list, load]);
+  });
+
+  it("still FAILS on a non-skill extra call even with skills active", () => {
+    const result = evaluateMultiTurnResults(
+      [zeroExpectTurn],
+      [[load, { toolName: "save", arguments: {} }]],
+      false,
+      noExtras,
+      { skillToolsActive: true },
+    );
+    expect(result.passed).toBe(false);
+    // Only the non-skill call is charged as unexpected; the load is exempt.
+    expect(result.unexpected).toEqual([{ toolName: "save", arguments: {} }]);
+  });
+
+  it("does NOT exempt when skillToolsActive is false (byte-identical legacy)", () => {
+    const result = evaluateMultiTurnResults(
+      [zeroExpectTurn],
+      [[load]],
+      false,
+      noExtras,
+      { skillToolsActive: false },
+    );
+    expect(result.passed).toBe(false);
+    expect(result.unexpected).toEqual([load]);
+  });
+
+  it("a skill tool NAMED in expectedToolCalls is matched, not exempted", () => {
+    // Skill-CI case: expecting loadSkill and it IS called → passes.
+    const expectTurn = {
+      id: "t1",
+      prompt: "use the skill",
+      expectedToolCalls: [load],
+    };
+    const ok = evaluateMultiTurnResults([expectTurn], [[load]], false, noExtras, {
+      skillToolsActive: true,
+    });
+    expect(ok.passed).toBe(true);
+
+    // Expecting loadSkill but it is NOT called → missing (exemption must not hide it).
+    const missing = evaluateMultiTurnResults(
+      [expectTurn],
+      [[list]],
+      false,
+      noExtras,
+      { skillToolsActive: true },
+    );
+    expect(missing.passed).toBe(false);
+    expect(missing.missing).toEqual([load]);
+  });
+
+  it("a negative test is not tripped by an unexpected skill load when active", () => {
+    const result = evaluateMultiTurnResults(
+      [zeroExpectTurn],
+      [[load]],
+      true, // isNegativeTest
+      undefined,
+      { skillToolsActive: true },
+    );
+    expect(result.passed).toBe(true);
+    expect(result.unexpected).toEqual([]);
+    expect(result.toolsCalled).toEqual([load]);
+  });
+});

@@ -31,6 +31,47 @@ export type ArgumentMismatch = EvalArgumentMismatch;
 export type OutOfOrderToolCall = EvalOutOfOrderToolCall;
 
 /**
+ * The emulated skill tool names, across BOTH delivery paths:
+ *   - cloud / pinned: `listSkills`, `loadSkill` (`cloud-skill-tools.ts`)
+ *   - local FS:       `loadSkill`, `listSkillFiles`, `readSkillFile`
+ *     (`skill-tools.ts`; the local path lists skills in the prompt, not a tool)
+ *
+ * The matcher exempts calls to these from tool-call expectations (a skill LOAD
+ * is agent housekeeping, not a task action), so a `maxExtraToolCalls: 0` case
+ * doesn't fail merely because the model discovered/loaded a skill. The exemption
+ * is overridden per-turn when a skill tool is NAMED in `expectedToolCalls` — so
+ * skill-CI cases can still assert `loadSkill`. Kept here (a shared boundary
+ * module, no SDK dependency) so both runner and any future client agree.
+ */
+export const SKILL_TOOL_NAMES = [
+  "listSkills",
+  "loadSkill",
+  "listSkillFiles",
+  "readSkillFile",
+] as const;
+
+const SKILL_TOOL_NAME_SET: ReadonlySet<string> = new Set(SKILL_TOOL_NAMES);
+
+/** Whether a tool name is one of the emulated skill tools. */
+export function isSkillToolName(name: string): boolean {
+  return SKILL_TOOL_NAME_SET.has(name);
+}
+
+/**
+ * Whether skill tools are active in a prepared tool set — true when ANY skill
+ * tool is advertised. Runners pass the result as `skillToolsActive` so the
+ * matcher only filters skill calls when skills were genuinely in play (never for
+ * a suite that happens to have no skills). Robust across both paths: cloud
+ * advertises `listSkills`, local FS advertises `loadSkill`.
+ */
+export function hasSkillTools(toolNames: Iterable<string>): boolean {
+  for (const name of toolNames) {
+    if (SKILL_TOOL_NAME_SET.has(name)) return true;
+  }
+  return false;
+}
+
+/**
  * Zod schema mirroring `EvalMatchOptions` for transport boundaries
  * (HTTP request bodies, Convex args). Keep field names + value enums in
  * lockstep with `@mcpjam/sdk/matchers`.

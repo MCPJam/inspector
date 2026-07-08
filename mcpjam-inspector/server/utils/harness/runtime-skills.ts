@@ -21,8 +21,10 @@
 import {
   convexListSkillsForRuntime,
   convexListSkillsForRuntimeExecution,
+  normalizeProvenance,
   type CloudSkillRuntimeItem,
 } from "../computers/convex-skills-client.js";
+import type { PinnableSkill } from "../../../shared/skill-types.js";
 import type { ExecutionScope } from "../execution-scope.js";
 import { logger } from "../logger.js";
 
@@ -86,6 +88,23 @@ export function skillsFingerprint(skills: RuntimeSkill[]): string {
     h = Math.imul(h, 0x01000193);
   }
   return (h >>> 0).toString(16);
+}
+
+/**
+ * Map a runtime skill to the shared {@link PinnableSkill} contract — the shape
+ * both the eval snapshot factory and a future `mcp-server` catalog adapter
+ * consume. `contentHash` is the runtime item's `aggregateHash` (the drift key
+ * that already folds in supporting files); provenance is normalized off the
+ * wire-tolerant DTO field.
+ */
+export function toPinnableSkill(s: CloudSkillRuntimeItem): PinnableSkill {
+  return {
+    name: s.name,
+    description: s.description,
+    content: s.content,
+    contentHash: s.aggregateHash,
+    provenance: normalizeProvenance(s.provenance),
+  };
 }
 
 /** Adapter-agnostic payload — semantic, unmodified descriptions. */

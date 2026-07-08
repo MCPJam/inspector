@@ -2,10 +2,13 @@ import { describe, it, expect } from "vitest";
 import {
   appendToolCallsForPrompt,
   argumentsMatch,
+  hasSkillTools,
+  isSkillToolName,
   matchToolCalls,
   resolveCasePredicates,
   resolveCaseSuccessPredicates,
   resolveExtrasCap,
+  SKILL_TOOL_NAMES,
   summarizeRenderObservations,
   mergeToolCallsByPromptIndex,
   widgetCallToToolCall,
@@ -403,6 +406,30 @@ describe("resolveExtrasCap", () => {
     expect(
       resolveExtrasCap({ maxExtraToolCalls: null, allowExtraToolCalls: false }),
     ).toBeNull();
+  });
+});
+
+describe("skill tool identification", () => {
+  it("SKILL_TOOL_NAMES covers both delivery paths", () => {
+    expect(SKILL_TOOL_NAMES).toContain("listSkills"); // cloud discovery
+    expect(SKILL_TOOL_NAMES).toContain("loadSkill"); // both paths
+    expect(SKILL_TOOL_NAMES).toContain("listSkillFiles"); // supporting files
+    expect(SKILL_TOOL_NAMES).toContain("readSkillFile");
+  });
+
+  it("isSkillToolName is exact (no substring / non-skill tools)", () => {
+    expect(isSkillToolName("loadSkill")).toBe(true);
+    expect(isSkillToolName("listSkills")).toBe(true);
+    expect(isSkillToolName("loadSkillFoo")).toBe(false);
+    expect(isSkillToolName("save")).toBe(false);
+    expect(isSkillToolName("bash")).toBe(false);
+  });
+
+  it("hasSkillTools detects any skill tool, across both paths", () => {
+    expect(hasSkillTools(["bash", "save"])).toBe(false);
+    expect(hasSkillTools(["bash", "listSkills"])).toBe(true); // cloud
+    expect(hasSkillTools(["loadSkill"])).toBe(true); // local FS
+    expect(hasSkillTools([])).toBe(false);
   });
 });
 

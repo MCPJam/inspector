@@ -59,6 +59,7 @@ import {
   type ModelProvider,
 } from "@/shared/types";
 import {
+  hasSkillTools,
   mergeToolCallsByPromptIndex,
   summarizeRenderObservations,
   widgetToolCallsByPromptIndex,
@@ -2782,6 +2783,9 @@ const runLocalIteration = async ({
       toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
       isNegativeTest: test.isNegativeTest,
       matchOptions: test.matchOptions,
+      // Skill-tool calls are exempt from tool-call expectations (a skill load is
+      // agent housekeeping); active only when skill tools were advertised.
+      skillToolsActive: hasSkillTools(Object.keys(prepared?.allTools ?? {})),
       turnCheckResults,
       effectivePredicates,
       trace: traceForGate,
@@ -3534,6 +3538,8 @@ const runHostedIterationWithBrowser = async (
     toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
     isNegativeTest: test.isNegativeTest,
     matchOptions: test.matchOptions,
+    // Skill-tool calls are exempt from tool-call expectations (see local path).
+    skillToolsActive: hasSkillTools(Object.keys(prepared.allTools)),
     turnCheckResults,
     effectivePredicates,
     trace: traceForGate,
