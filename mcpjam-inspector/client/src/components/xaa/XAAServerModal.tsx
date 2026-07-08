@@ -51,6 +51,7 @@ export function XAAServerModal({
   const [clientId, setClientId] = useState("");
   const [scopes, setScopes] = useState("");
   const [authzIssuer, setAuthzIssuer] = useState("");
+  const [allowPathScopedIssuer, setAllowPathScopedIssuer] = useState(false);
   // Client-secret state mirrors the Connect-page model (shared component):
   // a typed value replaces the saved secret, the Clear toggle removes it.
   const [clientSecret, setClientSecret] = useState("");
@@ -72,6 +73,7 @@ export function XAAServerModal({
     // the space-separated form this modal edits.
     setScopes((derived.scopes ?? "").replace(/,/g, " ").trim());
     setAuthzIssuer(server?.xaaAuthzIssuer ?? "");
+    setAllowPathScopedIssuer(server?.xaaAllowPathScopedIssuer === true);
     setClientSecret("");
     setClearClientSecret(false);
     setXaaSubject(server?.xaaSubject ?? "");
@@ -155,6 +157,7 @@ export function XAAServerModal({
       oauthScopes: scopesArray,
       // Always send the issuer (possibly empty) so clearing it persists.
       xaaAuthzIssuer: trimmedIssuer,
+      xaaAllowPathScopedIssuer: allowPathScopedIssuer,
       // Per-server simulated identity, defaulting to the signed-in user when
       // blank — identical to the Connect page so the two surfaces stay synced.
       xaaSubject: xaaSubject.trim() || signedInEmail || undefined,
@@ -243,6 +246,8 @@ export function XAAServerModal({
               onScopesChange={setScopes}
               xaaAuthzIssuer={authzIssuer}
               onXaaAuthzIssuerChange={setAuthzIssuer}
+              xaaAllowPathScopedIssuer={allowPathScopedIssuer}
+              onXaaAllowPathScopedIssuerChange={setAllowPathScopedIssuer}
               xaaSubject={xaaSubject}
               onXaaSubjectChange={setXaaSubject}
               xaaEmail={xaaEmail}
