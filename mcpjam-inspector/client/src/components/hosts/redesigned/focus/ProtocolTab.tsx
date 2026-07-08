@@ -24,12 +24,20 @@ import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
 type HostProtocolDropdownValue = "auto" | "latest" | "rc";
 
+/**
+ * The concrete wire version the "Latest" option pins. Single source for
+ * both the option label and the dropdown handler so a future stable-MCP
+ * bump can't update one and silently leave "Latest" pinning the old
+ * version via the other.
+ */
+const LATEST_STABLE_PROTOCOL_VERSION = "2025-11-25" as const;
+
 const HOST_PROTOCOL_OPTIONS: Array<{
   value: HostProtocolDropdownValue;
   label: string;
 }> = [
   { value: "auto", label: "Auto (detect per server)" },
-  { value: "latest", label: "Latest (2025-11-25)" },
+  { value: "latest", label: `Latest (${LATEST_STABLE_PROTOCOL_VERSION})` },
   { value: "rc", label: "2026 RC (2026-07-28)" },
 ];
 
@@ -377,7 +385,7 @@ export function ProtocolTab({
                   // off, absence still means "SDK default", so Latest
                   // keeps mapping to `undefined` for hash stability.
                   statelessMcpEnabled
-                  ? "2025-11-25"
+                  ? LATEST_STABLE_PROTOCOL_VERSION
                   : undefined
               );
             }}

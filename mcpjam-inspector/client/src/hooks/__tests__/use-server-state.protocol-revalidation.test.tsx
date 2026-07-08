@@ -237,6 +237,10 @@ beforeEach(() => {
   });
   mockUseDbUserReady.mockReturnValue(true);
   posthogCaptureMock.mockReset();
+  // Flag defaults off per test — the flag-hydration case flips it to true
+  // and must not leak into later (order-independent) expectations.
+  statelessMcpEnabledMock.mockReset();
+  statelessMcpEnabledMock.mockReturnValue(false);
 });
 
 describe("useServerState mcpProtocolVersion re-validation", () => {
