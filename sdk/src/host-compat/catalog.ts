@@ -149,7 +149,7 @@ const MARKET_HOSTS: readonly (HostCompatCatalogHost & {
   },
   {
     id: "slack",
-    label: "Slack",
+    label: "Slackbot",
     provenance: "probe",
     rendersMcpApps: true,
     supportedProtocolVersions: ["2025-06-18"],
