@@ -49,6 +49,7 @@ import {
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
 import { HOSTED_MODE } from "@/lib/config";
+import { isPrivateNetworkUrl } from "@/lib/oauth/private-address";
 import { validateServerFormData } from "@/lib/server-form-validation";
 import {
   injectHostedServerMapping,
@@ -3431,6 +3432,22 @@ export function useServerState({
     ]
   );
 
+  // The hosted backend refreshes imported OAuth tokens from its cloud
+  // environment, so an authorization server on the user's machine (or LAN)
+  // is unreachable at refresh time even though the browser could reach it
+  // during the debugger flow. Warn up front instead of letting the first
+  // refresh fail with a discovery error.
+  const warnIfHostedCannotRefresh = useCallback(
+    (authorizationServerUrl?: string) => {
+      if (!HOSTED_MODE || !authorizationServerUrl) return;
+      if (!isPrivateNetworkUrl(authorizationServerUrl)) return;
+      toast.warning(
+        "This server's authorization server runs on your machine, so tokens can't auto-refresh in hosted mode. Re-run the OAuth flow when they expire, or use local mode for fully-local servers."
+      );
+    },
+    []
+  );
+
   const handleConnectWithTokensFromOAuthFlow = useCallback(
     async (
       serverName: string,
@@ -3459,6 +3476,7 @@ export function useServerState({
       );
       if (result.success) {
         toast.success(`Connected to ${serverName}!`);
+        warnIfHostedCannotRefresh(tokens.authorizationServerUrl);
       } else {
         toast.error(`Connection failed: ${result.error}`);
       }
@@ -3467,6 +3485,7 @@ export function useServerState({
       applyTokensFromOAuthFlow,
       notifyIfClientConfigSyncPending,
       notifyIfProjectNotProvisioned,
+      warnIfHostedCannotRefresh,
     ]
   );
 
@@ -3498,6 +3517,7 @@ export function useServerState({
       );
       if (result.success) {
         toast.success(`Tokens refreshed for ${serverName}!`);
+        warnIfHostedCannotRefresh(tokens.authorizationServerUrl);
       } else {
         toast.error(`Token refresh failed: ${result.error}`);
       }
@@ -3506,6 +3526,7 @@ export function useServerState({
       applyTokensFromOAuthFlow,
       notifyIfClientConfigSyncPending,
       notifyIfProjectNotProvisioned,
+      warnIfHostedCannotRefresh,
     ]
   );
 
