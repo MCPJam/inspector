@@ -85,9 +85,11 @@ import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
 import { resolveHarnessSandbox } from "./resolve-sandbox.js";
 import {
   fetchRuntimeSkills,
+  fetchRuntimeSkillFiles,
   skillsFingerprint,
   claudeCodeSafeSkills,
 } from "./runtime-skills.js";
+import { materializeSkillFiles } from "./materialize-skill-files.js";
 import {
   reconcileSkillDirs,
   appendManagedSkills,
@@ -887,6 +889,27 @@ export async function runHarnessTurn(
               skillsHash: skillsHash ?? "",
               ...(abortSignal ? { signal: abortSignal } : {}),
             }).catch(() => {});
+            // Materialize supporting files AFTER reconcile (the adapter wrote each
+            // SKILL.md; reconcile removed stale managed dirs). Fetched here rather
+            // than at turn start to keep the zero-file fast path free. Fully
+            // fail-soft; guest/swarm scope uses the execution-scoped file query.
+            if (projectId && authHeader) {
+              const runtimeFiles = await fetchRuntimeSkillFiles(
+                authHeader,
+                projectId,
+                executionScope,
+              ).catch(() => []);
+              if (runtimeFiles.length > 0) {
+                await materializeSkillFiles({
+                  session,
+                  files: runtimeFiles,
+                  skillNamesById: new Map(
+                    runtimeSkills.map((s) => [s.skillId, s.name]),
+                  ),
+                  ...(abortSignal ? { signal: abortSignal } : {}),
+                }).catch(() => {});
+              }
+            }
           }
           // Stream the workdir to the client (transient) so the Playground Shell
           // can open a terminal here instead of the box's home. The client keys

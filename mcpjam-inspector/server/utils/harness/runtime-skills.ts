@@ -21,8 +21,11 @@
 import {
   convexListSkillsForRuntime,
   convexListSkillsForRuntimeExecution,
+  convexListSkillFilesForRuntime,
+  convexListSkillFilesForRuntimeExecution,
   normalizeProvenance,
   type CloudSkillRuntimeItem,
+  type CloudSkillRuntimeFile,
 } from "../computers/convex-skills-client.js";
 import type { PinnableSkill } from "../../../shared/skill-types.js";
 import type { ExecutionScope } from "../execution-scope.js";
@@ -65,6 +68,31 @@ export async function fetchRuntimeSkills(
       error: error instanceof Error ? error.message : String(error),
     });
     return { ok: false };
+  }
+}
+
+export type RuntimeSkillFile = CloudSkillRuntimeFile;
+
+/**
+ * Fetch every visible skill's supporting files (with download URLs) for harness
+ * materialization. Returns `[]` on ANY failure (fail-soft — a fetch blip must
+ * never wipe or block; the SKILL.md itself is delivered separately). Scoped vs
+ * member query mirrors {@link fetchRuntimeSkills}.
+ */
+export async function fetchRuntimeSkillFiles(
+  bearer: string,
+  projectId: string,
+  executionScope?: ExecutionScope,
+): Promise<RuntimeSkillFile[]> {
+  try {
+    return executionScope
+      ? await convexListSkillFilesForRuntimeExecution(bearer, executionScope)
+      : await convexListSkillFilesForRuntime(bearer, projectId);
+  } catch (error) {
+    logger.warn("[runtime-skills] file fetch failed; skipping materialization", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
   }
 }
 
