@@ -59,12 +59,14 @@ npx @mcpjam/inspector@latest
   <img src="/images/xaa-debugger/01-inspector-home.png" alt="MCPJam Inspector home screen" />
 </Frame>
 
-**Connect the toy server.** Click **Add Server** and enter:
+**Connect the toy server.** Click **Add Server** (top-right) and fill in the dialog:
 
-- **Type:** HTTP
-- **URL:** `http://localhost:8080/mcp`
-- **Authentication:** Cross-App Access
+- **Server Name:** any name (e.g. `xaa-demo`)
+- **Connection Type:** HTTP, with the URL `http://localhost:8080/mcp`
+- **Authentication:** Cross-App Access (XAA) — the **Identity provider** field then shows *MCPJam test identity provider*
 - **Client ID:** `demo-client` (any value works — the demo server doesn't check it, but the flow needs one)
+
+Then click **Add Server** in the dialog to save and connect.
 
 <Frame caption="Add-server dialog with the toy server URL and Cross-App Access auth">
   <img src="/images/xaa-debugger/02-add-server.png" alt="Add server dialog" />
@@ -72,10 +74,11 @@ npx @mcpjam/inspector@latest
 
 ## 2. Trigger the failure
 
-Open the **XAA Flow** tab and click **Run all**. The handshake advances through
-each step — discover, mock login, exchange the pass, request the token — and
-then stops **red** at the final step, with the card **"MCP server rejected the
-access token."**
+In the left sidebar, open the **XAA Debugger**. In the run panel (top-right),
+click the **▾** next to **Start** and choose **Run all**. The handshake advances
+through each step — discover, mock login, exchange the pass, request the token —
+then fails at the final step (**MCP call**) with a red **"MCP server rejected the
+access token"** card.
 
 <Frame caption="The sequence diagram with the final step failed and the error card">
   <img src="/images/xaa-debugger/03-run-all-failed.png" alt="XAA flow failed at the authenticated MCP request" />
@@ -86,8 +89,8 @@ the office door refused it. So the problem is between the keycard and the door.
 
 ## 3. Inspect the trace
 
-Expand the failed final step — the **authenticated MCP request** (phase 5). Its
-**HTTP entry** shows the request carrying the keycard as an
+Expand the failed final step — the **MCP call** (the authenticated MCP request).
+Its **HTTP entry** shows the request carrying the keycard as an
 `Authorization: Bearer …` header, and the server's **401** response. The toy
 server's response even names the audience it required:
 
@@ -106,8 +109,8 @@ inspector**, as the `resource` claim.)
 Now compare that to what the server's door *requires*. Look back at the toy
 server's startup line: `audience required: https://demo.example.com/mcp`.
 
-<Frame caption="The two addresses side by side: token aud vs. required audience">
-  <img src="/images/xaa-debugger/05-mismatch.png" alt="Token audience versus required audience" />
+<Frame caption="The toy server's startup line — it requires the wrong, public audience">
+  <img src="/images/xaa-debugger/05-mismatch.png" alt="Toy server terminal showing the required audience is https://demo.example.com/mcp" />
 </Frame>
 
 - Keycard is stamped for: `http://localhost:8080/mcp`
@@ -150,7 +153,8 @@ Prefer an inline variable? `CANONICAL_URL=http://localhost:8080/mcp npm start`
 
 ## 6. Re-run and verify
 
-Back in the XAA Flow tab, click **Run all** again. Every step turns green and the
+Back in the **XAA Debugger**, open the run menu (**▾**) and choose **Run all**
+again. Every step turns green, the breadcrumb reads **Flow Complete**, and the
 final MCP call succeeds.
 
 <Frame caption="All steps green — the flow completes">
