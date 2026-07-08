@@ -49,6 +49,7 @@ import {
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
 import { HOSTED_MODE } from "@/lib/config";
+import { isPrivateNetworkUrl } from "@/lib/oauth/private-address";
 import { validateServerFormData } from "@/lib/server-form-validation";
 import {
   injectHostedServerMapping,
@@ -59,6 +60,7 @@ import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
 import {
   captureCurrentReturnPath,
+  isDebugOAuthCallbackPath,
   navigateApp,
   normalizeReturnTargetPath,
   routePaths,
@@ -1581,6 +1583,9 @@ export function useServerState({
         ...(serverEntry.xaaAuthzIssuer !== undefined
           ? { xaaAuthzIssuer: serverEntry.xaaAuthzIssuer }
           : {}),
+        ...(serverEntry.xaaAllowPathScopedIssuer !== undefined
+          ? { xaaAllowPathScopedIssuer: serverEntry.xaaAllowPathScopedIssuer }
+          : {}),
         ...(serverEntry.useXaa !== undefined
           ? { useXaa: serverEntry.useXaa }
           : {}),
@@ -2397,6 +2402,7 @@ export function useServerState({
             oauthFlowProfile: resolvedOAuthProfile,
             hasClientSecret: existingServer?.hasClientSecret,
             xaaAuthzIssuer: existingServer?.xaaAuthzIssuer,
+            xaaAllowPathScopedIssuer: existingServer?.xaaAllowPathScopedIssuer,
             initializationInfo: existingServer?.initializationInfo,
             useOAuth: true,
             lastOAuthTrace: result.oauthTrace,
@@ -2557,7 +2563,7 @@ export function useServerState({
   );
 
   useEffect(() => {
-    if (window.location.pathname.startsWith("/oauth/callback/debug")) {
+    if (isDebugOAuthCallbackPath(window.location.pathname)) {
       return;
     }
 
@@ -2765,6 +2771,9 @@ export function useServerState({
             : getServerBearerTokenState(existingServerForSave),
         xaaAuthzIssuer:
           formData.xaaAuthzIssuer ?? existingServerForSave?.xaaAuthzIssuer,
+        xaaAllowPathScopedIssuer:
+          formData.xaaAllowPathScopedIssuer ??
+          existingServerForSave?.xaaAllowPathScopedIssuer,
         useXaa: formData.useXaa ?? false,
         authServerMode: formData.useXaa
           ? formData.authServerMode ?? "mcpjam"
@@ -3176,6 +3185,9 @@ export function useServerState({
             : getServerBearerTokenState(existingServer),
         xaaAuthzIssuer:
           formData.xaaAuthzIssuer ?? existingServer?.xaaAuthzIssuer,
+        xaaAllowPathScopedIssuer:
+          formData.xaaAllowPathScopedIssuer ??
+          existingServer?.xaaAllowPathScopedIssuer,
         useXaa: formData.useXaa ?? false,
         authServerMode: formData.useXaa
           ? formData.authServerMode ?? "mcpjam"
@@ -3279,6 +3291,7 @@ export function useServerState({
         expiresIn?: number;
         clientId?: string;
         clientSecret?: string;
+        authorizationServerUrl?: string;
       },
       serverUrl: string
     ): Promise<{ success: boolean; error?: string }> => {
@@ -3336,6 +3349,13 @@ export function useServerState({
         serverUrl,
         ...(storedOAuthConfig.resourceUrl
           ? { oauthResourceUrl: storedOAuthConfig.resourceUrl }
+          : {}),
+        // Forward the AS URL discovered by the debugger flow so the hosted
+        // backend can refresh without re-discovering against a resource it
+        // can't reach itself (e.g. localhost). Mirrors the live OAuth path in
+        // MCPOAuthProvider.saveTokens.
+        ...(tokens.authorizationServerUrl
+          ? { authorizationServerUrl: tokens.authorizationServerUrl }
           : {}),
         kind: isRegistry ? "registry" : "generic",
         ...(isRegistry
@@ -3423,6 +3443,22 @@ export function useServerState({
     ]
   );
 
+  // The hosted backend refreshes imported OAuth tokens from its cloud
+  // environment, so an authorization server on the user's machine (or LAN)
+  // is unreachable at refresh time even though the browser could reach it
+  // during the debugger flow. Warn up front instead of letting the first
+  // refresh fail with a discovery error.
+  const warnIfHostedCannotRefresh = useCallback(
+    (authorizationServerUrl?: string) => {
+      if (!HOSTED_MODE || !authorizationServerUrl) return;
+      if (!isPrivateNetworkUrl(authorizationServerUrl)) return;
+      toast.warning(
+        "This server's authorization server runs on your machine, so tokens can't auto-refresh in hosted mode. Re-run the OAuth flow when they expire, or use local mode for fully-local servers."
+      );
+    },
+    []
+  );
+
   const handleConnectWithTokensFromOAuthFlow = useCallback(
     async (
       serverName: string,
@@ -3433,6 +3469,7 @@ export function useServerState({
         expiresIn?: number;
         clientId?: string;
         clientSecret?: string;
+        authorizationServerUrl?: string;
       },
       serverUrl: string
     ) => {
@@ -3450,6 +3487,7 @@ export function useServerState({
       );
       if (result.success) {
         toast.success(`Connected to ${serverName}!`);
+        warnIfHostedCannotRefresh(tokens.authorizationServerUrl);
       } else {
         toast.error(`Connection failed: ${result.error}`);
       }
@@ -3458,6 +3496,7 @@ export function useServerState({
       applyTokensFromOAuthFlow,
       notifyIfClientConfigSyncPending,
       notifyIfProjectNotProvisioned,
+      warnIfHostedCannotRefresh,
     ]
   );
 
@@ -3471,6 +3510,7 @@ export function useServerState({
         expiresIn?: number;
         clientId?: string;
         clientSecret?: string;
+        authorizationServerUrl?: string;
       },
       serverUrl: string
     ) => {
@@ -3488,6 +3528,7 @@ export function useServerState({
       );
       if (result.success) {
         toast.success(`Tokens refreshed for ${serverName}!`);
+        warnIfHostedCannotRefresh(tokens.authorizationServerUrl);
       } else {
         toast.error(`Token refresh failed: ${result.error}`);
       }
@@ -3496,6 +3537,7 @@ export function useServerState({
       applyTokensFromOAuthFlow,
       notifyIfClientConfigSyncPending,
       notifyIfProjectNotProvisioned,
+      warnIfHostedCannotRefresh,
     ]
   );
 
@@ -4660,6 +4702,9 @@ export function useServerState({
           useOAuth: formData.useOAuth ?? false,
           xaaAuthzIssuer:
             formData.xaaAuthzIssuer ?? originalServer?.xaaAuthzIssuer,
+          xaaAllowPathScopedIssuer:
+            formData.xaaAllowPathScopedIssuer ??
+            originalServer?.xaaAllowPathScopedIssuer,
           useXaa: formData.useXaa ?? false,
           authServerMode: formData.useXaa
             ? formData.authServerMode ?? "mcpjam"

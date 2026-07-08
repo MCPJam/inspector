@@ -270,6 +270,10 @@ export function EditServerFormContent({
             hostedServerId={hostedServerId}
             xaaAuthzIssuer={formState.xaaAuthzIssuer}
             onXaaAuthzIssuerChange={formState.setXaaAuthzIssuer}
+            xaaAllowPathScopedIssuer={formState.xaaAllowPathScopedIssuer}
+            onXaaAllowPathScopedIssuerChange={
+              formState.setXaaAllowPathScopedIssuer
+            }
             xaaSubject={formState.xaaSubject}
             onXaaSubjectChange={formState.setXaaSubject}
             xaaEmail={formState.xaaEmail}

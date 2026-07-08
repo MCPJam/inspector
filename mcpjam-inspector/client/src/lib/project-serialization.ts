@@ -59,6 +59,10 @@ function serializeServersInternal(
     if (server.xaaAuthzIssuer !== undefined) {
       serializedServer.xaaAuthzIssuer = server.xaaAuthzIssuer;
     }
+    if (server.xaaAllowPathScopedIssuer !== undefined) {
+      serializedServer.xaaAllowPathScopedIssuer =
+        server.xaaAllowPathScopedIssuer;
+    }
     if (server.useXaa !== undefined) {
       serializedServer.useXaa = server.useXaa;
     }
@@ -245,6 +249,12 @@ export function deserializeServersFromConvex(
     if (xaaAuthzIssuer !== undefined) {
       server.xaaAuthzIssuer = xaaAuthzIssuer;
     }
+    const xaaAllowPathScopedIssuer =
+      serverData.xaaAllowPathScopedIssuer ??
+      serverData.config?.xaaAllowPathScopedIssuer;
+    if (xaaAllowPathScopedIssuer !== undefined) {
+      server.xaaAllowPathScopedIssuer = xaaAllowPathScopedIssuer === true;
+    }
     if (serverData.useXaa !== undefined) {
       server.useXaa = serverData.useXaa === true;
     }
@@ -334,6 +344,15 @@ export function serversHaveChanged(
     const remoteXaaAuthzIssuer =
       remoteServer.xaaAuthzIssuer ?? remoteServer.config?.xaaAuthzIssuer;
     if ((localServer.xaaAuthzIssuer ?? undefined) !== (remoteXaaAuthzIssuer ?? undefined))
+      return true;
+
+    const remoteXaaAllowPathScopedIssuer =
+      remoteServer.xaaAllowPathScopedIssuer ??
+      remoteServer.config?.xaaAllowPathScopedIssuer;
+    if (
+      (localServer.xaaAllowPathScopedIssuer ?? undefined) !==
+      (remoteXaaAllowPathScopedIssuer ?? undefined)
+    )
       return true;
 
     // Get local URL
