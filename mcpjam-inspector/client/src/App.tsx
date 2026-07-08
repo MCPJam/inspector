@@ -217,6 +217,7 @@ import {
   navigateApp,
   pathnameToActiveTab,
   routePaths,
+  shouldSnapToServersOnActiveProjectChange,
   type OrganizationRouteSection,
   useActiveTab,
   useAppNavigate,
@@ -2450,19 +2451,23 @@ export default function App() {
       return;
     }
 
+    // Advance the ref regardless so this project change is consumed and can't
+    // trigger a stale snap on a later render (e.g. once the user leaves the
+    // org route). The snap decision itself lives in a pure, unit-tested helper.
     const previousActiveProjectId = previousActiveProjectIdRef.current;
     previousActiveProjectIdRef.current = activeProjectId;
     if (
-      previousActiveProjectId == null ||
-      previousActiveProjectId === activeProjectId ||
-      previousActiveProjectId === "none" ||
-      activeProjectId === "none"
+      shouldSnapToServersOnActiveProjectChange({
+        previousActiveProjectId,
+        nextActiveProjectId: activeProjectId,
+        activeTab,
+      })
     ) {
-      return;
+      navigateToServers();
     }
-    navigateToServers();
   }, [
     activeProjectId,
+    activeTab,
     isAuthLoading,
     isLoadingRemoteProjects,
     isWorkOsLoading,

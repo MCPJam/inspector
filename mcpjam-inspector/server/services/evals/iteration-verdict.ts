@@ -15,11 +15,9 @@
 // Per-turn check RESULTS are passed in rather than computed here: the legacy
 // runner already computes them from runner-only signals (`buildTurnCheckResults`),
 // and the step path will supply already-executed check facts — this is the
-// `checkResultsOverride` seam. The local-only behaviors (per-turn checks, the
-// pinned `widgetRendered` default, threaded pinned tool errors) are expressed by
-// what the caller passes: the hosted path passes `turnCheckResults: []`,
-// `effectivePredicates: test.successPredicates`, `pinnedToolErrors: []`,
-// `toolErrors: undefined` — making the shared body byte-identical to today.
+// `checkResultsOverride` seam. Caller-specific behaviors are expressed by what
+// the caller passes; both paths now thread pinned tool errors
+// (`pinnedToolErrors` / `toolErrors`) since hosted runs pinned turns too.
 
 import {
   evaluateMultiTurnResults,
@@ -63,13 +61,14 @@ export interface EvalIterationVerdictInput {
   trace: FinalizeTrace;
   usage: TranscriptArgs["usage"];
   renderObservations: TranscriptArgs["renderObservations"];
-  /** Pinned tool errors threaded into the case-predicate transcript (local only; omit for hosted). */
+  /** Pinned tool errors threaded into the case-predicate transcript. */
   toolErrors?: ToolErrorRecord[];
 
   // ── gates ──
   iterationError: string | undefined;
   failOnToolError: boolean;
-  /** Pinned (model-free) tool errors — invisible to the trace gate (local only; `[]` for hosted). */
+  /** Pinned (model-free) tool errors — invisible to the trace gate, so they
+   *  need this explicit channel to the `failOnToolError` gate. */
   pinnedToolErrors: ToolErrorRecord[];
   /** Widget interaction-check failures, AFTER the caller flushed active checks. */
   scriptedCheckFailures: { toolName: string; reason: string }[];
@@ -110,7 +109,6 @@ export function buildEvalIterationVerdict(
           usage: input.usage,
           renderObservations: input.renderObservations,
           // Pinned turns have no trace; thread their tool errors explicitly.
-          // Hosted omits the key entirely (parity), so include it only when given.
           ...(input.toolErrors !== undefined
             ? { toolErrors: input.toolErrors }
             : {}),
@@ -134,8 +132,7 @@ export function buildEvalIterationVerdict(
   });
 
   // A pinned (model-free) tool call's error never enters the trace, so the
-  // `failOnToolError` trace gate is blind to it — apply it explicitly. Hosted
-  // passes `pinnedToolErrors: []`, making this inert there (byte-identical).
+  // `failOnToolError` trace gate is blind to it — apply it explicitly.
   if (passed && input.failOnToolError && input.pinnedToolErrors.length > 0) {
     passed = false;
   }

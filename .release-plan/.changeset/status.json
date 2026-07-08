@@ -7,8 +7,8 @@
           "type": "patch"
         }
       ],
-      "summary": "Persist OAuth debugger registration settings through project serialization and surface actionable XAA issuer-mismatch errors.",
-      "id": "oauth-xaa-debugger-fixes"
+      "summary": "chatboxes/tunnels: use `authFetch` with same-origin relative paths instead of manually fetching a WorkOS access token and prefixing requests with `VITE_API_BASE_URL` in `GenerateSessionsDialog` and the MCP tunnels API client; behavior unchanged, but requests now correctly pick up guest/local sessions in addition to WorkOS.",
+      "id": "chatbox-relative-api-paths"
     },
     {
       "releases": [
@@ -17,20 +17,20 @@
           "type": "patch"
         }
       ],
-      "summary": "Stop advertising inspector-driving WebMCP `ui_*` tools on chatbox surfaces (published, share-link, and owner preview) — end-user chatbox turns no longer see or trigger inspector UI actions, on the client snapshot, the standalone chatbox route's tool registration, and both chat-v2 server boundaries.",
-      "id": "webmcp-gate-ui-tools-off-chatbox-surfaces"
+      "summary": "chatboxes: drop the chatbox-level `SessionReadinessStrip` rollup and surface synthetic-session readiness findings (`SessionInsightBar`) directly on the thread detail view instead; derive human-readable issue explanations from denormalized readiness fields when the server omits `issues[]`.",
+      "id": "session-insight-bar-relocation"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "2.23.0",
+      "oldVersion": "2.23.3",
       "changesets": [
-        "oauth-xaa-debugger-fixes",
-        "webmcp-gate-ui-tools-off-chatbox-surfaces"
+        "chatbox-relative-api-paths",
+        "session-insight-bar-relocation"
       ],
-      "newVersion": "2.23.1"
+      "newVersion": "2.23.4"
     }
   ]
 }

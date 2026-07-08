@@ -99,7 +99,7 @@ export async function discoverServerTargetTokenEndpoint(
     /**
      * Per-server opt-in: accept an advertised issuer that is a same-origin
      * path-prefix ancestor of the requested URL (multi-tenant AS deployments
-     * like Scalekit's /resources/res_x). Off = strict RFC 8414 match.
+     * with path-scoped issuers, e.g. /resources/res_x). Off = strict RFC 8414 match.
      */
     allowPathScopedIssuer?: boolean;
   },

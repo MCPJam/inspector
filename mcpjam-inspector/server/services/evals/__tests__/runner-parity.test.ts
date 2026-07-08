@@ -151,6 +151,12 @@ function scrub(value: unknown): unknown {
         /^eval-ai-err-\d+$/.test(v)
       ) {
         out[k] = "eval-ai-err-<scrubbed>";
+      } else if (
+        typeof v === "string" &&
+        /^pinned-\d+-\d+$/.test(v)
+      ) {
+        // Synthetic pinned toolCallIds embed Date.now().
+        out[k] = "pinned-<scrubbed>";
       } else {
         out[k] = scrub(v);
       }
@@ -195,6 +201,8 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     getToolsForAiSdk: vi.fn(),
     listServers: vi.fn(),
     getAllToolsMetadata: vi.fn().mockReturnValue({}),
+    // Pinned (`toolCall`) turns execute directly; inert for prompt-only cases.
+    executeTool: vi.fn(),
   };
 
   beforeEach(() => {
@@ -267,6 +275,9 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     promptTurns: unknown[];
     modelApiKeys?: Record<string, string>;
     emit: (e: EvalStreamEvent) => void;
+    /** Connected-server set + run environment, for pinned-server resolution. */
+    selectedServers?: string[];
+    environment?: unknown;
   }) {
     return streamTestCase({
       test: {
@@ -280,7 +291,8 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
         testCaseId: "case-1",
       },
       tools: {},
-      selectedServers: [],
+      selectedServers: args.selectedServers ?? [],
+      ...(args.environment ? { environment: args.environment } : {}),
       mcpClientManager: mcpClientManager as any,
       recorder: null,
       modelApiKeys: args.modelApiKeys ?? {},
@@ -448,6 +460,99 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
         },
       ],
     });
+    expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
+      "convex"
+    );
+  });
+
+  // ── Hosted pinned turns: hybrid (pinned toolCall + model prompt) cases ────
+  // The pinned turn executes inspector-side (model-free) on BOTH paths; only
+  // the prompt turn hits the model (local streamText / hosted /stream). The
+  // local-stream case exists so its pinned SSE slice is diffable side-by-side
+  // with the hosted-stream one (both synthesize via emitPinnedTurnSse).
+
+  const HYBRID_PINNED = [
+    {
+      id: "turn-1",
+      prompt: "",
+      expectedToolCalls: [],
+      pinnedToolCall: {
+        serverName: "srv-1",
+        toolName: "show_map",
+        arguments: { city: "SF" },
+      },
+    },
+    { id: "turn-2", prompt: "Describe the widget", expectedToolCalls: [] },
+  ];
+
+  it("local-stream hybrid pinned (toolCall + prompt): events + convex payload", async () => {
+    mcpClientManager.executeTool.mockResolvedValue({ content: [] });
+    const emitted: EvalStreamEvent[] = [];
+    await streamCase({
+      model: LOCAL_MODEL,
+      modelApiKeys: { openai: "sk-test" },
+      promptTurns: HYBRID_PINNED,
+      selectedServers: ["srv-1"],
+      environment: { servers: ["srv-1"] },
+      emit: (e) => emitted.push(e),
+    });
+    expect(summarizeEvents(emitted)).toMatchSnapshot("events");
+    expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
+      "convex"
+    );
+  });
+
+  it("hosted-batch hybrid pinned (toolCall + prompt): convex payload", async () => {
+    mcpClientManager.executeTool.mockResolvedValue({ content: [] });
+    fetchMock.mockImplementation(async () => backendStreamResponse());
+    await batchSuite({ model: HOSTED_MODEL, promptTurns: HYBRID_PINNED });
+    // The pinned turn never touches the backend; only the prompt turn streams.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
+      "convex"
+    );
+  });
+
+  it("hosted-stream hybrid pinned (toolCall + prompt): events + convex payload", async () => {
+    mcpClientManager.executeTool.mockResolvedValue({ content: [] });
+    fetchMock.mockImplementation(async () => backendStreamResponse());
+    const emitted: EvalStreamEvent[] = [];
+    await streamCase({
+      model: HOSTED_MODEL,
+      promptTurns: HYBRID_PINNED,
+      selectedServers: ["srv-1"],
+      environment: { servers: ["srv-1"] },
+      emit: (e) => emitted.push(e),
+    });
+    expect(summarizeEvents(emitted)).toMatchSnapshot("events");
+    expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
+      "convex"
+    );
+  });
+
+  it("hosted-batch hybrid pinned setup failure (server not connected): convex payload + status", async () => {
+    // Hosted mirror of the local pinned setup-failure golden: the pinned server
+    // "Asana" is NOT connected → setup failure halts the executor, the prompt
+    // step is skipped (no /stream call), and the iteration persists as
+    // status:"failed".
+    fetchMock.mockImplementation(async () => backendStreamResponse());
+    await batchSuite({
+      model: HOSTED_MODEL,
+      promptTurns: [
+        {
+          id: "turn-1",
+          prompt: "",
+          expectedToolCalls: [],
+          pinnedToolCall: {
+            serverName: "Asana",
+            toolName: "search",
+            arguments: { q: "x" },
+          },
+        },
+        { id: "turn-2", prompt: "Describe it", expectedToolCalls: [] },
+      ],
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
       "convex"
     );
