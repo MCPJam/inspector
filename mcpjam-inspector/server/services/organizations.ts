@@ -68,15 +68,57 @@ export async function resolveApiKeyReadiness(
     mcpjamOrganizationId,
   )}&userId=${encodeURIComponent(mcpjamUserId)}`;
 
+  // The timeout must stay armed through body consumption, not just until
+  // `fetch()` resolves — `fetch()` only settles once headers arrive, so a
+  // backend that sends headers and then stalls the body would otherwise
+  // hang `response.json()` / `isEntityNotFound`'s own `.json()` call
+  // indefinitely despite the "timeout" existing in name only.
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), READINESS_TIMEOUT_MS);
-  let response: Response;
   try {
-    response = await fetch(url, {
+    const response = await fetch(url, {
       method: "GET",
       headers: { "x-inspector-service-token": serviceToken },
       signal: controller.signal,
     });
+
+    if (response.status === 404) {
+      if (await isEntityNotFound(response, "Organization not found")) {
+        throw new ApiKeyReadinessError(404, "Organization not found");
+      }
+      throw new Error(
+        `Readiness route not found at ${convexUrl}${READINESS_PATH} — is it deployed?`,
+      );
+    }
+    if (response.status === 403) {
+      throw new ApiKeyReadinessError(403, "Not a member of this organization");
+    }
+    if (response.status === 400) {
+      throw new ApiKeyReadinessError(400, "Invalid organization or user id");
+    }
+    if (!response.ok) {
+      throw new Error(`API key readiness check failed (${response.status})`);
+    }
+
+    const body = (await response.json()) as {
+      ready?: unknown;
+      workosOrganizationId?: unknown;
+      reason?: unknown;
+    };
+    if (typeof body?.ready !== "boolean") {
+      throw new Error("API key readiness check returned an invalid body");
+    }
+    return {
+      ready: body.ready,
+      workosOrganizationId:
+        typeof body.workosOrganizationId === "string"
+          ? body.workosOrganizationId
+          : null,
+      reason:
+        typeof body.reason === "string"
+          ? (body.reason as ApiKeyReadinessReason)
+          : undefined,
+    };
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new Error("API key readiness check timed out");
@@ -85,42 +127,4 @@ export async function resolveApiKeyReadiness(
   } finally {
     clearTimeout(timeout);
   }
-
-  if (response.status === 404) {
-    if (await isEntityNotFound(response, "Organization not found")) {
-      throw new ApiKeyReadinessError(404, "Organization not found");
-    }
-    throw new Error(
-      `Readiness route not found at ${convexUrl}${READINESS_PATH} — is it deployed?`,
-    );
-  }
-  if (response.status === 403) {
-    throw new ApiKeyReadinessError(403, "Not a member of this organization");
-  }
-  if (response.status === 400) {
-    throw new ApiKeyReadinessError(400, "Invalid organization or user id");
-  }
-  if (!response.ok) {
-    throw new Error(`API key readiness check failed (${response.status})`);
-  }
-
-  const body = (await response.json()) as {
-    ready?: unknown;
-    workosOrganizationId?: unknown;
-    reason?: unknown;
-  };
-  if (typeof body?.ready !== "boolean") {
-    throw new Error("API key readiness check returned an invalid body");
-  }
-  return {
-    ready: body.ready,
-    workosOrganizationId:
-      typeof body.workosOrganizationId === "string"
-        ? body.workosOrganizationId
-        : null,
-    reason:
-      typeof body.reason === "string"
-        ? (body.reason as ApiKeyReadinessReason)
-        : undefined,
-  };
 }

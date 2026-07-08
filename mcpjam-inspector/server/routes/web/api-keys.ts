@@ -443,21 +443,40 @@ apiKeys.get("/", async (c) =>
     // two orgs didn't match. WorkOS keys are already user-scoped by this
     // endpoint; the MCPJam-org boundary is enforced at USE time via the
     // workosApiKeyBindings lookup in bearer-auth.ts, not at listing time.
-    const { status, body } = await callWorkOS(
-      "GET",
-      `/user_management/users/${encodeURIComponent(session.userId)}/api_keys`,
-    );
-
-    if (status < 200 || status >= 300) {
-      mapWorkOSError(status, body, "Failed to list API keys");
+    //
+    // Unscoped-by-org means a user's keys can now span enough pages for
+    // WorkOS to paginate (`list_metadata.after`) — same page-walk pattern
+    // as `userOwnsApiKey` below, so a key on a later page doesn't silently
+    // disappear from Settings the same way the org filter used to hide one.
+    const items: any[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < 10; page++) {
+      const params = new URLSearchParams({ limit: "100" });
+      if (after) {
+        params.set("after", after);
+      }
+      const { status, body } = await callWorkOS(
+        "GET",
+        `/user_management/users/${encodeURIComponent(session.userId)}/api_keys?${params.toString()}`,
+      );
+      if (status < 200 || status >= 300) {
+        mapWorkOSError(status, body, "Failed to list API keys");
+      }
+      // WorkOS returns `{ data: [...] }` or `{ data: [...], list_metadata: ... }`.
+      const pageItems = Array.isArray(body?.data)
+        ? body.data
+        : Array.isArray(body)
+          ? body
+          : [];
+      items.push(...pageItems);
+      after =
+        typeof body?.list_metadata?.after === "string"
+          ? body.list_metadata.after
+          : null;
+      if (!after) {
+        break;
+      }
     }
-
-    // WorkOS returns `{ data: [...] }` or `{ data: [...], list_metadata: ... }`.
-    const items = Array.isArray(body?.data)
-      ? body.data
-      : Array.isArray(body)
-        ? body
-        : [];
     return { items };
   }),
 );
