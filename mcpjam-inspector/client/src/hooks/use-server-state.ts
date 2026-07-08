@@ -6,7 +6,10 @@ import type {
   MCPServerConfig,
   NormalizedError,
 } from "@mcpjam/sdk/browser";
-import { isKnownProtocolVersionPin } from "@mcpjam/sdk/browser";
+import {
+  isKnownProtocolVersionPin,
+  MCP_PROTOCOL_VERSION_AUTO,
+} from "@mcpjam/sdk/browser";
 import type {
   AppAction,
   AppState,
@@ -42,6 +45,7 @@ import {
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
 import { HOSTED_MODE } from "@/lib/config";
+import { useStatelessMcpEnabled } from "@/hooks/use-stateless-mcp-enabled";
 import {
   injectHostedServerMapping,
   tryGetHostedServerDisplayName,
@@ -600,6 +604,12 @@ export function useServerState({
 }: UseServerStateParams) {
   const isUserReady = useDbUserReady();
   const convex = useConvex();
+  // Master switch for defaulting unpinned connections to "auto". Gating the
+  // connect-time default here (not just the hosted App.tsx path) is required:
+  // `buildResolverConnectionDefaults` feeds BOTH local resolver connects and
+  // hosted validation/reconnect (via `testConnection` when HOSTED_MODE), so an
+  // unconditional default would emit "auto" to hosted regardless of the flag.
+  const statelessMcpEnabled = useStatelessMcpEnabled();
   const {
     createServerIfMissing: convexCreateServerIfMissing,
     updateServer: convexUpdateServer,
@@ -1046,12 +1056,26 @@ export function useServerState({
         serverOverride,
         hostPin
       );
-      if (effective !== undefined) {
-        defaults.mcpProtocolVersion = effective;
+      // Auto is the host default (once the stateless-MCP feature is live):
+      // when neither the per-server override nor the host pin has an opinion,
+      // connect with the `"auto"` sentinel so the SDK probes for the stateless
+      // RC and falls back to the legacy `initialize` handshake per server.
+      // Auto's legacy fallback negotiates with the same SDK defaults the old
+      // "no pin" path used, so it changes behavior for unpinned hosts only by
+      // adding the probe — no stored-config migration needed.
+      //
+      // Gated on `stateless-mcp-enabled`: this default flows into hosted
+      // validation/reconnect (via `testConnection` when HOSTED_MODE), so with
+      // the flag off it MUST stay `undefined` (legacy) to honor the staged
+      // backend rollout. Flag off → unchanged legacy behavior everywhere.
+      const withAutoDefault =
+        effective ?? (statelessMcpEnabled ? MCP_PROTOCOL_VERSION_AUTO : undefined);
+      if (withAutoDefault !== undefined) {
+        defaults.mcpProtocolVersion = withAutoDefault;
       }
       return Object.keys(defaults).length > 0 ? defaults : undefined;
     },
-    [activeHostConfig]
+    [activeHostConfig, statelessMcpEnabled]
   );
 
   const guardedTestConnection = useCallback(
@@ -1759,8 +1783,13 @@ export function useServerState({
         serverOverride,
         hostPin
       );
-      // Gate removed — stateless-mcp-enabled goes permanent 2026-05-27.
-      const effective: McpProtocolVersionPin | undefined = resolvedPin;
+      // Mirror `buildResolverConnectionDefaults` exactly (including the
+      // `stateless-mcp-enabled` gate): an unpinned server resolves to the
+      // `"auto"` default on the wire only when the flag is on. Normalizing the
+      // same way here keeps change-detection comparing the value that actually
+      // gets sent — otherwise it would miss or spuriously trigger a re-test.
+      const effective: McpProtocolVersionPin | undefined =
+        resolvedPin ?? (statelessMcpEnabled ? MCP_PROTOCOL_VERSION_AUTO : undefined);
 
       const seenBefore = lastAppliedProtocolVersionRef.current.has(name);
       const previous = lastAppliedProtocolVersionRef.current.get(name);
@@ -1842,6 +1871,7 @@ export function useServerState({
     dispatch,
     guardedReconnectServer,
     storeInitInfo,
+    statelessMcpEnabled,
   ]);
 
   const testConnectionAfterOAuth = useCallback(

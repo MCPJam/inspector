@@ -75,6 +75,26 @@ describe("ProtocolTab — pin change vs derived supportedProtocolVersions", () =
     ).toEqual(["2025-06-18", "2025-03-26"]);
   });
 
+  it("shows Auto as the selected option for an unpinned host (default)", async () => {
+    renderWithDraft(emptyHostConfigInputV2());
+
+    // The combobox reflects the effective default without the user having
+    // picked anything — unpinned hosts now default to Auto.
+    expect(screen.getByRole("combobox")).toHaveTextContent(
+      "Auto (detect per server)"
+    );
+  });
+
+  it("pins the explicit stable version when switching to Latest", async () => {
+    const { getDraft } = renderWithDraft(emptyHostConfigInputV2());
+
+    await pickOption("Latest (2025-11-25)");
+
+    // "Latest" must carry a concrete version — absence now means Auto, so it
+    // can't collapse back to undefined.
+    expect(getDraft().mcpProfile?.mcpProtocolVersion).toBe("2025-11-25");
+  });
+
   it("preserves clientInfo when only the derived list is dropped", async () => {
     const { getDraft } = renderWithDraft({
       ...emptyHostConfigInputV2(),

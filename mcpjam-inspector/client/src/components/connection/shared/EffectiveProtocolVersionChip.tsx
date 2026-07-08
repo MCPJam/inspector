@@ -30,9 +30,13 @@ export function EffectiveProtocolVersionChip({
   const effective: McpProtocolVersionPin | undefined =
     serverOverride ?? hostDefault;
 
+  // Unpinned (`undefined`) now resolves to Auto at connect time — it probes
+  // the stateless RC and falls back to the legacy handshake — so render it as
+  // "Auto" to match the actual wire behavior. Only an explicit wire-version
+  // pin surfaces a concrete version label.
   return (
     <span className="inline-flex items-center px-1 text-[11px] text-muted-foreground">
-      {effective === "auto" ? "Auto" : effective ?? "Latest"}
+      {!effective || effective === "auto" ? "Auto" : effective}
     </span>
   );
 }

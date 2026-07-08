@@ -177,6 +177,21 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ],
     "unsupported-protocol-version",
   ),
+  "jsonrpc/protocol_version_rejected": entry(
+    "jsonrpc/protocol_version_rejected",
+    "Protocol version rejected (-32022)",
+    "The server rejected the MCP protocol version this connection is pinned to.",
+    [
+      "The pinned protocol version is not one the server supports.",
+      "The server is stateless-only (2026 RC) but this connection is pinned to a legacy version.",
+      "A per-server or host protocol-version override is stricter than what the server actually speaks.",
+    ],
+    [
+      "Set this server's protocol version to Auto so the inspector detects the right version at connect.",
+      "Or pin one of the versions the server reports as supported in the protocol setting.",
+    ],
+    "protocol-version-rejected",
+  ),
   "jsonrpc/url_elicitation_required": entry(
     "jsonrpc/url_elicitation_required",
     "URL elicitation required (-32042)",

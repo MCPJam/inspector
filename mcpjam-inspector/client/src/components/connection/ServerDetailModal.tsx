@@ -47,6 +47,7 @@ import type {
 } from "@/lib/project-server-config";
 import { EffectiveProtocolVersionChip } from "./shared/EffectiveProtocolVersionChip";
 import { useFeatureFlagEnabled } from "posthog-js/react";
+import { useStatelessMcpEnabled } from "@/hooks/use-stateless-mcp-enabled";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 
 export type ServerDetailTab =
@@ -190,7 +191,7 @@ export function ServerDetailModal({
   // round-trip rather than a server-update. Read/write here so the
   // form control inside `EditServerFormContent` can stay a pure prop
   // consumer.
-  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
+  const statelessMcpEnabled = useStatelessMcpEnabled();
   const serverHistoryEnabled = useFeatureFlagEnabled("server-history-tab");
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
