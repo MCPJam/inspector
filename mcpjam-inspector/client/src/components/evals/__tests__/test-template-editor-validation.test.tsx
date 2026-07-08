@@ -51,6 +51,7 @@ vi.mock("convex/react", () => ({
   useMutation: (_name: unknown) => useMutationMock(),
   useQuery: (name: unknown, args: unknown) => useQueryMock(name, args),
   useAction: () => vi.fn(),
+  useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
 }));
 
 describe("getStepsBlockReason", () => {
