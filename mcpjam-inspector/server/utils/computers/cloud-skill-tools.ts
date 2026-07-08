@@ -11,6 +11,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { isMCPJamProvidedModel } from "@/shared/types";
+import type { PinnableSkill } from "../../../shared/skill-types.js";
 import {
   CloudSkillsError,
   getCloudSkillByName,
@@ -190,6 +191,66 @@ export function getCloudSkillToolsAndPrompt(ctx: CloudSkillsContext): {
 } {
   return {
     tools: createCloudSkillTools(ctx),
+    systemPromptSection: CLOUD_SKILLS_PROMPT_SECTION,
+  };
+}
+
+/**
+ * PINNED skill tools for eval runs — an in-memory closure over frozen skill
+ * content (from `configSnapshot.pinnedSkills`). Structurally identical to the
+ * live cloud tools (same tool NAMES, NAME_RE, error strings, prompt section) so
+ * the model behaves the same and the matcher's skill exemption still applies —
+ * but `execute()` does ZERO network I/O (a mid-run skill edit can't change
+ * behavior between iterations, which is the whole point of pinning). Never
+ * `needsApproval` — pure reads of frozen content under an auto-deny eval run.
+ */
+export function createPinnedSkillTools(skills: PinnableSkill[]) {
+  const byName = new Map(skills.map((s) => [s.name, s]));
+  return {
+    listSkills: tool({
+      description:
+        "List the skills available to you in this project (personal + shared). Returns each skill's name and description. Call this first to discover what's available, then `loadSkill` to load one.",
+      inputSchema: z.object({}),
+      execute: async () => {
+        if (skills.length === 0) {
+          return "No skills are available in this project.";
+        }
+        return (
+          `Available skills:\n\n` +
+          skills.map((s) => `- **${s.name}**: ${s.description}`).join("\n")
+        );
+      },
+    }),
+    loadSkill: tool({
+      description:
+        "Load a skill's full instructions by name. Use when a task matches a skill's purpose.",
+      inputSchema: z.object({
+        name: z
+          .string()
+          .describe("The skill name to load (e.g., 'pdf-processing')."),
+      }),
+      execute: async ({ name }) => {
+        if (!NAME_RE.test(name)) {
+          return `Error: Invalid skill name format "${name}". Skill names contain only lowercase letters, numbers, and hyphens.`;
+        }
+        const skill = byName.get(name);
+        if (!skill) return `Error: Skill "${name}" not found.`;
+        return `# Skill: ${skill.name}\n\n${skill.content}`;
+      },
+    }),
+  };
+}
+
+/**
+ * Pinned equivalent of `getCloudSkillToolsAndPrompt`. Returns the frozen tools +
+ * the SAME prompt section as live (so the model sees an identical skills stanza).
+ */
+export function getPinnedSkillToolsAndPrompt(skills: PinnableSkill[]): {
+  tools: ReturnType<typeof createPinnedSkillTools>;
+  systemPromptSection: string;
+} {
+  return {
+    tools: createPinnedSkillTools(skills),
     systemPromptSection: CLOUD_SKILLS_PROMPT_SECTION,
   };
 }

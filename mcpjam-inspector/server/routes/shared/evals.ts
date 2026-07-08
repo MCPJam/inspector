@@ -33,6 +33,7 @@ import {
   type TestCaseType,
 } from "@/shared/probe-config";
 import { logger } from "../../utils/logger";
+import type { PinnableSkill } from "../../../shared/skill-types.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
   resolveOrgModelConfig,
@@ -1577,6 +1578,40 @@ export async function prepareEvalRun(
     }
   }
 
+  // Pinned skills for this run (PR-E3). Suite runs only — quick-run (runId null)
+  // has no run row to carry pins, so it stays skill-free. Tolerant: any failure
+  // degrades to no skills (never live), so a skills fetch blip can't fail a run.
+  let runPinnedSkills: PinnableSkill[] | undefined;
+  if (runId) {
+    try {
+      const res = (await convexClient.query(
+        "testSuites:getRunPinnedSkills" as any,
+        { runId },
+      )) as {
+        pinnedSkills?: Array<{
+          name: string;
+          description: string;
+          content: string;
+          contentHash: string;
+        }>;
+      };
+      const list = res?.pinnedSkills ?? [];
+      if (list.length > 0) {
+        runPinnedSkills = list.map((s) => ({
+          name: s.name,
+          description: s.description,
+          content: s.content,
+          contentHash: s.contentHash,
+        }));
+      }
+    } catch (error) {
+      logger.warn("[evals] getRunPinnedSkills failed; running without skills", {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   const execute = async () => {
     await runEvalSuiteWithAiSdk({
       suiteId: resolvedSuiteId,
@@ -1597,6 +1632,7 @@ export async function prepareEvalRun(
       // `selectedServerIds`) via `resolveExecutionContext`. `hostPolicy`
       // is the POLICY subset extracted upstream; this is the rest.
       suiteHostConfig,
+      ...(runPinnedSkills ? { pinnedSkills: runPinnedSkills } : {}),
     });
   };
 
