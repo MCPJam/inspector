@@ -144,10 +144,9 @@ export const MCP_APPS_SLACK: McpAppsCapabilities = frozen({
   widgetDisplayModeRequests: "accept",
 });
 
-/** VS Code (GitHub Copilot chat panel) — inherits Cursor's matrix (VS Code is
+/** VS Code (GitHub Copilot chat panel) — mirrors Cursor's matrix (VS Code is
  * the editor Cursor forks) but inline-only: VS Code renders MCP UI in the chat
- * panel without fullscreen/pip. Unprobed — values follow the vscode host
- * template's documented Cursor inheritance. */
+ * panel without fullscreen/pip. */
 export const MCP_APPS_VSCODE: McpAppsCapabilities = frozen({
   ...MCP_APPS_CURSOR,
   availableDisplayModes: ["inline"],

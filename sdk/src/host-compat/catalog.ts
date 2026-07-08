@@ -162,19 +162,18 @@ const MARKET_HOSTS: readonly (HostCompatCatalogHost & {
     supportedProtocolVersions: ["2025-06-18"],
   },
   {
-    // VS Code Copilot chat panel — renders MCP UI inline. Caps inherited from
-    // Cursor per the vscode template (no live probe yet) ⇒ provenance assumed.
+    // VS Code Copilot chat panel — renders MCP UI inline. Probe-captured.
     id: "vscode",
     label: "VS Code",
-    provenance: "assumed",
+    provenance: "probe",
     rendersMcpApps: true,
   },
   {
     // Notion AI — tools-only client, no widget rendering (still renders tool
-    // images). Unprobed MCP handshake ⇒ provenance assumed.
+    // images). Probe-captured.
     id: "notion",
     label: "Notion",
-    provenance: "assumed",
+    provenance: "probe",
     rendersMcpApps: false,
     supportedProtocolVersions: ["2025-11-25"],
   },
