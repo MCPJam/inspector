@@ -183,6 +183,11 @@ function extractProtocolVersionData(
   return { supported, requested };
 }
 
+/** Max chars kept per server-supplied version value before ellipsizing. */
+const PV_VALUE_MAX = 24;
+/** Max number of `supported` versions listed before collapsing to "+N more". */
+const PV_SUPPORTED_MAX = 6;
+
 /**
  * `-32022` promotes the server's own `supported` / `requested` version data
  * into the visible one-line so the user reads exactly which versions the
@@ -190,11 +195,6 @@ function extractProtocolVersionData(
  * because it's per-server. Falls back to the catalog `oneLine` when the
  * error carries no usable `data`.
  */
-/** Max chars kept per server-supplied version value before ellipsizing. */
-const PV_VALUE_MAX = 24;
-/** Max number of `supported` versions listed before collapsing to "+N more". */
-const PV_SUPPORTED_MAX = 6;
-
 function maybeEnrichProtocolVersionRejected(
   entry: ErrorCatalogEntry,
   slug: string,
