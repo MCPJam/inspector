@@ -56,7 +56,7 @@ export type FetchRuntimeSkillsResult =
 export async function fetchRuntimeSkills(
   bearer: string,
   projectId: string,
-  executionScope?: ExecutionScope,
+  executionScope?: ExecutionScope
 ): Promise<FetchRuntimeSkillsResult> {
   try {
     const skills = executionScope
@@ -73,26 +73,37 @@ export async function fetchRuntimeSkills(
 
 export type RuntimeSkillFile = CloudSkillRuntimeFile;
 
+export type FetchRuntimeSkillFilesResult =
+  | { ok: true; files: RuntimeSkillFile[] }
+  | { ok: false };
+
 /**
  * Fetch every visible skill's supporting files (with download URLs) for harness
- * materialization. Returns `[]` on ANY failure (fail-soft — a fetch blip must
- * never wipe or block; the SKILL.md itself is delivered separately). Scoped vs
- * member query mirrors {@link fetchRuntimeSkills}.
+ * materialization. Tri-state: `{ ok: false }` on ANY failure (never throws,
+ * never returns `[]` to mean "failed"). This distinction is LOAD-BEARING —
+ * `materializeSkillFiles` prunes on-box files absent from the returned set, so a
+ * failure surfaced as an empty array would delete every delivered skill's files.
+ * The caller MUST skip materialization on `{ ok: false }`. Scoped vs member
+ * query mirrors {@link fetchRuntimeSkills}.
  */
 export async function fetchRuntimeSkillFiles(
   bearer: string,
   projectId: string,
-  executionScope?: ExecutionScope,
-): Promise<RuntimeSkillFile[]> {
+  executionScope?: ExecutionScope
+): Promise<FetchRuntimeSkillFilesResult> {
   try {
-    return executionScope
+    const files = executionScope
       ? await convexListSkillFilesForRuntimeExecution(bearer, executionScope)
       : await convexListSkillFilesForRuntime(bearer, projectId);
+    return { ok: true, files };
   } catch (error) {
-    logger.warn("[runtime-skills] file fetch failed; skipping materialization", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return [];
+    logger.warn(
+      "[runtime-skills] file fetch failed; skipping materialization",
+      {
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
+    return { ok: false };
   }
 }
 
@@ -169,7 +180,7 @@ export function toYamlDoubleQuoted(value: string): string {
  * stays valid frontmatter. Other adapters must NOT use this.
  */
 export function claudeCodeSafeSkills(
-  skills: RuntimeSkill[],
+  skills: RuntimeSkill[]
 ): HarnessSkillPayload[] {
   return skills.map((s) => ({
     name: s.name,

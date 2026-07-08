@@ -894,19 +894,20 @@ export async function runHarnessTurn(
             // than at turn start to keep the zero-file fast path free. Fully
             // fail-soft; guest/swarm scope uses the execution-scoped file query.
             if (projectId && authHeader && runtimeSkills.length > 0) {
-              // null ⇒ the fetch FAILED (transient). Skip materialization then:
-              // an empty file set would otherwise prune every delivered skill's
-              // on-box files. An empty ARRAY is a successful "no files" and still
-              // runs, so a skill whose last file was removed gets pruned.
-              const runtimeFiles = await fetchRuntimeSkillFiles(
+              // Tri-state: `{ ok: false }` ⇒ the fetch FAILED (transient). Skip
+              // materialization then — an empty file set would otherwise prune
+              // every delivered skill's on-box files. `{ ok: true, files: [] }`
+              // is a successful "no files" and still runs, so a skill whose last
+              // file was removed gets pruned.
+              const fileResult = await fetchRuntimeSkillFiles(
                 authHeader,
                 projectId,
                 executionScope
-              ).catch(() => null);
-              if (runtimeFiles !== null) {
+              ).catch(() => ({ ok: false } as const));
+              if (fileResult.ok) {
                 await materializeSkillFiles({
                   session,
-                  files: runtimeFiles,
+                  files: fileResult.files,
                   skillNamesById: new Map(
                     runtimeSkills.map((s) => [s.skillId, s.name])
                   ),
