@@ -20,6 +20,7 @@ import { readCliSignInReturnPath } from "@/lib/cli-signin-return-path";
 const {
   toastError,
   toastSuccess,
+  toastWarning,
   completeHostedOAuthCallbackMock,
   handleOAuthCallbackMock,
   initiateOAuthMock,
@@ -42,6 +43,7 @@ const {
 } = vi.hoisted(() => ({
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
+  toastWarning: vi.fn(),
   completeHostedOAuthCallbackMock: vi.fn(),
   handleOAuthCallbackMock: vi.fn(),
   initiateOAuthMock: vi.fn(),
@@ -69,6 +71,7 @@ vi.mock("sonner", () => ({
   toast: {
     error: toastError,
     success: toastSuccess,
+    warning: toastWarning,
   },
 }));
 
@@ -986,6 +989,89 @@ describe("useServerState OAuth callback failures", () => {
         authorizationServerUrl: "http://127.0.0.1:8000",
       })
     );
+  });
+
+  it("warns after hosted connect when the authorization server is on a private address", async () => {
+    mockHostedMode.mockReturnValue(true);
+    reconnectServerMock.mockResolvedValueOnce({
+      success: true,
+      initInfo: null,
+    });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnectWithTokensFromOAuthFlow(
+        "demo-server",
+        {
+          accessToken: "hosted-access-token",
+          tokenType: "Bearer",
+          expiresIn: 300,
+          clientId: "hosted-client-id",
+          authorizationServerUrl: "http://127.0.0.1:8000",
+        },
+        "http://127.0.0.1:8000/mcp"
+      );
+    });
+
+    expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
+    expect(toastWarning).toHaveBeenCalledWith(
+      expect.stringContaining("can't auto-refresh in hosted mode")
+    );
+  });
+
+  it("does not warn after hosted connect when the authorization server is publicly reachable", async () => {
+    mockHostedMode.mockReturnValue(true);
+    reconnectServerMock.mockResolvedValueOnce({
+      success: true,
+      initInfo: null,
+    });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnectWithTokensFromOAuthFlow(
+        "demo-server",
+        {
+          accessToken: "hosted-access-token",
+          tokenType: "Bearer",
+          expiresIn: 300,
+          clientId: "hosted-client-id",
+          authorizationServerUrl: "https://auth.example.com",
+        },
+        "http://127.0.0.1:8000/mcp"
+      );
+    });
+
+    expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
+    expect(toastWarning).not.toHaveBeenCalled();
+  });
+
+  it("does not warn about refresh outside hosted mode even for a localhost authorization server", async () => {
+    mockHostedMode.mockReturnValue(false);
+    reconnectServerMock.mockResolvedValueOnce({
+      success: true,
+      initInfo: null,
+    });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnectWithTokensFromOAuthFlow(
+        "demo-server",
+        {
+          accessToken: "local-access-token",
+          tokenType: "Bearer",
+          expiresIn: 300,
+          clientId: "local-client-id",
+          authorizationServerUrl: "http://127.0.0.1:8000",
+        },
+        "http://127.0.0.1:8000/mcp"
+      );
+    });
+
+    expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
+    expect(toastWarning).not.toHaveBeenCalled();
   });
 
   it("marks the pending server as failed when authorization is denied", async () => {
