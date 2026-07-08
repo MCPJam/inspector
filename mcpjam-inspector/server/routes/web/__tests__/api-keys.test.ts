@@ -25,6 +25,24 @@ vi.mock("../../../services/workos-key-bindings.js", async (importOriginal) => {
   };
 });
 
+vi.mock("../../../services/identity.js", async (importOriginal) => {
+  const actual = await importOriginal<object>();
+  return {
+    ...actual,
+    resolveUserByExternalId: vi.fn().mockResolvedValue({ _id: "mcpjam_user_1" }),
+  };
+});
+
+const mockResolveApiKeyReadiness = vi.fn();
+vi.mock("../../../services/organizations.js", async (importOriginal) => {
+  const actual = await importOriginal<object>();
+  return {
+    ...actual,
+    resolveApiKeyReadiness: (...args: unknown[]) =>
+      mockResolveApiKeyReadiness(...args),
+  };
+});
+
 const OWNED_KEY_ID = "api_key_owned_1";
 const USER_KEYS_PATH = "/user_management/users/user_session_1/api_keys";
 
@@ -156,5 +174,116 @@ describe("web routes — API key revoke ownership", () => {
       message: "Could not verify API key ownership",
     });
     expect(deleted).toEqual([]);
+  });
+});
+
+async function mintKey(
+  app: ReturnType<typeof createWebTestApp>["app"],
+  organizationId = "org_convex_1",
+) {
+  return app.request("/api/web/api-keys", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer session-jwt",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name: "my key", organizationId }),
+  });
+}
+
+describe("web routes — API key mint readiness", () => {
+  const { app } = createWebTestApp();
+
+  beforeEach(() => {
+    vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    mockResolveApiKeyReadiness.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("mints a key once the backend reports the org+member ready", async () => {
+    mockResolveApiKeyReadiness.mockResolvedValue({
+      ready: true,
+      workosOrganizationId: "org_workos_1",
+    });
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (init?.method === "POST" && url.pathname === USER_KEYS_PATH) {
+        const body = JSON.parse(String(init.body));
+        expect(body.organization_id).toBe("org_workos_1");
+        return workosJson(keyRecord("api_key_new"));
+      }
+      return workosJson({ message: "unexpected WorkOS call" }, 500);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { status } = await expectJson(await mintKey(app));
+
+    expect(status).toBe(200);
+    expect(mockResolveApiKeyReadiness).toHaveBeenCalledWith(
+      "org_convex_1",
+      "mcpjam_user_1",
+    );
+  });
+
+  it("409s with a sync-timing message when the org is still pending", async () => {
+    mockResolveApiKeyReadiness.mockResolvedValue({
+      ready: false,
+      workosOrganizationId: null,
+      reason: "org_pending",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => workosJson({ message: "should not be called" }, 500)),
+    );
+
+    const { status, data } = await expectJson(await mintKey(app));
+
+    expect(status).toBe(409);
+    expect(data).toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("409s with a sync-timing message when the caller's membership is still pending", async () => {
+    mockResolveApiKeyReadiness.mockResolvedValue({
+      ready: false,
+      workosOrganizationId: "org_workos_1",
+      reason: "membership_pending",
+    });
+
+    const { status, data } = await expectJson(await mintKey(app));
+
+    expect(status).toBe(409);
+    expect(data).toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("403s when the caller has no membership row in the requested org", async () => {
+    const { ApiKeyReadinessError } = await import(
+      "../../../services/organizations.js"
+    );
+    mockResolveApiKeyReadiness.mockRejectedValue(
+      new ApiKeyReadinessError(403, "Not a member of this organization"),
+    );
+
+    const { status, data } = await expectJson(await mintKey(app));
+
+    expect(status).toBe(403);
+    expect(data).toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("404s when the requested org doesn't exist", async () => {
+    const { ApiKeyReadinessError } = await import(
+      "../../../services/organizations.js"
+    );
+    mockResolveApiKeyReadiness.mockRejectedValue(
+      new ApiKeyReadinessError(404, "Organization not found"),
+    );
+
+    const { status, data } = await expectJson(await mintKey(app));
+
+    expect(status).toBe(404);
+    expect(data).toMatchObject({ code: "NOT_FOUND" });
   });
 });
