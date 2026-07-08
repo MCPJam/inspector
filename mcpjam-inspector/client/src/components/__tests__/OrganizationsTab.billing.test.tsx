@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { describe, expect, it, beforeEach, vi } from "vitest";
+import { errorToastMessage } from "@/test/utils";
 import {
   fireEvent,
   render,
@@ -902,7 +903,9 @@ describe("OrganizationsTab billing", () => {
       });
     });
     expect(toast.error).toHaveBeenCalledWith(
-      "This organization has reached its member limit (3). Ask an organization owner to upgrade.",
+      errorToastMessage(
+        "This organization has reached its member limit (3). Ask an organization owner to upgrade.",
+      ),
       { duration: Infinity }
     );
   });

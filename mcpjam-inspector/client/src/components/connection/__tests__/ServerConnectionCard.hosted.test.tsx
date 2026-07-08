@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { errorToastMessage } from "@/test/utils";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { toast } from "sonner";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -101,7 +102,7 @@ describe("ServerConnectionCard hosted reconnect guard", () => {
     fireEvent.click(toggle);
 
     expect(toast.error).toHaveBeenCalledWith(
-      "HTTP servers are not supported in hosted mode",
+      errorToastMessage("HTTP servers are not supported in hosted mode"),
       { duration: Infinity }
     );
     expect(onReconnect).not.toHaveBeenCalled();

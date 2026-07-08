@@ -7,19 +7,30 @@
           "type": "patch"
         }
       ],
-      "summary": "Remove the guest free daily credits block from the sidebar.",
-      "id": "sidebar-guest-credit-block"
+      "summary": "chatboxes/tunnels: use `authFetch` with same-origin relative paths instead of manually fetching a WorkOS access token and prefixing requests with `VITE_API_BASE_URL` in `GenerateSessionsDialog` and the MCP tunnels API client; behavior unchanged, but requests now correctly pick up guest/local sessions in addition to WorkOS.",
+      "id": "chatbox-relative-api-paths"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "chatboxes: drop the chatbox-level `SessionReadinessStrip` rollup and surface synthetic-session readiness findings (`SessionInsightBar`) directly on the thread detail view instead; derive human-readable issue explanations from denormalized readiness fields when the server omits `issues[]`.",
+      "id": "session-insight-bar-relocation"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "2.22.0",
+      "oldVersion": "2.23.3",
       "changesets": [
-        "sidebar-guest-credit-block"
+        "chatbox-relative-api-paths",
+        "session-insight-bar-relocation"
       ],
-      "newVersion": "2.22.1"
+      "newVersion": "2.23.4"
     }
   ]
 }

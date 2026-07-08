@@ -39,7 +39,11 @@ import {
   resolveInitializeProtocolVersion,
 } from "./shared/initialize.js";
 import { resolveRequestedScopeValue } from "./shared/challenges.js";
-import { resolvePreregisteredClientAuthMethod } from "./shared/client-auth.js";
+import {
+  buildTokenRequestClientAuth,
+  normalizeRegisteredClientAuthMethod,
+  resolvePreregisteredClientAuthMethod,
+} from "./shared/client-auth.js";
 
 // Re-export types for backward compatibility
 export type { OAuthFlowStep, OAuthFlowState };
@@ -1036,7 +1040,7 @@ export const createDebugOAuthStateMachine = (
                   clientId: clientInfo.client_id,
                   clientSecret: clientInfo.client_secret,
                   tokenEndpointAuthMethod:
-                    clientInfo.token_endpoint_auth_method || "none",
+                    normalizeRegisteredClientAuthMethod(clientInfo),
                   lastResponse: registrationResponseData,
                   httpHistory: updatedHistoryReg,
                   infoLogs,
@@ -1196,7 +1200,7 @@ export const createDebugOAuthStateMachine = (
             });
             break;
 
-          case "received_authorization_code":
+          case "received_authorization_code": {
             // Step 10: Prepare token exchange
             if (
               !state.authorizationCode ||
@@ -1214,19 +1218,18 @@ export const createDebugOAuthStateMachine = (
               throw new Error("Missing token endpoint");
             }
 
+            const previewClientAuth = buildTokenRequestClientAuth({
+              clientId: state.clientId,
+              clientSecret: state.clientSecret,
+              tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+            });
+
             const tokenRequestBodyObj: Record<string, string> = {
               grant_type: "authorization_code",
               code: state.authorizationCode,
               redirect_uri: redirectUri,
+              ...previewClientAuth.bodyParams,
             };
-
-            if (state.clientId) {
-              tokenRequestBodyObj.client_id = state.clientId;
-            }
-
-            if (state.clientSecret) {
-              tokenRequestBodyObj.client_secret = state.clientSecret;
-            }
 
             if (state.codeVerifier) {
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
@@ -1241,6 +1244,7 @@ export const createDebugOAuthStateMachine = (
               url: state.authorizationServerMetadata.token_endpoint,
               headers: {
                 "Content-Type": "application/x-www-form-urlencoded",
+                ...previewClientAuth.headers,
               },
               body: tokenRequestBodyObj,
             };
@@ -1264,6 +1268,7 @@ export const createDebugOAuthStateMachine = (
 
             autoAdvance(50);
             return;
+          }
 
           case "token_request":
             // Step 11: Exchange authorization code for access token
@@ -1282,29 +1287,38 @@ export const createDebugOAuthStateMachine = (
             }
 
             try {
+              const clientAuth = buildTokenRequestClientAuth({
+                clientId: state.clientId,
+                clientSecret: state.clientSecret,
+                tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+              });
+
               const tokenRequestBody = new URLSearchParams({
                 grant_type: "authorization_code",
                 code: state.authorizationCode,
                 redirect_uri: redirectUri,
-                client_id: state.clientId || "",
                 code_verifier: state.codeVerifier || "",
+                ...clientAuth.bodyParams,
               });
-
-              if (state.clientSecret) {
-                tokenRequestBody.set("client_secret", state.clientSecret);
-              }
 
               if (state.serverUrl) {
                 tokenRequestBody.set("resource", state.serverUrl);
               }
 
+              // The client-auth Authorization header is applied AFTER the
+              // merge: the merge strips user-configured Authorization headers
+              // so MCP-server credentials never leak to the AS, but the Basic
+              // credential here IS addressed to the AS (client_secret_basic).
               const response = await executeRequest(
                 state.authorizationServerMetadata.token_endpoint,
                 {
                   method: "POST",
-                  headers: mergeHeadersForAuthServer(customHeaders, {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                  }),
+                  headers: {
+                    ...mergeHeadersForAuthServer(customHeaders, {
+                      "Content-Type": "application/x-www-form-urlencoded",
+                    }),
+                    ...clientAuth.headers,
+                  },
                   body: tokenRequestBody.toString(),
                 },
               );

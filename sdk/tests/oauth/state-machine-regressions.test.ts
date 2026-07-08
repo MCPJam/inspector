@@ -403,4 +403,73 @@ describe("OAuth state machine regressions", () => {
     expect(state.tokenEndpointAuthMethod).toBe("none");
     expect(state.error).toBeUndefined();
   });
+
+  it.each<[boolean | undefined, boolean | string]>([
+    [true, true],
+    [false, false],
+    [undefined, "false (not advertised, defaults to false per spec)"],
+  ])(
+    "2025-11-25 AS metadata summary reports CIMD support when the field is %s",
+    async (advertised, expectedRow) => {
+      const asMetadata: Record<string, unknown> = {
+        issuer: "https://auth.example.com",
+        authorization_endpoint: "https://auth.example.com/authorize",
+        token_endpoint: "https://auth.example.com/token",
+        response_types_supported: ["code"],
+        code_challenge_methods_supported: ["S256"],
+      };
+      if (advertised !== undefined) {
+        asMetadata.client_id_metadata_document_supported = advertised;
+      }
+
+      let state = {
+        ...EMPTY_OAUTH_FLOW_STATE,
+        currentStep: "request_authorization_server_metadata" as const,
+        authorizationServerUrl: "https://auth.example.com",
+        httpHistory: [
+          {
+            step: "request_authorization_server_metadata" as const,
+            timestamp: Date.now(),
+            request: {
+              method: "GET",
+              url: "https://auth.example.com/.well-known/oauth-authorization-server",
+              headers: {},
+            },
+          },
+        ],
+        infoLogs: [],
+        isInitiatingAuth: true,
+      };
+
+      const machine = createOAuthStateMachine({
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "dcr",
+        state,
+        getState: () => state,
+        updateState: (updates) => {
+          state = { ...state, ...updates };
+        },
+        serverUrl: SERVER_URL,
+        serverName: "Test Server",
+        redirectUrl: REDIRECT_URI,
+        requestExecutor: jest.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: asMetadata,
+        }),
+        dynamicRegistration: {
+          client_name: "Test Client",
+        },
+      });
+
+      await machine.proceedToNextStep();
+
+      expect(state.currentStep).toBe("received_authorization_server_metadata");
+      const summary = state.infoLogs?.find((log) => log.id === "as-metadata");
+      expect(summary).toBeDefined();
+      expect(summary?.data["CIMD Supported"]).toBe(expectedRow);
+    },
+  );
 });

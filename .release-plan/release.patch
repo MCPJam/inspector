@@ -1,37 +1,48 @@
-diff --git a/.changeset/sidebar-guest-credit-block.md b/.changeset/sidebar-guest-credit-block.md
+diff --git a/.changeset/chatbox-relative-api-paths.md b/.changeset/chatbox-relative-api-paths.md
 deleted file mode 100644
-index 34420ff4e..000000000
---- a/.changeset/sidebar-guest-credit-block.md
+index d6a386f79..000000000
+--- a/.changeset/chatbox-relative-api-paths.md
 +++ /dev/null
 @@ -1,5 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Remove the guest free daily credits block from the sidebar.
+-chatboxes/tunnels: use `authFetch` with same-origin relative paths instead of manually fetching a WorkOS access token and prefixing requests with `VITE_API_BASE_URL` in `GenerateSessionsDialog` and the MCP tunnels API client; behavior unchanged, but requests now correctly pick up guest/local sessions in addition to WorkOS.
+diff --git a/.changeset/session-insight-bar-relocation.md b/.changeset/session-insight-bar-relocation.md
+deleted file mode 100644
+index c95a2b592..000000000
+--- a/.changeset/session-insight-bar-relocation.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-chatboxes: drop the chatbox-level `SessionReadinessStrip` rollup and surface synthetic-session readiness findings (`SessionInsightBar`) directly on the thread detail view instead; derive human-readable issue explanations from denormalized readiness fields when the server omits `issues[]`.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 3d026ba6a..d438f281f 100644
+index 798028950..e1c1ce894 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.22.0",
-+  "version": "2.22.1",
+-  "version": "2.23.3",
++  "version": "2.23.4",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
 diff --git a/package-lock.json b/package-lock.json
-index 5bb02de1c..96f9166c7 100644
+index c63372175..80ce64356 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -327,7 +327,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.22.0",
-+      "version": "2.22.1",
+-      "version": "2.23.3",
++      "version": "2.23.4",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",

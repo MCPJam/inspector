@@ -71,6 +71,9 @@ export interface ServerWithName {
    * XAA metadata only — intentionally NOT part of MCPServerConfig / toMCPConfig.
    */
   xaaAuthzIssuer?: string;
+  /** Opt-in: accept a path-scoped authorization server (same-origin root
+   * advertised as issuer). XAA metadata only, like xaaAuthzIssuer. */
+  xaaAllowPathScopedIssuer?: boolean;
   /**
    * Cross-App Access (XAA) connect flag. When true the server authenticates via
    * the XAA token-exchange flow (server mints the token) rather than standard
