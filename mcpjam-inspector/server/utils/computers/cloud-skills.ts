@@ -168,9 +168,9 @@ export function createCloudSkill(
 
 export function updateCloudSkill(
   ctx: CloudSkillsContext,
+  // No `name` — skill names are immutable in v1 (the backend rejects renames).
   data: {
     skillId: string;
-    name?: string;
     description?: string;
     content?: string;
   }

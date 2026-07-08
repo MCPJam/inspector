@@ -210,9 +210,9 @@ skills.post("/create", async (c) =>
 
 skills.post("/update", async (c) =>
   handleRoute(c, async () => {
+    // No `name` — skill names are immutable in v1 (the backend rejects renames).
     const body = parseWithSchema(
       skillIdSchema.extend({
-        name: z.string().min(1).optional(),
         description: z.string().min(1).optional(),
         content: skillContentSchema.optional(),
       }),
@@ -221,7 +221,6 @@ skills.post("/update", async (c) =>
     const skill = await run(async () =>
       updateCloudSkill(await ctxFrom(c, body.projectId), {
         skillId: body.skillId,
-        ...(body.name !== undefined ? { name: body.name } : {}),
         ...(body.description !== undefined
           ? { description: body.description }
           : {}),

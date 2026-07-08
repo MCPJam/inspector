@@ -226,10 +226,10 @@ export async function convexCreateSkill(
 
 export async function convexUpdateSkill(
   bearer: string,
+  // No `name` — skill names are immutable in v1 (the backend rejects renames).
   args: {
     projectId: string;
     skillId: string;
-    name?: string;
     description?: string;
     content?: string;
   },

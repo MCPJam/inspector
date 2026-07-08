@@ -384,10 +384,12 @@ export async function uploadSkillFolder(
  * Update a cloud skill's editable fields by id. Cloud-only in v1 (local FS skill
  * editing is out of scope). The first UI caller of the previously-unused update
  * chain; the server 403s if the caller may not manage this skill.
+ * `name` is deliberately NOT updatable — skill names are immutable in v1 (the
+ * backend rejects renames; on-box dirs and pins key off the name).
  */
 export async function updateSkill(
   skillId: string,
-  data: { name?: string; description?: string; content?: string },
+  data: { description?: string; content?: string },
   source?: SkillsSource
 ): Promise<Skill> {
   if (!isCloud(source)) {
@@ -397,7 +399,6 @@ export async function updateSkill(
     {
       projectId: string;
       skillId: string;
-      name?: string;
       description?: string;
       content?: string;
     },
