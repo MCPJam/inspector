@@ -291,10 +291,9 @@ export function ProtocolTab({
   const selectedDropdownValue: HostProtocolDropdownValue =
     storedPin === "2026-07-28"
       ? "rc"
-      : storedPin === "auto" ||
-          (storedPin === undefined && statelessMcpEnabled)
-        ? "auto"
-        : "latest";
+      : storedPin === "auto" || (storedPin === undefined && statelessMcpEnabled)
+      ? "auto"
+      : "latest";
 
   // Dropdown handler. Writes through to `draft.mcpProfile.mcpProtocolVersion`
   // directly (parallel to the JSON editor's applyJsonToDraft path) so the
@@ -371,21 +370,23 @@ export function ProtocolTab({
                 next === "rc"
                   ? "2026-07-28"
                   : next === "auto"
-                    ? "auto"
-                    : // With the flag on, "Latest" pins the current stable
-                      // wire version explicitly — it must NOT map to
-                      // `undefined` because absence means Auto. With the flag
-                      // off, absence still means "SDK default", so Latest
-                      // keeps mapping to `undefined` for hash stability.
-                      statelessMcpEnabled
-                      ? "2025-11-25"
-                      : undefined
+                  ? "auto"
+                  : // With the flag on, "Latest" pins the current stable
+                  // wire version explicitly — it must NOT map to
+                  // `undefined` because absence means Auto. With the flag
+                  // off, absence still means "SDK default", so Latest
+                  // keeps mapping to `undefined` for hash stability.
+                  statelessMcpEnabled
+                  ? "2025-11-25"
+                  : undefined
               );
             }}
             disabled={readOnly}
           >
             <SelectTrigger className="h-9 text-xs">
-              <SelectValue placeholder={statelessMcpEnabled ? "Auto" : "Latest"} />
+              <SelectValue
+                placeholder={statelessMcpEnabled ? "Auto" : "Latest"}
+              />
             </SelectTrigger>
             <SelectContent>
               {visibleOptions.map((opt) => (

@@ -341,10 +341,12 @@ export function parseConnectionDefaults(
   }
 
   // Pinned MCP protocol version. Membership-gate against
-  // MCP_PROTOCOL_VERSIONS at this trust boundary (per the
-  // validate-then-route discipline) so typo strings drop to undefined
-  // instead of slipping through to the factory's open-routing
-  // predicate.
+  // the known pins (MCP_PROTOCOL_VERSIONS plus the config-only "auto"
+  // sentinel) at this trust boundary — validate-then-route — so typo
+  // strings drop to undefined instead of slipping through to the
+  // factory's open-routing predicate. "auto" never reaches the wire:
+  // the SDK resolves it at connect time (server/discover probe with
+  // legacy initialize fallback).
   if (
     typeof input.mcpProtocolVersion === "string" &&
     isKnownProtocolVersionPin(input.mcpProtocolVersion)

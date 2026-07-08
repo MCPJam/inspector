@@ -1245,7 +1245,8 @@ export function useServerState({
       // the flag off it MUST stay `undefined` (legacy) to honor the staged
       // backend rollout. Flag off → unchanged legacy behavior everywhere.
       const withAutoDefault =
-        effective ?? (statelessMcpEnabled ? MCP_PROTOCOL_VERSION_AUTO : undefined);
+        effective ??
+        (statelessMcpEnabled ? MCP_PROTOCOL_VERSION_AUTO : undefined);
       if (withAutoDefault !== undefined) {
         defaults.mcpProtocolVersion = withAutoDefault;
       }
@@ -1531,7 +1532,11 @@ export function useServerState({
         // target it can describe a different project entirely, so a miss
         // there proves nothing — always fall through to the one-shot query
         // against the pinned project.
-        if (!target && snapshot !== undefined && options?.queryWhenLoaded !== true) {
+        if (
+          !target &&
+          snapshot !== undefined &&
+          options?.queryWhenLoaded !== true
+        ) {
           return undefined;
         }
         if (!isUserReadyRef.current) {
@@ -1859,7 +1864,8 @@ export function useServerState({
         if (
           flatAfterWait.some(
             (s) =>
-              s.name === serverName && remoteServerBelongsToProject(s, projectId)
+              s.name === serverName &&
+              remoteServerBelongsToProject(s, projectId)
           )
         ) {
           logger.warn(
@@ -2141,7 +2147,20 @@ export function useServerState({
   const lastAppliedProtocolVersionRef = useRef<
     Map<string, McpProtocolVersionPin | undefined>
   >(new Map());
+  // Last flag value this effect normalized against. PostHog's
+  // `useFeatureFlagEnabled` starts `undefined` and can hydrate to `true`
+  // shortly after mount; that flip re-normalizes `effective` for every
+  // unpinned server at once without invalidating any existing connection
+  // (an Auto connect to those servers lands on the same legacy path they
+  // are already on). Flag-only transitions therefore re-seed silently
+  // instead of firing a reconnect storm.
+  const lastStatelessFlagRef = useRef<boolean | undefined>(undefined);
   useEffect(() => {
+    const flagFlipped =
+      lastStatelessFlagRef.current !== undefined &&
+      lastStatelessFlagRef.current !== statelessMcpEnabled;
+    lastStatelessFlagRef.current = statelessMcpEnabled;
+
     const rawHostPin = activeMcpProfile?.mcpProtocolVersion;
     const hostPin: McpProtocolVersionPin | undefined =
       typeof rawHostPin === "string" && isKnownProtocolVersionPin(rawHostPin)
@@ -2175,7 +2194,8 @@ export function useServerState({
       // same way here keeps change-detection comparing the value that actually
       // gets sent — otherwise it would miss or spuriously trigger a re-test.
       const effective: McpProtocolVersionPin | undefined =
-        resolvedPin ?? (statelessMcpEnabled ? MCP_PROTOCOL_VERSION_AUTO : undefined);
+        resolvedPin ??
+        (statelessMcpEnabled ? MCP_PROTOCOL_VERSION_AUTO : undefined);
 
       const seenBefore = lastAppliedProtocolVersionRef.current.has(name);
       const previous = lastAppliedProtocolVersionRef.current.get(name);
@@ -2184,6 +2204,17 @@ export function useServerState({
       // Initial observation seeds without probing.
       if (!seenBefore) continue;
       if (previous === effective) continue;
+      // Flag hydration/toggle re-seeds without probing (see
+      // `lastStatelessFlagRef`). Only genuine pin edits after this run
+      // trigger a re-test.
+      if (flagFlipped) continue;
+      // `guardedReconnectServer` only supports resolver-mapped project
+      // servers — for anything it can't resolve (local / not-yet-synced)
+      // it throws PROJECT_NOT_PROVISIONED, which would land here as a
+      // spurious CONNECT_FAILURE on a healthy connection. Skip the probe
+      // and keep the seed; once the server becomes resolvable a later
+      // pin change re-tests normally.
+      if (!resolved) continue;
 
       // Resolved pin changed for a connected server. Re-test asynchronously;
       // dispatch CONNECT_FAILURE if the server can't speak the new wire mode
@@ -3251,7 +3282,9 @@ export function useServerState({
               ...(formData.clientSecret
                 ? { clientSecret: formData.clientSecret }
                 : {}),
-              ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
+              ...(formData.clearClientSecret
+                ? { clearClientSecret: true }
+                : {}),
               ...(formData.secretPatch?.env !== undefined
                 ? { env: formData.secretPatch.env }
                 : {}),
@@ -4055,11 +4088,8 @@ export function useServerState({
             server.oauthTokens?.client_id ??
             server.oauthFlowProfile?.clientId ??
             storedClientCredentials.clientId,
-          clientSecret:
-            undefined,
-          hasClientSecret: Boolean(
-            server.hasClientSecret
-          ),
+          clientSecret: undefined,
+          hasClientSecret: Boolean(server.hasClientSecret),
           customHeaders: mergeWithProjectHeaders(
             profileHeaders ??
               ("requestInit" in server.config

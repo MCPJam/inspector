@@ -35,10 +35,10 @@ export function EffectiveProtocolVersionChip({
     effective === "auto"
       ? "Auto"
       : effective !== undefined
-        ? effective
-        : flagEnabled
-          ? "Auto"
-          : "Latest";
+      ? effective
+      : flagEnabled
+      ? "Auto"
+      : "Latest";
 
   return (
     <span className="inline-flex items-center px-1 text-[11px] text-muted-foreground">

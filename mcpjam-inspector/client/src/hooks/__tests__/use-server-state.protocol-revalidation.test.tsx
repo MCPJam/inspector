@@ -257,6 +257,66 @@ describe("useServerState mcpProtocolVersion re-validation", () => {
     );
   });
 
+  it("re-seeds without probing when the stateless flag hydrates false\u2192true", async () => {
+    // PostHog's flag starts undefined/false and can flip to true shortly
+    // after mount. That re-normalizes every unpinned server's effective pin
+    // (undefined \u2192 "auto") but does not invalidate existing connections \u2014
+    // an Auto connect lands on the same legacy path. A reconnect storm here
+    // was the CodeRabbit "Major" finding on the PR.
+    statelessMcpEnabledMock.mockReturnValue(false);
+    const dispatch = vi.fn();
+    const { rerender } = renderRevalidationHook(dispatch, {
+      profile: undefined,
+      hostConfig: buildHostConfig(),
+    });
+    await flushAsyncWork(5);
+    expect(reconnectServerMock).not.toHaveBeenCalled();
+
+    statelessMcpEnabledMock.mockReturnValue(true);
+    rerender({ profile: undefined, hostConfig: buildHostConfig() });
+
+    await flushAsyncWork(10);
+    expect(reconnectServerMock).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "CONNECT_FAILURE" })
+    );
+
+    // A genuine pin edit after the flip still probes.
+    reconnectServerMock.mockResolvedValue({ success: true, initInfo: null });
+    rerender({
+      profile: { mcpProtocolVersion: "2026-07-28" },
+      hostConfig: buildHostConfig(),
+    });
+    await waitFor(() => {
+      expect(reconnectServerMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("skips probing servers the project resolver can't map (no spurious CONNECT_FAILURE)", async () => {
+    // `guardedReconnectServer` throws PROJECT_NOT_PROVISIONED for servers
+    // `tryResolveProjectServer` can't resolve (local / not-yet-synced);
+    // routing a healthy connection through it on a pin change would flip
+    // the toggle to failed. The cubic P1 finding on the PR.
+    tryResolveProjectServerMock.mockReturnValue(null);
+    const dispatch = vi.fn();
+    const { rerender } = renderRevalidationHook(dispatch, {
+      profile: undefined,
+      hostConfig: buildHostConfig(),
+    });
+    await flushAsyncWork(5);
+
+    rerender({
+      profile: { mcpProtocolVersion: "2026-07-28" },
+      hostConfig: buildHostConfig(),
+    });
+
+    await flushAsyncWork(10);
+    expect(reconnectServerMock).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "CONNECT_FAILURE" })
+    );
+  });
+
   it("dispatches CONNECT_FAILURE when host pin changes and the server can't speak it", async () => {
     reconnectServerMock.mockResolvedValue({
       success: false,
