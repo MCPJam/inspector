@@ -41,6 +41,9 @@ const LOGO_BY_ID: Record<
       dark: "/cline_logo_dark.svg",
     },
   },
+  slack: { logoSrc: "/slack_logo.png" },
+  vscode: { logoSrc: "/vscode_logo.svg" },
+  notion: { logoSrc: "/notion_logo.png" },
 };
 
 // A host published to the live catalog before this client ships its logo —
@@ -75,7 +78,7 @@ export function buildHostCompatProfiles(): HostCompatProfile[] {
  * consumers memoize on its state.
  */
 export function getHostProfiles(
-  catalog?: HostCompatCatalog | null,
+  catalog?: HostCompatCatalog | null
 ): HostCompatProfile[] {
   if (!catalog) return buildHostCompatProfiles();
   return buildHostProfilesFromCatalog(catalog).map(joinLogo);

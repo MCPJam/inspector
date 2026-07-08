@@ -75,6 +75,18 @@ const _capabilityKeyParity: [
 ] = [true, true];
 void _capabilityKeyParity;
 
+const imageSourceSupportSchema = z.object({
+  model: z.boolean(),
+  ui: z.boolean(),
+});
+
+const hostImageSupportSchema = z.object({
+  toolImageContent: imageSourceSupportSchema,
+  embeddedResourceImages: imageSourceSupportSchema,
+  resourceLinkImages: imageSourceSupportSchema,
+  placement: z.enum(["none", "collapsed", "inline"]).catch("none"),
+});
+
 const marketHostSchema = z.object({
   // Plain string by design — a new host on the backend must not require an
   // SDK release to parse.
@@ -90,6 +102,7 @@ const marketHostSchema = z.object({
   rendersMcpApps: z.boolean(),
   supportedProtocolVersions: z.array(z.string()).optional(),
   verifiedAt: z.number().optional(),
+  imageSupport: hostImageSupportSchema.optional(),
 });
 
 export const hostCompatCatalogSchema = z.object({

@@ -67,6 +67,8 @@ interface AuthenticationSectionProps {
   // above; these are XAA-specific.
   xaaAuthzIssuer?: string;
   onXaaAuthzIssuerChange?: (value: string) => void;
+  xaaAllowPathScopedIssuer?: boolean;
+  onXaaAllowPathScopedIssuerChange?: (value: boolean) => void;
   xaaSubject?: string;
   onXaaSubjectChange?: (value: string) => void;
   xaaEmail?: string;
@@ -127,6 +129,8 @@ export function AuthenticationSection({
   hostedServerId = null,
   xaaAuthzIssuer = "",
   onXaaAuthzIssuerChange,
+  xaaAllowPathScopedIssuer = false,
+  onXaaAllowPathScopedIssuerChange,
   xaaSubject = "",
   onXaaSubjectChange,
   xaaEmail = "",
@@ -724,6 +728,10 @@ export function AuthenticationSection({
               onScopesChange={onOauthScopesChange}
               xaaAuthzIssuer={xaaAuthzIssuer}
               onXaaAuthzIssuerChange={(v) => onXaaAuthzIssuerChange?.(v)}
+              xaaAllowPathScopedIssuer={xaaAllowPathScopedIssuer}
+              onXaaAllowPathScopedIssuerChange={(v) =>
+                onXaaAllowPathScopedIssuerChange?.(v)
+              }
               xaaSubject={xaaSubject}
               onXaaSubjectChange={(v) => onXaaSubjectChange?.(v)}
               xaaEmail={xaaEmail}

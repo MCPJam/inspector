@@ -285,6 +285,20 @@ function isSpecialEntryPathname(pathname: string): boolean {
   );
 }
 
+/**
+ * The OAuth debugger callback (`/oauth/callback/debug`) runs in a throwaway
+ * popup that only relays its code to the opener and closes. It must render
+ * WITHOUT `<AuthKitProvider>` (see main.tsx): AuthKit's on-load refresh rotates
+ * the shared WorkOS token from this short-lived context, intermittently
+ * dropping the opener window's session.
+ */
+export function isDebugOAuthCallbackPath(pathname: string): boolean {
+  return (
+    pathname === "/oauth/callback/debug" ||
+    pathname.startsWith("/oauth/callback/debug/")
+  );
+}
+
 export function pathnameToActiveTab(pathname: string): string {
   if (isSpecialEntryPathname(pathname)) return "servers";
   const firstSegment = pathname.replace(/^\/+/, "").split("/")[0] || "home";

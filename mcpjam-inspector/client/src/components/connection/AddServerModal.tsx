@@ -449,6 +449,10 @@ export function AddServerModal({
               clientSecretError={formState.clientSecretError}
               xaaAuthzIssuer={formState.xaaAuthzIssuer}
               onXaaAuthzIssuerChange={formState.setXaaAuthzIssuer}
+              xaaAllowPathScopedIssuer={formState.xaaAllowPathScopedIssuer}
+              onXaaAllowPathScopedIssuerChange={
+                formState.setXaaAllowPathScopedIssuer
+              }
               xaaSubject={formState.xaaSubject}
               onXaaSubjectChange={formState.setXaaSubject}
               xaaEmail={formState.xaaEmail}

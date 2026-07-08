@@ -47,6 +47,8 @@ export {
   MCP_APPS_CURSOR,
   MCP_APPS_GOOSE,
   MCP_APPS_COPILOT,
+  MCP_APPS_SLACK,
+  MCP_APPS_VSCODE,
   MCP_APPS_NO_CLAIMS,
 } from "./capabilities.js";
 export {
@@ -76,4 +78,7 @@ export type {
   HostCompatReport,
   ServerRequirements,
   HostCompatProfile,
+  ImagePlacement,
+  ImageSourceSupport,
+  HostImageSupport,
 } from "./types.js";
