@@ -444,3 +444,43 @@ export function getInvalidOrganizationRouteNavigationTarget({
 
   return null;
 }
+
+/**
+ * Decide whether an active-project change should snap the user to Servers.
+ *
+ * Staying on a project-scoped page (App Builder/Chat) after the active project
+ * changes would leave the user pointed at a project that no longer exists, so
+ * we snap to Servers. But not every project change is a manual switch: opening
+ * another org's settings (e.g. via the switcher's per-row gear) flips the
+ * active org, which auto-resolves a new active project as a *side effect* while
+ * the user deliberately navigates to the org page. Organization routes are
+ * org-scoped, not project-scoped, so snapping there would bounce the user right
+ * back off the settings they just opened.
+ *
+ * The initial hydration (no previous id) and the local-default `"none"`
+ * placeholder are never treated as real switches.
+ */
+export function shouldSnapToServersOnActiveProjectChange({
+  previousActiveProjectId,
+  nextActiveProjectId,
+  activeTab,
+}: {
+  previousActiveProjectId: string | null;
+  nextActiveProjectId: string;
+  activeTab: string;
+}): boolean {
+  if (
+    previousActiveProjectId == null ||
+    previousActiveProjectId === nextActiveProjectId ||
+    previousActiveProjectId === "none" ||
+    nextActiveProjectId === "none"
+  ) {
+    return false;
+  }
+
+  if (activeTab === "organizations") {
+    return false;
+  }
+
+  return true;
+}
