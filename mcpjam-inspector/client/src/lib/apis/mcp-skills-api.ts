@@ -1,6 +1,6 @@
 import { authFetch } from "@/lib/session-token";
 import { runByMode } from "@/lib/apis/mode-client";
-import { webPost, WebApiError } from "@/lib/apis/web/base";
+import { webPost } from "@/lib/apis/web/base";
 import type {
   Skill,
   SkillListItem,
@@ -243,109 +243,113 @@ export async function uploadSkillFolder(
         ((f as any).webkitRelativePath || "").endsWith("/SKILL.md")
     );
     if (!skillMdFile) throw new Error("No SKILL.md found in the folder");
-    // 1. Create the skill from SKILL.md (name/description/body). IDEMPOTENT on
-    // retry ONLY for the retry-after-partial-upload case: a prior attempt already
-    // created the skill but some files failed, so re-running 409s on the name,
-    // there ARE supporting files to (re-)attach (attach is upsert-by-path), AND
-    // the existing SKILL.md still MATCHES what we're uploading. Any other create
-    // failure — validation / permission / server, a SKILL.md-only duplicate
-    // (nothing to retry), OR a same-name upload with CHANGED instructions —
-    // rethrows so the user sees the conflict instead of a false success.
+    // 1. Create the skill from SKILL.md. A 409 here is a genuine name
+    // conflict: the supporting-file phase below ROLLS BACK the created skill
+    // on any failure, so a partial upload never persists and there is no
+    // half-uploaded state to resume.
     // Send the RAW SKILL.md too: the server parses it authoritatively so
     // preserved frontmatter (allowed-tools / license / …) survives; the local
     // parse below only feeds the legacy description/content fields.
     const rawSkillMd = await skillMdFile.text();
     const { description, body } = parseSkillMd(rawSkillMd);
     const supporting = files.filter((f) => f !== skillMdFile);
-    let skill: Skill;
-    try {
-      skill = await uploadSkill(
-        { name: skillName, description, content: body, skillMd: rawSkillMd },
-        source,
-        sharing
-      );
-    } catch (createErr) {
-      const isConflict =
-        createErr instanceof WebApiError && createErr.status === 409;
-      if (!isConflict || supporting.length === 0) throw createErr;
-      // Only RESUME when the existing skill's body/description match what we're
-      // uploading. A changed SKILL.md is a genuine name clash with different
-      // instructions — surface it rather than attaching new files to the stale
-      // skill and reporting success while the old cloud instructions persist.
-      const existing = await getSkill(skillName, source).catch(() => null);
-      if (!existing) throw createErr;
-      const sameContent =
-        existing.content.trim() === body.trim() &&
-        existing.description.trim() === description.trim();
-      if (!sameContent) throw createErr;
-      skill = existing;
-    }
+    const skill = await uploadSkill(
+      { name: skillName, description, content: body, skillMd: rawSkillMd },
+      source,
+      sharing
+    );
 
     // 2. Upload supporting files DIRECTLY to Convex (bypasses inspector body
-    // limits), then batch-register them. Partial failures are surfaced (with the
-    // failing paths), not silently dropped — the skill exists, so the user can retry.
+    // limits), then batch-register them. ATOMIC from the user's perspective:
+    // any failure best-effort deletes the just-created skill and throws, so a
+    // retry starts clean instead of half-saved.
     if (supporting.length === 0) return skill;
 
-    const skillId = await resolveCloudSkillId(source.projectId, skillName);
-    const attachInputs: {
-      path: string;
-      storageId: string;
-      contentHash: string;
-    }[] = [];
     const failedPaths: string[] = [];
-    for (const f of supporting) {
-      const path = skillRelativePath(f);
-      try {
-        const { uploadUrl } = await webPost<
-          { projectId: string; skillId: string },
-          { uploadUrl: string }
-        >("/api/web/skills/files/upload-url", {
-          projectId: source.projectId,
-          skillId,
-        });
-        const buf = await f.arrayBuffer();
-        const putRes = await fetch(uploadUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": f.type || "application/octet-stream",
-          },
-          body: buf,
-        });
-        if (!putRes.ok) throw new Error(`upload failed (${putRes.status})`);
-        const { storageId } = (await putRes.json()) as { storageId: string };
-        attachInputs.push({
-          path,
-          storageId,
-          contentHash: await sha256Hex(buf),
-        });
-      } catch {
-        failedPaths.push(path);
+    let skillId: string | null = null;
+    try {
+      skillId = await resolveCloudSkillId(source.projectId, skillName);
+    } catch {
+      // Can't even address the created skill's file APIs — treat every
+      // supporting file as failed so the rollback below runs.
+      failedPaths.push(...supporting.map(skillRelativePath));
+    }
+    if (skillId) {
+      const attachInputs: {
+        path: string;
+        storageId: string;
+        contentHash: string;
+      }[] = [];
+      for (const f of supporting) {
+        const path = skillRelativePath(f);
+        try {
+          const { uploadUrl } = await webPost<
+            { projectId: string; skillId: string },
+            { uploadUrl: string }
+          >("/api/web/skills/files/upload-url", {
+            projectId: source.projectId,
+            skillId,
+          });
+          const buf = await f.arrayBuffer();
+          const putRes = await fetch(uploadUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": f.type || "application/octet-stream",
+            },
+            body: buf,
+          });
+          if (!putRes.ok) throw new Error(`upload failed (${putRes.status})`);
+          const { storageId } = (await putRes.json()) as { storageId: string };
+          attachInputs.push({
+            path,
+            storageId,
+            contentHash: await sha256Hex(buf),
+          });
+        } catch {
+          failedPaths.push(path);
+        }
+      }
+      if (attachInputs.length > 0) {
+        try {
+          await webPost<
+            {
+              projectId: string;
+              skillId: string;
+              files: typeof attachInputs;
+            },
+            { files: unknown }
+          >("/api/web/skills/files/attach", {
+            projectId: source.projectId,
+            skillId,
+            files: attachInputs,
+          });
+        } catch {
+          failedPaths.push(...attachInputs.map((a) => a.path));
+        }
       }
     }
-    if (attachInputs.length > 0) {
+    if (failedPaths.length > 0) {
+      // Roll back the created skill so nothing partial persists. Best-effort:
+      // if the rollback itself fails, surface BOTH facts so the user knows a
+      // half-created skill is left behind.
+      let rollbackFailed = false;
       try {
-        await webPost<
-          {
-            projectId: string;
-            skillId: string;
-            files: typeof attachInputs;
-          },
-          { files: unknown }
-        >("/api/web/skills/files/attach", {
-          projectId: source.projectId,
-          skillId,
-          files: attachInputs,
-        });
+        await deleteSkill(skillName, source);
       } catch {
-        failedPaths.push(...attachInputs.map((a) => a.path));
+        rollbackFailed = true;
       }
-    }
-    const failed = failedPaths.length;
-    if (failed > 0) {
+      const failing = failedPaths.join(", ");
+      if (rollbackFailed) {
+        throw new Error(
+          `Upload failed — ${failedPaths.length} supporting file(s) failed ` +
+            `(${failing}), and removing the partially created skill also ` +
+            `failed. Delete skill '${skillName}' manually, then fix the ` +
+            `failing files and retry.`
+        );
+      }
       throw new Error(
-        `Skill created; ${failed} supporting file(s) failed to upload ` +
-          `(${failedPaths.join(", ")}). ` +
-          `Re-upload the folder to add them.`
+        `Upload failed — nothing was saved. Fix the failing files ` +
+          `(${failing}) and retry.`
       );
     }
     return skill;
