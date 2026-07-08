@@ -8,9 +8,11 @@
  *   server → client  text {type:"ready",sessionId} | {type:"exit"}
  *                    | {type:"error",message} | {type:"pong"}
  *
- * Auth is the Convex-minted terminal token in the query string (the
- * `/api/web/*` routes are not session-gated; the token IS the auth). Kept
- * free of xterm so the protocol is unit-testable with a fake WebSocket.
+ * Auth is the Convex-minted terminal token, sent as a WebSocket subprotocol
+ * (`new WebSocket(url, [token])`) — the `/api/web/*` routes are not
+ * session-gated, so the token IS the auth, and browsers can't attach a
+ * custom header to a WS handshake. Kept free of xterm so the protocol is
+ * unit-testable with a fake WebSocket.
  */
 
 export type TerminalEvent =
@@ -40,14 +42,14 @@ export interface OpenTerminalOptions {
    *  Applied server-side at PTY creation; falls back to home if it can't be set. */
   cwd?: string;
   /** WebSocket factory override for tests. */
-  wsFactory?: (url: string) => WebSocket;
+  wsFactory?: (url: string, protocols: string[]) => WebSocket;
 }
 
 /**
  * Convert a data-plane HTTP(S) origin into the `ws(s)://host` base expected
  * by `buildTerminalWsUrl`. Used when this inspector delegates to a remote
- * data plane (see GET /api/web/computers/config); the terminal token in the
- * query string is the auth, so a cross-origin socket needs nothing else.
+ * data plane (see GET /api/web/computers/config); the terminal token rides
+ * the WS subprotocol, so a cross-origin socket needs nothing else.
  */
 export function toTerminalWsBase(httpOrigin: string): string | undefined {
   try {
@@ -126,9 +128,10 @@ export async function uploadFilesToComputer(args: {
   return body.files ?? [];
 }
 
-/** Build the `ws(s)://…/api/web/computers/terminal?…` URL from page origin. */
+/** Build the `ws(s)://…/api/web/computers/terminal?…` URL from page origin.
+ *  The auth token is NOT part of this URL — it rides the WS subprotocol
+ *  (see `openTerminalConnection`) so it never lands in proxy/CDN access logs. */
 export function buildTerminalWsUrl(args: {
-  token: string;
   cols: number;
   rows: number;
   baseUrl?: string;
@@ -140,7 +143,6 @@ export function buildTerminalWsUrl(args: {
       window.location.host
     }`;
   const params = new URLSearchParams({
-    token: args.token,
     cols: String(args.cols),
     rows: String(args.rows),
   });
@@ -152,7 +154,10 @@ export function openTerminalConnection(
   opts: OpenTerminalOptions
 ): TerminalConnection {
   const url = buildTerminalWsUrl(opts);
-  const ws = (opts.wsFactory ?? ((u: string) => new WebSocket(u)))(url);
+  const ws = (opts.wsFactory ?? ((u: string, p: string[]) => new WebSocket(u, p)))(
+    url,
+    [opts.token]
+  );
   ws.binaryType = "arraybuffer";
 
   ws.onopen = () => opts.onOpen?.();
