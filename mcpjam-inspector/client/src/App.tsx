@@ -11,8 +11,8 @@ import {
   type ComponentProps,
 } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { AlertTriangle, Construction, Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { AlertTriangle, Loader2 } from "lucide-react";
+import { toast } from "@/lib/toast";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { HomeTab } from "./components/HomeTab";
 import { ServersTab } from "./components/ServersTab";
@@ -26,9 +26,9 @@ import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capab
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
-import { ViewsTab } from "./components/ViewsTab";
 import { ChatboxesTab } from "./components/ChatboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
+import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
 import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconciler";
@@ -36,10 +36,10 @@ import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
+import { HostCompatPage } from "./components/compat/HostCompatPage";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
-import { EmptyState } from "./components/ui/empty-state";
 import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
 import { isFirstRunEligible } from "./lib/onboarding-state";
 import { ProfileTab } from "./components/ProfileTab";
@@ -49,15 +49,15 @@ import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
 import { HostsTab } from "./components/HostsTab";
 import { HostConfigCompareView } from "./components/hosts/comparison/HostConfigCompareView";
+import { HostSectionTabs } from "./components/hosts/HostSectionTabs";
 import { ConnectViewHeader } from "./components/hosts/ConnectViewHeader";
+import { ComputerView } from "./components/computer/ComputerView";
+import { useComputersEnabledState } from "./hooks/useComputersEnabled";
 import { motion } from "framer-motion";
 import { SNAPPY_RAIL } from "./components/hosts/transition-tokens";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
-import {
-  MCPSidebar,
-  computeHostsHubFlagEnabled,
-} from "./components/mcp-sidebar";
+import { MCPSidebar } from "./components/mcp-sidebar";
 import {
   SidebarInset,
   SidebarProvider,
@@ -114,7 +114,7 @@ import type {
   ActiveServerSelectorProps,
   PlaygroundServerSelectorProps,
 } from "./components/ActiveServerSelector";
-import { useViewQueries, useProjectServers } from "./hooks/useViews";
+import { useProjectServers } from "./hooks/useViews";
 import { HostedShellGate } from "./components/hosted/HostedShellGate";
 import { resolveHostedShellGateState } from "./components/hosted/hosted-shell-gate-state";
 import {
@@ -130,6 +130,8 @@ import {
   createInspectorCommandClientError,
   registerInspectorCommandHandler,
 } from "./lib/inspector-command-handlers";
+import { resolveUiNavigationTarget } from "./lib/webmcp/ui-actions";
+import { useRegisterUiTools } from "./lib/webmcp/use-register-ui-tools";
 import { waitForUiCommit } from "./lib/wait-for-ui-commit";
 import { subscribeToOAuthDebuggerRequests } from "./lib/oauth/oauth-debugger-navigation";
 import {
@@ -201,7 +203,10 @@ import {
   MCP_PROTOCOL_VERSION_AUTO,
   type McpProtocolVersionPin,
 } from "@mcpjam/sdk/browser";
-import { resolveEffectiveMcpProtocolVersion } from "./lib/client-config-v2";
+import {
+  gateMcpToolResultImageRenderingByModelVisibility,
+  resolveEffectiveMcpProtocolVersion,
+} from "./lib/client-config-v2";
 import type { ProjectServerConfigDto } from "./lib/project-server-config";
 import {
   buildHostsPath,
@@ -209,6 +214,7 @@ import {
   buildEvalsPath,
   getInvalidOrganizationRouteNavigationTarget,
   getProjectSwitchNavigationTarget,
+  isDebugOAuthCallbackPath,
   navigationTargetToPath,
   navigateApp,
   pathnameToActiveTab,
@@ -235,6 +241,11 @@ import type {
 } from "@/shared/inspector-command.js";
 
 const OCCUPATION_GATE_ROLLOUT_MS = Date.parse("2026-04-29T00:00:00.000Z");
+// Accounts created on/after this ship date are treated as "new" for the
+// first-run Playground redirect. Older accounts (created before the cutoff)
+// are never redirected, regardless of their onboarding flag, so returning
+// users always keep the Home landing.
+const FIRST_RUN_PLAYGROUND_ROLLOUT_MS = Date.parse("2026-06-16T00:00:00.000Z");
 const AUTH_EXIT_RUNTIME_CLEANUP_TIMEOUT_MS = 2_500;
 
 function getHostedOAuthCallbackErrorMessage(): string {
@@ -446,6 +457,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <LearningRoute />;
     case "conformance":
       return <ConformanceRoute />;
+    case "compatibility":
+      return <CompatibilityRoute />;
     case "oauth-flow":
       return <OAuthFlowRoute />;
     case "xaa-flow":
@@ -456,12 +469,12 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <HostsRoute />;
     case "host-compare":
       return <HostCompareRoute />;
+    case "computer":
+      return <ComputerRoute />;
     case "chatboxes":
       return <ChatboxesRoute />;
     case "playground":
       return <PlaygroundRoute />;
-    case "views":
-      return <ViewsRoute />;
     case "support":
       return <SupportRoute />;
     case "settings":
@@ -511,11 +524,7 @@ function ActiveBillingUpsellGate() {
 }
 
 export function ServersRoute() {
-  const {
-    convexProjectId,
-    hostsHubFlagEnabled,
-    isAuthenticated,
-  } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
   const navigate = useAppNavigate();
 
   // From /servers, "select a host" means navigate to /hosts/:id. State sync
@@ -525,10 +534,10 @@ export function ServersRoute() {
     (next: string | null) => {
       navigate(next ? buildHostsPath(next) : routePaths.servers);
     },
-    [navigate],
+    [navigate]
   );
 
-  if (!hostsHubFlagEnabled || !isAuthenticated) {
+  if (!isAuthenticated) {
     return <ServersTabBody />;
   }
 
@@ -595,7 +604,6 @@ function ServersTabBody() {
 export function HostsRoute() {
   const {
     convexProjectId,
-    hostsHubFlagEnabled,
     hostsTabSelectedHostId,
     isAuthenticated,
     setHostsTabSelectedHostId,
@@ -624,10 +632,10 @@ export function HostsRoute() {
     (next: string | null) => {
       navigate(next ? buildHostsPath(next) : routePaths.hosts);
     },
-    [navigate],
+    [navigate]
   );
 
-  if (!hostsHubFlagEnabled || !isAuthenticated) {
+  if (!isAuthenticated) {
     return <ServersTabBody />;
   }
 
@@ -642,9 +650,8 @@ export function HostsRoute() {
   );
 }
 
-export function HostCompareRoute() {
-  const { convexProjectId, hostsHubFlagEnabled, isAuthenticated } =
-    useAppRouteContext();
+export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
 
@@ -652,12 +659,14 @@ export function HostCompareRoute() {
     <HostConfigCompareView
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
+      presetOnly={bare}
     />
   );
 
-  // Mirror the gating HostsRoute uses: when the hosts hub is off, Compare
-  // has no peer Servers/Client tabs to switch to, so render bare.
-  if (!hostsHubFlagEnabled || !isAuthenticated) {
+  // Mirror the gating HostsRoute uses: when signed out, Compare has no peer
+  // Servers/Client tabs to switch to, so render bare. `bare` forces the same
+  // for the chrome-less embed route (caniuse.dev) regardless of auth.
+  if (bare || !isAuthenticated) {
     return compareView;
   }
 
@@ -670,17 +679,88 @@ export function HostCompareRoute() {
       className="flex h-full min-h-0 flex-col"
     >
       <ConnectViewHeader
-        value="compare"
+        value="host"
         previewedHostId={previewedHostId}
         onChange={(next) => {
           if (next === "servers") {
             navigate(routePaths.servers);
           } else if (next === "host" && previewedHostId) {
             navigate(buildHostsPath(previewedHostId));
+          } else if (next === "computer") {
+            navigate(routePaths.computer);
+          }
+        }}
+        rightSlot={
+          // Host/Compare sub-nav inline in the header row (single bar) rather
+          // than stacked beneath the primary nav.
+          <div className="flex min-w-0 items-center justify-center md:justify-end">
+            <HostSectionTabs
+              value="compare"
+              hostEnabled={Boolean(previewedHostId)}
+              onSelect={(next) => {
+                if (next === "host" && previewedHostId) {
+                  navigate(buildHostsPath(previewedHostId));
+                }
+              }}
+            />
+          </div>
+        }
+      />
+      <div className="min-h-0 flex-1">{compareView}</div>
+    </motion.div>
+  );
+}
+
+export function ComputerRoute() {
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const [previewedHostId] = usePreviewedHostId(convexProjectId);
+  const navigate = useAppNavigate();
+  const computersEnabled = useComputersEnabledState();
+
+  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
+  // `undefined`; bouncing then would strand a flagged-in user who cold-loads
+  // /computer directly (the redirect fires before the flag resolves). Render
+  // nothing until it settles — disabled users get the bounce a beat later.
+  if (computersEnabled === false) {
+    return <Navigate to={routePaths.servers} replace />;
+  }
+  if (computersEnabled === undefined) {
+    return null;
+  }
+
+  const computerView = (
+    <ComputerView
+      projectId={convexProjectId}
+      isAuthenticated={isAuthenticated}
+    />
+  );
+
+  if (!isAuthenticated) {
+    return computerView;
+  }
+
+  return (
+    <motion.div
+      key="computer"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={SNAPPY_RAIL}
+      className="flex h-full min-h-0 flex-col"
+    >
+      <ConnectViewHeader
+        value="computer"
+        previewedHostId={previewedHostId}
+        onChange={(next) => {
+          if (next === "servers") {
+            navigate(routePaths.servers);
+          } else if (next === "compare") {
+            navigate(routePaths.hostCompare);
+          } else if (next === "host" && previewedHostId) {
+            navigate(buildHostsPath(previewedHostId));
           }
         }}
       />
-      <div className="min-h-0 flex-1">{compareView}</div>
+      <div className="min-h-0 flex-1">{computerView}</div>
     </motion.div>
   );
 }
@@ -716,16 +796,19 @@ export function ToolsRoute() {
   const prefHostStyle = usePreferencesStore((state) => state.hostStyle);
   const hostStyle = activeHost?.hostStyle ?? prefHostStyle;
   return (
-    <ActiveHostCapsResolverScope
-      activeHost={activeHost}
-      hostStyle={hostStyle}
-    >
+    <ActiveHostCapsResolverScope activeHost={activeHost} hostStyle={hostStyle}>
       <div className="h-full overflow-hidden">
         <ToolsTab
           serverConfig={selectedMCPConfig}
           serverName={appState.selectedServer}
           serverConnectionStatus={
             selectedServerEntry?.connectionStatus ?? "disconnected"
+          }
+          mcpToolResultImageRendering={
+            gateMcpToolResultImageRenderingByModelVisibility(
+              activeHost?.config?.mcpToolResultImageRendering,
+              activeHost?.config?.modelVisibleMcpToolResults
+            )
           }
         />
       </div>
@@ -735,7 +818,6 @@ export function ToolsRoute() {
 
 export function EvalsRoute() {
   const {
-    evaluateUiEnabled,
     billingUiEnabled,
     activeTabBillingLocked,
     activeTabBillingFeature,
@@ -744,16 +826,6 @@ export function EvalsRoute() {
     handleContinueEvalInChat,
     handleConnect,
   } = useAppRouteContext();
-
-  if (evaluateUiEnabled !== true) {
-    return (
-      <EmptyState
-        icon={Construction}
-        title="Evaluate Coming Soon"
-        description="The Evaluate suite is under construction. Stay tuned!"
-      />
-    );
-  }
 
   if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;
@@ -805,22 +877,27 @@ export function CiEvalsRoute() {
   );
 }
 
-export function ViewsRoute() {
-  const { appState, activeProjectId, handleUpdateHostContext } =
-    useAppRouteContext();
-
-  return (
-    <ViewsTab
-      selectedServer={appState.selectedServer}
-      activeProjectId={activeProjectId}
-      onSaveHostContext={handleUpdateHostContext}
-    />
-  );
-}
-
 export function ConformanceRoute() {
   const { selectedServerEntry } = useAppRouteContext();
   return <ConformanceTab server={selectedServerEntry ?? null} />;
+}
+
+export function CompatibilityRoute() {
+  const { appState, selectedServerEntry, activeProjectId, setSelectedServer } =
+    useAppRouteContext();
+  const connectedServers = Object.values<ServerWithName>(
+    appState.servers
+  ).filter((s) => s.connectionStatus === "connected");
+  // The page resolves the detail against `servers` (ignoring a stale/
+  // disconnected global selection), so it's safe to pass the raw selection.
+  return (
+    <HostCompatPage
+      servers={connectedServers}
+      selectedServer={selectedServerEntry ?? null}
+      onSelectServer={setSelectedServer}
+      projectId={activeProjectId}
+    />
+  );
 }
 
 // `/chatboxes` is the publish surface (link / mode / members / sessions /
@@ -882,7 +959,25 @@ export function PromptsRoute() {
 }
 
 export function SkillsRoute() {
-  return <SkillsTab />;
+  const { convexProjectId } = useAppRouteContext();
+  const computersEnabled = useComputersEnabledState();
+
+  // Hosted skills are a project-MEMBERSHIP resource (authored in Convex,
+  // available even without a Computer) — NOT gated on the Computer flag. Access
+  // is enforced server-side. We only wait for the project to resolve, since
+  // hosted skills have no local FS to fall back to (rendering early would hit
+  // the unavailable /api/mcp/skills/* routes). `computersEnabled` is passed
+  // through only for the local-mode Local/Cloud toggle.
+  if (HOSTED_MODE && !convexProjectId) {
+    return null;
+  }
+
+  return (
+    <SkillsTab
+      projectId={convexProjectId}
+      computersEnabled={computersEnabled === true}
+    />
+  );
 }
 
 export function LearningRoute() {
@@ -916,10 +1011,12 @@ export function AuthRoute() {
 export function OAuthFlowRoute() {
   const {
     appState,
+    displayServerConfigs,
     setSelectedServer,
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
+    oauthServerModalNonce,
     posthog,
   } = useAppRouteContext();
 
@@ -969,19 +1066,29 @@ export function OAuthFlowRoute() {
       }}
     >
       <OAuthFlowTab
-        serverConfigs={appState.servers}
+        serverConfigs={displayServerConfigs}
         selectedServerName={appState.selectedServer}
         onSelectServer={setSelectedServer}
         onSaveServerConfig={saveServerConfigWithoutConnecting}
         onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
         onRefreshTokens={handleRefreshTokensFromOAuthFlow}
+        openProfileModalSignal={oauthServerModalNonce}
       />
     </ErrorBoundary>
   );
 }
 
 export function XAAFlowRoute() {
-  const { xaaEnabled, appState } = useAppRouteContext();
+  const {
+    xaaEnabled,
+    appState,
+    displayServerConfigs,
+    activeOrganizationId,
+    convexProjectId,
+    setSelectedServer,
+    saveServerConfigWithoutConnecting,
+    xaaServerModalNonce,
+  } = useAppRouteContext();
   if (xaaEnabled !== true) return null;
 
   return (
@@ -993,8 +1100,17 @@ export function XAAFlowRoute() {
       }
     >
       <XAAFlowTab
-        serverConfigs={appState.servers}
+        // The saved project catalog (clientId, scopes, hasClientSecret,
+        // xaaAuthzIssuer), not the runtime connection entries — the latter
+        // drop the persisted OAuth config, so the Configure modal and the
+        // runner saw a confidential server as a public client with no issuer.
+        serverConfigs={displayServerConfigs}
         selectedServerName={appState.selectedServer}
+        organizationId={activeOrganizationId ?? null}
+        projectId={convexProjectId ?? null}
+        onSelectServer={setSelectedServer}
+        onSaveServerConfig={saveServerConfigWithoutConnecting}
+        openServerModalSignal={xaaServerModalNonce}
       />
     </ErrorBoundary>
   );
@@ -1094,6 +1210,11 @@ export function SettingsRoute() {
   );
 }
 
+export function ApiKeysSettingsRoute() {
+  const { activeOrganizationId } = useAppRouteContext();
+  return <ApiKeysRoute activeOrganizationId={activeOrganizationId} />;
+}
+
 export function SupportRoute() {
   return <SupportTab />;
 }
@@ -1133,13 +1254,16 @@ export function ServersRedirectRoute() {
 }
 
 export function HomeRoute() {
-  const { activeOrganizationId, activeProjectId } = useAppRouteContext();
-  const homeEnabled = useFeatureFlagEnabled("home-page-enabled");
-  if (!homeEnabled) return <ServersRoute />;
+  const { activeProjectId, homeOrganizationId, isHomeContextResolving } =
+    useAppRouteContext();
   return (
     <HomeTab
-      organizationId={activeOrganizationId ?? null}
+      // Membership-validated org for `/home` (the route carries none, so it is
+      // derived from the active project and checked against the org list — see
+      // App). Null → the welcome "Get started" state.
+      organizationId={homeOrganizationId ?? null}
       projectId={activeProjectId ?? null}
+      isContextLoading={isHomeContextResolving}
     />
   );
 }
@@ -1162,6 +1286,11 @@ export default function App() {
     setOptimisticallyDeletedOrganizationIds,
   ] = useState<string[]>([]);
   const [playgroundOnboarding, setPlaygroundOnboarding] = useState(false);
+  // Bumped to ask the active debugger route to open its own "configure server"
+  // modal (XAA / OAuth) instead of the generic Add Server modal — see the
+  // onAddServerRequested wiring on the header server picker below.
+  const [xaaServerModalNonce, setXaaServerModalNonce] = useState(0);
+  const [oauthServerModalNonce, setOauthServerModalNonce] = useState(0);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const billingDeepLinkNavRef = useRef(false);
@@ -1182,17 +1311,8 @@ export default function App() {
   // server). Gates the hosted connect-time Auto default below.
   const statelessMcpEnabled = useStatelessMcpEnabled();
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
-  const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
-  // Desktop builds default the Hosts/Connect rollout on (PostHog may be
-  // unreachable on the packaged Electron app), while hosted web keeps the
-  // PostHog gate. See `computeHostsHubFlagEnabled` for details.
-  const hostsHubFlagEnabled = computeHostsHubFlagEnabled({
-    hostsFlag: hostsEnabled,
-    hostedMode: HOSTED_MODE,
-  });
-  const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
+  const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
-  const evaluateUiEnabled = useFeatureFlagEnabled("evaluate-ui");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const {
     getAccessToken,
@@ -1207,24 +1327,23 @@ export default function App() {
     "users:getCurrentUser" as any,
     isAuthenticated ? ({} as any) : "skip"
   );
+  // Keyed off the stored callback context rather than the platform: the
+  // chatbox runtime (and its OAuth flows) runs on local/desktop builds too,
+  // and the completion effect below is already context-gated.
   const [hostedOAuthHandling, setHostedOAuthHandling] = useState(() => {
-    if (!HOSTED_MODE) {
-      return false;
-    }
-
     const callbackContext = getHostedOAuthCallbackContext();
     return callbackContext != null && callbackContext.surface !== "project";
   });
   const [exitedChatboxChat, setExitedChatboxChat] = useState(false);
-  const chatboxPathToken = HOSTED_MODE
-    ? getChatboxPathTokenFromLocation()
-    : null;
-  const chatboxSession = HOSTED_MODE ? readChatboxSession() : null;
+  // The published-chatbox runtime route (`/chatbox/<slug>/<token>`, plus the
+  // sessionStorage fallback that survives the post-redeem token strip) is
+  // platform-uniform: it resolves on hosted, local, and desktop builds
+  // alike. Capability gating happens downstream — redeem failures surface
+  // through ChatboxChatPage's error states — so local dev gets the same
+  // share-link and Preview-pane behavior as production.
+  const chatboxPathToken = getChatboxPathTokenFromLocation();
+  const chatboxSession = readChatboxSession();
   const hostedRouteKind = useMemo(() => {
-    if (!HOSTED_MODE) {
-      return null;
-    }
-
     if (chatboxPathToken) {
       return "chatbox" as const;
     }
@@ -1236,7 +1355,13 @@ export default function App() {
     return null;
   }, [chatboxPathToken, chatboxSession]);
   const isChatboxChatRoute =
-    HOSTED_MODE && !exitedChatboxChat && hostedRouteKind === "chatbox";
+    !exitedChatboxChat && hostedRouteKind === "chatbox";
+
+  // Chrome-less host-compare for vanity domains (caniuse.dev): rendered
+  // full-bleed without the sidebar/header, and the first-run onboarding
+  // redirect is suppressed so guests land directly on the comparison.
+  const isBareCompareRoute =
+    window.location.pathname === routePaths.embedHostCompare;
 
   useEffect(() => {
     setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
@@ -1245,12 +1370,9 @@ export default function App() {
       setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
     });
   }, [posthog]);
-  const defaultHubRoute = useMemo((): "connect" | "servers" => {
-    if (!evaluateRunsFlagsLoaded) {
-      return "servers";
-    }
-    return hostsHubFlagEnabled && isAuthenticated ? "connect" : "servers";
-  }, [evaluateRunsFlagsLoaded, hostsHubFlagEnabled, isAuthenticated]);
+  const defaultHubRoute = useMemo((): "home" | "connect" | "servers" => {
+    return "home";
+  }, []);
   const isHostedChatRoute = isChatboxChatRoute;
   const locationContext = useContext(UNSAFE_LocationContext);
   const routeOrganizationId = currentOrgRoute?.orgId;
@@ -1370,7 +1492,7 @@ export default function App() {
               return {
                 success: false,
                 error:
-                  "Your guest session expired. Reopen the chatbox link and try again.",
+                  "Your guest session expired. Reopen the swarm link and try again.",
               };
             }
             authorizationHeader = `Bearer ${guestBearerToken}`;
@@ -1463,9 +1585,7 @@ export default function App() {
   // Set up Electron OAuth callback handling
   useElectronOAuth();
 
-  const isDebugCallback = window.location.pathname.startsWith(
-    "/oauth/callback/debug"
-  );
+  const isDebugCallback = isDebugOAuthCallbackPath(window.location.pathname);
   const isOAuthCallback = window.location.pathname === "/callback";
   const electronMcpCallbackUrl = buildElectronMcpCallbackUrl();
 
@@ -1565,6 +1685,7 @@ export default function App() {
     handleReconnect,
     reconnectServerForClientSwitch,
     ensureServersReady,
+    ensureHostedServerIdsForNames,
     syncAgentStatus,
     handleUpdate,
     handleRemoveServer,
@@ -1601,7 +1722,6 @@ export default function App() {
     isLoadingOrganizations,
     validOrganizations: effectiveOrganizations,
     routeOrganizationId: hasRouteOrganization ? routeOrganizationId : undefined,
-    hostsHubFlagEnabled,
     requestSignIn: () => {
       void signIn();
     },
@@ -1634,6 +1754,12 @@ export default function App() {
     }
   }, [appState.servers, handleDisconnect]);
   useInspectorCommandBus();
+  // WebMCP UI tools: registered in both modes; advertised to MCPJam's chat
+  // agents via the chat POST snapshot and mirrored to the browser's native
+  // modelContext when present. Disabled on the standalone chatbox chat route:
+  // its end user is not the inspector operator, so inspector-driving tools
+  // must not exist on that page (chat snapshot OR native mirror).
+  useRegisterUiTools({ enabled: !isChatboxChatRoute });
   // One-time migration from legacy localStorage state to Convex. No-op in
   // hosted mode and after the first successful run; safe to keep in the tree.
   useLocalStateMigration({
@@ -1686,21 +1812,8 @@ export default function App() {
     isWorkOsLoading,
     hasWorkOsUser: !!workOsUser,
     workOsUserEmail: workOsUser?.email ?? null,
-    isLoadingRemoteProjects,
   });
-  const hostedChatShellGateState = resolveHostedShellGateState({
-    hostedMode: HOSTED_MODE,
-    nonProdLockdown: NON_PROD_LOCKDOWN,
-    isConvexAuthLoading: isAuthLoading,
-    isConvexAuthenticated: isAuthenticated,
-    isWorkOsLoading,
-    hasWorkOsUser: !!workOsUser,
-    workOsUserEmail: workOsUser?.email ?? null,
-    isLoadingRemoteProjects: false,
-  });
-  const baseHostedShellGateState = isHostedChatRoute
-    ? hostedChatShellGateState
-    : hostedShellGateState;
+  const baseHostedShellGateState = hostedShellGateState;
   const pendingDashboardOAuthServer = pendingDashboardOAuth
     ? projectServers[pendingDashboardOAuth.serverName]
     : null;
@@ -1724,12 +1837,55 @@ export default function App() {
       : currentUser.hasSeenOnboarding === true ||
         currentUser.hasCompletedOnboarding === true;
   const hasSeenFirstRunOnboarding = remoteFirstRunOnboardingShown === true;
-  const isHostedDefaultRoute = activeTab === "servers" || activeTab === "clients";
+  // A signed-in user counts as "new" (and thus gets the first-run Playground
+  // redirect) only when their account was created on/after the rollout cutoff.
+  // This keeps every pre-existing account on Home even if its onboarding flag
+  // was never set, while still sending brand-new signups to Playground.
+  const isNewSignedInAccount =
+    !!workOsUser &&
+    currentUser?.isAnonymous !== true &&
+    typeof currentUser?.createdAt === "number" &&
+    currentUser.createdAt >= FIRST_RUN_PLAYGROUND_ROLLOUT_MS;
+  const isHostedDefaultRoute =
+    activeTab === "home" || activeTab === "servers" || activeTab === "clients";
   const shouldHoldHostedDefaultRouteForAuth =
     HOSTED_MODE &&
     !isHostedChatRoute &&
     isHostedDefaultRoute &&
     hostedShellGateState === "auth-loading";
+  const shouldHoldHostedHomeRouteForAppReady =
+    HOSTED_MODE &&
+    !isHostedChatRoute &&
+    activeTab === "home" &&
+    effectiveHostedShellGateState === "ready" &&
+    (isAuthLoading ||
+      !isAuthenticated ||
+      isLoadingRemoteProjects ||
+      !areServersHydrated ||
+      !activeProjectId ||
+      activeProjectId === "none");
+  const shouldRouteToFirstRunOnboarding =
+    !isHostedChatRoute &&
+    !isBareCompareRoute &&
+    !isWorkOsLoading &&
+    effectiveHostedShellGateState === "ready" &&
+    !(isAuthenticated && currentUser === undefined) &&
+    !hasSeenFirstRunOnboarding &&
+    (!HOSTED_MODE ||
+      (isAuthenticated &&
+        !isLoadingRemoteProjects &&
+        areServersHydrated &&
+        !!activeProjectId &&
+        activeProjectId !== "none")) &&
+    isFirstRunEligible(
+      hasAnyFirstRunBlockingProjectServers,
+      activeTab,
+      !!workOsUser,
+      remoteFirstRunOnboardingShown,
+      isNewSignedInAccount
+    );
+  const shouldHoldHostedHomeRouteForFirstRunRedirect =
+    HOSTED_MODE && activeTab === "home" && shouldRouteToFirstRunOnboarding;
 
   const previousConnectedServersRef = useRef<Set<string> | null>(null);
   useEffect(() => {
@@ -1781,6 +1937,7 @@ export default function App() {
       activeTab === "prompts" ||
       activeTab === "tasks" ||
       activeTab === "conformance" ||
+      activeTab === "compatibility" ||
       activeTab === "auth";
     if (!needsServer || selectedMCPConfig) return;
 
@@ -1843,10 +2000,10 @@ export default function App() {
   // changes so it can't bleed across projects. `activeHostId` is owned by
   // useAppState (project-keyed in localStorage) and self-resets.
   useEffect(() => {
-    if (!hostsHubFlagEnabled || !isAuthenticated || !convexProjectId) {
+    if (!isAuthenticated || !convexProjectId) {
       setHostsTabSelectedHostId(null);
     }
-  }, [hostsHubFlagEnabled, isAuthenticated, convexProjectId]);
+  }, [isAuthenticated, convexProjectId]);
   useEffect(() => {
     setHostsTabSelectedHostId(null);
   }, [convexProjectId]);
@@ -2000,12 +2157,6 @@ export default function App() {
     isLoadingRemoteProjects,
   ]);
 
-  // Fetch views for the project to determine which servers have saved views
-  const { viewsByServer } = useViewQueries({
-    isAuthenticated,
-    projectId: convexProjectId,
-  });
-
   // Fetch project servers to map server IDs to names
   const { serversById } = useProjectServers({
     isAuthenticated,
@@ -2126,18 +2277,6 @@ export default function App() {
     enabled: !isHostedChatRoute,
   });
 
-  // Compute the set of server names that have saved views
-  const serversWithViews = useMemo(() => {
-    const serverNames = new Set<string>();
-    for (const serverId of viewsByServer.keys()) {
-      const serverName = serversById.get(serverId);
-      if (serverName) {
-        serverNames.add(serverName);
-      }
-    }
-    return serverNames;
-  }, [viewsByServer, serversById]);
-
   const navigateToTarget = useCallback(
     (target: string, options?: { replace?: boolean }) => {
       navigateApp(navigationTargetToPath(target), options);
@@ -2179,21 +2318,32 @@ export default function App() {
     }
   }, [activeTab, setActiveOrganizationId]);
 
+  // Registered in BOTH local and hosted modes: these handlers serve the
+  // local SSE command bus (which only subscribes in local mode) AND the
+  // WebMCP UI tools, which work everywhere. Hosted-blocked navigation
+  // targets are rejected per the hosted tab policy instead of silently
+  // falling back.
   useLayoutEffect(() => {
-    if (HOSTED_MODE) {
-      return;
-    }
-
     const unregisterNavigate = registerInspectorCommandHandler(
       "navigate",
       async (rawCommand) => {
         const command = rawCommand as NavigateInspectorCommand;
-        const path = navigationTargetToPath(command.payload.target);
+        const resolved = resolveUiNavigationTarget(command.payload.target);
+        if (!resolved.ok) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            resolved.reason
+          );
+        }
 
-        navigateApp(path);
+        navigateApp(resolved.path);
         await waitForUiCommit();
 
-        return { activeTab: pathnameToActiveTab(path) };
+        // Report the tab the shell actually landed on, not the requested
+        // one — the gating effects below (feature flags, hosted policy)
+        // can redirect immediately after the navigation commits, and the
+        // caller (SSE bus / WebMCP UI tools) plans its next step from this.
+        return { activeTab: pathnameToActiveTab(window.location.pathname) };
       }
     );
 
@@ -2301,62 +2451,10 @@ export default function App() {
   ]);
 
   useLayoutEffect(() => {
-    if (isHostedChatRoute) {
-      return;
-    }
-
-    if (isWorkOsLoading) {
-      return;
-    }
-
-    if (effectiveHostedShellGateState !== "ready") {
-      return;
-    }
-
-    if (isAuthenticated && currentUser === undefined) {
-      return;
-    }
-
-    if (hasSeenFirstRunOnboarding) {
-      return;
-    }
-
-    // Hosted guests need Convex auth and their actor-owned project before
-    // Playground can auto-connect Excalidraw against the right project.
-    if (
-      HOSTED_MODE &&
-      (!isAuthenticated ||
-        isLoadingRemoteProjects ||
-        !activeProjectId ||
-        activeProjectId === "none")
-    ) {
-      return;
-    }
-
-    if (
-      isFirstRunEligible(
-        hasAnyFirstRunBlockingProjectServers,
-        activeTab,
-        !!workOsUser,
-        remoteFirstRunOnboardingShown
-      )
-    ) {
+    if (shouldRouteToFirstRunOnboarding) {
       navigateApp(routePaths.playground);
     }
-  }, [
-    activeProjectId,
-    activeTab,
-    currentUser,
-    effectiveHostedShellGateState,
-    hasSeenFirstRunOnboarding,
-    hasAnyFirstRunBlockingProjectServers,
-    isAuthenticated,
-    isHostedChatRoute,
-    isLoadingRemoteProjects,
-    isWorkOsLoading,
-    remoteFirstRunOnboardingShown,
-    workOsUser,
-  ]);
+  }, [shouldRouteToFirstRunOnboarding]);
 
   // When the active project changes (org switch, project delete, manual switch),
   // snap to Servers — staying on App Builder/Chat would leave the user pointed
@@ -2547,10 +2645,7 @@ export default function App() {
         )} plan. Upgrade the organization to continue.`
       );
       navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (
-      activeTab === "clients" &&
-      (!hostsHubFlagEnabled || !isAuthenticated)
-    ) {
+    } else if (activeTab === "clients" && !isAuthenticated) {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "registry" && registryEnabled !== true) {
       navigateToTarget(defaultHubRoute, { replace: true });
@@ -2563,13 +2658,26 @@ export default function App() {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "conformance" && conformanceEnabled !== true) {
       navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (activeTab === "xaa-flow" && xaaEnabled !== true) {
+    } else if (
+      activeTab === "compatibility" &&
+      compatibilityEnabled === false
+    ) {
+      // Only bounce on an explicit `false`. While PostHog hydrates the flag is
+      // `undefined`; redirecting then would strand a flagged-in user who
+      // cold-loads /compatibility (the redirect fires before the flag
+      // resolves) — the "refresh sends me home" bug. Mirrors the xaa branch.
+      navigateToTarget(defaultHubRoute, { replace: true });
+    } else if (activeTab === "xaa-flow" && xaaEnabled === false) {
+      // Only bounce on an explicit `false`. While PostHog hydrates the flag is
+      // `undefined`; redirecting then would strand a flagged-in user who
+      // cold-loads /xaa-flow (the redirect fires before the flag resolves) —
+      // which is exactly the "refresh sends me home" bug. Mirrors ComputerRoute.
       navigateToTarget(defaultHubRoute, { replace: true });
     }
   }, [
     conformanceEnabled,
+    compatibilityEnabled,
     defaultHubRoute,
-    hostsHubFlagEnabled,
     registryEnabled,
     learningEnabled,
     evaluateRunsFlagsLoaded,
@@ -2861,7 +2969,11 @@ export default function App() {
     billingEntitlementsUiEnabled !== false &&
     pendingCheckoutIntent !== null;
 
-  if (shouldHoldHostedDefaultRouteForAuth) {
+  if (
+    shouldHoldHostedDefaultRouteForAuth ||
+    shouldHoldHostedHomeRouteForAppReady ||
+    shouldHoldHostedHomeRouteForFirstRunRedirect
+  ) {
     return <LoadingScreen />;
   }
 
@@ -2900,10 +3012,10 @@ export default function App() {
     activeTab === "prompts" ||
     activeTab === "tasks" ||
     activeTab === "conformance" ||
+    activeTab === "compatibility" ||
     activeTab === "oauth-flow" ||
     (activeTab === "xaa-flow" && xaaEnabled === true) ||
-    activeTab === "chat" ||
-    activeTab === "views";
+    activeTab === "chat";
 
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
@@ -2915,26 +3027,55 @@ export default function App() {
           serverConfigs: projectServers,
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
-          onConnect: handleConnect,
+          // XAA targets are saved server configs, never live connections.
+          // Adding one from the header picker must NOT launch a browser OAuth
+          // flow (handleConnect does a full-page redirect to the auth server,
+          // which strands the user on an error page when the client isn't
+          // registered). Save without connecting, then select it as the target.
+          onConnect:
+            activeTab === "xaa-flow" && xaaEnabled === true
+              ? async (formData) => {
+                  await saveServerConfigWithoutConnecting(formData);
+                  const name = formData.name?.trim();
+                  if (name) setSelectedServer(name);
+                }
+              : handleConnect,
           onReconnect: handleReconnect,
+          // The XAA / OAuth debuggers add servers through their own purpose-built
+          // modals (target URL + client credentials + simulated identity), not
+          // the generic Add Server modal. Route the header "Add Server" click to
+          // the active debugger's modal so it matches the in-canvas "Configure"
+          // button; other tabs fall back to the generic modal (prop omitted).
+          onAddServerRequested:
+            activeTab === "xaa-flow" && xaaEnabled === true
+              ? () => setXaaServerModalNonce((n) => n + 1)
+              : activeTab === "oauth-flow"
+              ? () => setOauthServerModalNonce((n) => n + 1)
+              : undefined,
           isMultiSelectEnabled: activeTab === "chat",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
           showOnlyOAuthServers:
             activeTab === "oauth-flow" ||
             (activeTab === "xaa-flow" && xaaEnabled === true),
+          includeXaaServers: activeTab === "xaa-flow" && xaaEnabled === true,
           autoSelectFilteredServer:
             activeTab !== "oauth-flow" &&
             !(activeTab === "xaa-flow" && xaaEnabled === true),
-          showOnlyServersWithViews: activeTab === "views",
-          serversWithViews: serversWithViews,
+          showOnlyServersWithViews: false,
           hasMessages: false,
         }
       : undefined;
 
   const isEvalsTab = activeTab === "evals" || activeTab === "ci-evals";
   const globalHostBarProps =
-    hostsHubFlagEnabled && isAuthenticated && convexProjectId && !isEvalsTab
+    isAuthenticated &&
+    convexProjectId &&
+    !isEvalsTab &&
+    // The playground has its own client chip in the chat-input toolbar
+    // (switch / compare / add host), so the global host bar is redundant
+    // there. It stays on every other tab.
+    activeTab !== "playground"
       ? {
           projectId: convexProjectId,
           onEditHost: (hostId: string) => {
@@ -2957,11 +3098,40 @@ export default function App() {
         }
       : undefined;
 
+  // The home route has no org segment, so its org is resolved from the active
+  // project (see HomeRoute). Until auth, the db user, the org list, and the
+  // project list have all settled, that org is transiently null — which must
+  // read as "loading", not as the empty "no organization" state. Bounded:
+  // every signal here resolves once its query/bootstrap completes.
+  const isHomeContextResolving =
+    isAuthLoading ||
+    (isAuthenticated &&
+      (isEnsuringUser ||
+        !isUserReady ||
+        isLoadingOrganizations ||
+        isLoadingRemoteProjects));
+
+  // Org shown on `/home`. Falls back to the active project's org (the route
+  // carries none) and then validates membership against the loaded org list —
+  // the same gate billing applies to `rawBillingOrganizationId` above — so a
+  // stale project pointing at an org the user no longer belongs to resolves to
+  // null (→ welcome CTA) instead of firing org-scoped queries that would throw.
+  const rawHomeOrganizationId =
+    activeOrganizationId ?? activeProject?.organizationId ?? null;
+  const homeOrganizationId =
+    !isLoadingOrganizations &&
+    rawHomeOrganizationId &&
+    effectiveOrganizations.some((org) => org._id === rawHomeOrganizationId)
+      ? rawHomeOrganizationId
+      : null;
+
   const routeContext: AppRouteContext = {
     activeMcpProfile,
     activeOrganizationId,
     activeOrganizationName,
     activeProject,
+    isHomeContextResolving,
+    homeOrganizationId,
     activeProjectBillingOrganizationId,
     activeProjectId,
     activeTabBillingFeature,
@@ -2999,8 +3169,6 @@ export default function App() {
     handleUpdate,
     handleUpdateHostContext,
     handleUpdateProject,
-    hostsEnabled,
-    hostsHubFlagEnabled,
     hostsTabSelectedHostId,
     isAuthLoading,
     isAuthenticated,
@@ -3011,8 +3179,6 @@ export default function App() {
     isWorkOsLoading,
     navigateToTarget,
     pendingDashboardOAuth,
-    playgroundEnabled,
-    evaluateUiEnabled,
     playgroundServerSelectorProps,
     posthog,
     projectServers,
@@ -3035,6 +3201,8 @@ export default function App() {
     upgradePlanForActiveTab,
     workOsUser,
     xaaEnabled,
+    xaaServerModalNonce,
+    oauthServerModalNonce,
   };
 
   const appContent = (
@@ -3150,6 +3318,24 @@ export default function App() {
     </SidebarProvider>
   );
 
+  // Vanity-domain embed (caniuse.dev): render the matched route
+  // (`HostCompareRoute bare`) full-bleed without the sidebar/header chrome.
+  // Still nested inside every provider in the return below, so auth, project,
+  // and the guest session resolve exactly as on the normal route.
+  const bareCompareContent = (
+    <div className="flex h-[100dvh] min-w-0 max-w-full flex-col overflow-hidden bg-background">
+      <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+        <AppRouteReactContext.Provider value={routeContext}>
+          {locationContext ? (
+            <Outlet context={routeContext} />
+          ) : (
+            <NoRouterRouteBody activeTab={activeTab} />
+          )}
+        </AppRouteReactContext.Provider>
+      </div>
+    </div>
+  );
+
   return (
     <PreferencesStoreProvider
       themeMode={initialThemeMode}
@@ -3161,75 +3347,78 @@ export default function App() {
       />
       <AppStateProvider appState={effectiveAppState}>
         <ServerActionsProvider
-        actions={{
-          ensureServersReady,
-          runtimeDisconnectServer: handleRuntimeDisconnect,
-          reconnectServer: reconnectServerForClientSwitch,
-          setSelectedServerNames: setSelectedMCPConfigs,
-        }}
-      >
-        <ActiveHostServerReconciler
-          projectId={convexProjectId}
-          isAuthenticated={isAuthenticated}
-          activeHost={activeHost}
-          activeHostId={activeHostId}
-        />
-        <AppReadyProvider
-          isLoadingAppState={isLoading}
-          isConvexAuthLoading={isAuthLoading}
-          isConvexAuthenticated={isAuthenticated}
-          effectiveActiveProjectId={activeProjectId}
-          isLoadingRemoteProjects={isLoadingRemoteProjects}
+          actions={{
+            ensureServersReady,
+            ensureHostedServerIdsForNames,
+            runtimeDisconnectServer: handleRuntimeDisconnect,
+            reconnectServer: reconnectServerForClientSwitch,
+            setSelectedServerNames: setSelectedMCPConfigs,
+          }}
         >
-          <Toaster />
-          <MCPJamLimitDialog />
-          <div
-            data-testid="app-shell"
-            aria-hidden={shouldShowBillingHandoffOverlay || undefined}
-            className={
-              shouldShowBillingHandoffOverlay
-                ? "pointer-events-none opacity-0"
-                : undefined
-            }
-            inert={shouldShowBillingHandoffOverlay || undefined}
+          <ActiveHostServerReconciler
+            projectId={convexProjectId}
+            isAuthenticated={isAuthenticated}
+            activeHost={activeHost}
+            activeHostId={activeHostId}
+          />
+          <AppReadyProvider
+            isLoadingAppState={isLoading}
+            isConvexAuthLoading={isAuthLoading}
+            isConvexAuthenticated={isAuthenticated}
+            effectiveActiveProjectId={activeProjectId}
+            isLoadingRemoteProjects={isLoadingRemoteProjects}
           >
-            <HostedShellGate
-              state={effectiveHostedShellGateState}
-              loadingMessage={
-                shouldShowPendingDashboardOAuthGate
-                  ? pendingDashboardOAuthMessage
+            <Toaster />
+            <MCPJamLimitDialog />
+            <div
+              data-testid="app-shell"
+              aria-hidden={shouldShowBillingHandoffOverlay || undefined}
+              className={
+                shouldShowBillingHandoffOverlay
+                  ? "pointer-events-none opacity-0"
                   : undefined
               }
-              onSignIn={() => {
-                if (chatboxPathToken) {
-                  writeChatboxSignInReturnPath(window.location.pathname);
-                }
-                signIn();
-              }}
-              onSignOut={() => {
-                void (async () => {
-                  try {
-                    await disconnectRuntimeServersForAuthExit();
-                  } finally {
-                    await signOut();
-                  }
-                })();
-              }}
+              inert={shouldShowBillingHandoffOverlay || undefined}
             >
-              {isChatboxChatRoute ? (
-                <ChatboxChatPage
-                  pathToken={chatboxPathToken}
-                  onExitChatboxChat={() => setExitedChatboxChat(true)}
-                />
-              ) : (
-                appContent
-              )}
-            </HostedShellGate>
-          </div>
-          {shouldShowBillingHandoffOverlay ? (
-            <BillingHandoffLoading overlay />
-          ) : null}
-        </AppReadyProvider>
+              <HostedShellGate
+                state={effectiveHostedShellGateState}
+                loadingMessage={
+                  shouldShowPendingDashboardOAuthGate
+                    ? pendingDashboardOAuthMessage
+                    : undefined
+                }
+                onSignIn={() => {
+                  if (chatboxPathToken) {
+                    writeChatboxSignInReturnPath(window.location.pathname);
+                  }
+                  signIn();
+                }}
+                onSignOut={() => {
+                  void (async () => {
+                    try {
+                      await disconnectRuntimeServersForAuthExit();
+                    } finally {
+                      await signOut();
+                    }
+                  })();
+                }}
+              >
+                {isChatboxChatRoute ? (
+                  <ChatboxChatPage
+                    pathToken={chatboxPathToken}
+                    onExitChatboxChat={() => setExitedChatboxChat(true)}
+                  />
+                ) : isBareCompareRoute ? (
+                  bareCompareContent
+                ) : (
+                  appContent
+                )}
+              </HostedShellGate>
+            </div>
+            {shouldShowBillingHandoffOverlay ? (
+              <BillingHandoffLoading overlay />
+            ) : null}
+          </AppReadyProvider>
         </ServerActionsProvider>
       </AppStateProvider>
     </PreferencesStoreProvider>

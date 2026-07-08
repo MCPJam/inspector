@@ -74,7 +74,9 @@ const {
     },
     isLoading: false,
     isLoadingRemoteProjects: false,
+    areServersHydrated: true,
     projectServers: {},
+    displayServerConfigs: {},
     connectedOrConnectingServerConfigs: {},
     selectedMCPConfig: null,
     handleConnect: vi.fn(),
@@ -127,6 +129,7 @@ const {
     mockOAuthFlowTabState: {
       shouldThrow: false,
       error: new Error("OAuth debugger failed"),
+      lastProps: undefined as unknown,
     },
     mockOrganizationsTab: vi.fn(() => <div />),
     mockPosthogCapture: vi.fn(),
@@ -301,8 +304,19 @@ vi.mock("../lib/guest-session", () => ({
   subscribeGuestSessionChanges: vi.fn(() => () => {}),
 }));
 
+vi.mock("../components/HomeTab", () => ({
+  HomeTab: () => <div data-testid="home-tab" />,
+}));
 vi.mock("../components/ServersTab", () => ({
   ServersTab: () => <div>Servers Tab</div>,
+}));
+// Signed-in users get the Hosts hub at /servers (and /clients); the real
+// component embeds the legacy Servers tab as its `serversTabElement` view, so
+// the mock passes it through to keep "Servers Tab" queries meaningful.
+vi.mock("../components/HostsTab", () => ({
+  HostsTab: ({ serversTabElement }: { serversTabElement?: ReactNode }) => (
+    <div data-testid="hosts-tab">{serversTabElement}</div>
+  ),
 }));
 vi.mock("../components/ToolsTab", () => ({
   ToolsTab: () => <div />,
@@ -331,9 +345,6 @@ vi.mock("../components/EvalsTab", () => ({
 vi.mock("../components/CiEvalsTab", () => ({
   CiEvalsTab: () => <div data-testid="ci-evals-tab">CI Evals Tab</div>,
 }));
-vi.mock("../components/ViewsTab", () => ({
-  ViewsTab: () => <div />,
-}));
 vi.mock("../components/ChatboxesTab", () => ({
   ChatboxesTab: (props: unknown) => mockChatboxesTab(props),
 }));
@@ -350,7 +361,8 @@ vi.mock("../components/AuthTab", () => ({
   AuthTab: () => <div />,
 }));
 vi.mock("../components/OAuthFlowTab", () => ({
-  OAuthFlowTab: () => {
+  OAuthFlowTab: (props: unknown) => {
+    mockOAuthFlowTabState.lastProps = props;
     if (mockOAuthFlowTabState.shouldThrow) {
       throw mockOAuthFlowTabState.error;
     }
@@ -405,17 +417,6 @@ vi.mock("../components/oauth/OAuthDebugCallback", () => ({
 }));
 vi.mock("../components/mcp-sidebar", () => ({
   MCPSidebar: (props: unknown) => mockMCPSidebar(props),
-  // App.tsx imports this helper to gate the Connect/Clients route on
-  // desktop. Tests run in jsdom (hosted-mode = true is the default but
-  // we still want the helper to behave correctly), so return the real
-  // semantic: hosted defers to PostHog, desktop default-on.
-  computeHostsHubFlagEnabled: ({
-    hostsFlag,
-    hostedMode,
-  }: {
-    hostsFlag: unknown;
-    hostedMode: boolean;
-  }) => (hostedMode ? hostsFlag === true : true),
 }));
 vi.mock("../components/ui/sidebar", () => ({
   SidebarInset: ({ children }: { children?: ReactNode }) => (
@@ -520,6 +521,7 @@ describe("App hosted OAuth callback handling", () => {
     mockMCPSidebar.mockImplementation(() => <div data-testid="mcp-sidebar" />);
     mockOAuthFlowTabState.shouldThrow = false;
     mockOAuthFlowTabState.error = new Error("OAuth debugger failed");
+    mockOAuthFlowTabState.lastProps = undefined;
     mockPosthogCapture.mockReset();
     mockPlaygroundTabMounts.mockReset();
     mockPlaygroundTabProps.mockReset();
@@ -709,7 +711,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(readHostedOAuthResumeMarker("chatbox")?.errorMessage).toBe(
-        "Your guest session expired. Reopen the chatbox link and try again."
+        "Your guest session expired. Reopen the swarm link and try again."
       );
     });
     expect(mockCompleteHostedOAuthCallback).not.toHaveBeenCalled();
@@ -765,6 +767,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(
       screen.queryByTestId("hosted-oauth-loading")
     ).not.toBeInTheDocument();
+    expect(screen.getByTestId("hosts-tab")).toBeInTheDocument();
     expect(screen.getByText("Servers Tab")).toBeInTheDocument();
 
     await waitFor(() => {
@@ -1840,7 +1843,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
     });
 
     expect(
@@ -2351,6 +2354,27 @@ describe("App hosted OAuth callback handling", () => {
     );
   });
 
+  it("auto-routes a Convex-authenticated hosted guest from the default route into Playground onboarding", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("playground-tab")).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/playground");
+    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+  });
+
   it("does not auto-route a guest row already marked as having seen onboarding", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
@@ -2506,6 +2530,75 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
 
+  it("does not flash Home while hosted auth is still loading on the default route", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockHandleOAuthCallback.mockReset();
+    mockHostedShellGateState.value = "auth-loading";
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/");
+    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
+  });
+
+  it("does not flash Home while hosted guest auth is unresolved on the default route", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockHandleOAuthCallback.mockReset();
+    mockHostedShellGateState.value = "ready";
+    mockConvexAuthState.isAuthenticated = false;
+    mockConvexAuthState.isLoading = false;
+    mockWorkOsAuthState.user = null;
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/");
+    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
+  });
+
+  it("does not flash Home while hosted project and server state hydrate on the default route", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockHandleOAuthCallback.mockReset();
+    mockHostedShellGateState.value = "ready";
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockFreshGuestUser();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      isLoadingRemoteProjects: true,
+      areServersHydrated: false,
+      activeProjectId: "ws_local",
+    }));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/");
+    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
+  });
+
   it("does not hijack a non-default hash route for first-run guests", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
@@ -2571,8 +2664,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/evals");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) =>
-        flag === "playground-enabled" || flag === "evaluate-ui"
+      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui"
     );
 
     render(<App />);
@@ -2673,24 +2765,22 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 
-  it("redirects conformance to servers when the feature flag is disabled", async () => {
+  it("redirects conformance to home when the feature flag is disabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/conformance");
     mockHandleOAuthCallback.mockReset();
 
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled"
-    );
+    mockUseFeatureFlagEnabled.mockImplementation(() => false);
 
     render(<App />);
 
     await waitFor(() => {
-      expect(window.location.pathname).toBe("/servers");
+      expect(window.location.pathname).toBe("/home");
     });
   });
 
-  it("redirects xaa-flow to Servers when the xaa flag is disabled", async () => {
+  it("redirects xaa-flow to home when the xaa flag is disabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/xaa-flow");
@@ -2699,10 +2789,10 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/servers");
+    expect(window.location.pathname).toBe("/home");
     expect(screen.queryByTestId("xaa-flow-tab")).not.toBeInTheDocument();
   });
 
@@ -2799,6 +2889,7 @@ describe("App hosted OAuth callback handling", () => {
       },
     };
     appStateMock.projectServers = currentProjectServers;
+    appStateMock.displayServerConfigs = currentProjectServers;
     appStateMock.appState.servers = {
       ...currentProjectServers,
       "other-project-oauth": {
@@ -2832,6 +2923,10 @@ describe("App hosted OAuth callback handling", () => {
     expect(latestProps.activeServerSelectorProps?.serverConfigs).toBe(
       currentProjectServers
     );
+    expect(
+      (mockOAuthFlowTabState.lastProps as { serverConfigs?: unknown })
+        .serverConfigs
+    ).toBe(currentProjectServers);
   });
 
   it("leaves the header server selector unfiltered outside the OAuth Debugger tab", async () => {
@@ -2933,10 +3028,10 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
     });
 
-    expect(window.location.pathname).toBe("/servers");
+    expect(window.location.pathname).toBe("/home");
     expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
   });
 });

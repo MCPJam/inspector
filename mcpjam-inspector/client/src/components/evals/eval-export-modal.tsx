@@ -8,8 +8,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@mcpjam/design-system/tabs";
-import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@mcpjam/design-system/tabs";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@mcpjam/design-system/alert";
 import { Button } from "@mcpjam/design-system/button";
 import type { EvalSuite } from "./types";
 import { CopyableCodeBlock } from "./copyable-code-block";
@@ -36,6 +45,7 @@ type EvalExportModalProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   scope: "suite" | "test-case";
+  projectId?: string | null;
   suite: Pick<EvalSuite, "name" | "description" | "environment" | "source">;
   cases: EvalExportCaseInput[];
   serverEntries: Record<string, ServerWithName | undefined>;
@@ -78,6 +88,7 @@ export function EvalExportModal({
   suite,
   cases,
   serverEntries,
+  projectId,
 }: EvalExportModalProps) {
   const posthog = usePostHog();
   const [activeTab, setActiveTab] = useState<"sdk" | "prompt">("sdk");
@@ -90,12 +101,12 @@ export function EvalExportModal({
   const serverIds = suite.environment?.servers ?? [];
   const serverConnections = useMemo(
     () => buildServerConnections(serverIds, serverEntries),
-    [serverEntries, serverIds],
+    [serverEntries, serverIds]
   );
   const sdkInstallSnippet = useMemo(() => buildSdkInstallSnippet(), []);
   const sdkEnvResult = useMemo(
-    () => buildSdkEnvSnippet(serverIds, serverEntries),
-    [serverEntries, serverIds],
+    () => buildSdkEnvSnippet(serverIds, serverEntries, projectId),
+    [serverEntries, serverIds, projectId]
   );
   const sdkTestFile = useMemo(
     () =>
@@ -105,7 +116,7 @@ export function EvalExportModal({
         serverConnections,
         usedPlaceholderFallback: sdkEnvResult.usedPlaceholderFallback,
       }),
-    [cases, sdkEnvResult.usedPlaceholderFallback, serverConnections, suite],
+    [cases, sdkEnvResult.usedPlaceholderFallback, serverConnections, suite]
   );
 
   const primaryCase = cases[0];
@@ -115,11 +126,11 @@ export function EvalExportModal({
       : primaryCase?.title || "Untitled test case";
   const downloadFileName = useMemo(
     () => buildSuiteExportFileName(exportLabel, scope),
-    [exportLabel, scope],
+    [exportLabel, scope]
   );
   const agentPromptDownloadFileName = useMemo(
     () => buildAgentPromptExportFileName(exportLabel),
-    [exportLabel],
+    [exportLabel]
   );
   const singleServerId = serverIds.length === 1 ? serverIds[0]! : null;
   const isPromptReady = agentPromptState.status === "ready";
@@ -276,7 +287,9 @@ export function EvalExportModal({
           </DialogTitle>
           <DialogDescription>
             {scope === "suite"
-              ? `${cases.length} case${cases.length === 1 ? "" : "s"} from ${exportLabel}`
+              ? `${cases.length} case${
+                  cases.length === 1 ? "" : "s"
+                } from ${exportLabel}`
               : exportLabel}
           </DialogDescription>
         </DialogHeader>

@@ -3,7 +3,9 @@ import { useMutation, useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import * as Sentry from "@sentry/react";
 import {
+  getExistingGuestId,
   getGuestPromotionProof,
+  isGuestActivated,
   revokeGuestSessionAndCookie,
 } from "@/lib/guest-session";
 import { useActorKey } from "@/hooks/use-actor-key";
@@ -198,12 +200,40 @@ export function useEnsureDbUser() {
       const isWorkOsAuth = !!workosUserId;
       let guestProofJwt: string | null = null;
       if (isWorkOsAuth) {
+        // Gate promotion on *activation*, not mere cookie presence. The
+        // server-rendered guest bootstrap (Pillar 1) can leave an incidental
+        // guest cookie on a browser whose user then signs in; that guest was
+        // never used as a guest and must not be absorbed into the account.
+        // Only mint a promotion proof when the cookie-backed guest carries an
+        // activation marker; otherwise revoke the incidental cookie and
+        // proceed without a proof.
+        let guestId: string | null = null;
         try {
-          guestProofJwt = await getGuestPromotionProof();
+          guestId = await getExistingGuestId();
         } catch {
-          // Network/transient failure minting the promotion proof is not
-          // fatal — the user can still create a fresh org-owned account.
-          guestProofJwt = null;
+          guestId = null;
+        }
+
+        if (guestId && isGuestActivated(guestId)) {
+          try {
+            guestProofJwt = await getGuestPromotionProof();
+          } catch {
+            // Network/transient failure minting the promotion proof is not
+            // fatal — the user can still create a fresh org-owned account.
+            guestProofJwt = null;
+          }
+        } else if (guestId) {
+          // Incidental, unactivated guest cookie: clean it up so it can't
+          // later be replayed, and do NOT promote it.
+          try {
+            await revokeGuestSessionAndCookie();
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error(
+              "[auth] incidental guest cookie revoke failed",
+              err
+            );
+          }
         }
       }
 

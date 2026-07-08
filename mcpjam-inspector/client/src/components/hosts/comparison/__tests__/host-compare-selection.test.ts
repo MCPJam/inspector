@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import {
+  DEFAULT_COMPARE_HOST_IDS,
   parseHostsParam,
   reconcileHostCompareSelection,
   resolveInitialHostCompareSelection,
@@ -36,7 +37,7 @@ describe("host-compare-selection", () => {
     ).toEqual(["b", "c"]);
   });
 
-  it("resolveInitialHostCompareSelection falls back to all live hosts", () => {
+  it("resolveInitialHostCompareSelection falls back to all live hosts when the default presets aren't known", () => {
     expect(
       resolveInitialHostCompareSelection({
         projectId: "proj_1",
@@ -81,5 +82,69 @@ describe("host-compare-selection", () => {
         urlSelection: ["dead-host"],
       }),
     ).toEqual(["b"]);
+  });
+
+  it("resolveInitialHostCompareSelection keeps a preset id from the URL via knownHostIds", () => {
+    // A preset is not a live host, so it must be reconciled against the
+    // known superset — otherwise a shared/reloaded preset column vanishes.
+    expect(
+      resolveInitialHostCompareSelection({
+        projectId: "proj_1",
+        liveHostIds: ["a"],
+        knownHostIds: ["a", "preset:claude"],
+        previousSelection: [],
+        urlSelection: ["a", "preset:claude"],
+      }),
+    ).toEqual(["a", "preset:claude"]);
+  });
+
+  it("resolveInitialHostCompareSelection resolves a preset selection with zero live hosts", () => {
+    writeHostCompareSelection("proj_1", ["preset:chatgpt"]);
+    expect(
+      resolveInitialHostCompareSelection({
+        projectId: "proj_1",
+        liveHostIds: [],
+        knownHostIds: ["preset:chatgpt", "preset:claude"],
+        previousSelection: [],
+      }),
+    ).toEqual(["preset:chatgpt"]);
+  });
+
+  it("resolveInitialHostCompareSelection falls back to live hosts when default presets are missing", () => {
+    expect(
+      resolveInitialHostCompareSelection({
+        projectId: "proj_1",
+        liveHostIds: ["a", "b"],
+        knownHostIds: ["a", "b", "preset:codex", "preset:cursor"],
+        previousSelection: [],
+      }),
+    ).toEqual(["a", "b"]);
+  });
+
+  it("resolveInitialHostCompareSelection defaults to ChatGPT + Claude over live hosts on a fresh visit", () => {
+    expect(
+      resolveInitialHostCompareSelection({
+        projectId: "proj_1",
+        liveHostIds: ["a", "b"],
+        knownHostIds: [
+          "a",
+          "b",
+          ...DEFAULT_COMPARE_HOST_IDS,
+          "preset:codex",
+        ],
+        previousSelection: [],
+      }),
+    ).toEqual([...DEFAULT_COMPARE_HOST_IDS]);
+  });
+
+  it("resolveInitialHostCompareSelection defaults to ChatGPT + Claude with zero live hosts", () => {
+    expect(
+      resolveInitialHostCompareSelection({
+        projectId: "proj_1",
+        liveHostIds: [],
+        knownHostIds: [...DEFAULT_COMPARE_HOST_IDS, "preset:codex"],
+        previousSelection: [],
+      }),
+    ).toEqual([...DEFAULT_COMPARE_HOST_IDS]);
   });
 });

@@ -20,10 +20,7 @@
 
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
-import {
-  DEFAULT_REQUEST_TIMEOUT_MS,
-  stableStringifyJson,
-} from "@/lib/client-config";
+import { stableStringifyJson } from "@/lib/client-config";
 import {
   buildHostCapabilities,
   findHostStyle,
@@ -41,7 +38,9 @@ import type {
   ResolvedMcpAppsCapabilities,
   ResolvedOpenAiAppsCapabilities,
 } from "@/lib/client-styles";
-import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
+// Single source of truth for the empty host-config builder: the same
+// Node-safe function the server `--template` resolver and the CLI use.
+import { emptyHostConfigInputV2 as sdkEmptyHostConfigInputV2 } from "@mcpjam/sdk/host-config/templates";
 // Shareable host-config primitives + the portable protocol-version resolver
 // live in @mcpjam/sdk/host-config/internal — single source of truth for the
 // backend canonicalizer and the inspector client. Re-exported below so the
@@ -55,9 +54,12 @@ import type {
   CspDomainSet,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
+  McpToolResultImageRenderPlacement,
+  McpToolResultImageRenderingPolicy,
   McpProtocolVersion,
   McpProtocolVersionPin,
 } from "@mcpjam/sdk/host-config/internal";
+import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config";
 
 export {
   DEFAULT_TEMPERATURE_V2,
@@ -68,11 +70,38 @@ export type {
   CspDomainSet,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
+  McpToolResultImageRenderPlacement,
+  McpToolResultImageRenderingPolicy,
   McpProtocolVersion,
   McpProtocolVersionPin,
+  ModelVisibleMcpToolResults,
 };
 
 export type HostStyleId = ChatboxHostStyle;
+
+/**
+ * Personal cloud workstation attached to a host (Project Computers). The
+ * resource attachment only; capabilities (e.g. `bash`) ride `builtInToolIds`.
+ * Mirrors the SDK's resource shape — the legacy `toolset` key is dropped from
+ * the client model (the backend still persists it vestigially while pinned to
+ * the published SDK, and strips it on read into this shape).
+ */
+export type HostConfigComputerV2 = {
+  kind: "personal";
+  /** Optional initial working directory for shell/terminal sessions. */
+  workdir?: string;
+};
+
+export type McpToolResultImageRendering = McpToolResultImageRenderingPolicy;
+
+/**
+ * Real agent harness for this host. `"claude-code"` / `"codex"` run the real CLI
+ * runtime (the `@ai-sdk/harness-claude-code` / `@ai-sdk/harness-codex` adapter)
+ * inside the attached personal computer instead of MCPJam's emulated engine.
+ * Absent ⇒ emulated. Mirrors the SDK's `Harness` type; the backend enforces
+ * `harness ⇒ computer`.
+ */
+export type HostConfigHarnessV2 = "claude-code" | "codex";
 
 /**
  * Mutable input shape. All fields are required at write time so the editor
@@ -113,6 +142,14 @@ export type HostConfigInputV2 = {
    * hostConfig row.
    */
   progressiveToolDiscovery?: boolean;
+  /**
+   * Host/client policies for which MCP tool-result content/resource shapes are
+   * exposed to the model. Optional so untouched hosts use runtime defaults
+   * without forcing a new snapshot.
+   */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /** Human-facing rendering policy for MCP tool-returned images. */
+  mcpToolResultImageRendering?: McpToolResultImageRendering;
   serverIds: string[];
   optionalServerIds: string[];
   /**
@@ -123,6 +160,20 @@ export type HostConfigInputV2 = {
    * validated against the backend `builtInTools` catalog on save.
    */
   builtInToolIds: string[];
+  /**
+   * Personal cloud workstation attached to this host (Project Computers).
+   * The RESOURCE only — the capabilities the model gets on it (e.g. the
+   * `bash` built-in tool) ride `builtInToolIds`, gated by the catalog's
+   * `requiresComputer` flag. Absent ⇒ no computer. `{ kind: "personal" }`
+   * is the only shape; `workdir` optionally pins the initial shell cwd.
+   */
+  computer?: HostConfigComputerV2;
+  /**
+   * Real agent harness (see {@link HostConfigHarnessV2}). `"claude-code"` runs
+   * the real Claude Code runtime on the attached computer; absent ⇒ MCPJam's
+   * emulated engine. Server-authoritative — never sourced from a chat body.
+   */
+  harness?: HostConfigHarnessV2;
   connectionDefaults: HostConfigConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
@@ -157,17 +208,20 @@ export type HostConfigInputV2 = {
    * connectionDefaults for that specific server. Included in the canonical
    * hash so hosts that differ only in overrides get distinct rows.
    */
-  serverConnectionOverrides?: Record<string, {
-    headersOverride?: Record<string, string>;
-    requestTimeoutOverride?: number;
-    /**
-     * Per-server override of the outbound MCP wire mode. Wins over
-     * `mcpProfile.mcpProtocolVersion`. Mirror of the execution-plane field
-     * fanned out from `projectServerRefs.mcpProtocolVersionOverride` by
-     * `fanOutProjectServerConfigToHosts`.
-     */
-    mcpProtocolVersionOverride?: McpProtocolVersionPin;
-  }>;
+  serverConnectionOverrides?: Record<
+    string,
+    {
+      headersOverride?: Record<string, string>;
+      requestTimeoutOverride?: number;
+      /**
+       * Per-server override of the outbound MCP wire mode. Wins over
+       * `mcpProfile.mcpProtocolVersion`. Mirror of the execution-plane field
+       * fanned out from `projectServerRefs.mcpProtocolVersionOverride` by
+       * `fanOutProjectServerConfigToHosts`.
+       */
+      mcpProtocolVersionOverride?: McpProtocolVersionPin;
+    }
+  >;
 };
 
 /**
@@ -190,6 +244,10 @@ export type HostConfigDtoV2 = {
   respectToolVisibility?: boolean;
   /** Surfaced verbatim — see HostConfigInputV2.progressiveToolDiscovery. */
   progressiveToolDiscovery?: boolean;
+  /** Surfaced verbatim — see HostConfigInputV2.modelVisibleMcpToolResults. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /** Surfaced verbatim — see HostConfigInputV2.mcpToolResultImageRendering. */
+  mcpToolResultImageRendering?: McpToolResultImageRendering;
   serverIds: string[];
   optionalServerIds: string[];
   /**
@@ -198,6 +256,17 @@ export type HostConfigDtoV2 = {
    * `undefined` to [].
    */
   builtInToolIds?: string[];
+  /**
+   * Personal computer attachment (see HostConfigInputV2.computer). Optional;
+   * absent ⇒ no computer. The backend may carry a vestigial `toolset` on the
+   * wire — `hostConfigDtoToInput` reads only `kind`/`workdir`.
+   */
+  computer?: HostConfigComputerV2 & { toolset?: string };
+  /**
+   * Real agent harness (see HostConfigInputV2.harness). Optional; pre-feature
+   * rows and non-harness hosts omit it.
+   */
+  harness?: HostConfigHarnessV2;
   connectionDefaults: HostConfigConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
@@ -212,108 +281,27 @@ export type HostConfigDtoV2 = {
    */
   mcpProfile?: HostConfigMcpProfileV1;
   /** Per-server connection overrides hydrated from hostConfigServerRefs. */
-  serverConnectionOverrides?: Record<string, {
-    headersOverride?: Record<string, string>;
-    requestTimeoutOverride?: number;
-    mcpProtocolVersionOverride?: McpProtocolVersionPin;
-  }>;
+  serverConnectionOverrides?: Record<
+    string,
+    {
+      headersOverride?: Record<string, string>;
+      requestTimeoutOverride?: number;
+      mcpProtocolVersionOverride?: McpProtocolVersionPin;
+    }
+  >;
 };
 
 export const DEFAULT_HOST_STYLE_V2: HostStyleId = "mcpjam";
 
-export function emptyHostConfigInputV2(
-  partial: Partial<HostConfigInputV2> = {},
-): HostConfigInputV2 {
-  // Clone every caller-provided array/record so the returned config can
-  // be mutated freely without aliasing the input. Matches the cloning
-  // behavior of hostConfigDtoToInput.
-  return {
-    hostStyle: partial.hostStyle ?? DEFAULT_HOST_STYLE_V2,
-    modelId: partial.modelId ?? "",
-    systemPrompt: partial.systemPrompt ?? "",
-    temperature: partial.temperature ?? DEFAULT_TEMPERATURE_V2,
-    requireToolApproval: partial.requireToolApproval ?? false,
-    // Default ON: every new config respects SEP-1865 visibility filtering
-    // unless the template (e.g. Cursor) explicitly opts out. Matches the
-    // spec-default behavior.
-    respectToolVisibility: partial.respectToolVisibility ?? true,
-    // Brand-new inputs default to explicit Off. The orchestrator still
-    // reads `undefined` as "auto policy" (existing rows surfaced by
-    // `hostConfigDtoToInput` round-trip verbatim), but creating a fresh
-    // host shouldn't silently opt into auto: a user who hasn't touched
-    // the toggle should not see progressive mode trip on a large
-    // catalog without an explicit choice. They can pick Auto if they
-    // want the auto policy.
-    progressiveToolDiscovery: partial.progressiveToolDiscovery ?? false,
-    serverIds: partial.serverIds ? [...partial.serverIds] : [],
-    optionalServerIds: partial.optionalServerIds
-      ? [...partial.optionalServerIds]
-      : [],
-    builtInToolIds: partial.builtInToolIds ? [...partial.builtInToolIds] : [],
-    connectionDefaults: {
-      headers: partial.connectionDefaults?.headers
-        ? { ...partial.connectionDefaults.headers }
-        : {},
-      requestTimeout:
-        partial.connectionDefaults?.requestTimeout ??
-        DEFAULT_REQUEST_TIMEOUT_MS,
-    },
-    // Seed with the SDK's default capabilities (which include the MCP UI
-    // extension and any other built-ins) so a brand-new project/chatbox/
-    // eval host config keeps advertising them. The legacy
-    // ProjectClientConfig path also seeds from getDefaultClientCapabilities;
-    // an empty {} here would silently drop MCP Apps support until the
-    // user manually edited the capability JSON.
-    //
-    // Deep-clone — clientCapabilities and hostContext can be nested
-    // (e.g. extensions.mimeTypes arrays). A shallow spread would alias
-    // the inner trees with the partial/source, allowing later mutations
-    // to leak through.
-    clientCapabilities: partial.clientCapabilities
-      ? deepCloneJsonRecord(partial.clientCapabilities)
-      : deepCloneJsonRecord(
-          getDefaultClientCapabilities() as Record<string, unknown>,
-        ),
-    hostContext: partial.hostContext
-      ? deepCloneJsonRecord(partial.hostContext)
-      : {},
-    hostCapabilitiesOverride: partial.hostCapabilitiesOverride
-      ? deepCloneJsonRecord(partial.hostCapabilitiesOverride)
-      : undefined,
-    chatUiOverride: partial.chatUiOverride
-      ? cloneChatUiOverride(partial.chatUiOverride)
-      : undefined,
-    // Same `undefined`-preservation rule as hostCapabilitiesOverride.
-    // Backend distinguishes `undefined` (use SDK defaults) from
-    // `{ profileVersion: 1 }` (empty envelope) on the hash, so a brand-new
-    // input MUST stay undefined until the user opts in via the editor.
-    mcpProfile: partial.mcpProfile
-      ? cloneMcpProfile(partial.mcpProfile)
-      : undefined,
-    serverConnectionOverrides: partial.serverConnectionOverrides
-      ? Object.fromEntries(
-          Object.entries(partial.serverConnectionOverrides).map(([k, v]) => [
-            k,
-            {
-              ...(v.headersOverride !== undefined
-                ? { headersOverride: { ...v.headersOverride } }
-                : {}),
-              ...(v.requestTimeoutOverride !== undefined
-                ? { requestTimeoutOverride: v.requestTimeoutOverride }
-                : {}),
-              ...(v.mcpProtocolVersionOverride !== undefined
-                ? { mcpProtocolVersionOverride: v.mcpProtocolVersionOverride }
-                : {}),
-            },
-          ]),
-        )
-      : undefined,
-  };
-}
+// Delegates to the Node-safe SDK builder so the empty-config defaults have a
+// single source of truth shared with the server `--template` resolver and the
+// CLI. Cast to the strict client aggregate — the runtime object is
+// field-identical (guarded by host-template-seed-parity.test.ts).
+export const emptyHostConfigInputV2 = sdkEmptyHostConfigInputV2 as unknown as (
+  partial?: Partial<HostConfigInputV2>
+) => HostConfigInputV2;
 
-export function hostConfigDtoToInput(
-  dto: HostConfigDtoV2,
-): HostConfigInputV2 {
+export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
   // Deep-clone the JSON record fields. clientCapabilities and
   // hostContext can be nested (e.g. the SDK's default capabilities
   // include an `extensions` object with arrays). A shallow spread
@@ -330,9 +318,25 @@ export function hostConfigDtoToInput(
     // feature; treat that as the spec default (filter app-only tools).
     respectToolVisibility: dto.respectToolVisibility ?? true,
     progressiveToolDiscovery: dto.progressiveToolDiscovery,
+    modelVisibleMcpToolResults: dto.modelVisibleMcpToolResults
+      ? cloneModelVisibleMcpToolResults(dto.modelVisibleMcpToolResults)
+      : undefined,
+    mcpToolResultImageRendering: dto.mcpToolResultImageRendering
+      ? cloneMcpToolResultImageRendering(dto.mcpToolResultImageRendering)
+      : undefined,
     serverIds: [...dto.serverIds],
     optionalServerIds: [...dto.optionalServerIds],
     builtInToolIds: dto.builtInToolIds ? [...dto.builtInToolIds] : [],
+    // Read only the resource shape; the backend may carry a vestigial
+    // `toolset` on the wire (legacy key) which the client model omits.
+    computer: dto.computer
+      ? {
+          kind: "personal",
+          ...(dto.computer.workdir ? { workdir: dto.computer.workdir } : {}),
+        }
+      : undefined,
+    // String literal pass-through; absent ⇒ emulated engine.
+    harness: dto.harness,
     connectionDefaults: {
       headers: { ...dto.connectionDefaults.headers },
       requestTimeout: dto.connectionDefaults.requestTimeout,
@@ -447,7 +451,7 @@ export function resolveEffectiveHostCapabilities(args: {
  * stays one-grep-able.
  */
 export function resolveClientInfo(
-  profile: HostConfigMcpProfileV1 | undefined,
+  profile: HostConfigMcpProfileV1 | undefined
 ): Record<string, unknown> | undefined {
   return profile?.initialize?.clientInfo;
 }
@@ -461,7 +465,7 @@ export function resolveClientInfo(
  * callers never see it here.
  */
 export function resolveSupportedProtocolVersions(
-  profile: HostConfigMcpProfileV1 | undefined,
+  profile: HostConfigMcpProfileV1 | undefined
 ): string[] | undefined {
   return profile?.initialize?.supportedProtocolVersions;
 }
@@ -476,7 +480,7 @@ export function resolveSupportedProtocolVersions(
  * layer (base-protocol `initialize` vs. MCP Apps `ui/initialize`).
  */
 export function resolveHostInfo(
-  profile: HostConfigMcpProfileV1 | undefined,
+  profile: HostConfigMcpProfileV1 | undefined
 ): Record<string, unknown> | undefined {
   return profile?.apps?.uiInitialize?.hostInfo;
 }
@@ -530,7 +534,7 @@ export function resolveEffectiveCompatRuntime(args: {
     injected: true,
     capabilities: mergeOpenAiAppsCapabilities(
       baseCapabilities,
-      override?.openaiAppsOverrides,
+      override?.openaiAppsOverrides
     ),
   };
 }
@@ -547,7 +551,7 @@ export function resolveEffectiveCompatRuntime(args: {
  */
 export function mergeOpenAiAppsCapabilities(
   base: ResolvedOpenAiAppsCapabilities,
-  override: OpenAiAppsCapabilities | undefined,
+  override: OpenAiAppsCapabilities | undefined
 ): ResolvedOpenAiAppsCapabilities {
   if (!override) return base;
   return {
@@ -555,8 +559,7 @@ export function mergeOpenAiAppsCapabilities(
     sendFollowUpMessage:
       override.sendFollowUpMessage ?? base.sendFollowUpMessage,
     setWidgetState: override.setWidgetState ?? base.setWidgetState,
-    requestDisplayMode:
-      override.requestDisplayMode ?? base.requestDisplayMode,
+    requestDisplayMode: override.requestDisplayMode ?? base.requestDisplayMode,
     notifyIntrinsicHeight:
       override.notifyIntrinsicHeight ?? base.notifyIntrinsicHeight,
     openExternal: override.openExternal ?? base.openExternal,
@@ -564,8 +567,7 @@ export function mergeOpenAiAppsCapabilities(
     requestModal: override.requestModal ?? base.requestModal,
     uploadFile: override.uploadFile ?? base.uploadFile,
     selectFiles: override.selectFiles ?? base.selectFiles,
-    getFileDownloadUrl:
-      override.getFileDownloadUrl ?? base.getFileDownloadUrl,
+    getFileDownloadUrl: override.getFileDownloadUrl ?? base.getFileDownloadUrl,
     requestCheckout: override.requestCheckout ?? base.requestCheckout,
     requestClose: override.requestClose ?? base.requestClose,
   };
@@ -585,7 +587,7 @@ export function mergeOpenAiAppsCapabilities(
  */
 export function mergeMcpAppsCapabilities(
   base: ResolvedMcpAppsCapabilities,
-  override: McpAppsCapabilities | undefined,
+  override: McpAppsCapabilities | undefined
 ): ResolvedMcpAppsCapabilities {
   if (!override) return base;
   const modesOverride = override.availableDisplayModes;
@@ -599,22 +601,18 @@ export function mergeMcpAppsCapabilities(
     availableDisplayModes,
     toolInputPartial: override.toolInputPartial ?? base.toolInputPartial,
     toolCancelled: override.toolCancelled ?? base.toolCancelled,
-    hostContextChanged:
-      override.hostContextChanged ?? base.hostContextChanged,
+    hostContextChanged: override.hostContextChanged ?? base.hostContextChanged,
     resourceTeardown: override.resourceTeardown ?? base.resourceTeardown,
     toolInfo: override.toolInfo ?? base.toolInfo,
     openLinks: override.openLinks ?? base.openLinks,
     serverTools: override.serverTools ?? base.serverTools,
     serverResources: override.serverResources ?? base.serverResources,
     logging: override.logging ?? base.logging,
-    updateModelContext:
-      override.updateModelContext ?? base.updateModelContext,
+    updateModelContext: override.updateModelContext ?? base.updateModelContext,
     message: override.message ?? base.message,
-    sandboxPermissions:
-      override.sandboxPermissions ?? base.sandboxPermissions,
+    sandboxPermissions: override.sandboxPermissions ?? base.sandboxPermissions,
     cspFrameDomains: override.cspFrameDomains ?? base.cspFrameDomains,
-    cspBaseUriDomains:
-      override.cspBaseUriDomains ?? base.cspBaseUriDomains,
+    cspBaseUriDomains: override.cspBaseUriDomains ?? base.cspBaseUriDomains,
     resourcePrefersBorder:
       override.resourcePrefersBorder ?? base.resourcePrefersBorder,
     downloadFile: override.downloadFile ?? base.downloadFile,
@@ -689,7 +687,7 @@ export function resolveEffectiveMcpAppsCapabilities(args: {
  * `resolveEffectiveHostCapabilities`.
  */
 export function hostCapabilitiesOverrideToMatrix(
-  legacy: Record<string, unknown> | undefined,
+  legacy: Record<string, unknown> | undefined
 ): McpAppsCapabilities | undefined {
   if (legacy === undefined) return undefined;
   return {
@@ -709,7 +707,7 @@ export function hostCapabilitiesOverrideToMatrix(
  * `HostConfigMcpProfileV1` type at the boundary.
  */
 function cloneMcpProfile(
-  profile: HostConfigMcpProfileV1,
+  profile: HostConfigMcpProfileV1
 ): HostConfigMcpProfileV1 {
   return deepCloneJsonValue(profile) as HostConfigMcpProfileV1;
 }
@@ -725,7 +723,7 @@ function cloneChatUiOverride(override: ChatUiOverride): ChatUiOverride {
 }
 
 function deepCloneJsonRecord(
-  value: Record<string, unknown>,
+  value: Record<string, unknown>
 ): Record<string, unknown> {
   return deepCloneJsonValue(value) as Record<string, unknown>;
 }
@@ -744,6 +742,192 @@ function deepCloneJsonValue(value: unknown): unknown {
   return value;
 }
 
+export function cloneModelVisibleMcpToolResults(
+  value: ModelVisibleMcpToolResults
+): ModelVisibleMcpToolResults {
+  return deepCloneJsonValue(value) as ModelVisibleMcpToolResults;
+}
+
+export function cloneMcpToolResultImageRendering(
+  value: McpToolResultImageRenderingPolicy
+): McpToolResultImageRenderingPolicy {
+  return deepCloneJsonValue(value) as McpToolResultImageRenderingPolicy;
+}
+
+export function isMcpDirectContentImageVisible(
+  policy: ModelVisibleMcpToolResults | undefined
+): boolean {
+  return policy?.directContent?.image ?? true;
+}
+
+export function isMcpEmbeddedResourceBlobImageVisible(
+  policy: ModelVisibleMcpToolResults | undefined
+): boolean {
+  return (
+    (policy?.embeddedResources?.blob?.enabled ?? true) &&
+    (policy?.embeddedResources?.blob?.image ?? true)
+  );
+}
+
+export function isMcpLinkedResourceBlobImageVisible(
+  policy: ModelVisibleMcpToolResults | undefined
+): boolean {
+  return (
+    (policy?.linkedResources?.blob?.enabled ?? true) &&
+    (policy?.linkedResources?.blob?.image ?? true)
+  );
+}
+
+export function setMcpDirectContentImageVisible(
+  policy: ModelVisibleMcpToolResults | undefined,
+  visible: boolean
+): ModelVisibleMcpToolResults {
+  return {
+    ...policy,
+    directContent: {
+      ...policy?.directContent,
+      image: visible,
+    },
+  };
+}
+
+export function setMcpEmbeddedResourceBlobImageVisible(
+  policy: ModelVisibleMcpToolResults | undefined,
+  visible: boolean
+): ModelVisibleMcpToolResults {
+  return {
+    ...policy,
+    embeddedResources: {
+      ...policy?.embeddedResources,
+      blob: {
+        ...policy?.embeddedResources?.blob,
+        image: visible,
+      },
+    },
+  };
+}
+
+export function setMcpLinkedResourceBlobImageVisible(
+  policy: ModelVisibleMcpToolResults | undefined,
+  visible: boolean
+): ModelVisibleMcpToolResults {
+  return {
+    ...policy,
+    linkedResources: {
+      ...policy?.linkedResources,
+      blob: {
+        ...policy?.linkedResources?.blob,
+        image: visible,
+      },
+    },
+  };
+}
+
+export function getMcpToolResultImageRenderPlacement(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): McpToolResultImageRenderPlacement {
+  return policy?.placement ?? "inline";
+}
+
+export function isMcpDirectContentImageRendered(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): boolean {
+  return policy?.directContent?.image ?? true;
+}
+
+export function isMcpEmbeddedResourceBlobImageRendered(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): boolean {
+  return policy?.embeddedResources?.blob?.image ?? true;
+}
+
+export function isMcpLinkedResourceBlobImageRendered(
+  policy: McpToolResultImageRenderingPolicy | undefined
+): boolean {
+  return policy?.linkedResources?.blob?.image ?? true;
+}
+
+export function setMcpToolResultImageRenderPlacement(
+  policy: McpToolResultImageRenderingPolicy | undefined,
+  placement: McpToolResultImageRenderPlacement
+): McpToolResultImageRenderingPolicy {
+  return {
+    ...policy,
+    placement,
+  };
+}
+
+export function setMcpDirectContentImageRendered(
+  policy: McpToolResultImageRenderingPolicy | undefined,
+  rendered: boolean
+): McpToolResultImageRenderingPolicy {
+  return {
+    ...policy,
+    directContent: {
+      ...policy?.directContent,
+      image: rendered,
+    },
+  };
+}
+
+export function setMcpEmbeddedResourceBlobImageRendered(
+  policy: McpToolResultImageRenderingPolicy | undefined,
+  rendered: boolean
+): McpToolResultImageRenderingPolicy {
+  return {
+    ...policy,
+    embeddedResources: {
+      ...policy?.embeddedResources,
+      blob: {
+        ...policy?.embeddedResources?.blob,
+        image: rendered,
+      },
+    },
+  };
+}
+
+export function setMcpLinkedResourceBlobImageRendered(
+  policy: McpToolResultImageRenderingPolicy | undefined,
+  rendered: boolean
+): McpToolResultImageRenderingPolicy {
+  return {
+    ...policy,
+    linkedResources: {
+      ...policy?.linkedResources,
+      blob: {
+        ...policy?.linkedResources?.blob,
+        image: rendered,
+      },
+    },
+  };
+}
+
+export function gateMcpToolResultImageRenderingByModelVisibility(
+  renderingPolicy: McpToolResultImageRenderingPolicy | undefined,
+  modelVisiblePolicy: ModelVisibleMcpToolResults | undefined
+): McpToolResultImageRenderingPolicy | undefined {
+  const directVisible = isMcpDirectContentImageVisible(modelVisiblePolicy);
+  const embeddedVisible =
+    isMcpEmbeddedResourceBlobImageVisible(modelVisiblePolicy);
+  const linkedVisible = isMcpLinkedResourceBlobImageVisible(modelVisiblePolicy);
+
+  if (directVisible && embeddedVisible && linkedVisible) {
+    return renderingPolicy;
+  }
+
+  let next = renderingPolicy;
+  if (!directVisible) {
+    next = setMcpDirectContentImageRendered(next, false);
+  }
+  if (!embeddedVisible) {
+    next = setMcpEmbeddedResourceBlobImageRendered(next, false);
+  }
+  if (!linkedVisible) {
+    next = setMcpLinkedResourceBlobImageRendered(next, false);
+  }
+  return next;
+}
+
 /**
  * Equality on the canonical fields (ignoring `id` and any extra
  * metadata). Used by editors to detect "no changes" before submitting.
@@ -755,7 +939,7 @@ function deepCloneJsonValue(value: unknown): unknown {
  */
 export function hostConfigInputsEqual(
   a: HostConfigInputV2,
-  b: HostConfigInputV2,
+  b: HostConfigInputV2
 ): boolean {
   if (a.hostStyle !== b.hostStyle) return false;
   if (a.modelId !== b.modelId) return false;
@@ -767,21 +951,49 @@ export function hostConfigInputsEqual(
   // (backend hashes them distinctly). A strict !== covers all three since
   // we never coerce undefined to false elsewhere in the input pipeline.
   if (a.progressiveToolDiscovery !== b.progressiveToolDiscovery) return false;
+  if (
+    !optionalModelVisibleMcpToolResultsEq(
+      a.modelVisibleMcpToolResults,
+      b.modelVisibleMcpToolResults
+    )
+  )
+    return false;
+  if (
+    !optionalMcpToolResultImageRenderingEq(
+      a.mcpToolResultImageRendering,
+      b.mcpToolResultImageRendering
+    )
+  ) {
+    return false;
+  }
   if (!stringArrayEq(a.serverIds, b.serverIds)) return false;
   if (!stringArrayEq(a.optionalServerIds, b.optionalServerIds)) return false;
   // Order-insensitive, same semantics as server ids — toggling a built-in
   // marks the draft dirty in the host/project/eval editors.
   if (!stringArrayEq(a.builtInToolIds, b.builtInToolIds)) return false;
+  // Personal computer: presence + workdir (kind is always 'personal').
+  // Attaching/detaching or changing the workdir marks the draft dirty.
+  if ((a.computer === undefined) !== (b.computer === undefined)) return false;
+  if (a.computer && b.computer && a.computer.workdir !== b.computer.workdir) {
+    return false;
+  }
+  // Harness selector: undefined vs "claude-code" are distinct states (backend
+  // hashes them distinctly). Switching engines marks the draft dirty.
+  if (a.harness !== b.harness) return false;
   if (
-    a.connectionDefaults.requestTimeout !==
-    b.connectionDefaults.requestTimeout
+    a.connectionDefaults.requestTimeout !== b.connectionDefaults.requestTimeout
   )
     return false;
   if (!jsonRecordEq(a.connectionDefaults.headers, b.connectionDefaults.headers))
     return false;
   if (!jsonRecordEq(a.clientCapabilities, b.clientCapabilities)) return false;
   if (!jsonRecordEq(a.hostContext, b.hostContext)) return false;
-  if (!optionalJsonRecordEq(a.hostCapabilitiesOverride, b.hostCapabilitiesOverride))
+  if (
+    !optionalJsonRecordEq(
+      a.hostCapabilitiesOverride,
+      b.hostCapabilitiesOverride
+    )
+  )
     return false;
   if (!optionalChatUiOverrideEq(a.chatUiOverride, b.chatUiOverride))
     return false;
@@ -789,7 +1001,7 @@ export function hostConfigInputsEqual(
   if (
     !serverConnectionOverridesEqual(
       a.serverConnectionOverrides,
-      b.serverConnectionOverrides,
+      b.serverConnectionOverrides
     )
   )
     return false;
@@ -803,13 +1015,27 @@ export function hostConfigInputsEqual(
  */
 export function serverConnectionOverridesEqual(
   a: HostConfigInputV2["serverConnectionOverrides"],
-  b: HostConfigInputV2["serverConnectionOverrides"],
+  b: HostConfigInputV2["serverConnectionOverrides"]
 ): boolean {
   const normalize = (
-    overrides: HostConfigInputV2["serverConnectionOverrides"],
-  ): Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number; mcpProtocolVersionOverride?: McpProtocolVersionPin }> => {
+    overrides: HostConfigInputV2["serverConnectionOverrides"]
+  ): Record<
+    string,
+    {
+      headersOverride?: Record<string, string>;
+      requestTimeoutOverride?: number;
+      mcpProtocolVersionOverride?: McpProtocolVersionPin;
+    }
+  > => {
     if (!overrides) return {};
-    const result: Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number; mcpProtocolVersionOverride?: McpProtocolVersionPin }> = {};
+    const result: Record<
+      string,
+      {
+        headersOverride?: Record<string, string>;
+        requestTimeoutOverride?: number;
+        mcpProtocolVersionOverride?: McpProtocolVersionPin;
+      }
+    > = {};
     for (const [key, entry] of Object.entries(overrides)) {
       if (!entry) continue;
       const hasHeaders =
@@ -820,19 +1046,25 @@ export function serverConnectionOverridesEqual(
       if (hasHeaders || hasTimeout || hasWireMode) {
         result[key] = {
           ...(hasHeaders ? { headersOverride: entry.headersOverride } : {}),
-          ...(hasTimeout ? { requestTimeoutOverride: entry.requestTimeoutOverride } : {}),
-          ...(hasWireMode ? { mcpProtocolVersionOverride: entry.mcpProtocolVersionOverride } : {}),
+          ...(hasTimeout
+            ? { requestTimeoutOverride: entry.requestTimeoutOverride }
+            : {}),
+          ...(hasWireMode
+            ? { mcpProtocolVersionOverride: entry.mcpProtocolVersionOverride }
+            : {}),
         };
       }
     }
     return result;
   };
-  return stableStringifyJson(normalize(a)) === stableStringifyJson(normalize(b));
+  return (
+    stableStringifyJson(normalize(a)) === stableStringifyJson(normalize(b))
+  );
 }
 
 function optionalMcpProfileEq(
   a: HostConfigMcpProfileV1 | undefined,
-  b: HostConfigMcpProfileV1 | undefined,
+  b: HostConfigMcpProfileV1 | undefined
 ): boolean {
   // Same undefined-vs-empty rule as optionalJsonRecordEq: backend hashes
   // `undefined` and `{ profileVersion: 1 }` distinctly, so flipping
@@ -846,9 +1078,27 @@ function optionalMcpProfileEq(
   return stableStringifyJson(a) === stableStringifyJson(b);
 }
 
+function optionalModelVisibleMcpToolResultsEq(
+  a: ModelVisibleMcpToolResults | undefined,
+  b: ModelVisibleMcpToolResults | undefined
+): boolean {
+  if (a === undefined && b === undefined) return true;
+  if (a === undefined || b === undefined) return false;
+  return stableStringifyJson(a) === stableStringifyJson(b);
+}
+
+function optionalMcpToolResultImageRenderingEq(
+  a: McpToolResultImageRenderingPolicy | undefined,
+  b: McpToolResultImageRenderingPolicy | undefined
+): boolean {
+  if (a === undefined && b === undefined) return true;
+  if (a === undefined || b === undefined) return false;
+  return stableStringifyJson(a) === stableStringifyJson(b);
+}
+
 function optionalJsonRecordEq(
   a: Record<string, unknown> | undefined,
-  b: Record<string, unknown> | undefined,
+  b: Record<string, unknown> | undefined
 ): boolean {
   // Treat `undefined` (use profile preset) and `{}` (explicit empty override)
   // as distinct values — flipping between them changes the resolved blob and
@@ -866,7 +1116,7 @@ function optionalJsonRecordEq(
  */
 function optionalChatUiOverrideEq(
   a: ChatUiOverride | undefined,
-  b: ChatUiOverride | undefined,
+  b: ChatUiOverride | undefined
 ): boolean {
   if (a === undefined && b === undefined) return true;
   if (a === undefined || b === undefined) return false;
@@ -885,7 +1135,7 @@ function stringArrayEq(a: string[], b: string[]): boolean {
 
 function jsonRecordEq(
   a: Record<string, unknown>,
-  b: Record<string, unknown>,
+  b: Record<string, unknown>
 ): boolean {
   // Use the shared canonicalizer so nested object key order doesn't make
   // semantically equal records compare unequal — e.g.

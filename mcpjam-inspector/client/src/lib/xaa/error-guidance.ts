@@ -51,7 +51,6 @@ export function latestErroredHttpEntry(
 
 export type XAAErrorActionIntent =
   | "configure"
-  | "bootstrap"
   | "reset"
   | "link";
 
@@ -77,11 +76,6 @@ export interface XAAErrorGuidanceInput {
 const CONFIGURE: XAAErrorAction = {
   label: "Open Configure Target",
   intent: "configure",
-};
-
-const REGISTER_ISSUER: XAAErrorAction = {
-  label: "Show issuer registration",
-  intent: "bootstrap",
 };
 
 const RESET_FLOW: XAAErrorAction = { label: "Reset flow", intent: "reset" };
@@ -249,7 +243,7 @@ export function getXAAErrorGuidance(
         title: "Your authorization server doesn't support the jwt-bearer grant",
         explanation:
           "The AS returned `unsupported_grant_type`. XAA requires the AS to accept `urn:ietf:params:oauth:grant-type:jwt-bearer` (RFC 7523). Most ASes don't yet — Okta does natively, Auth0/Keycloak with config, WorkOS/Stytch currently don't. Common workaround: run a small bridge service that accepts the ID-JAG, validates it against MCPJam's JWKS, and mints tokens via your AS's admin API.",
-        actions: [REGISTER_ISSUER],
+        actions: [],
         severity: "error",
       };
     }
@@ -275,7 +269,7 @@ export function getXAAErrorGuidance(
         title: "Authorization server rejected the ID-JAG assertion",
         explanation:
           "The AS accepted the grant type but rejected the assertion itself. Likely causes: (1) the AS doesn't trust MCPJam as an issuer — register the JWKS URL; (2) `aud` doesn't match the AS's own issuer; (3) `resource` isn't a registered resource; (4) the token is expired; (5) a negative-test mode is active.",
-        actions: [REGISTER_ISSUER],
+        actions: [],
         severity: "error",
       };
     }
@@ -300,7 +294,7 @@ export function getXAAErrorGuidance(
         title: "JWT bearer request failed at the authorization server",
         explanation:
           "The AS returned a non-success response. Expand the HTTP entry below for the raw body, then check: (1) AS supports the jwt-bearer grant, (2) AS trusts MCPJam's JWKS, (3) `client_id` is registered, (4) `resource` is recognized.",
-        actions: [REGISTER_ISSUER],
+        actions: [],
         severity: "error",
       };
     }

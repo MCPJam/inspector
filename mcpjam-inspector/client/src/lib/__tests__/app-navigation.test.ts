@@ -2,6 +2,7 @@ import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   captureCurrentReturnPath,
+  isDebugOAuthCallbackPath,
   legacyHashBookmarkToPath,
   navigationTargetToPath,
   normalizeInitialLegacyHashBookmark,
@@ -9,6 +10,25 @@ import {
   pathnameToActiveTab,
   useActiveTab,
 } from "../app-navigation";
+
+describe("isDebugOAuthCallbackPath", () => {
+  it("matches the OAuth debugger callback popup route", () => {
+    expect(isDebugOAuthCallbackPath("/oauth/callback/debug")).toBe(true);
+    expect(isDebugOAuthCallbackPath("/oauth/callback/debug/")).toBe(true);
+  });
+
+  it("does not match the WorkOS or connect callbacks", () => {
+    // These load in the main window and legitimately need <AuthKitProvider>.
+    expect(isDebugOAuthCallbackPath("/callback")).toBe(false);
+    expect(isDebugOAuthCallbackPath("/oauth/callback")).toBe(false);
+  });
+
+  it("does not match unrelated or look-alike paths", () => {
+    expect(isDebugOAuthCallbackPath("/oauth/callback/debugger")).toBe(false);
+    expect(isDebugOAuthCallbackPath("/servers")).toBe(false);
+    expect(isDebugOAuthCallbackPath("/")).toBe(false);
+  });
+});
 
 describe("pathnameToActiveTab", () => {
   beforeEach(() => {
@@ -22,6 +42,14 @@ describe("pathnameToActiveTab", () => {
     expect(pathnameToActiveTab("/organizations/org-a/billing")).toBe(
       "organizations",
     );
+  });
+
+  it("resolves server-scoped tool destinations (not the servers fallback)", () => {
+    // Regression: a route registered in the router + routePaths but missing
+    // from KNOWN_APP_TAB_SEGMENTS resolves to "servers", so the shell's
+    // flag-redirect / auto-select / active-server-selector never fire.
+    expect(pathnameToActiveTab("/conformance")).toBe("conformance");
+    expect(pathnameToActiveTab("/compatibility")).toBe("compatibility");
   });
 
   it("normalizes aliases", () => {

@@ -91,6 +91,24 @@ export type RequestEventMap = {
     tunnelDomain?: string;
     errorCode: string;
   };
+  "tunnel.rotated": {
+    tunnelKind: "shared" | "server";
+    tunnelDomain?: string;
+    full?: boolean;
+  };
+  "tunnel.rotation_failed": {
+    tunnelKind: "shared" | "server";
+    errorCode: string;
+    tunnelDomain?: string;
+  };
+  // One event per JSON-RPC request arriving through an active tunnel
+  // (never for local UI calls). `path` is scrubbed of bearer secrets by
+  // the request logger's URL scrubbing before emission.
+  "tunnel.request": {
+    tunnelKind: "shared" | "server";
+    rpcMethod?: string;
+    path: string;
+  };
   "chat.session.persist.failed": {
     failureKind: "timeout" | "http_error" | "exception" | "version_conflict";
     statusCode?: number;
@@ -120,6 +138,13 @@ export type RequestEventMap = {
   "mcp.tool.execution.failed": {
     toolName: string;
     serverId?: string;
+    errorCode: string;
+  };
+  // Project Computers terminal bridge (routes/web/computer-terminal.ts): the
+  // PTY could not be brought up after a successful token handshake (sandbox
+  // resume failed, envd unreachable, PTY create error, ...).
+  "computer.terminal.pty_open_failed": {
+    computerId: string;
     errorCode: string;
   };
 };
@@ -161,7 +186,7 @@ export function resolveEnvironment(): Environment {
     if (!warnedMissingEnv) {
       warnedMissingEnv = true;
       process.stderr.write(
-        "[logging] ENVIRONMENT not set in production; defaulting to 'prod'\n",
+        "[logging] ENVIRONMENT not set in production; defaulting to 'prod'\n"
       );
     }
     return "prod";
@@ -170,9 +195,5 @@ export function resolveEnvironment(): Environment {
 }
 
 export function resolveRelease(): string | null {
-  return (
-    process.env.RAILWAY_GIT_COMMIT_SHA ??
-    process.env.GIT_SHA ??
-    null
-  );
+  return process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.GIT_SHA ?? null;
 }

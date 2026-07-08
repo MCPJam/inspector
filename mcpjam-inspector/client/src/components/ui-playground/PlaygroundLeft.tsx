@@ -21,6 +21,7 @@ import { SearchInput } from "../ui/search-input";
 import { SavedRequestItem } from "../tools/SavedRequestItem";
 import type { FormField } from "@/lib/tool-form";
 import type { SavedRequest } from "@/lib/types/request-types";
+import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import { LoggerView } from "../logger-view";
 import { SchemaViewer } from "@/components/ui/schema-viewer";
 import {
@@ -33,6 +34,8 @@ import { TabHeader } from "./TabHeader";
 import { ToolList } from "./ToolList";
 import { SelectedToolHeader } from "./SelectedToolHeader";
 import { ParametersForm } from "./ParametersForm";
+import { useBuiltinToolRun } from "@/components/playground/use-builtin-tool-run";
+import { BuiltinToolDetailView } from "@/components/playground/BuiltinToolDetailView";
 
 interface PlaygroundLeftProps {
   tools: Record<string, Tool>;
@@ -61,6 +64,8 @@ interface PlaygroundLeftProps {
    * `false` because the logger lives in the right rail.
    */
   showLogger?: boolean;
+  /** Harness native built-in tools (display-only). Present for harness hosts. */
+  builtinTools?: HarnessBuiltinToolInfo[];
 }
 
 export function PlaygroundLeft({
@@ -83,10 +88,21 @@ export function PlaygroundLeft({
   onDeleteRequest,
   onClose,
   showLogger = true,
+  builtinTools = [],
 }: PlaygroundLeftProps) {
   const [isListExpanded, setIsListExpanded] = useState(!selectedToolName);
   const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Harness built-in tools flow through the SAME select → detail → Run UX as
+  // server tools, but "Run" asks the agent (see useBuiltinToolRun). Only one of
+  // {server tool, built-in} is selected at a time.
+  const builtin = useBuiltinToolRun(builtinTools);
+  const hasSelection = !!selectedToolName || !!builtin.selected;
+  const builtinNames = useMemo(
+    () => builtinTools.map((t) => t.name),
+    [builtinTools],
+  );
 
   // Get all tool names
   const toolNames = useMemo(() => {
@@ -115,15 +131,17 @@ export function PlaygroundLeft({
     });
   }, [savedRequests, searchQuery]);
 
-  // Sync list expansion with tool selection
+  // Sync list expansion when the selection (server OR built-in) changes. A
+  // manual expand (back) doesn't change the selection, so it persists.
   useEffect(() => {
-    setIsListExpanded(!selectedToolName);
-  }, [selectedToolName]);
+    setIsListExpanded(!selectedToolName && !builtin.selectedKey);
+  }, [selectedToolName, builtin.selectedKey]);
 
   const handleTabChange = (tab: "tools" | "saved") => {
     setActiveTab(tab);
-    if (tab === "tools" && selectedToolName) {
+    if (tab === "tools" && hasSelection) {
       onSelectTool(null);
+      builtin.clear();
     }
   };
 
@@ -132,8 +150,22 @@ export function PlaygroundLeft({
   };
 
   const handleToolListSelect = (name: string) => {
+    builtin.clear();
     onSelectTool(name);
     setIsListExpanded(false);
+  };
+
+  const handleSelectBuiltin = (key: string) => {
+    onSelectTool(null);
+    builtin.select(key);
+    setIsListExpanded(false);
+  };
+
+  // Top "Run": execute the selected server tool, OR ask the agent to run the
+  // selected built-in tool (no API can fire a built-in tool call directly).
+  const handleRun = () => {
+    if (builtin.selected) builtin.askAgentToRun();
+    else onExecute();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -143,14 +175,14 @@ export function PlaygroundLeft({
     const tag = target.tagName;
     // Avoid firing while typing in multiline fields
     if (tag === "TEXTAREA") return;
-    if (!selectedToolName || isExecuting) return;
+    if (!hasSelection || isExecuting) return;
     e.preventDefault();
-    onExecute();
+    handleRun();
   };
 
   const mainContent = (
     <div className="h-full min-h-0">
-      {activeTab === "saved" && !selectedToolName ? (
+      {activeTab === "saved" && !hasSelection ? (
         <SavedRequestsTab
           searchQuery={searchQuery}
           onSearchQueryChange={setSearchQuery}
@@ -162,7 +194,7 @@ export function PlaygroundLeft({
           onDuplicateRequest={onDuplicateRequest}
           onDeleteRequest={onDeleteRequest}
         />
-      ) : isListExpanded || !selectedToolName ? (
+      ) : isListExpanded || !hasSelection ? (
         <ToolList
           tools={tools}
           toolNames={toolNames}
@@ -173,6 +205,22 @@ export function PlaygroundLeft({
           onSearchQueryChange={setSearchQuery}
           onSelectTool={handleToolListSelect}
           onCollapseList={() => setIsListExpanded(false)}
+          builtinTools={builtinTools}
+          selectedBuiltinKey={isListExpanded ? null : builtin.selectedKey}
+          onSelectBuiltin={handleSelectBuiltin}
+        />
+      ) : builtin.selected ? (
+        <BuiltinToolDetailView
+          tool={builtin.selected}
+          fields={builtin.fields}
+          onExpand={() => setIsListExpanded(true)}
+          onFieldChange={builtin.onFieldChange}
+          onToggleField={builtin.onToggleField}
+          switchNames={builtinNames}
+          onSwitch={(name) => {
+            const t = builtinTools.find((x) => x.name === name);
+            if (t) handleSelectBuiltin(t.key);
+          }}
         />
       ) : (
         <ToolParametersView
@@ -201,10 +249,10 @@ export function PlaygroundLeft({
         toolCount={toolNames.length}
         savedCount={savedRequests.length}
         isExecuting={isExecuting}
-        canExecute={!!selectedToolName}
+        canExecute={hasSelection}
         canSave={!!selectedToolName}
         fetchingTools={fetchingTools}
-        onExecute={onExecute}
+        onExecute={handleRun}
         onSave={onSave}
         onRefresh={onRefresh}
         onClose={onClose}

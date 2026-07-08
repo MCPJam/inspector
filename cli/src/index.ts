@@ -3,6 +3,13 @@ import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import { registerAppsCommands } from "./commands/apps.js";
+import { registerAuthCommands } from "./commands/auth.js";
+import { registerCompatCommands } from "./commands/compat.js";
+import { registerEnvironmentsCommands } from "./commands/environments.js";
+import { registerEvalCommands } from "./commands/eval.js";
+import { registerHostsCommands } from "./commands/hosts.js";
+import { registerMcpCommands } from "./commands/mcp.js";
+import { registerProjectsCommands } from "./commands/projects.js";
 import { registerProtocolCommands } from "./commands/conformance.js";
 import { registerOAuthCommands } from "./commands/oauth.js";
 import { registerPromptCommands } from "./commands/prompts.js";
@@ -10,6 +17,7 @@ import { registerResourcesCommands } from "./commands/resources.js";
 import { registerServerCommands } from "./commands/server.js";
 import { registerTelemetryCommands } from "./commands/telemetry.js";
 import { registerToolsCommands } from "./commands/tools.js";
+import { registerTunnelCommands } from "./commands/tunnel.js";
 import { registerInspectorCommands } from "./commands/inspector.js";
 import {
   detectOutputFormatFromArgv,
@@ -65,11 +73,19 @@ export async function main(
   registerServerCommands(program);
   registerToolsCommands(program);
   registerResourcesCommands(program);
+  registerCompatCommands(program);
   registerPromptCommands(program);
   registerAppsCommands(program);
   registerOAuthCommands(program);
   registerProtocolCommands(program);
+  registerAuthCommands(program);
+  registerProjectsCommands(program);
+  registerEvalCommands(program);
+  registerHostsCommands(program);
+  registerEnvironmentsCommands(program);
+  registerTunnelCommands(program);
   registerInspectorCommands(program);
+  registerMcpCommands(program);
   registerTelemetryCommands(program, dependencies.telemetry);
 
   if (argv.length <= 2) {

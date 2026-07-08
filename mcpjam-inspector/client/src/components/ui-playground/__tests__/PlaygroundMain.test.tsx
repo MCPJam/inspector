@@ -28,7 +28,11 @@ const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
 const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 
 // Mock lucide-react icons
-vi.mock("lucide-react", () => ({
+vi.mock("lucide-react", async (importOriginal) => ({
+  // Spread the real icon set so a newly-rendered icon (e.g. Columns2) never
+  // breaks the whole suite; the explicit stubs below keep the data-testids the
+  // assertions rely on.
+  ...(await importOriginal<typeof import("lucide-react")>()),
   ArrowDown: () => <span data-testid="icon-arrow-down" />,
   ArrowUp: () => <span data-testid="icon-arrow-up" />,
   Braces: () => <span data-testid="icon-braces" />,
@@ -293,6 +297,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     isLoading,
     placeholder,
     pulseSubmit,
+    clientSelector,
   }: {
     value: string;
     onChange: (v: string) => void;
@@ -302,10 +307,12 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     isLoading?: boolean;
     placeholder: string;
     pulseSubmit?: boolean;
+    clientSelector?: unknown;
   }) => (
     <form
       data-testid="chat-input"
       data-loading={isLoading ? "true" : "false"}
+      data-client-selector={clientSelector ? "true" : "false"}
       onSubmit={(e) => {
         e.preventDefault();
         onSubmit(e);
@@ -504,14 +511,6 @@ vi.mock("@/components/shared/ClientContextHeader", () => ({
   },
 }));
 
-// Stub the playground host picker — its data hooks (Convex auth, host list,
-// previewed-host storage) are out of scope for these PlaygroundMain tests.
-vi.mock("@/components/playground/PlaygroundHostPicker", () => ({
-  PlaygroundHostPicker: () => (
-    <div data-testid="playground-host-picker-stub" />
-  ),
-}));
-
 // Mock traffic log store
 vi.mock("@/stores/traffic-log-store", () => ({
   useTrafficLogStore: (selector: any) => {
@@ -583,6 +582,7 @@ describe("PlaygroundMain", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     capturedChatSessionOptions = null;
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
     mockGetChatHistoryDetail.mockReset();
@@ -680,7 +680,7 @@ describe("PlaygroundMain", () => {
       expect(mockUseChatSession.resetChat).toHaveBeenCalled();
     });
 
-    it("hides the multi-host compare picker after the active session is shared", async () => {
+    it("drops the chat-input client chip after the active session is shared", async () => {
       const privateSessionLocal = {
         _id: "history-share-gate-1",
         chatSessionId: "chat-session-share-gate-1",
@@ -722,10 +722,11 @@ describe("PlaygroundMain", () => {
         );
       });
 
-      // Private sessions show the host picker by default.
-      expect(
-        screen.getByTestId("playground-host-picker-stub"),
-      ).toBeInTheDocument();
+      // Private sessions get the chat-input client chip wired up.
+      expect(screen.getByTestId("chat-input")).toHaveAttribute(
+        "data-client-selector",
+        "true",
+      );
 
       await act(async () => {
         const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
@@ -748,9 +749,11 @@ describe("PlaygroundMain", () => {
       await waitFor(() => {
         expect(capturedChatSessionOptions.directVisibility).toBe("project");
       });
-      expect(
-        screen.queryByTestId("playground-host-picker-stub"),
-      ).toBeNull();
+      // Shared sessions can't switch hosts — `clientSelector` is left undefined.
+      expect(screen.getByTestId("chat-input")).toHaveAttribute(
+        "data-client-selector",
+        "false",
+      );
     });
 
     it("keeps active playground thread visibility in sync after sharing", async () => {
@@ -1032,6 +1035,43 @@ describe("PlaygroundMain", () => {
       });
     });
 
+    it("passes the previewed host id into multi-model card runtime context", () => {
+      localStorage.setItem(
+        "mcp-previewed-host-id",
+        JSON.stringify({ "project-1": "host-claude-code" }),
+      );
+      mockUseChatSession.availableModels = [
+        {
+          id: "openai/gpt-5-mini",
+          name: "GPT-5 Mini",
+          provider: "openai",
+        },
+        {
+          id: "anthropic/claude-haiku-4.5",
+          name: "Claude Haiku 4.5",
+          provider: "anthropic",
+        },
+      ];
+      mockUseChatSession.selectedModelIds = [
+        "openai/gpt-5-mini",
+        "anthropic/claude-haiku-4.5",
+      ];
+      mockUseChatSession.multiModelEnabled = true;
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          activeProjectId="project-1"
+          enableMultiModelChat={true}
+        />,
+      );
+
+      expect(mockMultiModelPlaygroundCard.mock.calls.length).toBeGreaterThan(0);
+      for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+        expect(props.hostedContext?.hostId).toBe("host-claude-code");
+      }
+    });
+
     it("does not stop when Escape was already handled elsewhere", () => {
       mockUseChatSession.isStreaming = true;
       const preventEscape = (event: KeyboardEvent) => {
@@ -1302,6 +1342,9 @@ describe("PlaygroundMain", () => {
         />,
       );
 
+      const compareShell = screen.getByTestId("playground-compare-shell");
+      expect(compareShell).toHaveAttribute("data-thread-theme", "light");
+      expect(compareShell).not.toHaveClass("dark");
       expect(
         screen.getByText("Try one of these to get started"),
       ).toBeInTheDocument();

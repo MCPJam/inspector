@@ -18,6 +18,8 @@ import {
 } from "./hosted-rpc-logs.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { setRequestLogContext } from "../../utils/request-logger.js";
+import { logger } from "../../utils/logger.js";
+import type { RequestLogContext } from "../../utils/log-events.js";
 import {
   type InternalLogContext,
   mapInternalToRequestContext,
@@ -33,7 +35,16 @@ import {
   parseWithSchema,
 } from "./errors.js";
 import { buildHostedOAuthUnauthorizedHandler } from "../../utils/hosted-oauth-refresh.js";
-import { fetchRuntimeServerSecrets } from "../../utils/server-secrets.js";
+import {
+  fetchRuntimeServerSecrets,
+  fetchServerClientSecret,
+} from "../../utils/server-secrets.js";
+import {
+  buildXaaMintArgs,
+  mintXaaAccessToken,
+  resolveXaaIssuer,
+} from "../../services/xaa-mint.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
 
@@ -231,6 +242,13 @@ export type ConvexAuthorizeResponse = {
     headers?: Record<string, string>;
     hasHeaders?: boolean;
     useOAuth?: boolean;
+    // Cross-App Access (XAA) discriminator + non-secret config, surfaced by the
+    // hosted authorize endpoint. The confidential client secret + token endpoint
+    // are resolved separately at mint time via the hardened reveal-secret path.
+    useXaa?: boolean;
+    oauthScopes?: string[];
+    xaaSubject?: string;
+    xaaEmail?: string;
   };
   internalLogContext?: InternalLogContext;
 };
@@ -321,14 +339,46 @@ function stripStdioFieldsFromHostedConfig<
  * and stay on the original-bearer path until they're either reached
  * by an API key request or refactored to receive Context.
  */
+/**
+ * The caller-identity inputs the authorize/manager helpers actually consume,
+ * decoupled from Hono so background workers (scheduled evals) can call them
+ * without faking a route context. Routes build one via
+ * {@link callerContextFromHono}; workers pass explicit values (or the empty
+ * object, which behaves exactly like a plain-JWT caller — locked by
+ * `caller-context.test.ts`).
+ */
+export interface ManagerCallerContext {
+  /** "workos_api_key" switches to the service-token + acting-as exchange. */
+  authMethod?: string;
+  /** WorkOS user id (Convex `externalId`) for the delegated exchange. */
+  workosUserId?: string;
+  /** Convex organization id scope for the delegated exchange. */
+  mcpjamOrganizationId?: string;
+  /** Sink for backend-attributed request log context; absent ⇒ no-op. */
+  setLogContext?: (partial: Partial<RequestLogContext>) => void;
+  /** Read-back of the same log context (authenticatedUserId); absent ⇒ null. */
+  getLogContext?: () => RequestLogContext | undefined;
+}
+
+/** Adapt a live Hono request context to {@link ManagerCallerContext}. */
+export function callerContextFromHono(c: Context): ManagerCallerContext {
+  return {
+    authMethod: c.get("authMethod") as string | undefined,
+    workosUserId: c.get("workosUserId") as string | undefined,
+    mcpjamOrganizationId: c.get("mcpjamOrganizationId") as string | undefined,
+    setLogContext: (partial) => setRequestLogContext(c, partial),
+    getLogContext: () => c.var.requestLogContext,
+  };
+}
+
 export function buildConvexAuthHeaders(
-  c: Context,
+  caller: ManagerCallerContext,
   originalBearer: string
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  if (c.get("authMethod") === "workos_api_key") {
+  if (caller.authMethod === "workos_api_key") {
     const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
     if (!serviceToken) {
       throw new WebRouteError(
@@ -340,7 +390,7 @@ export function buildConvexAuthHeaders(
     // `acting-as` is the WorkOS user id (the user's Convex `externalId`),
     // NOT the Convex user `_id`: the backend resolves the delegated user by
     // externalId. Sending the Convex id here would 404 as UNKNOWN_DELEGATED_USER.
-    const actingAs = c.get("workosUserId");
+    const actingAs = caller.workosUserId;
     if (!actingAs) {
       throw new WebRouteError(
         500,
@@ -348,7 +398,7 @@ export function buildConvexAuthHeaders(
         "Missing workosUserId for WorkOS API key auth exchange"
       );
     }
-    const actingInOrg = c.get("mcpjamOrganizationId");
+    const actingInOrg = caller.mcpjamOrganizationId;
     if (!actingInOrg) {
       throw new WebRouteError(
         500,
@@ -389,7 +439,7 @@ export async function authorizeServer(
   try {
     response = await fetch(`${convexUrl}/web/authorize`, {
       method: "POST",
-      headers: buildConvexAuthHeaders(c, bearerToken),
+      headers: buildConvexAuthHeaders(callerContextFromHono(c), bearerToken),
       body: JSON.stringify({
         projectId,
         serverId,
@@ -443,7 +493,7 @@ export async function authorizeServer(
 }
 
 export async function authorizeBatch(
-  c: Context,
+  caller: ManagerCallerContext,
   bearerToken: string,
   projectId: string,
   serverIds: string[],
@@ -466,7 +516,7 @@ export async function authorizeBatch(
   try {
     response = await fetch(`${convexUrl}/web/authorize-batch`, {
       method: "POST",
-      headers: buildConvexAuthHeaders(c, bearerToken),
+      headers: buildConvexAuthHeaders(caller, bearerToken),
       body: JSON.stringify({
         projectId,
         serverIds,
@@ -549,7 +599,7 @@ export async function authorizeBatch(
       partial.serverTransport = null;
       partial.chatboxId = null;
     }
-    setRequestLogContext(c, partial);
+    caller.setLogContext?.(partial);
   }
 
   const strippedResults: Record<string, ConvexBatchAuthorizeResult> = {};
@@ -701,7 +751,7 @@ function resolveEffectiveInitializePinsForServer(
 }
 
 export async function createAuthorizedManager(
-  c: Context,
+  caller: ManagerCallerContext,
   bearerToken: string,
   projectId: string,
   serverIds: string[],
@@ -744,6 +794,13 @@ export async function createAuthorizedManager(
      * undefined (SDK chooses at request time).
      */
     mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersionPin>;
+    /**
+     * Pre-resolved MCPJam test-IdP issuer (`resolveXaaIssuer(c, HOSTED_MODE)`)
+     * for Cross-App Access servers. Supplied by callers that have the request
+     * `Context`. Required whenever the batch contains a `useXaa` server — the
+     * builder throws a 500 rather than connecting tokenless if it's missing.
+     */
+    xaaIssuer?: string;
   }
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
@@ -765,7 +822,7 @@ export async function createAuthorizedManager(
 
   const oauthServerUrls: Record<string, string> = {};
   const batch = await authorizeBatch(
-    c,
+    caller,
     bearerToken,
     projectId,
     uniqueServerIds,
@@ -830,6 +887,66 @@ export async function createAuthorizedManager(
         }
       }
 
+      // Cross-App Access: mint the resource access token server-side (MCPJam as
+      // the test IdP) and inject it through the same `oauthAccessToken` channel
+      // that sets the Bearer header. Strictly gated on `useXaa === true &&
+      // useOAuth !== true` so it can never collide with the OAuth branch above.
+      // The XAA token always overrides whatever the authorize batch returned: a
+      // server converted from OAuth still has a stored OAuth token, and reusing
+      // it would inject the wrong credential.
+      let connectToken = oauthToken;
+      let connectOnUnauthorized = onUnauthorized;
+      const useXaa =
+        auth.serverConfig.transportType === "http" &&
+        auth.serverConfig.useXaa === true &&
+        auth.serverConfig.useOAuth !== true;
+      if (useXaa) {
+        if (!options?.xaaIssuer) {
+          // Caller-contract violation: a `useXaa` server reached a manager
+          // builder that didn't thread the issuer (only callers holding the
+          // request `Context` can resolve it). Fail loud here rather than
+          // connecting tokenless and surfacing a confusing downstream 401.
+          throw new WebRouteError(
+            500,
+            ErrorCode.INTERNAL_ERROR,
+            `Missing XAA issuer for server "${displayServerName}". This connect surface must pass options.xaaIssuer.`
+          );
+        }
+        const mintArgs = buildXaaMintArgs({
+          issuer: options.xaaIssuer,
+          hostedMode: HOSTED_MODE,
+          serverConfig: auth.serverConfig,
+          serverId,
+          projectId,
+          bearerToken,
+          resolveServerSecret: fetchServerClientSecret,
+        });
+        try {
+          connectToken = (await mintXaaAccessToken(mintArgs)).accessToken;
+        } catch (error) {
+          logger.error("[XAA connect] mint failed", error, {
+            serverId,
+            serverName: displayServerName,
+            resource: auth.serverConfig.url,
+          });
+          throw error;
+        }
+        // Bounded re-mint: the SDK invokes this once on a 401 and retries; a
+        // second 401 surfaces rather than looping mint→401→mint.
+        let reMinted = false;
+        connectOnUnauthorized = async () => {
+          if (reMinted) {
+            throw new WebRouteError(
+              401,
+              ErrorCode.UNAUTHORIZED,
+              `Server "${displayServerName}" rejected the cross-app access token. Reconnect to retry.`
+            );
+          }
+          reMinted = true;
+          return { accessToken: (await mintXaaAccessToken(mintArgs)).accessToken };
+        };
+      }
+
       const effectiveInitializePins = resolveEffectiveInitializePinsForServer(
         serverId,
         options?.initializePins,
@@ -857,14 +974,13 @@ export async function createAuthorizedManager(
                       // as `authorizeBatch` — otherwise Convex would see the
                       // service token without an acting-as user.
                       workosApiKeyActingAs:
-                        c.get("authMethod") === "workos_api_key" &&
-                        c.get("workosUserId") &&
-                        c.get("mcpjamOrganizationId")
+                        caller.authMethod === "workos_api_key" &&
+                        caller.workosUserId &&
+                        caller.mcpjamOrganizationId
                           ? {
-                              workosUserId: c.get("workosUserId")!,
-                              mcpjamOrganizationId: c.get(
-                                "mcpjamOrganizationId"
-                              )!,
+                              workosUserId: caller.workosUserId,
+                              mcpjamOrganizationId:
+                                caller.mcpjamOrganizationId,
                             }
                           : undefined,
                     })
@@ -879,9 +995,9 @@ export async function createAuthorizedManager(
         toHttpConfig(
           authForConfig,
           timeoutMs,
-          oauthToken,
+          connectToken,
           clientCapabilities,
-          onUnauthorized,
+          connectOnUnauthorized,
           effectiveInitializePins
         ),
       ] as const;
@@ -896,7 +1012,7 @@ export async function createAuthorizedManager(
   return {
     manager,
     oauthServerUrls,
-    authenticatedUserId: c.var.requestLogContext?.userId ?? null,
+    authenticatedUserId: caller.getLogContext?.()?.userId ?? null,
   };
 }
 
@@ -1094,6 +1210,40 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
   }
 ): Promise<T> {
+  const { manager, body } = await createManualHostedConnection(
+    c,
+    rawBody,
+    schema,
+    options
+  );
+
+  try {
+    return await fn(manager, body);
+  } finally {
+    await manager.disconnectAllServers();
+  }
+}
+
+/**
+ * Authorize and create a hosted ephemeral MCP manager without binding it to the
+ * HTTP response lifecycle. Use only when the caller will keep the manager alive
+ * after returning a Response, and will explicitly disconnect it when background
+ * work settles.
+ */
+export async function createManualHostedConnection<S extends z.ZodTypeAny>(
+  c: any,
+  rawBody: Record<string, unknown>,
+  schema: S,
+  options?: {
+    timeoutMs?: number;
+    guestUnsupportedMessage?: string;
+    rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
+  }
+): Promise<{
+  manager: InstanceType<typeof MCPClientManager>;
+  body: z.infer<S>;
+  convexAuthToken: string;
+}> {
   // Both guest and signed-in actors flow through the same Convex
   // authorization path: the bearer token (guest JWT or WorkOS bearer) is
   // forwarded to /web/authorize-batch, which dispatches to the right
@@ -1107,7 +1257,15 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
     );
   }
 
-  const bearerToken = assertBearerToken(c);
+  // Under WorkOS API-key auth the raw `sk_` bearer is useless against
+  // Convex's JWT-only surfaces (`/web/oauth/force-refresh` inside the
+  // 401-refresh closure, reveal-secrets fallback). Swap in the short-lived
+  // delegated JWT so every bearer-forwarding path downstream of
+  // `createAuthorizedManager` works for API-key callers. JWT callers get
+  // their original bearer back unchanged. `authorizeBatch` is unaffected
+  // either way — `buildConvexAuthHeaders` branches on `authMethod`, not on
+  // this value.
+  const bearerToken = await getConvexBearerForRequest(c);
   const body = parseWithSchema(schema, rawBody);
   // Cast for internal plumbing — all web schemas include projectId + serverId(s).
   // The strongly-typed `body` is passed through to `fn` unchanged.
@@ -1129,28 +1287,30 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
   const { initializePins, mcpProtocolVersionsByServerId } =
     extractMcpInitializeOptions(raw);
 
-  return await withManager(
-    createAuthorizedManager(
-      c,
-      bearerToken,
-      raw.projectId as string,
-      serverIds,
-      timeoutMs,
-      oauthTokens,
-      (raw.clientCapabilities as Record<string, unknown> | undefined) ??
-        undefined,
-      {
-        accessScope,
-        chatboxId,
-        accessVersion,
-        rpcLogger: options?.rpcLogger,
-        serverNames,
-        initializePins,
-        mcpProtocolVersionsByServerId,
-      }
-    ),
-    (manager) => fn(manager, body as z.infer<S>)
+  const { manager } = await createAuthorizedManager(
+    callerContextFromHono(c),
+    bearerToken,
+    raw.projectId as string,
+    serverIds,
+    timeoutMs,
+    oauthTokens,
+    (raw.clientCapabilities as Record<string, unknown> | undefined) ??
+      undefined,
+    {
+      accessScope,
+      chatboxId,
+      accessVersion,
+      rpcLogger: options?.rpcLogger,
+      serverNames,
+      initializePins,
+      mcpProtocolVersionsByServerId,
+      // Resolve the XAA issuer here (we hold the request `Context`) so the
+      // manager builder can mint Cross-App Access tokens for `useXaa` servers.
+      xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+    }
   );
+
+  return { manager, body: body as z.infer<S>, convexAuthToken: bearerToken };
 }
 
 export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(

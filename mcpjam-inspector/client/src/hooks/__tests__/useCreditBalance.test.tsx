@@ -1,6 +1,7 @@
-import { renderHook } from "@testing-library/react";
+import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useCreditBalance } from "@/hooks/useCreditBalance";
+import { useCreditBalance, useOutOfCredits } from "@/hooks/useCreditBalance";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 const mocks = vi.hoisted(() => ({
   convexAuth: {
@@ -43,6 +44,17 @@ describe("useCreditBalance", () => {
     mocks.useQuery.mockImplementation((_name: unknown, args: unknown) =>
       args === "skip" ? undefined : mocks.queryResult
     );
+    localStorage.clear();
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "loading",
+      hasPendingLimit: false,
+      outOfCreditsHit: false,
+      outOfCreditsOrganizationId: null,
+      isOpen: false,
+      intent: null,
+      organizationId: null,
+      pendingInput: null,
+    });
   });
 
   it("skips guest Convex identities unless guests are included", () => {
@@ -159,5 +171,68 @@ describe("useCreditBalance", () => {
     // Monthly numerics stay undefined (not coerced to 0).
     expect(result.current.balance?.monthlyAllowanceTotal).toBeUndefined();
     expect(result.current.balance?.monthlyAllowanceRemaining).toBeUndefined();
+  });
+
+  it("treats a recent limit hit as out of credits before the balance query catches up", () => {
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.workosAuth.user = { id: "user_123" };
+    localStorage.setItem("active-organization-id:user_123", "org-1");
+    mocks.queryResult = {
+      paidCreditsRemaining: 0,
+      hasPurchaseHistory: false,
+      freeDailyPercentUsed: 65,
+      freeDailyResetAt: 1_777_777_777_000,
+      freeDailyCreditsRemaining: 7,
+      freeDailyCreditsTotal: 20,
+      walletLocked: false,
+    };
+    useMCPJamLimitDialogStore.setState({
+      outOfCreditsHit: true,
+      outOfCreditsOrganizationId: "org-1",
+    });
+
+    const { result } = renderHook(() => useOutOfCredits());
+
+    expect(result.current).toBe(true);
+  });
+
+  it("does not apply an org-specific limit hit to a different resolved org", () => {
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.workosAuth.user = { id: "user_123" };
+    localStorage.setItem("active-organization-id:user_123", "org-2");
+    useMCPJamLimitDialogStore.setState({
+      outOfCreditsHit: true,
+      outOfCreditsOrganizationId: "org-1",
+    });
+
+    const { result } = renderHook(() => useOutOfCredits());
+
+    expect(result.current).toBe(false);
+  });
+
+  it("clears the local limit hit once the balance query confirms the org is out", async () => {
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.workosAuth.user = { id: "user_123" };
+    localStorage.setItem("active-organization-id:user_123", "org-1");
+    mocks.queryResult = {
+      paidCreditsRemaining: 0,
+      hasPurchaseHistory: false,
+      freeDailyPercentUsed: 100,
+      freeDailyResetAt: 1_777_777_777_000,
+      freeDailyCreditsRemaining: 0,
+      freeDailyCreditsTotal: 20,
+      walletLocked: false,
+    };
+    useMCPJamLimitDialogStore.setState({
+      outOfCreditsHit: true,
+      outOfCreditsOrganizationId: "org-1",
+    });
+
+    const { result } = renderHook(() => useOutOfCredits());
+
+    expect(result.current).toBe(true);
+    await waitFor(() => {
+      expect(useMCPJamLimitDialogStore.getState().outOfCreditsHit).toBe(false);
+    });
   });
 });

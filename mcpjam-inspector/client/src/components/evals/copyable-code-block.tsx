@@ -1,6 +1,6 @@
 import { useCallback, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { copyToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 

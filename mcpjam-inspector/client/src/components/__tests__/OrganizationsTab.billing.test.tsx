@@ -130,7 +130,7 @@ function createPlanCatalog() {
 }
 
 function billingStatusFixture(
-  overrides: Record<string, unknown> = {},
+  overrides: Record<string, unknown> = {}
 ): Record<string, unknown> {
   return {
     organizationId: "org-1",
@@ -172,6 +172,7 @@ function createBillingHookState(overrides: Record<string, unknown>) {
     entitlements: undefined,
     organizationPremiumness: undefined,
     projectPremiumness: undefined,
+    activeSeatPaymentIntent: null,
     planCatalog: createPlanCatalog(),
     isLoadingBilling: false,
     isLoadingEntitlements: false,
@@ -183,6 +184,7 @@ function createBillingHookState(overrides: Record<string, unknown>) {
     isOpeningPortal: false,
     isCancelingScheduledBillingChange: false,
     isSelectingFreeAfterTrial: false,
+    isHandlingSeatPayment: false,
     error: null,
     startPlanChange: vi.fn(),
     openPortal: vi.fn(),
@@ -190,6 +192,8 @@ function createBillingHookState(overrides: Record<string, unknown>) {
     openIntervalChangePortal: vi.fn(),
     cancelScheduledBillingChange: vi.fn(),
     selectFreeAfterTrial: vi.fn(),
+    finishSeatPayment: vi.fn(),
+    cancelSeatPayment: vi.fn(),
     ...overrides,
   };
 }
@@ -294,6 +298,17 @@ vi.mock("@/hooks/useOrganizationBilling", () => ({
   isPaidPlan: (plan: string) => plan !== "free",
 }));
 
+// Stripe-backed invoice hook used by the merged payment-history section; stub
+// it empty so these org-tab tests don't reach the action layer.
+vi.mock("@/hooks/useInvoiceHistory", () => ({
+  useInvoiceHistory: () => ({
+    entries: [],
+    upcoming: null,
+    isLoading: false,
+    error: null,
+  }),
+}));
+
 vi.mock("../organization/OrganizationAuditLog", () => ({
   OrganizationAuditLog: () => <div data-testid="organization-audit-log" />,
 }));
@@ -355,7 +370,7 @@ describe("OrganizationsTab billing", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({ plan: "free" }),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
@@ -365,7 +380,51 @@ describe("OrganizationsTab billing", () => {
     expect(panel.getByText("Billing cycle")).toBeInTheDocument();
     expect(panel.queryByText("Subscription status")).not.toBeInTheDocument();
     expect(screen.getByTestId("current-plan-renewal")).toHaveTextContent(
-      "No active subscription",
+      "No active subscription"
+    );
+  });
+
+  it("shows pending seat payment notice in the billing view", async () => {
+    const finishSeatPayment = vi
+      .fn()
+      .mockResolvedValue({ status: "paid", seatQuantity: 4 });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: {
+          _id: "seat-payment-1",
+          organizationId: "org-1",
+          userId: "user-new",
+          email: "new@example.com",
+          role: "member",
+          source: "workspace",
+          status: "pending",
+          targetSeatQuantity: null,
+          stripeInvoiceId: null,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+        finishSeatPayment,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(screen.getByTestId("pending-seat-payment-notice")).toHaveTextContent(
+      "Finish payment to add new@example.com",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Finish payment" }));
+    await waitFor(() =>
+      expect(finishSeatPayment).toHaveBeenCalledWith(undefined),
     );
   });
 
@@ -383,14 +442,14 @@ describe("OrganizationsTab billing", () => {
           canManageBilling: false,
           isOwner: false,
         }),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(screen.queryByRole("button", { name: "Manage plan" })).toBeNull();
     expect(
-      screen.getByText("Only organization owners can manage billing."),
+      screen.getByText("Only organization owners can manage billing.")
     ).toBeInTheDocument();
   });
 
@@ -409,23 +468,23 @@ describe("OrganizationsTab billing", () => {
           stripeCurrentPeriodEnd: Date.parse("2026-05-01T12:00:00.000Z"),
           stripePriceId: "price_team",
         }),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(screen.getByTestId("current-plan-renewal")).toHaveTextContent(
-      "Cancels May 1, 2026",
+      "Cancels May 1, 2026"
     );
     expect(
-      screen.getByTestId("current-plan-non-renewing-badge"),
+      screen.getByTestId("current-plan-non-renewing-badge")
     ).toHaveTextContent("Will not renew");
     expect(
-      screen.getByTestId("current-plan-scheduled-cancel"),
+      screen.getByTestId("current-plan-scheduled-cancel")
     ).toHaveTextContent("Service ends May 1, 2026. Will not renew.");
     expect(screen.queryByText(/Renews /)).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Change to annual" }),
+      screen.queryByRole("button", { name: "Change to annual" })
     ).not.toBeInTheDocument();
   });
 
@@ -442,13 +501,13 @@ describe("OrganizationsTab billing", () => {
           stripeCurrentPeriodEnd: Date.parse("2026-05-19T12:00:00.000Z"),
           stripePriceId: "price_team_monthly",
         }),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(screen.getByTestId("current-plan-renewal")).toHaveTextContent(
-      "First charge May 19, 2026",
+      "First charge May 19, 2026"
     );
     expect(screen.queryByText(/Renews /)).not.toBeInTheDocument();
   });
@@ -465,17 +524,17 @@ describe("OrganizationsTab billing", () => {
           stripeCurrentPeriodEnd: Date.parse("2027-03-31T00:00:00.000Z"),
           stripePriceId: "price_team_annual",
         }),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     const panel = within(screen.getByTestId("current-plan-panel"));
     expect(
-      panel.getByText("$30 per seat/month, billed annually"),
+      panel.getByText("$30 per seat/month, billed annually")
     ).toBeInTheDocument();
     expect(
-      panel.queryByText("Billing details are updating…"),
+      panel.queryByText("Billing details are updating…")
     ).not.toBeInTheDocument();
   });
 
@@ -496,25 +555,25 @@ describe("OrganizationsTab billing", () => {
           stripeScheduledEffectiveAt: Date.parse("2027-04-01T12:00:00.000Z"),
           canCancelScheduledBillingChange: true,
         }),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(screen.getByTestId("current-plan-renewal")).toHaveTextContent(
-      "Changes Apr 1, 2027",
+      "Changes Apr 1, 2027"
     );
     expect(
-      screen.getByTestId("current-plan-scheduled-change"),
+      screen.getByTestId("current-plan-scheduled-change")
     ).toHaveTextContent("Monthly billing starts Apr 1, 2027.");
     expect(
-      screen.queryByRole("button", { name: "Change to monthly" }),
+      screen.queryByRole("button", { name: "Change to monthly" })
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Keep Team annual plan" }),
+      screen.getByRole("button", { name: "Keep Team annual plan" })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Manage plan" }),
+      screen.getByRole("button", { name: "Manage plan" })
     ).toBeInTheDocument();
   });
 
@@ -555,42 +614,44 @@ describe("OrganizationsTab billing", () => {
     mockUseOrganizationBilling.mockImplementation(() => hookState);
 
     const view = render(
-      <OrganizationsTab organizationId="org-1" section="billing" />,
+      <OrganizationsTab organizationId="org-1" section="billing" />
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Keep Team annual plan" }),
+      screen.getByRole("button", { name: "Keep Team annual plan" })
     );
 
     expect(
-      screen.getByRole("heading", { name: "Keep Team annual plan?" }),
+      screen.getByRole("heading", { name: "Keep Team annual plan?" })
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "This cancels the pending switch to monthly billing on Apr 1, 2027. Team annual remains active.",
-      ),
+        "This cancels the pending switch to monthly billing on Apr 1, 2027. Team annual remains active."
+      )
     ).toBeInTheDocument();
 
     fireEvent.click(
       within(screen.getByRole("alertdialog")).getByRole("button", {
         name: "Keep Team annual plan",
-      }),
+      })
     );
 
     await waitFor(() => {
       expect(cancelScheduledBillingChange).toHaveBeenCalledTimes(1);
     });
     expect(toast.success).toHaveBeenCalledWith(
-      "Scheduled billing change canceled. Team annual remains active.",
+      "Scheduled billing change canceled. Team annual remains active."
     );
 
-    view.rerender(<OrganizationsTab organizationId="org-1" section="billing" />);
+    view.rerender(
+      <OrganizationsTab organizationId="org-1" section="billing" />
+    );
 
     expect(
-      screen.queryByTestId("current-plan-scheduled-change"),
+      screen.queryByTestId("current-plan-scheduled-change")
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Change to monthly" }),
+      screen.getByRole("button", { name: "Change to monthly" })
     ).toBeInTheDocument();
   });
 
@@ -606,7 +667,7 @@ describe("OrganizationsTab billing", () => {
           trialStartedAt: Date.parse("2026-04-01T00:00:00.000Z"),
           trialEndsAt: Date.parse("2026-04-08T00:00:00.000Z"),
         }),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
@@ -614,13 +675,13 @@ describe("OrganizationsTab billing", () => {
     const panel = within(screen.getByTestId("current-plan-panel"));
     expect(panel.getByText("Team Trial")).toBeInTheDocument();
     expect(
-      panel.getByText("7-day trial · no active subscription yet"),
+      panel.getByText("7-day trial · no active subscription yet")
     ).toBeInTheDocument();
     expect(screen.getByTestId("current-plan-renewal")).toHaveTextContent(
-      "Trial ends",
+      "Trial ends"
     );
     expect(
-      panel.queryByText(/flat monthly rate|per seat\/month/i),
+      panel.queryByText(/flat monthly rate|per seat\/month/i)
     ).not.toBeInTheDocument();
   });
 
@@ -632,7 +693,7 @@ describe("OrganizationsTab billing", () => {
           effectivePlan: "team",
           source: "simulation",
         }),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
@@ -641,11 +702,11 @@ describe("OrganizationsTab billing", () => {
     expect(panel.getByText("Team")).toBeInTheDocument();
     expect(
       panel.getByText(
-        "Simulation active. Limits and access use Team, while billing remains on Free.",
-      ),
+        "Simulation active. Limits and access use Team, while billing remains on Free."
+      )
     ).toBeInTheDocument();
     expect(
-      panel.getByText("Simulation active · billing changes are not applied"),
+      panel.getByText("Simulation active · billing changes are not applied")
     ).toBeInTheDocument();
   });
 
@@ -662,23 +723,23 @@ describe("OrganizationsTab billing", () => {
           stripeCurrentPeriodEnd: 1_705_000_000_000,
           stripePriceId: "price_123",
         }),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" />);
 
     expect(
-      screen.queryByRole("button", { name: "Plans & billing" }),
+      screen.queryByRole("button", { name: "Plans & billing" })
     ).not.toBeInTheDocument();
     expect(screen.queryByText("Billing account")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "View plans" }),
+      screen.queryByRole("button", { name: "View plans" })
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Manage plan" }),
+      screen.queryByRole("button", { name: "Manage plan" })
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Upgrade plan" }),
+      screen.queryByRole("button", { name: "Upgrade plan" })
     ).not.toBeInTheDocument();
   });
 
@@ -694,7 +755,7 @@ describe("OrganizationsTab billing", () => {
           stripeCurrentPeriodEnd: 1_705_000_000_000,
           stripePriceId: "price_123",
         }),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
@@ -752,15 +813,15 @@ describe("OrganizationsTab billing", () => {
           canManageBilling: false,
           isOwner: false,
         }),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(
       screen.getByText(
-        "Only organization owners can manage billing changes. Admins can review plan details here.",
-      ),
+        "Only organization owners can manage billing changes. Admins can review plan details here."
+      )
     ).toBeInTheDocument();
     for (const button of screen.getAllByRole("button", {
       name: "Upgrade",
@@ -815,7 +876,7 @@ describe("OrganizationsTab billing", () => {
           canManageBilling: false,
           isOwner: false,
         }),
-      }),
+      })
     );
     addMemberMock.mockRejectedValue(
       new Error(
@@ -823,8 +884,8 @@ describe("OrganizationsTab billing", () => {
           code: "billing_limit_reached",
           limit: "maxMembers",
           allowedValue: 3,
-        }),
-      ),
+        })
+      )
     );
 
     render(<OrganizationsTab organizationId="org-1" />);
@@ -842,6 +903,7 @@ describe("OrganizationsTab billing", () => {
     });
     expect(toast.error).toHaveBeenCalledWith(
       "This organization has reached its member limit (3). Ask an organization owner to upgrade.",
+      { duration: Infinity }
     );
   });
 
@@ -874,7 +936,7 @@ describe("OrganizationsTab billing", () => {
             },
           ],
         },
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" />);
@@ -886,11 +948,11 @@ describe("OrganizationsTab billing", () => {
     expect(screen.getByTestId("member-limit-upsell")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "This organization has reached its member limit (1). Upgrade to add more members.",
-      ),
+        "This organization has reached its member limit (1). Upgrade to add more members."
+      )
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Upgrade to Team" }),
+      screen.getByRole("button", { name: "Upgrade to Team" })
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add member" })).toBeDisabled();
   });
@@ -963,17 +1025,17 @@ describe("OrganizationsTab billing", () => {
             },
           ],
         },
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" />);
 
     expect(screen.getByTestId("member-limit-upsell")).toBeInTheDocument();
     expect(
-      screen.getByText("Ask an organization owner to review billing options."),
+      screen.getByText("Ask an organization owner to review billing options.")
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Upgrade to Team" }),
+      screen.queryByRole("button", { name: "Upgrade to Team" })
     ).not.toBeInTheDocument();
   });
 
@@ -985,30 +1047,40 @@ describe("OrganizationsTab billing", () => {
           effectivePlan: "free",
           source: "free",
         }),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(screen.queryByText("Coming soon")).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Upgrade" })).toHaveLength(1);
+    // Since #2629 a free-plan org sees a dedicated Team upsell card (with its
+    // own Upgrade CTA) in addition to the comparison-table column, so an
+    // unscoped count is now 2. Scope to the upsell card and assert it offers
+    // the purchase affordance — that's what this test is about.
+    const upsell = within(screen.getByTestId("free-plan-team-upsell"));
+    expect(upsell.getByRole("button", { name: "Upgrade" })).toBeInTheDocument();
   });
 
   it("updates pricing when the billing interval toggle changes", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture(),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
+    // The free-plan Team upsell card (#2629) and the comparison table each
+    // render a price + interval toggle backed by the same `billingInterval`
+    // state, so global queries are now ambiguous. Drive and assert through the
+    // upsell card's own toggle.
+    const upsell = within(screen.getByTestId("free-plan-team-upsell"));
     // Default interval is annual — Team lists $30/seat/mo billed annually
-    expect(screen.getByText(/\$30/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /^Monthly$/ }));
-    expect(screen.getByText(/\$38/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Annual/ }));
-    expect(screen.getByText(/\$30/)).toBeInTheDocument();
+    expect(upsell.getByText(/\$30/)).toBeInTheDocument();
+    fireEvent.click(upsell.getByRole("button", { name: /^Monthly$/ }));
+    expect(upsell.getByText(/\$38/)).toBeInTheDocument();
+    fireEvent.click(upsell.getByRole("button", { name: /^Annual$/ }));
+    expect(upsell.getByText(/\$30/)).toBeInTheDocument();
   });
 
   it("shows deferred billing copy for active trials with enough time remaining", () => {
@@ -1027,14 +1099,14 @@ describe("OrganizationsTab billing", () => {
           deferredTrialBillingStartsAt: trialEndsAt,
           trialDaysRemaining: 10,
         }),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(
       screen.getAllByText(/\$0 today\. First bill charged in advance on /)
-        .length,
+        .length
     ).toBeGreaterThanOrEqual(1);
   });
 
@@ -1052,7 +1124,7 @@ describe("OrganizationsTab billing", () => {
           trialEndsAt: now + 36 * 60 * 60 * 1000,
           trialDaysRemaining: 2,
         }),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
@@ -1078,7 +1150,7 @@ describe("OrganizationsTab billing", () => {
           canManageBilling: false,
           isOwner: false,
         }),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
@@ -1090,7 +1162,7 @@ describe("OrganizationsTab billing", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture(),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
@@ -1107,7 +1179,7 @@ describe("OrganizationsTab billing", () => {
       createBillingHookState({
         billingStatus: billingStatusFixture(),
         startPlanChange,
-      }),
+      })
     );
 
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
@@ -1122,14 +1194,14 @@ describe("OrganizationsTab billing", () => {
         expect.stringContaining("/organizations/org-1/billing"),
         "team",
         "annual",
-        { confirmPaidPlanChange: true },
+        { confirmPaidPlanChange: true }
       );
     });
     expect(screen.queryByText("Upgrade to Team?")).not.toBeInTheDocument();
     expect(openSpy).toHaveBeenCalledWith(
       "https://stripe.test/checkout",
       "_blank",
-      "noopener,noreferrer",
+      "noopener,noreferrer"
     );
     openSpy.mockRestore();
   });
@@ -1140,7 +1212,7 @@ describe("OrganizationsTab billing", () => {
         billingStatus: billingStatusFixture(),
         isStartingPlanChange: true,
         pendingPlanChangeTarget: "team",
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
@@ -1175,7 +1247,7 @@ describe("OrganizationsTab billing", () => {
         startPlanChange,
         openPortal,
         openCancellationPortal,
-      }),
+      })
     );
 
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
@@ -1185,30 +1257,30 @@ describe("OrganizationsTab billing", () => {
     fireEvent.click(
       within(getPlanColumn("Free")).getByRole("button", {
         name: "Downgrade",
-      }),
+      })
     );
 
     expect(screen.getByText("Return to Free at renewal?")).toBeInTheDocument();
     expect(
-      screen.getByText(/This cancellation takes effect at renewal, not now\./),
+      screen.getByText(/This cancellation takes effect at renewal, not now\./)
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Team annual remains active until Apr 1, 2027/),
+      screen.getByText(/Team annual remains active until Apr 1, 2027/)
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/the organization returns to Free/),
+      screen.getByText(/the organization returns to Free/)
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/you can't change your billing interval/),
+      screen.getByText(/you can't change your billing interval/)
     ).toBeInTheDocument();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Open cancellation flow" }),
+      screen.getByRole("button", { name: "Open cancellation flow" })
     );
 
     await waitFor(() => {
       expect(openCancellationPortal).toHaveBeenCalledWith(
-        expect.stringContaining("/organizations/org-1/billing"),
+        expect.stringContaining("/organizations/org-1/billing")
       );
     });
     expect(startPlanChange).not.toHaveBeenCalled();
@@ -1216,7 +1288,7 @@ describe("OrganizationsTab billing", () => {
     expect(openSpy).toHaveBeenCalledWith(
       "https://stripe.test/portal/cancel",
       "_blank",
-      "noopener,noreferrer",
+      "noopener,noreferrer"
     );
 
     openSpy.mockRestore();
@@ -1231,7 +1303,7 @@ describe("OrganizationsTab billing", () => {
       createBillingHookState({
         billingStatus: billingStatusFixture(),
         startPlanChange,
-      }),
+      })
     );
 
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
@@ -1246,7 +1318,7 @@ describe("OrganizationsTab billing", () => {
     });
 
     expect(
-      screen.getByTestId("billing-deep-link-redirect"),
+      screen.getByTestId("billing-deep-link-redirect")
     ).toBeInTheDocument();
 
     await waitFor(() => {
@@ -1254,7 +1326,7 @@ describe("OrganizationsTab billing", () => {
         expect.stringContaining("/organizations/org-1/billing"),
         "team",
         "annual",
-        { confirmPaidPlanChange: false },
+        { confirmPaidPlanChange: false }
       );
     });
     expect(onCheckoutIntentNavigationStarted).toHaveBeenCalled();
@@ -1262,12 +1334,12 @@ describe("OrganizationsTab billing", () => {
       expect(onCheckoutIntentConsumed).toHaveBeenCalled();
     });
     expect(navigateBillingInSameTab).toHaveBeenCalledWith(
-      "https://stripe.test/checkout",
+      "https://stripe.test/checkout"
     );
     expect(openSpy).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(
-        screen.queryByTestId("billing-deep-link-redirect"),
+        screen.queryByTestId("billing-deep-link-redirect")
       ).not.toBeInTheDocument();
     });
 
@@ -1298,7 +1370,7 @@ describe("OrganizationsTab billing", () => {
         section="billing"
         checkoutIntent={checkoutIntent}
         navigateBillingInSameTab={navigateBillingInSameTab}
-      />,
+      />
     );
 
     await waitFor(() => {
@@ -1311,14 +1383,14 @@ describe("OrganizationsTab billing", () => {
         section="billing"
         checkoutIntent={{ ...checkoutIntent }}
         navigateBillingInSameTab={navigateBillingInSameTab}
-      />,
+      />
     );
 
     await waitFor(() => {
       expect(startPlanChange).toHaveBeenCalledTimes(1);
     });
     expect(navigateBillingInSameTab).toHaveBeenCalledWith(
-      "https://stripe.test/checkout",
+      "https://stripe.test/checkout"
     );
   });
 
@@ -1339,7 +1411,7 @@ describe("OrganizationsTab billing", () => {
           trialDaysRemaining: 7,
         }),
         startPlanChange,
-      }),
+      })
     );
 
     const navigateBillingInSameTab = vi.fn();
@@ -1356,7 +1428,7 @@ describe("OrganizationsTab billing", () => {
     });
 
     expect(
-      screen.getByTestId("billing-deep-link-redirect"),
+      screen.getByTestId("billing-deep-link-redirect")
     ).toBeInTheDocument();
 
     await waitFor(() => {
@@ -1364,17 +1436,17 @@ describe("OrganizationsTab billing", () => {
         expect.stringContaining("/organizations/org-1/billing"),
         "team",
         "annual",
-        { confirmPaidPlanChange: false },
+        { confirmPaidPlanChange: false }
       );
     });
     await waitFor(() => {
       expect(onCheckoutIntentConsumed).toHaveBeenCalled();
     });
     expect(navigateBillingInSameTab).toHaveBeenCalledWith(
-      "https://stripe.test/checkout",
+      "https://stripe.test/checkout"
     );
     expect(
-      screen.queryByText("You’re already on this plan"),
+      screen.queryByText("You’re already on this plan")
     ).not.toBeInTheDocument();
   });
 
@@ -1395,7 +1467,7 @@ describe("OrganizationsTab billing", () => {
           trialDaysRemaining: 7,
         }),
         startPlanChange,
-      }),
+      })
     );
 
     const navigateBillingInSameTab = vi.fn();
@@ -1416,14 +1488,14 @@ describe("OrganizationsTab billing", () => {
         expect.stringContaining("/organizations/org-1/billing"),
         "team",
         "monthly",
-        { confirmPaidPlanChange: false },
+        { confirmPaidPlanChange: false }
       );
     });
     await waitFor(() => {
       expect(onCheckoutIntentConsumed).toHaveBeenCalled();
     });
     expect(navigateBillingInSameTab).toHaveBeenCalledWith(
-      "https://stripe.test/checkout",
+      "https://stripe.test/checkout"
     );
   });
 
@@ -1436,7 +1508,7 @@ describe("OrganizationsTab billing", () => {
           canManageBilling: false,
         }),
         startPlanChange,
-      }),
+      })
     );
 
     const onCheckoutIntentConsumed = vi.fn();
@@ -1448,14 +1520,14 @@ describe("OrganizationsTab billing", () => {
     });
     await waitFor(() => {
       expect(
-        screen.queryByTestId("billing-deep-link-redirect"),
+        screen.queryByTestId("billing-deep-link-redirect")
       ).not.toBeInTheDocument();
     });
     expect(startPlanChange).not.toHaveBeenCalled();
     expect(
       screen.getByText(
-        "Billing is not configured in this environment. Plans are visible, but purchase actions are unavailable.",
-      ),
+        "Billing is not configured in this environment. Plans are visible, but purchase actions are unavailable."
+      )
     ).toBeInTheDocument();
   });
 
@@ -1473,7 +1545,7 @@ describe("OrganizationsTab billing", () => {
           stripePriceId: "price_team",
         }),
         startPlanChange,
-      }),
+      })
     );
 
     const onCheckoutIntentConsumed = vi.fn();
@@ -1492,7 +1564,7 @@ describe("OrganizationsTab billing", () => {
     });
     await waitFor(() => {
       expect(
-        screen.queryByTestId("billing-deep-link-redirect"),
+        screen.queryByTestId("billing-deep-link-redirect")
       ).not.toBeInTheDocument();
     });
     expect(startPlanChange).not.toHaveBeenCalled();
@@ -1512,7 +1584,7 @@ describe("OrganizationsTab billing", () => {
           stripePriceId: "price_team",
         }),
         startPlanChange,
-      }),
+      })
     );
 
     const onCheckoutIntentConsumed = vi.fn();
@@ -1531,7 +1603,7 @@ describe("OrganizationsTab billing", () => {
     });
     await waitFor(() => {
       expect(
-        screen.queryByTestId("billing-deep-link-redirect"),
+        screen.queryByTestId("billing-deep-link-redirect")
       ).not.toBeInTheDocument();
     });
     expect(startPlanChange).not.toHaveBeenCalled();
@@ -1545,7 +1617,7 @@ describe("OrganizationsTab billing", () => {
       createBillingHookState({
         billingStatus: billingStatusFixture(),
         startPlanChange,
-      }),
+      })
     );
 
     const navigateBillingInSameTab = vi.fn();
@@ -1561,7 +1633,7 @@ describe("OrganizationsTab billing", () => {
         expect.stringContaining("/organizations/org-1/billing"),
         "team",
         "annual",
-        { confirmPaidPlanChange: false },
+        { confirmPaidPlanChange: false }
       );
     });
     await waitFor(() => {
@@ -1569,7 +1641,7 @@ describe("OrganizationsTab billing", () => {
     });
     await waitFor(() => {
       expect(
-        screen.queryByTestId("billing-deep-link-redirect"),
+        screen.queryByTestId("billing-deep-link-redirect")
       ).not.toBeInTheDocument();
     });
     expect(navigateBillingInSameTab).not.toHaveBeenCalled();
@@ -1592,7 +1664,7 @@ describe("OrganizationsTab billing", () => {
         }),
         openPortal,
         openIntervalChangePortal,
-      }),
+      })
     );
 
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
@@ -1604,14 +1676,14 @@ describe("OrganizationsTab billing", () => {
     await waitFor(() => {
       expect(openIntervalChangePortal).toHaveBeenCalledWith(
         expect.stringContaining("/organizations/org-1/billing"),
-        "annual",
+        "annual"
       );
     });
     expect(openPortal).not.toHaveBeenCalled();
     expect(openSpy).toHaveBeenCalledWith(
       "https://stripe.test/portal/interval",
       "_blank",
-      "noopener,noreferrer",
+      "noopener,noreferrer"
     );
     openSpy.mockRestore();
   });
@@ -1629,7 +1701,7 @@ describe("OrganizationsTab billing", () => {
           stripePriceId: "price_123",
         }),
         openPortal,
-      }),
+      })
     );
 
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
@@ -1640,13 +1712,13 @@ describe("OrganizationsTab billing", () => {
 
     await waitFor(() => {
       expect(openPortal).toHaveBeenCalledWith(
-        expect.stringContaining("/organizations/org-1/billing"),
+        expect.stringContaining("/organizations/org-1/billing")
       );
     });
     expect(openSpy).toHaveBeenCalledWith(
       "https://stripe.test/portal",
       "_blank",
-      "noopener,noreferrer",
+      "noopener,noreferrer"
     );
     openSpy.mockRestore();
   });
@@ -1658,15 +1730,15 @@ describe("OrganizationsTab billing", () => {
           billingConfigured: false,
           canManageBilling: false,
         }),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(
       screen.getByText(
-        "Billing is not configured in this environment. Plans are visible, but purchase actions are unavailable.",
-      ),
+        "Billing is not configured in this environment. Plans are visible, but purchase actions are unavailable."
+      )
     ).toBeInTheDocument();
     for (const button of screen.getAllByRole("button", {
       name: "Upgrade",
@@ -1729,19 +1801,19 @@ describe("OrganizationsTab billing", () => {
         error: null,
         startPlanChange: vi.fn(),
         openPortal: vi.fn(),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" />);
 
     expect(
-      screen.getByText("Audit Log requires Enterprise"),
+      screen.getByText("Audit Log requires Enterprise")
     ).toBeInTheDocument();
     expect(
-      screen.queryByTestId("organization-audit-log"),
+      screen.queryByTestId("organization-audit-log")
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "View billing options" }),
+      screen.getByRole("button", { name: "View billing options" })
     ).toBeInTheDocument();
   });
 
@@ -1759,13 +1831,13 @@ describe("OrganizationsTab billing", () => {
         }),
         isLoadingEntitlements: true,
         isLoadingOrganizationPremiumness: true,
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" />);
 
     expect(
-      screen.queryByText("Loading audit log access..."),
+      screen.queryByText("Loading audit log access...")
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("organization-audit-log")).toBeInTheDocument();
   });
@@ -1777,23 +1849,23 @@ describe("OrganizationsTab billing", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({ plan: "free" }),
-      }),
+      })
     );
 
     render(
       <OrganizationsTab
         organizationId="org-1"
         onOrganizationDeleted={onOrganizationDeleted}
-      />,
+      />
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Delete Organization" }),
+      screen.getByRole("button", { name: "Delete Organization" })
     );
 
     const dialog = await screen.findByRole("alertdialog");
     fireEvent.click(
-      within(dialog).getByRole("button", { name: "Delete Organization" }),
+      within(dialog).getByRole("button", { name: "Delete Organization" })
     );
 
     await waitFor(() => {

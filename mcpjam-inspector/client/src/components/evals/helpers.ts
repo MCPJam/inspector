@@ -56,8 +56,78 @@ export function getEffectiveSuiteServers(
   if (hostAttachmentServers.length === 0) {
     return flatServers;
   }
-  return Array.from(
-    new Set([...flatServers, ...hostAttachmentServers]),
+  return Array.from(new Set([...flatServers, ...hostAttachmentServers]));
+}
+
+export type SuiteHostRunPlan = {
+  namedHostId?: string;
+  hostName: string | null;
+  serverIds: string[];
+};
+
+function suiteDefaultRunPlan(serverIds: string[]): SuiteHostRunPlan {
+  return {
+    namedHostId: undefined,
+    hostName: null,
+    serverIds,
+  };
+}
+
+function hostAttachmentRunPlan(
+  attachment: NonNullable<EvalSuite["hostAttachments"]>[number],
+  fallbackServerIds: string[],
+  useAttachmentServerIds = true,
+): SuiteHostRunPlan {
+  return {
+    namedHostId: attachment.namedHostId,
+    hostName: attachment.hostName ?? "host",
+    serverIds:
+      useAttachmentServerIds && attachment.resolvedServerNames.length > 0
+        ? attachment.resolvedServerNames
+        : fallbackServerIds,
+  };
+}
+
+export function buildSuiteHostRunPlans(
+  suite: {
+    environment?: { servers?: string[] } | undefined;
+    hostAttachments?: EvalSuite["hostAttachments"];
+    serverAttachment?: EvalSuite["serverAttachment"];
+  },
+  fallbackServerIds = getEffectiveSuiteServers(suite),
+): SuiteHostRunPlan[] {
+  const suiteServerIds = fallbackServerIds;
+  const attachments = suite.hostAttachments ?? [];
+  const useAttachmentServerIds = !suite.serverAttachment;
+  if (attachments.length === 0) {
+    return [suiteDefaultRunPlan(suiteServerIds)];
+  }
+  return attachments.map((attachment) =>
+    hostAttachmentRunPlan(attachment, suiteServerIds, useAttachmentServerIds),
+  );
+}
+
+export function getSelectedSuiteHostRunPlan(
+  suite: {
+    environment?: { servers?: string[] } | undefined;
+    hostAttachments?: EvalSuite["hostAttachments"];
+    serverAttachment?: EvalSuite["serverAttachment"];
+  },
+  namedHostId: string | undefined,
+): SuiteHostRunPlan {
+  const suiteServerIds = getEffectiveSuiteServers(suite);
+  const attachment = namedHostId
+    ? suite.hostAttachments?.find(
+        (candidate) => candidate.namedHostId === namedHostId,
+      )
+    : null;
+  if (!attachment) {
+    return suiteDefaultRunPlan(suiteServerIds);
+  }
+  return hostAttachmentRunPlan(
+    attachment,
+    suiteServerIds,
+    !suite.serverAttachment,
   );
 }
 
@@ -118,6 +188,9 @@ export function computeIterationSummary(items: EvalIteration[]) {
     if (iteration.result === "passed") summary.passed += 1;
     else if (iteration.result === "failed") summary.failed += 1;
     else if (iteration.result === "cancelled") summary.cancelled += 1;
+    // A timed-out iteration is terminal; without an explicit verdict it counts
+    // as failed, not pending.
+    else if (iteration.status === "timed_out") summary.failed += 1;
     else summary.pending += 1;
 
     summary.tokens += iteration.tokensUsed || 0;

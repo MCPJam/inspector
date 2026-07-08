@@ -95,6 +95,7 @@ export interface StreamingMessage {
 export type ModelProvider =
   | "anthropic"
   | "azure"
+  | "bedrock"
   | "openai"
   | "ollama"
   | "deepseek"
@@ -110,6 +111,10 @@ export type ModelProvider =
   | "custom";
 
 const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
+  "mistralai/mistral-small-2603",
+  "mistralai/mistral-medium-3-5",
+  "mistralai/mistral-large-2512",
+  "mistralai/devstral-2512",
   "openai/gpt-oss-120b",
   "openai/gpt-4o-mini",
   "openai/gpt-5-nano",
@@ -118,6 +123,7 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "anthropic/claude-sonnet-4.5",
   "anthropic/claude-opus-4.6-fast",
   "anthropic/claude-sonnet-4.6",
+  "anthropic/claude-sonnet-5",
   "anthropic/claude-opus-4.6",
   "anthropic/claude-opus-4.7",
   "anthropic/claude-fable-5",
@@ -151,6 +157,7 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "z-ai/glm-4.7",
   "z-ai/glm-4.7-flash",
   "z-ai/glm-5.1",
+  "z-ai/glm-5.2",
   "minimax/minimax-m2.1",
   "minimax/minimax-m2.7",
   "qwen/qwen3.6-plus",
@@ -163,6 +170,8 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
 ];
 
 const MCPJAM_GUEST_GATED_MODEL_IDS = [
+  "mistralai/mistral-medium-3-5",
+  "mistralai/mistral-large-2512",
   "openai/gpt-5.4",
   "openai/gpt-5.4-mini",
   "openai/gpt-5.4-nano",
@@ -173,6 +182,7 @@ const MCPJAM_GUEST_GATED_MODEL_IDS = [
   "deepseek/deepseek-v4-flash",
   "anthropic/claude-opus-4.6-fast",
   "anthropic/claude-sonnet-4.6",
+  "anthropic/claude-sonnet-5",
   "anthropic/claude-opus-4.6",
   "anthropic/claude-opus-4.7",
   "anthropic/claude-fable-5",
@@ -273,6 +283,7 @@ export interface ModelDefinition {
 
 export enum Model {
   CLAUDE_FABLE_5 = "claude-fable-5",
+  CLAUDE_SONNET_5 = "claude-sonnet-5",
   CLAUDE_OPUS_4_1 = "claude-opus-4-1",
   CLAUDE_OPUS_4_0 = "claude-opus-4-0",
   CLAUDE_SONNET_4_5 = "claude-sonnet-4-5",
@@ -316,6 +327,10 @@ export enum Model {
   // Mistral models
   MISTRAL_LARGE_LATEST = "mistral-large-latest",
   MISTRAL_SMALL_LATEST = "mistral-small-latest",
+  MISTRAL_SMALL_2603 = "mistral-small-2603",
+  MISTRAL_MEDIUM_3_5 = "mistral-medium-3-5",
+  MISTRAL_LARGE_2512 = "mistral-large-2512",
+  DEVSTRAL_2512 = "devstral-2512",
   CODESTRAL_LATEST = "codestral-latest",
   MINISTRAL_8B_LATEST = "ministral-8b-latest",
   MINISTRAL_3B_LATEST = "ministral-3b-latest",
@@ -510,6 +525,30 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "openai",
     contextLength: 131072,
   },
+  freeModel(
+    "mistralai/mistral-small-2603",
+    "Mistral Small 4",
+    "mistral",
+    262144
+  ),
+  freeModel(
+    "mistralai/mistral-medium-3-5",
+    "Mistral Medium 3.5",
+    "mistral",
+    262144
+  ),
+  freeModel(
+    "mistralai/mistral-large-2512",
+    "Mistral Large 3 2512",
+    "mistral",
+    262144
+  ),
+  freeModel(
+    "mistralai/devstral-2512",
+    "Devstral 2 2512",
+    "mistral",
+    262144
+  ),
   freeModel("openai/gpt-4o-mini", "GPT-4o Mini", "openai", 128000),
   {
     id: "openai/gpt-5-nano",
@@ -531,6 +570,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     "anthropic"
   ),
   freeModel("anthropic/claude-sonnet-4.6", "Claude Sonnet 4.6", "anthropic"),
+  freeModel(
+    "anthropic/claude-sonnet-5",
+    "Claude Sonnet 5",
+    "anthropic",
+    1000000
+  ),
   freeModel("anthropic/claude-opus-4.6", "Claude Opus 4.6", "anthropic"),
   freeModel("anthropic/claude-opus-4.7", "Claude Opus 4.7", "anthropic"),
   freeModel("anthropic/claude-fable-5", "Claude Fable 5", "anthropic", 1000000),
@@ -643,6 +688,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     contextLength: 200000,
   },
   {
+    id: "z-ai/glm-5.2",
+    name: "GLM 5.2 (Free)",
+    provider: "z-ai",
+    contextLength: 1000000,
+  },
+  {
     id: "minimax/minimax-m2.1",
     name: "MiniMax M2.1 (Free)",
     provider: "minimax",
@@ -657,6 +708,30 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   freeModel("qwen/qwen3.5-flash-02-23", "Qwen 3.5 Flash 02-23", "qwen"),
   freeModel("qwen/qwen3-max-thinking", "Qwen 3 Max Thinking", "qwen"),
   // Mistral models
+  {
+    id: Model.MISTRAL_SMALL_2603,
+    name: "Mistral Small 4",
+    provider: "mistral",
+    contextLength: 262144,
+  },
+  {
+    id: Model.MISTRAL_MEDIUM_3_5,
+    name: "Mistral Medium 3.5",
+    provider: "mistral",
+    contextLength: 262144,
+  },
+  {
+    id: Model.MISTRAL_LARGE_2512,
+    name: "Mistral Large 3 2512",
+    provider: "mistral",
+    contextLength: 262144,
+  },
+  {
+    id: Model.DEVSTRAL_2512,
+    name: "Devstral 2 2512",
+    provider: "mistral",
+    contextLength: 262144,
+  },
   {
     id: Model.MISTRAL_LARGE_LATEST,
     name: "Mistral Large",
@@ -749,6 +824,33 @@ export const isModelSupported = (id: string): boolean => {
   return SUPPORTED_MODELS.some((model) => model.id === id);
 };
 
+/**
+ * Amazon Bedrock model ids are bare strings like
+ * "us.anthropic.claude-sonnet-4-5-20250929-v1:0" — an optional geo prefix
+ * (us./eu./apac./us-gov./global/...), a known vendor segment, a model name,
+ * and an optional ":N" revision suffix (absent on legacy ids like
+ * "anthropic.claude-v2" or "amazon.titan-tg1-large"). Ollama ids (the other
+ * bare-id shape in the app) never carry a `vendor.` segment from this list,
+ * so the pattern safely disambiguates the two (e.g. "llama3.1:8b" or
+ * "mistral:latest" don't match).
+ */
+const BEDROCK_BARE_MODEL_ID_PATTERN =
+  /^(?:[a-z]{2,6}(?:-[a-z]+)?\.)?(?:ai21|amazon|anthropic|cohere|deepseek|luma|meta|minimax|mistral|moonshot|nvidia|openai|qwen|stability|twelvelabs|writer)\.[A-Za-z0-9][\w.-]*(?::\d+)?$/;
+
+/**
+ * True when a model id is recognizably Amazon Bedrock: a bare model /
+ * inference-profile id, or a Bedrock ARN (e.g.
+ * "arn:aws:bedrock:us-east-1:123456789012:inference-profile/..."). The ARN
+ * check is partition-agnostic so GovCloud/China ARNs (arn:aws-us-gov:...,
+ * arn:aws-cn:...) match too.
+ */
+export const isBedrockModelId = (modelId: string): boolean => {
+  return (
+    /^arn:aws(?:-[a-z0-9-]+)?:bedrock:/i.test(modelId) ||
+    BEDROCK_BARE_MODEL_ID_PATTERN.test(modelId)
+  );
+};
+
 export type ServerFormOAuthProtocolMode =
   | "auto"
   | "2025-03-26"
@@ -760,6 +862,13 @@ export type ServerFormOAuthRegistrationMode =
   | "cimd"
   | "dcr"
   | "preregistered";
+
+/**
+ * The auth type a server-form row is configured with. "xaa" (Cross-App Access)
+ * is a distinct flow from "oauth": the inspector server mints the access token
+ * server-side via token-exchange rather than running a browser OAuth flow.
+ */
+export type ServerFormAuthType = "oauth" | "bearer" | "none" | "xaa";
 
 export interface ServerFormData {
   name: string;
@@ -782,6 +891,30 @@ export interface ServerFormData {
   clientSecret?: string;
   hasClientSecret?: boolean;
   clearClientSecret?: boolean;
+  /** Optional issuer override for the cross-app authorization test target. */
+  xaaAuthzIssuer?: string;
+  /**
+   * Opt-in: accept a path-scoped authorization server whose metadata
+   * advertises the same-origin root as issuer (multi-tenant AS deployments
+   * like Scalekit). Off = strict RFC 8414 issuer match.
+   */
+  xaaAllowPathScopedIssuer?: boolean;
+  /**
+   * Cross-App Access (XAA) connect flag. When true the server authenticates via
+   * the XAA token-exchange flow rather than standard OAuth. Mutually exclusive
+   * with `useOAuth` — the form only ever sets one.
+   */
+  useXaa?: boolean;
+  /**
+   * Which identity provider mints the XAA assertion. v1 only writes "mcpjam"
+   * (the built-in test IdP); "own" is reserved for the bring-your-own-IdP
+   * follow-up.
+   */
+  authServerMode?: "mcpjam" | "own";
+  /** Optional simulated-identity override (subject) for the MCPJam test IdP. Blank = signed-in user. */
+  xaaSubject?: string;
+  /** Optional simulated-identity override (email) for the MCPJam test IdP. Blank = signed-in user. */
+  xaaEmail?: string;
   /** Registry credential key for resolving OAuth client ID from env (e.g. "github") */
   oauthCredentialKey?: string;
   /** True for registry servers that use backend-managed preregistered OAuth credentials */

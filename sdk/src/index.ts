@@ -71,8 +71,21 @@ export type {
 export {
   isChatGPTAppTool,
   isMcpAppTool,
+  MCP_DIRECT_IMAGE_MAX_BYTES,
+  MCP_IMAGE_MAX_MEDIA_PARTS,
+  MCP_IMAGE_MAX_TOTAL_BYTES,
+  MCP_LINKED_RESOURCE_MAX_READS,
+  MCP_PRESERVE_RAW_RESULT_FOR_UI,
+  mcpCallToolResultToModelOutput,
+  mcpCallToolResultToModelOutputWithLinkedResources,
   scrubMetaFromToolResult,
   scrubMetaAndStructuredContentFromToolResult,
+  type McpModelOutputContent,
+  type McpModelOutputContentPart,
+  type McpModelOutputOptions,
+  type McpModelOutputWithLinkedResourcesOptions,
+  type McpModelVisibleToolResultPolicy,
+  type McpLinkedResourceReader,
 } from "./mcp-client-manager/index.js";
 export {
   applyRuntimeClientCapabilities,
@@ -229,6 +242,17 @@ export type {
   OAuthLoginDependencies,
   OAuthLoginResult,
 } from "./oauth-login.js";
+// Loopback authorization-code capture + PKCE primitives, reused by the CLI's
+// platform login (`mcpjam login`) in addition to OAuth conformance runs.
+export {
+  createInteractiveAuthorizationSession,
+  openUrlInBrowser,
+  type InteractiveAuthorizationSession,
+} from "./oauth-conformance/auth-strategies/interactive.js";
+export {
+  generateCodeChallenge,
+  generateRandomString,
+} from "./oauth/state-machines/shared/pkce.js";
 export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
 export type {
   OAuthAuthorizationRequestResult,
@@ -584,6 +608,11 @@ export type {
   HostServerOverride,
   HostConnectionDefaults,
   HostStyleId,
+  Harness,
+  McpToolResultImageRendering,
+  McpToolResultImageRenderingPolicy,
+  McpToolResultImageRenderPlacement,
+  ModelVisibleMcpToolResults,
   ServerId,
   CspDomainSet,
   OpenAiAppsCapabilities,

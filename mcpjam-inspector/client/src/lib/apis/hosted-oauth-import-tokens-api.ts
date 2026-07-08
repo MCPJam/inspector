@@ -51,6 +51,9 @@ export interface ImportHostedOAuthTokensRequest {
   serverId: string;
   serverUrl: string;
   oauthResourceUrl?: string;
+  // AS URL discovered during this flow. Lets the hosted backend persist a
+  // refresh fallback for servers it can't reach itself (e.g. localhost).
+  authorizationServerUrl?: string;
   kind: "generic" | "registry";
   registryServerId?: string;
   useRegistryOAuthProxy?: boolean;

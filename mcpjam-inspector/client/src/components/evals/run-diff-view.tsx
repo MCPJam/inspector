@@ -15,6 +15,8 @@ type RunDiffViewProps = {
   baseRunId: string;
   compareRunId: string;
   previewChars?: number;
+  /** Hide the title block when a parent (e.g. group compare pickers) already shows context. */
+  hideHeader?: boolean;
   onBackToRun?: () => void;
   onOpenIteration?: (runId: string, iterationId: string) => void;
 };
@@ -35,6 +37,7 @@ export function RunDiffView({
   baseRunId,
   compareRunId,
   previewChars = 0,
+  hideHeader = false,
   onBackToRun,
   onOpenIteration,
 }: RunDiffViewProps) {
@@ -123,6 +126,7 @@ export function RunDiffView({
   return (
     <RunDiffLoaded
       diff={state.data}
+      hideHeader={hideHeader}
       onBackToRun={onBackToRun}
       onOpenIteration={onOpenIteration}
     />
@@ -131,10 +135,12 @@ export function RunDiffView({
 
 function RunDiffLoaded({
   diff,
+  hideHeader = false,
   onBackToRun,
   onOpenIteration,
 }: {
   diff: EvalRunDiff;
+  hideHeader?: boolean;
   onBackToRun?: () => void;
   onOpenIteration?: (runId: string, iterationId: string) => void;
 }) {
@@ -143,184 +149,139 @@ function RunDiffLoaded({
     [diff.cases]
   );
 
-  const metricLabel = diff.suite.source === "sdk" ? "Pass Rate" : "Accuracy";
+  const metricLabel = diff.suite.source === "sdk" ? "Pass rate" : "Accuracy";
+
+  const summaryMetrics = useMemo(
+    () =>
+      [
+        { label: metricLabel, diff: diff.scores.passRatePercent, format: "percent" as const, higherIsBetter: true },
+        { label: "Passed", diff: diff.scores.passed, format: "number" as const, higherIsBetter: true },
+        { label: "Failed", diff: diff.scores.failed, format: "number" as const },
+        { label: "Total", diff: diff.scores.total, format: "number" as const, neutral: true },
+      ],
+    [diff.scores, metricLabel]
+  );
+
+  const performanceMetrics = useMemo(
+    () =>
+      (
+        [
+          { label: "Duration", diff: diff.metrics.wallDurationMs, format: "duration" as const },
+          { label: "Tokens", diff: diff.metrics.totalTokens, format: "number" as const },
+          { label: "Input tokens", diff: diff.metrics.inputTokens, format: "number" as const },
+          { label: "Output tokens", diff: diff.metrics.outputTokens, format: "number" as const },
+          { label: "Cached tokens", diff: diff.metrics.cachedInputTokens, format: "number" as const },
+          { label: "Reasoning tokens", diff: diff.metrics.reasoningTokens, format: "number" as const },
+          { label: "Cost", diff: diff.metrics.estimatedCostUsd, format: "cost" as const },
+        ] satisfies Array<{
+          label: string;
+          diff: EvalRunNumericDiff;
+          format: DiffMetricFormat;
+        }>
+      ).filter((metric) => metricHasData(metric.diff)),
+    [diff.metrics]
+  );
+
+  const changedPerformanceMetrics = performanceMetrics.filter((metric) =>
+    metricChanged(metric.diff)
+  );
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold tracking-tight">
-            Run {formatRunId(diff.baseRun.id)} {"->"} Run{" "}
-            {formatRunId(diff.compareRun.id)}
-          </h2>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {diff.suite.name} - {changedCount} changed or failing case
-            {changedCount === 1 ? "" : "s"} - {diff.cases.length} total
-          </p>
-        </div>
-        {onBackToRun ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onBackToRun}
-          >
-            <ArrowLeft className="mr-2 h-3.5 w-3.5" aria-hidden />
-            Back to run
-          </Button>
-        ) : null}
-      </div>
-
-      <section className="rounded-xl border bg-card text-card-foreground">
-        <div className="border-b px-4 py-3">
-          <h3 className="text-sm font-semibold">Run Summary</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Base created {formatTime(diff.baseRun.createdAt)} - Compare created{" "}
-            {formatTime(diff.compareRun.createdAt)}
-          </p>
-        </div>
-        <div className="grid gap-px bg-border/50 sm:grid-cols-2 lg:grid-cols-4">
-          <DiffMetricCard
-            label={metricLabel}
-            diff={diff.scores.passRatePercent}
-            format="percent"
-            higherIsBetter
-          />
-          <DiffMetricCard
-            label="Passed"
-            diff={diff.scores.passed}
-            format="number"
-            higherIsBetter
-          />
-          <DiffMetricCard
-            label="Failed"
-            diff={diff.scores.failed}
-            format="number"
-          />
-          <DiffMetricCard
-            label="Total"
-            diff={diff.scores.total}
-            format="number"
-            neutral
-          />
-        </div>
-      </section>
-
-      <section className="mt-4 rounded-xl border bg-card text-card-foreground">
-        <div className="border-b px-4 py-3">
-          <h3 className="text-sm font-semibold">Metrics</h3>
-        </div>
-        <div className="grid gap-px bg-border/50 sm:grid-cols-2 lg:grid-cols-4">
-          <DiffMetricCard
-            label="Start offset"
-            diff={diff.metrics.startOffsetMs}
-            format="signedDuration"
-            neutral
-          />
-          <DiffMetricCard
-            label="Duration"
-            diff={diff.metrics.wallDurationMs}
-            format="duration"
-          />
-          <DiffMetricCard
-            label="Total tokens"
-            diff={diff.metrics.totalTokens}
-            format="number"
-          />
-          <DiffMetricCard
-            label="Input tokens"
-            diff={diff.metrics.inputTokens}
-            format="number"
-          />
-          <DiffMetricCard
-            label="Output tokens"
-            diff={diff.metrics.outputTokens}
-            format="number"
-          />
-          <DiffMetricCard
-            label="Cached tokens"
-            diff={diff.metrics.cachedInputTokens}
-            format="number"
-          />
-          <DiffMetricCard
-            label="Reasoning tokens"
-            diff={diff.metrics.reasoningTokens}
-            format="number"
-          />
-          <DiffMetricCard
-            label="Estimated cost"
-            diff={diff.metrics.estimatedCostUsd}
-            format="cost"
-          />
-        </div>
-      </section>
-
-      <section className="mt-4 min-h-0 rounded-xl border bg-card text-card-foreground">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
-          <div>
-            <h3 className="text-sm font-semibold">Cases</h3>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Changed and failing rows are sorted first.
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+      {!hideHeader ? (
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold tracking-tight">
+              Run {formatRunId(diff.baseRun.id)} vs Run{" "}
+              {formatRunId(diff.compareRun.id)}
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {diff.suite.name}
+              {" · "}
+              {changedCount === 0
+                ? "No case changes"
+                : `${changedCount} changed case${changedCount === 1 ? "" : "s"}`}
+              {" · "}
+              {diff.cases.length} total
             </p>
           </div>
-          <div className="text-xs text-muted-foreground tabular-nums">
-            {diff.cases.length.toLocaleString()} rows
-          </div>
+          {onBackToRun ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onBackToRun}
+            >
+              <ArrowLeft className="mr-2 h-3.5 w-3.5" aria-hidden />
+              Back to run
+            </Button>
+          ) : null}
         </div>
-        <div className="divide-y">
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">{diff.suite.name}</span>
+            {" · "}
+            {changedCount === 0
+              ? "No case changes"
+              : `${changedCount} changed case${changedCount === 1 ? "" : "s"}`}
+            {" · "}
+            {diff.cases.length} case{diff.cases.length === 1 ? "" : "s"}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {formatTime(diff.baseRun.createdAt)} → {formatTime(diff.compareRun.createdAt)}
+          </p>
+        </div>
+      )}
+
+      <section className="rounded-lg border border-border/60 bg-card px-4 py-3">
+        <div className="flex flex-wrap gap-x-6 gap-y-3">
+          {summaryMetrics.map((metric) => (
+            <SummaryMetric
+              key={metric.label}
+              label={metric.label}
+              diff={metric.diff}
+              format={metric.format}
+              higherIsBetter={metric.higherIsBetter}
+              neutral={metric.neutral}
+            />
+          ))}
+        </div>
+        {changedPerformanceMetrics.length > 0 ? (
+          <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 border-t border-border/40 pt-3">
+            {changedPerformanceMetrics.map((metric) => (
+              <SummaryMetric
+                key={metric.label}
+                label={metric.label}
+                diff={metric.diff}
+                format={metric.format}
+              />
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="min-h-0 rounded-lg border border-border/60 bg-card">
+        <div className="flex items-center justify-between border-b border-border/40 px-4 py-2.5">
+          <h3 className="text-sm font-medium">Cases</h3>
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {diff.cases.length}
+          </span>
+        </div>
+        <div className="divide-y divide-border/40">
           {diff.cases.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">
               No cases were found in either run.
             </div>
           ) : (
             diff.cases.map((row) => (
-              <div key={row.caseKey} className="px-4 py-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <StatusBadge status={row.status} />
-                      {row.configChanged ? (
-                        <span className="rounded bg-warning/50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-foreground">
-                          Config changed
-                        </span>
-                      ) : null}
-                      <h4 className="min-w-0 truncate text-sm font-semibold">
-                        {row.title}
-                      </h4>
-                    </div>
-                    <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-                      {row.caseKey}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-end gap-2">
-                    <SmallMetric
-                      label="Duration"
-                      diff={row.metrics.durationMs}
-                      format="duration"
-                    />
-                    <SmallMetric
-                      label="Tokens"
-                      diff={row.metrics.totalTokens}
-                      format="number"
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                  <CaseSide
-                    label={`Base Run ${formatRunId(diff.baseRun.id)}`}
-                    runId={diff.baseRun.id}
-                    side={row.base}
-                    onOpenIteration={onOpenIteration}
-                  />
-                  <CaseSide
-                    label={`Compare Run ${formatRunId(diff.compareRun.id)}`}
-                    runId={diff.compareRun.id}
-                    side={row.compare}
-                    onOpenIteration={onOpenIteration}
-                  />
-                </div>
-              </div>
+              <CaseRow
+                key={row.caseKey}
+                row={row}
+                baseRunId={diff.baseRun.id}
+                compareRunId={diff.compareRun.id}
+                onOpenIteration={onOpenIteration}
+              />
             ))
           )}
         </div>
@@ -329,7 +290,7 @@ function RunDiffLoaded({
   );
 }
 
-function DiffMetricCard({
+function SummaryMetric({
   label,
   diff,
   format,
@@ -342,31 +303,108 @@ function DiffMetricCard({
   higherIsBetter?: boolean;
   neutral?: boolean;
 }) {
+  const changed = metricChanged(diff);
+
   return (
-    <div className="min-w-0 bg-card px-4 py-3">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-        {label}
-      </div>
-      <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-sm tabular-nums">
-        <span className="font-semibold text-foreground">
-          {formatMetricValue(diff.base, format)}
-        </span>
-        <span className="text-muted-foreground">{"->"}</span>
-        <span className="font-semibold text-foreground">
-          {formatMetricValue(diff.compare, format)}
-        </span>
-        <DeltaPill
-          diff={diff}
-          format={format}
-          higherIsBetter={higherIsBetter}
-          neutral={neutral}
-        />
+    <div className="min-w-0">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-sm tabular-nums">
+        {changed ? (
+          <>
+            <span className="text-muted-foreground">
+              {formatMetricValue(diff.base, format)}
+            </span>
+            <span className="text-muted-foreground">→</span>
+            <span className="font-medium text-foreground">
+              {formatMetricValue(diff.compare, format)}
+            </span>
+            <DeltaPill
+              diff={diff}
+              format={format}
+              higherIsBetter={higherIsBetter}
+              neutral={neutral}
+            />
+          </>
+        ) : (
+          <span className="font-medium text-foreground">
+            {formatMetricValue(diff.compare ?? diff.base, format)}
+          </span>
+        )}
       </div>
     </div>
   );
 }
 
-function SmallMetric({
+function CaseRow({
+  row,
+  baseRunId,
+  compareRunId,
+  onOpenIteration,
+}: {
+  row: EvalRunDiff["cases"][number];
+  baseRunId: string;
+  compareRunId: string;
+  onOpenIteration?: (runId: string, iterationId: string) => void;
+}) {
+  const isCompact = row.status === "unchanged_passed" && !row.configChanged;
+
+  const durationChanged = metricChanged(row.metrics.durationMs);
+  const tokensChanged = metricChanged(row.metrics.totalTokens);
+
+  return (
+    <div className="px-4 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <StatusBadge status={row.status} />
+            {row.configChanged ? (
+              <span className="rounded bg-warning/50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-foreground">
+                Config changed
+              </span>
+            ) : null}
+            <h4 className="min-w-0 truncate text-sm font-medium">{row.title}</h4>
+          </div>
+          {!isCompact ? (
+            <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+              {row.caseKey}
+            </p>
+          ) : null}
+        </div>
+        {(durationChanged || tokensChanged) ? (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            {durationChanged ? (
+              <CaseMetricDelta label="Duration" diff={row.metrics.durationMs} format="duration" />
+            ) : null}
+            {tokensChanged ? (
+              <CaseMetricDelta label="Tokens" diff={row.metrics.totalTokens} format="number" />
+            ) : null}
+          </div>
+        ) : isCompact ? (
+          <span className="text-xs text-muted-foreground">Unchanged</span>
+        ) : null}
+      </div>
+
+      {!isCompact ? (
+        <div className="mt-2.5 grid gap-2 sm:grid-cols-2">
+          <CaseSide
+            label="Base"
+            runId={baseRunId}
+            side={row.base}
+            onOpenIteration={onOpenIteration}
+          />
+          <CaseSide
+            label="Compare"
+            runId={compareRunId}
+            side={row.compare}
+            onOpenIteration={onOpenIteration}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CaseMetricDelta({
   label,
   diff,
   format,
@@ -376,13 +414,10 @@ function SmallMetric({
   format: DiffMetricFormat;
 }) {
   return (
-    <div className="rounded-md border border-border/50 bg-muted/10 px-2 py-1 text-[11px]">
-      <span className="text-muted-foreground">{label}: </span>
-      <span className="font-mono text-foreground">
-        {formatMetricValue(diff.base, format)} {"->"}{" "}
-        {formatMetricValue(diff.compare, format)}
-      </span>
-    </div>
+    <span className="tabular-nums">
+      {label}{" "}
+      <DeltaPill diff={diff} format={format} higherIsBetter={false} neutral={false} />
+    </span>
   );
 }
 
@@ -401,13 +436,25 @@ function DeltaPill({
     return null;
   }
 
+  // Progressive disclosure: a change that rounds to <0.5% is noise. Keep the
+  // raw delta visible but render it quietly (neutral, no "-0%" suffix) so it
+  // doesn't compete with meaningful movement like a +33% accuracy swing.
+  const negligible =
+    format !== "percent" &&
+    diff.percentDelta !== null &&
+    Math.abs(diff.percentDelta) < 0.5;
+
   const isPositive = diff.delta > 0;
   const isGood = higherIsBetter ? isPositive : !isPositive;
-  const toneClass = neutral
-    ? "bg-muted text-muted-foreground"
-    : isGood
-    ? "bg-success/50 text-foreground"
-    : "bg-destructive/50 text-foreground";
+  const toneClass =
+    neutral || negligible
+      ? "bg-muted text-muted-foreground"
+      : isGood
+      ? "bg-success/50 text-foreground"
+      : "bg-destructive/50 text-foreground";
+
+  const showPercent =
+    format !== "percent" && diff.percentDelta !== null && !negligible;
 
   return (
     <span
@@ -417,9 +464,7 @@ function DeltaPill({
       )}
     >
       {formatSignedMetric(diff.delta, format)}
-      {format !== "percent" && diff.percentDelta !== null
-        ? ` ${formatSignedPercent(diff.percentDelta)}`
-        : ""}
+      {showPercent ? ` ${formatSignedPercent(diff.percentDelta!)}` : ""}
     </span>
   );
 }
@@ -438,23 +483,20 @@ function CaseSide({
   const canOpen = Boolean(side.representativeIterationId && onOpenIteration);
 
   return (
-    <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/50 bg-muted/10 px-3 py-2.5">
+    <div className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-border/40 bg-muted/5 px-3 py-2">
       <div className="min-w-0">
-        <div className="truncate text-xs font-medium">{label}</div>
+        <div className="text-xs font-medium">{label}</div>
         <div className="mt-0.5 text-[11px] text-muted-foreground">
-          {formatOutcome(side.outcome)} · {side.iterationIds.length} iteration
-          {side.iterationIds.length === 1 ? "" : "s"} ·{" "}
-          {side.expectedToolCalls.length} expected / {side.actualToolCalls.length}{" "}
-          actual tools
+          {formatOutcome(side.outcome)}
+          {side.error && !side.output ? (
+            <span className="text-destructive"> · {side.error}</span>
+          ) : null}
         </div>
-        {side.error && !side.output ? (
-          <p className="mt-1 truncate text-[11px] text-destructive">{side.error}</p>
-        ) : null}
       </div>
       {canOpen ? (
         <Button
           type="button"
-          variant="outline"
+          variant="ghost"
           size="sm"
           className="h-7 shrink-0 px-2 text-xs"
           onClick={() =>
@@ -462,10 +504,10 @@ function CaseSide({
           }
         >
           <ExternalLink className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-          View trace
+          Trace
         </Button>
       ) : (
-        <span className="shrink-0 text-[11px] text-muted-foreground">No trace</span>
+        <span className="shrink-0 text-[11px] text-muted-foreground">—</span>
       )}
     </div>
   );
@@ -528,6 +570,14 @@ function formatOutcome(outcome: EvalRunDiffSide["outcome"]): string {
     case "absent":
       return "Absent";
   }
+}
+
+function metricHasData(diff: EvalRunNumericDiff): boolean {
+  return diff.base !== null || diff.compare !== null;
+}
+
+function metricChanged(diff: EvalRunNumericDiff): boolean {
+  return diff.delta !== null && diff.delta !== 0;
 }
 
 function formatMetricValue(

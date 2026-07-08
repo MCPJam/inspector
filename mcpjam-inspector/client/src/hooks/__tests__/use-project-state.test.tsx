@@ -19,6 +19,7 @@ const {
   deleteProjectMock,
   projectQueryState,
   projectServersState,
+  useProjectServersMock,
   projectsBulkServersState,
   emitEmbeddedBlobReadMock,
   sentryCaptureMessageMock,
@@ -40,6 +41,7 @@ const {
     servers: undefined as any,
     isLoading: false as boolean,
   },
+  useProjectServersMock: vi.fn(),
   projectsBulkServersState: {
     serversByProject: {} as Record<string, any[]>,
     isLoading: false as boolean,
@@ -78,7 +80,7 @@ vi.mock("../useProjects", () => ({
     patchProjectDefaultConnection: patchProjectDefaultConnectionMock,
     deleteProject: deleteProjectMock,
   }),
-  useProjectServers: () => projectServersState,
+  useProjectServers: (...args: unknown[]) => useProjectServersMock(...args),
   useProjectsBulkServers: () => projectsBulkServersState,
 }));
 
@@ -238,6 +240,7 @@ describe("useProjectState automatic project creation", () => {
     patchProjectDefaultConnectionMock.mockResolvedValue(undefined);
     updateProjectMock.mockResolvedValue("remote-project-id");
     deleteProjectMock.mockResolvedValue(undefined);
+    useProjectServersMock.mockImplementation(() => projectServersState);
     projectQueryState.allProjects = [];
     projectQueryState.projects = [];
     projectQueryState.isLoading = false;
@@ -320,6 +323,53 @@ describe("useProjectState automatic project creation", () => {
 
     expect(ensureDefaultProjectMock).toHaveBeenLastCalledWith({
       organizationId: "org-c",
+    });
+  });
+
+  it("queries flat servers for the current org project when stored active project belongs to another org", () => {
+    localStorage.setItem(
+      "convex-active-project-id:test-actor",
+      "project-org-a",
+    );
+    projectQueryState.allProjects = [
+      {
+        _id: "project-org-a",
+        name: "Org A project",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-a",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        _id: "project-org-b",
+        name: "Org B project",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-b",
+        createdAt: 2,
+        updatedAt: 2,
+      },
+    ];
+    projectQueryState.projects = [projectQueryState.allProjects[1]];
+    projectServersState.servers = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultProject(),
+    });
+    const { result } = renderUseProjectState({
+      appState,
+      activeOrganizationId: "org-b",
+      validOrganizationIds: ["org-a", "org-b"],
+    });
+
+    expect(result.current.effectiveActiveProjectId).toBe("project-org-b");
+    expect(result.current.activeProjectServersFlatProjectId).toBe(
+      "project-org-b",
+    );
+    expect(useProjectServersMock).toHaveBeenLastCalledWith({
+      projectId: "project-org-b",
+      isAuthenticated: true,
     });
   });
 
@@ -492,6 +542,7 @@ describe("useProjectState automatic project creation", () => {
     expect(createProjectMock).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(
       "Create or join an organization to create projects.",
+      { duration: Infinity },
     );
   });
 
@@ -530,6 +581,7 @@ describe("useProjectState automatic project creation", () => {
     expect(createProjectMock).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(
       "Create or join an organization to create projects.",
+      { duration: Infinity },
     );
   });
 
@@ -559,6 +611,7 @@ describe("useProjectState automatic project creation", () => {
     expect(createProjectMock).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(
       "Create or join an organization to create projects.",
+      { duration: Infinity },
     );
   });
 
@@ -1476,6 +1529,7 @@ describe("useProjectState automatic project creation", () => {
 
     expect(toast.error).toHaveBeenCalledWith(
       "This organization has reached its project limit (1). Upgrade to create more projects.",
+      { duration: Infinity },
     );
   });
 
@@ -1519,6 +1573,7 @@ describe("useProjectState automatic project creation", () => {
 
     expect(toast.error).toHaveBeenCalledWith(
       "This organization has reached its project limit (1). Ask an organization owner to upgrade.",
+      { duration: Infinity },
     );
   });
 
@@ -1559,6 +1614,7 @@ describe("useProjectState automatic project creation", () => {
     expect(toast.error).toHaveBeenCalledTimes(1);
     expect(toast.error).toHaveBeenCalledWith(
       "This organization has reached its project limit (1). Ask an organization owner to upgrade.",
+      { duration: Infinity },
     );
     expect(logger.error).toHaveBeenCalledTimes(2);
   });

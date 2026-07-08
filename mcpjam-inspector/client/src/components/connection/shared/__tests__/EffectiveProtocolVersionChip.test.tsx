@@ -3,9 +3,12 @@ import { render, screen } from "@testing-library/react";
 import { EffectiveProtocolVersionChip } from "../EffectiveProtocolVersionChip";
 
 describe("EffectiveProtocolVersionChip", () => {
-  it("renders nothing when the flag is off", () => {
-    const { container } = render(<EffectiveProtocolVersionChip />);
-    expect(container).toBeEmptyDOMElement();
+  it("renders 'Latest' for an unpinned server when the flag is off", () => {
+    // Main GA'd the chip un-gated: it always renders. With the flag off,
+    // unpinned connections still use the legacy SDK default, so the label
+    // stays "Latest" — "Auto" would claim behavior that isn't active.
+    render(<EffectiveProtocolVersionChip />);
+    expect(screen.getByText("Latest")).toBeInTheDocument();
   });
 
   it("renders 'Auto' when unpinned (the new host default)", () => {

@@ -16,7 +16,7 @@ import {
   useOrganizationQueries,
 } from "@/hooks/useOrganizations";
 import type { ContentBlock } from "@modelcontextprotocol/client";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { ModelDefinition } from "@/shared/types";
 import { LoggerView } from "./logger-view";
 import {
@@ -42,7 +42,7 @@ import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-c
 import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
-import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
+import { usePostHog } from "posthog-js/react";
 import {
   detectEnvironment,
   detectPlatform,
@@ -99,6 +99,7 @@ import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
+import { gateMcpToolResultImageRenderingByModelVisibility } from "@/lib/client-config-v2";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import { ChatTraceViewModeHeaderBar } from "@/components/evals/trace-view-mode-tabs";
@@ -194,9 +195,17 @@ export function ChatTabV2({
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
     useJsonRpcPanelVisibility();
   const posthog = usePostHog();
-  const chatHistoryRailEnabled = useFeatureFlagEnabled("chat-history-rail");
-  const sharedThreadsEnabled =
-    useFeatureFlagEnabled("shared-threads-enabled") === true;
+  const effectiveMcpToolResultImageRendering = useMemo(
+    () =>
+      gateMcpToolResultImageRenderingByModelVisibility(
+        executionConfig?.mcpToolResultImageRendering,
+        executionConfig?.modelVisibleMcpToolResults
+      ),
+    [
+      executionConfig?.mcpToolResultImageRendering,
+      executionConfig?.modelVisibleMcpToolResults,
+    ]
+  );
 
   // Local state for ChatTabV2-specific features
   const [input, setInput] = useState("");
@@ -435,7 +444,7 @@ export function ChatTabV2({
 
   // Chat history handlers
   const showHistoryRail = Boolean(
-    HOSTED_MODE && !minimalMode && !hostedChatboxId && chatHistoryRailEnabled
+    HOSTED_MODE && !minimalMode && !hostedChatboxId
   );
   const {
     session: reactiveHistorySession,
@@ -1394,8 +1403,22 @@ export function ChatTabV2({
       setSelectedModelIds([String(selectedModel.id)]);
     }
 
-    startChatWithMessages(evalChatHandoff.messages);
+    const seedApplied = startChatWithMessages(evalChatHandoff.messages);
     appliedEvalChatHandoffIdRef.current = evalChatHandoff.id;
+
+    // A widget in the eval preview fired a `ui/message` follow-up: send it once
+    // the seeded conversation is applied, so the playground replies live just
+    // like chat would. Chained on the hydration promise to avoid sending into
+    // a not-yet-hydrated thread.
+    const pendingUserMessage = evalChatHandoff.pendingUserMessage;
+    if (pendingUserMessage) {
+      void seedApplied.then(() => {
+        sendMessage({
+          text: pendingUserMessage,
+          metadata: outgoingSenderMetadata,
+        });
+      });
+    }
 
     if (typeof handoffExec.systemPrompt === "string") {
       setSystemPrompt(handoffExec.systemPrompt);
@@ -1416,7 +1439,9 @@ export function ChatTabV2({
     evalChatHandoff,
     isSessionBootstrapComplete,
     onEvalChatHandoffConsumed,
+    outgoingSenderMetadata,
     selectedModel,
+    sendMessage,
     setMultiModelEnabled,
     setSelectedModel,
     setSelectedModelIds,
@@ -2093,7 +2118,6 @@ export function ChatTabV2({
                 hostStyle={hostStyle}
                 isAuthenticated={isConvexAuthenticated}
                 isStreaming={historyRailStreaming}
-                sharedThreadsEnabled={sharedThreadsEnabled}
                 projectId={effectiveHostedProjectId}
                 enabled={isSessionBootstrapComplete}
                 refreshSignal={historyRefreshSignal}
@@ -2339,11 +2363,14 @@ export function ChatTabV2({
                               executionConfig?.progressiveToolDiscovery,
                             respectToolVisibility:
                               executionConfig?.respectToolVisibility,
+                            modelVisibleMcpToolResults:
+                              executionConfig?.modelVisibleMcpToolResults,
+                            mcpToolResultImageRendering:
+                              effectiveMcpToolResultImageRendering,
                             // Same rationale: forward attached built-in
                             // tools so each per-model card resolves the
                             // same ToolSet the single-model path would.
-                            builtInToolIds:
-                              executionConfig?.builtInToolIds,
+                            builtInToolIds: executionConfig?.builtInToolIds,
                           }}
                           hostedContext={{
                             ...hostedContext,
@@ -2525,6 +2552,9 @@ export function ChatTabV2({
                           toolRenderOverrides={restoredToolRenderOverrides}
                           minimalMode={minimalMode}
                           reasoningDisplayMode={reasoningDisplayMode}
+                          mcpToolResultImageRendering={
+                            effectiveMcpToolResultImageRendering
+                          }
                           renderUserMessageActions={
                             chatSessionId && effectiveHostedProjectId
                               ? (message) => {

@@ -16,7 +16,7 @@ describe("SidebarTrialCountdown", () => {
       <SidebarTrialCountdown
         trialStartedAt={start - 6 * 24 * 60 * 60 * 1000}
         trialEndsAt={start + 60 * 60 * 1000 + 1_000}
-      />,
+      />
     );
 
     expect(screen.getByText("1h 0m 1s")).toBeInTheDocument();

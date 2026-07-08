@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@/lib/utils";
-import { Loader2, Sparkles, X } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import {
   activeAutoFixSentence,
   terminalAutoFixSentence,
@@ -27,9 +27,11 @@ function setOutcomeDismissedStorage(jobId: string) {
 }
 
 const cardClass =
-  "rounded-md border border-violet-200/70 bg-violet-50/40 dark:border-violet-900/45 dark:bg-violet-950/20";
+  "rounded-md border border-border/60 bg-muted/20 dark:bg-muted/10";
 const headerDividerClass =
-  "flex flex-wrap items-center justify-between gap-2 border-b border-violet-200/50 px-3 py-2 dark:border-violet-900/40";
+  "flex flex-wrap items-center justify-between gap-2 border-b border-border/60 px-3 py-2";
+const aiBadgeClass =
+  "border-border bg-muted text-muted-foreground text-[10px] font-bold uppercase tracking-wider shrink-0";
 
 export interface TraceRepairBannerProps {
   scope: "suite" | "case";
@@ -77,11 +79,7 @@ export function TraceRepairBanner({
       <div className={cn(cardClass, className)}>
         <div className={headerDividerClass}>
           <div className="flex flex-wrap items-center gap-2 min-w-0">
-            <Badge
-              variant="outline"
-              className="border-violet-300/70 bg-violet-100/60 text-violet-800 text-[10px] font-bold uppercase tracking-wider shrink-0 dark:border-violet-800/50 dark:bg-violet-900/35 dark:text-violet-300"
-            >
-              <Sparkles className="mr-1 h-3 w-3" />
+            <Badge variant="outline" className={aiBadgeClass}>
               AI
             </Badge>
             <span className="text-xs font-medium text-foreground">
@@ -114,11 +112,7 @@ export function TraceRepairBanner({
       <div className={cn("relative", cardClass, className)}>
         <div className={cn(headerDividerClass, "pr-10")}>
           <div className="flex flex-wrap items-center gap-2 min-w-0">
-            <Badge
-              variant="outline"
-              className="border-violet-300/70 bg-violet-100/60 text-violet-800 text-[10px] font-bold uppercase tracking-wider shrink-0 dark:border-violet-800/50 dark:bg-violet-900/35 dark:text-violet-300"
-            >
-              <Sparkles className="mr-1 h-3 w-3" />
+            <Badge variant="outline" className={aiBadgeClass}>
               AI
             </Badge>
             <span className="text-xs font-medium text-foreground">
@@ -128,7 +122,7 @@ export function TraceRepairBanner({
         </div>
         <button
           type="button"
-          className="absolute right-2 top-2 rounded p-0.5 text-muted-foreground hover:bg-violet-100/50 hover:text-foreground dark:hover:bg-violet-950/40"
+          className="absolute right-2 top-2 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
           aria-label="Dismiss auto fix outcome"
           onClick={() => {
             setDismissedId(latestOutcome.jobId);

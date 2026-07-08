@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import fixPath from "fix-path";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
+import { webBodyLimit } from "./middleware/web-body-limit.js";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger.js";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -14,6 +15,8 @@ import mcpRoutes from "./routes/mcp/index.js";
 import appsRoutes from "./routes/apps/index.js";
 import webRoutes from "./routes/web/index.js";
 import v1Routes from "./routes/v1/index.js";
+import cliAuthRoutes from "./routes/cli-auth/index.js";
+import workosAuthkitRoutes from "./routes/workos-authkit.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
@@ -28,7 +31,16 @@ import {
   generateSessionToken,
   getSessionToken,
 } from "./services/session-token.js";
-import { isAllowedHost } from "./utils/localhost-check.js";
+import {
+  isAllowedHost,
+  mayServeGuestBootstrap,
+} from "./utils/localhost-check.js";
+import { getActiveTunnelDomains } from "./services/tunnel-registry.js";
+import {
+  appendGuestSessionSetCookie,
+  buildGuestBootstrapScript,
+  mintGuestSessionForDocument,
+} from "./routes/web/guest-session-shared.js";
 import {
   sessionAuthMiddleware,
   scrubTokenFromUrl,
@@ -41,10 +53,12 @@ import {
   warnOnConvexDevMisconfiguration,
 } from "./env.js";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
+import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
 import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair.js";
 import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
+import { registerSelfFetch } from "./utils/self-app.js";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -66,6 +80,7 @@ export function createHonoApp() {
   initXAAIdpKeyPair();
 
   startGuestAuthProvisioningInBackground();
+  startLocalBrowserRenderingSetupInBackground();
 
   const app = new Hono();
   const strictModeResponse = (c: any, path: string) =>
@@ -196,21 +211,10 @@ export function createHonoApp() {
     }),
   );
 
-  // Hosted web APIs enforce a 1MB max JSON body.
-  app.use(
-    "/api/web/*",
-    bodyLimit({
-      maxSize: 1024 * 1024,
-      onError: (c) =>
-        c.json(
-          {
-            code: "VALIDATION_ERROR",
-            message: "Request body exceeds 1MB limit",
-          },
-          400,
-        ),
-    }),
-  );
+  // Hosted web APIs enforce a 1MB max JSON body — except the cloud-skills
+  // folder upload, which is multipart and bounded by the service caps. See
+  // `webBodyLimit`.
+  app.use("/api/web/*", webBodyLimit());
 
   // API Routes
   if (!HOSTED_MODE) {
@@ -254,6 +258,17 @@ export function createHonoApp() {
     }),
   );
   app.route("/api/v1", v1Routes);
+
+  if (!HOSTED_MODE || process.env.NODE_ENV === "development") {
+    app.route("/user_management", workosAuthkitRoutes);
+  }
+
+  // CLI OAuth bridge (mcpjam login). Public front-channel routes — no session
+  // auth (see session-auth.ts UNPROTECTED_PREFIXES) and no tokens returned;
+  // disabled (501) unless CLI_AUTH_STATE_SECRET + CLI_AUTH_PUBLIC_ORIGIN are
+  // set. Mirror of the mount in server/index.ts — both production entries
+  // must wire this up.
+  app.route("/api/cli/auth", cliAuthRoutes);
 
   // Health check
   app.get("/health", (c) => {
@@ -333,7 +348,7 @@ export function createHonoApp() {
     app.use("/*", serveStatic({ root }));
 
     // For HTML pages, inject the session token (only for localhost requests)
-    app.get("/*", (c) => {
+    app.get("/*", async (c) => {
       const reqPath = c.req.path;
 
       // Don't intercept API routes
@@ -348,6 +363,7 @@ export function createHonoApp() {
         // SECURITY: Only inject token for localhost or allowed hosts (in hosted mode)
         // This prevents token leakage when bound to 0.0.0.0
         const host = c.req.header("Host");
+        const forwardedHost = c.req.header("X-Forwarded-Host");
 
         if (isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
           const token = getSessionToken();
@@ -366,6 +382,46 @@ export function createHonoApp() {
         if (runtimeConfigScript) {
           html = html.replace("</head>", `${runtimeConfigScript}</head>`);
         }
+
+        // Guest bootstrap blob: mint a guest bearer server-side and inject it
+        // so a cold guest boots with a token already in hand. Gated on
+        // production + hosted + not locked-down + a host allowlist that
+        // includes the hosted app host(s) (mayServeGuestBootstrap), mirroring
+        // the session-token discipline. Wrapped in its own try/catch so a
+        // mint failure never 500s the document.
+        if (
+          process.env.NODE_ENV === "production" &&
+          HOSTED_MODE &&
+          process.env.MCPJAM_NONPROD_LOCKDOWN !== "true" &&
+          mayServeGuestBootstrap({
+            host,
+            forwardedHost,
+            allowedHosts: ALLOWED_HOSTS,
+            hostedMode: HOSTED_MODE,
+            activeTunnelDomains: getActiveTunnelDomains(),
+          })
+        ) {
+          try {
+            const { session, setCookies } =
+              await mintGuestSessionForDocument(c);
+            if (session && session.expiresAt > Date.now()) {
+              const bootstrapScript = buildGuestBootstrapScript(session);
+              html = html.replace("</head>", `${bootstrapScript}</head>`);
+              for (const cookie of setCookies) {
+                appendGuestSessionSetCookie(c, cookie);
+              }
+            }
+          } catch (error) {
+            appLogger.warn(
+              "[guest-bootstrap] document mint failed; serving without blob",
+              { error: error instanceof Error ? error.message : String(error) },
+            );
+          }
+        }
+
+        // The document may embed a per-guest bearer; never let a
+        // shared/browser cache replay one guest's blob to another.
+        c.header("Cache-Control", "no-store");
 
         return c.html(html);
       } catch (error) {
@@ -390,6 +446,10 @@ export function createHonoApp() {
       });
     });
   }
+
+  // In-process self-dispatch for the workspace built-in tools' platform
+  // client (see utils/self-app.ts) — their /api/v1 calls skip the network.
+  registerSelfFetch((request) => app.fetch(request));
 
   return app;
 }

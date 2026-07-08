@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useConvexAuth } from "convex/react";
 import { usePostHog } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -16,8 +16,11 @@ import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { useHostMutations } from "@/hooks/useClients";
 import { useProjectServers } from "@/hooks/useViews";
+import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import {
   DEFAULT_HOST_TEMPLATE_ID,
+  getHostTemplateLogoSrc,
   HOST_TEMPLATES,
   seedFromHostTemplate,
   type HostTemplateId,
@@ -45,16 +48,40 @@ export function CreateHostDialog({
   const { isAuthenticated } = useConvexAuth();
   const { servers } = useProjectServers({ isAuthenticated, projectId });
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  // The Claude Code and Codex host templates each run a real CLI harness and are
+  // gated behind a PostHog flag while their host profiles are iterated on. Off ⇒
+  // drop from the picker grid. Neither is a default or `initialTemplateId` (no
+  // caller seeds them), so hiding them here can't strand the selection on a
+  // missing tile. The codex template now seeds harness:"codex"+computer, so its
+  // gate also covers that; existing saved codex hosts are unaffected.
+  const claudeCodeEnabled = useClaudeCodeHostEnabled();
+  const codexEnabled = useCodexHostEnabled();
+  const harnessTemplateEnabled: Record<string, boolean> = {
+    "claude-code": claudeCodeEnabled,
+    codex: codexEnabled,
+  };
+  const visibleTemplates = HOST_TEMPLATES.filter(
+    (t) => harnessTemplateEnabled[t.id] ?? true
+  );
   const [name, setName] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState<HostTemplateId>(
-    initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID,
+    initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID
   );
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
-    setSelectedTemplateId(initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID);
-  }, [isOpen, initialTemplateId]);
+    // Clamp the selection to a visible template. This enforces the
+    // flag at the selection source, not just in the grid render: a
+    // gated template (e.g. claude-code) can never become
+    // `selectedTemplateId`, so it can't flow into `seedFromHostTemplate`
+    // — even if a future caller passes it as `initialTemplateId` or the
+    // flag flips off after the dialog opened (claudeCodeEnabled is in
+    // the dep list so a flip-off re-clamps a stranded selection).
+    const requested = initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID;
+    const allowed = visibleTemplates.some((t) => t.id === requested);
+    setSelectedTemplateId(allowed ? requested : DEFAULT_HOST_TEMPLATE_ID);
+  }, [isOpen, initialTemplateId, claudeCodeEnabled, codexEnabled]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -131,7 +158,7 @@ export function CreateHostDialog({
           <div className="flex flex-col gap-2">
             <Label>Start from template</Label>
             <div className="grid grid-cols-3 gap-2">
-              {HOST_TEMPLATES.map((template) => {
+              {visibleTemplates.map((template) => {
                 const isSelected = template.id === selectedTemplateId;
                 return (
                   <button
@@ -142,12 +169,12 @@ export function CreateHostDialog({
                       "flex flex-col items-start gap-2 rounded-md border p-3 text-left transition-colors",
                       isSelected
                         ? "border-primary ring-2 ring-primary/30 bg-accent"
-                        : "border-border hover:bg-accent/50",
+                        : "border-border hover:bg-accent/50"
                     )}
                     aria-pressed={isSelected}
                   >
                     <img
-                      src={template.logoSrc}
+                      src={getHostTemplateLogoSrc(template, themeMode)}
                       alt=""
                       className="h-6 w-6 object-contain"
                     />
@@ -175,10 +202,7 @@ export function CreateHostDialog({
           <Button variant="outline" onClick={handleClose} disabled={isSaving}>
             Cancel
           </Button>
-          <Button
-            onClick={handleCreate}
-            disabled={!name.trim() || isSaving}
-          >
+          <Button onClick={handleCreate} disabled={!name.trim() || isSaving}>
             {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Create
           </Button>

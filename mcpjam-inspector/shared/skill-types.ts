@@ -42,12 +42,25 @@ export interface Skill {
 }
 
 /**
- * Skill list item (used for listing skills without full content)
+ * Skill list item (used for listing skills without full content).
+ *
+ * Local (filesystem) skills set `path`. Cloud (Convex) skills set `skillId`,
+ * `sharing`, `isOwner`, and `origin` so the UI can key mutations by id and badge
+ * each row Personal/Shared. All cloud fields are optional for backward-compat
+ * with the local shape.
  */
 export interface SkillListItem {
   name: string;
   description: string;
   path: string;
+  /** Cloud skills only — stable id for mutations (delete/promote/get). */
+  skillId?: string;
+  /** Cloud skills only — 'user' (personal) or 'project' (shared). */
+  sharing?: "user" | "project";
+  /** Cloud skills only — whether the caller owns this (personal) skill. */
+  isOwner?: boolean;
+  /** Where the skill lives: 'local' filesystem or 'cloud' (Convex/Computer). */
+  origin?: "local" | "cloud";
 }
 
 /**

@@ -195,6 +195,47 @@ describe("SuiteRunsList run-group rendering", () => {
     expect(screen.queryByText(/hosts/i)).not.toBeInTheDocument();
   });
 
+  it("shows cancelled directly on standalone run rows", () => {
+    const run = makeRun({
+      _id: "cancelled0",
+      status: "cancelled",
+      result: "cancelled",
+      completedAt: 2_000,
+    });
+
+    renderWithProviders(
+      <SuiteRunsList runs={[run]} allIterations={[]} onRunClick={vi.fn()} />,
+    );
+
+    expect(screen.getByLabelText(/Open run cancelle/i)).toBeInTheDocument();
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+  });
+
+  it("shows cancelled directly on run group rows", () => {
+    const runs: EvalSuiteRun[] = [
+      makeRun({
+        _id: "cancelAaa",
+        runGroupId: "g-cancel",
+        namedHostId: "host-a",
+        status: "cancelled",
+        result: "cancelled",
+      }),
+      makeRun({
+        _id: "cancelBbb",
+        runGroupId: "g-cancel",
+        namedHostId: "host-b",
+        status: "cancelled",
+        result: "cancelled",
+      }),
+    ];
+
+    renderWithProviders(
+      <SuiteRunsList runs={runs} allIterations={[]} onRunClick={vi.fn()} />,
+    );
+
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+  });
+
   it("expanding a group reveals its child runs", async () => {
     const user = userEvent.setup();
     const runs: EvalSuiteRun[] = [

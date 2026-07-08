@@ -24,8 +24,8 @@ const WELCOME_BODY_EXCALIDRAW_DEMO = [
   "This chatbox is pre-wired with the Excalidraw MCP server. Ask the assistant to sketch a diagram, walk through an idea visually, or just play with what the tools can do.",
 ].join("\n");
 
-/** Prefer a stable default; the first MCPJam model in SUPPORTED_MODELS is often gpt-oss-120b. */
-const DEFAULT_HOSTED_CHATBOX_MODEL_ID = "openai/gpt-5-mini";
+/** Prefer the hosted model chosen as the general MCPJam default. */
+const DEFAULT_HOSTED_CHATBOX_MODEL_ID = "mistralai/mistral-small-2603";
 
 export function getDefaultHostedModelId(): string {
   if (
@@ -37,7 +37,7 @@ export function getDefaultHostedModelId(): string {
   return (
     SUPPORTED_MODELS.find((model) =>
       isMCPJamProvidedModel(String(model.id)),
-    )?.id?.toString() ?? "openai/gpt-5-mini"
+    )?.id?.toString() ?? "mistralai/mistral-small-2603"
   );
 }
 

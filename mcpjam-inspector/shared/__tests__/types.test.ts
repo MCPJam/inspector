@@ -20,7 +20,22 @@ describe("MCPJam-provided model classification", () => {
     expect(isMCPJamProvidedModel("deepseek/deepseek-v4-pro")).toBe(true);
     expect(isMCPJamProvidedModel("deepseek/deepseek-v4-flash")).toBe(true);
     expect(isMCPJamProvidedModel("qwen/qwen3.6-plus")).toBe(true);
+    expect(isMCPJamProvidedModel("mistralai/mistral-small-2603")).toBe(true);
+    expect(isMCPJamProvidedModel("mistralai/mistral-medium-3-5")).toBe(true);
+    expect(isMCPJamProvidedModel("mistralai/mistral-large-2512")).toBe(true);
+    expect(isMCPJamProvidedModel("mistralai/devstral-2512")).toBe(true);
+    expect(isMCPJamProvidedModel("z-ai/glm-5.2")).toBe(true);
     expect(isMCPJamGuestAllowedModel("openai/gpt-oss-120b")).toBe(true);
+    expect(isMCPJamGuestAllowedModel("mistralai/mistral-small-2603")).toBe(
+      true,
+    );
+    expect(isMCPJamGuestAllowedModel("mistralai/devstral-2512")).toBe(true);
+    expect(isMCPJamGuestAllowedModel("mistralai/mistral-medium-3-5")).toBe(
+      false,
+    );
+    expect(isMCPJamGuestAllowedModel("mistralai/mistral-large-2512")).toBe(
+      false,
+    );
     expect(isMCPJamGuestAllowedModel("openai/gpt-5.4")).toBe(false);
     expect(isMCPJamGuestAllowedModel("openai/gpt-5.4-mini")).toBe(false);
     expect(isMCPJamGuestAllowedModel("openai/gpt-5.4-nano")).toBe(false);
@@ -43,11 +58,15 @@ describe("MCPJam-provided model classification", () => {
       false,
     );
     expect(isMCPJamGuestAllowedModel("qwen/qwen3.6-plus")).toBe(true);
+    expect(isMCPJamGuestAllowedModel("z-ai/glm-5.2")).toBe(true);
   });
 
-  it("resolves provider metadata for new qwen and xAI hosted models", () => {
+  it("resolves provider metadata for new hosted models", () => {
     expect(getModelById("qwen/qwen3.6-plus")?.provider).toBe("qwen");
     expect(getModelById("x-ai/grok-4-fast")?.provider).toBe("xai");
+    expect(getModelById("mistralai/mistral-small-2603")?.provider).toBe(
+      "mistral",
+    );
   });
 
   it("normalizes bare model ids with provider metadata", () => {
@@ -70,5 +89,9 @@ describe("MCPJam-provided model classification", () => {
       "google",
     );
     expect(getModelById("z-ai/glm-4.6")?.provider).toBe("z-ai");
+    expect(getModelById("z-ai/glm-5.2")?.contextLength).toBe(1000000);
+    expect(getModelById("mistralai/devstral-2512")?.contextLength).toBe(
+      262144,
+    );
   });
 });

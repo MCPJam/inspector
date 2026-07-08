@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useMutation, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -34,11 +34,13 @@ import {
 } from "@/lib/mcp-ui/mcp-apps-utils";
 import { getConnectionStatusMeta } from "./server-card-utils";
 import { useServerForm } from "./hooks/use-server-form";
+import { useAuth } from "@workos-inc/authkit-react";
 import { ServerInfoContent } from "./ServerInfoContent";
 import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent";
 import { EditServerFormContent } from "./EditServerFormContent";
 import { ServerHistoryContent } from "./ServerHistoryContent";
 import { ServerHistoryDriftChip } from "./ServerHistoryDriftChip";
+import { HostCompatContent } from "@/components/compat/HostCompatContent";
 import type { McpProtocolVersionPin } from "@/lib/client-config-v2";
 import type {
   ProjectServerConfigDto,
@@ -46,7 +48,7 @@ import type {
   ProjectServerOverrideEntry,
 } from "@/lib/project-server-config";
 import { EffectiveProtocolVersionChip } from "./shared/EffectiveProtocolVersionChip";
-import { useFeatureFlagEnabled } from "posthog-js/react";
+import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { useStatelessMcpEnabled } from "@/hooks/use-stateless-mcp-enabled";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 
@@ -54,6 +56,7 @@ export type ServerDetailTab =
   | "overview"
   | "configuration"
   | "tools-metadata"
+  | "compatibility"
   | "history";
 
 interface ServerDetailModalProps {
@@ -192,7 +195,6 @@ export function ServerDetailModal({
   // form control inside `EditServerFormContent` can stay a pure prop
   // consumer.
   const statelessMcpEnabled = useStatelessMcpEnabled();
-  const serverHistoryEnabled = useFeatureFlagEnabled("server-history-tab");
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
     projectId ? ({ projectId } as never) : "skip"
@@ -211,10 +213,9 @@ export function ServerDetailModal({
   // `hostedServerId`.
   const serverId = hostedServerId ?? undefined;
   // The History tab + drift chip surface persisted snapshot revisions, which
-  // only exist for project-scoped (hosted) servers. Gated behind the
-  // `server-history-tab` PostHog flag (@mcpjam.com only) and hidden in local
-  // mode. Both surfaces key off `showHistory`, so this is the single gate.
-  const showHistory = Boolean(projectId && serverId && serverHistoryEnabled);
+  // only exist for project-scoped (hosted) servers — hidden in local mode.
+  // Both surfaces key off `showHistory`, so this is the single gate.
+  const showHistory = Boolean(projectId && serverId);
   const currentMcpProtocolVersionOverride = useMemo<
     McpProtocolVersionPin | undefined
   >(
@@ -409,7 +410,11 @@ export function ServerDetailModal({
   const isOpenAIAppServer = isOpenAIApp(toolsData);
   const isOpenAIAppAndMCPAppServer = isOpenAIAppAndMCPApp(toolsData);
 
-  const formState = useServerForm(server, { projectClientConfig });
+  const { user: signedInUser } = useAuth();
+  const formState = useServerForm(server, {
+    projectClientConfig,
+    signedInEmail: signedInUser?.email,
+  });
   const trimmedName = formState.name.trim();
   const isDuplicateServerName =
     trimmedName !== "" &&
@@ -506,9 +511,41 @@ export function ServerDetailModal({
       environment: detectEnvironment(),
     });
 
-    const finalFormData = formState.buildFormData();
     setIsSaving(true);
     try {
+      // Saving an auth or header change replaces the whole stored header
+      // set. When that set is hidden, fetch it first so e.g. rotating a
+      // bearer token doesn't wipe the other saved headers.
+      let revealedHeaders: Record<string, string> | undefined;
+      if (formState.needsStoredHeaderReveal) {
+        if (!projectId || !hostedServerId) {
+          toast.error(
+            "Reveal saved headers before changing authentication so existing hidden headers aren't lost."
+          );
+          return;
+        }
+        try {
+          const secrets = await fetchServerSecrets({
+            projectId,
+            serverId: hostedServerId,
+          });
+          // A null headers payload means the stored set couldn't be read;
+          // merging against it would wipe the saved headers, so fail closed.
+          if (!secrets.headers) {
+            throw new Error("Stored headers missing from reveal response");
+          }
+          revealedHeaders = secrets.headers;
+        } catch {
+          toast.error(
+            "Couldn't load this server's saved headers to apply this change. Reveal saved headers in Advanced settings and try again."
+          );
+          return;
+        }
+      }
+
+      const finalFormData = formState.buildFormData(
+        revealedHeaders ? { revealedHeaders } : undefined
+      );
       await onSubmit(finalFormData, server.name);
     } finally {
       setIsSaving(false);
@@ -568,9 +605,8 @@ export function ServerDetailModal({
     }
   };
 
-  const tabGridClass = showHistory
-    ? "grid w-full grid-cols-4"
-    : "grid w-full grid-cols-3";
+  const tabTriggerClass =
+    "min-w-0 flex-1 px-1.5 text-xs sm:px-2 sm:text-sm";
   const isConfigurationTab = activeTab === "configuration";
 
   const handleConfigurationSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -681,12 +717,35 @@ export function ServerDetailModal({
             onValueChange={(v) => setActiveTab(v as ServerDetailTab)}
             className="flex min-h-0 flex-col"
           >
-            <TabsList className={tabGridClass}>
-              <TabsTrigger value="configuration">Configuration</TabsTrigger>
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="tools-metadata">Tools Metadata</TabsTrigger>
+            <TabsList className="-ml-1 flex h-9 w-full p-[3px]">
+              <TabsTrigger
+                value="configuration"
+                aria-label="Configuration"
+                className={tabTriggerClass}
+              >
+                Config
+              </TabsTrigger>
+              <TabsTrigger value="overview" className={tabTriggerClass}>
+                Overview
+              </TabsTrigger>
+              <TabsTrigger
+                value="tools-metadata"
+                aria-label="Tools metadata"
+                className={tabTriggerClass}
+              >
+                Tools
+              </TabsTrigger>
+              <TabsTrigger
+                value="compatibility"
+                aria-label="Host compatibility"
+                className={tabTriggerClass}
+              >
+                Hosts
+              </TabsTrigger>
               {showHistory && (
-                <TabsTrigger value="history">History</TabsTrigger>
+                <TabsTrigger value="history" className={tabTriggerClass}>
+                  History
+                </TabsTrigger>
               )}
             </TabsList>
 
@@ -805,6 +864,23 @@ export function ServerDetailModal({
                   ) : (
                     <ServerInfoToolsMetadataContent toolsData={toolsData} />
                   )}
+                </div>
+              </TabsContent>
+
+              {/* Compatibility: per-host static compat report; degrades
+                  gracefully while disconnected (transport/auth facts only) */}
+              <TabsContent
+                value="compatibility"
+                className="mt-0 flex-none absolute inset-0 overflow-y-auto bg-background"
+              >
+                <div className="pl-1 pr-6">
+                  <HostCompatContent
+                    server={server}
+                    toolsData={toolsData}
+                    projectId={projectId}
+                    serverId={serverId}
+                    onClose={onClose}
+                  />
                 </div>
               </TabsContent>
 

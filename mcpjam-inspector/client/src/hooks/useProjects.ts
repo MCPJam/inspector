@@ -44,10 +44,19 @@ export interface RemoteServer {
   useOAuth?: boolean;
   oauthScopes?: string[];
   clientId?: string;
+  oauthProtocolVersion?: string;
+  oauthRegistrationStrategy?: string;
   hasClientSecret?: boolean;
   hasEnv?: boolean;
   hasHeaders?: boolean;
+  hasBearerToken?: boolean;
   oauthResourceUrl?: string;
+  xaaAuthzIssuer?: string;
+  // Cross-App Access (XAA)
+  useXaa?: boolean;
+  authServerMode?: "mcpjam" | "own";
+  xaaSubject?: string;
+  xaaEmail?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -261,6 +270,7 @@ export function useServerMutations() {
   const createServerWithClientSecret = useAction(
     "servers:createServerWithClientSecret" as any
   );
+  const moveServerToProject = useAction("servers:moveServerToProject" as any);
   const updateServerWithClientSecret = useAction(
     "servers:updateServerWithClientSecret" as any
   );
@@ -270,6 +280,7 @@ export function useServerMutations() {
     createServerIfMissing,
     updateServer,
     createServerWithClientSecret,
+    moveServerToProject,
     updateServerWithClientSecret,
     deleteServer,
   };

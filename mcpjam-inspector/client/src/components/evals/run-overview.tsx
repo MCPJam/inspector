@@ -37,7 +37,7 @@ import {
   EVAL_DESTRUCTIVE_BUTTON_CLASS,
   EVAL_LOW_PASS_RATE_TEXT_CLASS,
 } from "./constants";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 const RUN_ROW_STAGGER_CAP = 20;
 
@@ -55,6 +55,31 @@ const runItemVariants: Variants = {
     transition: { duration: 0.15, ease: [0.16, 1, 0.3, 1] },
   },
 };
+
+type RunResultBadgeKind =
+  | "passed"
+  | "failed"
+  | "running"
+  | "cancelled"
+  | "timed_out"
+  | "pending";
+
+function runResultBadge(result: RunResultBadgeKind) {
+  switch (result) {
+    case "passed":
+      return { label: "Passed", className: "bg-success/50 text-foreground" };
+    case "failed":
+      return { label: "Failed", className: "bg-destructive/50 text-foreground" };
+    case "cancelled":
+      return { label: "Cancelled", className: "bg-muted text-muted-foreground" };
+    case "timed_out":
+      return { label: "Timed out", className: "bg-warning/50 text-foreground" };
+    case "running":
+      return { label: "Running", className: "bg-warning/50 text-foreground" };
+    default:
+      return null;
+  }
+}
 
 interface RunOverviewProps {
   suite: { _id: string; name: string; source?: "ui" | "sdk" };
@@ -635,7 +660,7 @@ export function RunOverview({
                     (r) => r === "passed"
                   ).length;
                   const realTimeFailed = iterationResults.filter(
-                    (r) => r === "failed"
+                    (r) => r === "failed" || r === "timed_out"
                   ).length;
                   const realTimeTotal = realTimePassed + realTimeFailed;
                   const totalTokens = runIterations.reduce(
@@ -674,10 +699,13 @@ export function RunOverview({
                         ? "passed"
                         : "failed"
                       : run.status === "cancelled"
-                      ? "cancelled"
-                      : run.status === "running"
-                      ? "running"
-                      : "pending");
+                        ? "cancelled"
+                        : run.status === "timed_out"
+                          ? "timed_out"
+                          : run.status === "running"
+                            ? "running"
+                            : "pending");
+                  const badge = runResultBadge(runResult);
                   const runAccent = evalStatusLeftBorderClasses(runResult);
 
                   const isSelected = selectedRunIds.has(run._id);
@@ -688,8 +716,20 @@ export function RunOverview({
 
                   const runRowCells = (
                     <>
-                      <span className="truncate py-0.5 text-xs font-medium">
-                        Run {formatRunId(run._id)}
+                      <span className="flex min-w-0 items-center gap-2 py-0.5">
+                        <span className="truncate text-xs font-medium">
+                          Run {formatRunId(run._id)}
+                        </span>
+                        {badge ? (
+                          <span
+                            className={cn(
+                              "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
+                              badge.className,
+                            )}
+                          >
+                            {badge.label}
+                          </span>
+                        ) : null}
                       </span>
                       <span className="truncate py-0.5 text-xs text-muted-foreground">
                         {timestamp}

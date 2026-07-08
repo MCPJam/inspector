@@ -281,17 +281,20 @@ export function ProtocolTab({
     onDraftChange,
   });
   const statelessMcpEnabled = useStatelessMcpEnabled();
-  // Auto is the host default: an absent pin (`undefined`) means "detect per
-  // server at connect" and is shown — and behaves — as Auto. `"auto"` maps to
-  // it explicitly. Any concrete stateful literal (2025-*, legacy carry-over)
-  // surfaces as "Latest"; the 2026 RC surfaces as its own option.
+  // With the stateless-MCP flag on, Auto is the host default: an absent pin
+  // (`undefined`) means "detect per server at connect" and is shown — and
+  // behaves — as Auto; `"auto"` maps to it explicitly. With the flag off,
+  // unpinned hosts keep the legacy SDK-default behavior and display as
+  // "Latest" (the pre-Auto reading). Any concrete stateful literal (2025-*,
+  // legacy carry-over) surfaces as "Latest"; the 2026 RC has its own option.
   const storedPin = draft.mcpProfile?.mcpProtocolVersion;
   const selectedDropdownValue: HostProtocolDropdownValue =
     storedPin === "2026-07-28"
       ? "rc"
-      : storedPin === "auto" || storedPin === undefined
-      ? "auto"
-      : "latest";
+      : storedPin === "auto" ||
+          (storedPin === undefined && statelessMcpEnabled)
+        ? "auto"
+        : "latest";
 
   // Dropdown handler. Writes through to `draft.mcpProfile.mcpProtocolVersion`
   // directly (parallel to the JSON editor's applyJsonToDraft path) so the
@@ -345,49 +348,55 @@ export function ProtocolTab({
 
   // Shared with the cross-host comparison matrix via the field schema.
   const fProtocolVersion = hostConfigField("mcpProtocolVersion");
+  // The Auto option only appears with the stateless-MCP flag on — without
+  // the connect-time default wiring it would store a pin with no effect.
+  const visibleOptions = statelessMcpEnabled
+    ? HOST_PROTOCOL_OPTIONS
+    : HOST_PROTOCOL_OPTIONS.filter((opt) => opt.value !== "auto");
 
   return (
     <div className="flex h-full min-h-[480px] flex-col gap-3">
-      {statelessMcpEnabled ? (
-        <div className="rounded-[10px] border border-border bg-background px-3.5 py-2.5">
-          <div className="flex items-center gap-3">
-            <span
-              className="text-[12px] font-medium"
-              title="Auto: detect per server at connect time — stateless servers get the 2026 RC preview, everything else the legacy handshake. Latest: current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
-            >
-              {fProtocolVersion.label}
-            </span>
-            <Select
-              value={selectedDropdownValue}
-              onValueChange={(next) => {
-                setProtocolVersion(
-                  next === "rc"
-                    ? "2026-07-28"
-                    : next === "auto"
+      <div className="rounded-[10px] border border-border bg-background px-3.5 py-2.5">
+        <div className="flex items-center gap-3">
+          <span
+            className="text-[12px] font-medium"
+            title="Auto: detect per server at connect time — stateless servers get the 2026 RC preview, everything else the legacy handshake. Latest: current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
+          >
+            {fProtocolVersion.label}
+          </span>
+          <Select
+            value={selectedDropdownValue}
+            onValueChange={(next) => {
+              setProtocolVersion(
+                next === "rc"
+                  ? "2026-07-28"
+                  : next === "auto"
                     ? "auto"
-                    : // "Latest" pins the current stable wire version
-                      // explicitly. It must NOT map to `undefined` any more:
-                      // absence now means Auto (the default), so an explicit
-                      // "Latest" choice has to carry a concrete version.
-                      "2025-11-25"
-                );
-              }}
-              disabled={readOnly}
-            >
-              <SelectTrigger className="h-9 text-xs">
-                <SelectValue placeholder="Latest" />
-              </SelectTrigger>
-              <SelectContent>
-                {HOST_PROTOCOL_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+                    : // With the flag on, "Latest" pins the current stable
+                      // wire version explicitly — it must NOT map to
+                      // `undefined` because absence means Auto. With the flag
+                      // off, absence still means "SDK default", so Latest
+                      // keeps mapping to `undefined` for hash stability.
+                      statelessMcpEnabled
+                      ? "2025-11-25"
+                      : undefined
+              );
+            }}
+            disabled={readOnly}
+          >
+            <SelectTrigger className="h-9 text-xs">
+              <SelectValue placeholder={statelessMcpEnabled ? "Auto" : "Latest"} />
+            </SelectTrigger>
+            <SelectContent>
+              {visibleOptions.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-      ) : null}
+      </div>
       <div className="flex min-h-0 flex-1 flex-col">
         <JsonEditor
           rawContent={content}

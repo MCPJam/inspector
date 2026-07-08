@@ -13,7 +13,7 @@
 
 import { Copy, Loader2, ScanSearch } from "lucide-react";
 import type { ModelMessage } from "ai";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { usePostHog } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
 import { JsonEditor } from "@/components/ui/json-editor";
@@ -25,6 +25,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ResolvedModelRequestPayload } from "@/shared/model-request-payload";
+import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import type { TraceEnvelope, TraceMessage } from "./trace-viewer-adapter";
 
 export interface TraceRawRequestPayloadHistory {
@@ -99,11 +100,20 @@ export function TraceRawView({
   trace,
   requestPayloadHistory,
   growWithContent = false,
+  harnessBuiltinTools,
 }: {
   trace: TraceEnvelope | TraceMessage | TraceMessage[] | null;
   requestPayloadHistory?: TraceRawRequestPayloadHistory | null;
   /** Parent owns scroll (e.g. StickToBottom); JSON height grows with payload. */
   growWithContent?: boolean;
+  /**
+   * Harness native built-in tools. When set (a harness host), Raw annotates the
+   * request: the harness builds its OWN model request inside the sandbox, so the
+   * shown `tools` are empty — these run there instead. Only the playground Raw
+   * surface (which knows the previewed host) passes this; it stays undefined for
+   * chat / multi-model / eval-trace reuse.
+   */
+  harnessBuiltinTools?: HarnessBuiltinToolInfo[];
 }) {
   const posthog = usePostHog();
   const jsonHeight = growWithContent ? "auto" : "100%";
@@ -111,6 +121,35 @@ export function TraceRawView({
   const hasUiMessages = requestPayloadHistory?.hasUiMessages ?? false;
   const orderedEntries = requestPayloadEntries;
   const latestEntry = orderedEntries.at(-1) ?? null;
+
+  // Compact, display-only note shown under the request JSON for harness hosts.
+  // These execute inside the sandbox — schemas live in the Tools panel.
+  const harnessAnnotation =
+    harnessBuiltinTools && harnessBuiltinTools.length > 0 ? (
+      <div className="mt-2 rounded-lg border border-border bg-muted/20 p-3">
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          The harness builds its model request{" "}
+          <span className="font-medium text-foreground">
+            inside the sandbox
+          </span>
+          , so the <code className="font-mono">tools</code> above are empty here.
+          Its native built-in tools (see the Trace tab for live calls):
+        </p>
+        <ul className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
+          {harnessBuiltinTools.map((t) => (
+            <li key={t.key} className="text-[11px] leading-snug">
+              <code className="font-mono text-foreground">{t.name}</code>
+              {t.description ? (
+                <span className="text-muted-foreground">
+                  {" "}
+                  — {t.description}
+                </span>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </div>
+    ) : null;
 
   if (requestPayloadHistory) {
     const hasLiveRequestLine =
@@ -137,6 +176,7 @@ export function TraceRawView({
                 collapseStringsAfterLength={100}
               />
             </div>
+            {harnessAnnotation}
           </div>
         );
       }
@@ -157,6 +197,7 @@ export function TraceRawView({
                 className="min-h-0"
               />
             </div>
+            {harnessAnnotation}
           </div>
         </div>
       );

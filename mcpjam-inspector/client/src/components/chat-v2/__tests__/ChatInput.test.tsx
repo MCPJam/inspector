@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, createEvent } from "@testing-library/react";
 import { ChatInput } from "../chat-input";
 import {
   ChatboxHostStyleProvider,
@@ -127,7 +127,64 @@ describe("ChatInput", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:http://localhost/chat-input-test"),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: vi.fn(),
+    });
   });
+
+  function createMockFile(name: string, type: string): File {
+    return new File(["test file contents"], name, { type });
+  }
+
+  function createClipboardPasteEvent(
+    target: Element,
+    options: {
+      files?: File[];
+      textOnly?: boolean;
+    },
+  ) {
+    const files = options.files ?? [];
+    const clipboardData = {
+      files,
+      items: options.textOnly
+        ? [
+            {
+              kind: "string",
+              type: "text/plain",
+              getAsFile: () => null,
+            },
+          ]
+        : files.map((file) => ({
+            kind: "file",
+            type: file.type,
+            getAsFile: () => file,
+          })),
+      types: files.length > 0 ? ["Files"] : ["text/plain"],
+    };
+    const event = createEvent.paste(target);
+    Object.defineProperty(event, "clipboardData", {
+      configurable: true,
+      value: clipboardData,
+    });
+    return event;
+  }
+
+  function createFileDragData(files: File[]) {
+    return {
+      files,
+      items: files.map((file) => ({
+        kind: "file",
+        type: file.type,
+        getAsFile: () => file,
+      })),
+      types: ["Files"],
+    };
+  }
 
   describe("rendering", () => {
     it("renders textarea with placeholder", () => {
@@ -223,6 +280,106 @@ describe("ChatInput", () => {
       expect(textarea.selectionEnd).toBe(
         "Draw me an MCP architecture diagram".length,
       );
+    });
+  });
+
+  describe("file paste and drop", () => {
+    it("attaches pasted clipboard images with a fallback filename", () => {
+      const onChangeFileAttachments = vi.fn();
+      render(
+        <ChatInput
+          {...defaultProps}
+          onChangeFileAttachments={onChangeFileAttachments}
+        />,
+      );
+
+      const textarea = screen.getByPlaceholderText("Type your message...");
+      const file = createMockFile("", "image/png");
+      const event = createClipboardPasteEvent(textarea, { files: [file] });
+      const preventDefaultSpy = vi.spyOn(event, "preventDefault");
+
+      fireEvent(textarea, event);
+
+      expect(preventDefaultSpy).toHaveBeenCalled();
+      expect(onChangeFileAttachments).toHaveBeenCalledTimes(1);
+      const attachments = onChangeFileAttachments.mock.calls[0][0];
+      expect(attachments).toHaveLength(1);
+      expect(attachments[0].file.name).toBe("pasted-image-1.png");
+      expect(attachments[0].file.type).toBe("image/png");
+      expect(attachments[0].previewUrl).toBe(
+        "blob:http://localhost/chat-input-test",
+      );
+    });
+
+    it("does not intercept plain text paste", () => {
+      const onChangeFileAttachments = vi.fn();
+      render(
+        <ChatInput
+          {...defaultProps}
+          onChangeFileAttachments={onChangeFileAttachments}
+        />,
+      );
+
+      const textarea = screen.getByPlaceholderText("Type your message...");
+      const event = createClipboardPasteEvent(textarea, { textOnly: true });
+      const preventDefaultSpy = vi.spyOn(event, "preventDefault");
+
+      fireEvent(textarea, event);
+
+      expect(preventDefaultSpy).not.toHaveBeenCalled();
+      expect(onChangeFileAttachments).not.toHaveBeenCalled();
+    });
+
+    it("shows a drop overlay and attaches dropped files", () => {
+      const onChangeFileAttachments = vi.fn();
+      render(
+        <ChatInput
+          {...defaultProps}
+          onChangeFileAttachments={onChangeFileAttachments}
+        />,
+      );
+
+      const composer = screen.getByTestId("chat-input-composer");
+      const file = createMockFile("diagram.png", "image/png");
+      const dataTransfer = createFileDragData([file]);
+
+      fireEvent.dragEnter(composer, { dataTransfer });
+
+      expect(
+        screen.getByText("Drop image or file to attach"),
+      ).toBeInTheDocument();
+
+      fireEvent.drop(composer, { dataTransfer });
+
+      expect(
+        screen.queryByText("Drop image or file to attach"),
+      ).not.toBeInTheDocument();
+      expect(onChangeFileAttachments).toHaveBeenCalledTimes(1);
+      const attachments = onChangeFileAttachments.mock.calls[0][0];
+      expect(attachments[0].file).toBe(file);
+      expect(attachments[0].previewUrl).toBe(
+        "blob:http://localhost/chat-input-test",
+      );
+    });
+
+    it("shows existing validation errors for invalid dropped files", () => {
+      const onChangeFileAttachments = vi.fn();
+      render(
+        <ChatInput
+          {...defaultProps}
+          onChangeFileAttachments={onChangeFileAttachments}
+        />,
+      );
+
+      const composer = screen.getByTestId("chat-input-composer");
+      const file = createMockFile("clip.mp4", "video/mp4");
+
+      fireEvent.drop(composer, { dataTransfer: createFileDragData([file]) });
+
+      expect(onChangeFileAttachments).not.toHaveBeenCalled();
+      expect(
+        screen.getByText(/clip\.mp4: Unsupported file type/),
+      ).toBeInTheDocument();
     });
   });
 

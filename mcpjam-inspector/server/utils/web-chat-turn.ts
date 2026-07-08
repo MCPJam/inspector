@@ -24,14 +24,19 @@
  *     its own OAuth-error enrichment if applicable.
  */
 import type { Context } from "hono";
-import { convertToModelMessages, type ToolSet } from "ai";
+import { type ToolSet } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import type { Harness, MCPClientManager } from "@mcpjam/sdk";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "@mcpjam/sdk/host-config/internal";
 import {
   handleMCPJamFreeChatModel,
   warnIfChatAbortSignalMissing,
 } from "./mcpjam-stream-handler.js";
+import type { ExecutionScope } from "./execution-scope.js";
 import {
   handleHostedOrgChatModel,
   handleLocalOrgChatModel,
@@ -47,6 +52,7 @@ import {
   buildWidgetModelContextSystemPrompt,
   prepareChatV2,
   type AppToolEntry,
+  type UiToolEntry,
   type WidgetModelContextEntry,
 } from "./chat-v2-orchestration.js";
 import {
@@ -57,14 +63,18 @@ import {
   type DirectHostConfig,
   type PersistedTurnTrace,
 } from "./chat-ingestion.js";
+import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
-import {
-  ErrorCode,
-  WebRouteError,
-} from "./../routes/web/errors.js";
+import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
+import { bridgeHarnessRpcLogsToCollector } from "./../routes/web/hosted-rpc-logs.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getClientIp } from "./client-ip.js";
+import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
+import {
+  resolveWebAuthorizedHarnessStrategy,
+  type HarnessMcpProxyStrategy,
+} from "./harness/harness-proxy-strategy.js";
 
 type RpcCollector = ReturnType<typeof createHostedRpcLogCollector>;
 
@@ -89,6 +99,9 @@ export interface WebChatTurnPersistContext {
   surface?: "preview" | "share_link";
   chatboxId?: string;
   accessVersion?: number;
+  /** Phase 3 execution scope (chatbox/host runtime-config). Threaded into the
+   *  harness path so the backend re-resolves live access + per-swarm caps. */
+  executionScope?: ExecutionScope;
   /** Server-authenticated user id (Convex), forwarded to message-sender stamping. */
   authenticatedUserId?: string | null;
   /** UI messages from the inbound request — used to stamp `senderUserId`. */
@@ -105,7 +118,9 @@ export interface WebChatTurnPersistContext {
   hostConfig?:
     | DirectHostConfig
     | null
-    | ((args: { resolvedTemperature: number | undefined }) => DirectHostConfig | null);
+    | ((args: {
+        resolvedTemperature: number | undefined;
+      }) => DirectHostConfig | null);
   /** Direct-chat only — selectedServers as names when available. */
   selectedServerNames?: string[];
   /** Required for `resumeConfig.selectedServers` fallback on direct chat. */
@@ -114,6 +129,10 @@ export interface WebChatTurnPersistContext {
   systemPrompt?: string;
   temperature?: number;
   requireToolApproval?: boolean;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
+  /** Resolved host harness (absent ⇒ emulated). Routes a claude-code host
+   *  through the real Claude Code runtime via handleMCPJamFreeChatModel. */
+  harness?: Harness;
   respectToolVisibility?: boolean;
   /**
    * When `false`, skip the `exportConnectedServerToolSnapshotForEvalAuthoring`
@@ -137,15 +156,26 @@ export interface WebChatTurnPrepareInputs {
   temperature?: number;
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   customProviders?: CustomProviderConfig[];
   /** UI messages from the inbound request, converted to ModelMessages by helper. */
   uiMessages: UIMessage[] | unknown[];
   /** Optional progressive-discovery override. */
   progressiveToolDiscovery?: { enabled: boolean };
+  /** Resolved host harness. Harness runtimes own native tool discovery. */
+  harness?: Harness;
   appTools?: AppToolEntry[];
+  /** WebMCP-shaped MCPJam UI tools (client-fulfilled, like `appTools`). */
+  uiTools?: UiToolEntry[];
   /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
   builtInTools?: ToolSet;
   widgetModelContext?: WidgetModelContextEntry[];
+  /**
+   * When set, skills are sourced from the caller's Computer (E2B sandbox)
+   * rather than the local FS. Set by the hosted chat route only when the host
+   * actually has a computer. See `chat-v2-orchestration.ts`.
+   */
+  cloudSkills?: { authHeader: string; projectId: string };
 }
 
 /** Runtime knobs (auth, abort, rpc collector, Hono context for cleanup). */
@@ -168,6 +198,19 @@ export interface StreamWebChatTurnArgs {
 }
 
 /**
+ * Read-only `ui_*` names from the validated snapshot — exempt from the
+ * MCPJam loop's approval gate (see `isApprovalFreeToolCallName` in
+ * mcpjam-stream-handler). Computed from the VALIDATED entries' `readOnly`
+ * flag, never from the raw name, which a third-party server could spoof.
+ */
+function approvalFreeUiToolNamesFrom(
+  uiTools: UiToolEntry[] | undefined
+): ReadonlySet<string> | undefined {
+  const names = (uiTools ?? []).filter((t) => t.readOnly).map((t) => t.name);
+  return names.length > 0 ? new Set(names) : undefined;
+}
+
+/**
  * Run a single web-chat streaming turn.
  *
  * Returns the streaming Response. Throws WebRouteError / runtime errors;
@@ -175,7 +218,7 @@ export interface StreamWebChatTurnArgs {
  * path and mapping the error to a `webError(...)` response.
  */
 export async function streamWebChatTurn(
-  args: StreamWebChatTurnArgs
+  args: StreamWebChatTurnArgs,
 ): Promise<Response> {
   const { manager, prepare, persist, runtime } = args;
   const { c } = runtime;
@@ -185,16 +228,23 @@ export async function streamWebChatTurn(
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
+      "Server missing CONVEX_HTTP_URL configuration",
     );
   }
 
   const sessionStartedAt = Date.now();
   // Convert UI messages to ModelMessage[] up front so prepareChatV2 can
   // replay prior `load_mcp_tools` calls into discovery state.
-  const modelMessages = (await convertToModelMessages(
-    prepare.uiMessages as never
-  )) as ModelMessage[];
+  const modelMessages = await convertToMcpjamModelMessages(
+    prepare.uiMessages as never,
+    {
+      modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+      // Browser-sent history can replay already-resolved media, but must not
+      // trigger new linked resource reads. Fresh server-side tool execution
+      // resolves resource_link results through trusted tool-origin metadata.
+      abortSignal: c.req.raw.signal as AbortSignal | undefined,
+    },
+  );
 
   let prepared;
   try {
@@ -206,13 +256,17 @@ export async function streamWebChatTurn(
       temperature: prepare.temperature,
       requireToolApproval: prepare.requireToolApproval,
       respectToolVisibility: prepare.respectToolVisibility,
+      modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       customProviders: prepare.customProviders,
       priorMessages: modelMessages,
+      ...(prepare.harness ? { harness: prepare.harness } : {}),
       ...(prepare.progressiveToolDiscovery !== undefined
         ? { progressiveToolDiscovery: prepare.progressiveToolDiscovery }
         : {}),
       appTools: prepare.appTools,
+      uiTools: prepare.uiTools,
       builtInTools: prepare.builtInTools,
+      ...(prepare.cloudSkills ? { cloudSkills: prepare.cloudSkills } : {}),
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -232,7 +286,7 @@ export async function streamWebChatTurn(
   } = prepared;
 
   const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
-    prepare.widgetModelContext ?? []
+    prepare.widgetModelContext ?? [],
   );
   const effectiveEnhancedSystemPrompt = [
     enhancedSystemPrompt,
@@ -247,29 +301,38 @@ export async function streamWebChatTurn(
   };
 
   const isChatboxSession = persist.sourceType === "chatbox";
+  // Provider is REQUIRED here: bare hosted ids (`gpt-5-nano` + `openai`) only
+  // canonicalize to their prefixed form (`openai/gpt-5-nano`) when the provider
+  // is supplied. Without it, a bare id fails this check and the turn silently
+  // branches into org-BYOK — skipping runHarnessTurn even when the route's
+  // harness preflight (which does pass the provider) approved the turn.
   const isMCPJam =
     Boolean(prepare.modelDefinition.id) &&
-    isMCPJamProvidedModel(String(prepare.modelDefinition.id));
+    isMCPJamProvidedModel(
+      String(prepare.modelDefinition.id),
+      prepare.modelDefinition.provider,
+    );
 
   // Resolve the host config now that `resolvedTemperature` is known.
   // Legacy chat-v2 fed `resolvedTemperature` into `buildDirectHostConfig`;
   // callers preserve that by passing a closure here.
   const resolvedHostConfig: DirectHostConfig | null =
     typeof persist.hostConfig === "function"
-      ? persist.hostConfig({ resolvedTemperature }) ?? null
-      : persist.hostConfig ?? null;
+      ? (persist.hostConfig({ resolvedTemperature }) ?? null)
+      : (persist.hostConfig ?? null);
 
   // Build the persist callback once — it's a closure over a lot of context
   // and is identical between MCPJam-free and org-BYOK other than the modelId
   // + modelSource.
   const buildOnConversationComplete = (
     modelId: string,
-    modelSource: "mcpjam" | "byok" | "local_byok"
+    modelSource: "mcpjam" | "byok" | "local_byok",
   ) => {
     if (!hostedChatSessionId) return undefined;
     return async (
       fullHistory: ModelMessage[],
-      turnTrace: PersistedTurnTrace
+      turnTrace: PersistedTurnTrace,
+      harnessSessionCommit?: HarnessSessionCommitPayload,
     ) => {
       const isDirectChat = !isChatboxSession;
       // Capture the live tool catalog. Failures must never block the persist.
@@ -287,7 +350,7 @@ export async function streamWebChatTurn(
               await exportConnectedServerToolSnapshotForEvalAuthoring(
                 manager,
                 knownIds,
-                { logPrefix: "chat-v2.persist" }
+                { logPrefix: "chat-v2.persist" },
               );
           }
         } catch {
@@ -311,7 +374,7 @@ export async function streamWebChatTurn(
         sessionMessages: stampSenderUserIdsOnSessionMessages(
           fullHistory,
           persist.originalMessages as unknown[],
-          { authenticatedUserId: persist.authenticatedUserId }
+          { authenticatedUserId: persist.authenticatedUserId },
         ),
         startedAt: sessionStartedAt,
         lastActivityAt: Date.now(),
@@ -324,6 +387,9 @@ export async function streamWebChatTurn(
                 temperature: persist.temperature,
                 requireToolApproval: persist.requireToolApproval,
                 respectToolVisibility: persist.respectToolVisibility,
+                modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+                mcpToolResultImageRendering:
+                  persist.mcpToolResultImageRendering,
                 selectedServers:
                   Array.isArray(persist.selectedServerNames) &&
                   persist.selectedServerNames.length ===
@@ -331,24 +397,27 @@ export async function streamWebChatTurn(
                     ? persist.selectedServerNames
                     : persist.selectedServerIds,
               },
-              ...(resolvedHostConfig
-                ? { hostConfig: resolvedHostConfig }
-                : {}),
+              ...(resolvedHostConfig ? { hostConfig: resolvedHostConfig } : {}),
             }
           : {}),
         turnTrace,
+        // §3: chat-backed harness resume-state commit, applied atomically with
+        // the transcript inside the ingest mutation.
+        ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
         forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
       });
     };
   };
 
   if (!isMCPJam) {
-    const providerKeyResult = deriveOrgProviderKeyResult(prepare.modelDefinition);
+    const providerKeyResult = deriveOrgProviderKeyResult(
+      prepare.modelDefinition,
+    );
     if (!providerKeyResult.ok) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        providerKeyResult.error
+        providerKeyResult.error,
       );
     }
     const providerKey = providerKeyResult.key;
@@ -359,17 +428,22 @@ export async function streamWebChatTurn(
     // answer is always "cloud" for those. See chat-v2 history for the
     // BYOK regression that motivated this fast path.
     const orgRuntime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
-      ? await resolveOrgProviderRuntime(persist.projectId, providerKey, modelId, {
-          authHeader: runtime.authHeader,
-          chatboxId: persist.chatboxId,
-          accessVersion: persist.accessVersion,
-          serverIds: persist.selectedServerIds,
-        })
+      ? await resolveOrgProviderRuntime(
+          persist.projectId,
+          providerKey,
+          modelId,
+          {
+            authHeader: runtime.authHeader,
+            chatboxId: persist.chatboxId,
+            accessVersion: persist.accessVersion,
+            serverIds: persist.selectedServerIds,
+          },
+        )
       : { runtimeLocation: "cloud", providerKey };
 
     const onConversationComplete = buildOnConversationComplete(
       modelId,
-      orgRuntime.runtimeLocation === "local" ? "local_byok" : "byok"
+      orgRuntime.runtimeLocation === "local" ? "local_byok" : "byok",
     );
 
     warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
@@ -421,6 +495,8 @@ export async function streamWebChatTurn(
       selectedServers: persist.selectedServerIds,
       serverIds: persist.selectedServerIds,
       requireToolApproval: persist.requireToolApproval,
+      approvalFreeUiToolNames: approvalFreeUiToolNamesFrom(prepare.uiTools),
+      modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       onConversationComplete,
       onStreamComplete: cleanupStream,
       onStreamWriterReady: (writer) =>
@@ -433,13 +509,32 @@ export async function streamWebChatTurn(
   const mcpjamModelId = String(prepare.modelDefinition.id);
   const onConversationComplete = buildOnConversationComplete(
     mcpjamModelId,
-    "mcpjam"
+    "mcpjam",
   );
   warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
+
+  // Harness MCP proxy — WEB-AUTHORIZED plane: this is an /api/web request, so
+  // the harness reaches MCPJam either directly (public inspector) or via a
+  // scoped harness-web relay (private/dev inspector), decided purely by whether
+  // the inspector is publicly reachable. The token (with the user's identity) is
+  // minted by Convex from the same bearer. If relay infra is needed but absent,
+  // the turn fails closed later, at tunnel creation.
+  const harnessMcpProxy: HarnessMcpProxyStrategy | undefined = persist.harness
+    ? resolveWebAuthorizedHarnessStrategy()
+    : undefined;
+
+  // Harness observation: the turn's MCP traffic arrives as separate
+  // `/api/web/harness-mcp` requests (not through THIS request's manager), so
+  // bridge the in-process rpc-log bus into this turn's collector while the
+  // stream is live — the Logs panel then fills exactly like an emulated turn.
+  // Subscribed at stream start (not before — a pre-stream failure must not
+  // leave a live subscription) and torn down with the stream.
+  let stopHarnessRpcLogBridge: (() => void) | undefined;
 
   return handleMCPJamFreeChatModel({
     messages: modelMessages,
     modelId: mcpjamModelId,
+    provider: prepare.modelDefinition.provider,
     chatSessionId: hostedChatSessionId,
     sourceType: persist.sourceType,
     systemPrompt: effectiveEnhancedSystemPrompt,
@@ -452,13 +547,38 @@ export async function streamWebChatTurn(
     chatboxId: persist.chatboxId,
     accessVersion: persist.accessVersion,
     projectId: persist.projectId,
+    // Phase 3: thread the runtime-config execution scope into the harness path
+    // (sandbox reserve, skills, broker, session-state, commit).
+    ...(persist.executionScope
+      ? { executionScope: persist.executionScope }
+      : {}),
     mcpClientManager: manager,
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
+    approvalFreeUiToolNames: approvalFreeUiToolNamesFrom(prepare.uiTools),
+    modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+    ...(persist.harness ? { harness: persist.harness } : {}),
+    ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+    // Forwarded SEPARATELY (also merged into `tools` for the emulated engine)
+    // so the harness path can hand MCPJam's server-executed built-ins
+    // (web_search) to HarnessAgent without the MCP-server tools, which the
+    // harness gets via .mcp.json.
+    ...(prepare.builtInTools ? { builtInTools: prepare.builtInTools } : {}),
     abortSignal: runtime.abortSignal,
     onConversationComplete,
-    onStreamComplete: cleanupStream,
-    onStreamWriterReady: (writer) =>
-      runtime.rpcCollector?.attachStreamWriter(writer),
+    onStreamComplete: async () => {
+      stopHarnessRpcLogBridge?.();
+      stopHarnessRpcLogBridge = undefined;
+      await cleanupStream();
+    },
+    onStreamWriterReady: (writer) => {
+      runtime.rpcCollector?.attachStreamWriter(writer);
+      if (persist.harness && runtime.rpcCollector && !stopHarnessRpcLogBridge) {
+        stopHarnessRpcLogBridge = bridgeHarnessRpcLogsToCollector(
+          persist.selectedServerIds,
+          runtime.rpcCollector
+        );
+      }
+    },
   });
 }

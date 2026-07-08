@@ -1,5 +1,6 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
+  ArrowLeftRight,
   Building2,
   ChevronDown,
   ChevronsUpDown,
@@ -56,7 +57,7 @@ interface SidebarContextSwitcherProps {
   activeOrganizationId?: string;
   /**
    * Navigates to an organization's overview/billing page.
-   * Used by the chip-level gear and the per-row gear in the org popover.
+   * Used by the footer org row's gear and the per-row gear in the switch list.
    */
   onSwitchOrganization?: (
     organizationId: string,
@@ -131,47 +132,19 @@ export function SidebarContextSwitcher({
   const { isMobile } = useSidebar();
   const { isAuthenticated } = useConvexAuth();
   const { user, signIn } = useAuth();
-  const { sortedOrganizations, canCreateOrganization } =
-    useOrganizationQueries({ isAuthenticated });
+  const { sortedOrganizations, canCreateOrganization } = useOrganizationQueries(
+    { isAuthenticated }
+  );
   const showSignInChip = !user;
 
   const [menuOpen, setMenuOpen] = useState(false);
-  const [chipPopoverOpen, setChipPopoverOpen] = useState(false);
+  const [orgListOpen, setOrgListOpen] = useState(false);
   const [showCreateOrgDialog, setShowCreateOrgDialog] = useState(false);
-  const closePopoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null
-  );
 
+  // Switching orgs is rare; start every menu open on the common case (projects).
   useEffect(() => {
-    if (menuOpen) {
-      setChipPopoverOpen(false);
-    }
+    setOrgListOpen(false);
   }, [menuOpen]);
-
-  useEffect(() => {
-    return () => {
-      if (closePopoverTimerRef.current) {
-        clearTimeout(closePopoverTimerRef.current);
-      }
-    };
-  }, []);
-
-  const openOrgPopover = () => {
-    if (closePopoverTimerRef.current) {
-      clearTimeout(closePopoverTimerRef.current);
-      closePopoverTimerRef.current = null;
-    }
-    setChipPopoverOpen(true);
-  };
-
-  const scheduleCloseOrgPopover = () => {
-    if (closePopoverTimerRef.current) {
-      clearTimeout(closePopoverTimerRef.current);
-    }
-    closePopoverTimerRef.current = setTimeout(() => {
-      setChipPopoverOpen(false);
-    }, 120);
-  };
 
   const activeProject = projects[activeProjectId];
 
@@ -209,6 +182,10 @@ export function SidebarContextSwitcher({
       return a.name.localeCompare(b.name);
     });
 
+  // Membership in >1 org (e.g. invited to an external one) is what makes
+  // switching meaningful; with a single org we render context only.
+  const canSwitchOrganizations = sortedOrganizations.length > 1;
+
   const handleCreateProject = () => {
     if (isCreateDisabled) return;
     const baseName = "New project";
@@ -221,6 +198,27 @@ export function SidebarContextSwitcher({
     }
     onCreateProject(name, true);
   };
+
+  const openCreateOrgDialog = () => {
+    setShowCreateOrgDialog(true);
+    setMenuOpen(false);
+  };
+
+  const newOrganizationRow = canCreateOrganization ? (
+    <button
+      type="button"
+      aria-label="New organization"
+      onClick={openCreateOrgDialog}
+      className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors"
+    >
+      <div className="flex items-center justify-center size-5 rounded bg-muted shrink-0">
+        <Plus className="size-3" />
+      </div>
+      <span className="flex-1 truncate text-left font-medium">
+        New organization
+      </span>
+    </button>
+  ) : null;
 
   const triggerButton = (
     <SidebarMenuButton
@@ -265,239 +263,12 @@ export function SidebarContextSwitcher({
               <DropdownMenuTrigger asChild>{triggerButton}</DropdownMenuTrigger>
             )}
             <DropdownMenuContent
-              className="w-[300px] rounded-xl p-0 shadow-md bg-sidebar !overflow-x-visible !overflow-y-visible"
+              className="w-[300px] rounded-xl p-0 shadow-md bg-sidebar"
               side={isMobile ? "bottom" : "right"}
               align="start"
               sideOffset={4}
             >
-              {/* Org section */}
-              <div className="relative px-1.5 pt-2 pb-1">
-                <div className="flex items-center justify-between px-2 pb-1.5">
-                  <span className={SECTION_LABEL_CLASS}>Organization</span>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="inline-flex">
-                        <button
-                          type="button"
-                          aria-label="New organization"
-                          disabled={!canCreateOrganization}
-                          onClick={() => {
-                            if (!canCreateOrganization) return;
-                            setShowCreateOrgDialog(true);
-                            setChipPopoverOpen(false);
-                            setMenuOpen(false);
-                          }}
-                          className="p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground/70 disabled:cursor-not-allowed"
-                        >
-                          <Plus className="size-3.5" />
-                        </button>
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent side="top" sideOffset={6}>
-                      {canCreateOrganization
-                        ? "New organization"
-                        : "You can only create one organization. Ask to be invited to others."}
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-                <div
-                  className="group/orgchip flex items-center gap-1 rounded-lg hover:bg-accent transition-colors"
-                  // Hover-to-open is desktop-only. On touch devices iOS fires a
-                  // synthetic mouseleave right after tap, which would schedule the
-                  // popover to close ~120ms after it opens. Tap-to-toggle (the
-                  // chip-button onClick) is the mobile interaction.
-                  onMouseEnter={
-                    isMobile || showSignInChip ? undefined : openOrgPopover
-                  }
-                  onMouseLeave={
-                    isMobile || showSignInChip
-                      ? undefined
-                      : scheduleCloseOrgPopover
-                  }
-                >
-                  <button
-                    type="button"
-                    data-testid="org-chip-button"
-                    onClick={() => {
-                      if (showSignInChip) {
-                        signIn();
-                        setMenuOpen(false);
-                        return;
-                      }
-                      setChipPopoverOpen((o) => !o);
-                    }}
-                    onFocus={
-                      isMobile || showSignInChip ? undefined : openOrgPopover
-                    }
-                    className="flex-1 flex items-center gap-2.5 pl-2 py-1.5 text-left min-w-0 rounded-l-lg"
-                  >
-                    {showSignInChip ? (
-                      <div className="flex items-center justify-center size-6 rounded-md bg-primary/10 text-primary shrink-0">
-                        <LogIn className="size-3.5" />
-                      </div>
-                    ) : activeOrg ? (
-                      <div
-                        className={cn(
-                          "flex items-center justify-center size-6 rounded-md text-[11px] font-semibold shrink-0",
-                          activeOrgTint!.bg,
-                          activeOrgTint!.fg
-                        )}
-                      >
-                        {activeOrg.name.charAt(0).toUpperCase()}
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-center size-6 rounded-md bg-muted text-muted-foreground shrink-0">
-                        <Building2 className="size-3.5" />
-                      </div>
-                    )}
-                    <span className="flex-1 min-w-0 text-[13px] font-medium truncate">
-                      {showSignInChip
-                        ? "Sign in"
-                        : (activeOrg?.name ?? "No organization")}
-                    </span>
-                    {/* Tap affordance — mobile only. Desktop relies on hover. */}
-                    {isMobile && !showSignInChip ? (
-                      <ChevronDown
-                        aria-hidden="true"
-                        className={cn(
-                          "size-3.5 mr-1 text-muted-foreground/70 shrink-0 transition-transform",
-                          chipPopoverOpen && "rotate-180"
-                        )}
-                      />
-                    ) : null}
-                  </button>
-                  {/* Settings gear on hover — mirrors the per-project row's
-                      gear so the current org has the same affordance. */}
-                  {!showSignInChip && activeOrg && onSwitchOrganization ? (
-                    <button
-                      type="button"
-                      aria-label={`Open ${activeOrg.name} settings`}
-                      title={`Open ${activeOrg.name} settings`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSwitchOrganization(activeOrg._id, "overview");
-                        setChipPopoverOpen(false);
-                        setMenuOpen(false);
-                      }}
-                      className="mr-1 p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors opacity-0 group-hover/orgchip:opacity-100 group-focus-within/orgchip:opacity-100"
-                    >
-                      <Settings className="size-3.5" />
-                    </button>
-                  ) : null}
-                </div>
-                {chipPopoverOpen && !showSignInChip ? (
-                  <div
-                    data-testid="org-popover"
-                    onMouseEnter={isMobile ? undefined : openOrgPopover}
-                    onMouseLeave={
-                      isMobile ? undefined : scheduleCloseOrgPopover
-                    }
-                    className={cn(
-                      "absolute z-10 rounded-lg border border-border bg-sidebar shadow-lg p-1",
-                      // On mobile the dropdown lives at the screen edge, so expanding
-                      // to the side would be clipped. Drop the popover below the chip
-                      // instead — it overlays the projects list while open.
-                      isMobile
-                        ? "left-2 right-2 top-[calc(100%+4px)]"
-                        : "left-[calc(100%+6px)] top-2 w-[260px]"
-                    )}
-                  >
-                    {sortedOrganizations.length === 0 ? (
-                      <div className="px-2 py-3 text-xs text-muted-foreground">
-                        No organizations yet
-                      </div>
-                    ) : (
-                      sortedOrganizations.map((org) => {
-                        const tint = getOrgTint(org._id);
-                        return (
-                          <div
-                            key={org._id}
-                            role="menuitem"
-                            tabIndex={0}
-                            data-testid={`org-row-${org._id}`}
-                            onClick={() => {
-                              if (org._id !== activeOrganizationId) {
-                                onSwitchActiveOrganization?.(org._id);
-                              }
-                              setChipPopoverOpen(false);
-                              setMenuOpen(false);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                if (org._id !== activeOrganizationId) {
-                                  onSwitchActiveOrganization?.(org._id);
-                                }
-                                setChipPopoverOpen(false);
-                                setMenuOpen(false);
-                              }
-                            }}
-                            className={cn(
-                              "group/org flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] cursor-pointer",
-                              org._id === activeOrganizationId
-                                ? "bg-accent"
-                                : "hover:bg-accent/60"
-                            )}
-                          >
-                            <div
-                              className={cn(
-                                "flex items-center justify-center size-5 rounded text-[10px] font-semibold shrink-0",
-                                tint.bg,
-                                tint.fg
-                              )}
-                            >
-                              {org.name.charAt(0).toUpperCase()}
-                            </div>
-                            <span className="flex-1 truncate font-medium">
-                              {org.name}
-                            </span>
-                            {onSwitchOrganization ? (
-                              <button
-                                type="button"
-                                aria-label={`Open ${org.name} settings`}
-                                title={`Open ${org.name} settings`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onSwitchOrganization(org._id, "overview");
-                                  setMenuOpen(false);
-                                }}
-                                className="p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors opacity-0 group-hover/org:opacity-100 group-focus-within/org:opacity-100"
-                              >
-                                <Settings className="size-3.5" />
-                              </button>
-                            ) : null}
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                ) : null}
-
-                {/* Active org's shared credit usage, shown right below the
-                    org so it's always visible (not hidden behind a hover). */}
-                {!showSignInChip && activeOrganizationId ? (
-                  <div className="px-0.5 pt-1">
-                    <SidebarCreditUsage
-                      variant="full"
-                      organizationId={activeOrganizationId}
-                      onClick={
-                        activeOrg && onSwitchOrganization
-                          ? () => {
-                              onSwitchOrganization(activeOrg._id, "billing");
-                              setChipPopoverOpen(false);
-                              setMenuOpen(false);
-                            }
-                          : undefined
-                      }
-                    />
-                  </div>
-                ) : null}
-              </div>
-
-              {/* Inset hairline divider */}
-              <div className="mx-3 my-0.5 h-px bg-border/70" />
-
-              {/* Projects section */}
+              {/* Projects section — the frequent operation owns the body */}
               <div className="px-1.5 pt-2 pb-1">
                 <div className="flex items-center justify-between px-2 pb-1.5">
                   <span className={SECTION_LABEL_CLASS}>Projects</span>
@@ -568,6 +339,186 @@ export function SidebarContextSwitcher({
                     ))
                   )}
                 </div>
+              </div>
+
+              {/* Inset hairline divider */}
+              <div className="mx-3 my-0.5 h-px bg-border/70" />
+
+              {/* Org footer — ambient context, not a destination */}
+              <div className="px-1.5 pt-1 pb-1.5">
+                {showSignInChip ? (
+                  <button
+                    type="button"
+                    data-testid="org-sign-in-button"
+                    onClick={() => {
+                      signIn();
+                      setMenuOpen(false);
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-accent transition-colors"
+                  >
+                    <div className="flex items-center justify-center size-6 rounded-md bg-primary/10 text-primary shrink-0">
+                      <LogIn className="size-3.5" />
+                    </div>
+                    <span className="flex-1 min-w-0 text-[13px] font-medium truncate">
+                      Sign in
+                    </span>
+                  </button>
+                ) : (
+                  <>
+                    <div
+                      data-testid="org-context-row"
+                      className="group/orgrow flex items-center gap-2.5 rounded-lg px-2 py-1.5"
+                    >
+                      {activeOrg ? (
+                        <div
+                          className={cn(
+                            "flex items-center justify-center size-6 rounded-md text-[11px] font-semibold shrink-0",
+                            activeOrgTint!.bg,
+                            activeOrgTint!.fg
+                          )}
+                        >
+                          {activeOrg.name.charAt(0).toUpperCase()}
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-center size-6 rounded-md bg-muted text-muted-foreground shrink-0">
+                          <Building2 className="size-3.5" />
+                        </div>
+                      )}
+                      <span className="flex-1 min-w-0 text-[13px] font-medium truncate">
+                        {activeOrg?.name ?? "No organization"}
+                      </span>
+                      {activeOrg && onSwitchOrganization ? (
+                        <button
+                          type="button"
+                          aria-label={`Open ${activeOrg.name} settings`}
+                          title={`Open ${activeOrg.name} settings`}
+                          onClick={() => {
+                            onSwitchOrganization(activeOrg._id, "overview");
+                            setMenuOpen(false);
+                          }}
+                          className="p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors opacity-0 group-hover/orgrow:opacity-100 group-focus-within/orgrow:opacity-100"
+                        >
+                          <Settings className="size-3.5" />
+                        </button>
+                      ) : null}
+                    </div>
+
+                    {/* Active org's shared credit usage, right below the org name */}
+                    {activeOrganizationId ? (
+                      <div className="px-0.5 pt-1">
+                        <SidebarCreditUsage
+                          variant="full"
+                          organizationId={activeOrganizationId}
+                          onClick={
+                            activeOrg && onSwitchOrganization
+                              ? () => {
+                                  onSwitchOrganization(
+                                    activeOrg._id,
+                                    "billing"
+                                  );
+                                  setMenuOpen(false);
+                                }
+                              : undefined
+                          }
+                        />
+                      </div>
+                    ) : null}
+
+                    {canSwitchOrganizations ? (
+                      <button
+                        type="button"
+                        data-testid="switch-org-button"
+                        aria-expanded={orgListOpen}
+                        onClick={() => setOrgListOpen((o) => !o)}
+                        className="mt-0.5 flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors"
+                      >
+                        <div className="flex items-center justify-center size-5 rounded bg-muted shrink-0">
+                          <ArrowLeftRight className="size-3" />
+                        </div>
+                        <span className="flex-1 truncate text-left font-medium">
+                          Switch organization
+                        </span>
+                        <ChevronDown
+                          aria-hidden="true"
+                          className={cn(
+                            "size-3.5 shrink-0 transition-transform",
+                            orgListOpen && "rotate-180"
+                          )}
+                        />
+                      </button>
+                    ) : null}
+
+                    {canSwitchOrganizations && orgListOpen ? (
+                      <div data-testid="org-switch-list" className="mt-0.5">
+                        {sortedOrganizations.map((org) => {
+                          const tint = getOrgTint(org._id);
+                          return (
+                            <div
+                              key={org._id}
+                              role="menuitem"
+                              tabIndex={0}
+                              data-testid={`org-row-${org._id}`}
+                              onClick={() => {
+                                if (org._id !== activeOrganizationId) {
+                                  onSwitchActiveOrganization?.(org._id);
+                                }
+                                setMenuOpen(false);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  if (org._id !== activeOrganizationId) {
+                                    onSwitchActiveOrganization?.(org._id);
+                                  }
+                                  setMenuOpen(false);
+                                }
+                              }}
+                              className={cn(
+                                "group/org flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] cursor-pointer",
+                                org._id === activeOrganizationId
+                                  ? "bg-accent"
+                                  : "hover:bg-accent/60"
+                              )}
+                            >
+                              <div
+                                className={cn(
+                                  "flex items-center justify-center size-5 rounded text-[10px] font-semibold shrink-0",
+                                  tint.bg,
+                                  tint.fg
+                                )}
+                              >
+                                {org.name.charAt(0).toUpperCase()}
+                              </div>
+                              <span className="flex-1 truncate font-medium">
+                                {org.name}
+                              </span>
+                              {onSwitchOrganization ? (
+                                <button
+                                  type="button"
+                                  aria-label={`Open ${org.name} settings`}
+                                  title={`Open ${org.name} settings`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onSwitchOrganization(org._id, "overview");
+                                    setMenuOpen(false);
+                                  }}
+                                  className="p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors opacity-0 group-hover/org:opacity-100 group-focus-within/org:opacity-100"
+                                >
+                                  <Settings className="size-3.5" />
+                                </button>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                        {newOrganizationRow}
+                      </div>
+                    ) : null}
+
+                    {/* No second org to switch to: surface create directly
+                        (only renders for users who don't already own one). */}
+                    {!canSwitchOrganizations ? newOrganizationRow : null}
+                  </>
+                )}
               </div>
             </DropdownMenuContent>
           </DropdownMenu>

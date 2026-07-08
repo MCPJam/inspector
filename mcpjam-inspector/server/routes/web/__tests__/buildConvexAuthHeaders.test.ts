@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { Context } from "hono";
-import { buildConvexAuthHeaders } from "../auth.js";
+import { buildConvexAuthHeaders, callerContextFromHono } from "../auth.js";
 
 const SERVICE_TOKEN = "svc-token-test";
 const ORIGINAL_ENV = process.env.INSPECTOR_SERVICE_TOKEN;
@@ -37,7 +37,7 @@ describe("buildConvexAuthHeaders — WorkOS API key exchange", () => {
       mcpjamOrganizationId: "org_42",
     });
 
-    const headers = buildConvexAuthHeaders(c, "sk_should_not_be_forwarded");
+    const headers = buildConvexAuthHeaders(callerContextFromHono(c), "sk_should_not_be_forwarded");
 
     expect(headers["Authorization"]).toBe(`Bearer ${SERVICE_TOKEN}`);
     expect(headers["x-mcpjam-acting-as"]).toBe("workos|user_42");
@@ -52,7 +52,7 @@ describe("buildConvexAuthHeaders — WorkOS API key exchange", () => {
       authMethod: "workos_api_key",
       mcpjamOrganizationId: "org_42",
     });
-    expect(() => buildConvexAuthHeaders(c, "sk_x")).toThrow(/workosUserId/);
+    expect(() => buildConvexAuthHeaders(callerContextFromHono(c), "sk_x")).toThrow(/workosUserId/);
   });
 
   it("throws when the bound org id is missing", () => {
@@ -60,7 +60,7 @@ describe("buildConvexAuthHeaders — WorkOS API key exchange", () => {
       authMethod: "workos_api_key",
       workosUserId: "workos|user_42",
     });
-    expect(() => buildConvexAuthHeaders(c, "sk_x")).toThrow(
+    expect(() => buildConvexAuthHeaders(callerContextFromHono(c), "sk_x")).toThrow(
       /mcpjamOrganizationId/,
     );
   });
@@ -69,7 +69,7 @@ describe("buildConvexAuthHeaders — WorkOS API key exchange", () => {
 describe("buildConvexAuthHeaders — non-API-key path", () => {
   it("forwards the original bearer verbatim and adds no delegation headers", () => {
     const c = fakeContext({}); // no authMethod → session/guest JWT
-    const headers = buildConvexAuthHeaders(c, "eyJ-session-jwt");
+    const headers = buildConvexAuthHeaders(callerContextFromHono(c), "eyJ-session-jwt");
 
     expect(headers["Authorization"]).toBe("Bearer eyJ-session-jwt");
     expect(headers["x-mcpjam-acting-as"]).toBeUndefined();

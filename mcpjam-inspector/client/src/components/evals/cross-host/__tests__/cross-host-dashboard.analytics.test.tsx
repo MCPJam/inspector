@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import type {
   EvalCase,
   EvalIteration,
@@ -72,13 +72,15 @@ function makeIteration(
   suiteRunId: string,
   testCaseId: string,
 ): EvalIteration {
+  const now = Date.now();
   return {
     _id: id,
     suiteRunId,
     testCaseId,
     createdBy: "u1",
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
+    createdAt: now,
+    updatedAt: now + 5000,
+    startedAt: now,
     iterationNumber: 1,
     status: "completed",
     result: "passed",
@@ -86,6 +88,18 @@ function makeIteration(
     actualToolCalls: [],
     tokensUsed: 0,
   } as EvalIteration;
+}
+
+function makeRunWithTime(
+  id: string,
+  namedHostId: string,
+  createdAt: number,
+): EvalSuiteRun {
+  return {
+    ...makeRun(id, namedHostId),
+    createdAt,
+    completedAt: createdAt + 1000,
+  } as EvalSuiteRun;
 }
 
 describe("CrossHostDashboard analytics", () => {
@@ -215,6 +229,47 @@ describe("CrossHostDashboard analytics", () => {
     const payload = captureMock.mock.calls[0][1];
     expect(payload.has_host_attachments).toBe(false);
     expect(payload.host_count).toBe(0);
+  });
+
+  it("renders cell trend UI when cellTrends is enabled and history exists", () => {
+    const suite = makeSuite([{ namedHostId: "h1", hostName: "Claude" }]);
+    const cases = [makeCase("c1")];
+    const run1 = makeRunWithTime("r1", "h1", 1000);
+    const run2 = makeRunWithTime("r2", "h1", 2000);
+    const iter1 = makeIteration("i1", "r1", "c1");
+    const iter2 = makeIteration("i2", "r2", "c1");
+    const { container } = render(
+      <CrossHostDashboard
+        suite={suite}
+        cases={cases}
+        runs={[run1, run2]}
+        allIterations={[iter1, iter2]}
+        cellTrends
+        expanded
+      />,
+    );
+    expect(container.querySelector('[data-testid="cell-metric-strip"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="metric-sparkline-latency"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="metric-sparkline-tokens"]')).not.toBeNull();
+  });
+
+  it("does not render cell trend UI when cellTrends is disabled", () => {
+    const suite = makeSuite([{ namedHostId: "h1", hostName: "Claude" }]);
+    const cases = [makeCase("c1")];
+    const run1 = makeRunWithTime("r1", "h1", 1000);
+    const run2 = makeRunWithTime("r2", "h1", 2000);
+    const iter1 = makeIteration("i1", "r1", "c1");
+    const iter2 = makeIteration("i2", "r2", "c1");
+    const { container } = render(
+      <CrossHostDashboard
+        suite={suite}
+        cases={cases}
+        runs={[run1, run2]}
+        allIterations={[iter1, iter2]}
+        expanded
+      />,
+    );
+    expect(container.querySelector('[data-testid="cell-metric-strip"]')).toBeNull();
   });
 
   it("does not throw when posthog.capture throws", () => {

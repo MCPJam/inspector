@@ -753,7 +753,18 @@ export function EvalsSuiteListSidebar({
                   {visibleSuites.map((entry) => {
                     const suite = entry.suite;
                     const isSelected = selectedSuiteId === suite._id;
-                    const isThisSuiteRerunning = rerunningSuiteId === suite._id;
+                    const latestRunInProgress =
+                      entry.latestRun?.status === "running" ||
+                      entry.latestRun?.status === "pending";
+                    const isThisSuiteRerunning =
+                      rerunningSuiteId === suite._id || latestRunInProgress;
+                    const rowRunAllBlocked =
+                      runAllBlocked || latestRunInProgress;
+                    const rowRunAllDisabledReason =
+                      runAllDisabledReason ??
+                      (latestRunInProgress
+                        ? "A suite run is already in progress."
+                        : null);
 
                     return (
                       <SuiteOverviewRow
@@ -767,8 +778,8 @@ export function EvalsSuiteListSidebar({
                         onSelectSuite={onSelectSuite}
                         onRunAll={onRunAll}
                         onEditSuite={onEditSuite}
-                        runAllBlocked={runAllBlocked}
-                        runAllDisabledReason={runAllDisabledReason}
+                        runAllBlocked={rowRunAllBlocked}
+                        runAllDisabledReason={rowRunAllDisabledReason}
                         isThisSuiteRerunning={isThisSuiteRerunning}
                       />
                     );

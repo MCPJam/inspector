@@ -26,6 +26,15 @@ vi.mock("@/lib/PosthogUtils", () => ({
   standardEventProps: () => ({}),
 }));
 
+// The dialog reads the persona roster via Convex (usePersonaRoster -> useQuery).
+// These configure-stage tests render it without a ConvexProvider, so stub the
+// roster hooks: an undefined roster simply hides the stage-1 roster section.
+vi.mock("@/components/chatboxes/personas", () => ({
+  usePersonaRoster: () => undefined,
+  useSortedRoster: (roster: unknown) => roster,
+  PersonaCard: () => null,
+}));
+
 const baseChatbox: ChatboxSettings = {
   chatboxId: "cb_1",
   projectId: "proj_1",

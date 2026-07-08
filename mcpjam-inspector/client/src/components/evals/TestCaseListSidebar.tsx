@@ -28,6 +28,7 @@ import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import type { EvalCase, EvalSuite } from "./types";
 import { getEffectiveSuiteServers } from "./helpers";
+import { isModelFree } from "@/shared/steps";
 import {
   formatCaseTitleForSidebar,
   getEvalCaseSidebarGroupKey,
@@ -118,8 +119,12 @@ export function TestCaseListSidebar({
   const missingServers = suiteServers.filter(
     (serverName) => !connectedServerNames?.has(serverName),
   );
+  const selectedCaseIsProbe = selectedTestCase
+    ? isModelFree(selectedTestCase.steps)
+    : false;
   const canRunSelectedCase =
     Boolean(selectedTestCase) &&
+    !selectedCaseIsProbe &&
     Boolean(selectedTestCase?.models?.length) &&
     Boolean(suite) &&
     Boolean(onRunTestCase) &&
@@ -209,15 +214,17 @@ export function TestCaseListSidebar({
                   ? "Add cases first"
                   : !selectedTestCase
                     ? "Select a case first"
-                    : !selectedTestCase.models?.length
-                      ? "Add a model first"
-                      : !hasConfiguredSuiteServers
-                        ? "Configure suite servers first"
-                        : missingServers.length > 0
-                          ? "Connect and run."
-                        : isRunningSelectedCase
-                          ? "Running..."
-                          : "Run selected case"}
+                    : selectedCaseIsProbe
+                      ? "Render checks run with the full suite or on its schedule"
+                      : !selectedTestCase.models?.length
+                        ? "Add a model first"
+                        : !hasConfiguredSuiteServers
+                          ? "Configure suite servers first"
+                          : missingServers.length > 0
+                            ? "Connect and run."
+                            : isRunningSelectedCase
+                              ? "Running..."
+                              : "Run selected case"}
               </TooltipContent>
             </Tooltip>
           ) : null}

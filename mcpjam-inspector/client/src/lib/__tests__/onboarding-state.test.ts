@@ -26,7 +26,7 @@ describe("onboarding-state", () => {
     it("marks onboarding as started before the NUX is shown", () => {
       markOnboardingStarted();
       expect(readOnboardingState()).toEqual(
-        expect.objectContaining({ status: "started" }),
+        expect.objectContaining({ status: "started" })
       );
     });
 
@@ -34,7 +34,7 @@ describe("onboarding-state", () => {
       markOnboardingStarted();
       markOnboardingShown();
       expect(readOnboardingState()).toEqual(
-        expect.objectContaining({ status: "seen", shownAt: expect.any(Number) }),
+        expect.objectContaining({ status: "seen", shownAt: expect.any(Number) })
       );
     });
 
@@ -52,7 +52,7 @@ describe("onboarding-state", () => {
     it("returns null for invalid status", () => {
       localStorage.setItem(
         "mcp-onboarding-state",
-        JSON.stringify({ status: "invalid" }),
+        JSON.stringify({ status: "invalid" })
       );
       expect(readOnboardingState()).toBeNull();
     });
@@ -111,6 +111,22 @@ describe("onboarding-state", () => {
       expect(isFirstRunEligible(false, "", true)).toBe(false);
     });
 
+    it("returns true for a brand-new signed-in account (not yet onboarded)", () => {
+      // isSignedInWithWorkOs=true but isNewSignedInAccount=true and the remote
+      // onboarding flag is false → genuinely-new signups get the first-run NUX.
+      expect(isFirstRunEligible(false, "", true, false, true)).toBe(true);
+    });
+
+    it("returns false for a new signed-in account that already saw onboarding", () => {
+      expect(isFirstRunEligible(false, "", true, true, true)).toBe(false);
+    });
+
+    it("returns false for a signed-in account that is not flagged new", () => {
+      // Older/returning accounts (isNewSignedInAccount=false) stay on Home even
+      // when their remote onboarding flag was never set.
+      expect(isFirstRunEligible(false, "", true, false, false)).toBe(false);
+    });
+
     it("does not treat guest Convex auth as signed-in WorkOS state", () => {
       expect(isFirstRunEligible(false, "", false)).toBe(true);
     });
@@ -119,6 +135,19 @@ describe("onboarding-state", () => {
       writeOnboardingState({ status: "seen", shownAt: Date.now() });
       expect(isFirstRunEligible(false, "", false, false)).toBe(true);
       expect(isFirstRunEligible(false, "", false, true)).toBe(false);
+    });
+
+    it("local completed state beats a remote false (fresh guest session)", () => {
+      // Guest Convex sessions start with hasSeenOnboarding: false on a new
+      // user row. That must not override a locally-completed state from a
+      // previous session or NUX completion.
+      writeOnboardingState({ status: "completed", completedAt: Date.now() });
+      expect(isFirstRunEligible(false, "", false, false)).toBe(false);
+    });
+
+    it("local dismissed state beats a remote false (fresh guest session)", () => {
+      writeOnboardingState({ status: "dismissed" });
+      expect(isFirstRunEligible(false, "", false, false)).toBe(false);
     });
 
     it("returns false when onboarding was completed", () => {

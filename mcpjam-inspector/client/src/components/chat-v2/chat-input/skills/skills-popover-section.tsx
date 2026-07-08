@@ -6,7 +6,11 @@ import {
 import { cn } from "@/lib/chat-utils";
 import { SquareSlash, Loader2 } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
-import { listSkills, getSkill } from "@/lib/apis/mcp-skills-api";
+import {
+  listSkills,
+  getSkill,
+  type SkillsSource,
+} from "@/lib/apis/mcp-skills-api";
 import type { SkillListItem, SkillResult } from "./skill-types";
 import { usePostHog } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -19,6 +23,8 @@ interface SkillsPopoverSectionProps {
   isHovering: boolean;
   actionTrigger: string | null;
   onOpenUploadDialog?: () => void;
+  /** When set, list/load skills from the cloud (Convex/Computer) source. */
+  skillsSource?: SkillsSource;
 }
 
 export function SkillsPopoverSection({
@@ -29,6 +35,7 @@ export function SkillsPopoverSection({
   isHovering,
   actionTrigger,
   onOpenUploadDialog,
+  skillsSource,
 }: SkillsPopoverSectionProps) {
   const posthog = usePostHog();
   const [skills, setSkills] = useState<SkillListItem[]>([]);
@@ -41,7 +48,7 @@ export function SkillsPopoverSection({
     (async () => {
       try {
         setIsLoading(true);
-        const skillsList = await listSkills();
+        const skillsList = await listSkills(skillsSource);
         if (!active) return;
         setSkills(skillsList);
       } catch (err) {
@@ -56,18 +63,20 @@ export function SkillsPopoverSection({
     return () => {
       active = false;
     };
-  }, []);
+  }, [skillsSource]);
 
   const handleSkillClick = useCallback(
     async (skill: SkillListItem) => {
       try {
         setLoadingSkillName(skill.name);
-        const fullSkill = await getSkill(skill.name);
+        const fullSkill = await getSkill(skill.name, skillsSource);
         posthog.capture("skill_injected", {
           skill_name: skill.name,
           ...standardEventProps("chat_input_skills_popover"),
         });
-        onSkillSelected(fullSkill);
+        // Stamp the source onto the result so later file reads (expanding the
+        // card) stay pinned to the project it was selected from.
+        onSkillSelected({ ...fullSkill, source: skillsSource });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error("[SkillsPopoverSection] Failed to get skill", message);
@@ -75,7 +84,7 @@ export function SkillsPopoverSection({
         setLoadingSkillName(null);
       }
     },
-    [onSkillSelected],
+    [onSkillSelected, skillsSource],
   );
 
   // Handle Enter key on highlighted skill
@@ -164,7 +173,10 @@ export function SkillsPopoverSection({
 }
 
 // Export the skill count getter for the parent popover to calculate navigation
-export function useSkillsCount(): { count: number; isLoading: boolean } {
+export function useSkillsCount(skillsSource?: SkillsSource): {
+  count: number;
+  isLoading: boolean;
+} {
   const [count, setCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -172,7 +184,7 @@ export function useSkillsCount(): { count: number; isLoading: boolean } {
     let active = true;
     (async () => {
       try {
-        const skills = await listSkills();
+        const skills = await listSkills(skillsSource);
         if (!active) return;
         setCount(skills.length);
       } catch {
@@ -186,7 +198,7 @@ export function useSkillsCount(): { count: number; isLoading: boolean } {
     return () => {
       active = false;
     };
-  }, []);
+  }, [skillsSource]);
 
   return { count, isLoading };
 }

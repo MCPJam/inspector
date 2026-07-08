@@ -1,5 +1,6 @@
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { MCPAppsRenderer } from "./mcp-apps/mcp-apps-renderer";
+import { InspectorWidgetHostProvider } from "./mcp-apps/use-widget-host";
 import type { ToolState } from "./mcp-apps/useToolInputStreaming";
 import type { ToolRenderOverride } from "./tool-render-overrides";
 import {
@@ -8,13 +9,13 @@ import {
   UIType,
 } from "@/lib/mcp-ui/mcp-apps-utils";
 import { getToolServerId, type ToolServerMap } from "@/lib/apis/mcp-tools-api";
-import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
-import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 import {
   readToolResultMeta,
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
-import type { DisplayMode } from "@/stores/ui-playground-store";
+// DisplayMode comes from the WidgetHost contract module (re-exported there) so
+// this cluster file stays free of `@/stores` (Tier-B guard).
+import type { DisplayMode } from "./mcp-apps/widget-host";
 import type { AppToolInvocationUpdate } from "./app-tool-invocations";
 
 export interface WidgetReplayProps {
@@ -29,6 +30,13 @@ export interface WidgetReplayProps {
   toolMetadata?: Record<string, unknown>;
   toolsMetadata?: Record<string, Record<string, any>>;
   toolServerMap?: ToolServerMap;
+  /**
+   * Overrides the `toolResponseMetadata` (window.openai.toolResponseMetadata)
+   * the widget receives. Used when the visible result came from a re-Run, whose
+   * fresh `_meta` must reach the widget while `rawOutput` stays the original so
+   * serverId / uiType / binding derivation is unaffected.
+   */
+  toolResponseMetadataOverride?: Record<string, unknown>;
   renderOverride?: ToolRenderOverride;
   onSendFollowUp?: (text: string) => void;
   onCallTool?: (
@@ -54,7 +62,31 @@ export interface WidgetReplayProps {
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onAppSupportedDisplayModesChange?: (modes: DisplayMode[] | undefined) => void;
+  /**
+   * Host policy gate: returns whether the active host advertises the MCP UI
+   * extension for the tool's server. Injected by the caller (PartSwitch), which
+   * owns the inspector host-capabilities context; WidgetReplay applies it with
+   * its own resolved `serverId`. Defaults to permissive (`() => true`), matching
+   * the legacy `hostSupportsWidgetRendering(undefined) === true` behavior for
+   * surfaces mounted without a host-capabilities scope (keeps this cluster file
+   * free of `@/contexts` / `@/lib/host-capabilities` per the Tier-B guard).
+   */
+  resolveHostSupportsWidget?: (serverId: string | undefined) => boolean;
   minimalMode?: boolean;
+  /** Tier 2 recorder — forwarded to MCPAppsRenderer. Default off. */
+  recordMode?: boolean;
+  onRecorderStep?: (step: unknown) => void;
+  onRecorderReady?: () => void;
+  /** Replay controller publisher — forwarded to MCPAppsRenderer. */
+  onReplayControllerReady?: (
+    replay:
+      | ((step: unknown) => Promise<{
+          ok: boolean;
+          reason?: string;
+          deferred?: string;
+        }>)
+      | null
+  ) => void;
 }
 
 export function WidgetReplay({
@@ -69,6 +101,7 @@ export function WidgetReplay({
   toolMetadata,
   toolsMetadata = {},
   toolServerMap = {},
+  toolResponseMetadataOverride,
   renderOverride,
   onSendFollowUp,
   onCallTool,
@@ -85,9 +118,13 @@ export function WidgetReplay({
   displayMode,
   onDisplayModeChange,
   onAppSupportedDisplayModesChange,
+  resolveHostSupportsWidget = () => true,
   minimalMode = false,
+  recordMode,
+  onRecorderStep,
+  onRecorderReady,
+  onReplayControllerReady,
 }: WidgetReplayProps) {
-  const resolveHostCaps = useActiveHostCapsResolver();
   const effectiveToolMeta =
     renderOverride?.toolMetadata ??
     toolMetadata ??
@@ -111,11 +148,13 @@ export function WidgetReplay({
   // (which decides between ToolPart and WidgetReplay). Re-checking here
   // means a host that strips the MCP UI extension never renders a widget
   // even on code paths that mount WidgetReplay directly (transcript
-  // thread, trace viewer adapters, future callers). `serverId` (computed
-  // above) is passed through so any per-server `clientCapabilities`
-  // override is honored, matching `initialize`.
+  // thread, trace viewer adapters, future callers). The caller injects
+  // `resolveHostSupportsWidget` (PartSwitch binds it to the inspector
+  // host-capabilities context); `serverId` (computed above) is passed
+  // through so any per-server `clientCapabilities` override is honored,
+  // matching `initialize`.
   const hasUi =
-    hostSupportsWidgetRendering(resolveHostCaps(serverId ?? undefined)) &&
+    resolveHostSupportsWidget(serverId ?? undefined) &&
     (uiType === UIType.MCP_APPS ||
       uiType === UIType.OPENAI_SDK ||
       uiType === UIType.OPENAI_SDK_AND_MCP_APPS);
@@ -147,52 +186,63 @@ export function WidgetReplay({
   // Computed from `rawOutput` so the `{ value, _meta }` wrapper case
   // (where `toolOutput` is the unwrapped value and lacks `_meta`)
   // resolves correctly via readToolResultMeta's two-level check.
-  const toolResponseMetadata = (readToolResultMeta(rawOutput) ??
+  const toolResponseMetadata = (toolResponseMetadataOverride ??
+    readToolResultMeta(rawOutput) ??
     readToolResultMeta(toolOutput)) as Record<string, unknown> | undefined;
 
+  // The relocated renderer reads its host via the package `useWidgetHost()`
+  // context. Provide it here — this is the inline mount boundary for every
+  // surface that renders <WidgetReplay> (chat thread, tools panel, transcript)
+  // and only runs the host-composing hook once a widget actually mounts.
   return (
-    <MCPAppsRenderer
-      chatSessionId={chatSessionId}
-      serverId={serverId ?? "offline-view"}
-      serverName={serverId ?? "offline-view"}
-      toolCallId={toolCallId}
-      toolName={toolName}
-      toolState={toolState}
-      toolInput={toolInput ?? undefined}
-      toolOutput={resolvedToolOutput}
-      toolResponseMetadata={toolResponseMetadata ?? null}
-      toolErrorText={toolErrorText}
-      resourceUri={uiResourceUri ?? "mcp://offline/view"}
-      toolMetadata={effectiveToolMeta}
-      toolsMetadata={toolsMetadata}
-      onSendFollowUp={onSendFollowUp}
-      onCallTool={onCallTool}
-      onAppToolInvocationChange={onAppToolInvocationChange}
-      onWidgetStateChange={onWidgetStateChange}
-      onModelContextUpdate={onModelContextUpdate}
-      pipWidgetId={pipWidgetId}
-      fullscreenWidgetId={fullscreenWidgetId}
-      onRequestPip={onRequestPip}
-      onExitPip={onExitPip}
-      displayMode={displayMode}
-      onDisplayModeChange={onDisplayModeChange}
-      onRequestFullscreen={onRequestFullscreen}
-      onExitFullscreen={onExitFullscreen}
-      onAppSupportedDisplayModesChange={onAppSupportedDisplayModesChange}
-      onRequestTeardown={onRequestTeardown}
-      isOffline={renderOverride?.isOffline}
-      cachedWidgetHtmlUrl={renderOverride?.cachedWidgetHtmlUrl}
-      liveFetchPreferred={renderOverride?.liveFetchPreferred}
-      widgetCsp={renderOverride?.widgetCsp}
-      widgetPermissions={renderOverride?.widgetPermissions}
-      widgetPermissive={renderOverride?.widgetPermissive}
-      prefersBorder={renderOverride?.prefersBorder}
-      injectedOpenAiCompat={renderOverride?.injectedOpenAiCompat}
-      injectedOpenAiCompatCapabilities={
-        renderOverride?.injectedOpenAiCompatCapabilities
-      }
-      initialWidgetState={renderOverride?.initialWidgetState}
-      minimalMode={minimalMode}
-    />
+    <InspectorWidgetHostProvider>
+      <MCPAppsRenderer
+        chatSessionId={chatSessionId}
+        serverId={serverId ?? "offline-view"}
+        serverName={serverId ?? "offline-view"}
+        toolCallId={toolCallId}
+        toolName={toolName}
+        toolState={toolState}
+        toolInput={toolInput ?? undefined}
+        toolOutput={resolvedToolOutput}
+        toolResponseMetadata={toolResponseMetadata ?? null}
+        toolErrorText={toolErrorText}
+        resourceUri={uiResourceUri ?? "mcp://offline/view"}
+        toolMetadata={effectiveToolMeta}
+        toolsMetadata={toolsMetadata}
+        onSendFollowUp={onSendFollowUp}
+        onCallTool={onCallTool}
+        onAppToolInvocationChange={onAppToolInvocationChange}
+        onWidgetStateChange={onWidgetStateChange}
+        onModelContextUpdate={onModelContextUpdate}
+        pipWidgetId={pipWidgetId}
+        fullscreenWidgetId={fullscreenWidgetId}
+        onRequestPip={onRequestPip}
+        onExitPip={onExitPip}
+        displayMode={displayMode}
+        onDisplayModeChange={onDisplayModeChange}
+        onRequestFullscreen={onRequestFullscreen}
+        onExitFullscreen={onExitFullscreen}
+        onAppSupportedDisplayModesChange={onAppSupportedDisplayModesChange}
+        onRequestTeardown={onRequestTeardown}
+        isOffline={renderOverride?.isOffline}
+        cachedWidgetHtmlUrl={renderOverride?.cachedWidgetHtmlUrl}
+        liveFetchPreferred={renderOverride?.liveFetchPreferred}
+        widgetCsp={renderOverride?.widgetCsp}
+        widgetPermissions={renderOverride?.widgetPermissions}
+        widgetPermissive={renderOverride?.widgetPermissive}
+        prefersBorder={renderOverride?.prefersBorder}
+        injectedOpenAiCompat={renderOverride?.injectedOpenAiCompat}
+        injectedOpenAiCompatCapabilities={
+          renderOverride?.injectedOpenAiCompatCapabilities
+        }
+        initialWidgetState={renderOverride?.initialWidgetState}
+        minimalMode={minimalMode}
+        recordMode={recordMode}
+        onRecorderStep={onRecorderStep}
+        onRecorderReady={onRecorderReady}
+        onReplayControllerReady={onReplayControllerReady}
+      />
+    </InspectorWidgetHostProvider>
   );
 }

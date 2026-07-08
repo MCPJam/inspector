@@ -27,13 +27,11 @@ type DropdownValue = "inherit" | "auto" | "latest" | "rc";
 const MCP_PROTOCOL_OPTIONS: Array<{
   value: DropdownValue;
   label: string;
-  /** When true, the option appears only with `stateless-mcp-enabled` flag. */
-  flagGated?: boolean;
 }> = [
   { value: "inherit", label: "Host default" },
   { value: "auto", label: "Auto (detect)" },
   { value: "latest", label: "Latest (2025-11-25)" },
-  { value: "rc", label: "2026 RC (2026-07-28)", flagGated: true },
+  { value: "rc", label: "2026 RC (2026-07-28)" },
 ];
 
 interface HeaderEntry {
@@ -67,13 +65,11 @@ interface AdvancedConnectionSettingsSectionProps {
   clientCapabilitiesOverrideError?: string | null;
   headersWarning?: string;
   /**
-   * Visibility flag for the protocol-version override row. Wired from
-   * `useFeatureFlagEnabled("stateless-mcp-enabled")` at the caller. When
-   * false, the entire dropdown is hidden AND the `2026-07-28` RC option
-   * is omitted from the option list (the RC option is the flag-gated
-   * piece; stateful options are always available behind the same flag).
-   * Defaults to false. Host-default JSON keeps working regardless —
-   * just no per-server affordance.
+   * Visibility for the protocol-version override row. Edit-server contexts
+   * (where the per-server override can be persisted on the project layer)
+   * pass true; the Add Server modal leaves it off since no project server
+   * ref exists yet. Defaults to false. Host-default JSON keeps working
+   * regardless — just no per-server affordance.
    */
   showMcpProtocolVersionOverride?: boolean;
   /**
@@ -94,6 +90,13 @@ interface AdvancedConnectionSettingsSectionProps {
    * UI filter is the user-friendly safety net).
    */
   transportKind?: "http" | "stdio" | "sse";
+  /**
+   * Whether the "Auto (detect)" option is offered. Gated on the
+   * stateless-MCP flag at the caller — without the connect-time Auto
+   * wiring the stored sentinel would have no effect. The rest of the
+   * dropdown (Host default / Latest / RC) is GA and always shown.
+   */
+  showAutoOption?: boolean;
 }
 
 export function AdvancedConnectionSettingsSection({
@@ -120,6 +123,7 @@ export function AdvancedConnectionSettingsSection({
   mcpProtocolVersionOverride,
   onMcpProtocolVersionOverrideChange,
   transportKind = "http",
+  showAutoOption = false,
 }: AdvancedConnectionSettingsSectionProps) {
   const showHeaderControls =
     customHeaders !== undefined &&
@@ -140,6 +144,7 @@ export function AdvancedConnectionSettingsSection({
   const isHttp = transportKind === "http";
   const visibleOptions = MCP_PROTOCOL_OPTIONS.filter((opt) => {
     if (opt.value === "rc" && !isHttp) return false;
+    if (opt.value === "auto" && !showAutoOption) return false;
     return true;
   });
   const selectedDropdownValue: DropdownValue =
@@ -314,11 +319,10 @@ export function AdvancedConnectionSettingsSection({
               (detect at connect time — safe on every transport);
               "Latest" → `"2025-11-25"` (legacy adapter + initialize
               handshake); "2026 RC" → `"2026-07-28"` (stateless RC
-              preview client). Gated by `stateless-mcp-enabled` at the
-              caller. The RC option is hidden on non-HTTP transports
-              because MCPJam's current stateless client requires
-              Streamable HTTP; Auto stays visible there because it
-              degrades to the legacy path instead of throwing. */}
+              preview client). The RC option is hidden on non-HTTP
+              transports because MCPJam's current stateless client
+              requires Streamable HTTP; Auto stays visible there because
+              it degrades to the legacy path instead of throwing. */}
           {showProtocolVersionControl && (
             <div className="space-y-1.5">
               <label

@@ -1,17 +1,20 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, CheckCircle2, AlertCircle } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { evaluateToolCalls } from "@/shared/eval-matching";
 import type { TraceViewerEvalToolCall } from "./trace-viewer";
 
 /**
- * Side-by-side expected vs actual tool-call diff.
+ * Expected-vs-actual tool-call diff, rendered as a single status-led ledger.
  *
- * Replaces two blob JsonEditor panels with a paired view that:
- *  - calls out the mismatch count up top with a "jump to first" affordance
- *  - pairs expected[i] / actual[i] in a single row
- *  - auto-expands rows that mismatch; collapses rows that match
- *  - highlights specific differing argument keys (red on expected, green on actual)
+ * The old layout promised an "Expected | Actual" two-column comparison but most
+ * verdicts are one-sided (match / extra / missing / wrong-tool) — only an
+ * argument diff is genuinely two-sided. So we collapse to one column where:
+ *  - a colored left rail carries the verdict (scan the edge for problems;
+ *    matches stay quiet, soft issues amber, hard misses red)
+ *  - each call's args are summarized inline so the gist needs no expand
+ *  - expanding shows full args; an arg diff expands to a compact per-key
+ *    `old → new` instead of two raw JSON panes
  */
 export function ToolCallsDiffView({
   expected,
@@ -36,40 +39,24 @@ export function ToolCallsDiffView({
     [expected, actual, result],
   );
 
-  const mismatchCount = rows.filter((r) => r.status !== "match").length;
+  const issueCount = rows.filter((r) => r.status !== "match").length;
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2.5">
       <div className="flex shrink-0 items-center gap-2">
         <div className="min-w-0 flex-1">
           <DiffBanner
             passed={result.passed}
-            mismatchCount={mismatchCount}
+            issueCount={issueCount}
             expectedCount={expected.length}
             actualCount={actual.length}
             isLoading={isLoading}
           />
         </div>
-        {headerTrailing ? (
-          <div className="shrink-0">{headerTrailing}</div>
-        ) : null}
+        {headerTrailing ? <div className="shrink-0">{headerTrailing}</div> : null}
       </div>
 
-      <div className="grid shrink-0 grid-cols-2 gap-2 px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-        <div>Expected</div>
-        <div className="flex items-center gap-1">
-          Actual
-          {isLoading ? (
-            <span
-              data-testid="trace-viewer-actual-loading"
-              className="inline-block size-1.5 animate-pulse rounded-full bg-muted-foreground/60"
-              aria-hidden
-            />
-          ) : null}
-        </div>
-      </div>
-
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-1.5 overflow-auto">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-1 overflow-auto pr-0.5">
         {rows.length === 0 ? (
           <div className="rounded-md border border-dashed border-border/50 bg-muted/10 px-4 py-6 text-center text-xs text-muted-foreground">
             No expected or actual tool calls.
@@ -88,61 +75,66 @@ export function ToolCallsDiffView({
 
 function DiffBanner({
   passed,
-  mismatchCount,
+  issueCount,
   expectedCount,
   actualCount,
   isLoading,
 }: {
   passed: boolean;
-  mismatchCount: number;
+  issueCount: number;
   expectedCount: number;
   actualCount: number;
   isLoading: boolean;
 }) {
-  if (passed && mismatchCount === 0) {
+  if (passed && issueCount === 0) {
     return (
-      <div
-        className={cn(
-          "flex w-full items-center gap-2 rounded-md border px-3 py-2 text-xs",
-          "border-border/50 bg-muted/15 text-muted-foreground",
-        )}
-      >
-        <CheckCircle2 className="size-3.5 shrink-0" aria-hidden />
+      <div className="flex w-full items-center gap-2 rounded-md border border-border/50 bg-muted/15 px-3 py-2 text-xs text-muted-foreground">
+        <span className="size-1.5 shrink-0 rounded-full bg-success" aria-hidden />
         <span>
           All {expectedCount} expected tool call
           {expectedCount === 1 ? "" : "s"} matched.
         </span>
+        {isLoading ? <LoadingDot /> : null}
       </div>
     );
   }
 
-  if (isLoading && mismatchCount === 0) {
+  if (isLoading && issueCount === 0) {
     return (
       <div className="flex w-full items-center gap-2 rounded-md border border-border/50 bg-muted/15 px-3 py-2 text-xs text-muted-foreground">
         Comparing tool calls…
+        <LoadingDot />
       </div>
     );
   }
 
   return (
-    <div
-      className={cn(
-        "flex w-full items-center gap-2 rounded-md border px-3 py-2 text-xs",
-        "border-border/60 bg-muted/20 text-foreground",
-      )}
-    >
-      <AlertCircle
-        className="size-3.5 shrink-0 text-muted-foreground"
+    <div className="flex w-full items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-foreground">
+      <span
+        className="size-1.5 shrink-0 rounded-full bg-destructive"
         aria-hidden
       />
       <span className="min-w-0">
         <strong className="font-semibold">
-          {mismatchCount} mismatch{mismatchCount === 1 ? "" : "es"}
-        </strong>{" "}
-        across {expectedCount} expected / {actualCount} actual tool call
-        {actualCount === 1 ? "" : "s"}.
+          {issueCount} difference{issueCount === 1 ? "" : "s"}
+        </strong>
+        <span className="text-muted-foreground">
+          {" "}
+          · {expectedCount} expected, {actualCount} actual
+        </span>
       </span>
+      {isLoading ? <LoadingDot /> : null}
     </div>
+  );
+}
+
+function LoadingDot() {
+  return (
+    <span
+      data-testid="trace-viewer-actual-loading"
+      className="ml-auto inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-muted-foreground/60"
+      aria-hidden
+    />
   );
 }
 
@@ -158,132 +150,219 @@ interface PairedRow {
   diffKeys: Set<string>;
 }
 
-function DiffRow({
-  row,
-  index,
-}: {
-  row: PairedRow;
-  index: number;
-}) {
-  // Auto-expand mismatches; collapse matches so large traces stay light.
-  const [expanded, setExpanded] = useState(() => row.status !== "match");
+type Tone = "neutral" | "warn" | "bad";
+
+const STATUS_META: Record<RowStatus, { label: string; tone: Tone }> = {
+  match: { label: "match", tone: "neutral" },
+  "arg-mismatch": { label: "arg diff", tone: "warn" },
+  "name-mismatch": { label: "wrong tool", tone: "bad" },
+  missing: { label: "missing", tone: "bad" },
+  extra: { label: "unexpected", tone: "warn" },
+};
+
+function DiffRow({ row, index }: { row: PairedRow; index: number }) {
+  const meta = STATUS_META[row.status];
+  const expandable = isExpandable(row);
+  // Auto-expand the genuinely two-sided rows (a comparison the eye needs to
+  // line up); one-sided rows lead with an inline summary and stay collapsed.
+  const [expanded, setExpanded] = useState(
+    () => row.status === "arg-mismatch" || row.status === "name-mismatch",
+  );
+
+  const primary = row.actual ?? row.expected;
+  // Inline preview only where the args are the interesting bit (something is
+  // off). Matches stay a clean single line so the eye skims past them.
+  const summary =
+    !expanded && (row.status === "extra" || row.status === "missing")
+      ? inlineSummary(row)
+      : null;
+
+  const header = (
+    <>
+      {expandable ? (
+        <ChevronRight
+          className={cn(
+            "size-3.5 shrink-0 text-muted-foreground transition-transform",
+            expanded && "rotate-90",
+          )}
+          aria-hidden
+        />
+      ) : (
+        <span className="size-3.5 shrink-0" aria-hidden />
+      )}
+      <span className="w-5 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground/70">
+        {index + 1}
+      </span>
+      <span className="min-w-0 flex-1 truncate font-mono text-xs">
+        <span className={row.status === "missing" ? "text-muted-foreground line-through" : ""}>
+          {row.expected?.toolName ?? row.actual?.toolName ?? "—"}
+        </span>
+        {row.status === "name-mismatch" && row.actual?.toolName ? (
+          <>
+            <span className="px-1 text-muted-foreground">→</span>
+            <span className="text-foreground">{row.actual.toolName}</span>
+          </>
+        ) : null}
+        {summary ? (
+          <span className="ml-2 truncate font-mono text-[11px] text-muted-foreground">
+            {summary}
+          </span>
+        ) : null}
+      </span>
+      <span
+        className={cn(
+          "shrink-0 text-[10px] font-medium uppercase tracking-wide",
+          toneLabel(meta.tone),
+        )}
+      >
+        {meta.label}
+      </span>
+    </>
+  );
 
   return (
     <div
       className={cn(
-        "rounded-md border bg-background/30",
-        rowBorderClass(row.status),
+        "rounded-md border border-l-2 bg-background/40 transition-colors",
+        toneRail(meta.tone),
       )}
     >
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 px-2 py-1.5 text-left"
-      >
-        {expanded ? (
-          <ChevronDown
-            className="size-3.5 shrink-0 text-muted-foreground"
-            aria-hidden
-          />
-        ) : (
-          <ChevronRight
-            className="size-3.5 shrink-0 text-muted-foreground"
-            aria-hidden
-          />
-        )}
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          #{index + 1}
-        </span>
-        <StatusPill status={row.status} />
-        <span className="min-w-0 flex-1 truncate font-mono text-xs">
-          {row.expected?.toolName ?? row.actual?.toolName ?? "—"}
-          {row.status === "name-mismatch" && row.actual?.toolName ? (
-            <>
-              <span className="px-1 text-muted-foreground">→</span>
-              <span className="text-foreground">{row.actual.toolName}</span>
-            </>
-          ) : null}
-        </span>
-      </button>
+      {expandable ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex w-full items-center gap-2 px-2.5 py-2 text-left hover:bg-muted/20"
+        >
+          {header}
+        </button>
+      ) : (
+        <div className="flex w-full items-center gap-2 px-2.5 py-2">{header}</div>
+      )}
 
       {expanded ? (
-        <div className="grid grid-cols-2 gap-2 border-t border-border/40 p-2">
-          <PaneCallArgs
-            side="expected"
-            call={row.expected}
-            diffKeys={row.diffKeys}
-            rowStatus={row.status}
-          />
-          <PaneCallArgs
-            side="actual"
-            call={row.actual}
-            diffKeys={row.diffKeys}
-            rowStatus={row.status}
-          />
+        <div className="border-t border-border/40 px-2.5 py-2">
+          <ExpandedDetail row={row} primary={primary} />
         </div>
       ) : null}
     </div>
   );
 }
 
-function PaneCallArgs({
-  side,
-  call,
-  diffKeys,
-  rowStatus,
+function ExpandedDetail({
+  row,
+  primary,
 }: {
-  side: "expected" | "actual";
-  call: TraceViewerEvalToolCall | null;
-  diffKeys: Set<string>;
-  rowStatus: RowStatus;
+  row: PairedRow;
+  primary: TraceViewerEvalToolCall | null;
 }) {
-  if (!call) {
-    const label =
-      side === "expected"
-        ? rowStatus === "extra"
-          ? "(not expected)"
-          : "—"
-        : rowStatus === "missing"
-          ? "(never called)"
-          : "—";
+  if (row.status === "arg-mismatch") {
+    return <ArgKeyDiff expected={row.expected} actual={row.actual} diffKeys={row.diffKeys} />;
+  }
+
+  if (row.status === "name-mismatch") {
     return (
-      <div
-        className={cn(
-          "rounded border border-border/30 bg-background/40 px-2 py-1.5 font-mono text-[11px] italic text-muted-foreground",
-        )}
-      >
-        {label}
+      <div className="space-y-2">
+        <SideArgs label="Expected" call={row.expected} />
+        <SideArgs label="Actual" call={row.actual} />
       </div>
     );
   }
 
-  const entries = Object.entries(call.arguments || {});
+  // One-sided: match / extra / missing — a single args block with a quiet caption.
+  const caption =
+    row.status === "missing"
+      ? "Expected, never called"
+      : row.status === "extra"
+        ? "Called, not expected"
+        : "Arguments";
+  return <SideArgs label={caption} call={primary} />;
+}
+
+function SideArgs({
+  label,
+  call,
+}: {
+  label: string;
+  call: TraceViewerEvalToolCall | null;
+}) {
+  const entries = Object.entries(call?.arguments ?? {});
   return (
-    <div className="rounded border border-border/40 bg-background/60 p-1.5">
+    <div>
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+        {label}
+      </div>
       {entries.length === 0 ? (
         <div className="font-mono text-[11px] italic text-muted-foreground">
           {"{ }"}
         </div>
       ) : (
         <div className="space-y-1">
-          {entries.map(([key, value]) => {
-            const isDiff = diffKeys.has(key);
-            return (
-              <div
-                key={key}
-                className={cn(
-                  "rounded px-1.5 py-1 font-mono text-[11px]",
-                  isDiff && "bg-muted/35 ring-1 ring-inset ring-border/50",
-                )}
-              >
-                <span className="font-semibold text-foreground">{key}</span>
-                <span className="text-muted-foreground">: </span>
-                <ValueRender value={value} />
-              </div>
-            );
-          })}
+          {entries.map(([key, value]) => (
+            <ArgLine key={key} name={key} value={value} />
+          ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Per-key diff for an argument mismatch: `key  old → new`, unchanged keys muted. */
+function ArgKeyDiff({
+  expected,
+  actual,
+  diffKeys,
+}: {
+  expected: TraceViewerEvalToolCall | null;
+  actual: TraceViewerEvalToolCall | null;
+  diffKeys: Set<string>;
+}) {
+  const exp = expected?.arguments ?? {};
+  const act = actual?.arguments ?? {};
+  const keys = Array.from(new Set([...Object.keys(exp), ...Object.keys(act)]));
+
+  return (
+    <div className="space-y-1">
+      {keys.map((key) => {
+        const changed = diffKeys.has(key);
+        if (!changed) {
+          return <ArgLine key={key} name={key} value={act[key]} muted />;
+        }
+        return (
+          <div
+            key={key}
+            className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded px-1.5 py-1 font-mono text-[11px] ring-1 ring-inset ring-warning/40"
+          >
+            <span className="font-semibold text-foreground">{key}</span>
+            <span className="text-muted-foreground line-through">
+              <ValueRender value={exp[key]} />
+            </span>
+            <span className="text-muted-foreground">→</span>
+            <span className="text-foreground">
+              <ValueRender value={act[key]} />
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ArgLine({
+  name,
+  value,
+  muted,
+}: {
+  name: string;
+  value: unknown;
+  muted?: boolean;
+}) {
+  return (
+    <div className="font-mono text-[11px]">
+      <span className={muted ? "text-muted-foreground" : "font-semibold text-foreground"}>
+        {name}
+      </span>
+      <span className="text-muted-foreground">: </span>
+      <ValueRender value={value} />
     </div>
   );
 }
@@ -293,15 +372,14 @@ function ValueRender({ value }: { value: unknown }) {
     return <span className="text-muted-foreground">null</span>;
   }
   if (value === undefined) {
-    return <span className="text-muted-foreground">undefined</span>;
+    return <span className="text-muted-foreground">—</span>;
   }
   if (typeof value === "string") {
-    return <span className="break-all text-foreground">"{value}"</span>;
+    return <span className="break-all text-foreground/90">"{value}"</span>;
   }
   if (typeof value === "number" || typeof value === "boolean") {
-    return <span className="text-foreground">{String(value)}</span>;
+    return <span className="text-foreground/90">{String(value)}</span>;
   }
-  // Object / array: pretty-print with line breaks; collapse very large values.
   let serialized: string;
   try {
     serialized = JSON.stringify(value, null, 2);
@@ -318,60 +396,58 @@ function ValueRender({ value }: { value: unknown }) {
   );
 }
 
-function StatusPill({ status }: { status: RowStatus }) {
-  const label = statusLabel(status);
-  const klass = statusPillClass(status);
-  return (
-    <span
-      className={cn(
-        "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide",
-        klass,
-      )}
-    >
-      {label}
-    </span>
-  );
+// ── Tone styling ────────────────────────────────────────────────────────────────
+
+function toneRail(tone: Tone): string {
+  switch (tone) {
+    case "neutral":
+      return "border-border/40";
+    case "warn":
+      return "border-border/40 border-l-warning/60";
+    case "bad":
+      return "border-border/40 border-l-destructive/60";
+  }
+}
+
+function toneLabel(tone: Tone): string {
+  switch (tone) {
+    case "neutral":
+      return "text-muted-foreground/70";
+    case "warn":
+      return "text-warning";
+    case "bad":
+      return "text-destructive";
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function statusLabel(status: RowStatus): string {
-  switch (status) {
-    case "match":
-      return "match";
-    case "arg-mismatch":
-      return "arg diff";
-    case "name-mismatch":
-      return "name diff";
-    case "missing":
-      return "missing";
-    case "extra":
-      return "extra";
-  }
+function isExpandable(row: PairedRow): boolean {
+  if (row.status === "arg-mismatch" || row.status === "name-mismatch") return true;
+  const call = row.actual ?? row.expected;
+  return Object.keys(call?.arguments ?? {}).length > 0;
 }
 
-function statusPillClass(status: RowStatus): string {
-  switch (status) {
-    case "match":
-      return "bg-muted/30 text-muted-foreground";
-    case "arg-mismatch":
-    case "name-mismatch":
-    case "missing":
-    case "extra":
-      return "bg-muted/45 text-foreground";
-  }
+/** Compact one-line args preview shown on a collapsed row (`id: "redbull"`). */
+function inlineSummary(row: PairedRow): string {
+  const call = row.actual ?? row.expected;
+  const args = call?.arguments ?? {};
+  const keys = Object.keys(args);
+  if (keys.length === 0) return "";
+  const shown = keys
+    .slice(0, 2)
+    .map((k) => `${k}: ${previewValue(args[k])}`)
+    .join(", ");
+  return keys.length > 2 ? `${shown} +${keys.length - 2}` : shown;
 }
 
-function rowBorderClass(status: RowStatus): string {
-  switch (status) {
-    case "match":
-      return "border-border/40";
-    case "arg-mismatch":
-    case "name-mismatch":
-    case "missing":
-    case "extra":
-      return "border-border/60 bg-muted/10";
-  }
+function previewValue(value: unknown): string {
+  if (value === null) return "null";
+  if (value === undefined) return "—";
+  if (typeof value === "string")
+    return value.length > 24 ? `"${value.slice(0, 24)}…"` : `"${value}"`;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return Array.isArray(value) ? `[${value.length}]` : "{…}";
 }
 
 interface MatchResultLike {

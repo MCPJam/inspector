@@ -59,6 +59,32 @@ export interface ServerWithName {
   hasClientSecret?: boolean;
   hasEnv?: boolean;
   hasHeaders?: boolean;
+  /**
+   * Whether a redacted HTTP config carried an `Authorization: Bearer …`
+   * header. The header value itself is stripped before reaching the browser
+   * (like env/headers), so the edit form relies on this flag to know the
+   * server uses bearer auth and to keep the saved token hidden-but-preserved.
+   */
+  hasBearerToken?: boolean;
+  /**
+   * Optional issuer override for the cross-app authorization test target.
+   * XAA metadata only — intentionally NOT part of MCPServerConfig / toMCPConfig.
+   */
+  xaaAuthzIssuer?: string;
+  /** Opt-in: accept a path-scoped authorization server (same-origin root
+   * advertised as issuer). XAA metadata only, like xaaAuthzIssuer. */
+  xaaAllowPathScopedIssuer?: boolean;
+  /**
+   * Cross-App Access (XAA) connect flag. When true the server authenticates via
+   * the XAA token-exchange flow (server mints the token) rather than standard
+   * OAuth. Mutually exclusive with `useOAuth`.
+   */
+  useXaa?: boolean;
+  /** Which IdP mints the XAA assertion. v1 only "mcpjam". */
+  authServerMode?: "mcpjam" | "own";
+  /** Optional simulated-identity overrides for the MCPJam test IdP. Blank = signed-in user. */
+  xaaSubject?: string;
+  xaaEmail?: string;
 }
 
 export interface Project {
@@ -83,6 +109,25 @@ export interface Project {
   sharedProjectId?: string;
   organizationId?: string;
   visibility?: ProjectVisibility;
+}
+
+/**
+ * Resolve a project from either id space. `AppState.projects` is keyed by
+ * local project ids, but several surfaces carry the Convex/shared project
+ * id instead (App.tsx's `convexProjectId` props, eval run rows'
+ * `projectId`). Key lookup wins; otherwise fall back to a
+ * `sharedProjectId` match.
+ */
+export function findProjectByAnyId(
+  projects: Record<string, Project> | undefined,
+  id: string | null | undefined,
+): Project | undefined {
+  if (!id) return undefined;
+  const byKey = projects?.[id];
+  if (byKey) return byKey;
+  return Object.values(projects ?? {}).find(
+    (project) => project.sharedProjectId === id,
+  );
 }
 
 export interface AppState {

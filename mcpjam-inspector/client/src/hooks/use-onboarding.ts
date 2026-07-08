@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useMutation } from "convex/react";
 import { usePostHog } from "posthog-js/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import type { OnboardingPhase } from "@/lib/onboarding-state";
 import {
   markOnboardingShown,

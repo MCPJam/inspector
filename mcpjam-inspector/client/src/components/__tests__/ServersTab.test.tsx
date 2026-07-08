@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { HostsConnectAddServerSlotContext } from "@/components/hosts/HostsConnectAddServerSlotContext";
 import { useState, type ReactNode } from "react";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
@@ -125,10 +131,12 @@ let mockIsAuthenticated = false;
 let mockCatalogCards: EnrichedRegistryCatalogCard[] = [];
 let mockRegistryLoading = false;
 let mockJsonRpcPanelVisible = false;
+let mockViewProjectServers: Array<any> | undefined;
 const mockConnectRegistry = vi.fn();
 const mockLoggerView = vi.fn();
 const mockUseRegistryServers = vi.fn();
 const mockUseProjectBillingGate = vi.fn();
+const mockMoveServerToProject = vi.fn();
 
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
@@ -208,7 +216,13 @@ vi.mock("@/hooks/useProjects", async (importOriginal) => {
   return {
     ...actual,
     useProjectServers: () => ({
-      serversRecord: {},
+      servers: mockViewProjectServers,
+      serversRecord: Object.fromEntries(
+        (mockViewProjectServers ?? []).map((server) => [server.name, server])
+      ),
+    }),
+    useServerMutations: () => ({
+      moveServerToProject: mockMoveServerToProject,
     }),
     useProjectQueries: () => ({
       allProjects: undefined,
@@ -221,12 +235,28 @@ vi.mock("@/hooks/useProjects", async (importOriginal) => {
   };
 });
 
+vi.mock("@/hooks/useViews", () => ({
+  useProjectServers: () => ({
+    servers: mockViewProjectServers,
+    serversByName: new Map(
+      (mockViewProjectServers ?? []).map((server) => [server.name, server._id])
+    ),
+    serversById: new Map(
+      (mockViewProjectServers ?? []).map((server) => [server._id, server.name])
+    ),
+    isLoading: false,
+  }),
+}));
+
 vi.mock("../connection/ServerConnectionCard", () => ({
   ServerConnectionCard: ({
     server,
     needsReconnect,
     onReconnect,
     onOpenDetailModal,
+    moveTargets,
+    onMoveToProject,
+    isMovingToProject,
   }: {
     server: ServerWithName;
     needsReconnect?: boolean;
@@ -238,6 +268,9 @@ vi.mock("../connection/ServerConnectionCard", () => ({
       }
     ) => Promise<void>;
     onOpenDetailModal?: (server: ServerWithName, defaultTab: string) => void;
+    moveTargets?: Array<{ id: string; name: string }>;
+    onMoveToProject?: (serverName: string, targetProjectId: string) => void;
+    isMovingToProject?: boolean;
   }) => (
     <div>
       <button onClick={() => onOpenDetailModal?.(server, "configuration")}>
@@ -249,6 +282,15 @@ vi.mock("../connection/ServerConnectionCard", () => ({
       {needsReconnect ? (
         <span aria-label="Connection settings changed" />
       ) : null}
+      {moveTargets?.map((target) => (
+        <button
+          key={target.id}
+          onClick={() => onMoveToProject?.(server.name, target.id)}
+        >
+          Move {server.name} to {target.name}
+        </button>
+      ))}
+      {isMovingToProject ? <span>Moving {server.name}</span> : null}
       <div data-testid={`server-card-${server.name}`}>
         {server.name}:{server.connectionStatus}
       </div>
@@ -465,6 +507,8 @@ describe("ServersTab shared detail modal", () => {
     mockCatalogCards = [];
     mockRegistryLoading = false;
     mockJsonRpcPanelVisible = false;
+    mockViewProjectServers = undefined;
+    mockMoveServerToProject.mockReset();
     mockLoggerView.mockReset();
     mockUseProjectBillingGate.mockImplementation(
       ({
@@ -513,12 +557,131 @@ describe("ServersTab shared detail modal", () => {
     );
   });
 
+  it("moves a server through the backend action and then removes it locally", async () => {
+    mockIsAuthenticated = true;
+    mockViewProjectServers = [
+      {
+        _id: "server-source-1",
+        projectId: "shared-source",
+        name: "test-server",
+        enabled: true,
+        transportType: "stdio",
+        command: "npx",
+        args: ["server.js"],
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
+    mockMoveServerToProject.mockResolvedValue({ serverId: "server-target-1" });
+    const onDisconnect = vi.fn().mockResolvedValue(undefined);
+    const onRemove = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ServersTab
+        {...defaultProps}
+        onDisconnect={onDisconnect}
+        onRemove={onRemove}
+        projects={{
+          "project-1": {
+            ...createProject(projectServers),
+            id: "project-1",
+            sharedProjectId: "shared-source",
+            organizationId: "org-1",
+          },
+          "project-2": {
+            ...createProject({}),
+            id: "project-2",
+            name: "Target project",
+            sharedProjectId: "shared-target",
+            organizationId: "org-1",
+            isDefault: false,
+          },
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getByText("Move test-server to Target project"));
+
+    await waitFor(() => {
+      expect(mockMoveServerToProject).toHaveBeenCalledWith({
+        serverId: "server-source-1",
+        targetProjectId: "shared-target",
+      });
+    });
+    await waitFor(() => {
+      expect(onDisconnect).toHaveBeenCalledWith("test-server");
+      expect(onRemove).toHaveBeenCalledWith("test-server");
+    });
+  });
+
+  it("does not remove the local server when the backend move fails", async () => {
+    mockIsAuthenticated = true;
+    mockViewProjectServers = [
+      {
+        _id: "server-source-1",
+        projectId: "shared-source",
+        name: "test-server",
+        enabled: true,
+        transportType: "stdio",
+        command: "npx",
+        args: ["server.js"],
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
+    mockMoveServerToProject.mockRejectedValue(
+      new Error('Target project already has a server named "test-server"')
+    );
+    const onDisconnect = vi.fn().mockResolvedValue(undefined);
+    const onRemove = vi.fn().mockResolvedValue(undefined);
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    try {
+      render(
+        <ServersTab
+          {...defaultProps}
+          onDisconnect={onDisconnect}
+          onRemove={onRemove}
+          projects={{
+            "project-1": {
+              ...createProject(projectServers),
+              id: "project-1",
+              sharedProjectId: "shared-source",
+              organizationId: "org-1",
+            },
+            "project-2": {
+              ...createProject({}),
+              id: "project-2",
+              name: "Target project",
+              sharedProjectId: "shared-target",
+              organizationId: "org-1",
+              isDefault: false,
+            },
+          }}
+        />
+      );
+
+      fireEvent.click(screen.getByText("Move test-server to Target project"));
+
+      await waitFor(() => {
+        expect(mockMoveServerToProject).toHaveBeenCalledWith({
+          serverId: "server-source-1",
+          targetProjectId: "shared-target",
+        });
+      });
+      expect(onDisconnect).not.toHaveBeenCalled();
+      expect(onRemove).not.toHaveBeenCalled();
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
   it("shows a full-tab loading state while billing context is pending", () => {
     render(<ServersTab {...defaultProps} isBillingContextPending={true} />);
 
-    expect(
-      screen.getByTestId("servers-loading-skeleton")
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("servers-loading-skeleton")).toBeInTheDocument();
     expect(screen.queryByText("Add Server")).not.toBeInTheDocument();
     expect(mockUseProjectBillingGate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -727,7 +890,7 @@ describe("ServersTab shared detail modal", () => {
     );
 
     expect(sessionStorage.getItem("mcp-server-logger-focus")).toContain(
-      "\"projectId\":\"project-2\""
+      '"projectId":"project-2"'
     );
 
     rerender(

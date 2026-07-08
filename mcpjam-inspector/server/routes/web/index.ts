@@ -10,6 +10,7 @@ import chatV2 from "./chat-v2.js";
 import mcpjamAgent from "./mcpjam-agent.js";
 import chatboxes from "./chatboxes.js";
 import chatboxSessions from "./chatbox-sessions.js";
+import { harnessMcp } from "./harness-mcp.js";
 import apps from "./apps.js";
 import evals from "./evals.js";
 import oauthWeb from "./oauth.js";
@@ -17,10 +18,13 @@ import serverSecretsWeb from "./server-secrets.js";
 import xaaWeb from "./xaa.js";
 import exporter from "./export.js";
 import guestSession from "./guest-session.js";
+import guestToken from "./guest-token.js";
 import chatHistory from "./chat-history.js";
 import conformanceWeb from "./conformance.js";
 import checks from "./checks.js";
 import apiKeys from "./api-keys.js";
+import computers from "./computers.js";
+import skills from "./skills.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
 
 const web = new Hono();
@@ -34,10 +38,22 @@ web.use("/chatboxes/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/evals/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-v2", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/mcpjam-agent", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use(
+  "/mcpjam-agent/widget-content",
+  bearerAuthMiddleware,
+  guestRateLimitMiddleware
+);
 web.use("/chat-history/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/conformance/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/checks/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/server/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// `/computers/exec` runs commands — bearer required. `/computers/config` is
+// deliberately open: it returns only a boolean and a public URL, and the
+// client needs it before any authed flow to know where the terminal lives.
+web.use("/computers/exec", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Cloud Skills live on the caller's Computer (E2B sandbox); every op needs a
+// bearer (forwarded to Convex for reserve/wake + authz).
+web.use("/skills/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
   "/apps/mcp-apps/widget-content",
   bearerAuthMiddleware,
@@ -53,15 +69,27 @@ web.route("/chatboxes", chatboxSessions);
 web.route("/evals", evals);
 web.route("/export", exporter);
 web.route("/chat-v2", chatV2);
+// Token-only (signed proxy token IS the auth) — NO bearerAuthMiddleware, like
+// /guest-token. `sessionAuthMiddleware` already bypasses /api/web/*. The Claude
+// Code harness (in a cloud sandbox) connects its MCP through here.
+web.route("/harness-mcp", harnessMcp);
 web.route("/mcpjam-agent", mcpjamAgent);
 web.route("/apps", apps);
 web.route("/oauth", oauthWeb);
 web.route("/server", serverSecretsWeb);
 web.route("/xaa", xaaWeb);
 web.route("/guest-session", guestSession);
+// Service-token-gated guest minting for the platform MCP worker (anonymous
+// /mcp sessions). Gated inside the router by `x-inspector-service-token`;
+// `sessionAuthMiddleware` bypasses `/api/web/*` entirely.
+web.route("/guest-token", guestToken);
 web.route("/chat-history", chatHistory);
 web.route("/conformance", conformanceWeb);
 web.route("/checks", checks);
+// `/computers/terminal` (the WS) is registered on the root app in
+// server/index.ts — only /config and /exec live on this sub-router.
+web.route("/computers", computers);
+web.route("/skills", skills);
 // `/api-keys` carries its own bearer-auth `.use()` because
 // `sessionAuthMiddleware` bypasses `/api/web/*` entirely. Nothing on this
 // sub-router is reachable without a session JWT (WorkOS `sk_…` keys are
@@ -94,7 +122,7 @@ web.onError((error, c) => {
     routeError.code,
     routeError.message,
     routeError.details,
-    routeError.normalized ? { normalized: routeError.normalized } : undefined,
+    routeError.normalized ? { normalized: routeError.normalized } : undefined
   );
 });
 

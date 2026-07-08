@@ -94,6 +94,7 @@ import {
   convertMCPToolsToVercelTools,
   type ToolSchemaOverrides,
 } from "./tool-converters.js";
+import type { ModelVisibleMcpToolResults } from "../host-config/types.js";
 import {
   applyRuntimeClientCapabilities,
   getDefaultClientCapabilities,
@@ -644,6 +645,8 @@ export class MCPClientManager {
        * mirroring a host that does not implement visibility filtering.
        */
       includeAppOnly?: boolean;
+      /** Host policy for model visibility of MCP tool-result content/resources. */
+      modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
     } = {}
   ): Promise<AiSdkTool> {
     const ids = Array.isArray(serverIds)
@@ -661,6 +664,13 @@ export class MCPClientManager {
             schemas: options.schemas,
             needsApproval: options.needsApproval,
             includeAppOnly: options.includeAppOnly,
+            modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
+            readResource: async ({ uri, options: readOptions }) => {
+              const requestOptions = readOptions?.abortSignal
+                ? { signal: readOptions.abortSignal }
+                : undefined;
+              return this.readResource(id, { uri }, requestOptions);
+            },
             callTool: async ({ name, args, options: callOptions }) => {
               const requestOptions = callOptions?.abortSignal
                 ? { signal: callOptions.abortSignal }

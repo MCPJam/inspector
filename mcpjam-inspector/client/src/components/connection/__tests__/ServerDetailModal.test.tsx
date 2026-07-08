@@ -9,6 +9,10 @@ const mockUseFeatureFlagEnabled = vi.hoisted(() => vi.fn(() => false));
 const mockUseQuery = vi.hoisted(() => vi.fn(() => undefined));
 const mockSetProjectServerConfig = vi.hoisted(() => vi.fn());
 
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { email: "tester@example.com" } }),
+}));
+
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: mockCapture,
@@ -207,7 +211,7 @@ describe("ServerDetailModal", () => {
       expect(toolsPanel).toBeInTheDocument();
       expect(toolsPanel?.className).toContain("overflow-y-auto");
     });
-    expect(screen.getByText("search")).toBeInTheDocument();
+    expect(await screen.findByText("search")).toBeInTheDocument();
   });
 
   it("shows tool metadata for connected non-app servers", async () => {
@@ -316,7 +320,9 @@ describe("ServerDetailModal", () => {
     expect(protocolSelect).toBeEnabled();
 
     await user.click(protocolSelect);
-    await user.click(await screen.findByRole("option", { name: "Latest (2025-11-25)" }));
+    await user.click(
+      await screen.findByRole("option", { name: "Latest (2025-11-25)" })
+    );
 
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
@@ -361,7 +367,9 @@ describe("ServerDetailModal", () => {
     expect(hostDefaultSelect).toHaveTextContent("Host default");
 
     await user.click(hostDefaultSelect);
-    await user.click(await screen.findByRole("option", { name: "Latest (2025-11-25)" }));
+    await user.click(
+      await screen.findByRole("option", { name: "Latest (2025-11-25)" })
+    );
 
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
