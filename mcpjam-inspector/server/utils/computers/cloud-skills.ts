@@ -13,24 +13,35 @@
  * harness `skills` param (see `harness/runtime-skills.ts`), with on-box cleanup
  * in `harness/reconcile-skill-dirs.ts`.
  *
- * v1 is SKILL.md-only: a skill is `{name, description, content}`. Supporting
- * files are a v2 add (they'll need `_storage` blobs in the backend).
+ * A skill is `{name, description, content}` plus optional supporting files
+ * (v2) — each a `_storage` blob in the backend, uploaded browser→Convex and
+ * registered via attachCloudSkillFiles; read back server-side (readCloudSkillFile).
  */
 import {
+  convexAttachSkillFiles,
   convexCreateSkill,
   convexDeleteSkill,
+  convexGenerateSkillFileUploadUrl,
   convexGetSkill,
   convexGetSkillByName,
+  convexGetSkillFileUrl,
+  convexListSkillFiles,
   convexListSkills,
   convexPromoteSkill,
+  convexRemoveSkillFile,
   convexUpdateSkill,
   type CloudSkillDetail,
+  type CloudSkillFileMeta,
   type CloudSkillListItem,
   type SkillSharing,
 } from "./convex-skills-client.js";
+import { getMimeType, isTextMimeType } from "../skill-parser.js";
+import type { SkillFileContent } from "../../../shared/skill-types.js";
 
 /** Client-side preflight cap (the backend enforces the real one). */
 export const MAX_SKILL_CONTENT_BYTES = 128 * 1024;
+/** Text is inlined up to 1MB (matches the local FS reader); larger ⇒ base64. */
+export const MAX_SKILL_FILE_TEXT_BYTES = 1024 * 1024;
 
 export class CloudSkillsError extends Error {
   readonly status: number;
@@ -176,4 +187,98 @@ export function promoteCloudSkill(
   skillId: string
 ): Promise<CloudSkillDetail> {
   return run(() => convexPromoteSkill(ctx.authHeader, ctx.projectId, skillId));
+}
+
+// ── supporting files (v2) ──────────────────────────────────────────────────
+
+export type { CloudSkillFileMeta };
+
+export function generateCloudSkillFileUploadUrl(
+  ctx: CloudSkillsContext,
+  skillId: string
+): Promise<{ uploadUrl: string }> {
+  return run(() =>
+    convexGenerateSkillFileUploadUrl(ctx.authHeader, ctx.projectId, skillId)
+  );
+}
+
+export function attachCloudSkillFiles(
+  ctx: CloudSkillsContext,
+  skillId: string,
+  files: { path: string; storageId: string; contentHash: string }[]
+): Promise<{ files: CloudSkillFileMeta[] }> {
+  return run(() =>
+    convexAttachSkillFiles(ctx.authHeader, ctx.projectId, skillId, files)
+  );
+}
+
+export function removeCloudSkillFile(
+  ctx: CloudSkillsContext,
+  skillId: string,
+  path: string
+): Promise<{ removed: boolean }> {
+  return run(() =>
+    convexRemoveSkillFile(ctx.authHeader, ctx.projectId, skillId, path)
+  );
+}
+
+export function listCloudSkillFiles(
+  ctx: CloudSkillsContext,
+  skillId: string
+): Promise<CloudSkillFileMeta[]> {
+  return run(() =>
+    convexListSkillFiles(ctx.authHeader, ctx.projectId, skillId)
+  );
+}
+
+/**
+ * Read a supporting file's content by resolving its `_storage` URL and fetching
+ * the bytes SERVER-SIDE (the browser never sees the storage URL). Returns a
+ * {@link SkillFileContent} shaped exactly like the local FS reader: text inlined
+ * up to 1MB, larger/binary as base64.
+ */
+export function readCloudSkillFile(
+  ctx: CloudSkillsContext,
+  skillId: string,
+  path: string
+): Promise<SkillFileContent> {
+  return run(async () => {
+    const { url } = await convexGetSkillFileUrl(
+      ctx.authHeader,
+      ctx.projectId,
+      skillId,
+      path
+    );
+    if (!url) throw new CloudSkillsError("Skill file not found", 404);
+    const res = await fetch(url, { signal: ctx.signal });
+    if (!res.ok) {
+      throw new CloudSkillsError(
+        `Failed to read skill file (${res.status})`,
+        502
+      );
+    }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const mimeType = getMimeType(path);
+    const name = path.split("/").pop() ?? path;
+    const isText =
+      isTextMimeType(mimeType) && bytes.byteLength <= MAX_SKILL_FILE_TEXT_BYTES;
+    if (isText) {
+      return {
+        path,
+        name,
+        content: new TextDecoder().decode(bytes),
+        mimeType,
+        size: bytes.byteLength,
+        isText: true,
+      };
+    }
+    return {
+      path,
+      name,
+      base64: Buffer.from(bytes).toString("base64"),
+      mimeType,
+      size: bytes.byteLength,
+      isText: false,
+    };
+  });
 }

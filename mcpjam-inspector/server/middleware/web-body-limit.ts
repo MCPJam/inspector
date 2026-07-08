@@ -8,9 +8,10 @@
  * here. POST-only: the route's own cap is mounted on POST, so exempting other
  * methods on the path would leave them with no cap at all.
  *
- * (An earlier multipart carve-out for skill *folder* uploads was removed when
- * skills moved to a Convex source of truth — there's no large multipart upload
- * on this surface in v1.)
+ * Skill supporting files (v2) do NOT need a carve-out here: the blob bytes are
+ * POSTed by the browser DIRECTLY to Convex `_storage` (via a minted upload URL),
+ * never through `/api/web/*`. Only the small JSON `attach`/`list`/`read` control
+ * messages transit this surface, all well under 1MB.
  */
 import { bodyLimit } from "hono/body-limit";
 import type { Context, Next } from "hono";

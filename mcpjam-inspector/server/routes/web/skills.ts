@@ -29,6 +29,11 @@ import {
   updateCloudSkill,
   deleteCloudSkill,
   promoteCloudSkill,
+  listCloudSkillFiles,
+  generateCloudSkillFileUploadUrl,
+  attachCloudSkillFiles,
+  removeCloudSkillFile,
+  readCloudSkillFile,
   MAX_SKILL_CONTENT_BYTES,
   type CloudSkillsContext,
 } from "../../utils/computers/cloud-skills.js";
@@ -80,6 +85,20 @@ const projectOnly = z.object({ projectId: z.string().min(1) });
 const skillIdSchema = projectOnly.extend({ skillId: z.string().min(1) });
 const sharingSchema = z.enum(["user", "project"]).optional();
 
+/**
+ * A non-empty skill-content string capped by BYTE length (UTF-8), matching the
+ * backend's byte cap. `z.string().max()` counts UTF-16 code units, so a
+ * multibyte body could slip past a char cap and be rejected server-side — refine
+ * on real byte length instead.
+ */
+const skillContentSchema = z
+  .string()
+  .min(1)
+  .refine(
+    (s) => new TextEncoder().encode(s).length <= MAX_SKILL_CONTENT_BYTES,
+    `Skill content must be at most ${MAX_SKILL_CONTENT_BYTES} bytes`,
+  );
+
 skills.post("/list", async (c) =>
   handleRoute(c, async () => {
     const body = parseWithSchema(projectOnly, await readJsonBody(c));
@@ -126,7 +145,7 @@ skills.post("/create", async (c) =>
       projectOnly.extend({
         name: z.string().min(1),
         description: z.string().min(1),
-        content: z.string().min(1).max(MAX_SKILL_CONTENT_BYTES),
+        content: skillContentSchema,
         sharing: sharingSchema,
       }),
       await readJsonBody(c),
@@ -149,7 +168,7 @@ skills.post("/update", async (c) =>
       skillIdSchema.extend({
         name: z.string().min(1).optional(),
         description: z.string().min(1).optional(),
-        content: z.string().min(1).max(MAX_SKILL_CONTENT_BYTES).optional(),
+        content: skillContentSchema.optional(),
       }),
       await readJsonBody(c),
     );
@@ -184,6 +203,96 @@ skills.post("/promote", async (c) =>
       promoteCloudSkill(await ctxFrom(c, body.projectId), body.skillId),
     );
     return { success: true, skill };
+  }),
+);
+
+// ── supporting files (v2) ──────────────────────────────────────────────────
+
+skills.post("/files/list", async (c) =>
+  handleRoute(c, async () => {
+    const body = parseWithSchema(skillIdSchema, await readJsonBody(c));
+    const files = await run(async () =>
+      listCloudSkillFiles(await ctxFrom(c, body.projectId), body.skillId),
+    );
+    return { files };
+  }),
+);
+
+// Mint a browser→Convex direct upload URL (blob bypasses the inspector body
+// limit by design). The manage-gate runs in Convex before the URL is issued.
+skills.post("/files/upload-url", async (c) =>
+  handleRoute(c, async () => {
+    const body = parseWithSchema(skillIdSchema, await readJsonBody(c));
+    const { uploadUrl } = await run(async () =>
+      generateCloudSkillFileUploadUrl(
+        await ctxFrom(c, body.projectId),
+        body.skillId,
+      ),
+    );
+    return { uploadUrl };
+  }),
+);
+
+skills.post("/files/attach", async (c) =>
+  handleRoute(c, async () => {
+    const body = parseWithSchema(
+      skillIdSchema.extend({
+        files: z
+          .array(
+            z.object({
+              path: z.string().min(1),
+              storageId: z.string().min(1),
+              contentHash: z.string().min(1),
+            }),
+          )
+          .min(1),
+      }),
+      await readJsonBody(c),
+    );
+    const { files } = await run(async () =>
+      attachCloudSkillFiles(
+        await ctxFrom(c, body.projectId),
+        body.skillId,
+        body.files,
+      ),
+    );
+    return { files };
+  }),
+);
+
+skills.post("/files/remove", async (c) =>
+  handleRoute(c, async () => {
+    const body = parseWithSchema(
+      skillIdSchema.extend({ path: z.string().min(1) }),
+      await readJsonBody(c),
+    );
+    const { removed } = await run(async () =>
+      removeCloudSkillFile(
+        await ctxFrom(c, body.projectId),
+        body.skillId,
+        body.path,
+      ),
+    );
+    return { success: true, removed };
+  }),
+);
+
+// Read a file's content: resolves the storage URL + fetches bytes SERVER-SIDE
+// (the browser never sees the storage URL), returning a SkillFileContent.
+skills.post("/files/read", async (c) =>
+  handleRoute(c, async () => {
+    const body = parseWithSchema(
+      skillIdSchema.extend({ path: z.string().min(1) }),
+      await readJsonBody(c),
+    );
+    const file = await run(async () =>
+      readCloudSkillFile(
+        await ctxFrom(c, body.projectId),
+        body.skillId,
+        body.path,
+      ),
+    );
+    return { file };
   }),
 );
 

@@ -91,6 +91,22 @@ export interface AdoptSkillResult {
   message?: string;
 }
 
+/** Metadata for one supporting file (no content). */
+export interface CloudSkillFileMeta {
+  path: string;
+  size: number;
+  contentHash: string;
+  updatedAt: number;
+}
+
+/** A supporting file for harness materialization (carries a download URL). */
+export interface CloudSkillRuntimeFile {
+  skillId: string;
+  path: string;
+  size: number;
+  url: string | null;
+}
+
 /** Convex query/mutation names — kept in one place so a rename is one edit. */
 const FN = {
   list: "projectSkills:listSkills",
@@ -106,6 +122,13 @@ const FN = {
   del: "projectSkills:deleteSkill",
   promote: "projectSkills:promoteSkillToProject",
   adopt: "projectSkills:adoptComputerSkills",
+  fileUploadUrl: "projectSkills:generateSkillFileUploadUrl",
+  attachFiles: "projectSkills:attachSkillFiles",
+  removeFile: "projectSkills:removeSkillFile",
+  listFiles: "projectSkills:listSkillFiles",
+  fileUrl: "projectSkills:getSkillFileUrl",
+  filesForRuntime: "projectSkills:listSkillFilesForRuntime",
+  filesForRuntimeExecution: "projectSkills:listSkillFilesForRuntimeExecution",
 } as const;
 
 function stripBearer(token: string): string {
@@ -240,5 +263,86 @@ export async function convexAdoptComputerSkills(
   return await makeClient(bearer).mutation(FN.adopt as any, {
     projectId,
     skills,
+  });
+}
+
+// ── supporting files (v2) ──────────────────────────────────────────────────
+
+export async function convexGenerateSkillFileUploadUrl(
+  bearer: string,
+  projectId: string,
+  skillId: string,
+): Promise<{ uploadUrl: string }> {
+  return await makeClient(bearer).mutation(FN.fileUploadUrl as any, {
+    projectId,
+    skillId,
+  });
+}
+
+export async function convexAttachSkillFiles(
+  bearer: string,
+  projectId: string,
+  skillId: string,
+  files: { path: string; storageId: string; contentHash: string }[],
+): Promise<{ files: CloudSkillFileMeta[] }> {
+  return await makeClient(bearer).mutation(FN.attachFiles as any, {
+    projectId,
+    skillId,
+    files,
+  });
+}
+
+export async function convexRemoveSkillFile(
+  bearer: string,
+  projectId: string,
+  skillId: string,
+  path: string,
+): Promise<{ removed: boolean }> {
+  return await makeClient(bearer).mutation(FN.removeFile as any, {
+    projectId,
+    skillId,
+    path,
+  });
+}
+
+export async function convexListSkillFiles(
+  bearer: string,
+  projectId: string,
+  skillId: string,
+): Promise<CloudSkillFileMeta[]> {
+  return await makeClient(bearer).query(FN.listFiles as any, {
+    projectId,
+    skillId,
+  });
+}
+
+export async function convexGetSkillFileUrl(
+  bearer: string,
+  projectId: string,
+  skillId: string,
+  path: string,
+): Promise<{ url: string | null; size: number }> {
+  return await makeClient(bearer).query(FN.fileUrl as any, {
+    projectId,
+    skillId,
+    path,
+  });
+}
+
+export async function convexListSkillFilesForRuntime(
+  bearer: string,
+  projectId: string,
+): Promise<CloudSkillRuntimeFile[]> {
+  return await makeClient(bearer).query(FN.filesForRuntime as any, {
+    projectId,
+  });
+}
+
+export async function convexListSkillFilesForRuntimeExecution(
+  bearer: string,
+  executionScope: ExecutionScope,
+): Promise<CloudSkillRuntimeFile[]> {
+  return await makeClient(bearer).query(FN.filesForRuntimeExecution as any, {
+    executionScope,
   });
 }

@@ -15,6 +15,8 @@ import {
   CloudSkillsError,
   getCloudSkillByName,
   listCloudSkills,
+  listCloudSkillFiles,
+  readCloudSkillFile,
   type CloudSkillsContext,
 } from "./cloud-skills.js";
 
@@ -109,6 +111,61 @@ export function createCloudSkillTools(ctx: CloudSkillsContext) {
         }
       },
     }),
+
+    listSkillFiles: tool({
+      description:
+        "List a skill's supporting files (scripts, references, assets). Use after loadSkill when a skill mentions supporting files.",
+      inputSchema: z.object({
+        name: z.string().describe("The skill name."),
+      }),
+      execute: async ({ name }) => {
+        if (!NAME_RE.test(name)) {
+          return `Error: Invalid skill name format "${name}".`;
+        }
+        try {
+          const skill = await getCloudSkillByName(ctx, name);
+          if (!skill) return `Error: Skill "${name}" not found.`;
+          const files = await listCloudSkillFiles(ctx, skill.skillId);
+          if (files.length === 0) {
+            return `Skill "${name}" has no supporting files.`;
+          }
+          return (
+            `Supporting files for "${name}":\n\n` +
+            files.map((f) => `- ${f.path} (${f.size} bytes)`).join("\n") +
+            `\n\nUse \`readSkillFile\` to read one.`
+          );
+        } catch (err) {
+          return `Error listing files for "${name}": ${errMessage(err)}`;
+        }
+      },
+    }),
+
+    readSkillFile: tool({
+      description:
+        "Read the contents of a skill's supporting file by its relative path (e.g., 'scripts/fill.py').",
+      inputSchema: z.object({
+        name: z.string().describe("The skill name."),
+        path: z
+          .string()
+          .describe("Relative path within the skill (e.g., 'scripts/fill.py')."),
+      }),
+      execute: async ({ name, path }) => {
+        if (!NAME_RE.test(name)) {
+          return `Error: Invalid skill name format "${name}".`;
+        }
+        try {
+          const skill = await getCloudSkillByName(ctx, name);
+          if (!skill) return `Error: Skill "${name}" not found.`;
+          const file = await readCloudSkillFile(ctx, skill.skillId, path);
+          if (!file.isText) {
+            return `File "${path}" is binary (${file.mimeType}, ${file.size} bytes) and can't be shown as text.`;
+          }
+          return `# ${path}\n\n${file.content ?? ""}`;
+        } catch (err) {
+          return `Error reading "${path}" from "${name}": ${errMessage(err)}`;
+        }
+      },
+    }),
   };
 }
 
@@ -117,7 +174,8 @@ const CLOUD_SKILLS_PROMPT_SECTION =
   `This project may have skills available to you (personal + shared) — reusable ` +
   `instruction packages for specific tasks. Call the \`listSkills\` tool to see ` +
   `what's available, then \`loadSkill\` to load a skill's full instructions when ` +
-  `a task matches its purpose.`;
+  `a task matches its purpose. If a loaded skill references supporting files, use ` +
+  `\`listSkillFiles\` and \`readSkillFile\` to access them.`;
 
 /**
  * Cloud equivalent of `getSkillToolsAndPrompt`. Always returns the tools +
