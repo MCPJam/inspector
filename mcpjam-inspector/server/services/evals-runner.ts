@@ -2423,6 +2423,17 @@ const runLocalIteration = async ({
         ...(resolvedExecution.harness
           ? { harness: resolvedExecution.harness }
           : {}),
+        // Host progressive-discovery toggle, same conversion as the chat-v2
+        // routes and the session-sim runner. Only an explicit host value is
+        // forwarded — absent stays undefined so prepareChatV2 keeps its
+        // "auto" threshold behavior.
+        ...(resolvedExecution.progressiveToolDiscovery !== undefined
+          ? {
+              progressiveToolDiscovery: {
+                enabled: resolvedExecution.progressiveToolDiscovery,
+              },
+            }
+          : {}),
         customProviders: modelRuntime!.customProviders,
         priorMessages: [],
       });
@@ -3284,6 +3295,17 @@ const runHostedIterationWithBrowser = async (
       modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
       ...(resolvedExecution.harness
         ? { harness: resolvedExecution.harness }
+        : {}),
+      // Host progressive-discovery toggle, same conversion as the chat-v2
+      // routes and the session-sim runner. Only an explicit host value is
+      // forwarded — absent stays undefined so prepareChatV2 keeps its
+      // "auto" threshold behavior.
+      ...(resolvedExecution.progressiveToolDiscovery !== undefined
+        ? {
+            progressiveToolDiscovery: {
+              enabled: resolvedExecution.progressiveToolDiscovery,
+            },
+          }
         : {}),
       ...(backendCustomProviders?.length
         ? { customProviders: backendCustomProviders }
