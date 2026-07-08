@@ -13,6 +13,7 @@ import {
   MCP_APPS_GOOSE,
   MCP_APPS_COPILOT,
   MCP_APPS_SLACK,
+  MCP_APPS_VSCODE,
   MCP_APPS_NO_CLAIMS,
 } from "./capabilities.js";
 import {
@@ -21,7 +22,11 @@ import {
   type HostCompatEvaluation,
 } from "./evaluator.js";
 import type { HostCompatToolsInput } from "./server-requirements.js";
-import type { CompatProvenance, HostCompatProfile } from "./types.js";
+import type {
+  CompatProvenance,
+  HostCompatProfile,
+  HostImageSupport,
+} from "./types.js";
 
 /**
  * The host-compat *catalog* — the market-host facts as pure data, separated
@@ -56,6 +61,8 @@ export type HostCompatCatalogHost = {
   /** When this host's facts were last verified (ms epoch). Backend-published
    * catalogs may carry it; the bundled catalog omits it. */
   verifiedAt?: number;
+  /** Tool-result image handling (see `HostImageSupport`). */
+  imageSupport?: HostImageSupport;
 };
 
 /**
@@ -154,6 +161,22 @@ const MARKET_HOSTS: readonly (HostCompatCatalogHost & {
     rendersMcpApps: true,
     supportedProtocolVersions: ["2025-06-18"],
   },
+  {
+    // VS Code Copilot chat panel — renders MCP UI inline. Probe-captured.
+    id: "vscode",
+    label: "VS Code",
+    provenance: "probe",
+    rendersMcpApps: true,
+  },
+  {
+    // Notion AI — tools-only client, no widget rendering (still renders tool
+    // images). Probe-captured.
+    id: "notion",
+    label: "Notion",
+    provenance: "probe",
+    rendersMcpApps: false,
+    supportedProtocolVersions: ["2025-11-25"],
+  },
 ];
 
 /** Per-host MCP Apps capability matrix (only the rendering hosts need one). */
@@ -165,6 +188,95 @@ const MATRIX_BY_ID: Partial<Record<HostTemplateId, McpAppsCapabilities>> = {
   cursor: MCP_APPS_CURSOR,
   copilot: MCP_APPS_COPILOT,
   slack: MCP_APPS_SLACK,
+  vscode: MCP_APPS_VSCODE,
+};
+
+/**
+ * Per-host tool-result image handling (all hosts, headless included — a
+ * tools-only host like Notion still previews images). `model` = passed to the
+ * model; `ui` = rendered in the host UI at `placement`. Probe-studied per host.
+ */
+const IMAGE_SUPPORT_BY_ID: Partial<Record<HostTemplateId, HostImageSupport>> = {
+  claude: {
+    toolImageContent: { model: true, ui: true },
+    embeddedResourceImages: { model: true, ui: true },
+    resourceLinkImages: { model: false, ui: false },
+    placement: "inline",
+  },
+  chatgpt: {
+    toolImageContent: { model: true, ui: true },
+    embeddedResourceImages: { model: true, ui: true },
+    resourceLinkImages: { model: true, ui: true },
+    placement: "inline",
+  },
+  mistral: {
+    toolImageContent: { model: false, ui: false },
+    embeddedResourceImages: { model: false, ui: false },
+    resourceLinkImages: { model: false, ui: false },
+    placement: "none",
+  },
+  goose: {
+    toolImageContent: { model: true, ui: true },
+    embeddedResourceImages: { model: false, ui: false },
+    resourceLinkImages: { model: false, ui: false },
+    placement: "collapsed",
+  },
+  cursor: {
+    toolImageContent: { model: true, ui: false },
+    embeddedResourceImages: { model: true, ui: false },
+    resourceLinkImages: { model: true, ui: false },
+    placement: "none",
+  },
+  codex: {
+    toolImageContent: { model: true, ui: true },
+    embeddedResourceImages: { model: true, ui: false },
+    resourceLinkImages: { model: true, ui: false },
+    placement: "collapsed",
+  },
+  copilot: {
+    toolImageContent: { model: true, ui: false },
+    embeddedResourceImages: { model: true, ui: false },
+    resourceLinkImages: { model: true, ui: false },
+    placement: "none",
+  },
+  n8n: {
+    toolImageContent: { model: false, ui: false },
+    embeddedResourceImages: { model: false, ui: false },
+    resourceLinkImages: { model: false, ui: false },
+    placement: "none",
+  },
+  perplexity: {
+    toolImageContent: { model: false, ui: false },
+    embeddedResourceImages: { model: false, ui: false },
+    resourceLinkImages: { model: false, ui: false },
+    placement: "none",
+  },
+  cline: {
+    toolImageContent: { model: true, ui: false },
+    embeddedResourceImages: { model: false, ui: false },
+    resourceLinkImages: { model: false, ui: false },
+    placement: "none",
+  },
+  slack: {
+    toolImageContent: { model: false, ui: false },
+    embeddedResourceImages: { model: false, ui: false },
+    resourceLinkImages: { model: false, ui: false },
+    placement: "none",
+  },
+  vscode: {
+    toolImageContent: { model: true, ui: true },
+    embeddedResourceImages: { model: true, ui: true },
+    resourceLinkImages: { model: true, ui: true },
+    placement: "inline",
+  },
+  notion: {
+    toolImageContent: { model: false, ui: true },
+    embeddedResourceImages: { model: false, ui: false },
+    resourceLinkImages: { model: false, ui: false },
+    placement: "collapsed",
+  },
+  // Non-market templates (mcpjam / claude-code / agentcore) are intentionally
+  // omitted — not studied, and they're not in MARKET_HOSTS.
 };
 
 /**
@@ -208,12 +320,16 @@ export function bundledHostCompatCatalog(): HostCompatCatalog {
       };
     }
     cachedBundledCatalog = deepFreeze({
-      marketHosts: MARKET_HOSTS.map((host) => ({
-        ...host,
-        supportedProtocolVersions: host.supportedProtocolVersions
-          ? [...host.supportedProtocolVersions]
-          : undefined,
-      })),
+      marketHosts: MARKET_HOSTS.map((host) => {
+        const img = IMAGE_SUPPORT_BY_ID[host.id];
+        return {
+          ...host,
+          supportedProtocolVersions: host.supportedProtocolVersions
+            ? [...host.supportedProtocolVersions]
+            : undefined,
+          imageSupport: img ? { ...img } : undefined,
+        };
+      }),
       capabilitiesById,
       openAiCompatByStyle: { ...OPENAI_COMPAT_PRESET_BY_STYLE },
     });
@@ -235,6 +351,14 @@ function cloneProfile(p: HostCompatProfile): HostCompatProfile {
           availableDisplayModes: p.capabilities.availableDisplayModes
             ? [...p.capabilities.availableDisplayModes]
             : undefined,
+        }
+      : undefined,
+    imageSupport: p.imageSupport
+      ? {
+          toolImageContent: { ...p.imageSupport.toolImageContent },
+          embeddedResourceImages: { ...p.imageSupport.embeddedResourceImages },
+          resourceLinkImages: { ...p.imageSupport.resourceLinkImages },
+          placement: p.imageSupport.placement,
         }
       : undefined,
   };
@@ -283,6 +407,7 @@ export function buildHostProfilesFromCatalog(
         rendersOpenAiApps,
         supportedProtocolVersions: host.supportedProtocolVersions,
         capabilities,
+        imageSupport: host.imageSupport,
       };
     })
     .map(cloneProfile);

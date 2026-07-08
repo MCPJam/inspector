@@ -42,6 +42,8 @@ const LOGO_BY_ID: Record<
     },
   },
   slack: { logoSrc: "/slack_logo.png" },
+  vscode: { logoSrc: "/vscode_logo.svg" },
+  notion: { logoSrc: "/notion_logo.png" },
 };
 
 // A host published to the live catalog before this client ships its logo —

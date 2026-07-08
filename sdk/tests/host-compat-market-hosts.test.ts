@@ -46,6 +46,8 @@ describe("buildMarketHostProfiles", () => {
         "n8n",
         "perplexity",
         "slack",
+        "vscode",
+        "notion",
       ].sort()
     );
     expect(profiles.every((p) => !("logoSrc" in p))).toBe(true);
@@ -124,6 +126,8 @@ describe("buildMarketHostProfiles", () => {
       "perplexity",
       "cline",
       "slack",
+      "vscode",
+      "notion",
     ]);
     expect(b.find((p) => p.id === "claude")?.capabilities?.message).toBe(true);
   });

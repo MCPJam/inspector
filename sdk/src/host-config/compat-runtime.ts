@@ -67,6 +67,8 @@ export const OPENAI_COMPAT_PRESET_BY_STYLE: Readonly<Record<string, boolean>> =
     codex: false,
     goose: false,
     slack: false,
+    vscode: false,
+    notion: false,
   });
 
 export function compatPresetForHostStyle(
