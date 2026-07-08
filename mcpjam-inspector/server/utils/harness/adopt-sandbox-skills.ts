@@ -30,6 +30,7 @@ import {
   type AdoptSkillInput,
 } from "../computers/convex-skills-client.js";
 import { extractExtraFrontmatter } from "../skill-extra-frontmatter.js";
+import { shellQuote } from "./shell-quote.js";
 import { logger } from "../logger.js";
 
 const SKILLS_BASE = "/home/user/.claude/skills";
@@ -67,15 +68,6 @@ export interface AdoptedSkillEntry {
 
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).length;
-}
-
-/**
- * POSIX single-quote a shell argument (defense-in-depth). Dir names come off the
- * box `ls`, so quote before interpolating into `find` — a name with a space or a
- * shell metacharacter must never break out of its argument.
- */
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 /** Whether a skill dir contains any file other than SKILL.md (fail-soft). */

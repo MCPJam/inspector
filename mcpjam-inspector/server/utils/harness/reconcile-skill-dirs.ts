@@ -16,6 +16,7 @@
  * removal (callers pass the already-fetched set, never `[]`-on-failure).
  */
 import { isValidSkillName } from "../../../shared/skill-types.js";
+import { shellQuote } from "./shell-quote.js";
 import { logger } from "../logger.js";
 
 /** Minimal structural view of the harness sandbox session. */
@@ -80,8 +81,9 @@ async function removeManagedSkillDir(
 ): Promise<void> {
   if (!isValidSkillName(name)) return; // never rm an unvalidated path
   // `--` guards option-like names (the validator forbids leading hyphens); the
-  // charset is [a-z0-9-], so there are no shell metacharacters.
-  await session.run({ command: `rm -rf -- ${SKILLS_BASE}/${name}` });
+  // charset is [a-z0-9-] so there are no shell metacharacters, but quote
+  // anyway (shared defense-in-depth rule — see shell-quote.ts).
+  await session.run({ command: `rm -rf -- ${shellQuote(`${SKILLS_BASE}/${name}`)}` });
 }
 
 /**

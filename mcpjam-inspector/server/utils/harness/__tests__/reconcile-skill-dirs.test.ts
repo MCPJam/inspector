@@ -18,8 +18,10 @@ function makeSession(initialFiles: Record<string, string> = {}) {
       return undefined;
     },
     run: async ({ command }) => {
-      const m = command.match(/rm -rf -- (\S+)/);
-      if (m) removed.push(m[1]);
+      // The path is POSIX single-quoted (shared shellQuote); capture the whole
+      // quoted arg and de-escape embedded quotes.
+      const m = command.match(/rm -rf -- '(.*)'$/);
+      if (m) removed.push(m[1].replace(/'\\''/g, "'"));
       return undefined;
     },
   };

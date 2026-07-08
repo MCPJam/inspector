@@ -21,6 +21,7 @@
  */
 import { isPathWithinDirectory } from "../skill-parser.js";
 import type { RuntimeSkillFile } from "./runtime-skills.js";
+import { shellQuote } from "./shell-quote.js";
 import { logger } from "../logger.js";
 
 const SKILLS_BASE = "/home/user/.claude/skills";
@@ -28,16 +29,6 @@ const SKILLS_BASE = "/home/user/.claude/skills";
 const MATERIALIZE_BUDGET_BYTES = 20 * 1024 * 1024;
 /** Per-file download ceiling so one stalled blob can't hang the whole turn. */
 const MATERIALIZE_FETCH_TIMEOUT_MS = 30_000;
-
-/**
- * POSIX single-quote a shell argument (defense-in-depth). Paths reaching `run`
- * are cloud-managed + `isPathWithinDirectory`-validated, but path containment
- * does NOT neutralize spaces / `;` / `$()`, so we still quote before interpolating
- * into `find`/`rm` — a managed filename must never be able to break out of its arg.
- */
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
 
 /** Minimal live-session surface: binary write + exec (for stale-file prune). */
 export interface MaterializeSession {
