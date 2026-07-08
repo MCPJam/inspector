@@ -69,5 +69,10 @@ describe("createPinnedSkillTools", () => {
     expect(tools.listSkills).toBeDefined();
     expect(tools.loadSkill).toBeDefined();
     expect(systemPromptSection).toContain("Skills");
+    // Pinned skills are file-free (decision 8c) — the prompt must NOT advertise
+    // the file tools the pinned tool set doesn't expose.
+    expect(systemPromptSection).not.toContain("listSkillFiles");
+    expect(systemPromptSection).not.toContain("readSkillFile");
+    expect(tools).not.toHaveProperty("listSkillFiles");
   });
 });

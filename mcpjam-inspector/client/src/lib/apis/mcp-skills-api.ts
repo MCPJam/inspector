@@ -225,13 +225,26 @@ export async function uploadSkillFolder(
         ((f as any).webkitRelativePath || "").endsWith("/SKILL.md"),
     );
     if (!skillMdFile) throw new Error("No SKILL.md found in the folder");
-    // 1. Create the skill from SKILL.md (name/description/body).
+    // 1. Create the skill from SKILL.md (name/description/body). IDEMPOTENT on
+    // retry: if a prior attempt already created the skill but some files failed,
+    // re-running would 409 on the name — so reuse the existing skill instead and
+    // proceed to (re-)attach files (attach is upsert-by-(skillId,path)).
     const { description, body } = parseSkillMd(await skillMdFile.text());
-    const skill = await uploadSkill(
-      { name: skillName, description, content: body },
-      source,
-      sharing,
-    );
+    let skill: Skill;
+    try {
+      skill = await uploadSkill(
+        { name: skillName, description, content: body },
+        source,
+        sharing,
+      );
+    } catch (createErr) {
+      const existingId = await resolveCloudSkillId(
+        source.projectId,
+        skillName,
+      ).catch(() => null);
+      if (!existingId) throw createErr; // a real create failure, not a retry
+      skill = await getSkill(skillName, source);
+    }
 
     // 2. Upload supporting files DIRECTLY to Convex (bypasses inspector body
     // limits), then batch-register them. Partial failures are surfaced, not

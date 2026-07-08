@@ -170,13 +170,21 @@ export function createCloudSkillTools(ctx: CloudSkillsContext) {
   };
 }
 
-const CLOUD_SKILLS_PROMPT_SECTION =
+// Base section (listSkills + loadSkill) — advertised by every skill path.
+const SKILLS_PROMPT_BASE =
   `\n\n## Skills\n\n` +
   `This project may have skills available to you (personal + shared) — reusable ` +
   `instruction packages for specific tasks. Call the \`listSkills\` tool to see ` +
   `what's available, then \`loadSkill\` to load a skill's full instructions when ` +
-  `a task matches its purpose. If a loaded skill references supporting files, use ` +
-  `\`listSkillFiles\` and \`readSkillFile\` to access them.`;
+  `a task matches its purpose.`;
+// File-tools sentence — only for paths that ALSO expose listSkillFiles/readSkillFile
+// (the live cloud path). Pinned eval skills are supporting-file-free by design
+// (decision 8c), so the pinned path omits this to avoid advertising absent tools.
+const SKILLS_FILE_TOOLS_SENTENCE =
+  ` If a loaded skill references supporting files, use \`listSkillFiles\` and ` +
+  `\`readSkillFile\` to access them.`;
+const CLOUD_SKILLS_PROMPT_SECTION =
+  SKILLS_PROMPT_BASE + SKILLS_FILE_TOOLS_SENTENCE;
 
 /**
  * Cloud equivalent of `getSkillToolsAndPrompt`. Always returns the tools +
@@ -251,6 +259,9 @@ export function getPinnedSkillToolsAndPrompt(skills: PinnableSkill[]): {
 } {
   return {
     tools: createPinnedSkillTools(skills),
-    systemPromptSection: CLOUD_SKILLS_PROMPT_SECTION,
+    // Pinned skills have no supporting files (decision 8c blocks file-backed
+    // skills from eval selection), so the pinned tool set omits the file tools —
+    // and the prompt omits the file-tools sentence to match (no absent-tool ask).
+    systemPromptSection: SKILLS_PROMPT_BASE,
   };
 }
