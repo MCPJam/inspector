@@ -4,6 +4,7 @@ import { webPost } from "@/lib/apis/web/base";
 import type {
   Skill,
   SkillListItem,
+  SkillProvenance,
   SkillFile,
   SkillFileContent,
 } from "../../../../shared/skill-types";
@@ -38,7 +39,14 @@ interface CloudSkillWire {
   description: string;
   sharing: SkillSharing;
   isOwner: boolean;
+  /** Wire-tolerant; absent/unknown ⇒ 'authored'. */
+  provenance?: string;
   content?: string;
+}
+
+/** Normalize a wire provenance (unknown ⇒ 'authored'), mirroring the backend. */
+function normalizeProvenance(value: string | undefined): SkillProvenance {
+  return value === "computer-adopted" ? "computer-adopted" : "authored";
 }
 
 function cloudToListItem(s: CloudSkillWire): SkillListItem {
@@ -50,6 +58,7 @@ function cloudToListItem(s: CloudSkillWire): SkillListItem {
     sharing: s.sharing,
     isOwner: s.isOwner,
     origin: "cloud",
+    provenance: normalizeProvenance(s.provenance),
   };
 }
 
@@ -247,6 +256,36 @@ export async function uploadSkillFolder(
     );
   }
   return body.skill as Skill;
+}
+
+/**
+ * Update a cloud skill's editable fields by id. Cloud-only in v1 (local FS skill
+ * editing is out of scope). The first UI caller of the previously-unused update
+ * chain; the server 403s if the caller may not manage this skill.
+ */
+export async function updateSkill(
+  skillId: string,
+  data: { name?: string; description?: string; content?: string },
+  source?: SkillsSource,
+): Promise<Skill> {
+  if (!isCloud(source)) {
+    throw new Error("Editing is only supported for cloud skills.");
+  }
+  const body = await webPost<
+    {
+      projectId: string;
+      skillId: string;
+      name?: string;
+      description?: string;
+      content?: string;
+    },
+    { skill: CloudSkillWire }
+  >("/api/web/skills/update", {
+    projectId: source.projectId,
+    skillId,
+    ...data,
+  });
+  return cloudToSkill(body.skill);
 }
 
 export async function deleteSkill(

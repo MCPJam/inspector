@@ -121,8 +121,10 @@ const CLOUD_SKILLS_PROMPT_SECTION =
 
 /**
  * Cloud equivalent of `getSkillToolsAndPrompt`. Always returns the tools +
- * prompt section (the gate is "host has a computer + non-guest", enforced by the
- * caller); discovery is lazy via `listSkills` (a cheap Convex read).
+ * prompt section; whether to advertise them is decided by the caller via
+ * `shouldEnableCloudSkillTools` (non-guest + a project + not a real harness turn
+ * — cloud skills need NO computer). Discovery is lazy via `listSkills` (a cheap
+ * Convex read).
  */
 export function getCloudSkillToolsAndPrompt(ctx: CloudSkillsContext): {
   tools: ReturnType<typeof createCloudSkillTools>;
