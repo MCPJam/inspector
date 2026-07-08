@@ -343,4 +343,39 @@ describe("web routes — API key listing is not scoped by session org", () => {
     expect(status).toBe(200);
     expect(data.items).toHaveLength(2);
   });
+
+  it("pages through a multi-page key list instead of returning only the first page", async () => {
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = new URL(String(input));
+      const after = url.searchParams.get("after");
+      if (!after) {
+        return workosJson({
+          object: "list",
+          data: [keyRecord("api_key_page_1")],
+          list_metadata: { before: null, after: "cursor_1" },
+        });
+      }
+      expect(after).toBe("cursor_1");
+      return workosJson({
+        object: "list",
+        data: [keyRecord("api_key_page_2")],
+        list_metadata: { before: null, after: null },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { status, data } = await expectJson(
+      await app.request("/api/web/api-keys", {
+        method: "GET",
+        headers: { Authorization: "Bearer session-jwt" },
+      }),
+    );
+
+    expect(status).toBe(200);
+    expect(data.items.map((k: { id: string }) => k.id)).toEqual([
+      "api_key_page_1",
+      "api_key_page_2",
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
