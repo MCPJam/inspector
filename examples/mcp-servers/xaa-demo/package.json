@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
+    "dotenv": "^16.4.7",
     "express": "^5.0.0",
     "jose": "^5.9.0",
     "zod": "^4.0.0"

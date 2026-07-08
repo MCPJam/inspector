@@ -21,11 +21,15 @@ Flow tab. See the guide for the full walkthrough.
 
 ## The fix
 
-Set the audience to the address you actually reach the server at:
+The server reads a `.env` file if present. Copy the template (it sets the
+audience to your real local URL) and restart:
 
 ```bash
-CANONICAL_URL=http://localhost:8080/mcp npm start
+cp .env.example .env
+npm start
 ```
+
+Or set it inline: `CANONICAL_URL=http://localhost:8080/mcp npm start`.
 
 ## Test
 

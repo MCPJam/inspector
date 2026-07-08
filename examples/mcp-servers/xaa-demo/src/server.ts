@@ -1,3 +1,4 @@
+import "dotenv/config"; // Load a local .env (if present) into process.env.
 import express, { type Express } from "express";
 import type { Server } from "node:http";
 import { getConfig, resourceUrl, asIssuer } from "./config.ts";

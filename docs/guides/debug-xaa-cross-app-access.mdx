@@ -86,15 +86,20 @@ the office door refused it. So the problem is between the keycard and the door.
 
 ## 3. Inspect the trace
 
-Expand the failed **authenticated MCP request** entry in the log, and open the
-decoded **access token**. Find its **audience (`aud`)** field.
+Expand the failed final step — the **authenticated MCP request** (phase 5). Its
+**HTTP entry** shows the request carrying the keycard as an
+`Authorization: Bearer …` header, and the server's **401** response. The toy
+server's response even names the audience it required:
 
-<Frame caption="The failed HTTP entry expanded, with the decoded access token">
-  <img src="/images/xaa-debugger/04-inspect-token.png" alt="Decoded access token showing the aud claim" />
+> `token audience does not match this server's required audience (https://demo.example.com/mcp)`
+
+That keycard was minted for `http://localhost:8080/mcp` — the address you
+connected to. (You can confirm that address higher up the run in the **ID-JAG
+inspector**, as the `resource` claim.)
+
+<Frame caption="The failed MCP request: a 401 whose response names the required audience">
+  <img src="/images/xaa-debugger/04-inspect-token.png" alt="Failed authenticated MCP request showing the 401 and the audience-mismatch message" />
 </Frame>
-
-You'll see the keycard's `aud` is `http://localhost:8080/mcp` — the address you
-connected to.
 
 ## 4. Find the root cause
 
@@ -116,21 +121,28 @@ against where the server *thinks* it lives.
 
 ## 5. Apply the fix
 
-Stop the server (`Ctrl-C`) and restart it with the required audience set to the
-address you actually use:
+The server reads a `.env` file if one is present. Create it from the template —
+it sets the required audience to your real local URL:
 
 <CodeGroup>
 ```bash macOS / Linux
-CANONICAL_URL=http://localhost:8080/mcp npm start
+cp .env.example .env
 ```
 
 ```powershell Windows (PowerShell)
-$env:CANONICAL_URL="http://localhost:8080/mcp"; npm start
+Copy-Item .env.example .env
 ```
 </CodeGroup>
 
-The startup line now reads `audience required: http://localhost:8080/mcp` — the
-keycard and the door finally agree.
+Then stop the server (`Ctrl-C`) and start it again with `npm start`. The startup
+line now reads `audience required: http://localhost:8080/mcp` — the keycard and
+the door finally agree.
+
+<Note>
+Prefer an inline variable? `CANONICAL_URL=http://localhost:8080/mcp npm start`
+(macOS/Linux) or `$env:CANONICAL_URL="http://localhost:8080/mcp"; npm start`
+(PowerShell) works too.
+</Note>
 
 <Frame caption="Server restarted with the corrected required audience">
   <img src="/images/xaa-debugger/06-fix.png" alt="Server restarted with corrected audience" />
