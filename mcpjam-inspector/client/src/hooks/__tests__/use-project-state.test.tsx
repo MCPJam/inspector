@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { errorToastMessage } from "@/test/utils";
 import { toast } from "sonner";
 import type { AppAction, AppState, Project } from "@/state/app-types";
 import { useProjectState } from "../use-project-state";
@@ -541,7 +542,7 @@ describe("useProjectState automatic project creation", () => {
 
     expect(createProjectMock).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(
-      "Create or join an organization to create projects.",
+      errorToastMessage("Create or join an organization to create projects."),
       { duration: Infinity },
     );
   });
@@ -580,7 +581,7 @@ describe("useProjectState automatic project creation", () => {
 
     expect(createProjectMock).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(
-      "Create or join an organization to create projects.",
+      errorToastMessage("Create or join an organization to create projects."),
       { duration: Infinity },
     );
   });
@@ -610,7 +611,7 @@ describe("useProjectState automatic project creation", () => {
 
     expect(createProjectMock).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(
-      "Create or join an organization to create projects.",
+      errorToastMessage("Create or join an organization to create projects."),
       { duration: Infinity },
     );
   });
@@ -1528,7 +1529,9 @@ describe("useProjectState automatic project creation", () => {
     });
 
     expect(toast.error).toHaveBeenCalledWith(
-      "This organization has reached its project limit (1). Upgrade to create more projects.",
+      errorToastMessage(
+        "This organization has reached its project limit (1). Upgrade to create more projects.",
+      ),
       { duration: Infinity },
     );
   });
@@ -1572,7 +1575,9 @@ describe("useProjectState automatic project creation", () => {
     });
 
     expect(toast.error).toHaveBeenCalledWith(
-      "This organization has reached its project limit (1). Ask an organization owner to upgrade.",
+      errorToastMessage(
+        "This organization has reached its project limit (1). Ask an organization owner to upgrade.",
+      ),
       { duration: Infinity },
     );
   });
@@ -1613,7 +1618,9 @@ describe("useProjectState automatic project creation", () => {
 
     expect(toast.error).toHaveBeenCalledTimes(1);
     expect(toast.error).toHaveBeenCalledWith(
-      "This organization has reached its project limit (1). Ask an organization owner to upgrade.",
+      errorToastMessage(
+        "This organization has reached its project limit (1). Ask an organization owner to upgrade.",
+      ),
       { duration: Infinity },
     );
     expect(logger.error).toHaveBeenCalledTimes(2);

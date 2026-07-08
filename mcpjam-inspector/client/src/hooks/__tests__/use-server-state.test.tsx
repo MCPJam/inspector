@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { flushSync } from "react-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { errorToastMessage } from "@/test/utils";
 import type { AppState, AppAction, ServerWithName } from "@/state/app-types";
 import {
   buildElectronMcpCallbackUrl,
@@ -1095,7 +1096,9 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(toastError).toHaveBeenCalledWith(
-      "OAuth authorization failed: access_denied: User denied access",
+      errorToastMessage(
+        "OAuth authorization failed: access_denied: User denied access",
+      ),
       { duration: Infinity }
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
@@ -1125,7 +1128,7 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(toastError).toHaveBeenCalledWith(
-      "Error completing OAuth flow: Token exchange failed",
+      errorToastMessage("Error completing OAuth flow: Token exchange failed"),
       { duration: Infinity }
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
@@ -1671,7 +1674,7 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(toastError).toHaveBeenCalledWith(
-      CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
+      errorToastMessage(CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE),
       { duration: Infinity }
     );
     expect(
@@ -1695,7 +1698,7 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(toastError).toHaveBeenCalledWith(
-      PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
+      errorToastMessage(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE),
       { duration: Infinity }
     );
     expect(testConnectionMock).not.toHaveBeenCalled();
@@ -1732,7 +1735,7 @@ describe("useServerState OAuth callback failures", () => {
       error: PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
     });
     expect(toastError).toHaveBeenCalledWith(
-      PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
+      errorToastMessage(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE),
       { duration: Infinity }
     );
   });
@@ -2019,7 +2022,7 @@ describe("useServerState OAuth callback failures", () => {
       }),
     });
     expect(toastError).not.toHaveBeenCalledWith(
-      "No hosted OAuth credential found"
+      errorToastMessage("No hosted OAuth credential found"),
     );
   });
 
@@ -2086,7 +2089,9 @@ describe("useServerState OAuth callback failures", () => {
       error: "Failed to resolve registry OAuth config: registry lookup failed",
     });
     expect(toastError).toHaveBeenCalledWith(
-      "Network error: Failed to resolve registry OAuth config: registry lookup failed",
+      errorToastMessage(
+        "Network error: Failed to resolve registry OAuth config: registry lookup failed",
+      ),
       { duration: Infinity }
     );
   });
@@ -2879,7 +2884,9 @@ describe("syncServerToConvex name-collision recovery", () => {
       expect.objectContaining({ type: "UPSERT_SERVER" })
     );
     expect(toastError.mock.calls[0]?.[0]).toEqual(
-      expect.stringContaining("selected project is not in the active organization")
+      errorToastMessage(
+        "Cannot save server: the selected project is not in the active organization. Refresh and try again."
+      )
     );
   });
 

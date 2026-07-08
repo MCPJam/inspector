@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { errorToastMessage } from "@/test/utils";
 import { ChatTabV2 } from "../ChatTabV2";
 
 const mockToastError = vi.hoisted(() => vi.fn());
@@ -704,7 +705,9 @@ describe("ChatTabV2 history sync", () => {
     );
     expect(mockUseChatSession.syncResumedVersion).toHaveBeenCalledWith(null);
     expect(mockToastError).toHaveBeenCalledWith(
-      "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
+      errorToastMessage(
+        "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
+      ),
       { duration: Infinity }
     );
   });

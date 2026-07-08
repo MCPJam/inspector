@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { errorToastMessage } from "@/test/utils";
 import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
@@ -349,7 +350,7 @@ describe("useAutoConnectProjectServers", () => {
       { serverName: "beta", error: "beta exploded" }
     );
     expect(mocks.toastError).toHaveBeenCalledWith(
-      "Failed to reconnect 1 server.",
+      errorToastMessage("Failed to reconnect 1 server."),
       { duration: Infinity }
     );
   });
