@@ -1646,7 +1646,23 @@ export async function prepareEvalRun(
   // configSnapshot and the judge still claim the pinned skills were available.
   let runPinnedSkills: PinnableSkill[] | undefined;
   if (runId) {
-    runPinnedSkills = await fetchRunPinnedSkillsWithRetry(convexClient, runId);
+    // The run row already exists (startSuiteRunWithRecorder created it), so a
+    // persistent pin-fetch failure would otherwise strand the run as
+    // running/pending forever. Finalize it as failed before rethrowing.
+    try {
+      runPinnedSkills = await fetchRunPinnedSkillsWithRetry(convexClient, runId);
+    } catch (error) {
+      await recorder
+        .finalize({
+          status: "failed",
+          notes: (error instanceof Error
+            ? error.message
+            : String(error)
+          ).slice(0, 500),
+        })
+        .catch(() => {});
+      throw error;
+    }
   }
 
   const execute = async () => {
