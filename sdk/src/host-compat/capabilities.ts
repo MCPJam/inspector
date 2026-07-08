@@ -144,12 +144,29 @@ export const MCP_APPS_SLACK: McpAppsCapabilities = frozen({
   widgetDisplayModeRequests: "accept",
 });
 
-/** VS Code (GitHub Copilot chat panel) — mirrors Cursor's matrix (VS Code is
- * the editor Cursor forks) but inline-only: VS Code renders MCP UI in the chat
- * panel without fullscreen/pip. */
+/** VS Code (GitHub Copilot chat panel) — from the VS Code client template
+ * (`VSCODE_HOST_STYLE.mcp.mcpAppsCapabilities` in built-ins.ts): full surface
+ * minus updateModelContext + message. */
 export const MCP_APPS_VSCODE: McpAppsCapabilities = frozen({
-  ...MCP_APPS_CURSOR,
-  availableDisplayModes: ["inline"],
+  availableDisplayModes: ["inline", "fullscreen", "pip"],
+  toolInputPartial: true,
+  toolCancelled: true,
+  hostContextChanged: true,
+  resourceTeardown: true,
+  toolInfo: true,
+  openLinks: true,
+  serverTools: true,
+  serverResources: true,
+  logging: true,
+  updateModelContext: false,
+  message: false,
+  sandboxPermissions: true,
+  cspFrameDomains: true,
+  cspBaseUriDomains: true,
+  resourcePrefersBorder: true,
+  downloadFile: true,
+  requestTeardown: true,
+  widgetDisplayModeRequests: "accept",
 });
 
 /** Spec-default "no claims" — every advertise key off. Fallback baseline. */
