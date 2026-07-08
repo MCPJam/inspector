@@ -65,6 +65,13 @@ export interface CloudSkillRuntimeItem {
   /** Wire-tolerant (see {@link normalizeProvenance}); absent ⇒ 'authored'. */
   provenance?: string;
   aggregateHash: string;
+  /**
+   * Preserved Agent-Skills-spec frontmatter (license / compatibility /
+   * allowed-tools / metadata). The harness `skills` param structurally can't
+   * carry it, so `materializeSkillFrontmatter` rewrites the on-box SKILL.md
+   * for skills that have it. Absent on older backends (wire-tolerant).
+   */
+  extraFrontmatter?: SkillExtraFrontmatterInput;
 }
 
 /** Preserved Agent-Skills-spec frontmatter (backend re-validates + size-caps). */

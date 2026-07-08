@@ -90,6 +90,7 @@ import {
   claudeCodeSafeSkills,
 } from "./runtime-skills.js";
 import { materializeSkillFiles } from "./materialize-skill-files.js";
+import { materializeSkillFrontmatter } from "./materialize-skill-frontmatter.js";
 import {
   reconcileSkillDirs,
   appendManagedSkills,
@@ -1011,6 +1012,27 @@ export async function runHarnessTurn(
       // Session is up: the finalizer + heartbeat now own the continuity lane, so
       // the pre-session cleanup in onFinishEngine no longer needs to free it.
       sessionEstablished = true;
+
+      // Re-write SKILL.md WITH preserved extra frontmatter (allowed-tools /
+      // license / …) for skills that carry it. The adapter's `skills` param
+      // structurally can't deliver those fields, and the adapter writes its
+      // own (extras-less) SKILL.md during createSession — AFTER
+      // `onSandboxSession` — so this must run here, post-createSession, or a
+      // fresh start (exactly when the adapter writes) would clobber it.
+      // Fail-soft (never fails the turn); zero session calls when no skill
+      // has extras; same gating as the onSandboxSession skill passes.
+      if (
+        harnessAdapter.supportsSkills &&
+        runtimeSkills !== null &&
+        runtimeSkills.length > 0 &&
+        sandboxFileSession
+      ) {
+        await materializeSkillFrontmatter({
+          session: sandboxFileSession,
+          skills: runtimeSkills,
+          ...(abortSignal ? { signal: abortSignal } : {}),
+        }).catch(() => {});
+      }
 
       // Heartbeat the lease while we stream (turns can outlive the TTL). The
       // heartbeat is the liveness guard: it aborts the turn on a DEFINITIVE
