@@ -118,6 +118,39 @@ describe("adoptSandboxSkills", () => {
     });
   });
 
+  it("does NOT adopt a file-backed dir (SKILL.md-only adoption)", async () => {
+    // `find` reports a supporting file → the dir is skipped (would otherwise lose
+    // those files after a reset / on a later cloud delete).
+    const session = {
+      run: vi.fn(async ({ command }: { command: string }) => {
+        if (command.startsWith("ls -1")) {
+          return { exitCode: 0, stdout: "file-skill", stderr: "" };
+        }
+        if (command.startsWith("find")) {
+          return {
+            exitCode: 0,
+            stdout: `${SKILLS_BASE}/file-skill/scripts/run.py`,
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+      readTextFile: vi.fn(async ({ path }: { path: string }) =>
+        path === `${SKILLS_BASE}/file-skill/SKILL.md`
+          ? skillMd("file-skill")
+          : null,
+      ),
+    };
+    const out = await adoptSandboxSkills({
+      session,
+      authHeader: "Bearer x",
+      projectId: "proj_1",
+      managedNames: new Set(),
+    });
+    expect(convexAdoptComputerSkills).not.toHaveBeenCalled();
+    expect(out.adopted).toEqual([]);
+  });
+
   it("skips dirs with no SKILL.md and caps the batch at 5", async () => {
     vi.mocked(convexAdoptComputerSkills).mockResolvedValue({ results: [] });
     const dirs = ["a", "b", "c", "d", "e", "f", "g", "no-md"];

@@ -1,6 +1,6 @@
 import { authFetch } from "@/lib/session-token";
 import { runByMode } from "@/lib/apis/mode-client";
-import { webPost } from "@/lib/apis/web/base";
+import { webPost, WebApiError } from "@/lib/apis/web/base";
 import type {
   Skill,
   SkillListItem,
@@ -226,10 +226,13 @@ export async function uploadSkillFolder(
     );
     if (!skillMdFile) throw new Error("No SKILL.md found in the folder");
     // 1. Create the skill from SKILL.md (name/description/body). IDEMPOTENT on
-    // retry: if a prior attempt already created the skill but some files failed,
-    // re-running would 409 on the name — so reuse the existing skill instead and
-    // proceed to (re-)attach files (attach is upsert-by-(skillId,path)).
+    // retry ONLY for the retry-after-partial-upload case: a prior attempt already
+    // created the skill but some files failed, so re-running 409s on the name AND
+    // there ARE supporting files to (re-)attach (attach is upsert-by-path). Any
+    // other create failure — validation / permission / server, OR a genuine
+    // SKILL.md-only duplicate (nothing to retry) — rethrows so the user sees it.
     const { description, body } = parseSkillMd(await skillMdFile.text());
+    const supporting = files.filter((f) => f !== skillMdFile);
     let skill: Skill;
     try {
       skill = await uploadSkill(
@@ -238,18 +241,20 @@ export async function uploadSkillFolder(
         sharing,
       );
     } catch (createErr) {
+      const isConflict =
+        createErr instanceof WebApiError && createErr.status === 409;
+      if (!isConflict || supporting.length === 0) throw createErr;
       const existingId = await resolveCloudSkillId(
         source.projectId,
         skillName,
       ).catch(() => null);
-      if (!existingId) throw createErr; // a real create failure, not a retry
+      if (!existingId) throw createErr;
       skill = await getSkill(skillName, source);
     }
 
     // 2. Upload supporting files DIRECTLY to Convex (bypasses inspector body
-    // limits), then batch-register them. Partial failures are surfaced, not
-    // silently dropped — the skill still exists, so the user can retry.
-    const supporting = files.filter((f) => f !== skillMdFile);
+    // limits), then batch-register them. Partial failures are surfaced (with the
+    // failing paths), not silently dropped — the skill exists, so the user can retry.
     if (supporting.length === 0) return skill;
 
     const skillId = await resolveCloudSkillId(source.projectId, skillName);
@@ -258,10 +263,10 @@ export async function uploadSkillFolder(
       storageId: string;
       contentHash: string;
     }[] = [];
-    let failed = 0;
+    const failedPaths: string[] = [];
     for (const f of supporting) {
+      const path = skillRelativePath(f);
       try {
-        const path = skillRelativePath(f);
         const { uploadUrl } = await webPost<
           { projectId: string; skillId: string },
           { uploadUrl: string }
@@ -285,7 +290,7 @@ export async function uploadSkillFolder(
           contentHash: await sha256Hex(buf),
         });
       } catch {
-        failed += 1;
+        failedPaths.push(path);
       }
     }
     if (attachInputs.length > 0) {
@@ -303,12 +308,14 @@ export async function uploadSkillFolder(
           files: attachInputs,
         });
       } catch {
-        failed += attachInputs.length;
+        failedPaths.push(...attachInputs.map((a) => a.path));
       }
     }
+    const failed = failedPaths.length;
     if (failed > 0) {
       throw new Error(
-        `Skill created; ${failed} supporting file(s) failed to upload. ` +
+        `Skill created; ${failed} supporting file(s) failed to upload ` +
+          `(${failedPaths.join(", ")}). ` +
           `Re-upload the folder to add them.`,
       );
     }

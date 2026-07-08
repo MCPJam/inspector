@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Loader2, Save } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -38,6 +38,8 @@ export function SkillEditDialog({
   onSaved,
 }: SkillEditDialogProps) {
   // Hooks BEFORE any early return (rules-of-hooks).
+  const descriptionId = useId();
+  const contentId = useId();
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -90,8 +92,11 @@ export function SkillEditDialog({
 
         <div className="space-y-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Description</label>
+            <label htmlFor={descriptionId} className="text-sm font-medium">
+              Description
+            </label>
             <textarea
+              id={descriptionId}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               disabled={isSaving}
@@ -101,8 +106,11 @@ export function SkillEditDialog({
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Instructions (SKILL.md)</label>
+            <label htmlFor={contentId} className="text-sm font-medium">
+              Instructions (SKILL.md)
+            </label>
             <textarea
+              id={contentId}
               value={content}
               onChange={(e) => setContent(e.target.value)}
               disabled={isSaving}

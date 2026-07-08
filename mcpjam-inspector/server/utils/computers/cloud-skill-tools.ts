@@ -205,12 +205,15 @@ export function getCloudSkillToolsAndPrompt(ctx: CloudSkillsContext): {
 
 /**
  * PINNED skill tools for eval runs — an in-memory closure over frozen skill
- * content (from `configSnapshot.pinnedSkills`). Structurally identical to the
- * live cloud tools (same tool NAMES, NAME_RE, error strings, prompt section) so
- * the model behaves the same and the matcher's skill exemption still applies —
- * but `execute()` does ZERO network I/O (a mid-run skill edit can't change
- * behavior between iterations, which is the whole point of pinning). Never
- * `needsApproval` — pure reads of frozen content under an auto-deny eval run.
+ * content (from `configSnapshot.pinnedSkills`). Mirrors the live cloud
+ * `listSkills`/`loadSkill` tools (same NAMES, NAME_RE, error strings) so the
+ * model behaves the same and the matcher's skill exemption still applies — but
+ * `execute()` does ZERO network I/O (a mid-run skill edit can't change behavior
+ * between iterations, which is the whole point of pinning). The supporting-file
+ * tools (`listSkillFiles`/`readSkillFile`) are intentionally OMITTED: pinned
+ * eval skills are file-free by design (decision 8c), and the pinned prompt omits
+ * the file-tools guidance to match. Never `needsApproval` — pure reads of frozen
+ * content under an auto-deny eval run.
  */
 export function createPinnedSkillTools(skills: PinnableSkill[]) {
   const byName = new Map(skills.map((s) => [s.name, s]));

@@ -893,7 +893,7 @@ export async function runHarnessTurn(
             // SKILL.md; reconcile removed stale managed dirs). Fetched here rather
             // than at turn start to keep the zero-file fast path free. Fully
             // fail-soft; guest/swarm scope uses the execution-scoped file query.
-            if (projectId && authHeader) {
+            if (projectId && authHeader && runtimeSkills.length > 0) {
               const runtimeFiles = await fetchRuntimeSkillFiles(
                 authHeader,
                 projectId,

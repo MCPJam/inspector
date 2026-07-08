@@ -261,9 +261,9 @@ export function SkillUploadDialog({
           <DialogDescription>
             {source?.kind === "cloud" ? (
               <>
-                Upload a skill folder containing a SKILL.md file. Cloud skills are{" "}
-                <strong>SKILL.md-only for now</strong> — folders with supporting
-                files are rejected (inline anything SKILL.md needs).
+                Upload a skill folder containing a SKILL.md file. Supporting files
+                (scripts, references, assets) are uploaded alongside it and
+                available to the skill at runtime.
               </>
             ) : (
               <>

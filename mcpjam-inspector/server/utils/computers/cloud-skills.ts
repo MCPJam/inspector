@@ -42,6 +42,8 @@ import type { SkillFileContent } from "../../../shared/skill-types.js";
 export const MAX_SKILL_CONTENT_BYTES = 128 * 1024;
 /** Text is inlined up to 1MB (matches the local FS reader); larger ⇒ base64. */
 export const MAX_SKILL_FILE_TEXT_BYTES = 1024 * 1024;
+/** Hard read cap — the backend caps files at 2MB; refuse anything larger. */
+export const SKILL_FILE_MAX_READ_BYTES = 2 * 1024 * 1024;
 
 export class CloudSkillsError extends Error {
   readonly status: number;
@@ -243,14 +245,29 @@ export function readCloudSkillFile(
   path: string
 ): Promise<SkillFileContent> {
   return run(async () => {
-    const { url } = await convexGetSkillFileUrl(
+    const { url, size } = await convexGetSkillFileUrl(
       ctx.authHeader,
       ctx.projectId,
       skillId,
       path
     );
     if (!url) throw new CloudSkillsError("Skill file not found", 404);
-    const res = await fetch(url, { signal: ctx.signal });
+    // Guard on the server-verified size BEFORE fetching so a large blob can't
+    // force buffering the whole payload in memory. The backend caps files at
+    // 2MB, so anything above that is anomalous.
+    if (size > SKILL_FILE_MAX_READ_BYTES) {
+      throw new CloudSkillsError(
+        `Skill file too large to read (${size} bytes).`,
+        413
+      );
+    }
+    // Combine the caller's disconnect signal with an explicit timeout so a slow
+    // `_storage` response can't hold the worker indefinitely.
+    const timeout = AbortSignal.timeout(30_000);
+    const signal = ctx.signal
+      ? AbortSignal.any([ctx.signal, timeout])
+      : timeout;
+    const res = await fetch(url, { signal });
     if (!res.ok) {
       throw new CloudSkillsError(
         `Failed to read skill file (${res.status})`,

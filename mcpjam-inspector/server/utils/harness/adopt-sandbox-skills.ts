@@ -40,6 +40,12 @@ const MAX_SCAN_DIRS = 50;
 const MAX_ADOPT_PER_TURN = 5;
 const SKILL_CONTENT_MAX_BYTES = 128 * 1024;
 const SKILL_DESCRIPTION_MAX_CHARS = 1024;
+/**
+ * Hard cap on the RAW SKILL.md we'll even parse — the 128KB body cap plus
+ * headroom for frontmatter. Bounding before `matter()` means an oversized/bad
+ * filesystem skill can't spend time+memory parsing before we reject it.
+ */
+const MAX_RAW_SKILL_MD_BYTES = SKILL_CONTENT_MAX_BYTES + 64 * 1024;
 
 /**
  * Minimal live-session surface this pass needs (subset of the harness sandbox
@@ -61,6 +67,22 @@ export interface AdoptedSkillEntry {
 
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).length;
+}
+
+/** Whether a skill dir contains any file other than SKILL.md (fail-soft). */
+async function dirHasSupportingFiles(
+  session: AdoptSession,
+  name: string,
+): Promise<boolean> {
+  try {
+    const res = await session.run({
+      command: `find ${SKILLS_BASE}/${name} -mindepth 1 -type f ! -name SKILL.md -print -quit`,
+    });
+    return res.exitCode === 0 && res.stdout.trim().length > 0;
+  } catch {
+    // Can't tell → be conservative and treat as file-backed (skip adoption).
+    return true;
+  }
 }
 
 /** Extract the preserved optional spec frontmatter (best-effort, lenient). */
@@ -211,8 +233,30 @@ export async function adoptSandboxSkills(args: {
         raw = null;
       }
       if (!raw) continue; // not a skill dir (no SKILL.md) — silent, not a skill
+      // Bound the raw file BEFORE parsing so an oversized/bad SKILL.md can't
+      // spend time+memory in gray-matter before we'd reject it anyway.
+      if (byteLength(raw) > MAX_RAW_SKILL_MD_BYTES) {
+        logger.info("[adopt-sandbox-skills] skip: SKILL.md too large to parse", {
+          dir: name,
+          bytes: byteLength(raw),
+        });
+        continue;
+      }
       const candidate = parseAdoptCandidate(raw, name);
-      if (candidate) candidates.push(candidate);
+      if (!candidate) continue;
+      // Adoption is SKILL.md-ONLY (adopting on-box files into org storage needs
+      // its own threat review). A file-backed dir must NOT be adopted: the cloud
+      // record would carry no file metadata to re-materialize after a reset, and
+      // marking it managed would let a later cloud delete remove the dir WITH its
+      // un-adopted files. Skip such dirs until package adoption is designed.
+      if (await dirHasSupportingFiles(args.session, name)) {
+        logger.info(
+          "[adopt-sandbox-skills] skip: dir has supporting files (SKILL.md-only adoption)",
+          { dir: name },
+        );
+        continue;
+      }
+      candidates.push(candidate);
     }
 
     if (candidates.length === 0) return { adopted: [] };
