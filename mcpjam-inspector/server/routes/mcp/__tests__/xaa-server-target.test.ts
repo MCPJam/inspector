@@ -353,9 +353,9 @@ describe("server-target /proxy/token", () => {
     expect(tokenPosted).toBe(false);
   });
 
-  // The Scalekit shape: OAuth endpoints scoped under /resources/res_x while
-  // the metadata advertises the origin root as issuer. Rejected by the strict
-  // check unless the per-server opt-in is stored.
+  // A path-scoped AS shape: OAuth endpoints scoped under /resources/res_x
+  // while the metadata advertises the origin root as issuer. Rejected by the
+  // strict check unless the per-server opt-in is stored.
   function stubPathScopedAs(onTokenPost?: (url: string) => void) {
     const fetchMock = vi.fn(async (url: any, init?: RequestInit) => {
       const method = (init?.method ?? "GET").toUpperCase();

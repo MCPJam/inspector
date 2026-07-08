@@ -54,7 +54,7 @@ export interface XaaCredentialFieldsProps {
   xaaAuthzIssuer: string;
   onXaaAuthzIssuerChange: (value: string) => void;
   /** Opt-in: accept a path-scoped authorization server whose metadata
-   * advertises the same-origin root as issuer (e.g. Scalekit). */
+   * advertises the same-origin root as issuer. */
   xaaAllowPathScopedIssuer: boolean;
   onXaaAllowPathScopedIssuerChange: (value: boolean) => void;
   xaaSubject: string;
@@ -524,7 +524,7 @@ export function XaaCredentialFields({
                 <p className="text-xs text-muted-foreground">
                   Allow the metadata to advertise the origin root as issuer
                   while the OAuth endpoints live under a path (multi-tenant
-                  setups like Scalekit&apos;s{" "}
+                  setups with paths like{" "}
                   <code className="font-mono">/resources/…</code>). Off keeps
                   the strict RFC 8414 issuer match.
                 </p>
