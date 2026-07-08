@@ -19,9 +19,10 @@ function fakeSession(onBoxFiles: string[] = []) {
           return { exitCode: 0, stdout: onBoxFiles.join("\n"), stderr: "" };
         }
         if (command.startsWith("rm")) {
-          const m = command.match(/rm -f -- (\S+)/);
-          // The path is POSIX single-quoted; strip the surrounding quotes.
-          if (m) removed.push(m[1].replace(/^'|'$/g, ""));
+          // The path is POSIX single-quoted; capture the whole quoted arg
+          // (spaces included) and de-escape embedded quotes to match shellQuote.
+          const m = command.match(/rm -f -- '(.*)'$/);
+          if (m) removed.push(m[1].replace(/'\\''/g, "'"));
         }
         return { exitCode: 0, stdout: "", stderr: "" };
       }),

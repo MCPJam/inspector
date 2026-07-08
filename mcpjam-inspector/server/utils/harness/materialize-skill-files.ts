@@ -26,6 +26,8 @@ import { logger } from "../logger.js";
 const SKILLS_BASE = "/home/user/.claude/skills";
 /** Per-turn write budget across ALL skills (matches the backend per-skill cap). */
 const MATERIALIZE_BUDGET_BYTES = 20 * 1024 * 1024;
+/** Per-file download ceiling so one stalled blob can't hang the whole turn. */
+const MATERIALIZE_FETCH_TIMEOUT_MS = 30_000;
 
 /**
  * POSIX single-quote a shell argument (defense-in-depth). Paths reaching `run`
@@ -175,9 +177,13 @@ export async function materializeSkillFiles(args: {
       continue;
     }
     try {
-      const res = await fetch(file.url, {
-        ...(args.signal ? { signal: args.signal } : {}),
-      });
+      // Bound every download so a stalled blob can't hang the sequential loop
+      // even if the caller's signal never fires; compose with it when present.
+      const timeout = AbortSignal.timeout(MATERIALIZE_FETCH_TIMEOUT_MS);
+      const signal = args.signal
+        ? AbortSignal.any([args.signal, timeout])
+        : timeout;
+      const res = await fetch(file.url, { signal });
       if (!res.ok) {
         skipped += 1;
         continue;
