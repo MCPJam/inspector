@@ -23,7 +23,6 @@ import { ShareUsageThreadList } from "@/components/connection/share-usage/ShareU
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import { ChatboxTopicMapPanel } from "@/components/chatboxes/ChatboxTopicMapPanel";
 import { GenerateSessionsDialog } from "@/components/chatboxes/GenerateSessionsDialog";
-import { SessionReadinessStrip } from "@/components/chatboxes/session-readiness";
 import { buildChatboxSessionPath } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 
@@ -264,7 +263,6 @@ export function ChatboxUsagePanel({
                   Generate with AI
                 </Button>
               </div>
-              <SessionReadinessStrip chatboxId={chatbox.chatboxId} />
               <div className="min-h-0 flex-1 overflow-hidden">
                 <ShareUsageThreadList
                   threads={sortedThreads}
