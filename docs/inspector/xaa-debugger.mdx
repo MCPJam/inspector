@@ -67,6 +67,19 @@ When the flow encounters an error, the debugger surfaces a guidance callout with
 **MCP Server Rejected the Access Token**
 - The AS issued a token but the MCP server returned 401. The `resource` or `aud` claim on the access token likely doesn't match the MCP server's canonical resource URL.
 
+**Path-scoped authorization server issuer mismatch**
+- The AS metadata advertises the origin root (e.g. `https://env.example.com`) as its issuer, but the configured issuer URL points to a path-scoped endpoint (e.g. `https://env.example.com/resources/res_x`). This is the shape used by multi-tenant authorization servers like Scalekit. Enable the **Path-scoped authorization server** toggle in the server's XAA settings to allow this. See [Path-scoped authorization servers](#path-scoped-authorization-servers) below.
+
+## Path-scoped authorization servers
+
+Some multi-tenant authorization servers (for example, Scalekit's `/resources/res_x` layout) scope their OAuth endpoints under a path while their metadata advertises the origin root as the `issuer`. By default, MCPJam enforces the strict RFC 8414 issuer match and rejects this shape with a 409 error.
+
+To allow a path-scoped AS for a specific server, enable the **Path-scoped authorization server** toggle that appears below the Authorization Server issuer field in the server's XAA settings. The toggle is available on both the Connect page and the XAA Debugger modal.
+
+**When to enable it:** Your AS metadata returns an `issuer` value that is the same-origin root of the issuer URL you configured (e.g. you set `https://env.example.com/resources/res_x` but the metadata advertises `https://env.example.com`).
+
+**Security note:** The relaxation is per-server and off by default. Even with the toggle on, the token endpoint must stay on the same origin as the advertised issuer — MCPJam will not send your client secret to a different host.
+
 ## Sequence Diagram
 
 The XAA flow sequence diagram shows four actors:
