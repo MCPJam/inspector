@@ -293,13 +293,12 @@ export function ChatboxShareSection({
         </DropdownMenu>
       </div>
 
-      {/* Secure Guest Harness Enablement — admin-only host-funded guest
-          execution + Claude Code harness opt-in. Server-side project-admin
-          gated; a non-admin's save is rejected. */}
-      <ChatboxGuestExecutionSection
-        chatbox={settings}
-        onUpdated={updateSettings}
-      />
+      {accessPreset === "link_guests" ? (
+        <ChatboxGuestExecutionSection
+          chatbox={settings}
+          onUpdated={updateSettings}
+        />
+      ) : null}
 
       <div className="space-y-2">
         <label className="text-sm font-medium">Has access</label>

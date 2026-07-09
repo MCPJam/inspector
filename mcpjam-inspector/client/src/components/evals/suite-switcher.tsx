@@ -12,6 +12,7 @@ import {
   formatOverviewRelativeTime,
   getSuitePassFailCounts,
   stripTimestampSuffix,
+  SuiteSourceBadge,
 } from "./suite-overview-presentation";
 
 interface SuiteSwitcherProps {
@@ -126,8 +127,11 @@ export function SuiteSwitcher({
                       {name.slice(0, 1)}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-medium text-foreground">
-                        {name}
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span className="truncate text-[13px] font-medium text-foreground">
+                          {name}
+                        </span>
+                        <SuiteSourceBadge source={entry.suite.source} />
                       </span>
                       <span className="block truncate text-[11px] text-muted-foreground">
                         {entry.latestRun
@@ -156,7 +160,10 @@ export function SuiteSwitcher({
                   {isActive ? (
                     <Check className="h-4 w-4 shrink-0 text-primary" />
                   ) : null}
-                  {onDeleteSuite ? (
+                  {/* CI-created suites can't be deleted from the switcher:
+                      their history is CI's record, and the next report would
+                      recreate the suite anyway. */}
+                  {onDeleteSuite && entry.suite.source !== "sdk" ? (
                     <button
                       type="button"
                       onClick={(e) => {

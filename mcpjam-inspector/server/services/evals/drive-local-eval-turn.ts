@@ -17,7 +17,8 @@ import {
 } from "../../utils/direct-chat-turn.js";
 import type { createLlmModel } from "../../utils/chat-helpers.js";
 import type { PrepareChatV2Result } from "../../utils/chat-v2-orchestration.js";
-import { runPinnedTurn } from "./pinned-turn.js";
+import { buildPinnedTurnAccounting, runPinnedTurn } from "./pinned-turn.js";
+import type { PinnedTurnSsePayload } from "./pinned-turn-sse.js";
 import { EVAL_WIDGET_MODEL_CONTEXT } from "../../config.js";
 import { withWidgetContextSystemPrompt } from "./widget-interaction-context.js";
 import {
@@ -85,23 +86,14 @@ export type LocalEvalTurnSinks = {
   /**
    * PR5 — a model-free pinned (`toolCall`) turn ran. There is no model stream
    * to translate, so the streaming runner synthesizes the SSE sequence from
-   * this. `messages` is the persisted shape (user "Pinned tool call …" +
-   * assistant summary) so the live trace matches the finalized iteration.
-   * `iterationError` set ⇒ the pinned call failed before an MCP call ran
-   * (server not connected, etc.).
+   * this (via `emitPinnedTurnSse`). `messages` is the persisted shape (user
+   * "Pinned tool call …" + assistant summary) so the live trace matches the
+   * finalized iteration. `iterationError` set ⇒ the pinned call failed before
+   * an MCP call ran (server not connected, etc.). Typed as the shared SSE
+   * payload (minus the runner-owned `turnIndex`) so the sink and the emitter
+   * cannot drift.
    */
-  onPinnedTurn?: (ctx: {
-    prompt: string;
-    messages: ModelMessage[];
-    spans: EvalTraceSpan[];
-    usage: UsageTotals;
-    toolCall?: ToolCall;
-    toolCallId?: string;
-    toolResult?: unknown;
-    toolResultIsError?: boolean;
-    toolError?: ToolErrorRecord;
-    iterationError?: string;
-  }) => void;
+  onPinnedTurn?: (ctx: Omit<PinnedTurnSsePayload, "turnIndex">) => void;
 };
 
 export type DriveLocalEvalTurnParams = {
@@ -214,32 +206,25 @@ export async function driveLocalEvalTurn(
       browser,
       promptIndex,
     });
-    acc.conversationMessages.push({
-      role: "user",
-      content: `Pinned tool call: ${pinned.toolName} on "${pinned.serverName}"`,
-    });
-    acc.conversationMessages.push({
-      role: "assistant",
-      content: pinnedResult.summary,
-    });
+    const accounting = buildPinnedTurnAccounting(pinned, pinnedResult);
+    acc.conversationMessages.push(
+      accounting.userMessage,
+      accounting.assistantMessage
+    );
     appendToolCallsForPrompt(
       acc.toolsCalledByPrompt,
       promptIndex,
-      pinnedResult.toolCall ? [pinnedResult.toolCall] : []
+      accounting.toolCalls
     );
-    acc.assistantMessageByPrompt[promptIndex] = pinnedResult.summary;
-    acc.toolErrorsByPrompt[promptIndex] = pinnedResult.toolError
-      ? [pinnedResult.toolError]
-      : [];
-    if (pinnedResult.toolError) {
-      acc.pinnedToolErrors.push(pinnedResult.toolError);
-    }
-    if (pinnedResult.iterationError && !acc.iterationError) {
-      acc.iterationError = pinnedResult.iterationError;
+    acc.assistantMessageByPrompt[promptIndex] = accounting.summary;
+    acc.toolErrorsByPrompt[promptIndex] = accounting.toolErrors;
+    acc.pinnedToolErrors.push(...accounting.toolErrors);
+    if (accounting.iterationError && !acc.iterationError) {
+      acc.iterationError = accounting.iterationError;
       acc.pinnedSetupFailure = true;
     }
     sinks?.onPinnedTurn?.({
-      prompt: `Pinned tool call: ${pinned.toolName} on "${pinned.serverName}"`,
+      prompt: accounting.prompt,
       messages: acc.conversationMessages,
       spans: acc.capturedSpans,
       usage: acc.accumulatedUsage,

@@ -189,7 +189,7 @@ describe("POST /api/web/computers/upload", () => {
     expect(fake.writes).toHaveLength(0);
   });
 
-  it("still accepts the legacy ?token= query (stale tabs across a deploy)", async () => {
+  it("401s on a ?token= query string alone (no header fallback)", async () => {
     stubConfiguredEnv();
     const fake = fakeSandbox();
     const app = createApp(async () => fake.sandbox);
@@ -199,8 +199,8 @@ describe("POST /api/web/computers/upload", () => {
       `/api/web/computers/upload?token=${encodeURIComponent(await signToken())}`,
       { method: "POST", body: form }
     );
-    expect(res.status).toBe(200);
-    expect(fake.writes).toHaveLength(1);
+    expect(res.status).toBe(401);
+    expect(fake.writes).toHaveLength(0);
   });
 
   it("400s when no files are attached", async () => {

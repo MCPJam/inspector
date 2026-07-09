@@ -29,6 +29,7 @@ import {
   useSessionBrowserArtifacts,
   type SharedChatTurnTrace,
 } from "@/hooks/useSharedChatThreads";
+import { SessionInsightBar } from "@/components/chatboxes/session-readiness";
 
 const EMPTY_SPANS: EvalTraceSpan[] = [];
 
@@ -352,6 +353,10 @@ export function ShareUsageThreadDetail({
           </div>
         </div>
       </div>
+
+      {thread.synthetic === true && thread.readiness ? (
+        <SessionInsightBar readiness={thread.readiness} />
+      ) : null}
 
       {/* Trace / Chat / [Browser] / Raw tabs. The Browser tab appears when the
           session carries browser-rendered MCP App artifacts (synthetic runs);

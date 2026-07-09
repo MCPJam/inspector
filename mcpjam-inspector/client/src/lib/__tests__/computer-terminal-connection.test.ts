@@ -11,6 +11,7 @@ import {
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
   url: string;
+  protocols: string[];
   binaryType = "blob";
   readyState = WebSocket.OPEN;
   onopen: (() => void) | null = null;
@@ -19,8 +20,9 @@ class FakeWebSocket {
   onerror: (() => void) | null = null;
   sent: Array<string | ArrayBufferView> = [];
 
-  constructor(url: string) {
+  constructor(url: string, protocols: string[] = []) {
     this.url = url;
+    this.protocols = protocols;
     FakeWebSocket.instances.push(this);
   }
   send(payload: string | ArrayBufferView) {
@@ -55,7 +57,7 @@ function open(
     cols: 80,
     rows: 24,
     baseUrl: "wss://example.test",
-    wsFactory: (u) => new FakeWebSocket(u) as unknown as WebSocket,
+    wsFactory: (u, p) => new FakeWebSocket(u, p) as unknown as WebSocket,
     onOutput: (b) => output.push(b),
     onEvent: (e) => events.push(e),
     onClose: (code, reason) => closes.push({ code, reason }),
@@ -66,22 +68,18 @@ function open(
 }
 
 describe("buildTerminalWsUrl", () => {
-  it("builds the route URL with token + dims from the base origin", () => {
+  it("builds the route URL with dims from the base origin, no token", () => {
     expect(
       buildTerminalWsUrl({
-        token: "abc",
         cols: 100,
         rows: 30,
         baseUrl: "wss://host.test",
       })
-    ).toBe(
-      "wss://host.test/api/web/computers/terminal?token=abc&cols=100&rows=30"
-    );
+    ).toBe("wss://host.test/api/web/computers/terminal?cols=100&rows=30");
   });
 
   it("appends an encoded cwd when provided", () => {
     const url = buildTerminalWsUrl({
-      token: "abc",
       cols: 80,
       rows: 24,
       baseUrl: "wss://host.test",
@@ -92,21 +90,30 @@ describe("buildTerminalWsUrl", () => {
 
   it("omits cwd when absent", () => {
     const url = buildTerminalWsUrl({
-      token: "abc",
       cols: 80,
       rows: 24,
       baseUrl: "wss://host.test",
     });
     expect(url).not.toContain("cwd=");
   });
+
+  it("never puts a token in the URL — auth rides the WS subprotocol", () => {
+    const url = buildTerminalWsUrl({
+      cols: 80,
+      rows: 24,
+      baseUrl: "wss://host.test",
+    });
+    expect(url).not.toContain("token");
+  });
 });
 
 describe("openTerminalConnection", () => {
-  it("sets binaryType and connects to the token URL", () => {
+  it("sets binaryType and sends the token as a WS subprotocol, never in the URL", () => {
     const { ws } = open();
     expect(ws.binaryType).toBe("arraybuffer");
-    expect(ws.url).toContain("token=tok-123");
+    expect(ws.url).not.toContain("token");
     expect(ws.url).toContain("cols=80");
+    expect(ws.protocols).toEqual(["tok-123"]);
   });
 
   it("sends stdin as a binary frame and resize/ping as text JSON", () => {
