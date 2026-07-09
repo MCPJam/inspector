@@ -327,6 +327,19 @@ export interface MCPAppsRendererProps {
    * collapse the inline view).
    */
   onRequestTeardown?: (toolCallId: string, displayWidgetId?: string) => void;
+  /**
+   * Ask the host to confirm a widget-initiated `ui/download-file` before the
+   * download runs (SEP-1865: host SHOULD confirm). Resolve `true` to proceed,
+   * `false` to deny (the widget then receives a JSON-RPC "Download denied by
+   * user" error). When omitted, downloads proceed unprompted — so embedders of
+   * the published package keep the prior behavior.
+   */
+  onConfirmDownload?: (info: {
+    kind: "resource" | "resource_link";
+    filename?: string;
+    mimeType?: string;
+    uri?: string;
+  }) => Promise<boolean>;
   /** Whether the server is offline (for using cached content) */
   isOffline?: boolean;
   /** URL to cached widget HTML for offline rendering */
@@ -676,6 +689,7 @@ export function MCPAppsRendererSurface({
   onModelContextUpdate,
   onAppSupportedDisplayModesChange,
   onRequestTeardown,
+  onConfirmDownload,
   isOffline,
   cachedWidgetHtmlUrl,
   liveFetchPreferred,
@@ -1478,6 +1492,7 @@ export function MCPAppsRendererSurface({
   const onRequestPipRef = useRef(onRequestPip);
   const onExitPipRef = useRef(onExitPip);
   const onRequestTeardownRef = useRef(onRequestTeardown);
+  const onConfirmDownloadRef = useRef(onConfirmDownload);
   const setDisplayModeRef = useRef(setDisplayMode);
   const isPlaygroundActiveRef = useRef(isPlaygroundActive);
   const playgroundDeviceTypeRef = useRef(playgroundDeviceType);
@@ -2932,6 +2947,7 @@ export function MCPAppsRendererSurface({
     onAppSupportedDisplayModesChangeRef.current =
       onAppSupportedDisplayModesChange;
     onRequestTeardownRef.current = onRequestTeardown;
+    onConfirmDownloadRef.current = onConfirmDownload;
   }, [
     onSendFollowUp,
     onCallTool,
@@ -2951,6 +2967,7 @@ export function MCPAppsRendererSurface({
     onModelContextUpdate,
     onAppSupportedDisplayModesChange,
     onRequestTeardown,
+    onConfirmDownload,
   ]);
 
   // Adapter: bind the renderer's refs / state setters / store callbacks to the
@@ -3203,7 +3220,51 @@ export function MCPAppsRendererSurface({
           onDownloadFile: async ({ contents }) => {
             // SEP-1865 `ui/download-file`: the host mediates the download
             // since the iframe sandbox blocks direct anchor-clicks. Blob +
-            // object-URL anchor (no confirmation prompt yet — follow-up).
+            // object-URL anchor.
+            //
+            // Confirmation runs BEFORE the try/catch below: the catch maps any
+            // throw to `{ isError: true }`, which the widget reads as a failed
+            // download, not a refusal. A user denial must instead surface as a
+            // JSON-RPC error (SEP-1865: "Download denied by user"), so we throw
+            // out here where the error propagates as-is. When the host doesn't
+            // supply a confirmer, downloads proceed unprompted (back-compat).
+            const confirmDownload = onConfirmDownloadRef.current;
+            if (confirmDownload) {
+              for (const item of contents) {
+                let info: {
+                  kind: "resource" | "resource_link";
+                  filename?: string;
+                  mimeType?: string;
+                  uri?: string;
+                };
+                if (item.type === "resource" && item.resource) {
+                  const res = item.resource as {
+                    uri: string;
+                    mimeType?: string;
+                  };
+                  info = {
+                    kind: "resource",
+                    filename: res.uri.split("/").pop() || undefined,
+                    mimeType: res.mimeType,
+                    uri: res.uri,
+                  };
+                } else if (item.type === "resource_link") {
+                  const link = item as { uri: string; mimeType?: string };
+                  info = {
+                    kind: "resource_link",
+                    filename: link.uri.split("/").pop() || undefined,
+                    mimeType: link.mimeType,
+                    uri: link.uri,
+                  };
+                } else {
+                  continue;
+                }
+                const approved = await confirmDownload(info);
+                if (!approved) {
+                  throw new Error("Download denied by user");
+                }
+              }
+            }
             try {
               for (const item of contents) {
                 if (item.type === "resource" && item.resource) {
@@ -3438,10 +3499,32 @@ export function MCPAppsRendererSurface({
         appToolsBridgeIdRef.current = null;
         setAppToolsBridgeIdState(null);
       }
+      // SEP-1865: the host SHOULD send `ui/resource-teardown` and wait for the
+      // view's response before tearing down, so the widget can flush/persist
+      // (prevent data loss). React cleanups can't be async, so we send the
+      // teardown, then close only after the view acks OR a short deadline —
+      // whichever comes first — so a misbehaving widget that never acks can't
+      // wedge the bridge open. When the widget never finished initializing
+      // there's nothing to notify, so close immediately.
       if (isReadyRef.current) {
-        bridge.teardownResource({}).catch(() => {});
+        const TEARDOWN_ACK_TIMEOUT_MS = 1500;
+        void (async () => {
+          try {
+            await Promise.race([
+              bridge.teardownResource({}),
+              new Promise((resolve) =>
+                setTimeout(resolve, TEARDOWN_ACK_TIMEOUT_MS)
+              ),
+            ]);
+          } catch {
+            // Teardown is best-effort; close regardless of ack/error.
+          } finally {
+            bridge.close().catch(() => {});
+          }
+        })();
+      } else {
+        bridge.close().catch(() => {});
       }
-      bridge.close().catch(() => {});
       // Clear model context on widget teardown
       setWidgetModelContextRef.current(toolCallIdRef.current, null);
     };

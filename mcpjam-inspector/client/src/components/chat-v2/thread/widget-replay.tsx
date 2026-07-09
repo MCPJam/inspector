@@ -1,6 +1,7 @@
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { MCPAppsRenderer } from "./mcp-apps/mcp-apps-renderer";
 import { InspectorWidgetHostProvider } from "./mcp-apps/use-widget-host";
+import { useDownloadConfirmation } from "./mcp-apps/use-download-confirmation";
 import type { ToolState } from "./mcp-apps/useToolInputStreaming";
 import type { ToolRenderOverride } from "./tool-render-overrides";
 import {
@@ -139,6 +140,11 @@ export function WidgetReplay({
     readToolResultServerId(rawOutput);
   const hasCachedHtmlForOffline = !!renderOverride?.cachedWidgetHtmlUrl;
 
+  // SEP-1865 `ui/download-file` confirmation. Called before any early return so
+  // hook order stays stable; supplies `onConfirmDownload` + the modal element.
+  const { confirmDownload, dialog: downloadConfirmDialog } =
+    useDownloadConfirmation();
+
   // Single-path routing: every UI-bearing tool (Apps SDK, MCP Apps, or
   // dual-metadata) renders through MCPAppsRenderer. Whether the OpenAI
   // compatibility runtime is injected is controlled by the selected
@@ -225,6 +231,7 @@ export function WidgetReplay({
         onExitFullscreen={onExitFullscreen}
         onAppSupportedDisplayModesChange={onAppSupportedDisplayModesChange}
         onRequestTeardown={onRequestTeardown}
+        onConfirmDownload={confirmDownload}
         isOffline={renderOverride?.isOffline}
         cachedWidgetHtmlUrl={renderOverride?.cachedWidgetHtmlUrl}
         liveFetchPreferred={renderOverride?.liveFetchPreferred}
@@ -243,6 +250,7 @@ export function WidgetReplay({
         onRecorderReady={onRecorderReady}
         onReplayControllerReady={onReplayControllerReady}
       />
+      {downloadConfirmDialog}
     </InspectorWidgetHostProvider>
   );
 }

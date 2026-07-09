@@ -298,9 +298,24 @@ export function registerHostBridgeHandlers(
 
   if (effectiveHostCapabilities.openLinks) {
     bridge.onopenlink = async ({ url }) => {
-      if (url) {
-        callbacks.onOpenLink?.(url);
+      if (!url) return {};
+      // The URL is widget-controlled and flows into the host's `window.open`.
+      // Only http(s) may be opened — `javascript:`/`data:`/`vbscript:` and other
+      // schemes would let a malicious widget run script or smuggle content in the
+      // host origin. Reject with a JSON-RPC error (SEP-1865 sanctions "Policy
+      // violation" here) rather than silently dropping, so the widget can react.
+      let scheme: string;
+      try {
+        scheme = new URL(url).protocol;
+      } catch {
+        throw new Error(`Policy violation: malformed URL: ${url}`);
       }
+      if (scheme !== "http:" && scheme !== "https:") {
+        throw new Error(
+          `Policy violation: only http(s) links may be opened (got "${scheme}")`,
+        );
+      }
+      callbacks.onOpenLink?.(url);
       return {};
     };
   }
