@@ -253,6 +253,14 @@ export interface CheckRowProps {
   onChange: (next: Predicate) => void;
   onRemove?: () => void;
   availableTools?: string[];
+  /**
+   * Names for the widget-filter dropdowns (`widgetRendered`,
+   * `widgetRenderLatencyUnder`, `widgetNoConsoleErrors`). Defaults to
+   * `availableTools`; callers whose `availableTools` include harness system
+   * tools (bash, read, …) pass the MCP-only subset here — system tools never
+   * render widgets.
+   */
+  widgetToolNames?: string[];
   toolArgSchemas?: ToolArgSchemas;
   readOnly?: boolean;
   /** Strip outer card chrome + kind header when nested inside a step row. */
@@ -268,6 +276,7 @@ export function CheckRow({
   onChange,
   onRemove,
   availableTools,
+  widgetToolNames,
   toolArgSchemas,
   readOnly = false,
   embedded = false,
@@ -319,6 +328,7 @@ export function CheckRow({
             predicate={predicate}
             onChange={onChange}
             availableTools={availableTools}
+            widgetToolNames={widgetToolNames}
             toolArgSchemas={toolArgSchemas}
             readOnly={readOnly}
             compactGlobalGate={globalGate}
@@ -356,6 +366,7 @@ function CheckFields({
   predicate,
   onChange,
   availableTools,
+  widgetToolNames,
   toolArgSchemas,
   readOnly,
   compactGlobalGate = false,
@@ -363,10 +374,12 @@ function CheckFields({
   predicate: Predicate;
   onChange: (next: Predicate) => void;
   availableTools?: string[];
+  widgetToolNames?: string[];
   toolArgSchemas?: ToolArgSchemas;
   readOnly: boolean;
   compactGlobalGate?: boolean;
 }) {
+  const widgetTools = widgetToolNames ?? availableTools;
   switch (predicate.type) {
     case "toolCalledWith":
       return (
@@ -446,7 +459,7 @@ function CheckFields({
                   : { type: "widgetRendered", toolName },
               )
             }
-            availableTools={availableTools}
+            availableTools={widgetTools}
             readOnly={readOnly}
           />
         </div>
@@ -456,7 +469,7 @@ function CheckFields({
         <WidgetLatencyFields
           predicate={predicate}
           onChange={onChange}
-          availableTools={availableTools}
+          availableTools={widgetTools}
           readOnly={readOnly}
         />
       );
@@ -472,7 +485,7 @@ function CheckFields({
                   : { type: "widgetNoConsoleErrors", toolName },
               )
             }
-            availableTools={availableTools}
+            availableTools={widgetTools}
             readOnly={readOnly}
           />
         );
@@ -492,7 +505,7 @@ function CheckFields({
                   : { type: "widgetNoConsoleErrors", toolName },
               )
             }
-            availableTools={availableTools}
+            availableTools={widgetTools}
             readOnly={readOnly}
           />
         </div>

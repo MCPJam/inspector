@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { usePostHog } from "posthog-js/react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { authFetch } from "@/lib/session-token";
 import { toast } from "@/lib/toast";
 import { AlertTriangle, Loader2, Sparkles } from "lucide-react";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
@@ -23,8 +23,6 @@ import {
   usePersonaRoster,
   useSortedRoster,
 } from "@/components/chatboxes/personas";
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:6274";
 
 // Mirrors the backend MAX_PERSONA_COUNT and the /start `.max(10)` validator.
 const MAX_PERSONAS = 10;
@@ -76,7 +74,6 @@ export function GenerateSessionsDialog({
   chatbox,
   initialPersonas,
 }: GenerateSessionsDialogProps) {
-  const { getAccessToken } = useAuth();
   const posthog = usePostHog();
 
   const [stage, setStage] = useState<DialogStage>("configure");
@@ -195,11 +192,6 @@ export function GenerateSessionsDialog({
     setStage("review");
   }
 
-  async function authHeader(): Promise<Record<string, string>> {
-    const token = await getAccessToken();
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  }
-
   async function handleGenerate() {
     setGenerating(true);
     posthog.capture("chatbox_generate_personas_started", {
@@ -208,14 +200,16 @@ export function GenerateSessionsDialog({
       persona_count: personaCount,
     });
     try {
-      const response = await fetch(
-        `${API_BASE}/api/web/chatboxes/${chatbox.chatboxId}/generate-personas`,
+      // Same-origin relative path via authFetch: the Vite dev proxy forwards
+      // `/api` locally, and authFetch attaches the right bearer (WorkOS,
+      // guest, or local session) only to allowlisted origins.
+      const response = await authFetch(
+        `/api/web/chatboxes/${encodeURIComponent(
+          chatbox.chatboxId
+        )}/generate-personas`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(await authHeader()),
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             projectId: chatbox.projectId,
             servers: serversPayload,
@@ -263,14 +257,13 @@ export function GenerateSessionsDialog({
     runStartAt.current = Date.now();
     setStarting(true);
     try {
-      const response = await fetch(
-        `${API_BASE}/api/web/chatboxes/${chatbox.chatboxId}/simulate-sessions/start`,
+      const response = await authFetch(
+        `/api/web/chatboxes/${encodeURIComponent(
+          chatbox.chatboxId
+        )}/simulate-sessions/start`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(await authHeader()),
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             projectId: chatbox.projectId,
             servers: serversPayload,
@@ -317,18 +310,13 @@ export function GenerateSessionsDialog({
     if (pollTimer.current) clearInterval(pollTimer.current);
     pollTimer.current = setInterval(async () => {
       try {
-        const response = await fetch(
-          `${API_BASE}/api/web/chatboxes/${
+        const response = await authFetch(
+          `/api/web/chatboxes/${encodeURIComponent(
             chatbox.chatboxId
-          }/simulate-sessions/${runId}?projectId=${encodeURIComponent(
-            chatbox.projectId
-          )}`,
-          {
-            method: "GET",
-            headers: {
-              ...(await authHeader()),
-            },
-          }
+          )}/simulate-sessions/${encodeURIComponent(
+            runId
+          )}?projectId=${encodeURIComponent(chatbox.projectId)}`,
+          { method: "GET" }
         );
         if (!response.ok) {
           setPollError(`Last update failed (${response.status})`);

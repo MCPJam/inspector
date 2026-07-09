@@ -15,6 +15,8 @@ const {
   mockAdaptTraceToUiMessages: vi.fn(),
   mockThreadState: {
     sourceType: "chatbox",
+    synthetic: false as boolean,
+    readiness: undefined as unknown,
   },
   mockBrowserArtifactsState: {
     artifacts: undefined as unknown,
@@ -25,6 +27,8 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
   useSharedChatThread: () => ({
     thread: {
       sourceType: mockThreadState.sourceType,
+      synthetic: mockThreadState.synthetic,
+      readiness: mockThreadState.readiness,
       messagesBlobUrl: "https://storage.example.com/thread.json",
       modelId: "openai/gpt-oss-120b",
       visitorDisplayName: "Marcelo Jimenez",
@@ -74,6 +78,8 @@ describe("ShareUsageThreadDetail", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockThreadState.sourceType = "chatbox";
+    mockThreadState.synthetic = false;
+    mockThreadState.readiness = undefined;
     mockBrowserArtifactsState.artifacts = undefined;
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -190,6 +196,30 @@ describe("ShareUsageThreadDetail", () => {
     ).toBeInTheDocument();
     expect(screen.getByTestId("render-observation-card")).toBeInTheDocument();
     expect(screen.queryByText("Computer Use timeline")).toBeNull();
+  });
+
+  it("shows readiness findings for synthetic sessions", async () => {
+    mockThreadState.synthetic = true;
+    mockThreadState.readiness = {
+      status: "completed",
+      verdict: "needs_attention",
+      issueCount: 1,
+      coverageRatio: 0.2,
+      advertisedToolCount: 5,
+      usedToolCount: 1,
+      toolCallCount: 0,
+      toolErrorCount: 0,
+      issues: [],
+    };
+
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    expect(
+      await screen.findByText(/Why this needs attention/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Only 20% of advertised tools were used/i),
+    ).toBeInTheDocument();
   });
 
   it("falls back to Chat when the active browser view loses its artifacts (session switch)", async () => {

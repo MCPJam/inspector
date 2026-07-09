@@ -19,8 +19,13 @@ import {
   driveHostedEvalTurn,
   type DriveHostedEvalTurnParams,
 } from "./drive-hosted-eval-turn";
-import type { PromptTurn } from "@/shared/steps";
-import { extractToolErrors } from "@/shared/eval-matching";
+import type { PinnedToolCall, PromptTurn, ToolCallStep } from "@/shared/steps";
+import {
+  extractToolErrors,
+  type ToolErrorRecord,
+} from "@/shared/eval-matching";
+import { buildPinnedTurnAccounting, runPinnedTurn } from "./pinned-turn";
+import type { PinnedTurnSsePayload } from "./pinned-turn-sse";
 import type {
   StepEngineOutcome,
   StepExecutorHandlers,
@@ -192,16 +197,29 @@ export function buildLocalStepHandlers(
 export type HostedStepHandlerContext = Omit<
   DriveHostedEvalTurnParams,
   "promptIndex" | "prompt" | "widgetChecks"
->;
+> & {
+  /** Mirrors `DriveLocalEvalTurnParams.resolvePinnedServerKey`: resolve a pinned
+   *  server ref to a connected manager key (`undefined` ⇒ not-connected setup
+   *  failure). */
+  resolvePinnedServerKey: (pinned: PinnedToolCall) => string | undefined;
+  /** Iteration-level pinned tool failures, kept OFF the driver acc so
+   *  `driveHostedEvalTurn` stays pinned-agnostic. The runner threads this into
+   *  the verdict's `failOnToolError` gate (the hosted analogue of
+   *  `LocalEvalTurnAcc.pinnedToolErrors`). */
+  pinnedToolErrors: ToolErrorRecord[];
+  /** Streaming only: the shared pinned SSE synthesis (absent ⇒ batch, headless). */
+  emitPinnedTurn?: (payload: PinnedTurnSsePayload) => void;
+};
 
 /**
  * Production `StepExecutorHandlers` for the HOSTED (MCPJam / org cloud) path — the
  * hosted analogue of {@link buildLocalStepHandlers}. `driveHostedEvalTurn` also
  * mutates a shared `acc` (`{messageHistory, capturedSpans, accumulatedUsage,
  * toolsCalledByPrompt}`) and returns a `completed`/`cancelled`/`failed` outcome;
- * the bridge reports the per-step delta. Hosted has no pinned-turn path (the
- * runner rejects pinned+model mixing), so `onToolCall` is unreachable and errors
- * loudly if a case ever routes one here.
+ * the bridge reports the per-step delta. Pinned (`toolCall`) steps never touch
+ * the backend: `runPinnedTurn` is model-free, so `onToolCall` executes it
+ * inspector-side and injects the resulting plain-text message pair into
+ * `messageHistory` for the next model turn to carry through `/stream`.
  */
 export function buildHostedStepHandlers(
   ctx: HostedStepHandlerContext,
@@ -297,14 +315,91 @@ export function buildHostedStepHandlers(
     };
   }
 
+  // Model-free pinned turn, executed inspector-side (mirrors the local pinned
+  // branch in driveLocalEvalTurn). The whole body is caught: local is shielded
+  // by runLocalIteration's broad iteration catch, but nothing wraps
+  // executeSteps on the hosted path — a throw from `dismissCarriedWidget` /
+  // `renderPinnedToolResult` would otherwise escape persistence entirely.
+  async function drivePinned(
+    step: ToolCallStep,
+    turnOrdinal: number,
+  ): Promise<StepEngineOutcome> {
+    const pinned: PinnedToolCall = {
+      serverName: step.serverName,
+      toolName: step.toolName,
+      arguments: step.arguments,
+    };
+    try {
+      // Mirror the local pinned branch's pre-steps; the executor already
+      // stamped `setActivePromptIndex(turnOrdinal)` before dispatching here.
+      ctx.browser.setActiveWidgetChecks([]);
+      await ctx.browser.dismissCarriedWidget();
+      const result = await runPinnedTurn({
+        pinned,
+        resolvedServerKey: ctx.resolvePinnedServerKey(pinned),
+        mcpClientManager: ctx.mcpClientManager,
+        browser: ctx.browser,
+        promptIndex: turnOrdinal,
+      });
+      const accounting = buildPinnedTurnAccounting(pinned, result);
+      // messageHistory invariant: append only a COMPLETE plain-TEXT
+      // user+assistant pair. The next driveHostedEvalTurn snapshots the full
+      // history as `/stream` input; text-only messages round-trip the backend
+      // untouched — tool-call parts would NOT.
+      acc.messageHistory.push(
+        accounting.userMessage,
+        accounting.assistantMessage,
+      );
+      (acc.toolsCalledByPrompt[turnOrdinal] ??= []).push(
+        ...accounting.toolCalls,
+      );
+      ctx.pinnedToolErrors.push(...accounting.toolErrors);
+      ctx.emitPinnedTurn?.({
+        turnIndex: turnOrdinal,
+        prompt: accounting.prompt,
+        messages: acc.messageHistory,
+        spans: acc.capturedSpans,
+        usage: acc.accumulatedUsage,
+        ...(result.toolCall ? { toolCall: result.toolCall } : {}),
+        ...(result.toolCallId ? { toolCallId: result.toolCallId } : {}),
+        ...("toolResult" in result ? { toolResult: result.toolResult } : {}),
+        ...(result.toolResultIsError
+          ? { toolResultIsError: result.toolResultIsError }
+          : {}),
+        ...(result.toolError ? { toolError: result.toolError } : {}),
+        ...(result.iterationError
+          ? { iterationError: result.iterationError }
+          : {}),
+      });
+      return {
+        messages: [accounting.userMessage, accounting.assistantMessage],
+        ...(accounting.toolCalls.length
+          ? { toolCalls: accounting.toolCalls }
+          : {}),
+        ...(accounting.toolErrors.length
+          ? { toolErrors: accounting.toolErrors }
+          : {}),
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        ...(accounting.iterationError
+          ? { iterationError: accounting.iterationError, setupFailure: true }
+          : {}),
+      };
+    } catch (error) {
+      // Not a setup failure (that flag means "pinned server not connected");
+      // a failed outcome halts the executor, records the remaining steps as
+      // skipped, and lets the iteration persist with the error.
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        iterationError: `pinned tool call "${step.toolName}" failed: ${message}`,
+      };
+    }
+  }
+
   return {
     onPrompt: ({ step, turnOrdinal }) =>
       drivePrompt(step.prompt, turnOrdinal),
-    onToolCall: ({ step }) => {
-      throw new Error(
-        `hosted eval path does not support pinned toolCall steps (step "${step.id}")`,
-      );
-    },
+    onToolCall: ({ step, turnOrdinal }) => drivePinned(step, turnOrdinal),
     onFollowUp: ({ text, turnOrdinal }) => driveTurn(text, turnOrdinal),
   };
 }

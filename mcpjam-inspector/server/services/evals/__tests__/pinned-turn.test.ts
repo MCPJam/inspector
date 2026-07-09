@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { runPinnedTurn } from "../pinned-turn";
+import {
+  buildPinnedTurnAccounting,
+  runPinnedTurn,
+  type PinnedTurnResult,
+} from "../pinned-turn";
 import { evaluateMultiTurnResults } from "../types";
 import { legacyProbeToPinnedTurn } from "@/shared/steps";
 import type { ProbeConfig } from "@/shared/probe-config";
@@ -84,6 +88,85 @@ describe("runPinnedTurn", () => {
     expect(executeTool).not.toHaveBeenCalled();
     expect(result.toolCall).toBeNull();
     expect(result.iterationError).toContain("not connected");
+  });
+});
+
+describe("buildPinnedTurnAccounting", () => {
+  const successResult: PinnedTurnResult = {
+    toolCall: { toolName: "show_map", arguments: { city: "SF" } },
+    toolCallId: "pinned-0-123",
+    toolResult: { content: [] },
+    summary: "Pinned tool call show_map executed",
+  };
+
+  it("derives the message pair and tool call on success", () => {
+    const accounting = buildPinnedTurnAccounting(probe, successResult);
+    expect(accounting.prompt).toBe('Pinned tool call: show_map on "Weather"');
+    expect(accounting.userMessage).toEqual({
+      role: "user",
+      content: 'Pinned tool call: show_map on "Weather"',
+    });
+    expect(accounting.assistantMessage).toEqual({
+      role: "assistant",
+      content: "Pinned tool call show_map executed",
+    });
+    expect(accounting.summary).toBe("Pinned tool call show_map executed");
+    expect(accounting.toolCalls).toEqual([
+      { toolName: "show_map", arguments: { city: "SF" } },
+    ]);
+    expect(accounting.toolErrors).toEqual([]);
+    expect(accounting.iterationError).toBeUndefined();
+    expect(accounting.setupFailure).toBe(false);
+  });
+
+  it("carries a content-error as a toolError without setup failure", () => {
+    const accounting = buildPinnedTurnAccounting(probe, {
+      ...successResult,
+      toolResultIsError: true,
+      toolError: {
+        toolName: "show_map",
+        kind: "content-error",
+        message: "boom",
+      },
+      summary: "Pinned tool call show_map failed: boom",
+    });
+    expect(accounting.toolErrors).toEqual([
+      { toolName: "show_map", kind: "content-error", message: "boom" },
+    ]);
+    expect(accounting.toolCalls).toHaveLength(1);
+    expect(accounting.iterationError).toBeUndefined();
+    expect(accounting.setupFailure).toBe(false);
+  });
+
+  it("carries a protocol-error as a toolError without setup failure", () => {
+    const accounting = buildPinnedTurnAccounting(probe, {
+      ...successResult,
+      toolResultIsError: true,
+      toolError: {
+        toolName: "show_map",
+        kind: "protocol-error",
+        message: "transport down",
+      },
+      summary: "Pinned tool call show_map failed: transport down",
+    });
+    expect(accounting.toolErrors[0]?.kind).toBe("protocol-error");
+    expect(accounting.setupFailure).toBe(false);
+  });
+
+  it("maps not-connected to iterationError + setupFailure and no phantom call", () => {
+    const accounting = buildPinnedTurnAccounting(probe, {
+      toolCall: null,
+      iterationError:
+        'pinned_server_not_connected: "Weather" is not connected in this run\'s environment',
+      summary: 'Pinned tool call skipped: server "Weather" not connected',
+    });
+    expect(accounting.toolCalls).toEqual([]);
+    expect(accounting.toolErrors).toEqual([]);
+    expect(accounting.iterationError).toContain("not connected");
+    expect(accounting.setupFailure).toBe(true);
+    // The transcript pair is still produced (transcript honesty on failure).
+    expect(accounting.userMessage.role).toBe("user");
+    expect(accounting.assistantMessage.content).toContain("skipped");
   });
 });
 

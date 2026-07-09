@@ -50,7 +50,7 @@ export type ControlPlaneResult<T> =
   | { ok: true; value: T }
   | { ok: false; status: number; error: string };
 
-function getConvexHttpUrl(): string | null {
+export function getConvexHttpUrl(): string | null {
   return process.env.CONVEX_HTTP_URL?.trim() || null;
 }
 
