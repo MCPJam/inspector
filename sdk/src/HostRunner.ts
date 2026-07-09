@@ -17,6 +17,7 @@ import type {
   StepResult,
 } from "ai";
 import type { CallToolResult } from "@modelcontextprotocol/client";
+import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
 import type { CreateModelOptions } from "./model-factory.js";
 import { extractToolCalls } from "./tool-extraction.js";
@@ -412,9 +413,20 @@ export class HostRunner implements HostExecutor {
       return;
     }
 
-    const ui = toolMetadata.ui as { resourceUri?: string } | undefined;
-    const resourceUri =
-      typeof ui?.resourceUri === "string" ? ui.resourceUri : undefined;
+    // `getToolMetadata` returns the tool's `_meta` contents, so wrap it back
+    // into a `_meta` carrier for the SDK helper — which resolves the nested
+    // `_meta.ui.resourceUri` AND the deprecated flat `_meta["ui/resourceUri"]`
+    // key (legacy servers still emit the latter). The helper throws on a
+    // malformed URI; swallow that here so a misbehaving server can't crash the
+    // passive widget-snapshot capture.
+    let resourceUri: string | undefined;
+    try {
+      resourceUri = getToolUiResourceUri({
+        _meta: toolMetadata,
+      } as Parameters<typeof getToolUiResourceUri>[0]);
+    } catch {
+      return;
+    }
     if (!resourceUri) {
       return;
     }
