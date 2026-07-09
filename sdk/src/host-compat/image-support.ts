@@ -32,3 +32,28 @@ export function imageSupportToHostConfigFields(
     },
   };
 }
+
+export function hostConfigFieldsToImageSupport(hostConfig: {
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
+}): HostImageSupport | undefined {
+  const model = hostConfig.modelVisibleMcpToolResults;
+  const ui = hostConfig.mcpToolResultImageRendering;
+  if (!model && !ui) return undefined;
+
+  return {
+    toolImageContent: {
+      model: model?.directContent?.image === true,
+      ui: ui?.directContent?.image === true,
+    },
+    embeddedResourceImages: {
+      model: model?.embeddedResources?.blob?.image === true,
+      ui: ui?.embeddedResources?.blob?.image === true,
+    },
+    resourceLinkImages: {
+      model: model?.linkedResources?.blob?.image === true,
+      ui: ui?.linkedResources?.blob?.image === true,
+    },
+    placement: ui?.placement ?? "none",
+  };
+}

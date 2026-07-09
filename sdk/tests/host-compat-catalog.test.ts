@@ -102,11 +102,12 @@ describe("bundledHostCompatCatalog", () => {
     });
   });
 
-  it("maps imageSupport into host creation template image fields", () => {
+  it("uses template image fields as source and derives imageSupport for profiles", () => {
     const catalog = bundledHostCompatCatalog();
     const rawGeneratedHost = BUNDLED_HOST_COMPAT_CATALOG.hostsById.notion;
     const host = getCatalogHost(catalog, "notion");
     const template = getCatalogTemplate(catalog, "notion");
+    expect(rawGeneratedHost).not.toHaveProperty("imageSupport");
     expect(rawGeneratedHost.modelVisibleMcpToolResults).toMatchObject({
       directContent: { image: false },
       embeddedResources: { blob: { image: false } },
@@ -139,6 +140,12 @@ describe("bundledHostCompatCatalog", () => {
       directContent: { image: true },
       embeddedResources: { blob: { image: false } },
       linkedResources: { blob: { image: false } },
+    });
+    expect(host?.imageSupport).toMatchObject({
+      toolImageContent: { model: false, ui: true },
+      embeddedResourceImages: { model: false, ui: false },
+      resourceLinkImages: { model: false, ui: false },
+      placement: "collapsed",
     });
   });
 

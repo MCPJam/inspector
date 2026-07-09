@@ -81,33 +81,22 @@ describe("GET /api/v1/host-catalog", () => {
     );
   });
 
-  it("hydrates imageSupport into concrete image config fields before serving live catalog", async () => {
+  it("derives imageSupport from concrete image config fields before serving live catalog", async () => {
     const upstream = liveEnvelope();
     const notion = upstream.catalog.hostsById.notion as {
-      modelVisibleMcpToolResults?: unknown;
-      mcpToolResultImageRendering?: unknown;
+      imageSupport?: unknown;
     };
-    delete notion.modelVisibleMcpToolResults;
-    delete notion.mcpToolResultImageRendering;
+    delete notion.imageSupport;
 
     fetchMock.mockResolvedValue(jsonResponse(upstream));
     const res = await makeApp().request("/api/v1/host-catalog");
     const body = await res.json();
     expect(body.source).toBe("live");
-    expect(
-      body.catalog.hostsById.notion.modelVisibleMcpToolResults
-    ).toMatchObject({
-      directContent: { image: false },
-      embeddedResources: { blob: { image: false } },
-      linkedResources: { blob: { image: false } },
-    });
-    expect(
-      body.catalog.hostsById.notion.mcpToolResultImageRendering
-    ).toMatchObject({
+    expect(body.catalog.hostsById.notion.imageSupport).toMatchObject({
+      toolImageContent: { model: false, ui: true },
+      embeddedResourceImages: { model: false, ui: false },
+      resourceLinkImages: { model: false, ui: false },
       placement: "collapsed",
-      directContent: { image: true },
-      embeddedResources: { blob: { image: false } },
-      linkedResources: { blob: { image: false } },
     });
   });
 

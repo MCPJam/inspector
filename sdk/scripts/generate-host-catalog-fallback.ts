@@ -2,14 +2,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import prettier from "prettier";
-import { imageSupportToHostConfigFields } from "../src/host-compat/image-support.js";
-import type { HostImageSupport } from "../src/host-compat/types.js";
 
 type BackendSeedModule = {
   SEED_DOCUMENT: unknown;
 };
-
-type ImageSourceSupport = { model: boolean; ui: boolean };
 
 const CHECK_ONLY = process.argv.includes("--check");
 
@@ -36,30 +32,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function isImageSourceSupport(value: unknown): value is ImageSourceSupport {
-  return (
-    isRecord(value) &&
-    typeof value.model === "boolean" &&
-    typeof value.ui === "boolean"
-  );
-}
-
-function isImagePlacement(
-  value: unknown
-): value is HostImageSupport["placement"] {
-  return value === "none" || value === "collapsed" || value === "inline";
-}
-
-function isImageSupport(value: unknown): value is HostImageSupport {
-  return (
-    isRecord(value) &&
-    isImageSourceSupport(value.toolImageContent) &&
-    isImageSourceSupport(value.embeddedResourceImages) &&
-    isImageSourceSupport(value.resourceLinkImages) &&
-    isImagePlacement(value.placement)
-  );
-}
-
 function hydrateSeedDocument(seed: unknown): unknown {
   if (!isRecord(seed)) {
     throw new Error("Backend seed module must export a catalog object.");
@@ -69,20 +41,7 @@ function hydrateSeedDocument(seed: unknown): unknown {
       "Backend seed catalog is missing hostsById; refusing to generate a partial SDK fallback."
     );
   }
-  return {
-    ...seed,
-    hostsById: Object.fromEntries(
-      Object.entries(seed.hostsById).map(([id, host]) => {
-        if (!isRecord(host) || !isImageSupport(host.imageSupport)) {
-          return [id, host];
-        }
-        return [
-          id,
-          { ...host, ...imageSupportToHostConfigFields(host.imageSupport) },
-        ];
-      })
-    ),
-  };
+  return seed;
 }
 
 const hydratedSeedDocument = hydrateSeedDocument(SEED_DOCUMENT);

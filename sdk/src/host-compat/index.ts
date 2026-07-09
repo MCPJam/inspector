@@ -34,7 +34,10 @@ export {
   type HostCompatCatalog,
   type HostCompatCatalogHost,
 } from "./catalog.js";
-export { imageSupportToHostConfigFields } from "./image-support.js";
+export {
+  hostConfigFieldsToImageSupport,
+  imageSupportToHostConfigFields,
+} from "./image-support.js";
 export {
   hostCompatCatalogSchema,
   hostCompatCatalogEnvelopeSchema,

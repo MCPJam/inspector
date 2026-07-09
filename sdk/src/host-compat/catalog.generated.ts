@@ -13,20 +13,36 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "assumed",
       rendersMcpApps: true,
       verifiedAt: 1783468800000,
-      imageSupport: {
-        toolImageContent: {
-          model: true,
-          ui: true,
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: true,
         },
-        embeddedResourceImages: {
-          model: true,
-          ui: true,
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
         },
-        resourceLinkImages: {
-          model: true,
-          ui: true,
+        linkedResources: {
+          blob: {
+            image: true,
+          },
         },
+      },
+      mcpToolResultImageRendering: {
         placement: "inline",
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: true,
+          },
+        },
       },
       hostStyle: "mcpjam",
       modelId: "anthropic/claude-haiku-4.5",
@@ -213,6 +229,13 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+    },
+    claude: {
+      id: "claude",
+      label: "Claude",
+      provenance: "assumed",
+      rendersMcpApps: true,
+      verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -224,7 +247,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
         linkedResources: {
           blob: {
-            image: true,
+            image: false,
           },
         },
       },
@@ -240,31 +263,9 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
         linkedResources: {
           blob: {
-            image: true,
+            image: false,
           },
         },
-      },
-    },
-    claude: {
-      id: "claude",
-      label: "Claude",
-      provenance: "assumed",
-      rendersMcpApps: true,
-      verifiedAt: 1783468800000,
-      imageSupport: {
-        toolImageContent: {
-          model: true,
-          ui: true,
-        },
-        embeddedResourceImages: {
-          model: true,
-          ui: true,
-        },
-        resourceLinkImages: {
-          model: false,
-          ui: false,
-        },
-        placement: "inline",
       },
       hostStyle: "claude",
       modelId: "anthropic/claude-haiku-4.5",
@@ -526,13 +527,21 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+    },
+    "claude-code": {
+      id: "claude-code",
+      label: "Claude Code",
+      provenance: "vendor-doc",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-11-25"],
+      verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
         directContent: {
-          image: true,
+          image: false,
         },
         embeddedResources: {
           blob: {
-            image: true,
+            image: false,
           },
         },
         linkedResources: {
@@ -542,13 +551,13 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
       mcpToolResultImageRendering: {
-        placement: "inline",
+        placement: "none",
         directContent: {
-          image: true,
+          image: false,
         },
         embeddedResources: {
           blob: {
-            image: true,
+            image: false,
           },
         },
         linkedResources: {
@@ -556,29 +565,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             image: false,
           },
         },
-      },
-    },
-    "claude-code": {
-      id: "claude-code",
-      label: "Claude Code",
-      provenance: "vendor-doc",
-      rendersMcpApps: false,
-      supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1783468800000,
-      imageSupport: {
-        toolImageContent: {
-          model: false,
-          ui: false,
-        },
-        embeddedResourceImages: {
-          model: false,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: false,
-          ui: false,
-        },
-        placement: "none",
       },
       hostStyle: "claude-code",
       modelId: "anthropic/claude-haiku-4.5",
@@ -639,37 +625,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
-      modelVisibleMcpToolResults: {
-        directContent: {
-          image: false,
-        },
-        embeddedResources: {
-          blob: {
-            image: false,
-          },
-        },
-        linkedResources: {
-          blob: {
-            image: false,
-          },
-        },
-      },
-      mcpToolResultImageRendering: {
-        placement: "none",
-        directContent: {
-          image: false,
-        },
-        embeddedResources: {
-          blob: {
-            image: false,
-          },
-        },
-        linkedResources: {
-          blob: {
-            image: false,
-          },
-        },
-      },
     },
     chatgpt: {
       id: "chatgpt",
@@ -677,20 +632,36 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "vendor-doc",
       rendersMcpApps: true,
       verifiedAt: 1783468800000,
-      imageSupport: {
-        toolImageContent: {
-          model: true,
-          ui: true,
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: true,
         },
-        embeddedResourceImages: {
-          model: true,
-          ui: true,
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
         },
-        resourceLinkImages: {
-          model: true,
-          ui: true,
+        linkedResources: {
+          blob: {
+            image: true,
+          },
         },
+      },
+      mcpToolResultImageRendering: {
         placement: "inline",
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: true,
+          },
+        },
       },
       hostStyle: "chatgpt",
       modelId: "openai/gpt-5-nano",
@@ -802,37 +773,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
-      modelVisibleMcpToolResults: {
-        directContent: {
-          image: true,
-        },
-        embeddedResources: {
-          blob: {
-            image: true,
-          },
-        },
-        linkedResources: {
-          blob: {
-            image: true,
-          },
-        },
-      },
-      mcpToolResultImageRendering: {
-        placement: "inline",
-        directContent: {
-          image: true,
-        },
-        embeddedResources: {
-          blob: {
-            image: true,
-          },
-        },
-        linkedResources: {
-          blob: {
-            image: true,
-          },
-        },
-      },
     },
     mistral: {
       id: "mistral",
@@ -841,20 +781,36 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-11-25"],
       verifiedAt: 1783468800000,
-      imageSupport: {
-        toolImageContent: {
-          model: false,
-          ui: false,
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: false,
         },
-        embeddedResourceImages: {
-          model: false,
-          ui: false,
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
         },
-        resourceLinkImages: {
-          model: false,
-          ui: false,
+        linkedResources: {
+          blob: {
+            image: false,
+          },
         },
+      },
+      mcpToolResultImageRendering: {
         placement: "none",
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
       },
       hostStyle: "mistral",
       modelId: "mistralai/mistral-large-2512",
@@ -976,9 +932,17 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+    },
+    goose: {
+      id: "goose",
+      label: "Goose",
+      provenance: "probe",
+      rendersMcpApps: true,
+      supportedProtocolVersions: ["2025-03-26"],
+      verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
         directContent: {
-          image: false,
+          image: true,
         },
         embeddedResources: {
           blob: {
@@ -992,9 +956,9 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
       mcpToolResultImageRendering: {
-        placement: "none",
+        placement: "collapsed",
         directContent: {
-          image: false,
+          image: true,
         },
         embeddedResources: {
           blob: {
@@ -1006,29 +970,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             image: false,
           },
         },
-      },
-    },
-    goose: {
-      id: "goose",
-      label: "Goose",
-      provenance: "probe",
-      rendersMcpApps: true,
-      supportedProtocolVersions: ["2025-03-26"],
-      verifiedAt: 1783468800000,
-      imageSupport: {
-        toolImageContent: {
-          model: true,
-          ui: true,
-        },
-        embeddedResourceImages: {
-          model: false,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: false,
-          ui: false,
-        },
-        placement: "collapsed",
       },
       hostStyle: "goose",
       modelId: "openai/gpt-5-nano",
@@ -1218,9 +1159,17 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+    },
+    slack: {
+      id: "slack",
+      label: "Slackbot",
+      provenance: "probe",
+      rendersMcpApps: true,
+      supportedProtocolVersions: ["2025-06-18"],
+      verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
         directContent: {
-          image: true,
+          image: false,
         },
         embeddedResources: {
           blob: {
@@ -1234,9 +1183,9 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
       mcpToolResultImageRendering: {
-        placement: "collapsed",
+        placement: "none",
         directContent: {
-          image: true,
+          image: false,
         },
         embeddedResources: {
           blob: {
@@ -1248,29 +1197,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             image: false,
           },
         },
-      },
-    },
-    slack: {
-      id: "slack",
-      label: "Slackbot",
-      provenance: "probe",
-      rendersMcpApps: true,
-      supportedProtocolVersions: ["2025-06-18"],
-      verifiedAt: 1783468800000,
-      imageSupport: {
-        toolImageContent: {
-          model: false,
-          ui: false,
-        },
-        embeddedResourceImages: {
-          model: false,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: false,
-          ui: false,
-        },
-        placement: "none",
       },
       hostStyle: "slack",
       modelId: "openai/gpt-5-nano",
@@ -1447,18 +1373,25 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+    },
+    cursor: {
+      id: "cursor",
+      label: "Cursor",
+      provenance: "probe",
+      rendersMcpApps: true,
+      verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
         directContent: {
-          image: false,
+          image: true,
         },
         embeddedResources: {
           blob: {
-            image: false,
+            image: true,
           },
         },
         linkedResources: {
           blob: {
-            image: false,
+            image: true,
           },
         },
       },
@@ -1477,28 +1410,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             image: false,
           },
         },
-      },
-    },
-    cursor: {
-      id: "cursor",
-      label: "Cursor",
-      provenance: "probe",
-      rendersMcpApps: true,
-      verifiedAt: 1783468800000,
-      imageSupport: {
-        toolImageContent: {
-          model: true,
-          ui: false,
-        },
-        embeddedResourceImages: {
-          model: true,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: true,
-          ui: false,
-        },
-        placement: "none",
       },
       hostStyle: "cursor",
       modelId: "anthropic/claude-sonnet-4.5",
@@ -1589,6 +1500,14 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+    },
+    codex: {
+      id: "codex",
+      label: "Codex",
+      provenance: "assumed",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-06-18"],
+      verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -1605,9 +1524,9 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
       mcpToolResultImageRendering: {
-        placement: "none",
+        placement: "collapsed",
         directContent: {
-          image: false,
+          image: true,
         },
         embeddedResources: {
           blob: {
@@ -1619,29 +1538,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             image: false,
           },
         },
-      },
-    },
-    codex: {
-      id: "codex",
-      label: "Codex",
-      provenance: "assumed",
-      rendersMcpApps: false,
-      supportedProtocolVersions: ["2025-06-18"],
-      verifiedAt: 1783468800000,
-      imageSupport: {
-        toolImageContent: {
-          model: true,
-          ui: true,
-        },
-        embeddedResourceImages: {
-          model: true,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: true,
-          ui: false,
-        },
-        placement: "collapsed",
       },
       hostStyle: "codex",
       modelId: "openai/gpt-5-nano",
@@ -1676,6 +1572,13 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+    },
+    copilot: {
+      id: "copilot",
+      label: "Copilot",
+      provenance: "vendor-doc",
+      rendersMcpApps: true,
+      verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -1692,9 +1595,9 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
       mcpToolResultImageRendering: {
-        placement: "collapsed",
+        placement: "none",
         directContent: {
-          image: true,
+          image: false,
         },
         embeddedResources: {
           blob: {
@@ -1706,28 +1609,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             image: false,
           },
         },
-      },
-    },
-    copilot: {
-      id: "copilot",
-      label: "Copilot",
-      provenance: "vendor-doc",
-      rendersMcpApps: true,
-      verifiedAt: 1783468800000,
-      imageSupport: {
-        toolImageContent: {
-          model: true,
-          ui: false,
-        },
-        embeddedResourceImages: {
-          model: true,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: true,
-          ui: false,
-        },
-        placement: "none",
       },
       hostStyle: "copilot",
       modelId: "openai/gpt-5.3-chat",
@@ -1831,6 +1712,13 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+    },
+    vscode: {
+      id: "vscode",
+      label: "VS Code",
+      provenance: "probe",
+      rendersMcpApps: true,
+      verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -1847,42 +1735,20 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
       mcpToolResultImageRendering: {
-        placement: "none",
+        placement: "inline",
         directContent: {
-          image: false,
+          image: true,
         },
         embeddedResources: {
           blob: {
-            image: false,
+            image: true,
           },
         },
         linkedResources: {
           blob: {
-            image: false,
+            image: true,
           },
         },
-      },
-    },
-    vscode: {
-      id: "vscode",
-      label: "VS Code",
-      provenance: "probe",
-      rendersMcpApps: true,
-      verifiedAt: 1783468800000,
-      imageSupport: {
-        toolImageContent: {
-          model: true,
-          ui: true,
-        },
-        embeddedResourceImages: {
-          model: true,
-          ui: true,
-        },
-        resourceLinkImages: {
-          model: true,
-          ui: true,
-        },
-        placement: "inline",
       },
       hostStyle: "vscode",
       modelId: "anthropic/claude-sonnet-4.5",
@@ -1973,37 +1839,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
-      modelVisibleMcpToolResults: {
-        directContent: {
-          image: true,
-        },
-        embeddedResources: {
-          blob: {
-            image: true,
-          },
-        },
-        linkedResources: {
-          blob: {
-            image: true,
-          },
-        },
-      },
-      mcpToolResultImageRendering: {
-        placement: "inline",
-        directContent: {
-          image: true,
-        },
-        embeddedResources: {
-          blob: {
-            image: true,
-          },
-        },
-        linkedResources: {
-          blob: {
-            image: true,
-          },
-        },
-      },
     },
     agentcore: {
       id: "agentcore",
@@ -2012,20 +1847,36 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-06-18"],
       verifiedAt: 1783468800000,
-      imageSupport: {
-        toolImageContent: {
-          model: false,
-          ui: false,
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: false,
         },
-        embeddedResourceImages: {
-          model: false,
-          ui: false,
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
         },
-        resourceLinkImages: {
-          model: false,
-          ui: false,
+        linkedResources: {
+          blob: {
+            image: false,
+          },
         },
+      },
+      mcpToolResultImageRendering: {
         placement: "none",
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
       },
       hostStyle: "agentcore",
       modelId: "anthropic/claude-haiku-4.5",
@@ -2058,6 +1909,14 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+    },
+    n8n: {
+      id: "n8n",
+      label: "n8n",
+      provenance: "probe",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-11-25"],
+      verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -2088,29 +1947,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             image: false,
           },
         },
-      },
-    },
-    n8n: {
-      id: "n8n",
-      label: "n8n",
-      provenance: "probe",
-      rendersMcpApps: false,
-      supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1783468800000,
-      imageSupport: {
-        toolImageContent: {
-          model: false,
-          ui: false,
-        },
-        embeddedResourceImages: {
-          model: false,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: false,
-          ui: false,
-        },
-        placement: "none",
       },
       hostStyle: "n8n",
       modelId: "openai/gpt-5-nano",
@@ -2161,6 +1997,14 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+    },
+    perplexity: {
+      id: "perplexity",
+      label: "Perplexity",
+      provenance: "probe",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-06-18"],
+      verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -2191,29 +2035,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             image: false,
           },
         },
-      },
-    },
-    perplexity: {
-      id: "perplexity",
-      label: "Perplexity",
-      provenance: "probe",
-      rendersMcpApps: false,
-      supportedProtocolVersions: ["2025-06-18"],
-      verifiedAt: 1783468800000,
-      imageSupport: {
-        toolImageContent: {
-          model: false,
-          ui: false,
-        },
-        embeddedResourceImages: {
-          model: false,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: false,
-          ui: false,
-        },
-        placement: "none",
       },
       hostStyle: "perplexity",
       modelId: "openai/gpt-5-nano",
@@ -2264,9 +2085,17 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+    },
+    cline: {
+      id: "cline",
+      label: "Cline",
+      provenance: "probe",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-11-25"],
+      verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
         directContent: {
-          image: false,
+          image: true,
         },
         embeddedResources: {
           blob: {
@@ -2294,29 +2123,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             image: false,
           },
         },
-      },
-    },
-    cline: {
-      id: "cline",
-      label: "Cline",
-      provenance: "probe",
-      rendersMcpApps: false,
-      supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1783468800000,
-      imageSupport: {
-        toolImageContent: {
-          model: true,
-          ui: false,
-        },
-        embeddedResourceImages: {
-          model: false,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: false,
-          ui: false,
-        },
-        placement: "none",
       },
       hostStyle: "cline",
       modelId: "anthropic/claude-haiku-4.5",
@@ -2367,23 +2173,15 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+    },
+    notion: {
+      id: "notion",
+      label: "Notion",
+      provenance: "probe",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-11-25"],
+      verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
-        directContent: {
-          image: true,
-        },
-        embeddedResources: {
-          blob: {
-            image: false,
-          },
-        },
-        linkedResources: {
-          blob: {
-            image: false,
-          },
-        },
-      },
-      mcpToolResultImageRendering: {
-        placement: "none",
         directContent: {
           image: false,
         },
@@ -2398,28 +2196,21 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
-    },
-    notion: {
-      id: "notion",
-      label: "Notion",
-      provenance: "probe",
-      rendersMcpApps: false,
-      supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1783468800000,
-      imageSupport: {
-        toolImageContent: {
-          model: false,
-          ui: true,
-        },
-        embeddedResourceImages: {
-          model: false,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: false,
-          ui: false,
-        },
+      mcpToolResultImageRendering: {
         placement: "collapsed",
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
       },
       hostStyle: "notion",
       modelId: "anthropic/claude-haiku-4.5",
@@ -2467,37 +2258,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             downloadFile: false,
             requestTeardown: false,
             widgetDisplayModeRequests: "accept",
-          },
-        },
-      },
-      modelVisibleMcpToolResults: {
-        directContent: {
-          image: false,
-        },
-        embeddedResources: {
-          blob: {
-            image: false,
-          },
-        },
-        linkedResources: {
-          blob: {
-            image: false,
-          },
-        },
-      },
-      mcpToolResultImageRendering: {
-        placement: "collapsed",
-        directContent: {
-          image: true,
-        },
-        embeddedResources: {
-          blob: {
-            image: false,
-          },
-        },
-        linkedResources: {
-          blob: {
-            image: false,
           },
         },
       },
