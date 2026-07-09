@@ -15,7 +15,10 @@ import {
 import { useSearchParams } from "react-router";
 import { useHost, useHostList } from "@/hooks/useClients";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
+import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
 import type {
   HostComparisonSubject,
   HostConfigFieldDef,
@@ -100,27 +103,29 @@ export function HostConfigCompareView({
       isAuthenticated: canQueryLiveHosts,
       projectId,
     });
+  const catalogState = useHostCatalog();
+  const compareCatalog = catalogState.catalog ?? bundledHostCompatCatalog();
   const liveHosts = canQueryLiveHosts ? queriedLiveHosts : [];
   const listLoading = canQueryLiveHosts ? queriedListLoading : false;
   const selectionScopeId = presetOnly ? "public" : projectId ?? "";
 
-  // Static host profiles (Claude, ChatGPT, Cursor, …) offered as opt-in
-  // comparison columns even when the user hasn't created them — the same
-  // best-effort profiles the server detail modal's Hosts tab renders. Threaded
-  // with the current theme so preset configs match the rest of the app.
+  // Catalog host profiles (Claude, ChatGPT, Cursor, …) offered as opt-in
+  // comparison columns even when the user hasn't created them.
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
+  const codexEnabled = useCodexHostEnabled();
   const excludedPresetTemplateIds = useMemo(() => {
-    const excluded = new Set<"claude-code">();
+    const excluded = new Set<string>();
     if (!claudeCodeEnabled) excluded.add("claude-code");
+    if (!codexEnabled) excluded.add("codex");
     return excluded;
-  }, [claudeCodeEnabled]);
+  }, [claudeCodeEnabled, codexEnabled]);
   const presets = useMemo(
     () =>
-      buildPresetCompareEntries(themeMode, {
+      buildPresetCompareEntries(compareCatalog, {
         excludedTemplateIds: excludedPresetTemplateIds,
       }),
-    [themeMode, excludedPresetTemplateIds]
+    [compareCatalog, excludedPresetTemplateIds]
   );
 
   // Real created hosts first, then presets — what the selector chips iterate.
@@ -748,11 +753,7 @@ function CompareSearchBar({
             aria-label="Open MCPJam"
           >
             <span>Brought to you by</span>
-            <img
-              src={mcpJamLogoSrc}
-              alt="MCPJam"
-              className="h-3.5 w-auto"
-            />
+            <img src={mcpJamLogoSrc} alt="MCPJam" className="h-3.5 w-auto" />
           </a>
         </div>
       ) : (

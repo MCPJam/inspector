@@ -7,19 +7,43 @@ import {
 /**
  * Live host-compat catalog for the client, fetched once per page load from
  * the inspector's own proxy (`/api/v1/host-catalog` — same-origin, no CORS,
- * no credentials). `null` = bundled: before the fetch resolves, when it
- * fails, and when the proxy itself fell back (`source: "bundled"` carries the
- * same data the SDK already ships, so recomputing verdicts for it is churn).
- * Verdicts render immediately from the bundled catalog and recompute when
- * live data lands.
+ * no credentials). The status is explicit so product flows can require a live
+ * backend catalog while compatibility surfaces can still render from fallback
+ * data.
  */
-export type HostCatalogState = {
-  catalog: HostCompatCatalog;
-  version: number;
-  source: string;
-} | null;
+export type HostCatalogState =
+  | {
+      status: "loading";
+      catalog: null;
+      version: null;
+      source: null;
+    }
+  | {
+      status: "live" | "fallback";
+      catalog: HostCompatCatalog;
+      version: number;
+      source: string;
+    }
+  | {
+      status: "error";
+      catalog: null;
+      version: null;
+      source: null;
+    };
 
-let cached: HostCatalogState = null;
+type ResolvedHostCatalogState = Exclude<
+  HostCatalogState,
+  { status: "loading" }
+>;
+
+const LOADING_STATE: HostCatalogState = {
+  status: "loading",
+  catalog: null,
+  version: null,
+  source: null,
+};
+
+let cached: ResolvedHostCatalogState | null = null;
 let inflight: Promise<HostCatalogState> | null = null;
 // Bumped on every reset so a fetch started before a reset can't write `cached`
 // after it — otherwise an already-in-flight promise leaks stale state into the
@@ -29,10 +53,18 @@ let generation = 0;
 async function loadHostCatalog(): Promise<HostCatalogState> {
   const result = await fetchHostCompatCatalog({
     baseUrl: "/api/v1",
-    timeoutMs: 4_000,
-  });
-  if (!result.ok || result.source === "bundled") return null;
+    timeoutMs: 8_000,
+  }).catch(() => ({ ok: false as const, reason: "network" as const }));
+  if (!result.ok) {
+    return {
+      status: "error",
+      catalog: null,
+      version: null,
+      source: null,
+    };
+  }
   return {
+    status: result.source === "bundled" ? "fallback" : "live",
     catalog: result.catalog,
     version: result.version,
     source: result.source,
@@ -47,7 +79,7 @@ export function resetHostCatalogForTests(): void {
 }
 
 export function useHostCatalog(): HostCatalogState {
-  const [state, setState] = useState<HostCatalogState>(cached);
+  const [state, setState] = useState<HostCatalogState>(cached ?? LOADING_STATE);
 
   useEffect(() => {
     if (cached) {
@@ -65,12 +97,22 @@ export function useHostCatalog(): HostCatalogState {
     const effectGeneration = generation;
     if (!inflight) {
       inflight = loadHostCatalog().then((resolved) => {
-        if (effectGeneration === generation) cached = resolved;
+        if (effectGeneration === generation) {
+          cached =
+            resolved.status === "loading"
+              ? {
+                  status: "error",
+                  catalog: null,
+                  version: null,
+                  source: null,
+                }
+              : resolved;
+        }
         return resolved;
       });
     }
     void inflight.then((resolved) => {
-      if (mounted && resolved && effectGeneration === generation) {
+      if (mounted && effectGeneration === generation) {
         setState(resolved);
       }
     });

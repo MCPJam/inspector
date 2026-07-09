@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
+import {
+  bundledHostCompatCatalog,
+  getCatalogHosts,
+  getCatalogTemplate,
+  SUPPORTED_CATALOG_SCHEMA_VERSION,
+} from "@mcpjam/sdk/host-compat";
 
 // Covers the /api/v1/host-catalog proxy seam: unauthenticated access, live
 // upstream passthrough (source: live + cacheable), upstream validation, and
@@ -18,7 +23,7 @@ function makeApp(): Hono {
 }
 
 const liveEnvelope = () => ({
-  schemaVersion: 1,
+  schemaVersion: SUPPORTED_CATALOG_SCHEMA_VERSION,
   version: 3,
   contentHash: "deadbeef",
   publishedAt: 1750000000000,
@@ -61,12 +66,45 @@ describe("GET /api/v1/host-catalog", () => {
     const body = await res.json();
     expect(body.source).toBe("live");
     expect(body.version).toBe(3);
-    expect(body.catalog.marketHosts).toHaveLength(
-      bundledHostCompatCatalog().marketHosts.length
+    expect(getCatalogHosts(body.catalog)).toHaveLength(
+      getCatalogHosts(bundledHostCompatCatalog()).length
+    );
+    expect(getCatalogTemplate(body.catalog, "mcpjam")?.hostStyle).toBe(
+      "mcpjam"
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toBe(
       "https://convex-http.example.com/public/host-catalog"
+    );
+  });
+
+  it("hydrates imageSupport into concrete image config fields before serving live catalog", async () => {
+    const upstream = liveEnvelope();
+    const notion = upstream.catalog.hostsById.notion as {
+      modelVisibleMcpToolResults?: unknown;
+      mcpToolResultImageRendering?: unknown;
+    };
+    delete notion.modelVisibleMcpToolResults;
+    delete notion.mcpToolResultImageRendering;
+
+    fetchMock.mockResolvedValue(jsonResponse(upstream));
+    const res = await makeApp().request("/api/v1/host-catalog");
+    const body = await res.json();
+    expect(body.source).toBe("live");
+    expect(body.catalog.hostsById.notion.modelVisibleMcpToolResults).toMatchObject(
+      {
+        directContent: { image: false },
+        embeddedResources: { blob: { image: false } },
+        linkedResources: { blob: { image: false } },
+      }
+    );
+    expect(body.catalog.hostsById.notion.mcpToolResultImageRendering).toMatchObject(
+      {
+        placement: "collapsed",
+        directContent: { image: true },
+        embeddedResources: { blob: { image: false } },
+        linkedResources: { blob: { image: false } },
+      }
     );
   });
 
@@ -87,8 +125,11 @@ describe("GET /api/v1/host-catalog", () => {
     const body = await res.json();
     expect(body.source).toBe("bundled");
     expect(body.version).toBe(0);
-    expect(body.catalog.marketHosts).toHaveLength(
-      bundledHostCompatCatalog().marketHosts.length
+    expect(getCatalogHosts(body.catalog)).toHaveLength(
+      getCatalogHosts(bundledHostCompatCatalog()).length
+    );
+    expect(getCatalogTemplate(body.catalog, "claude-code")?.hostStyle).toBe(
+      "claude-code"
     );
     expect(fetchMock).not.toHaveBeenCalled();
   });

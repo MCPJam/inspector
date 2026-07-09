@@ -5,15 +5,57 @@ import {
   bundledHostCompatCatalog,
   evaluateMarketHosts,
   fetchHostCompatCatalog,
+  getCatalogHost,
+  getCatalogHosts,
+  getCatalogTemplate,
+  getTemplateMcpAppsCapabilities,
   hostCompatCatalogEnvelopeSchema,
   hostCompatCatalogSchema,
   type HostCompatCatalog,
 } from "../src/host-compat/index";
+import { BUNDLED_HOST_COMPAT_CATALOG } from "../src/host-compat/catalog.generated";
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
+const minimalHost = (
+  hostStyle: string,
+  rendersOpenAiApps = false,
+  metadata: Partial<
+    Pick<
+      HostCompatCatalog["hostsById"][string],
+      "label" | "provenance" | "rendersMcpApps"
+    >
+  > = {}
+): HostCompatCatalog["hostsById"][string] => ({
+  id: hostStyle,
+  label: metadata.label ?? hostStyle,
+  provenance: metadata.provenance ?? "assumed",
+  rendersMcpApps: metadata.rendersMcpApps ?? true,
+  hostStyle,
+  modelId: "anthropic/claude-haiku-4.5",
+  systemPrompt: "",
+  temperature: 0.7,
+  requireToolApproval: false,
+  respectToolVisibility: true,
+  progressiveToolDiscovery: false,
+  serverIds: [],
+  optionalServerIds: [],
+  builtInToolIds: [],
+  connectionDefaults: { headers: {}, requestTimeout: 10000 },
+  clientCapabilities: {},
+  hostContext: {},
+  ...(rendersOpenAiApps
+    ? {
+        mcpProfile: {
+          profileVersion: 1,
+          apps: { compatRuntime: { openaiApps: true } },
+        },
+      }
+    : {}),
+});
+
 const envelopeFor = (catalog: HostCompatCatalog, extra?: object) => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   version: 7,
   contentHash: "abc123",
   publishedAt: 1750000000000,
@@ -26,9 +68,13 @@ describe("bundledHostCompatCatalog", () => {
     const catalog = bundledHostCompatCatalog();
     expect(catalog).toBe(bundledHostCompatCatalog());
     expect(Object.isFrozen(catalog)).toBe(true);
-    expect(Object.isFrozen(catalog.marketHosts[0])).toBe(true);
-    expect(Object.isFrozen(catalog.capabilitiesById.claude)).toBe(true);
-    expect(Object.isFrozen(catalog.openAiCompatByStyle)).toBe(true);
+    expect(Object.isFrozen(catalog.hostsById.claude)).toBe(true);
+    expect(Object.isFrozen(catalog.hostsById.mcpjam)).toBe(true);
+    expect(
+      Object.isFrozen(
+        catalog.hostsById.claude.mcpProfile?.apps?.mcpAppsOverrides
+      )
+    ).toBe(true);
   });
 
   it("parses under the catalog schema (lockstep guard: bundled ⊆ wire shape)", () => {
@@ -37,6 +83,76 @@ describe("bundledHostCompatCatalog", () => {
       clone(bundledHostCompatCatalog())
     );
     expect(parsed.success).toBe(true);
+  });
+
+  it("includes full creation templates for market and non-market hosts", () => {
+    const catalog = bundledHostCompatCatalog();
+    expect(getCatalogTemplate(catalog, "claude")?.hostStyle).toBe("claude");
+    expect(getCatalogTemplate(catalog, "mcpjam")?.hostStyle).toBe("mcpjam");
+    expect(getCatalogTemplate(catalog, "claude-code")?.hostStyle).toBe(
+      "claude-code"
+    );
+    expect(getTemplateMcpAppsCapabilities(catalog, "mcpjam")).toMatchObject({
+      serverTools: true,
+      message: true,
+    });
+    expect(getTemplateMcpAppsCapabilities(catalog, "claude")).toMatchObject({
+      serverTools: true,
+      message: true,
+    });
+  });
+
+  it("maps imageSupport into host creation template image fields", () => {
+    const catalog = bundledHostCompatCatalog();
+    const rawGeneratedHost = BUNDLED_HOST_COMPAT_CATALOG.hostsById.notion;
+    const host = getCatalogHost(catalog, "notion");
+    const template = getCatalogTemplate(catalog, "notion");
+    expect(rawGeneratedHost.modelVisibleMcpToolResults).toMatchObject({
+      directContent: { image: false },
+      embeddedResources: { blob: { image: false } },
+      linkedResources: { blob: { image: false } },
+    });
+    expect(rawGeneratedHost.mcpToolResultImageRendering).toMatchObject({
+      placement: "collapsed",
+      directContent: { image: true },
+      embeddedResources: { blob: { image: false } },
+      linkedResources: { blob: { image: false } },
+    });
+    expect(host?.modelVisibleMcpToolResults).toMatchObject({
+      directContent: { image: false },
+      embeddedResources: { blob: { image: false } },
+      linkedResources: { blob: { image: false } },
+    });
+    expect(host?.mcpToolResultImageRendering).toMatchObject({
+      placement: "collapsed",
+      directContent: { image: true },
+      embeddedResources: { blob: { image: false } },
+      linkedResources: { blob: { image: false } },
+    });
+    expect(template?.modelVisibleMcpToolResults).toMatchObject({
+      directContent: { image: false },
+      embeddedResources: { blob: { image: false } },
+      linkedResources: { blob: { image: false } },
+    });
+    expect(template?.mcpToolResultImageRendering).toMatchObject({
+      placement: "collapsed",
+      directContent: { image: true },
+      embeddedResources: { blob: { image: false } },
+      linkedResources: { blob: { image: false } },
+    });
+  });
+
+  it("returns mutable template copies without mutating the catalog", () => {
+    const catalog = bundledHostCompatCatalog();
+    const template = getCatalogTemplate(catalog, "claude");
+    expect(template).toBeDefined();
+    template!.hostContext.theme = "mutated-theme";
+    template!.serverIds.push("local-server");
+
+    expect(getCatalogHost(catalog, "claude")?.hostContext.theme).not.toBe(
+      "mutated-theme"
+    );
+    expect(getCatalogHost(catalog, "claude")?.serverIds).toEqual([]);
   });
 });
 
@@ -70,20 +186,30 @@ describe("buildHostProfilesFromCatalog", () => {
     expect(by("slack")?.placement).toBe("none");
   });
 
+  it("carries per-host verifiedAt into profiles and reports", () => {
+    const catalog = bundledHostCompatCatalog();
+    const expected = catalog.hostsById.mistral.verifiedAt;
+    expect(typeof expected).toBe("number");
+    expect(
+      buildMarketHostProfiles().find((p) => p.id === "mistral")?.verifiedAt
+    ).toBe(expected);
+    expect(
+      evaluateMarketHosts({ tools: [] }).reports.find(
+        (r) => r.hostId === "mistral"
+      )?.verifiedAt
+    ).toBe(expected);
+  });
+
   it("keeps rendersOpenAiApps independent of rendersMcpApps (NOT &&-gated)", () => {
     const catalog: HostCompatCatalog = {
-      marketHosts: [
+      hostsById: {
         // Headless host with OpenAI compat on — still rendersOpenAiApps,
         // therefore rendersWidgets, therefore gets a capability matrix.
-        {
-          id: "ghostwriter",
+        ghostwriter: minimalHost("ghostwriter", true, {
           label: "Ghostwriter",
-          provenance: "assumed",
           rendersMcpApps: false,
-        },
-      ],
-      capabilitiesById: {},
-      openAiCompatByStyle: { ghostwriter: true },
+        }),
+      },
     };
     const [profile] = buildHostProfilesFromCatalog(catalog);
     expect(profile.rendersMcpApps).toBe(false);
@@ -95,16 +221,13 @@ describe("buildHostProfilesFromCatalog", () => {
 
   it("leaves capabilities undefined for fully headless hosts", () => {
     const catalog: HostCompatCatalog = {
-      marketHosts: [
-        {
-          id: "headless",
+      hostsById: {
+        headless: minimalHost("headless", false, {
           label: "Headless",
           provenance: "probe",
           rendersMcpApps: false,
-        },
-      ],
-      capabilitiesById: {},
-      openAiCompatByStyle: {},
+        }),
+      },
     };
     expect(
       buildHostProfilesFromCatalog(catalog)[0].capabilities
@@ -113,38 +236,31 @@ describe("buildHostProfilesFromCatalog", () => {
 
   it("falls back to no-claims for a host id colliding with a prototype key", () => {
     const catalog: HostCompatCatalog = {
-      marketHosts: [
-        {
-          id: "constructor",
+      hostsById: {
+        constructor: minimalHost("constructor", false, {
           label: "Constructor",
           provenance: "probe",
-          rendersMcpApps: true,
-        },
-      ],
-      // No own entry for "constructor" — the lookup must NOT read
-      // Object.prototype.constructor.
-      capabilitiesById: {},
-      openAiCompatByStyle: {},
+        }),
+      },
     };
     const [profile] = buildHostProfilesFromCatalog(catalog);
     expect(profile.capabilities).toBeDefined();
     expect(profile.capabilities?.serverTools).toBe(false);
     expect(typeof profile.capabilities).toBe("object");
+    expect(
+      getCatalogTemplate({ hostsById: {} }, "constructor")
+    ).toBeUndefined();
   });
 
-  it("does not treat a prototype-key openAiCompat lookup as compatible", () => {
+  it("does not treat a missing compatRuntime as OpenAI compatible", () => {
     const catalog: HostCompatCatalog = {
-      marketHosts: [
-        {
-          id: "toString",
+      hostsById: {
+        toString: minimalHost("toString", false, {
           label: "Prototype",
           provenance: "probe",
           rendersMcpApps: false,
-        },
-      ],
-      capabilitiesById: {},
-      // No own "toString" entry — the lookup must not read the inherited fn.
-      openAiCompatByStyle: {},
+        }),
+      },
     };
     const [profile] = buildHostProfilesFromCatalog(catalog);
     expect(profile.rendersOpenAiApps).toBe(false);
@@ -158,8 +274,12 @@ describe("buildHostProfilesFromCatalog", () => {
     const catalog = clone(bundledHostCompatCatalog()) as HostCompatCatalog;
     buildHostProfilesFromCatalog(catalog);
     expect(Object.isFrozen(catalog)).toBe(false);
-    expect(Object.isFrozen(catalog.capabilitiesById.claude)).toBe(false);
-    expect(Object.isFrozen(catalog.marketHosts[0])).toBe(false);
+    expect(
+      Object.isFrozen(
+        catalog.hostsById.claude.mcpProfile?.apps?.mcpAppsOverrides
+      )
+    ).toBe(false);
+    expect(Object.isFrozen(catalog.hostsById.claude)).toBe(false);
   });
 
   it("returns independent, mutable profile copies", () => {
@@ -177,16 +297,12 @@ describe("buildHostProfilesFromCatalog", () => {
 describe("evaluateMarketHosts with a catalog", () => {
   it("threads options.catalog into the evaluation", () => {
     const catalog: HostCompatCatalog = {
-      marketHosts: [
-        {
-          id: "solo",
+      hostsById: {
+        solo: minimalHost("solo", false, {
           label: "Solo",
           provenance: "probe",
-          rendersMcpApps: true,
-        },
-      ],
-      capabilitiesById: {},
-      openAiCompatByStyle: {},
+        }),
+      },
     };
     const { reports } = evaluateMarketHosts({ tools: [] }, { catalog });
     expect(reports.map((r) => r.hostId)).toEqual(["solo"]);
@@ -196,7 +312,9 @@ describe("evaluateMarketHosts with a catalog", () => {
     const { reports } = evaluateMarketHosts({ tools: [] });
     // Derive from the bundled catalog so this stays a behavioral check rather
     // than a snapshot of the exact host count.
-    expect(reports).toHaveLength(bundledHostCompatCatalog().marketHosts.length);
+    expect(reports).toHaveLength(
+      getCatalogHosts(bundledHostCompatCatalog()).length
+    );
   });
 });
 
@@ -217,47 +335,39 @@ describe("hostCompatCatalogEnvelopeSchema forward-compat", () => {
   it("strips unknown keys instead of failing", () => {
     const catalog = bundled() as Record<string, unknown>;
     catalog.futureTopLevelField = { anything: true };
-    (catalog.marketHosts as Record<string, unknown>[])[0].futureHostField = 1;
+    const hostsById = catalog.hostsById as Record<
+      string,
+      Record<string, unknown>
+    >;
+    hostsById.claude.futureHostField = 1;
     const parsed = hostCompatCatalogEnvelopeSchema.safeParse(
       envelopeFor(catalog as unknown as HostCompatCatalog)
     );
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       expect("futureTopLevelField" in parsed.data.catalog).toBe(false);
-      expect("futureHostField" in parsed.data.catalog.marketHosts[0]).toBe(
+      expect("futureHostField" in parsed.data.catalog.hostsById.claude).toBe(
         false
       );
     }
   });
 
-  it("filters unknown display modes and absorbs widened enums", () => {
+  it("absorbs widened provenance enums", () => {
     const catalog = bundled();
-    (catalog.capabilitiesById.claude.availableDisplayModes as string[]).push(
-      "holodeck"
-    );
-    (catalog.marketHosts[0] as Record<string, unknown>).provenance =
+    (catalog.hostsById.claude as Record<string, unknown>).provenance =
       "future-source";
-    (
-      catalog.capabilitiesById.claude as Record<string, unknown>
-    ).widgetDisplayModeRequests = "future-policy";
     const parsed = hostCompatCatalogEnvelopeSchema.safeParse(
       envelopeFor(catalog)
     );
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(
-        parsed.data.catalog.capabilitiesById.claude.availableDisplayModes
-      ).toEqual(["inline", "fullscreen", "pip"]);
-      expect(parsed.data.catalog.marketHosts[0].provenance).toBe("assumed");
-      expect(
-        parsed.data.catalog.capabilitiesById.claude.widgetDisplayModeRequests
-      ).toBeUndefined();
+      expect(parsed.data.catalog.hostsById.claude.provenance).toBe("assumed");
     }
   });
 
   it("fails whole-parse on structurally invalid catalogs (no partial apply)", () => {
     const catalog = bundled() as Record<string, unknown>;
-    catalog.marketHosts = "not-an-array";
+    catalog.hostsById = "not-an-object";
     expect(
       hostCompatCatalogEnvelopeSchema.safeParse(
         envelopeFor(catalog as unknown as HostCompatCatalog)
@@ -265,23 +375,41 @@ describe("hostCompatCatalogEnvelopeSchema forward-compat", () => {
     ).toBe(false);
   });
 
+  it("rejects templates with invalid type-level fields", () => {
+    const missingRespect = bundled();
+    delete (missingRespect.hostsById.claude as Record<string, unknown>)
+      .respectToolVisibility;
+    expect(
+      hostCompatCatalogEnvelopeSchema.safeParse(envelopeFor(missingRespect))
+        .success
+    ).toBe(false);
+
+    const nullComputer = bundled();
+    (nullComputer.hostsById.claude as Record<string, unknown>).computer = null;
+    expect(
+      hostCompatCatalogEnvelopeSchema.safeParse(envelopeFor(nullComputer))
+        .success
+    ).toBe(false);
+  });
+
   it("rejects an unsupported (future breaking) schemaVersion", () => {
     expect(
       hostCompatCatalogEnvelopeSchema.safeParse(
-        envelopeFor(bundled(), { schemaVersion: 2 })
+        envelopeFor(bundled(), { schemaVersion: 3 })
       ).success
     ).toBe(false);
   });
 
   it("preserves an 'observed' provenance instead of downgrading it", () => {
     const catalog = bundled();
-    (catalog.marketHosts[0] as Record<string, unknown>).provenance = "observed";
+    (catalog.hostsById.claude as Record<string, unknown>).provenance =
+      "observed";
     const parsed = hostCompatCatalogEnvelopeSchema.safeParse(
       envelopeFor(catalog)
     );
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.catalog.marketHosts[0].provenance).toBe("observed");
+      expect(parsed.data.catalog.hostsById.claude.provenance).toBe("observed");
     }
   });
 });

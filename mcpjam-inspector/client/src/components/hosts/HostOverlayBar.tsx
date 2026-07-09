@@ -14,18 +14,15 @@ import {
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
-import {
-  DEFAULT_SEEDED_HOST_MODEL_ID,
-  emptyHostConfigInputV2,
-} from "@/lib/client-config-v2";
+import { cloneHostTemplateInput } from "@/lib/client-config-v2";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { standardEventProps } from "@/lib/PosthogUtils";
-import {
-  HOST_TEMPLATES,
-  type HostTemplateId,
-} from "@/lib/client-templates";
 import { CreateHostDialog } from "./CreateHostDialog";
+import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { getHostLogoSrc } from "@/lib/host-ui-metadata";
 
-const QUICK_ADD_TEMPLATES: HostTemplateId[] = ["claude", "chatgpt", "copilot"];
+const QUICK_ADD_TEMPLATES = ["claude", "chatgpt", "copilot"] as const;
 
 const MCPJAM_HOST_NAME = "MCPJam";
 const LAST_HOST_DELETE_REASON =
@@ -48,45 +45,67 @@ export function HostOverlayBar({
 }: HostOverlayBarProps) {
   const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
+  const catalogState = useHostCatalog();
+  const themeMode = usePreferencesStore((s) => s.themeMode);
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
   const { createHost, deleteHost } = useHostMutations();
   const [showCreate, setShowCreate] = useState(false);
-  const [createTemplateId, setCreateTemplateId] = useState<HostTemplateId | undefined>(
-    undefined,
+  const [createTemplateId, setCreateTemplateId] = useState<string | undefined>(
+    undefined
   );
   const [isDeleting, setIsDeleting] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const mcpjamHostName =
+    catalogState.status === "live"
+      ? getCatalogHost(catalogState.catalog, "mcpjam")?.label ??
+        MCPJAM_HOST_NAME
+      : MCPJAM_HOST_NAME;
 
   const mcpjamHost = useMemo(
-    () => hosts.find((h) => h.name === MCPJAM_HOST_NAME) ?? null,
-    [hosts],
+    () =>
+      hosts.find((h) => h.name === mcpjamHostName) ??
+      hosts.find((h) => h.name === MCPJAM_HOST_NAME) ??
+      null,
+    [hosts, mcpjamHostName]
   );
 
-  // Lazily seed a "MCPJam" host with SDK defaults only when the project has
-  // no hosts at all. Once any host exists (including after the user deletes
-  // MCPJam), we stop seeding — otherwise a deleted MCPJam respawns on every
-  // mount and duplicates accumulate. Pin a cheap default model: interactive
-  // chat would paper over "" via the picker fallback, but synthetic/swarm
-  // runs consume the pinned value directly and fail on a modelless host.
+  // Lazily seed a "MCPJam" host from the live backend template only when the
+  // project has no hosts at all. Once any host exists (including after the user
+  // deletes MCPJam), we stop seeding — otherwise a deleted MCPJam respawns on
+  // every mount and duplicates accumulate. The catalog template carries the
+  // pinned default model so synthetic/swarm runs never start from a modelless
+  // host.
   const seededRef = useRef(false);
   useEffect(() => {
     if (
       !isAuthenticated ||
       isLoading ||
       hosts.length > 0 ||
-      seededRef.current
+      seededRef.current ||
+      catalogState.status !== "live"
     ) {
       return;
     }
+    const template = getCatalogTemplate(catalogState.catalog, "mcpjam");
+    if (!template) return;
     seededRef.current = true;
     createHost({
       projectId,
-      name: MCPJAM_HOST_NAME,
-      input: emptyHostConfigInputV2({ modelId: DEFAULT_SEEDED_HOST_MODEL_ID }),
+      name: mcpjamHostName,
+      input: cloneHostTemplateInput(template, { themeMode }),
     }).catch(() => {
       seededRef.current = false;
     });
-  }, [isAuthenticated, isLoading, hosts.length, projectId, createHost]);
+  }, [
+    isAuthenticated,
+    isLoading,
+    hosts.length,
+    projectId,
+    createHost,
+    catalogState,
+    mcpjamHostName,
+    themeMode,
+  ]);
 
   const validPreviewedHostId =
     previewedHostId && hosts.some((h) => h.hostId === previewedHostId)
@@ -98,13 +117,20 @@ export function HostOverlayBar({
   // skeleton indefinitely (seeding skips when `hosts.length > 0`).
   const sortedHosts = useMemo(() => {
     return [...hosts].sort((a, b) => {
-      if (a.name === MCPJAM_HOST_NAME) return -1;
-      if (b.name === MCPJAM_HOST_NAME) return 1;
+      const aIsDefault =
+        a.name === mcpjamHostName || a.name === MCPJAM_HOST_NAME;
+      const bIsDefault =
+        b.name === mcpjamHostName || b.name === MCPJAM_HOST_NAME;
+      if (aIsDefault && !bIsDefault) return -1;
+      if (bIsDefault && !aIsDefault) return 1;
       return a.name.localeCompare(b.name);
     });
-  }, [hosts]);
+  }, [hosts, mcpjamHostName]);
   const effectiveHostId =
-    validPreviewedHostId ?? mcpjamHost?.hostId ?? sortedHosts[0]?.hostId ?? null;
+    validPreviewedHostId ??
+    mcpjamHost?.hostId ??
+    sortedHosts[0]?.hostId ??
+    null;
 
   useEffect(() => {
     if (isLoading) return;
@@ -130,7 +156,7 @@ export function HostOverlayBar({
       effectiveHostId == null
         ? -1
         : sortedHosts.findIndex((h) => h.hostId === effectiveHostId),
-    [sortedHosts, effectiveHostId],
+    [sortedHosts, effectiveHostId]
   );
 
   const effectiveHost = activeIndex >= 0 ? sortedHosts[activeIndex] : null;
@@ -188,7 +214,7 @@ export function HostOverlayBar({
       const msg = err instanceof Error ? err.message : "Failed to delete host";
       if (msg.includes("consumer")) {
         toast.error(
-          `${msg} — use force delete or remove dependent chatboxes/evals first`,
+          `${msg} — use force delete or remove dependent chatboxes/evals first`
         );
       } else {
         toast.error(msg);
@@ -198,7 +224,7 @@ export function HostOverlayBar({
     }
   };
 
-  const openCreateWithTemplate = (templateId?: HostTemplateId) => {
+  const openCreateWithTemplate = (templateId?: string) => {
     setCreateTemplateId(templateId);
     setShowCreate(true);
     setMenuOpen(false);
@@ -232,7 +258,7 @@ export function HostOverlayBar({
               "inline-flex h-8 w-7 items-center justify-center rounded-l-md text-muted-foreground transition-colors",
               "hover:bg-muted/60 hover:text-foreground",
               "focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none",
-              "disabled:cursor-not-allowed disabled:opacity-40",
+              "disabled:cursor-not-allowed disabled:opacity-40"
             )}
           >
             <ChevronLeft className="size-4" />
@@ -247,7 +273,7 @@ export function HostOverlayBar({
                 className={cn(
                   "flex h-8 min-w-[7rem] max-w-[14rem] items-center justify-center border-x border-border/40 bg-transparent px-3 text-sm font-medium text-foreground transition-colors outline-none",
                   "hover:bg-muted/60 data-[state=open]:bg-muted/60",
-                  "focus-visible:ring-2 focus-visible:ring-ring/45",
+                  "focus-visible:ring-2 focus-visible:ring-ring/45"
                 )}
               >
                 <span className="truncate">{effectiveHost.name}</span>
@@ -289,9 +315,7 @@ export function HostOverlayBar({
                         aria-label={`Delete ${host.name}`}
                         data-testid={`host-overlay-delete-${host.hostId}`}
                         disabled={isDeleting || !canDelete}
-                        title={
-                          !canDelete ? LAST_HOST_DELETE_REASON : undefined
-                        }
+                        title={!canDelete ? LAST_HOST_DELETE_REASON : undefined}
                         className="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
                         onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
@@ -319,14 +343,17 @@ export function HostOverlayBar({
                   onPointerDown={(e) => e.stopPropagation()}
                 >
                   {QUICK_ADD_TEMPLATES.map((id) => {
-                    const template = HOST_TEMPLATES.find((t) => t.id === id);
-                    if (!template) return null;
+                    const catalogHost =
+                      catalogState.status === "live"
+                        ? getCatalogHost(catalogState.catalog, id)
+                        : undefined;
+                    if (!catalogHost) return null;
                     return (
                       <button
                         key={id}
                         type="button"
-                        aria-label={`Add ${template.label} host`}
-                        title={`Add ${template.label}`}
+                        aria-label={`Add ${catalogHost.label} host`}
+                        title={`Add ${catalogHost.label}`}
                         data-testid={`host-overlay-quick-add-${id}`}
                         onClick={(e) => {
                           e.preventDefault();
@@ -335,11 +362,11 @@ export function HostOverlayBar({
                         }}
                         className={cn(
                           "inline-flex size-6 items-center justify-center rounded-sm transition-colors",
-                          "hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50",
+                          "hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                         )}
                       >
                         <img
-                          src={template.logoSrc}
+                          src={getHostLogoSrc(id, themeMode)}
                           alt=""
                           className="size-4 object-contain"
                         />
@@ -361,7 +388,7 @@ export function HostOverlayBar({
               "inline-flex h-8 w-7 items-center justify-center rounded-r-md text-muted-foreground transition-colors",
               "hover:bg-muted/60 hover:text-foreground",
               "focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none",
-              "disabled:cursor-not-allowed disabled:opacity-40",
+              "disabled:cursor-not-allowed disabled:opacity-40"
             )}
           >
             <ChevronRight className="size-4" />

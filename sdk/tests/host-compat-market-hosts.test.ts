@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildMarketHostProfiles,
+  bundledHostCompatCatalog,
   evaluateMarketHosts,
   MCP_APPS_FULL,
   type HostCompatToolsInput,
@@ -31,24 +32,10 @@ const verdictFor = (
     ?.verdict;
 
 describe("buildMarketHostProfiles", () => {
-  it("includes the market hosts (logo-free)", () => {
+  it("includes the catalog hosts (logo-free)", () => {
     const profiles = buildMarketHostProfiles();
     expect(profiles.map((p) => p.id).sort()).toEqual(
-      [
-        "chatgpt",
-        "claude",
-        "cline",
-        "codex",
-        "copilot",
-        "cursor",
-        "goose",
-        "mistral",
-        "n8n",
-        "perplexity",
-        "slack",
-        "vscode",
-        "notion",
-      ].sort()
+      Object.keys(bundledHostCompatCatalog().hostsById).sort()
     );
     expect(profiles.every((p) => !("logoSrc" in p))).toBe(true);
   });
@@ -114,21 +101,9 @@ describe("buildMarketHostProfiles", () => {
 
     const b = buildMarketHostProfiles();
     // Order + nested state of a second call are unaffected by the mutation.
-    expect(b.map((p) => p.id)).toEqual([
-      "claude",
-      "chatgpt",
-      "mistral",
-      "goose",
-      "cursor",
-      "copilot",
-      "codex",
-      "n8n",
-      "perplexity",
-      "cline",
-      "slack",
-      "vscode",
-      "notion",
-    ]);
+    expect(b.map((p) => p.id)).toEqual(
+      Object.keys(bundledHostCompatCatalog().hostsById)
+    );
     expect(b.find((p) => p.id === "claude")?.capabilities?.message).toBe(true);
   });
 });

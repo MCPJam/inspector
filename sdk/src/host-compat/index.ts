@@ -25,6 +25,12 @@ export {
 export {
   bundledHostCompatCatalog,
   buildHostProfilesFromCatalog,
+  getCatalogHost,
+  getCatalogHosts,
+  getCatalogTemplate,
+  getTemplateMcpAppsCapabilities,
+  imageSupportToHostConfigFields,
+  hydrateHostCompatCatalog,
   type EvaluateMarketHostsOptions,
   type HostCompatCatalog,
   type HostCompatCatalogHost,
@@ -33,6 +39,7 @@ export {
   hostCompatCatalogSchema,
   hostCompatCatalogEnvelopeSchema,
   mcpAppsCapabilitiesSchema,
+  SUPPORTED_CATALOG_SCHEMA_VERSION,
   type HostCompatCatalogEnvelope,
 } from "./catalog-schema.js";
 export {

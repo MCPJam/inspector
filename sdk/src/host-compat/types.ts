@@ -96,6 +96,8 @@ export type CompatLaneVerdict = {
 export type HostCompatReport = {
   hostId: string;
   hostLabel: string;
+  /** When this host's catalog facts were last verified/reviewed (ms epoch). */
+  verifiedAt?: number;
   /** Worst-wins aggregate across lanes. */
   verdict: CompatVerdict;
   /** Host's baseline provenance (dominant source for its facts). */
@@ -177,6 +179,8 @@ export type HostCompatProfile = {
   id: string;
   label: string;
   provenance: CompatProvenance;
+  /** When this host's catalog facts were last verified/reviewed (ms epoch). */
+  verifiedAt?: number;
   rendersMcpApps: boolean;
   rendersOpenAiApps: boolean;
   supportedProtocolVersions?: string[];
