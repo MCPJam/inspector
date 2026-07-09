@@ -10,6 +10,7 @@ import {
 
 const DEFAULT_CATALOG_URL = "https://staging.mcpjam.com";
 const LOCAL_ONLY = process.argv.includes("--local-only");
+const REMOTE_FETCH_TIMEOUT_MS = 10_000;
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -84,17 +85,28 @@ function bundledCatalog(): HostCompatCatalog {
 
 async function fetchRemoteCatalog(): Promise<HostCompatCatalog> {
   const url = catalogUrlFromEnv();
-  const response = await fetch(url, {
-    method: "GET",
-    headers: { accept: "application/json" },
-  });
-  if (!response.ok) {
-    throw new Error(
-      `Remote host catalog fetch failed: HTTP ${response.status} (${url}).`
-    );
-  }
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    REMOTE_FETCH_TIMEOUT_MS
+  );
+  let body: unknown;
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Remote host catalog fetch failed: HTTP ${response.status} (${url}).`
+      );
+    }
 
-  const body: unknown = await response.json();
+    body = await response.json();
+  } finally {
+    clearTimeout(timeoutId);
+  }
   const parsed = hostCompatCatalogEnvelopeSchema.safeParse(body);
   if (!parsed.success) {
     const schemaVersion =

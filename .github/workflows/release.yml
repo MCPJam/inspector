@@ -563,3 +563,66 @@ jobs:
           files: |
             .release-assets/macos/**
             .release-assets/windows/**
+
+      - name: Dispatch and wait for backend host catalog seed
+        if: |
+          fromJSON(inputs.deploy_backend_prod) &&
+          needs.deploy-backend-prod.result == 'success'
+        uses: actions/github-script@v7
+        env:
+          BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
+        with:
+          github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          script: |
+            const [owner, repo] = process.env.BACKEND_REPO.split("/");
+            const dispatchTime = new Date();
+
+            await github.rest.repos.createDispatchEvent({
+              owner,
+              repo,
+              event_type: "inspector_release_seed_catalog",
+              client_payload: {
+                sha: context.sha,
+                ref: context.ref,
+                scope: "${{ needs.preflight.outputs.scope }}",
+                release_tag: "${{ needs.preflight.outputs.release_tag }}",
+              },
+            });
+
+            const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            for (let attempt = 0; attempt < 40; attempt += 1) {
+              await sleep(15000);
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                owner,
+                repo,
+                workflow_id: "seed-market-host-catalog-production.yml",
+                event: "repository_dispatch",
+                per_page: 20,
+              });
+
+              const matchingRun = data.workflow_runs.find(
+                (run) => new Date(run.created_at) >= dispatchTime
+              );
+
+              if (!matchingRun) {
+                core.info(`No backend host catalog seed workflow run found yet (attempt ${attempt + 1}/40).`);
+                continue;
+              }
+
+              core.info(
+                `Backend host catalog seed workflow ${matchingRun.id} is ${matchingRun.status}/${matchingRun.conclusion ?? "pending"}.`
+              );
+
+              if (matchingRun.status !== "completed") {
+                continue;
+              }
+
+              if (matchingRun.conclusion !== "success") {
+                core.setFailed(
+                  `Backend host catalog seed failed with conclusion ${matchingRun.conclusion}.`
+                );
+              }
+              return;
+            }
+
+            core.setFailed("Timed out waiting for backend host catalog seed to finish.");

@@ -452,41 +452,47 @@ describe("fetchHostCompatCatalog", () => {
 
   it("maps parse failures to invalid", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    expect(
-      await fetchHostCompatCatalog({
-        fetchImpl: async () => okResponse({ nope: true }),
-      })
-    ).toEqual({ ok: false, reason: "invalid" });
-    expect(
-      await fetchHostCompatCatalog({
-        fetchImpl: async () => new Response("not json", { status: 200 }),
-      })
-    ).toEqual({ ok: false, reason: "invalid" });
-    expect(warnSpy).toHaveBeenCalledWith(
-      "[host-catalog] rejected live catalog envelope",
-      expect.objectContaining({ reason: "invalid_envelope" })
-    );
-    warnSpy.mockRestore();
+    try {
+      expect(
+        await fetchHostCompatCatalog({
+          fetchImpl: async () => okResponse({ nope: true }),
+        })
+      ).toEqual({ ok: false, reason: "invalid" });
+      expect(
+        await fetchHostCompatCatalog({
+          fetchImpl: async () => new Response("not json", { status: 200 }),
+        })
+      ).toEqual({ ok: false, reason: "invalid" });
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[host-catalog] rejected live catalog envelope",
+        expect.objectContaining({ reason: "invalid_envelope" })
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("warns specifically when the live catalog schema version is unsupported", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const result = await fetchHostCompatCatalog({
-      fetchImpl: async () =>
-        okResponse(
-          envelopeFor(bundledHostCompatCatalog(), { schemaVersion: 3 })
-        ),
-    });
-    expect(result).toEqual({ ok: false, reason: "invalid" });
-    expect(warnSpy).toHaveBeenCalledWith(
-      "[host-catalog] rejected live catalog envelope",
-      expect.objectContaining({
-        reason: "schema_version_mismatch",
-        schemaVersion: 3,
-        expectedSchemaVersion: 2,
-      })
-    );
-    warnSpy.mockRestore();
+    try {
+      const result = await fetchHostCompatCatalog({
+        fetchImpl: async () =>
+          okResponse(
+            envelopeFor(bundledHostCompatCatalog(), { schemaVersion: 3 })
+          ),
+      });
+      expect(result).toEqual({ ok: false, reason: "invalid" });
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[host-catalog] rejected live catalog envelope",
+        expect.objectContaining({
+          reason: "schema_version_mismatch",
+          schemaVersion: 3,
+          expectedSchemaVersion: 2,
+        })
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("maps thrown fetch errors to network", async () => {

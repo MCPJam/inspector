@@ -26,6 +26,7 @@ import {
   type HostCompatCatalog,
   type HostCompatCatalogEnvelope,
 } from "@mcpjam/sdk/host-compat";
+import { logger } from "../../utils/logger.js";
 
 // The Zod-inferred envelope narrows `provenance` to the wire enum; the SDK's
 // catalog type also admits `observed` (earned live, never published). Serve
@@ -70,7 +71,7 @@ function warnHostCatalogDegradation(
   const lastWarnAt = lastDegradationWarnAtByReason.get(reason) ?? 0;
   if (now - lastWarnAt < DEGRADATION_WARN_THROTTLE_MS) return;
   lastDegradationWarnAtByReason.set(reason, now);
-  console.warn("[host-catalog] degraded catalog path", {
+  logger.warn("[host-catalog] degraded catalog path", {
     reason,
     ...details,
   });

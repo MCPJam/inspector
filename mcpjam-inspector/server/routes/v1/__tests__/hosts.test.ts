@@ -64,6 +64,7 @@ import {
   SUPPORTED_CATALOG_SCHEMA_VERSION,
   type HostCompatCatalog,
 } from "@mcpjam/sdk/host-compat";
+import { logger } from "../../../utils/logger.js";
 
 function makeApp(): Hono {
   const app = new Hono();
@@ -148,7 +149,7 @@ describe("v1 host routes", () => {
     // Default: the bearer is neither a guest token nor an `sk_` key, so the
     // middleware treats it as a WorkOS JWT and passes it through to Convex.
     validateGuestTokenMock.mockResolvedValue({ valid: false });
-    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -340,6 +341,33 @@ describe("v1 host routes", () => {
       expect(warnSpy).toHaveBeenCalledWith(
         "[host-catalog] v1 host template fallback",
         expect.objectContaining({ reason: "unavailable" })
+      );
+    });
+
+    it("falls back to the bundled SDK catalog when CONVEX_HTTP_URL is missing", async () => {
+      delete process.env.CONVEX_HTTP_URL;
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const fallbackTemplate = getCatalogTemplate(
+        bundledHostCompatCatalog(),
+        "mistral"
+      );
+
+      const res = await request("POST", "/api/v1/projects/p1/hosts", {
+        body: { name: "Mistral", template: "mistral" },
+      });
+
+      expect(res.status).toBe(201);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(createdHostInput()).toMatchObject({
+        hostStyle: "mistral",
+        modelId: fallbackTemplate?.modelId,
+      });
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[host-catalog] v1 host template fallback",
+        expect.objectContaining({ reason: "missing_convex_http_url" })
       );
     });
 

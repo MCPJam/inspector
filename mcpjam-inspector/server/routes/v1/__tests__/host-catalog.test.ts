@@ -15,6 +15,7 @@ import {
 
 import v1Routes from "../index.js";
 import { resetHostCatalogCacheForTests } from "../host-catalog.js";
+import { logger } from "../../../utils/logger.js";
 
 function makeApp(): Hono {
   const app = new Hono();
@@ -49,7 +50,7 @@ describe("GET /api/v1/host-catalog", () => {
     process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
     fetchMock = vi.fn();
     global.fetch = fetchMock as unknown as typeof fetch;
-    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -162,6 +163,10 @@ describe("GET /api/v1/host-catalog", () => {
     fetchMock.mockResolvedValue(jsonResponse({ error: "not seeded" }, 503));
     const res = await makeApp().request("/api/v1/host-catalog");
     expect((await res.json()).source).toBe("bundled");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[host-catalog] degraded catalog path",
+      expect.objectContaining({ reason: "upstream_non_2xx", status: 503 })
+    );
   });
 
   it("serves the stale cached envelope with revalidation headers when a later refresh fails", async () => {
@@ -234,6 +239,14 @@ describe("GET /api/v1/host-catalog", () => {
       expect(body.source).toBe("live");
       expect(res.headers.get("Cache-Control")).toBe("public, max-age=300");
       expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[host-catalog] degraded catalog path",
+        expect.objectContaining({
+          reason: "upstream_older_version",
+          upstreamVersion: 2,
+          cachedVersion: 3,
+        })
+      );
 
       // The older-response refresh must still bump the TTL — a follow-up
       // request inside the window is served from cache without re-hitting
