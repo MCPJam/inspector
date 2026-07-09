@@ -131,6 +131,109 @@ describe("POST /api/web/skills/create", () => {
   });
 });
 
+describe("POST /api/web/skills/create with raw skillMd", () => {
+  const created = {
+    skillId: "s3",
+    projectId: "proj_1",
+    name: "git-helper",
+    description: "Server-parsed description",
+    sharing: "user" as const,
+    isOwner: true,
+    content: "Run git carefully.",
+    aggregateHash: "h",
+    createdAt: 1,
+    updatedAt: 1,
+  };
+
+  it("parses skillMd server-side and forwards extraFrontmatter to createCloudSkill", async () => {
+    vi.mocked(createCloudSkill).mockResolvedValue(created);
+    const skillMd = [
+      "---",
+      "name: git-helper",
+      "description: Server-parsed description",
+      "license: MIT",
+      "allowed-tools: Bash(git:*), Read",
+      "---",
+      "",
+      "Run git carefully.",
+    ].join("\n");
+    const res = await post("/api/web/skills/create", {
+      projectId: "proj_1",
+      name: "git-helper",
+      // Client-sent fields are superseded by the server-side parse.
+      description: "naive client parse",
+      content: "naive client body",
+      skillMd,
+    });
+    expect(res.status).toBe(200);
+    expect(vi.mocked(createCloudSkill)).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "proj_1" }),
+      {
+        name: "git-helper",
+        description: "Server-parsed description",
+        content: "Run git carefully.",
+        extraFrontmatter: {
+          license: "MIT",
+          allowedTools: ["Bash(git:*)", "Read"],
+        },
+      },
+    );
+  });
+
+  it("rejects a skillMd whose frontmatter name mismatches the provided name", async () => {
+    const skillMd = [
+      "---",
+      "name: other-name",
+      "description: d",
+      "---",
+      "",
+      "body",
+    ].join("\n");
+    const res = await post("/api/web/skills/create", {
+      projectId: "proj_1",
+      name: "git-helper",
+      description: "d",
+      content: "body",
+      skillMd,
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).message).toMatch(/does not match/);
+    expect(vi.mocked(createCloudSkill)).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unparseable skillMd (missing description)", async () => {
+    const skillMd = ["---", "name: git-helper", "---", "", "body"].join("\n");
+    const res = await post("/api/web/skills/create", {
+      projectId: "proj_1",
+      name: "git-helper",
+      description: "d",
+      content: "body",
+      skillMd,
+    });
+    expect(res.status).toBe(400);
+    expect(vi.mocked(createCloudSkill)).not.toHaveBeenCalled();
+  });
+
+  it("without skillMd, forwards the client fields unchanged (no extraFrontmatter)", async () => {
+    vi.mocked(createCloudSkill).mockResolvedValue(created);
+    const res = await post("/api/web/skills/create", {
+      projectId: "proj_1",
+      name: "git-helper",
+      description: "client description",
+      content: "client body",
+    });
+    expect(res.status).toBe(200);
+    expect(vi.mocked(createCloudSkill)).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        name: "git-helper",
+        description: "client description",
+        content: "client body",
+      },
+    );
+  });
+});
+
 describe("POST /api/web/skills/delete + /promote", () => {
   it("delete maps a 404 from the service", async () => {
     vi.mocked(deleteCloudSkill).mockRejectedValue(

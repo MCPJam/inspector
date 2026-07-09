@@ -2,10 +2,14 @@ import { describe, it, expect } from "vitest";
 import {
   appendToolCallsForPrompt,
   argumentsMatch,
+  computeSkillAdherence,
+  hasSkillTools,
+  isSkillToolName,
   matchToolCalls,
   resolveCasePredicates,
   resolveCaseSuccessPredicates,
   resolveExtrasCap,
+  SKILL_TOOL_NAMES,
   summarizeRenderObservations,
   mergeToolCallsByPromptIndex,
   widgetCallToToolCall,
@@ -403,6 +407,73 @@ describe("resolveExtrasCap", () => {
     expect(
       resolveExtrasCap({ maxExtraToolCalls: null, allowExtraToolCalls: false }),
     ).toBeNull();
+  });
+});
+
+describe("skill tool identification", () => {
+  it("SKILL_TOOL_NAMES covers both delivery paths", () => {
+    expect(SKILL_TOOL_NAMES).toContain("listSkills"); // cloud discovery
+    expect(SKILL_TOOL_NAMES).toContain("loadSkill"); // both paths
+    expect(SKILL_TOOL_NAMES).toContain("listSkillFiles"); // supporting files
+    expect(SKILL_TOOL_NAMES).toContain("readSkillFile");
+  });
+
+  it("isSkillToolName is exact (no substring / non-skill tools)", () => {
+    expect(isSkillToolName("loadSkill")).toBe(true);
+    expect(isSkillToolName("listSkills")).toBe(true);
+    expect(isSkillToolName("loadSkillFoo")).toBe(false);
+    expect(isSkillToolName("save")).toBe(false);
+    expect(isSkillToolName("bash")).toBe(false);
+  });
+
+  it("hasSkillTools detects any skill tool, across both paths", () => {
+    expect(hasSkillTools(["bash", "save"])).toBe(false);
+    expect(hasSkillTools(["bash", "listSkills"])).toBe(true); // cloud
+    expect(hasSkillTools(["loadSkill"])).toBe(true); // local FS
+    expect(hasSkillTools([])).toBe(false);
+  });
+});
+
+describe("computeSkillAdherence", () => {
+  const load = (name: string) => ({ toolName: "loadSkill", arguments: { name } });
+  const act = (toolName: string) => ({ toolName, arguments: {} });
+
+  it("returns undefined when there are no expected skills", () => {
+    expect(computeSkillAdherence(undefined, [load("pdf")])).toBeUndefined();
+    expect(computeSkillAdherence([], [load("pdf")])).toBeUndefined();
+  });
+
+  it("is adherent when every expected skill loads before the first action", () => {
+    const res = computeSkillAdherence(
+      ["pdf"],
+      [act("listSkills"), load("pdf"), act("save")],
+    );
+    expect(res?.adherent).toBe(true);
+    expect(res?.loadedBeforeFirstAction).toEqual(["pdf"]);
+    expect(res?.loadedSkills).toEqual(["pdf"]);
+  });
+
+  it("is NOT adherent when the skill loads after the first action", () => {
+    const res = computeSkillAdherence(["pdf"], [act("save"), load("pdf")]);
+    expect(res?.adherent).toBe(false);
+    expect(res?.loadedBeforeFirstAction).toEqual([]);
+    // Still recorded as loaded (just too late).
+    expect(res?.loadedSkills).toEqual(["pdf"]);
+  });
+
+  it("is NOT adherent when an expected skill is never loaded", () => {
+    const res = computeSkillAdherence(["pdf", "viz"], [load("pdf"), act("save")]);
+    expect(res?.adherent).toBe(false);
+    expect(res?.loadedBeforeFirstAction).toEqual(["pdf"]);
+  });
+
+  it("treats skill tools as housekeeping (not the first action)", () => {
+    // listSkills + loadSkill before an action → still adherent.
+    const res = computeSkillAdherence(
+      ["pdf"],
+      [act("listSkills"), act("loadSkill" as never), load("pdf"), act("run")],
+    );
+    expect(res?.adherent).toBe(true);
   });
 });
 

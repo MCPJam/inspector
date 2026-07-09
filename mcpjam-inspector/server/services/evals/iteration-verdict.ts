@@ -43,6 +43,12 @@ export interface EvalIterationVerdictInput {
   toolsCalledByPrompt: EvalArgs[1];
   isNegativeTest: EvalArgs[2];
   matchOptions: EvalArgs[3];
+  /**
+   * True when the prepared tool set advertised skill tools — gates the matcher's
+   * skill-call exemption (`evalContext.skillToolsActive`). Omitted / false ⇒
+   * byte-identical matching (no exemption), so skill-free suites are unaffected.
+   */
+  skillToolsActive?: boolean;
 
   // ── per-turn check results (computed by the caller / step facts) ──
   /** Scope-tagged per-turn results, OR `[]` (hosted skips per-turn checks). */
@@ -90,6 +96,7 @@ export function buildEvalIterationVerdict(
     input.toolsCalledByPrompt,
     input.isNegativeTest,
     input.matchOptions,
+    { skillToolsActive: input.skillToolsActive === true },
   );
 
   const casePredicateResults = input.effectivePredicates?.length

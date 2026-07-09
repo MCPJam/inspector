@@ -85,10 +85,17 @@ import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
 import { resolveHarnessSandbox } from "./resolve-sandbox.js";
 import {
   fetchRuntimeSkills,
+  fetchRuntimeSkillFiles,
   skillsFingerprint,
   claudeCodeSafeSkills,
 } from "./runtime-skills.js";
-import { reconcileSkillDirs } from "./reconcile-skill-dirs.js";
+import { materializeSkillFiles } from "./materialize-skill-files.js";
+import { materializeSkillFrontmatter } from "./materialize-skill-frontmatter.js";
+import {
+  reconcileSkillDirs,
+  appendManagedSkills,
+} from "./reconcile-skill-dirs.js";
+import { adoptSandboxSkills } from "./adopt-sandbox-skills.js";
 import {
   claimHarnessSessionState,
   commitHarnessSessionState,
@@ -156,7 +163,7 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
   const configured = selectedServerIds.filter((id) => {
     if (manager.getServerConfig(id)) return true;
     logger.warn(
-      `[harness] selected server has no live config; skipping serverId=${id}`,
+      `[harness] selected server has no live config; skipping serverId=${id}`
     );
     return false;
   });
@@ -174,7 +181,7 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
     });
     if (!minted.ok) {
       throw new Error(
-        `Couldn't mint harness MCP proxy tokens (${minted.status}): ${minted.error}`,
+        `Couldn't mint harness MCP proxy tokens (${minted.status}): ${minted.error}`
       );
     }
     // Hard-fail, never skip: the harness must run with every selected server or
@@ -186,7 +193,7 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
       const token = minted.tokens[id];
       if (!token) {
         throw new Error(
-          `Harness MCP proxy: no token minted for selected serverId=${id} — refusing to run with missing MCP tools`,
+          `Harness MCP proxy: no token minted for selected serverId=${id} — refusing to run with missing MCP tools`
         );
       }
       const url = await resolveHarnessProxyUrl({
@@ -255,7 +262,7 @@ const TYPED_TOOL_OUTPUT_TYPES: ReadonlySet<string> = new Set([
  *  anything else is wrapped once as `{type:"json", value}`. */
 export function toToolResultOutput(
   rawOutput: unknown,
-  isError: boolean,
+  isError: boolean
 ): { type: string; value: unknown } {
   if (isError) {
     return {
@@ -323,7 +330,7 @@ export function harnessRuntimeFingerprint(parts: {
 
 export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
-  streamSink: "ui" | "none",
+  streamSink: "ui" | "none"
 ): Promise<ChatEngineLoopResult> {
   const {
     messages,
@@ -383,6 +390,22 @@ export async function runHarnessTurn(
   const promptIndex = getPromptIndex(messages);
   let aborted = false;
   let runSucceeded = false;
+  // The file-capable sandbox session, captured from `onSandboxSession` so the
+  // turn-end adoption pass (in the finally, before the box is released) can read
+  // `~/.claude/skills` and write the managed-skills manifest. The finally's own
+  // `session` is the AI-SDK AGENT session (detach/destroy), which has no file I/O.
+  let sandboxFileSession:
+    | {
+        readTextFile(args: { path: string }): PromiseLike<string | null>;
+        writeTextFile(args: {
+          path: string;
+          content: string;
+        }): PromiseLike<unknown>;
+        run(args: {
+          command: string;
+        }): PromiseLike<{ exitCode: number; stdout: string; stderr: string }>;
+      }
+    | undefined;
   // WS3: the turn paused awaiting a tool approval (a third terminal alongside
   // success/abort). Treated like a clean end that happens to await input — the
   // continuation is committed with `awaitingApproval` and the next request
@@ -476,12 +499,12 @@ export async function runHarnessTurn(
     try {
       if (!projectId) {
         throw new Error(
-          "harness turn requires a projectId to resolve the computer",
+          "harness turn requires a projectId to resolve the computer"
         );
       }
       if (!authHeader) {
         throw new Error(
-          "harness turn requires an auth bearer to resolve the computer",
+          "harness turn requires an auth bearer to resolve the computer"
         );
       }
       // WS3: requireToolApproval is now SUPPORTED via the harness's native
@@ -519,7 +542,7 @@ export async function runHarnessTurn(
       //       silently substitute its own default model.
       if (!harnessAdapter.supportsModel(modelId)) {
         throw new Error(
-          `The ${harnessAdapter.displayName} harness can't run model "${modelId}".`,
+          `The ${harnessAdapter.displayName} harness can't run model "${modelId}".`
         );
       }
       //   (b) a harness that can't deliver the host's selected MCP servers must
@@ -530,7 +553,7 @@ export async function runHarnessTurn(
       ) {
         throw new Error(
           `The ${harnessAdapter.displayName} harness doesn't support MCP servers yet, ` +
-            `but this host has ${selectedServers?.length} selected — remove them to run it.`,
+            `but this host has ${selectedServers?.length} selected — remove them to run it.`
         );
       }
 
@@ -549,7 +572,7 @@ export async function runHarnessTurn(
         throw new Error(
           "Guest harness requires broker credential delivery " +
             "(MCPJAM_HARNESS_BROKER_DELIVERY=true) — refusing to start a " +
-            "host-funded harness turn without it.",
+            "host-funded harness turn without it."
         );
       }
       let auth: HarnessAuth | undefined = useBroker
@@ -583,7 +606,7 @@ export async function runHarnessTurn(
       // harness would silently get zero MCP tools (the exact failure we hit).
       if ((selectedServers?.length ?? 0) > 0 && !harnessMcpProxy) {
         throw new Error(
-          "harness turn has MCP servers but no harnessMcpProxy strategy — the caller route must set options.harnessMcpProxy",
+          "harness turn has MCP servers but no harnessMcpProxy strategy — the caller route must set options.harnessMcpProxy"
         );
       }
       const { mcpJson, keyToServerId } =
@@ -640,8 +663,8 @@ export async function runHarnessTurn(
         sourceType === "chatbox"
           ? "chatbox-chat"
           : sourceType === "eval" || sourceType === "sandbox"
-            ? undefined
-            : "direct-chat";
+          ? undefined
+          : "direct-chat";
       let continuity:
         | {
             owner: HarnessOwnerRef;
@@ -694,7 +717,7 @@ export async function runHarnessTurn(
           // conversation.
           if (claim.status === 409) {
             throw new Error(
-              "Another turn is already running for this chat — wait for it to finish.",
+              "Another turn is already running for this chat — wait for it to finish."
             );
           }
           logger.warn("[harness] session-state claim failed; failing closed", {
@@ -704,7 +727,7 @@ export async function runHarnessTurn(
           throw new Error(
             `Couldn't start a ${harnessAdapter.displayName} session — the ` +
               "continuity service is unavailable right now. Please try again in " +
-              "a moment.",
+              "a moment."
           );
         } else {
           continuity = {
@@ -820,13 +843,17 @@ export async function runHarnessTurn(
         Object.keys(hostExecutedTools).length
           ? {
               toolApproval: Object.fromEntries(
-                Object.keys(hostExecutedTools).map((n) => [n, "user-approval"]),
+                Object.keys(hostExecutedTools).map((n) => [n, "user-approval"])
               ) as NonNullable<
                 ConstructorParameters<typeof HarnessAgent>[0]["toolApproval"]
               >,
             }
           : {}),
         onSandboxSession: async ({ session, sessionWorkDir }) => {
+          // Capture the file-capable sandbox session for the turn-end adoption
+          // pass (the finally's agent session has no file I/O). Stays valid until
+          // the box is detached/destroyed, which happens AFTER adoption.
+          sandboxFileSession = session;
           // Deliver the host's MCP servers into the session before the runtime
           // starts, via the adapter's own strategy (Claude Code writes a
           // `.mcp.json`). Codex v1 has no delivery (`supportsSelectedMcpServers:
@@ -838,7 +865,7 @@ export async function runHarnessTurn(
             if (!harnessAdapter.deliverMcpServers) {
               throw new Error(
                 `The ${harnessAdapter.displayName} harness advertises MCP support ` +
-                  "but has no deliverMcpServers strategy (adapter misconfigured).",
+                  "but has no deliverMcpServers strategy (adapter misconfigured)."
               );
             }
             await harnessAdapter.deliverMcpServers({
@@ -863,6 +890,32 @@ export async function runHarnessTurn(
               skillsHash: skillsHash ?? "",
               ...(abortSignal ? { signal: abortSignal } : {}),
             }).catch(() => {});
+            // Materialize supporting files AFTER reconcile (the adapter wrote each
+            // SKILL.md; reconcile removed stale managed dirs). Fetched here rather
+            // than at turn start to keep the zero-file fast path free. Fully
+            // fail-soft; guest/swarm scope uses the execution-scoped file query.
+            if (projectId && authHeader && runtimeSkills.length > 0) {
+              // Tri-state: `{ ok: false }` ⇒ the fetch FAILED (transient). Skip
+              // materialization then — an empty file set would otherwise prune
+              // every delivered skill's on-box files. `{ ok: true, files: [] }`
+              // is a successful "no files" and still runs, so a skill whose last
+              // file was removed gets pruned.
+              const fileResult = await fetchRuntimeSkillFiles(
+                authHeader,
+                projectId,
+                executionScope
+              ).catch(() => ({ ok: false } as const));
+              if (fileResult.ok) {
+                await materializeSkillFiles({
+                  session,
+                  files: fileResult.files,
+                  skillNamesById: new Map(
+                    runtimeSkills.map((s) => [s.skillId, s.name])
+                  ),
+                  ...(abortSignal ? { signal: abortSignal } : {}),
+                }).catch(() => {});
+              }
+            }
           }
           // Stream the workdir to the client (transient) so the Playground Shell
           // can open a terminal here instead of the box's home. The client keys
@@ -897,7 +950,7 @@ export async function runHarnessTurn(
         sandboxId,
       });
       const resumable = eligibility.resume
-        ? (continuity?.state ?? undefined)
+        ? continuity?.state ?? undefined
         : undefined;
       // Categorical reason to surface to the client (never a raw sandbox id).
       // Only hard resets are shown; legacy-cold-resume is a logged attempt.
@@ -908,7 +961,7 @@ export async function runHarnessTurn(
       if (eligibility.reason === "legacy-cold-resume") {
         logger.warn(
           "[harness] resuming a pre-detach sidecar (cold/disk resume; continuity not guaranteed)",
-          { harnessSessionId: continuity?.state?.harnessSessionId },
+          { harnessSessionId: continuity?.state?.harnessSessionId }
         );
       }
       // WS3: resuming a turn the user just approved/denied. The committed state
@@ -960,6 +1013,27 @@ export async function runHarnessTurn(
       // the pre-session cleanup in onFinishEngine no longer needs to free it.
       sessionEstablished = true;
 
+      // Re-write SKILL.md WITH preserved extra frontmatter (allowed-tools /
+      // license / …) for skills that carry it. The adapter's `skills` param
+      // structurally can't deliver those fields, and the adapter writes its
+      // own (extras-less) SKILL.md during createSession — AFTER
+      // `onSandboxSession` — so this must run here, post-createSession, or a
+      // fresh start (exactly when the adapter writes) would clobber it.
+      // Fail-soft (never fails the turn); zero session calls when no skill
+      // has extras; same gating as the onSandboxSession skill passes.
+      if (
+        harnessAdapter.supportsSkills &&
+        runtimeSkills !== null &&
+        runtimeSkills.length > 0 &&
+        sandboxFileSession
+      ) {
+        await materializeSkillFrontmatter({
+          session: sandboxFileSession,
+          skills: runtimeSkills,
+          ...(abortSignal ? { signal: abortSignal } : {}),
+        }).catch(() => {});
+      }
+
       // Heartbeat the lease while we stream (turns can outlive the TTL). The
       // heartbeat is the liveness guard: it aborts the turn on a DEFINITIVE
       // lease loss, tolerates transient failures (network blips), and gives up
@@ -994,7 +1068,7 @@ export async function runHarnessTurn(
             });
             if (elapsedMs >= HARNESS_LEASE_TTL_MS) {
               logger.warn(
-                "[harness] heartbeat lost liveness past TTL — aborting turn",
+                "[harness] heartbeat lost liveness past TTL — aborting turn"
               );
               livenessAbort.abort(new Error("harness lost liveness"));
             }
@@ -1113,7 +1187,7 @@ export async function runHarnessTurn(
             });
           }
           const flushedToolCallIds = new Set(
-            pendingResults.map((tr) => tr.toolCallId),
+            pendingResults.map((tr) => tr.toolCallId)
           );
           for (const tr of pendingResults) {
             messageHistory.push({
@@ -1130,7 +1204,7 @@ export async function runHarnessTurn(
                     ? {
                         providerOptions: mergeMcpToolOriginMetadata(
                           undefined,
-                          tr.serverId,
+                          tr.serverId
                         ),
                       }
                     : {}),
@@ -1147,7 +1221,7 @@ export async function runHarnessTurn(
             messageHistory,
             promptIndex,
             stepIndex,
-            flushedToolCallIds,
+            flushedToolCallIds
           );
         };
         // Step + tool-identity tracking. A "step" spans assistant content + its
@@ -1170,7 +1244,7 @@ export async function runHarnessTurn(
             writer,
             messageHistory,
             toolSetForTrace as unknown as ToolSet,
-            activeDriver.snapshotContext(messageHistory),
+            activeDriver.snapshotContext(messageHistory)
           );
           stepIndex += 1;
           stepStartedAt = Date.now();
@@ -1213,7 +1287,7 @@ export async function runHarnessTurn(
             } else {
               if (reasoningId === undefined) {
                 reasoningId = String(
-                  (part as { id?: unknown }).id ?? crypto.randomUUID(),
+                  (part as { id?: unknown }).id ?? crypto.randomUUID()
                 );
                 emitReasoningStart(writer, reasoningId);
               }
@@ -1221,7 +1295,7 @@ export async function runHarnessTurn(
                 const rDelta = String(
                   (part as { text?: unknown; delta?: unknown }).text ??
                     (part as { delta?: unknown }).delta ??
-                    "",
+                    ""
                 );
                 if (rDelta) emitReasoningDelta(writer, reasoningId, rDelta);
               }
@@ -1231,7 +1305,7 @@ export async function runHarnessTurn(
             const delta = String(
               (part as { text?: unknown; delta?: unknown }).delta ??
                 (part as { text?: unknown }).text ??
-                "",
+                ""
             );
             if (!delta) continue;
             // Assistant text after tool results begins the next step.
@@ -1274,10 +1348,10 @@ export async function runHarnessTurn(
             }
             const toolCallId = String(
               (part as { toolCallId?: unknown }).toolCallId ??
-                crypto.randomUUID(),
+                crypto.randomUUID()
             );
             const rawToolName = String(
-              (part as { toolName?: unknown }).toolName ?? "tool",
+              (part as { toolName?: unknown }).toolName ?? "tool"
             );
             // Claude Code namespaces MCP tools as mcp__<server>__<tool>; map back
             // to { serverId, un-namespaced toolName } so the UI chunks, engine
@@ -1286,12 +1360,12 @@ export async function runHarnessTurn(
             // tools (Bash, Read, …) have no prefix → serverId stays undefined.
             const { serverId, toolName } = harnessAdapter.parseToolName(
               rawToolName,
-              keyToServerId,
+              keyToServerId
             );
             const input = coerceToolInput(
               (part as { input?: unknown }).input ??
                 (part as { args?: unknown }).args ??
-                {},
+                {}
             );
             toolMeta.set(toolCallId, {
               ...(serverId ? { serverId } : {}),
@@ -1307,7 +1381,7 @@ export async function runHarnessTurn(
             // auto-continues, re-submitting the turn forever.
             const providerMetadata = mergeMcpToolOriginMetadata(
               undefined,
-              serverId,
+              serverId
             );
             writer.write({
               type: "tool-input-available",
@@ -1340,7 +1414,7 @@ export async function runHarnessTurn(
             type === "tool-output-available"
           ) {
             const toolCallId = String(
-              (part as { toolCallId?: unknown }).toolCallId ?? "",
+              (part as { toolCallId?: unknown }).toolCallId ?? ""
             );
             const output =
               (part as { output?: unknown }).output ??
@@ -1356,7 +1430,7 @@ export async function runHarnessTurn(
               toolMeta.get(toolCallId) ??
               harnessAdapter.parseToolName(
                 String((part as { toolName?: unknown }).toolName ?? "tool"),
-                keyToServerId,
+                keyToServerId
               );
             // Provider-executed (in-sandbox) — see tool-input-available above.
             emitToolOutput(writer, {
@@ -1383,7 +1457,7 @@ export async function runHarnessTurn(
               ...createOffsetInterval(
                 traceBaseMs,
                 toolStartMs.get(toolCallId) ?? Date.now(),
-                Date.now(),
+                Date.now()
               ),
               promptIndex,
               stepIndex,
@@ -1492,10 +1566,10 @@ export async function runHarnessTurn(
             // confirmation; host-tool `toolApproval` reliably emits this part.
             const approvalId = String(
               (part as { approvalId?: unknown }).approvalId ??
-                crypto.randomUUID(),
+                crypto.randomUUID()
             );
             const toolCallId = String(
-              (part as { toolCallId?: unknown }).toolCallId ?? "",
+              (part as { toolCallId?: unknown }).toolCallId ?? ""
             );
             closeReasoning();
             if (textId !== undefined) {
@@ -1603,7 +1677,7 @@ export async function runHarnessTurn(
           const finalTextLength =
             typeof finalText === "string" ? finalText.length : 0;
           logger.warn(
-            `[harness] completed without visible chat parts; streamTypes=${streamTypes}; finalTextLength=${finalTextLength}`,
+            `[harness] completed without visible chat parts; streamTypes=${streamTypes}; finalTextLength=${finalTextLength}`
           );
           projectAssistantText(HARNESS_EMPTY_VISIBLE_OUTPUT_TEXT);
         }
@@ -1631,11 +1705,52 @@ export async function runHarnessTurn(
             tConnect - tSandbox
           }ms modelStream=${tStream - tConnect}ms total=${
             tStream - tStart
-          }ms resumed=${resumedSession}`,
+          }ms resumed=${resumedSession}`
         );
       } finally {
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         try {
+          // Turn-end adoption: sync filesystem-installed skills up into Convex
+          // while the session is still LIVE (before detach/destroy below). Only on
+          // a clean success — never on abort/error/pausedForApproval — and only
+          // for a skills-capable adapter with a healthy fetch (`runtimeSkills`),
+          // outside guest/swarm scopes (v1 skips `executionScope`). Fully
+          // fail-soft. NOTE: a fresh adoption adds a new skillId to the runtime set
+          // NEXT turn, so the runtime fingerprint intentionally forks then (the
+          // adapter (re)writes on the fresh start) — expected, not a bug.
+          if (
+            runSucceeded &&
+            !aborted &&
+            !pausedForApproval &&
+            harnessAdapter.supportsSkills &&
+            runtimeSkills !== null &&
+            !executionScope &&
+            authHeader &&
+            projectId &&
+            sandboxFileSession &&
+            process.env.HARNESS_SKILL_ADOPTION_DISABLED !== "1"
+          ) {
+            const fileSession = sandboxFileSession;
+            const { adopted } = await adoptSandboxSkills({
+              session: fileSession,
+              authHeader,
+              projectId,
+              // Names already delivered as cloud skills this turn are the adapter's
+              // own dirs — not adoptions.
+              managedNames: new Set(runtimeSkills.map((s) => s.name)),
+              ...(abortSignal ? { signal: abortSignal } : {}),
+            }).catch(() => ({
+              adopted: [] as { skillId: string; name: string }[],
+            }));
+            // Only TRUE 'adopted' dirs become managed (decision 3b): never convert
+            // a hand-placed dir into a cloud-deletable cache.
+            if (adopted.length > 0) {
+              await appendManagedSkills({
+                session: fileSession,
+                skills: adopted,
+              }).catch(() => {});
+            }
+          }
           // On a clean turn with continuity: detach to park the live bridge and
           // get a warm resume payload, then BUILD the commit (don't send it
           // here). The commit rides /ingest-chat atomically with the transcript
@@ -1691,7 +1806,7 @@ export async function runHarnessTurn(
         } catch (finalizeErr) {
           logger.warn(
             "[harness] session finalize failed; releasing lease, sidecar not committed",
-            { error: finalizeErr },
+            { error: finalizeErr }
           );
           // stop()/destroy() threw → no resume payload to commit. Drop any
           // half-built commit and free the lane so the next turn can claim.
@@ -1720,7 +1835,7 @@ export async function runHarnessTurn(
           writer,
           messageHistory,
           toolSetForTrace as unknown as ToolSet,
-          driver.snapshotContext(messageHistory),
+          driver.snapshotContext(messageHistory)
         );
         driver.emitErrorTurnFinish(writer);
       }
@@ -1761,7 +1876,7 @@ export async function runHarnessTurn(
         await onConversationComplete?.(
           [...messageHistory],
           trace,
-          capturedHarnessCommit,
+          capturedHarnessCommit
         );
         persistOk = true;
       } catch (persistErr) {
@@ -1789,7 +1904,7 @@ export async function runHarnessTurn(
     } catch (cleanupError) {
       logger.error(
         "[harness] error while running stream cleanup",
-        cleanupError,
+        cleanupError
       );
     }
   };

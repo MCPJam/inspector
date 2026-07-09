@@ -31,7 +31,11 @@ import {
   type CustomProviderConfig,
 } from "./chat-helpers.js";
 import { getSkillToolsAndPrompt } from "./skill-tools.js";
-import { getCloudSkillToolsAndPrompt } from "./computers/cloud-skill-tools.js";
+import {
+  getCloudSkillToolsAndPrompt,
+  getPinnedSkillToolsAndPrompt,
+} from "./computers/cloud-skill-tools.js";
+import type { PinnableSkill } from "../../shared/skill-types.js";
 import { logger } from "./logger.js";
 import { isGPT5Model, type ModelDefinition } from "@/shared/types";
 import {
@@ -621,6 +625,16 @@ export interface PrepareChatV2Options {
    * Takes precedence over the local/HOSTED_MODE skill branches.
    */
   cloudSkills?: { authHeader: string; projectId: string };
+  /**
+   * Explicit skill source, ABOVE the cloud/HOSTED/local chain. Set ONLY by eval
+   * runners: `pinned` mints frozen in-memory tools over snapshotted content
+   * (zero network in execute), `none` suppresses skills entirely. Chat callers
+   * never set it → the existing precedence is byte-identical. `pinned` tools
+   * bypass approval (pure reads of frozen content under an auto-deny eval run).
+   */
+  skillsSource?:
+    | { kind: "pinned"; skills: PinnableSkill[] }
+    | { kind: "none" };
 }
 
 /**
@@ -761,6 +775,7 @@ export async function prepareChatV2(
     uiTools,
     builtInTools,
     cloudSkills,
+    skillsSource,
     harness,
   } = options;
 
@@ -806,31 +821,50 @@ export async function prepareChatV2(
     filterAppOnlyTools(mcpTools, mcpClientManager);
   }
   // Skills source, in precedence order:
+  //   0. skillsSource set (EVAL RUNNERS ONLY) ⇒ pinned frozen tools or none.
+  //      Above everything; chat callers never set it, so the chain below is
+  //      byte-identical for them. Pinned tools bypass approval (decision 12).
   //   1. cloudSkills set ⇒ the caller's Computer (E2B sandbox) — hosted path
   //      with a provisioned computer. Lazy discovery (no upfront wake).
   //   2. HOSTED_MODE without a computer ⇒ no skills (local FS unavailable).
   //   3. local ⇒ the inspector's own filesystem.
+  const skillsArePinned = skillsSource?.kind === "pinned";
+  // Decision 11: harness eval turns live-fetch skills, so a pinned set would
+  // falsify the snapshot claim. Harness is stripped from suite configs already;
+  // this throw is belt-and-suspenders at the single point both paths funnel through.
+  if (harness && skillsArePinned) {
+    throw new Error(
+      "Pinned skills are not supported on harness runs (they live-fetch skills).",
+    );
+  }
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
-    cloudSkills
-      ? getCloudSkillToolsAndPrompt({
-          authHeader: cloudSkills.authHeader,
-          projectId: cloudSkills.projectId,
-        })
-      : HOSTED_MODE
-        ? { tools: {}, systemPromptSection: "" }
-        : await getSkillToolsAndPrompt();
+    skillsSource
+      ? skillsSource.kind === "pinned"
+        ? getPinnedSkillToolsAndPrompt(skillsSource.skills)
+        : { tools: {}, systemPromptSection: "" }
+      : cloudSkills
+        ? getCloudSkillToolsAndPrompt({
+            authHeader: cloudSkills.authHeader,
+            projectId: cloudSkills.projectId,
+          })
+        : HOSTED_MODE
+          ? { tools: {}, systemPromptSection: "" }
+          : await getSkillToolsAndPrompt();
 
-  const finalSkillTools: Record<string, unknown> = requireToolApproval
-    ? Object.fromEntries(
-        Object.entries(skillTools).map(([name, tool]) => [
-          name,
-          {
-            ...(tool && typeof tool === "object" ? tool : {}),
-            needsApproval: true,
-          },
-        ])
-      )
-    : (skillTools as Record<string, unknown>);
+  // Pinned skill tools NEVER require approval (pure reads of frozen content; the
+  // eval run is auto-deny). Otherwise the normal approval wrap applies.
+  const finalSkillTools: Record<string, unknown> =
+    requireToolApproval && !skillsArePinned
+      ? Object.fromEntries(
+          Object.entries(skillTools).map(([name, tool]) => [
+            name,
+            {
+              ...(tool && typeof tool === "object" ? tool : {}),
+              needsApproval: true,
+            },
+          ])
+        )
+      : (skillTools as Record<string, unknown>);
 
   // SEP-1865 App-Provided Tools (Host → App direction). Client supplies
   // the snapshot per chat POST; we register them as no-execute entries so
