@@ -73,6 +73,11 @@ describe("getComputersRemoteDataPlaneUrl", () => {
     expect(getComputersRemoteDataPlaneUrl()).toBe("http://127.0.0.1:3500");
   });
 
+  it("allows plain http for the IPv6 loopback (bracketed by URL parsing)", () => {
+    vi.stubEnv("COMPUTERS_REMOTE_DATA_PLANE_URL", "http://[::1]:3500");
+    expect(getComputersRemoteDataPlaneUrl()).toBe("http://[::1]:3500");
+  });
+
   it("rejects plain http for a non-loopback host", () => {
     vi.stubEnv("COMPUTERS_REMOTE_DATA_PLANE_URL", "http://staging.mcpjam.com");
     expect(getComputersRemoteDataPlaneUrl()).toBeNull();

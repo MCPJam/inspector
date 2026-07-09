@@ -41,7 +41,14 @@ import {
 } from "./control-plane-client.js";
 
 function isLoopbackHost(hostname: string): boolean {
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  // WHATWG URL bracket-wraps IPv6 hosts (new URL("http://[::1]").hostname
+  // === "[::1]"), so the literal form must be matched too.
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
 }
 
 /**
