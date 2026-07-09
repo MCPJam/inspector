@@ -201,6 +201,21 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
       );
     }
 
+    // Fail fast before the run record exists. An unpinned host persists
+    // modelId "" (a fully supported host state — Save never gates on it),
+    // and unlike interactive chat there is no visitor picker to fall back
+    // to: without this guard the runner misclassifies "" as an Ollama BYOK
+    // model and every session dies on an opaque backend "model is required"
+    // that never reaches the dialog.
+    const modelId = runtime.config.modelId?.trim();
+    if (!modelId) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "This chatbox's host has no model selected. Pick a model on the host's Behavior tab, then run sessions again."
+      );
+    }
+
     // selectedServerIds may be empty (no required servers): the manager
     // factory returns a connection-less manager and the sessions run
     // toolless, exactly like a real no-opt-in visitor's chat.
@@ -237,7 +252,6 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
     const personas = body.personas as PersonaSlate[];
     const sessionsPerPersona = body.sessionsPerPersona;
     const maxTurns = body.maxTurns;
-    const modelId = runtime.config.modelId;
     const systemPrompt = runtime.config.systemPrompt;
     const temperature = runtime.config.temperature;
     const requireToolApproval = runtime.config.requireToolApproval;

@@ -203,6 +203,18 @@ describe("buildSyntheticModelDefinition", () => {
     );
     expect(result.provider).toBe("ollama");
   });
+
+  it("throws on an empty/whitespace modelId instead of misclassifying it as Ollama", () => {
+    // An unpinned host persists modelId "" — pre-guard this fell into the
+    // bare-id branch, produced a bogus ollama definition, and the failure
+    // surfaced many hops later as an opaque backend "model is required".
+    expect(() => buildSyntheticModelDefinition("")).toThrow(
+      /no model selected/i,
+    );
+    expect(() => buildSyntheticModelDefinition("   ")).toThrow(
+      /no model selected/i,
+    );
+  });
 });
 
 describe("matchOrgProviderForModelId", () => {

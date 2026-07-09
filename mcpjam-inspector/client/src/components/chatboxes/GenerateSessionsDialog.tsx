@@ -143,13 +143,23 @@ export function GenerateSessionsDialog({
   }));
   const hasRequiredServers = serversPayload.some((s) => !s.optional);
 
+  // An unpinned host persists modelId "" — synthetic sessions have no
+  // visitor picker to fall back to (unlike interactive chat), so the run
+  // is doomed before it starts. Gate both action buttons and show the
+  // fix-it notice instead of letting the user sail into a run where every
+  // session fails. The /start route enforces the same guard server-side.
+  const hasNoModel = !chatbox.modelId.trim();
+
   // BYOK is now supported on synthetic runs — the runner dispatches
   // org-BYOK models through /stream/org (or local-usage writeback) and
   // the backend forwarder stamps synthesisRunId onto the resulting
   // llmUsageRecord. The flag is kept to (a) show a spend-warning
   // notice so users know provider credits will be consumed, and (b)
-  // render the rough cost preview below.
-  const isByokChatbox = !isMCPJamProvidedModel(chatbox.modelId);
+  // render the rough cost preview below. A modelless chatbox is NOT
+  // BYOK — without the hasNoModel exclusion, isMCPJamProvidedModel("")
+  // → false used to show the org-key spend warning for a chatbox that
+  // has no model at all.
+  const isByokChatbox = !hasNoModel && !isMCPJamProvidedModel(chatbox.modelId);
 
   // Rough cost estimate (not an upper bound — uses a single blended
   // midpoint rate with no safety multiplier, so it can under-estimate
@@ -388,6 +398,16 @@ export function GenerateSessionsDialog({
 
         {stage === "configure" ? (
           <div className="space-y-4">
+            {hasNoModel ? (
+              <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  This chatbox&apos;s host has no model selected. Pick a model
+                  on the host&apos;s Behavior tab, then come back to run
+                  sessions.
+                </span>
+              </div>
+            ) : null}
             {/* Stage 1 — roster selection. Pick saved characters to run, or
                 generate a fresh slate below. */}
             {roster && roster.length > 0 ? (
@@ -538,7 +558,14 @@ export function GenerateSessionsDialog({
               <Button variant="outline" size="sm" onClick={onClose}>
                 Cancel
               </Button>
-              <Button size="sm" onClick={handleGenerate} disabled={generating}>
+              <Button
+                size="sm"
+                onClick={handleGenerate}
+                // hasNoModel: persona generation itself would succeed (it
+                // runs on the backend's own LLM), but the subsequent run
+                // can't — block here so the user isn't led into a dead end.
+                disabled={generating || hasNoModel}
+              >
                 {generating ? (
                   <>
                     <Loader2 className="mr-1 size-3 animate-spin" /> Generating
@@ -553,6 +580,19 @@ export function GenerateSessionsDialog({
 
         {stage === "review" ? (
           <div className="space-y-3">
+            {/* No-model notice — also shown here because the Personas-tab
+                "Run swarm" path opens straight at Review, bypassing the
+                configure-stage notice. */}
+            {hasNoModel ? (
+              <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  This chatbox&apos;s host has no model selected. Pick a model
+                  on the host&apos;s Behavior tab, then come back to run
+                  sessions.
+                </span>
+              </div>
+            ) : null}
             {/* BYOK spend warning — also shown here because the Personas-tab
                 "Run swarm" path opens straight at Review, bypassing the
                 configure-stage warning. */}
@@ -645,6 +685,7 @@ export function GenerateSessionsDialog({
                   onClick={handleRun}
                   disabled={
                     starting ||
+                    hasNoModel ||
                     selectedReviewCount === 0 ||
                     selectedReviewCount > MAX_PERSONAS
                   }
