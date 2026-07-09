@@ -58,10 +58,31 @@ function getDataPlaneSecret(): string | null {
   return process.env.COMPUTERS_DATA_PLANE_SECRET?.trim() || null;
 }
 
-/** True when every env var the computers data plane needs is present. */
+function getServiceToken(): string | null {
+  return process.env.INSPECTOR_SERVICE_TOKEN?.trim() || null;
+}
+
+/**
+ * True when everything the computers data plane needs is present: a Convex
+ * to talk to, a server-to-server credential for it (legacy shared secret or
+ * the inspector service token), the vendor key, and the terminal-token
+ * secret. The last one is deliberately part of "configured": the terminal
+ * verifier (`terminal-token.ts`) fails closed without it, so a server that
+ * can exec but can't verify terminal tokens would be lying if it reported
+ * configured. (It leaves the predicate once RS256/JWKS verification is fully
+ * rolled out and harness proxy tokens have migrated.)
+ *
+ * Values may arrive from the environment OR from the boot bootstrap
+ * (`runtime-config.ts`, which fills env in place) — callers that can run
+ * before startup finishes must await `initComputersRuntimeConfigBootstrap`
+ * first (see `initComputersStartup` in `remote-data-plane.ts`).
+ */
 export function isComputersDataPlaneConfigured(): boolean {
   return Boolean(
-    getConvexHttpUrl() && getDataPlaneSecret() && process.env.E2B_API_KEY
+    getConvexHttpUrl() &&
+      (getDataPlaneSecret() || getServiceToken()) &&
+      process.env.E2B_API_KEY &&
+      process.env.COMPUTERS_TERMINAL_TOKEN_SECRET?.trim()
   );
 }
 
@@ -103,9 +124,18 @@ async function postJson<T>(
   return { ok: true, value: payload as T };
 }
 
-function secretHeaders(): Record<string, string> | null {
+/**
+ * Server-to-server auth headers for the secret-gated `/computers/*` routes.
+ * The legacy shared secret wins when present (matches the backend's
+ * dual-accept precedence and keeps three-var setups byte-identical);
+ * otherwise the inspector service token. Null when the server holds neither
+ * — callers treat that as unconfigured.
+ */
+function authHeaders(): Record<string, string> | null {
   const secret = getDataPlaneSecret();
-  return secret ? { [SECRET_HEADER]: secret } : null;
+  if (secret) return { [SECRET_HEADER]: secret };
+  const token = getServiceToken();
+  return token ? { "x-inspector-service-token": token } : null;
 }
 
 function bearerHeader(raw: string): Record<string, string> {
@@ -148,7 +178,7 @@ export async function releaseEvalSandbox(args: {
   sandboxRowId: string;
   signal?: AbortSignal;
 }): Promise<void> {
-  const headers = secretHeaders();
+  const headers = authHeaders();
   if (!headers) return;
   const result = await postJson(
     "/evals/sandbox/release",
@@ -194,7 +224,7 @@ export async function getComputerSandboxInfo(args: {
   computerId: string;
   signal?: AbortSignal;
 }): Promise<ControlPlaneResult<ComputerSandboxInfo>> {
-  const headers = secretHeaders();
+  const headers = authHeaders();
   if (!headers) {
     return {
       ok: false,
@@ -220,7 +250,7 @@ export async function recordComputerCommand(args: {
   exitCode?: number;
   outputPreview?: string;
 }): Promise<void> {
-  const headers = secretHeaders();
+  const headers = authHeaders();
   if (!headers) return;
   const result = await postJson("/computers/commands", headers, { ...args });
   if (!result.ok) {
@@ -240,7 +270,7 @@ export async function recordTerminalSession(args: {
   action: "open" | "close";
   computerId?: string;
 }): Promise<void> {
-  const headers = secretHeaders();
+  const headers = authHeaders();
   if (!headers) return;
   const result = await postJson("/computers/terminal-sessions", headers, {
     sessionId: args.sessionId,

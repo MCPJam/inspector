@@ -51,7 +51,7 @@ import { requestLogContextMiddleware } from "./middleware/request-log-context";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url";
 import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal";
 import { createComputerUploadHandler } from "./routes/web/computer-upload";
-import { initComputersRemoteDataPlaneDiscovery } from "./utils/computers/remote-data-plane";
+import { initComputersStartup } from "./utils/computers/remote-data-plane";
 import { registerSelfFetch } from "./utils/self-app";
 
 const sysLogger = getSystemLogger("process");
@@ -240,8 +240,11 @@ startGuestAuthProvisioningInBackground();
 startLocalBrowserRenderingSetupInBackground();
 // Mirror of the call in server/app.ts::createHonoApp — both production
 // entries must wire this up. Memoized, so it's harmless if a process ever
-// ran both.
-void initComputersRemoteDataPlaneDiscovery();
+// ran both. Kicked off here so it overlaps route setup; AWAITED before
+// `serve()` below — synchronous gates (harness pre-flight, evals) read
+// `isComputersDataPlaneConfigured()`, which is only truthful once the
+// credential bootstrap has resolved.
+const computersStartup = initComputersStartup();
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
 
@@ -669,6 +672,11 @@ const isDocker = process.env.DOCKER_CONTAINER === "true";
 const hostname = isDocker ? "0.0.0.0" : "127.0.0.1";
 
 appLogger.info(`🎵 MCPJam: http://127.0.0.1:${displayPort}`);
+
+// Readiness gate: computers credential bootstrap + data-plane discovery must
+// resolve before the first request — see initComputersStartup. Bounded (~11s
+// worst case, sub-second typical) and never throws.
+await computersStartup;
 
 // Start the Hono server
 const server = serve({
