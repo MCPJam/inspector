@@ -164,7 +164,14 @@ export function WidgetReplay({
     (uiType === UIType.MCP_APPS ||
       uiType === UIType.OPENAI_SDK ||
       uiType === UIType.OPENAI_SDK_AND_MCP_APPS);
-  if (!hasUi) return null;
+  // The download-confirm dialog rides EVERY return path below, not just the
+  // success one. `useDownloadConfirmation` stays mounted here across re-renders,
+  // so if a `ui/download-file` prompt is open when we drop into a guard (host
+  // capability toggled off, tool state flips, load error), omitting the dialog
+  // would strand the pending promise — the widget's `onDownloadFile` hangs and
+  // the one-at-a-time guard auto-denies all future downloads. Keeping it mounted
+  // leaves the prompt resolvable; it renders nothing while idle.
+  if (!hasUi) return downloadConfirmDialog;
 
   if (
     toolState !== "output-available" &&
@@ -173,7 +180,7 @@ export function WidgetReplay({
     toolState !== "input-streaming" &&
     toolState !== "input-available"
   ) {
-    return null;
+    return downloadConfirmDialog;
   }
 
   if (
@@ -182,9 +189,12 @@ export function WidgetReplay({
     !toolCallId
   ) {
     return (
-      <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
-        Failed to load server id or resource uri for MCP App.
-      </div>
+      <>
+        <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
+          Failed to load server id or resource uri for MCP App.
+        </div>
+        {downloadConfirmDialog}
+      </>
     );
   }
 
