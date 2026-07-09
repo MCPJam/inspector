@@ -32,6 +32,7 @@ import { logger } from "../logger.js";
 import {
   getConvexHttpUrl,
   isComputersDataPlaneConfigured,
+  markServiceTokenRejected,
 } from "./control-plane-client.js";
 
 export const INSPECTOR_SERVICE_TOKEN_HEADER = "x-inspector-service-token";
@@ -126,13 +127,22 @@ async function fetchRuntimeConfigOnce(
   if (response.status === 401 || response.status === 404) {
     // Old backend (no route) or a token this deployment doesn't recognize:
     // nothing to bootstrap — same end state as today's unconfigured server.
-    // 401 additionally suggests a misconfigured token, so say so.
-    logger.warn(
-      `[computers] runtime-config bootstrap unavailable (status ${response.status})` +
-        (response.status === 401
-          ? " — INSPECTOR_SERVICE_TOKEN does not match this Convex deployment"
-          : "")
-    );
+    if (response.status === 401) {
+      // The token is present but rejected. Mark it so a stray E2B key +
+      // terminal secret in env can't make isComputersDataPlaneConfigured()
+      // report a working local data plane that every /computers/* call
+      // (same auth gate) would then hard-401.
+      markServiceTokenRejected();
+      logger.warn(
+        "[computers] runtime-config bootstrap unavailable (status 401) — " +
+          "INSPECTOR_SERVICE_TOKEN does not match this Convex deployment"
+      );
+    } else {
+      logger.warn(
+        "[computers] runtime-config bootstrap unavailable (status 404) — " +
+          "backend predates the runtime-config route"
+      );
+    }
     return "unavailable";
   }
   if (!response.ok) {

@@ -58,7 +58,31 @@ function getDataPlaneSecret(): string | null {
   return process.env.COMPUTERS_DATA_PLANE_SECRET?.trim() || null;
 }
 
+/**
+ * Set once the boot bootstrap gets a 401 from this server's Convex
+ * (`runtime-config.ts` calls `markServiceTokenRejected`): the
+ * `INSPECTOR_SERVICE_TOKEN` this process holds is NOT a valid data-plane
+ * credential. The runtime-config route and every secret-gated `/computers/*`
+ * route gate on the SAME check, so a token the bootstrap rejected will also
+ * 401 the data-plane calls — it must not count toward
+ * `isComputersDataPlaneConfigured()` or be presented on requests, or the
+ * server would advertise `localConfigured: true` while every computer call
+ * hard-401s. Sticky for the process lifetime: a wrong token only becomes
+ * right via an env change + restart, and a 401 bootstrap never re-runs.
+ */
+let serviceTokenRejected = false;
+
+/** Called by the bootstrap on a 401. */
+export function markServiceTokenRejected(): void {
+  serviceTokenRejected = true;
+}
+
+export function resetServiceTokenRejectedForTests(): void {
+  serviceTokenRejected = false;
+}
+
 function getServiceToken(): string | null {
+  if (serviceTokenRejected) return null;
   return process.env.INSPECTOR_SERVICE_TOKEN?.trim() || null;
 }
 

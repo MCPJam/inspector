@@ -4,7 +4,10 @@ import {
   resolveComputersLocalConfigured,
   resetComputersRuntimeConfigBootstrapForTests,
 } from "../computers/runtime-config";
-import { isComputersDataPlaneConfigured } from "../computers/control-plane-client";
+import {
+  isComputersDataPlaneConfigured,
+  resetServiceTokenRejectedForTests,
+} from "../computers/control-plane-client";
 
 // The bootstrap talks to Convex through global fetch; stub it and assert the
 // env-mutation semantics (atomic, only-if-unset, fail-closed).
@@ -50,6 +53,7 @@ beforeEach(() => {
   process.env.INSPECTOR_SERVICE_TOKEN = "svc-tok";
   process.env.CONVEX_HTTP_URL = "https://convex.example.test";
   resetComputersRuntimeConfigBootstrapForTests();
+  resetServiceTokenRejectedForTests();
   fetchCalls = [];
   fetchImpl = () => jsonResponse(200, ENABLED_PAYLOAD);
   vi.stubGlobal(
@@ -71,6 +75,7 @@ afterEach(() => {
     else process.env[key] = savedEnv[key];
   }
   resetComputersRuntimeConfigBootstrapForTests();
+  resetServiceTokenRejectedForTests();
 });
 
 describe("initComputersRuntimeConfigBootstrap", () => {
@@ -214,5 +219,21 @@ describe("resolveComputersLocalConfigured", () => {
   it("answers false when nothing is configured and no token exists", async () => {
     delete process.env.INSPECTOR_SERVICE_TOKEN;
     expect(await resolveComputersLocalConfigured()).toBe(false);
+  });
+
+  it("reports NOT configured after a 401 even with stray E2B + terminal secret in env", async () => {
+    // Hybrid config: a wrong service token, no legacy secret, but leftover
+    // hand-set E2B key + terminal secret. Without marking the token rejected,
+    // the predicate would report localConfigured:true while every
+    // secret-gated /computers/* call hard-401s.
+    process.env.E2B_API_KEY = "stray-key";
+    process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = "stray-terminal-secret";
+    delete process.env.COMPUTERS_DATA_PLANE_SECRET;
+    fetchImpl = () => jsonResponse(401, { error: "Unauthorized" });
+
+    expect(await resolveComputersLocalConfigured()).toBe(false);
+    // A legacy secret is an independent credential and still counts.
+    process.env.COMPUTERS_DATA_PLANE_SECRET = "legacy-secret";
+    expect(isComputersDataPlaneConfigured()).toBe(true);
   });
 });
