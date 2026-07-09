@@ -18,6 +18,7 @@ import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
+import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
 import type {
   HostComparisonSubject,
   HostConfigFieldDef,
@@ -103,10 +104,9 @@ export function HostConfigCompareView({
       projectId,
     });
   const catalogState = useHostCatalog();
+  const compareCatalog = catalogState.catalog ?? bundledHostCompatCatalog();
   const liveHosts = canQueryLiveHosts ? queriedLiveHosts : [];
-  const listLoading =
-    (canQueryLiveHosts ? queriedListLoading : false) ||
-    catalogState.status === "loading";
+  const listLoading = canQueryLiveHosts ? queriedListLoading : false;
   const selectionScopeId = presetOnly ? "public" : projectId ?? "";
 
   // Catalog host profiles (Claude, ChatGPT, Cursor, …) offered as opt-in
@@ -122,12 +122,10 @@ export function HostConfigCompareView({
   }, [claudeCodeEnabled, codexEnabled]);
   const presets = useMemo(
     () =>
-      catalogState.catalog
-        ? buildPresetCompareEntries(catalogState.catalog, {
-            excludedTemplateIds: excludedPresetTemplateIds,
-          })
-        : { hosts: [], subjects: {} },
-    [catalogState.catalog, excludedPresetTemplateIds]
+      buildPresetCompareEntries(compareCatalog, {
+        excludedTemplateIds: excludedPresetTemplateIds,
+      }),
+    [compareCatalog, excludedPresetTemplateIds]
   );
 
   // Real created hosts first, then presets — what the selector chips iterate.
