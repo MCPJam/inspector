@@ -34,39 +34,46 @@ describe("ui/open-link scheme gate", () => {
     expect(onOpenLink).toHaveBeenNthCalledWith(2, "http://example.com/y");
   });
 
+  // Per the ext-apps App.openLink contract, a host policy block resolves
+  // { isError: true } (NOT a throw — throws are reserved for transport/timeout),
+  // so the widget's documented `const { isError } = await app.openLink()` path
+  // runs its fallback instead of hitting an unhandled rejection.
   it.each([
     "javascript:alert(1)",
     "data:text/html,<script>alert(1)</script>",
     "vbscript:msgbox(1)",
     "file:///etc/passwd",
     "about:blank",
-  ])("rejects the dangerous scheme %s without calling the host", async (url) => {
-    const onOpenLink = vi.fn();
-    const bridge = makeBridge({ onOpenLink });
+  ])(
+    "resolves { isError: true } for the dangerous scheme %s without calling the host",
+    async (url) => {
+      const onOpenLink = vi.fn();
+      const bridge = makeBridge({ onOpenLink });
 
-    await expect(bridge.onopenlink!({ url }, {} as never)).rejects.toThrow(
-      /Policy violation/
-    );
-    expect(onOpenLink).not.toHaveBeenCalled();
-  });
+      await expect(
+        bridge.onopenlink!({ url }, {} as never)
+      ).resolves.toEqual({ isError: true });
+      expect(onOpenLink).not.toHaveBeenCalled();
+    }
+  );
 
-  it("rejects a malformed URL", async () => {
+  it("resolves { isError: true } for a malformed URL", async () => {
     const onOpenLink = vi.fn();
     const bridge = makeBridge({ onOpenLink });
 
     await expect(
       bridge.onopenlink!({ url: "not a url" }, {} as never)
-    ).rejects.toThrow(/Policy violation/);
+    ).resolves.toEqual({ isError: true });
     expect(onOpenLink).not.toHaveBeenCalled();
   });
 
-  it("no-ops on an empty url", async () => {
+  it("resolves { isError: true } on an empty url", async () => {
     const onOpenLink = vi.fn();
     const bridge = makeBridge({ onOpenLink });
 
     await expect(
       bridge.onopenlink!({ url: "" }, {} as never)
-    ).resolves.toEqual({});
+    ).resolves.toEqual({ isError: true });
     expect(onOpenLink).not.toHaveBeenCalled();
   });
 });

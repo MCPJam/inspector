@@ -3222,12 +3222,14 @@ export function MCPAppsRendererSurface({
             // since the iframe sandbox blocks direct anchor-clicks. Blob +
             // object-URL anchor.
             //
-            // Confirmation runs BEFORE the try/catch below: the catch maps any
-            // throw to `{ isError: true }`, which the widget reads as a failed
-            // download, not a refusal. A user denial must instead surface as a
-            // JSON-RPC error (SEP-1865: "Download denied by user"), so we throw
-            // out here where the error propagates as-is. When the host doesn't
-            // supply a confirmer, downloads proceed unprompted (back-compat).
+            // Confirmation runs BEFORE the try/catch below. Per the ext-apps
+            // `App.downloadFile` contract, a user cancellation / host denial
+            // resolves `{ isError: true }` (the widget's documented
+            // `if (result.isError)` path) — a throw is reserved for
+            // transport/timeout, so a denial must RETURN isError, not throw, or
+            // the widget skips its denial handling and may surface an unhandled
+            // rejection. When the host supplies no confirmer, downloads proceed
+            // unprompted (back-compat for other embedders of the package).
             const confirmDownload = onConfirmDownloadRef.current;
             if (confirmDownload) {
               for (const item of contents) {
@@ -3254,11 +3256,14 @@ export function MCPAppsRendererSurface({
                   // prompting — the download loop below enforces the same
                   // scheme gate, so prompting for a link we'll refuse anyway
                   // would show the user a misleading confirmation.
-                  const parsed = new URL(link.uri, window.location.href);
-                  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-                    throw new Error(
-                      `Unsupported download URI protocol: ${parsed.protocol}`
-                    );
+                  let protocol: string | undefined;
+                  try {
+                    protocol = new URL(link.uri, window.location.href).protocol;
+                  } catch {
+                    protocol = undefined;
+                  }
+                  if (protocol !== "http:" && protocol !== "https:") {
+                    return { isError: true };
                   }
                   info = {
                     kind: "resource_link",
@@ -3271,7 +3276,7 @@ export function MCPAppsRendererSurface({
                 }
                 const approved = await confirmDownload(info);
                 if (!approved) {
-                  throw new Error("Download denied by user");
+                  return { isError: true };
                 }
               }
             }
