@@ -3250,6 +3250,16 @@ export function MCPAppsRendererSurface({
                   };
                 } else if (item.type === "resource_link") {
                   const link = item as { uri: string; mimeType?: string };
+                  // Reject a non-http(s) resource_link up front, before
+                  // prompting — the download loop below enforces the same
+                  // scheme gate, so prompting for a link we'll refuse anyway
+                  // would show the user a misleading confirmation.
+                  const parsed = new URL(link.uri, window.location.href);
+                  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+                    throw new Error(
+                      `Unsupported download URI protocol: ${parsed.protocol}`
+                    );
+                  }
                   info = {
                     kind: "resource_link",
                     filename: link.uri.split("/").pop() || undefined,
