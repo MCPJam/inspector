@@ -289,12 +289,6 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
-      - name: Check SDK host catalog fallback against staging
-        if: fromJSON(needs.preflight.outputs.publish_sdk)
-        run: npm run check:host-catalog-fallback:remote -w @mcpjam/sdk
-        env:
-          HOST_CATALOG_PARITY_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
-
       - name: Build SDK
         if: |
           fromJSON(needs.preflight.outputs.publish_sdk) ||
@@ -484,6 +478,45 @@ jobs:
 
       - name: Apply release patch
         run: git apply --binary .release-plan/release.patch
+
+      - name: Setup Node.js for catalog parity heads-up
+        if: fromJSON(needs.preflight.outputs.publish_sdk)
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies for catalog parity heads-up
+        if: fromJSON(needs.preflight.outputs.publish_sdk)
+        run: npm ci --legacy-peer-deps
+
+      - name: Check SDK host catalog fallback against staging
+        if: fromJSON(needs.preflight.outputs.publish_sdk)
+        env:
+          HOST_CATALOG_PARITY_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
+        run: |
+          set +e
+          npm run check:host-catalog-fallback:remote -w @mcpjam/sdk
+          status=$?
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            {
+              echo "## SDK host catalog fallback parity"
+              echo ""
+              echo "SDK fallback matches the live catalog at \`$HOST_CATALOG_PARITY_URL\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "::warning::SDK host catalog fallback did not match the live catalog at $HOST_CATALOG_PARITY_URL. This release will continue; verify backend deploy/seed status before relying on the fallback snapshot."
+          {
+            echo "## SDK host catalog fallback parity warning"
+            echo ""
+            echo "The SDK fallback did not match the live catalog at \`$HOST_CATALOG_PARITY_URL\`."
+            echo ""
+            echo "This warning is non-blocking. Check backend deploy/seed status before relying on the fallback snapshot."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Commit version changes
         run: |
