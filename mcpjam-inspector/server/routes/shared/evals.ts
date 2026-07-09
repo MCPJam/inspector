@@ -1658,13 +1658,40 @@ export async function prepareEvalRun(
       // startSuiteRunWithRecorder already precreated the iteration rows, so
       // finalizing only the run leaves every attempt stuck pending. Mirror the
       // precreate-failure cleanup: fail the pending iterations, then the run.
+      // Log cleanup failures (but never let them mask the original pin-fetch
+      // error): if either call fails the run can stay stranded pending, and an
+      // operator needs a breadcrumb to find and repair it.
       await convexClient
         .mutation("testSuites:markSetupPendingIterationsFailed" as any, {
           runId,
           error: cause,
         })
-        .catch(() => {});
-      await recorder.finalize({ status: "failed", notes: cause }).catch(() => {});
+        .catch((cleanupError: unknown) =>
+          logger.warn(
+            "[evals] Failed to fail pending iterations after pin-fetch abort",
+            {
+              runId,
+              error:
+                cleanupError instanceof Error
+                  ? cleanupError.message
+                  : String(cleanupError),
+            }
+          )
+        );
+      await recorder
+        .finalize({ status: "failed", notes: cause })
+        .catch((finalizeError: unknown) =>
+          logger.warn(
+            "[evals] Failed to finalize run after pin-fetch abort",
+            {
+              runId,
+              error:
+                finalizeError instanceof Error
+                  ? finalizeError.message
+                  : String(finalizeError),
+            }
+          )
+        );
       throw error;
     }
   }
