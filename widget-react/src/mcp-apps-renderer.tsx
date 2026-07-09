@@ -3499,32 +3499,21 @@ export function MCPAppsRendererSurface({
         appToolsBridgeIdRef.current = null;
         setAppToolsBridgeIdState(null);
       }
-      // SEP-1865: the host SHOULD send `ui/resource-teardown` and wait for the
-      // view's response before tearing down, so the widget can flush/persist
-      // (prevent data loss). React cleanups can't be async, so we send the
-      // teardown, then close only after the view acks OR a short deadline —
-      // whichever comes first — so a misbehaving widget that never acks can't
-      // wedge the bridge open. When the widget never finished initializing
-      // there's nothing to notify, so close immediately.
+      // SEP-1865: the host MUST send `ui/resource-teardown` before tearing the
+      // view down (so it can flush/persist), and SHOULD wait for the ack. We
+      // send the teardown request — the outbound message is posted before
+      // close() — but deliberately DO NOT await the ack: this cleanup also runs
+      // when the widget is reloaded/replaced, and the outer sandbox-proxy
+      // iframe is reused for the next resource. Keeping this (now stale) bridge
+      // subscribed while a replacement bridge attaches to the SAME proxy window
+      // would let both answer the new widget's JSON-RPC (duplicate `ui/initialize`
+      // / stale responses). Detaching synchronously is the only way to guarantee
+      // the stale transport stops handling messages before the new one starts;
+      // the ack, if it arrives, lands after close() and is harmlessly dropped.
       if (isReadyRef.current) {
-        const TEARDOWN_ACK_TIMEOUT_MS = 1500;
-        void (async () => {
-          try {
-            await Promise.race([
-              bridge.teardownResource({}),
-              new Promise((resolve) =>
-                setTimeout(resolve, TEARDOWN_ACK_TIMEOUT_MS)
-              ),
-            ]);
-          } catch {
-            // Teardown is best-effort; close regardless of ack/error.
-          } finally {
-            bridge.close().catch(() => {});
-          }
-        })();
-      } else {
-        bridge.close().catch(() => {});
+        bridge.teardownResource({}).catch(() => {});
       }
+      bridge.close().catch(() => {});
       // Clear model context on widget teardown
       setWidgetModelContextRef.current(toolCallIdRef.current, null);
     };

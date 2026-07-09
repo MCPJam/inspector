@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -50,6 +50,21 @@ export function useDownloadConfirmation(): {
     pendingRef.current = null;
     setPending(null);
     current.resolve(approved);
+  }, []);
+
+  // If the widget (and this hook) unmount while a prompt is open — e.g. the
+  // tool call is torn down mid-decision — the renderer's `onDownloadFile` is
+  // still awaiting our promise. Resolve it as a denial so the widget receives
+  // its "Download denied by user" error instead of hanging forever. Mirrors
+  // the overlay/escape denial path.
+  useEffect(() => {
+    return () => {
+      const current = pendingRef.current;
+      if (current) {
+        pendingRef.current = null;
+        current.resolve(false);
+      }
+    };
   }, []);
 
   const confirmDownload = useCallback(
