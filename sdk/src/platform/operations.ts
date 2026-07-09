@@ -8,7 +8,6 @@
 import { z } from "zod";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
-import { HOST_TEMPLATE_IDS } from "../host-config/templates/index.js";
 import {
   evaluateMarketHosts,
   scanWidgetUsage,
@@ -2596,7 +2595,9 @@ const createHostInput = z
       .describe(PROJECT_SELECTOR_DESCRIPTION),
     name: z.string().trim().min(1).describe("Display name for the new host."),
     template: z
-      .enum(HOST_TEMPLATE_IDS)
+      .string()
+      .trim()
+      .min(1)
       .optional()
       .describe(
         "Built-in template to seed the host config from (e.g. claude, chatgpt, cursor)."

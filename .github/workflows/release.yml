@@ -289,6 +289,12 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
+      - name: Check SDK host catalog fallback against staging
+        if: fromJSON(needs.preflight.outputs.publish_sdk)
+        run: npm run check:host-catalog-fallback:remote -w @mcpjam/sdk
+        env:
+          HOST_CATALOG_PARITY_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
+
       - name: Build SDK
         if: |
           fromJSON(needs.preflight.outputs.publish_sdk) ||

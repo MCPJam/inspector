@@ -30,6 +30,11 @@ jobs:
       - name: Install workspace dependencies
         run: npm ci --legacy-peer-deps
 
+      - name: Check SDK host catalog fallback against staging
+        run: npm run check:host-catalog-fallback:remote -w @mcpjam/sdk
+        env:
+          HOST_CATALOG_PARITY_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
+
       - name: Verify docs tokens are in sync with design system
         run: npm run docs:check-tokens
 

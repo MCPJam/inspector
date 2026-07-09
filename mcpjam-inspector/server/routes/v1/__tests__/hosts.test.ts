@@ -139,6 +139,7 @@ describe("v1 host routes", () => {
     CONVEX_URL: process.env.CONVEX_URL,
     CONVEX_HTTP_URL: process.env.CONVEX_HTTP_URL,
   };
+  let warnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -147,6 +148,7 @@ describe("v1 host routes", () => {
     // Default: the bearer is neither a guest token nor an `sk_` key, so the
     // middleware treats it as a WorkOS JWT and passes it through to Convex.
     validateGuestTokenMock.mockResolvedValue({ valid: false });
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -155,6 +157,7 @@ describe("v1 host routes", () => {
       if (value) process.env[key] = value;
       else delete process.env[key];
     }
+    warnSpy.mockRestore();
   });
 
   describe("auth", () => {
@@ -277,6 +280,38 @@ describe("v1 host routes", () => {
       });
     });
 
+    it("accepts template ids that exist only in the live backend catalog", async () => {
+      const catalog = clone(bundledHostCompatCatalog());
+      catalog.hostsById["future-host"] = {
+        ...catalog.hostsById.claude,
+        id: "future-host",
+        label: "Future Host",
+        hostStyle: "future-host",
+        modelId: "backend/future-host",
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify(catalogEnvelope(catalog)), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          })
+        )
+      );
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+
+      const res = await request("POST", "/api/v1/projects/p1/hosts", {
+        body: { name: "Future Host", template: "future-host" },
+      });
+
+      expect(res.status).toBe(201);
+      expect(createdHostInput()).toMatchObject({
+        hostStyle: "future-host",
+        modelId: "backend/future-host",
+      });
+    });
+
     it("falls back to the bundled SDK catalog when the backend catalog is unavailable", async () => {
       vi.stubGlobal(
         "fetch",
@@ -302,6 +337,10 @@ describe("v1 host routes", () => {
         mcpToolResultImageRendering:
           fallbackTemplate?.mcpToolResultImageRendering,
       });
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[host-catalog] v1 host template fallback",
+        expect.objectContaining({ reason: "unavailable" })
+      );
     });
 
     it("rejects a body with neither template nor config (400)", async () => {

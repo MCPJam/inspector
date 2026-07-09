@@ -22,7 +22,7 @@ import {
   useVisibleHostFocusTabs,
 } from "./host-focus-tab-defs";
 import { HostIdentityRow } from "./HostIdentityRow";
-import { UpdateCapabilitiesButton } from "./UpdateCapabilitiesButton";
+import { UpdateHostToLatestButton } from "./UpdateHostToLatestButton";
 import {
   hostFocusShellHeaderRowClass,
   hostFocusShellRootClass,
@@ -96,7 +96,7 @@ export function HostFocusPanel({
         hasNameIssue={behaviorIssues.has("hostDisplayName")}
         logoSrc={logoSrc}
         action={
-          <UpdateCapabilitiesButton
+          <UpdateHostToLatestButton
             draft={draft}
             hostDisplayName={hostDisplayName}
             onHostDisplayNameChange={onHostDisplayNameChange}

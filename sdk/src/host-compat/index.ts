@@ -29,12 +29,12 @@ export {
   getCatalogHosts,
   getCatalogTemplate,
   getTemplateMcpAppsCapabilities,
-  imageSupportToHostConfigFields,
   hydrateHostCompatCatalog,
   type EvaluateMarketHostsOptions,
   type HostCompatCatalog,
   type HostCompatCatalogHost,
 } from "./catalog.js";
+export { imageSupportToHostConfigFields } from "./image-support.js";
 export {
   hostCompatCatalogSchema,
   hostCompatCatalogEnvelopeSchema,

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import posthog from "posthog-js";
 import {
   fetchHostCompatCatalog,
   type HostCompatCatalog,
@@ -43,6 +44,26 @@ const LOADING_STATE: HostCatalogState = {
   source: null,
 };
 
+function reportHostCatalogDegradation(
+  details:
+    | {
+        status: "fallback";
+        source: string;
+        version: number;
+      }
+    | {
+        status: "error";
+        reason: string;
+      }
+): void {
+  console.warn("[host-catalog] client catalog degraded", details);
+  try {
+    posthog.capture("host_catalog_degraded", details);
+  } catch {
+    // Telemetry must not affect catalog loading.
+  }
+}
+
 let cached: ResolvedHostCatalogState | null = null;
 let inflight: Promise<HostCatalogState> | null = null;
 // Bumped on every reset so a fetch started before a reset can't write `cached`
@@ -56,12 +77,23 @@ async function loadHostCatalog(): Promise<HostCatalogState> {
     timeoutMs: 8_000,
   }).catch(() => ({ ok: false as const, reason: "network" as const }));
   if (!result.ok) {
+    reportHostCatalogDegradation({
+      status: "error",
+      reason: result.reason,
+    });
     return {
       status: "error",
       catalog: null,
       version: null,
       source: null,
     };
+  }
+  if (result.source === "bundled") {
+    reportHostCatalogDegradation({
+      status: "fallback",
+      source: result.source,
+      version: result.version,
+    });
   }
   return {
     status: result.source === "bundled" ? "fallback" : "live",

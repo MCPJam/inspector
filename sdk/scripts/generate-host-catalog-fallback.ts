@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import prettier from "prettier";
-import { imageSupportToHostConfigFields } from "../src/host-compat/catalog.js";
+import { imageSupportToHostConfigFields } from "../src/host-compat/image-support.js";
 import type { HostImageSupport } from "../src/host-compat/types.js";
 
 type BackendSeedModule = {

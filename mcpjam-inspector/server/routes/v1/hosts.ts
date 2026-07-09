@@ -22,7 +22,6 @@ import {
   getCatalogTemplate,
   type HostCompatCatalog,
 } from "@mcpjam/sdk/host-compat";
-import { HOST_TEMPLATE_IDS } from "@mcpjam/sdk/host-config/templates";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { createConvexClients } from "../shared/evals.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
@@ -70,15 +69,26 @@ function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function warnHostTemplateFallback(details: Record<string, unknown>): void {
+  console.warn("[host-catalog] v1 host template fallback", details);
+}
+
 async function fetchBackendHostCatalog(): Promise<HostCompatCatalog | null> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexHttpUrl) return null;
+  if (!convexHttpUrl) {
+    warnHostTemplateFallback({ reason: "missing_convex_http_url" });
+    return null;
+  }
   const baseUrl = new URL("/public", convexHttpUrl).toString();
   const result = await fetchHostCompatCatalog({
     baseUrl,
     timeoutMs: HOST_CATALOG_FETCH_TIMEOUT_MS,
   });
-  return result.ok ? result.catalog : null;
+  if (!result.ok) {
+    warnHostTemplateFallback({ reason: result.reason });
+    return null;
+  }
+  return result.catalog;
 }
 
 async function resolveHostTemplateInput(
@@ -185,7 +195,7 @@ const hostConfigSchema = z.record(z.string(), z.unknown());
 const createHostSchema = z
   .object({
     name: z.string().trim().min(1),
-    template: z.enum(HOST_TEMPLATE_IDS).optional(),
+    template: z.string().trim().min(1).optional(),
     theme: z.enum(["light", "dark"]).optional(),
     config: hostConfigSchema.optional(),
   })
