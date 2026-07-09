@@ -1802,14 +1802,22 @@ export function AppsExtensionTab({
     // threaded explicitly because its editor surface isn't a form
     // control fieldset can reach.
     <fieldset disabled={readOnly} className="contents">
-      <div className="flex h-full min-h-[480px] flex-col gap-3">
+      {/* `min-h-full` (not `h-full`) lets the column grow past the panel
+          when the matrices expand so the parent scroll region takes over,
+          instead of clamping to the viewport and squeezing the editor to
+          nothing. When collapsed, it still fills the panel and the editor
+          flex-grows. */}
+      <div className="flex min-h-full flex-col gap-3">
         <OpenaiAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
         {/* Two-matrix architecture: window.openai (shim) and app.* (spec
             bridge) are independent surfaces and never cross-gate. The
             subtitle on each section makes this explicit so users don't
             confuse them. */}
         <McpAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
-        <div className="min-h-0 flex-1">
+        {/* `min-h-[320px]` guarantees the editor keeps a usable, scrollable
+            height even when both matrices above are expanded — its own
+            CodeMirror scroll then works instead of the editor collapsing. */}
+        <div className="min-h-[320px] flex-1">
           <JsonEditor
             rawContent={content}
             onRawChange={onRawChange}
