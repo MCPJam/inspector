@@ -330,4 +330,18 @@ describe("scrubTokenFromUrl", () => {
     const url = "/api/test";
     expect(scrubTokenFromUrl(url)).toBe("/api/test");
   });
+
+  it("scrubs a bare token= param (e.g. a stray computer terminal token)", () => {
+    const url = "/api/web/computers/terminal?token=eyJhbGciOi.abc.def&cols=80";
+    expect(scrubTokenFromUrl(url)).toBe(
+      "/api/web/computers/terminal?token=[REDACTED]&cols=80",
+    );
+  });
+
+  it("scrubs token= without clobbering _token= in the same URL", () => {
+    const url = "/api/test?_token=session123&token=terminal456";
+    expect(scrubTokenFromUrl(url)).toBe(
+      "/api/test?_token=[REDACTED]&token=[REDACTED]",
+    );
+  });
 });

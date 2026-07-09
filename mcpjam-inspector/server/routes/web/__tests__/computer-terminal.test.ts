@@ -66,7 +66,8 @@ async function signToken(
 }
 
 function installSandboxInfoStub(
-  providerComputerId: string | null = "sbx_42"
+  providerComputerId: string | null = "sbx_42",
+  overrides: { projectId?: string; ownerUserId?: string } = {}
 ) {
   vi.stubGlobal(
     "fetch",
@@ -79,8 +80,8 @@ function installSandboxInfoStub(
             providerComputerId,
             provider: "e2b",
             status: providerComputerId ? "ready" : "provisioning",
-            projectId: "projects_789",
-            ownerUserId: "users_123",
+            projectId: overrides.projectId ?? "projects_789",
+            ownerUserId: overrides.ownerUserId ?? "users_123",
           }),
           { status: 200, headers: { "content-type": "application/json" } }
         );
@@ -201,6 +202,34 @@ describe("GET /api/web/computers/terminal", () => {
     );
     const closed = await waitForClose(ws);
     expect(closed.code).toBe(4503);
+  });
+
+  it("rejects when the sandbox-info row's owner doesn't match the token's claims", async () => {
+    stubConfiguredEnv();
+    // Row belongs to a different user than the token claims — e.g. the
+    // computer's ownership changed after the token was minted.
+    installSandboxInfoStub("sbx_42", { ownerUserId: "users_other" });
+    const token = await signToken();
+    const ws = new WebSocket(
+      `ws://127.0.0.1:${port}/api/web/computers/terminal?cols=80&rows=24`,
+      [token]
+    );
+    const closed = await waitForClose(ws);
+    expect(closed.code).toBe(4401);
+    expect(vi.mocked(Sandbox.connect)).not.toHaveBeenCalled();
+  });
+
+  it("rejects when the sandbox-info row's project doesn't match the token's claims", async () => {
+    stubConfiguredEnv();
+    installSandboxInfoStub("sbx_42", { projectId: "projects_other" });
+    const token = await signToken();
+    const ws = new WebSocket(
+      `ws://127.0.0.1:${port}/api/web/computers/terminal?cols=80&rows=24`,
+      [token]
+    );
+    const closed = await waitForClose(ws);
+    expect(closed.code).toBe(4401);
+    expect(vi.mocked(Sandbox.connect)).not.toHaveBeenCalled();
   });
 
   it("opens a PTY and records the terminal session for a subprotocol token", async () => {
