@@ -103,4 +103,33 @@ describe("SuiteSwitcher", () => {
       screen.queryByRole("button", { name: "Delete suite nightly" }),
     ).not.toBeInTheDocument();
   });
+
+  it("hides delete for ui suites that CI has reported into", async () => {
+    const user = userEvent.setup();
+    const mixedEntry = makeEntry("suite-mixed", "mixed");
+    (mixedEntry.suite as { lastSdkRunAt?: number }).lastSdkRunAt = 123;
+
+    render(
+      <SuiteSwitcher
+        suites={[makeEntry("suite-a", "amazon"), mixedEntry]}
+        currentSuiteId="suite-a"
+        onSelectSuite={vi.fn()}
+        onCreateSuite={vi.fn()}
+        onDeleteSuite={vi.fn()}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /Switch suite \(current: amazon\)/,
+      }),
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Delete suite amazon" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Delete suite mixed" }),
+    ).not.toBeInTheDocument();
+  });
 });

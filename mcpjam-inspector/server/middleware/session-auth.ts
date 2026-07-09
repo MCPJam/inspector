@@ -61,15 +61,19 @@ const UNPROTECTED_PREFIXES = [
 
 /**
  * Scrub sensitive tokens from URLs for safe logging.
- * Replaces _token (session token), k (tunnel bearer secret), and t (the
- * retired harness `?t=` proxy-token fallback — still scrubbed in case a stale
- * URL carries one) query parameter values with [REDACTED].
+ * Replaces _token (session token), k (tunnel bearer secret), t (the retired
+ * harness `?t=` proxy-token fallback), and token (the computer terminal/
+ * upload token — routes/web/computer-terminal.ts takes it from the WS
+ * subprotocol only, never `?token=`, but this is scrubbed defensively in
+ * case a stale client, a proxy, or a future regression puts one in the URL)
+ * query parameter values with [REDACTED].
  */
 export function scrubTokenFromUrl(url: string): string {
   return url
     .replace(/([?&])_token=[^&]*/g, "$1_token=[REDACTED]")
     .replace(/([?&])k=[^&]*/g, "$1k=[REDACTED]")
-    .replace(/([?&])t=[^&]*/g, "$1t=[REDACTED]");
+    .replace(/([?&])t=[^&]*/g, "$1t=[REDACTED]")
+    .replace(/([?&])token=[^&]*/g, "$1token=[REDACTED]");
 }
 
 // Routes that typically use query param auth (SSE endpoints)

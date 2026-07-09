@@ -32,7 +32,11 @@ import {
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { formatRunId, getEffectiveSuiteServers } from "./helpers";
+import {
+  formatRunId,
+  getEffectiveSuiteServers,
+  getRunMetricSource,
+} from "./helpers";
 import {
   EvalSuite,
   EvalSuiteRun,
@@ -337,7 +341,10 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   }
 
   if (viewMode === "run-detail" && selectedRunDetails) {
-    const badgeMetricLabel = suite.source === "sdk" ? "Pass Rate" : "Accuracy";
+    const badgeMetricLabel =
+      getRunMetricSource(selectedRunDetails, suite.source) === "sdk"
+        ? "Pass Rate"
+        : "Accuracy";
 
     if (omitRunDetailIdentity) {
       if (hideRunActions) {

@@ -53,6 +53,7 @@ import { HostSectionTabs } from "./components/hosts/HostSectionTabs";
 import { ConnectViewHeader } from "./components/hosts/ConnectViewHeader";
 import { ComputerView } from "./components/computer/ComputerView";
 import { useComputersEnabledState } from "./hooks/useComputersEnabled";
+import { useSkillsEnabledState } from "./hooks/useSkillsEnabled";
 import { motion } from "framer-motion";
 import { SNAPPY_RAIL } from "./components/hosts/transition-tokens";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
@@ -960,15 +961,30 @@ export function PromptsRoute() {
 export function SkillsRoute() {
   const { convexProjectId } = useAppRouteContext();
   const computersEnabled = useComputersEnabledState();
+  const skillsEnabled = useSkillsEnabledState();
 
   // Hosted skills are a project-MEMBERSHIP resource (authored in Convex,
-  // available even without a Computer) — NOT gated on the Computer flag. Access
-  // is enforced server-side. We only wait for the project to resolve, since
-  // hosted skills have no local FS to fall back to (rendering early would hit
-  // the unavailable /api/mcp/skills/* routes). `computersEnabled` is passed
-  // through only for the local-mode Local/Cloud toggle.
-  if (HOSTED_MODE && !convexProjectId) {
-    return null;
+  // available even without a Computer) but gated behind the `skills-enabled`
+  // PostHog flag until QA completes. Access is also enforced server-side.
+  // `computersEnabled` is passed through only for the local-mode Local/Cloud
+  // toggle; the skills flag applies to hosted mode only (local FS skills are
+  // always available).
+  if (HOSTED_MODE) {
+    // Wait for the project to resolve before rendering, since hosted skills
+    // have no local FS to fall back to (rendering early would hit the
+    // unavailable /api/mcp/skills/* routes).
+    if (!convexProjectId) {
+      return null;
+    }
+    // Only redirect on an explicit `false`. While PostHog hydrates the flag is
+    // `undefined`; bouncing then would strand a flagged-in user who cold-loads
+    // /skills directly. Render nothing until it settles.
+    if (skillsEnabled === false) {
+      return <Navigate to={routePaths.servers} replace />;
+    }
+    if (skillsEnabled === undefined) {
+      return null;
+    }
   }
 
   return (

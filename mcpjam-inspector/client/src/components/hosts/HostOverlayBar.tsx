@@ -72,7 +72,9 @@ export function HostOverlayBar({
   // Lazily seed a "MCPJam" host from the live backend template only when the
   // project has no hosts at all. Once any host exists (including after the user
   // deletes MCPJam), we stop seeding — otherwise a deleted MCPJam respawns on
-  // every mount and duplicates accumulate.
+  // every mount and duplicates accumulate. The catalog template carries the
+  // pinned default model so synthetic/swarm runs never start from a modelless
+  // host.
   const seededRef = useRef(false);
   useEffect(() => {
     if (

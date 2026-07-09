@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   getComputersRemoteDataPlaneUrl,
   execViaRemoteDataPlane,
+  initComputersRemoteDataPlaneDiscovery,
+  resolveComputersRemoteDataPlaneUrl,
+  resetComputersRemoteDataPlaneDiscoveryForTests,
 } from "../computers/remote-data-plane";
 import { buildBashTool } from "../built-in-tools/bash";
 
@@ -48,6 +51,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+  resetComputersRemoteDataPlaneDiscoveryForTests();
 });
 
 describe("getComputersRemoteDataPlaneUrl", () => {
@@ -62,9 +66,21 @@ describe("getComputersRemoteDataPlaneUrl", () => {
     expect(getComputersRemoteDataPlaneUrl()).toBe(REMOTE_URL);
   });
 
-  it("keeps explicit ports and allows plain http", () => {
+  it("keeps explicit ports and allows plain http for loopback hosts", () => {
     vi.stubEnv("COMPUTERS_REMOTE_DATA_PLANE_URL", "http://localhost:3500");
     expect(getComputersRemoteDataPlaneUrl()).toBe("http://localhost:3500");
+    vi.stubEnv("COMPUTERS_REMOTE_DATA_PLANE_URL", "http://127.0.0.1:3500");
+    expect(getComputersRemoteDataPlaneUrl()).toBe("http://127.0.0.1:3500");
+  });
+
+  it("allows plain http for the IPv6 loopback (bracketed by URL parsing)", () => {
+    vi.stubEnv("COMPUTERS_REMOTE_DATA_PLANE_URL", "http://[::1]:3500");
+    expect(getComputersRemoteDataPlaneUrl()).toBe("http://[::1]:3500");
+  });
+
+  it("rejects plain http for a non-loopback host", () => {
+    vi.stubEnv("COMPUTERS_REMOTE_DATA_PLANE_URL", "http://staging.mcpjam.com");
+    expect(getComputersRemoteDataPlaneUrl()).toBeNull();
   });
 
   it("rejects invalid values and non-http(s) schemes", () => {
@@ -72,6 +88,139 @@ describe("getComputersRemoteDataPlaneUrl", () => {
     expect(getComputersRemoteDataPlaneUrl()).toBeNull();
     vi.stubEnv("COMPUTERS_REMOTE_DATA_PLANE_URL", "ftp://dp.example.test");
     expect(getComputersRemoteDataPlaneUrl()).toBeNull();
+  });
+});
+
+describe("initComputersRemoteDataPlaneDiscovery", () => {
+  it("fetches the canonical URL from Convex and caches it", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
+    installFetchStub();
+    fetchResponse = () => jsonResponse(200, { url: REMOTE_URL });
+
+    await initComputersRemoteDataPlaneDiscovery();
+
+    expect(fetchCalls).toHaveLength(1);
+    expect(fetchCalls[0].url).toBe(
+      "https://convex.example/computers/data-plane-url"
+    );
+    expect(getComputersRemoteDataPlaneUrl()).toBe(REMOTE_URL);
+  });
+
+  it("skips the network call when an explicit override is set", async () => {
+    vi.stubEnv("COMPUTERS_REMOTE_DATA_PLANE_URL", REMOTE_URL);
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
+    installFetchStub();
+
+    await initComputersRemoteDataPlaneDiscovery();
+
+    expect(fetchCalls).toHaveLength(0);
+    expect(getComputersRemoteDataPlaneUrl()).toBe(REMOTE_URL);
+  });
+
+  it("skips the network call when this server already holds real secrets", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
+    vi.stubEnv("COMPUTERS_DATA_PLANE_SECRET", "secret");
+    vi.stubEnv("E2B_API_KEY", "e2b_test");
+    installFetchStub();
+
+    await initComputersRemoteDataPlaneDiscovery();
+
+    expect(fetchCalls).toHaveLength(0);
+    expect(getComputersRemoteDataPlaneUrl()).toBeNull();
+  });
+
+  it("stays unconfigured (does not throw) when CONVEX_HTTP_URL is unset", async () => {
+    installFetchStub();
+    await expect(initComputersRemoteDataPlaneDiscovery()).resolves.toBeUndefined();
+    expect(fetchCalls).toHaveLength(0);
+    expect(getComputersRemoteDataPlaneUrl()).toBeNull();
+  });
+
+  it("stays unconfigured (does not throw) on a network failure", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
+    installFetchStub();
+    fetchResponse = () => {
+      throw new TypeError("fetch failed");
+    };
+
+    await expect(initComputersRemoteDataPlaneDiscovery()).resolves.toBeUndefined();
+    expect(getComputersRemoteDataPlaneUrl()).toBeNull();
+  });
+
+  it("does NOT skip discovery for an invalid override (a typo isn't a real override)", async () => {
+    vi.stubEnv("COMPUTERS_REMOTE_DATA_PLANE_URL", "not a url");
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
+    installFetchStub();
+    fetchResponse = () => jsonResponse(200, { url: REMOTE_URL });
+
+    await initComputersRemoteDataPlaneDiscovery();
+
+    expect(fetchCalls).toHaveLength(1);
+    expect(getComputersRemoteDataPlaneUrl()).toBe(REMOTE_URL);
+  });
+
+  it("does NOT skip discovery for a non-loopback http override (rejected, not a real override)", async () => {
+    vi.stubEnv("COMPUTERS_REMOTE_DATA_PLANE_URL", "http://staging.mcpjam.com");
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
+    installFetchStub();
+    fetchResponse = () => jsonResponse(200, { url: REMOTE_URL });
+
+    await initComputersRemoteDataPlaneDiscovery();
+
+    expect(fetchCalls).toHaveLength(1);
+    expect(getComputersRemoteDataPlaneUrl()).toBe(REMOTE_URL);
+  });
+
+  it("memoizes: a second call does not re-fetch", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
+    installFetchStub();
+    fetchResponse = () => jsonResponse(200, { url: REMOTE_URL });
+
+    await Promise.all([
+      initComputersRemoteDataPlaneDiscovery(),
+      initComputersRemoteDataPlaneDiscovery(),
+    ]);
+    await initComputersRemoteDataPlaneDiscovery();
+
+    expect(fetchCalls).toHaveLength(1);
+  });
+
+  it("stays unconfigured when Convex has no canonical URL set", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
+    installFetchStub();
+    fetchResponse = () => jsonResponse(200, { url: null });
+
+    await initComputersRemoteDataPlaneDiscovery();
+    expect(getComputersRemoteDataPlaneUrl()).toBeNull();
+  });
+});
+
+describe("resolveComputersRemoteDataPlaneUrl", () => {
+  it("awaits a slow in-flight discovery instead of racing it", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
+    installFetchStub();
+    let resolveFetch: (value: Response) => void;
+    fetchResponse = () =>
+      new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      });
+
+    // Simulates server startup firing discovery without awaiting it.
+    void initComputersRemoteDataPlaneDiscovery();
+    const resolved = resolveComputersRemoteDataPlaneUrl();
+
+    // The lookup hasn't returned yet — resolveComputersRemoteDataPlaneUrl
+    // must not settle with a premature null.
+    resolveFetch!(jsonResponse(200, { url: REMOTE_URL }));
+    expect(await resolved).toBe(REMOTE_URL);
+  });
+
+  it("self-triggers discovery when nothing has started it yet", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
+    installFetchStub();
+    fetchResponse = () => jsonResponse(200, { url: REMOTE_URL });
+
+    expect(await resolveComputersRemoteDataPlaneUrl()).toBe(REMOTE_URL);
   });
 });
 

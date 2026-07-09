@@ -155,4 +155,30 @@ describe("GenerateSessionsDialog — plan v4 §J affordances", () => {
         .disabled,
     ).toBe(false);
   });
+
+  it("blocks a modelless chatbox: fix-it notice shown, Generate disabled, no false BYOK warning", () => {
+    // An unpinned host persists modelId "" — synthetic runs have no picker
+    // fallback, so the dialog gates instead of leading into a doomed run.
+    // Pre-fix, isMCPJamProvidedModel("") → false also showed the misleading
+    // org-key spend warning for a chatbox with no model at all.
+    const modellessChatbox = { ...baseChatbox, modelId: "" };
+    render(
+      <GenerateSessionsDialog
+        isOpen
+        onClose={() => {}}
+        chatbox={modellessChatbox}
+      />,
+    );
+    expect(
+      screen.getByText(/host has no model selected/i),
+    ).toBeInTheDocument();
+    expect(
+      (screen.getByRole("button", { name: "Generate personas" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      screen.queryByText(/will consume your provider credits/i),
+    ).toBeNull();
+    expect(screen.queryByText(/Rough cost estimate/i)).toBeNull();
+  });
 });

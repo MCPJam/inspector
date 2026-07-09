@@ -16,6 +16,7 @@
  * removal (callers pass the already-fetched set, never `[]`-on-failure).
  */
 import { isValidSkillName } from "../../../shared/skill-types.js";
+import { shellQuote } from "./shell-quote.js";
 import { logger } from "../logger.js";
 
 /** Minimal structural view of the harness sandbox session. */
@@ -80,8 +81,9 @@ async function removeManagedSkillDir(
 ): Promise<void> {
   if (!isValidSkillName(name)) return; // never rm an unvalidated path
   // `--` guards option-like names (the validator forbids leading hyphens); the
-  // charset is [a-z0-9-], so there are no shell metacharacters.
-  await session.run({ command: `rm -rf -- ${SKILLS_BASE}/${name}` });
+  // charset is [a-z0-9-] so there are no shell metacharacters, but quote
+  // anyway (shared defense-in-depth rule — see shell-quote.ts).
+  await session.run({ command: `rm -rf -- ${shellQuote(`${SKILLS_BASE}/${name}`)}` });
 }
 
 /**
@@ -132,5 +134,42 @@ export async function reconcileSkillDirs(args: {
       error: error instanceof Error ? error.message : String(error),
     });
     return result;
+  }
+}
+
+/**
+ * Mark newly-adopted dirs as MANAGED by merging them into the manifest (keyed by
+ * skillId). This is the ONLY writer of the manifest besides `reconcileSkillDirs`,
+ * so the format stays owned here. Preserves the existing entries + `skillsHash`.
+ *
+ * Only TRUE `'adopted'` results may be passed (see decision 3b): marking an
+ * `'exists'` dir managed would convert a hand-placed dir into a cloud-deletable
+ * cache, violating the "never touch hand-placed dirs" invariant. A failed write
+ * leaves the dir unmanaged-but-shadowed — content still converges via the
+ * adapter; only cloud-delete cleanup is lost for that dir. Best-effort.
+ */
+export async function appendManagedSkills(args: {
+  session: ReconcileSession;
+  skills: ReconcileSkill[];
+}): Promise<{ appended: number }> {
+  if (args.skills.length === 0) return { appended: 0 };
+  try {
+    const manifest = await readManifest(args.session);
+    let appended = 0;
+    for (const s of args.skills) {
+      if (!isValidSkillName(s.name)) continue;
+      manifest.skills[s.skillId] = { skillId: s.skillId, name: s.name };
+      appended += 1;
+    }
+    await args.session.writeTextFile({
+      path: MANIFEST_PATH,
+      content: JSON.stringify(manifest),
+    });
+    return { appended };
+  } catch (error) {
+    logger.warn("[reconcile-skill-dirs] appendManagedSkills failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { appended: 0 };
   }
 }

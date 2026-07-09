@@ -189,7 +189,7 @@ describe("POST /api/web/computers/upload", () => {
     expect(fake.writes).toHaveLength(0);
   });
 
-  it("still accepts the legacy ?token= query (stale tabs across a deploy)", async () => {
+  it("401s on a ?token= query string alone (no header fallback)", async () => {
     stubConfiguredEnv();
     const fake = fakeSandbox();
     const app = createApp(async () => fake.sandbox);
@@ -199,8 +199,8 @@ describe("POST /api/web/computers/upload", () => {
       `/api/web/computers/upload?token=${encodeURIComponent(await signToken())}`,
       { method: "POST", body: form }
     );
-    expect(res.status).toBe(200);
-    expect(fake.writes).toHaveLength(1);
+    expect(res.status).toBe(401);
+    expect(fake.writes).toHaveLength(0);
   });
 
   it("400s when no files are attached", async () => {
@@ -328,6 +328,58 @@ describe("POST /api/web/computers/upload", () => {
       new File([new Uint8Array([1])], "a.txt"),
     ]);
     expect(res.status).toBe(503);
+  });
+
+  it("401s when the sandbox-info row's owner doesn't match the token's claims", async () => {
+    stubConfiguredEnv();
+    installSandboxInfoStub((path) =>
+      path === "/computers/sandbox-info"
+        ? {
+            status: 200,
+            json: {
+              computerId: "computers_456",
+              providerComputerId: "sbx_42",
+              provider: "e2b",
+              status: "ready",
+              projectId: "projects_789",
+              ownerUserId: "users_other",
+            },
+          }
+        : undefined
+    );
+    const fake = fakeSandbox();
+    const app = createApp(async () => fake.sandbox);
+    const res = await uploadRequest(app, await signToken(), [
+      new File([new Uint8Array([1])], "a.txt"),
+    ]);
+    expect(res.status).toBe(401);
+    expect(fake.writes).toHaveLength(0);
+  });
+
+  it("401s when the sandbox-info row's project doesn't match the token's claims", async () => {
+    stubConfiguredEnv();
+    installSandboxInfoStub((path) =>
+      path === "/computers/sandbox-info"
+        ? {
+            status: 200,
+            json: {
+              computerId: "computers_456",
+              providerComputerId: "sbx_42",
+              provider: "e2b",
+              status: "ready",
+              projectId: "projects_other",
+              ownerUserId: "users_123",
+            },
+          }
+        : undefined
+    );
+    const fake = fakeSandbox();
+    const app = createApp(async () => fake.sandbox);
+    const res = await uploadRequest(app, await signToken(), [
+      new File([new Uint8Array([1])], "a.txt"),
+    ]);
+    expect(res.status).toBe(401);
+    expect(fake.writes).toHaveLength(0);
   });
 
   it("503s when the computer is still provisioning (no providerComputerId)", async () => {

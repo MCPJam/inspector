@@ -248,7 +248,12 @@ export async function updateRun(
   projectId: string,
   runId: string,
   deltaSummary: DeltaSummary,
-  status?: RunRecord["status"]
+  status?: RunRecord["status"],
+  // Persisted onto the run record (`RunRecord.error`) so the dialog's
+  // running/terminal stage can show a real diagnostic instead of a bare
+  // "Failed". The backend runs/update route already accepts and patches
+  // this field; the write path was the only missing link.
+  errorMessage?: string
 ): Promise<void> {
   const data = await postJson<{ ok?: boolean; error?: string }>(
     `${convexHttpUrl}/session-simulation/runs/update`,
@@ -258,6 +263,7 @@ export async function updateRun(
       runId,
       deltaSummary,
       ...(status ? { status } : {}),
+      ...(errorMessage !== undefined ? { error: errorMessage } : {}),
     },
     NON_LLM_TIMEOUT_MS
   );
