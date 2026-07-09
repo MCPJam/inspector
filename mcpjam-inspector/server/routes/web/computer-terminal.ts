@@ -123,6 +123,17 @@ export function createComputerTerminalWsHandler(
         if (!info.ok) {
           rejectCode = CLOSE_UNAVAILABLE;
           rejectMessage = `Computer unavailable: ${info.error}`;
+        } else if (
+          info.value.ownerUserId !== claims.userId ||
+          info.value.projectId !== claims.projectId
+        ) {
+          // Defense-in-depth: the token was already authorized for this
+          // computerId at mint time (~60s TTL), but re-check the row's
+          // current owner/project against the token's claims before ever
+          // touching the vendor sandbox — guards the (narrow) window where
+          // the row's ownership or project changes between mint and use.
+          rejectCode = CLOSE_UNAUTHORIZED;
+          rejectMessage = "Invalid or expired terminal token.";
         } else if (!info.value.providerComputerId) {
           rejectCode = CLOSE_UNAVAILABLE;
           rejectMessage = "Computer is still provisioning.";

@@ -40,11 +40,26 @@ import {
   isComputersDataPlaneConfigured,
 } from "./control-plane-client.js";
 
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+/**
+ * Normalizes to a bare http(s) origin, matching the policy the backend
+ * already enforces on `/computers/data-plane-url` (mcpjam-backend
+ * `computersDataPlane.ts`): non-http(s) schemes are rejected outright, and
+ * plain `http:` is only allowed for a loopback host — a real deployment
+ * must be `https:`. Applies to BOTH the explicit env override and the
+ * Convex-discovered value, so a misconfigured `COMPUTERS_REMOTE_DATA_PLANE_URL`
+ * can't downgrade this server into forwarding a user's bearer token to a
+ * cleartext, non-loopback origin.
+ */
 function normalizeDataPlaneUrl(raw: string | null | undefined): string | null {
   if (!raw) return null;
   try {
     const url = new URL(raw);
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (url.protocol === "http:" && !isLoopbackHost(url.hostname)) return null;
     return url.origin;
   } catch {
     return null;

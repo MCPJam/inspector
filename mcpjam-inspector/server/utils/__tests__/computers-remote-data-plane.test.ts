@@ -66,9 +66,16 @@ describe("getComputersRemoteDataPlaneUrl", () => {
     expect(getComputersRemoteDataPlaneUrl()).toBe(REMOTE_URL);
   });
 
-  it("keeps explicit ports and allows plain http", () => {
+  it("keeps explicit ports and allows plain http for loopback hosts", () => {
     vi.stubEnv("COMPUTERS_REMOTE_DATA_PLANE_URL", "http://localhost:3500");
     expect(getComputersRemoteDataPlaneUrl()).toBe("http://localhost:3500");
+    vi.stubEnv("COMPUTERS_REMOTE_DATA_PLANE_URL", "http://127.0.0.1:3500");
+    expect(getComputersRemoteDataPlaneUrl()).toBe("http://127.0.0.1:3500");
+  });
+
+  it("rejects plain http for a non-loopback host", () => {
+    vi.stubEnv("COMPUTERS_REMOTE_DATA_PLANE_URL", "http://staging.mcpjam.com");
+    expect(getComputersRemoteDataPlaneUrl()).toBeNull();
   });
 
   it("rejects invalid values and non-http(s) schemes", () => {
@@ -137,6 +144,18 @@ describe("initComputersRemoteDataPlaneDiscovery", () => {
 
   it("does NOT skip discovery for an invalid override (a typo isn't a real override)", async () => {
     vi.stubEnv("COMPUTERS_REMOTE_DATA_PLANE_URL", "not a url");
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
+    installFetchStub();
+    fetchResponse = () => jsonResponse(200, { url: REMOTE_URL });
+
+    await initComputersRemoteDataPlaneDiscovery();
+
+    expect(fetchCalls).toHaveLength(1);
+    expect(getComputersRemoteDataPlaneUrl()).toBe(REMOTE_URL);
+  });
+
+  it("does NOT skip discovery for a non-loopback http override (rejected, not a real override)", async () => {
+    vi.stubEnv("COMPUTERS_REMOTE_DATA_PLANE_URL", "http://staging.mcpjam.com");
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
     installFetchStub();
     fetchResponse = () => jsonResponse(200, { url: REMOTE_URL });

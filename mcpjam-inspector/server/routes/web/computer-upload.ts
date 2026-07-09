@@ -126,6 +126,17 @@ export function createComputerUploadHandler(deps: ComputerUploadDeps = {}) {
         503
       );
     }
+    // Defense-in-depth: see computer-terminal.ts for why this re-checks the
+    // row's current owner/project against the token's claims.
+    if (
+      info.value.ownerUserId !== claims.userId ||
+      info.value.projectId !== claims.projectId
+    ) {
+      return c.json(
+        { ok: false, error: "Invalid or expired terminal token." },
+        401
+      );
+    }
     if (!info.value.providerComputerId) {
       return c.json({ ok: false, error: "Computer is still provisioning." }, 503);
     }
