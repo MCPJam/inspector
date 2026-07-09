@@ -124,7 +124,7 @@ const hostConfigTemplateSchema = z.object({
   systemPrompt: z.string(),
   temperature: z.number(),
   requireToolApproval: z.boolean(),
-  respectToolVisibility: z.boolean().optional(),
+  respectToolVisibility: z.boolean(),
   progressiveToolDiscovery: z.boolean().optional(),
   serverIds: z.array(z.string()),
   optionalServerIds: z.array(z.string()),
@@ -132,13 +132,10 @@ const hostConfigTemplateSchema = z.object({
   modelVisibleMcpToolResults: z.unknown().optional(),
   mcpToolResultImageRendering: z.unknown().optional(),
   computer: z
-    .union([
-      z.null(),
-      z.object({
-        kind: z.literal("personal"),
-        workdir: z.string().optional(),
-      }),
-    ])
+    .object({
+      kind: z.literal("personal"),
+      workdir: z.string().optional(),
+    })
     .optional(),
   harness: z.enum(["claude-code", "codex"]).optional(),
   connectionDefaults: z.object({

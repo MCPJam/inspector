@@ -1,7 +1,6 @@
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import type { HostListItem } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
-import type { HostTemplateId } from "@/lib/client-templates";
 import {
   getCatalogHosts,
   getCatalogTemplate,
@@ -11,10 +10,9 @@ import {
 /**
  * Static host profiles surfaced in Host Compare so a user can compare against
  * Claude / ChatGPT / Cursor / Copilot / Codex … without having created (or
- * connected) those hosts — the same "best-effort host profiles" the server
- * detail modal's Hosts tab renders from `HOST_TEMPLATES`. Each preset is a
- * synthetic, immediately-available comparison subject derived from a template
- * `seed()`, never a real `hosts:listHosts` row.
+ * connected) those hosts. Each preset is a synthetic, immediately-available
+ * comparison subject derived from the catalog host row, never a real
+ * `hosts:listHosts` row.
  */
 
 /** Prefix that marks a synthetic preset host id (`preset:claude`, …). Chosen so
@@ -33,7 +31,7 @@ export interface PresetCompareEntries {
 }
 
 interface PresetCompareOptions {
-  excludedTemplateIds?: ReadonlySet<HostTemplateId>;
+  excludedTemplateIds?: ReadonlySet<string>;
 }
 
 /**
@@ -49,8 +47,7 @@ export function buildPresetCompareEntries(
   const subjects: Record<string, HostComparisonSubject> = {};
 
   for (const host of getCatalogHosts(catalog)) {
-    const templateId = host.id as HostTemplateId;
-    if (options.excludedTemplateIds?.has(templateId)) continue;
+    if (options.excludedTemplateIds?.has(host.id)) continue;
 
     const hostId = `${PRESET_HOST_ID_PREFIX}${host.id}`;
     const input = getCatalogTemplate(catalog, host.id);

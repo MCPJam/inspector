@@ -58,6 +58,12 @@ vi.mock("convex/browser", () => ({
 }));
 
 import v1Routes from "../index.js";
+import {
+  bundledHostCompatCatalog,
+  getCatalogTemplate,
+  SUPPORTED_CATALOG_SCHEMA_VERSION,
+  type HostCompatCatalog,
+} from "@mcpjam/sdk/host-compat";
 
 function makeApp(): Hono {
   const app = new Hono();
@@ -106,6 +112,28 @@ function mockQuery(map: Record<string, unknown>) {
   );
 }
 
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function catalogEnvelope(catalog: HostCompatCatalog) {
+  return {
+    schemaVersion: SUPPORTED_CATALOG_SCHEMA_VERSION,
+    version: 99,
+    contentHash: "test-hash",
+    publishedAt: 1,
+    catalog,
+  };
+}
+
+function createdHostInput(): Record<string, unknown> {
+  const call = convexMutationMock.mock.calls.find(
+    ([fn]) => fn === "hosts:createHost"
+  );
+  if (!call) throw new Error("hosts:createHost was not called");
+  return (call[1] as { input: Record<string, unknown> }).input;
+}
+
 describe("v1 host routes", () => {
   const originalEnv = {
     CONVEX_URL: process.env.CONVEX_URL,
@@ -122,6 +150,7 @@ describe("v1 host routes", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value) process.env[key] = value;
       else delete process.env[key];
@@ -206,6 +235,72 @@ describe("v1 host routes", () => {
         projectId: "p1",
         name: "Alpha",
         input: { modelId: "gpt-4o-mini" },
+      });
+    });
+
+    it("creates a template host from the live backend catalog first", async () => {
+      const catalog = clone(bundledHostCompatCatalog());
+      catalog.hostsById.claude = {
+        ...catalog.hostsById.claude,
+        modelId: "backend/claude-live",
+        hostContext: {
+          ...(catalog.hostsById.claude.hostContext as Record<string, unknown>),
+          backendOnly: true,
+        },
+      };
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(catalogEnvelope(catalog)), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+
+      const res = await request("POST", "/api/v1/projects/p1/hosts", {
+        body: { name: "Claude", template: "claude", theme: "light" },
+      });
+
+      expect(res.status).toBe(201);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://convex-http.example.com/public/host-catalog",
+        expect.objectContaining({ method: "GET" })
+      );
+      expect(createdHostInput()).toMatchObject({
+        hostStyle: "claude",
+        modelId: "backend/claude-live",
+        hostContext: expect.objectContaining({
+          theme: "light",
+          backendOnly: true,
+        }),
+      });
+    });
+
+    it("falls back to the bundled SDK catalog when the backend catalog is unavailable", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(new Response("unavailable", { status: 503 }))
+      );
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const fallbackTemplate = getCatalogTemplate(
+        bundledHostCompatCatalog(),
+        "mistral"
+      );
+
+      const res = await request("POST", "/api/v1/projects/p1/hosts", {
+        body: { name: "Mistral", template: "mistral" },
+      });
+
+      expect(res.status).toBe(201);
+      expect(createdHostInput()).toMatchObject({
+        hostStyle: "mistral",
+        modelId: fallbackTemplate?.modelId,
+        modelVisibleMcpToolResults:
+          fallbackTemplate?.modelVisibleMcpToolResults,
+        mcpToolResultImageRendering:
+          fallbackTemplate?.mcpToolResultImageRendering,
       });
     });
 

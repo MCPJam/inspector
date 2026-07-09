@@ -18,11 +18,24 @@ import { filterProfilesByFeatureFlags } from "@/lib/host-compat/feature-visibili
 type HostColumn = {
   id: string;
   label: string;
+  verifiedAt?: number;
   logoSrc: string;
   logoSrcByTheme?: { light: string; dark: string };
 };
 
 export type ColumnSummary = { works: number; loaded: number };
+
+const VERIFIED_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: "UTC",
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+
+function formatVerifiedDate(verifiedAt: number | undefined): string | null {
+  if (verifiedAt === undefined || !Number.isFinite(verifiedAt)) return null;
+  return VERIFIED_DATE_FORMATTER.format(new Date(verifiedAt));
+}
 
 /**
  * For one host column, count how many of the loaded servers "work" there.
@@ -165,6 +178,7 @@ export function HostCompatMatrix({
       }).map((p) => ({
         id: p.id,
         label: p.label,
+        verifiedAt: p.verifiedAt,
         logoSrc: p.logoSrc,
         logoSrcByTheme: p.logoSrcByTheme,
       })),
@@ -201,22 +215,30 @@ export function HostCompatMatrix({
             <th className="sticky left-0 z-10 bg-muted/30 px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               Server
             </th>
-            {hosts.map((h) => (
-              <th key={h.id} className="px-2 py-2 text-center">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <img
-                      src={h.logoSrcByTheme?.[themeMode] ?? h.logoSrc}
-                      alt={h.label}
-                      className="mx-auto h-4 w-4 rounded-[3px] object-contain"
-                    />
-                  </TooltipTrigger>
-                  <TooltipContent side="top" variant="muted">
-                    {h.label}
-                  </TooltipContent>
-                </Tooltip>
-              </th>
-            ))}
+            {hosts.map((h) => {
+              const verifiedDate = formatVerifiedDate(h.verifiedAt);
+              return (
+                <th key={h.id} className="px-2 py-2 text-center">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <img
+                        src={h.logoSrcByTheme?.[themeMode] ?? h.logoSrc}
+                        alt={h.label}
+                        className="mx-auto h-4 w-4 rounded-[3px] object-contain"
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent side="top" variant="muted">
+                      <div>{h.label}</div>
+                      {verifiedDate ? (
+                        <div className="text-[10px] text-muted-foreground">
+                          Last verified {verifiedDate}
+                        </div>
+                      ) : null}
+                    </TooltipContent>
+                  </Tooltip>
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>

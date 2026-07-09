@@ -8,6 +8,7 @@ import {
   getCatalogTemplate,
 } from "@mcpjam/sdk/host-compat";
 import {
+  cloneHostTemplateInput,
   emptyHostConfigInputV2,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
@@ -33,13 +34,16 @@ vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn() },
 }));
 
-function cloneTemplate(hostStyle: string): HostConfigInputV2 {
+function catalogDraftFor(
+  hostStyle: string,
+  themeMode: "light" | "dark" = "light"
+) {
   const template = getCatalogTemplate(liveCatalog, hostStyle);
   if (!template) throw new Error(`Missing template for ${hostStyle}`);
-  return JSON.parse(JSON.stringify(template)) as HostConfigInputV2;
+  return cloneHostTemplateInput(template, { themeMode });
 }
 
-function catalogLabel(hostStyle: string): string {
+function catalogLabelFor(hostStyle: string) {
   const host = getCatalogHost(liveCatalog, hostStyle);
   if (!host) throw new Error(`Missing catalog host for ${hostStyle}`);
   return host.label;
@@ -47,26 +51,29 @@ function catalogLabel(hostStyle: string): string {
 
 function renderButton(args: {
   initialDraft: HostConfigInputV2;
-  initialName: string;
+  initialName?: string;
 }) {
   const draftRef: { current: HostConfigInputV2 } = {
     current: args.initialDraft,
   };
-  const nameRef: { current: string } = { current: args.initialName };
+  const nameRef: { current: string } = {
+    current: args.initialName ?? "Custom Host",
+  };
 
   function Harness() {
     const [draft, setDraft] = useState(args.initialDraft);
-    const [name, setName] = useState(args.initialName);
+    const [name, setName] = useState(nameRef.current);
     draftRef.current = draft;
     nameRef.current = name;
     return (
       <UpdateCapabilitiesButton
+        draft={draft}
         hostDisplayName={name}
         onHostDisplayNameChange={(next) => {
           nameRef.current = next;
           setName(next);
         }}
-        draft={draft}
+        themeMode="light"
         onDraftChange={(updater) =>
           setDraft((prev) => {
             const next = updater(prev);
@@ -83,10 +90,15 @@ function renderButton(args: {
 }
 
 describe("UpdateCapabilitiesButton", () => {
-  it("replaces the draft with the full latest catalog template", async () => {
+  it("copies the latest catalog template, including image settings", async () => {
     const user = userEvent.setup();
+    const serverConnectionOverrides = {
+      "srv-1": {
+        requestTimeoutOverride: 1234,
+      },
+    };
     const initial = emptyHostConfigInputV2({
-      hostStyle: "claude",
+      hostStyle: "mistral",
       modelId: "wrong-model",
       systemPrompt: "local edit",
       temperature: 0.1,
@@ -94,18 +106,35 @@ describe("UpdateCapabilitiesButton", () => {
       respectToolVisibility: false,
       progressiveToolDiscovery: true,
       clientCapabilities: {},
-      hostContext: { wrong: true },
+      hostContext: { wrong: true, theme: "light" },
       chatUiOverride: { logo: { kind: "dots", color: "#ff0000", count: 1 } },
+      hostCapabilitiesOverride: { openLinks: {} },
       modelVisibleMcpToolResults: {
-        directContent: { image: false },
+        directContent: { image: true },
+        embeddedResources: { blob: { image: true } },
+        linkedResources: { blob: { image: true } },
       },
       mcpToolResultImageRendering: {
-        placement: "none",
+        placement: "inline",
+        directContent: { image: true },
+        embeddedResources: { blob: { image: true } },
+        linkedResources: { blob: { image: true } },
+      },
+      serverIds: ["srv-1"],
+      optionalServerIds: ["srv-2"],
+      serverConnectionOverrides,
+      mcpProfile: {
+        profileVersion: 1,
+        mcpProtocolVersion: "2025-06-18",
+        apps: {
+          uiInitialize: { hostInfo: { name: "Custom Host" } },
+          mcpAppsOverrides: { serverTools: false },
+        },
       },
     });
-    const { draftRef } = renderButton({
+    const { draftRef, nameRef } = renderButton({
       initialDraft: initial,
-      initialName: "Custom Claude",
+      initialName: "Custom Mistral",
     });
 
     await user.click(
@@ -114,44 +143,36 @@ describe("UpdateCapabilitiesButton", () => {
       })
     );
 
-    expect(draftRef.current).toEqual(cloneTemplate("claude"));
-    expect(draftRef.current.modelVisibleMcpToolResults).toEqual({
-      directContent: { image: true },
-      embeddedResources: { blob: { image: true } },
-      linkedResources: { blob: { image: false } },
+    const expected = catalogDraftFor("mistral");
+    expect(draftRef.current).toEqual({
+      ...expected,
+      hostContext: {
+        ...expected.hostContext,
+        theme: "light",
+      },
+      serverIds: ["srv-1"],
+      optionalServerIds: ["srv-2"],
+      serverConnectionOverrides,
     });
-    expect(draftRef.current.mcpToolResultImageRendering).toEqual({
-      placement: "inline",
-      directContent: { image: true },
-      embeddedResources: { blob: { image: true } },
-      linkedResources: { blob: { image: false } },
-    });
-  });
-
-  it("updates the host display name from the catalog label", async () => {
-    const user = userEvent.setup();
-    const { nameRef } = renderButton({
-      initialDraft: emptyHostConfigInputV2({ hostStyle: "slack" }),
-      initialName: "Slackbot",
-    });
-
-    await user.click(
-      screen.getByRole("button", {
-        name: /update to latest/i,
-      })
+    expect(nameRef.current).toBe(catalogLabelFor("mistral"));
+    expect(draftRef.current.modelVisibleMcpToolResults).toEqual(
+      expected.modelVisibleMcpToolResults
     );
-
-    expect(nameRef.current).toBe(catalogLabel("slack"));
+    expect(draftRef.current.mcpToolResultImageRendering).toEqual(
+      expected.mcpToolResultImageRendering
+    );
   });
 
   it("works for non-market templates", async () => {
     const user = userEvent.setup();
-    const { draftRef, nameRef } = renderButton({
+    const { draftRef } = renderButton({
       initialDraft: emptyHostConfigInputV2({
         hostStyle: "mcpjam",
-        modelId: "wrong-model",
+        mcpProfile: {
+          profileVersion: 1,
+          apps: { mcpAppsOverrides: { serverTools: false } },
+        },
       }),
-      initialName: "Wrong MCPJam",
     });
 
     await user.click(
@@ -160,15 +181,14 @@ describe("UpdateCapabilitiesButton", () => {
       })
     );
 
-    expect(draftRef.current).toEqual(cloneTemplate("mcpjam"));
-    expect(nameRef.current).toBe(catalogLabel("mcpjam"));
+    expect(draftRef.current).toEqual(catalogDraftFor("mcpjam"));
   });
 
-  it("stays enabled when only the display name is stale", async () => {
+  it("stays enabled when only the display name needs updating", async () => {
     const user = userEvent.setup();
-    const { nameRef } = renderButton({
-      initialDraft: cloneTemplate("slack"),
-      initialName: "Definitely stale name",
+    const { draftRef } = renderButton({
+      initialDraft: catalogDraftFor("slack"),
+      initialName: "Slack",
     });
 
     const button = screen.getByRole("button", {
@@ -178,13 +198,14 @@ describe("UpdateCapabilitiesButton", () => {
 
     await user.click(button);
 
-    expect(nameRef.current).toBe(catalogLabel("slack"));
+    expect(draftRef.current).toEqual(catalogDraftFor("slack"));
   });
 
-  it("disables when the draft and display name already match the catalog", () => {
+  it("disables when the draft already matches the catalog", () => {
+    const initialDraft = catalogDraftFor("claude");
     renderButton({
-      initialDraft: cloneTemplate("claude"),
-      initialName: catalogLabel("claude"),
+      initialDraft,
+      initialName: catalogLabelFor("claude"),
     });
 
     expect(
@@ -192,5 +213,27 @@ describe("UpdateCapabilitiesButton", () => {
         name: /update to latest/i,
       })
     ).toBeDisabled();
+  });
+
+  it("sets host theme to the current global theme instead of the catalog theme", async () => {
+    const user = userEvent.setup();
+    const initialDraft = emptyHostConfigInputV2({
+      hostStyle: "claude",
+      hostContext: { theme: "dark" },
+      modelId: "wrong-model",
+    });
+    const { draftRef } = renderButton({
+      initialDraft,
+      initialName: catalogLabelFor("claude"),
+    });
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /update to latest/i,
+      })
+    );
+
+    expect(draftRef.current.hostContext.theme).toBe("light");
+    expect(draftRef.current.modelId).toBe(catalogDraftFor("claude").modelId);
   });
 });

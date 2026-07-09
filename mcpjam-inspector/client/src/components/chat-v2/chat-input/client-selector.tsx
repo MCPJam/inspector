@@ -23,18 +23,14 @@ import { cn } from "@/lib/utils";
 import type { HostListItem } from "@/hooks/useClients";
 import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
 import type { HostThemeMode } from "@/lib/client-styles";
-import {
-  HOST_TEMPLATES,
-  getHostTemplateLogoSrc,
-  type HostTemplateId,
-} from "@/lib/client-templates";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
-import { getCatalogHost } from "@mcpjam/sdk/host-compat";
+import { getCatalogHost, getCatalogHosts } from "@mcpjam/sdk/host-compat";
+import { getHostLogoSrc } from "@/lib/host-ui-metadata";
 
 // Quick-add priority. These templates surface first in the Add-host strip;
 // everything else follows in template order and spills into the overflow (⋯).
-const QUICK_ADD_ORDER: HostTemplateId[] = [
+const QUICK_ADD_ORDER = [
   "mcpjam",
   "claude",
   "chatgpt",
@@ -43,16 +39,7 @@ const QUICK_ADD_ORDER: HostTemplateId[] = [
   "vscode",
   "mistral",
   "goose",
-];
-
-// Priority templates first, then any remaining templates in their natural order.
-const ORDERED_TEMPLATES = [
-  ...QUICK_ADD_ORDER.flatMap((id) => {
-    const template = HOST_TEMPLATES.find((t) => t.id === id);
-    return template ? [template] : [];
-  }),
-  ...HOST_TEMPLATES.filter((t) => !QUICK_ADD_ORDER.includes(t.id)),
-];
+] as const;
 
 // How many logos render inline before the rest collapse into the "⋯" overflow
 // (sized to fit the 260px dropdown alongside the "Add host" label).
@@ -130,9 +117,9 @@ export function ClientSelector({
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);
-  const [createTemplateId, setCreateTemplateId] = useState<
-    HostTemplateId | undefined
-  >(undefined);
+  const [createTemplateId, setCreateTemplateId] = useState<string | undefined>(
+    undefined
+  );
   const catalogState = useHostCatalog();
   const keepPopoverOpenRef = useRef(false);
   const keepPopoverOpenTimeoutRef = useRef<number | null>(null);
@@ -261,7 +248,24 @@ export function ClientSelector({
     onPromoteLead(hostId);
   };
 
-  const openCreateWithTemplate = (templateId?: HostTemplateId) => {
+  const orderedCatalogHosts = useMemo(() => {
+    if (catalogState.status !== "live") return [];
+    const hostsById = new Map(
+      getCatalogHosts(catalogState.catalog).map((host) => [host.id, host])
+    );
+    const priority = QUICK_ADD_ORDER.flatMap((id) => {
+      const host = hostsById.get(id);
+      if (!host) return [];
+      hostsById.delete(id);
+      return [host];
+    });
+    const rest = [...hostsById.values()].sort((a, b) =>
+      a.label.localeCompare(b.label)
+    );
+    return [...priority, ...rest];
+  }, [catalogState]);
+
+  const openCreateWithTemplate = (templateId?: string) => {
     setCreateTemplateId(templateId);
     setShowCreate(true);
     setIsOpen(false);
@@ -557,36 +561,34 @@ export function ClientSelector({
                   <span>Add host</span>
                 </button>
                 <span className="flex flex-1 items-center justify-between gap-0.5">
-                  {ORDERED_TEMPLATES.slice(0, QUICK_ADD_VISIBLE).map(
-                    (template) => {
-                      const catalogHost = catalogState.catalog
-                        ? getCatalogHost(catalogState.catalog, template.id)
-                        : undefined;
-                      const templateLabel = catalogHost?.label ?? template.label;
+                  {orderedCatalogHosts
+                    .slice(0, QUICK_ADD_VISIBLE)
+                    .map((host) => {
+                      const catalogHost =
+                        catalogState.status === "live"
+                          ? getCatalogHost(catalogState.catalog, host.id)
+                          : undefined;
+                      if (!catalogHost) return null;
                       return (
                         <button
-                          key={template.id}
+                          key={host.id}
                           type="button"
-                          aria-label={`Add ${templateLabel} host`}
-                          title={`Add ${templateLabel}`}
-                          data-testid={`client-quick-add-${template.id}`}
-                          onClick={() => openCreateWithTemplate(template.id)}
+                          aria-label={`Add ${catalogHost.label} host`}
+                          title={`Add ${catalogHost.label}`}
+                          data-testid={`client-quick-add-${host.id}`}
+                          onClick={() => openCreateWithTemplate(host.id)}
                           className="inline-flex size-5 shrink-0 items-center justify-center rounded-sm transition-colors hover:bg-accent"
                         >
                           <img
-                            src={getHostTemplateLogoSrc(
-                              template,
-                              modalThemeMode,
-                            )}
+                            src={getHostLogoSrc(host.id, modalThemeMode)}
                             alt=""
                             className="size-4 object-contain"
                           />
                         </button>
                       );
-                    }
-                  )}
+                    })}
                 </span>
-                {ORDERED_TEMPLATES.length > QUICK_ADD_VISIBLE ? (
+                {orderedCatalogHosts.length > QUICK_ADD_VISIBLE ? (
                   <button
                     type="button"
                     aria-label="More hosts"

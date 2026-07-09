@@ -872,9 +872,9 @@ function setCompatRuntimeOnDraft(
  *   shim with ONLY that method, letting users build an exact subset from
  *   scratch instead of starting from the full preset.
  * - A collapsed disclosure summarizes "N of 13 enabled" and expands to
- *   the full per-method list. Defaults inherit from the active host
- *   template (`client-templates.ts`), so picking ChatGPT / Copilot /
- *   etc. is already the "preset" — no second affordance needed.
+ *   the full per-method list. Defaults inherit from the active catalog host
+ *   definition, so picking ChatGPT / Copilot / etc. is already the "preset" —
+ *   no second affordance needed.
  * - Method rows show the effective value with an "Overridden" badge
  *   when the user has diverged from the preset.
  *

@@ -29,6 +29,7 @@ export {
   getCatalogHosts,
   getCatalogTemplate,
   getTemplateMcpAppsCapabilities,
+  imageSupportToHostConfigFields,
   hydrateHostCompatCatalog,
   type EvaluateMarketHostsOptions,
   type HostCompatCatalog,

@@ -179,13 +179,10 @@ describe("seedHostTemplate", () => {
   });
 
   // Golden-output guard. The committed snapshot was captured when these seeds
-  // were extracted from the inspector client, at which point a client-side
-  // parity test verified them byte-identical to the pre-refactor
-  // `seedFromHostTemplate` implementation (running against the live client
-  // modules). It now locks the seed output so any accidental drift in the
-  // extracted seeds — a changed default, a dropped field — fails CI and must
-  // be re-blessed deliberately. `appVersion` is pinned so the snapshot is
-  // deterministic.
+  // were extracted from the old inspector client template adapter. It now locks
+  // the fallback seed output so any accidental drift — a changed default, a
+  // dropped field — fails CI and must be re-blessed deliberately. `appVersion`
+  // is pinned so the snapshot is deterministic.
   it("seed output matches the committed golden snapshot", () => {
     const golden: Record<string, unknown> = {};
     for (const id of ALL_IDS) {

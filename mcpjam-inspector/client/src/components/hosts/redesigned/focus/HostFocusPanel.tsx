@@ -3,6 +3,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
 import { cn } from "@/lib/utils";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
+import type { ThemeMode } from "@/types/preferences/theme";
 import type {
   HostAttentionIssue,
   HostFocusTabId,
@@ -46,6 +47,7 @@ interface HostFocusPanelProps {
   focusSubKey?: SandboxConfigSubKey;
   hostDisplayName: string;
   onHostDisplayNameChange: (value: string) => void;
+  themeMode?: ThemeMode;
   draft: HostConfigInputV2;
   onDraftChange: (
     updater: (prev: HostConfigInputV2) => HostConfigInputV2
@@ -66,6 +68,7 @@ export function HostFocusPanel({
   focusSubKey,
   hostDisplayName,
   onHostDisplayNameChange,
+  themeMode = "light",
   draft,
   onDraftChange,
   attention,
@@ -94,9 +97,10 @@ export function HostFocusPanel({
         logoSrc={logoSrc}
         action={
           <UpdateCapabilitiesButton
+            draft={draft}
             hostDisplayName={hostDisplayName}
             onHostDisplayNameChange={onHostDisplayNameChange}
-            draft={draft}
+            themeMode={themeMode}
             onDraftChange={onDraftChange}
           />
         }

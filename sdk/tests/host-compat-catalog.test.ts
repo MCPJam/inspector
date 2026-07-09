@@ -141,6 +141,19 @@ describe("bundledHostCompatCatalog", () => {
       linkedResources: { blob: { image: false } },
     });
   });
+
+  it("returns mutable template copies without mutating the catalog", () => {
+    const catalog = bundledHostCompatCatalog();
+    const template = getCatalogTemplate(catalog, "claude");
+    expect(template).toBeDefined();
+    template!.hostContext.theme = "mutated-theme";
+    template!.serverIds.push("local-server");
+
+    expect(getCatalogHost(catalog, "claude")?.hostContext.theme).not.toBe(
+      "mutated-theme"
+    );
+    expect(getCatalogHost(catalog, "claude")?.serverIds).toEqual([]);
+  });
 });
 
 describe("buildHostProfilesFromCatalog", () => {
@@ -171,6 +184,20 @@ describe("buildHostProfilesFromCatalog", () => {
     });
     // Slackbot: nothing.
     expect(by("slack")?.placement).toBe("none");
+  });
+
+  it("carries per-host verifiedAt into profiles and reports", () => {
+    const catalog = bundledHostCompatCatalog();
+    const expected = catalog.hostsById.mistral.verifiedAt;
+    expect(typeof expected).toBe("number");
+    expect(
+      buildMarketHostProfiles().find((p) => p.id === "mistral")?.verifiedAt
+    ).toBe(expected);
+    expect(
+      evaluateMarketHosts({ tools: [] }).reports.find(
+        (r) => r.hostId === "mistral"
+      )?.verifiedAt
+    ).toBe(expected);
   });
 
   it("keeps rendersOpenAiApps independent of rendersMcpApps (NOT &&-gated)", () => {
@@ -220,7 +247,9 @@ describe("buildHostProfilesFromCatalog", () => {
     expect(profile.capabilities).toBeDefined();
     expect(profile.capabilities?.serverTools).toBe(false);
     expect(typeof profile.capabilities).toBe("object");
-    expect(getCatalogTemplate({ hostsById: {} }, "constructor")).toBeUndefined();
+    expect(
+      getCatalogTemplate({ hostsById: {} }, "constructor")
+    ).toBeUndefined();
   });
 
   it("does not treat a missing compatRuntime as OpenAI compatible", () => {
@@ -306,7 +335,10 @@ describe("hostCompatCatalogEnvelopeSchema forward-compat", () => {
   it("strips unknown keys instead of failing", () => {
     const catalog = bundled() as Record<string, unknown>;
     catalog.futureTopLevelField = { anything: true };
-    const hostsById = catalog.hostsById as Record<string, Record<string, unknown>>;
+    const hostsById = catalog.hostsById as Record<
+      string,
+      Record<string, unknown>
+    >;
     hostsById.claude.futureHostField = 1;
     const parsed = hostCompatCatalogEnvelopeSchema.safeParse(
       envelopeFor(catalog as unknown as HostCompatCatalog)
@@ -314,9 +346,9 @@ describe("hostCompatCatalogEnvelopeSchema forward-compat", () => {
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       expect("futureTopLevelField" in parsed.data.catalog).toBe(false);
-      expect(
-        "futureHostField" in parsed.data.catalog.hostsById.claude
-      ).toBe(false);
+      expect("futureHostField" in parsed.data.catalog.hostsById.claude).toBe(
+        false
+      );
     }
   });
 
@@ -329,9 +361,7 @@ describe("hostCompatCatalogEnvelopeSchema forward-compat", () => {
     );
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.catalog.hostsById.claude.provenance).toBe(
-        "assumed"
-      );
+      expect(parsed.data.catalog.hostsById.claude.provenance).toBe("assumed");
     }
   });
 
@@ -342,6 +372,23 @@ describe("hostCompatCatalogEnvelopeSchema forward-compat", () => {
       hostCompatCatalogEnvelopeSchema.safeParse(
         envelopeFor(catalog as unknown as HostCompatCatalog)
       ).success
+    ).toBe(false);
+  });
+
+  it("rejects templates with invalid type-level fields", () => {
+    const missingRespect = bundled();
+    delete (missingRespect.hostsById.claude as Record<string, unknown>)
+      .respectToolVisibility;
+    expect(
+      hostCompatCatalogEnvelopeSchema.safeParse(envelopeFor(missingRespect))
+        .success
+    ).toBe(false);
+
+    const nullComputer = bundled();
+    (nullComputer.hostsById.claude as Record<string, unknown>).computer = null;
+    expect(
+      hostCompatCatalogEnvelopeSchema.safeParse(envelopeFor(nullComputer))
+        .success
     ).toBe(false);
   });
 
@@ -362,9 +409,7 @@ describe("hostCompatCatalogEnvelopeSchema forward-compat", () => {
     );
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.catalog.hostsById.claude.provenance).toBe(
-        "observed"
-      );
+      expect(parsed.data.catalog.hostsById.claude.provenance).toBe("observed");
     }
   });
 });

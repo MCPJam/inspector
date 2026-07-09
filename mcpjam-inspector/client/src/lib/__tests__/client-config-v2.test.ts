@@ -759,6 +759,22 @@ describe("setMcpAppsOverridesOnDraft", () => {
       setMcpAppsOverridesOnDraft(draft, undefined).mcpProfile
     ).toBeUndefined();
   });
+
+  it("preserves a protocol-version pin when the override is cleared", () => {
+    const draft = makeInput({
+      mcpProfile: {
+        profileVersion: 1,
+        mcpProtocolVersion: "2025-06-18",
+        apps: { mcpAppsOverrides: { serverTools: true } },
+      },
+    });
+
+    expect(setMcpAppsOverridesOnDraft(draft, undefined).mcpProfile).toEqual({
+      profileVersion: 1,
+      mcpProtocolVersion: "2025-06-18",
+      apps: undefined,
+    });
+  });
 });
 
 // Shared helper for mergeMcpAppsCapabilities tests; mirrors the

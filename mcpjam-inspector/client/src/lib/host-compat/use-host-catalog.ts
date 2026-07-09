@@ -54,7 +54,7 @@ async function loadHostCatalog(): Promise<HostCatalogState> {
   const result = await fetchHostCompatCatalog({
     baseUrl: "/api/v1",
     timeoutMs: 8_000,
-  });
+  }).catch(() => ({ ok: false as const, reason: "network" as const }));
   if (!result.ok) {
     return {
       status: "error",

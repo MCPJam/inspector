@@ -557,6 +557,7 @@ export function HostBuilderViewRedesigned({
                     focusSubKey={focusState.focusSubKey}
                     hostDisplayName={draftName}
                     onHostDisplayNameChange={setDraftName}
+                    themeMode={themeMode}
                     draft={draftConfig}
                     onDraftChange={(updater) =>
                       setDraftConfig((prev) => (prev ? updater(prev) : prev))

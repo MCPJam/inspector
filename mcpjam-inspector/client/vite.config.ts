@@ -22,8 +22,8 @@ const sdkHostConfigInternalEntry = path.resolve(
   "../sdk/src/host-config/internal.ts",
 );
 // Node-safe host-template seeds. Aliased to source (mirrors the internal alias
-// above) so the client's delegating `client-templates.ts` resolves it without a
-// prior `npm run build -w @mcpjam/sdk`.
+// above) so clean checkout builds resolve it without a prior
+// `npm run build -w @mcpjam/sdk`.
 const sdkHostConfigTemplatesEntry = path.resolve(
   rootDir,
   "../sdk/src/host-config/templates/index.ts",

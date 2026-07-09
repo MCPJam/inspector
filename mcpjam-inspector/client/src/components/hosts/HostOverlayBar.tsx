@@ -14,22 +14,19 @@ import {
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
-import type { HostConfigInputV2 } from "@/lib/client-config-v2";
+import { cloneHostTemplateInput } from "@/lib/client-config-v2";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { standardEventProps } from "@/lib/PosthogUtils";
-import { HOST_TEMPLATES, type HostTemplateId } from "@/lib/client-templates";
 import { CreateHostDialog } from "./CreateHostDialog";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { getHostLogoSrc } from "@/lib/host-ui-metadata";
 
-const QUICK_ADD_TEMPLATES: HostTemplateId[] = ["claude", "chatgpt", "copilot"];
+const QUICK_ADD_TEMPLATES = ["claude", "chatgpt", "copilot"] as const;
 
 const MCPJAM_HOST_NAME = "MCPJam";
 const LAST_HOST_DELETE_REASON =
   "A project needs at least one host. Create another host first.";
-
-function cloneHostTemplateInput(value: unknown): HostConfigInputV2 {
-  return JSON.parse(JSON.stringify(value)) as HostConfigInputV2;
-}
 
 interface HostOverlayBarProps {
   projectId: string;
@@ -49,12 +46,13 @@ export function HostOverlayBar({
   const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
   const catalogState = useHostCatalog();
+  const themeMode = usePreferencesStore((s) => s.themeMode);
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
   const { createHost, deleteHost } = useHostMutations();
   const [showCreate, setShowCreate] = useState(false);
-  const [createTemplateId, setCreateTemplateId] = useState<
-    HostTemplateId | undefined
-  >(undefined);
+  const [createTemplateId, setCreateTemplateId] = useState<string | undefined>(
+    undefined
+  );
   const [isDeleting, setIsDeleting] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const mcpjamHostName =
@@ -92,7 +90,7 @@ export function HostOverlayBar({
     createHost({
       projectId,
       name: mcpjamHostName,
-      input: cloneHostTemplateInput(template),
+      input: cloneHostTemplateInput(template, { themeMode }),
     }).catch(() => {
       seededRef.current = false;
     });
@@ -104,6 +102,7 @@ export function HostOverlayBar({
     createHost,
     catalogState,
     mcpjamHostName,
+    themeMode,
   ]);
 
   const validPreviewedHostId =
@@ -223,7 +222,7 @@ export function HostOverlayBar({
     }
   };
 
-  const openCreateWithTemplate = (templateId?: HostTemplateId) => {
+  const openCreateWithTemplate = (templateId?: string) => {
     setCreateTemplateId(templateId);
     setShowCreate(true);
     setMenuOpen(false);
@@ -342,19 +341,17 @@ export function HostOverlayBar({
                   onPointerDown={(e) => e.stopPropagation()}
                 >
                   {QUICK_ADD_TEMPLATES.map((id) => {
-                    const template = HOST_TEMPLATES.find((t) => t.id === id);
-                    if (!template) return null;
                     const catalogHost =
                       catalogState.status === "live"
                         ? getCatalogHost(catalogState.catalog, id)
                         : undefined;
-                    const templateLabel = catalogHost?.label ?? template.label;
+                    if (!catalogHost) return null;
                     return (
                       <button
                         key={id}
                         type="button"
-                        aria-label={`Add ${templateLabel} host`}
-                        title={`Add ${templateLabel}`}
+                        aria-label={`Add ${catalogHost.label} host`}
+                        title={`Add ${catalogHost.label}`}
                         data-testid={`host-overlay-quick-add-${id}`}
                         onClick={(e) => {
                           e.preventDefault();
@@ -367,7 +364,7 @@ export function HostOverlayBar({
                         )}
                       >
                         <img
-                          src={template.logoSrc}
+                          src={getHostLogoSrc(id, themeMode)}
                           alt=""
                           className="size-4 object-contain"
                         />

@@ -41,24 +41,10 @@ import { useHostMutations } from "@/hooks/useClients";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { HOST_TEMPLATES, type HostTemplateId } from "@/lib/client-templates";
-import type { HostConfigInputV2 } from "@/lib/client-config-v2";
+import { cloneHostTemplateInput } from "@/lib/client-config-v2";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { filterReportsByFeatureFlags } from "@/lib/host-compat/feature-visibility";
-
-/** Compat profile ids (`claude`, `chatgpt`, …) are the same string literals
- * as the host template ids, so a verdict maps to a template with no lookup
- * table — but we still gate on the catalog so a profile id that ever drifts
- * away from a real template silently hides its CTA instead of crashing. */
-const COMPAT_TEMPLATE_IDS = new Set<string>(HOST_TEMPLATES.map((t) => t.id));
-
-const isHostTemplateId = (id: string): id is HostTemplateId =>
-  COMPAT_TEMPLATE_IDS.has(id);
-
-function cloneHostTemplateInput(value: unknown): HostConfigInputV2 {
-  return JSON.parse(JSON.stringify(value)) as HostConfigInputV2;
-}
 
 const PROVENANCE_LABEL: Record<CompatProvenance, string> = {
   observed: "Observed from a live run",
@@ -66,6 +52,26 @@ const PROVENANCE_LABEL: Record<CompatProvenance, string> = {
   probe: "Probe-captured from a real host",
   assumed: "Best-effort preset — unverified",
 };
+
+const VERIFIED_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: "UTC",
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+
+function formatVerifiedDate(verifiedAt: number | undefined): string | null {
+  if (verifiedAt === undefined || !Number.isFinite(verifiedAt)) return null;
+  return VERIFIED_DATE_FORMATTER.format(new Date(verifiedAt));
+}
+
+function provenanceTooltip(report: HostCompatReport): string {
+  const date = formatVerifiedDate(report.verifiedAt);
+  if (!date) return PROVENANCE_LABEL[report.provenance];
+  const prefix =
+    report.provenance === "assumed" ? "Last reviewed" : "Last verified";
+  return `${PROVENANCE_LABEL[report.provenance]} | ${prefix} ${date}`;
+}
 
 const FINDING_ICON: Record<
   CompatFinding["severity"],
@@ -180,7 +186,7 @@ export function HostCompatContent({
   const canCreateHosts = Boolean(projectId && serverId);
   const handleTestInHost = async (report: HostCompatReport) => {
     const templateId = report.hostId;
-    if (!projectId || !serverId || !isHostTemplateId(templateId)) return;
+    if (!projectId || !serverId) return;
     const catalog =
       catalogState.status === "live" ? catalogState.catalog : null;
     const template = catalog
@@ -204,7 +210,7 @@ export function HostCompatContent({
 
     setCreatingTemplateId(templateId);
     try {
-      const seed = cloneHostTemplateInput(template);
+      const seed = cloneHostTemplateInput(template, { themeMode });
       const { hostId, hostConfigId } = await createHost({
         projectId,
         name: label,
@@ -291,7 +297,7 @@ export function HostCompatContent({
                     </span>
                   </TooltipTrigger>
                   <TooltipContent side="top" variant="muted">
-                    {PROVENANCE_LABEL[report.provenance]}
+                    {provenanceTooltip(report)}
                   </TooltipContent>
                 </Tooltip>
 
@@ -337,7 +343,7 @@ export function HostCompatContent({
                         )}
                       </Button>
                     )}
-                  {canCreateHosts && isHostTemplateId(report.hostId) && (
+                  {canCreateHosts && (
                     <Button
                       size="sm"
                       variant="ghost"

@@ -16,20 +16,20 @@
 
 import { type HostConfigInputV2 } from "@/lib/client-config-v2";
 import {
-  seedFromHostTemplate,
-  type HostTemplateId,
-} from "@/lib/client-templates";
+  bundledHostCompatCatalog,
+  getCatalogTemplate,
+} from "@mcpjam/sdk/host-compat";
 
 /**
- * Snapshot a host-style's template defaults onto a HostConfigInputV2 in-place
+ * Snapshot a host-style's catalog defaults onto a HostConfigInputV2 in-place
  * (well, immutably — returns a new value). Mirrors what
  * `applyHostConfigToPlayground` writes to the playground stores, but as data:
  *
  *   - `hostStyle`            = the picked id (BYO ids stay as themselves)
- *   - `hostContext`          = the host template's full hostContext blob
- *   - `mcpProfile`           = the host template's mcpProfile (may be undefined)
- *   - `hostCapabilitiesOverride` = the host template's override (may be undefined)
- *   - `chatUiOverride`       = the host template's chat-ui override (may be undefined)
+ *   - `hostContext`          = the catalog host's full hostContext blob
+ *   - `mcpProfile`           = the catalog host's mcpProfile (may be undefined)
+ *   - `hostCapabilitiesOverride` = the catalog host's override (may be undefined)
+ *   - `chatUiOverride`       = the catalog host's chat-ui override (may be undefined)
  *   - everything else        = preserved from `current`
  *
  * The `modelId` is NOT touched. The playground host-sync path also pokes
@@ -41,17 +41,18 @@ export function applyHostStyleToHostConfigInput(
   hostStyle: string,
   current: HostConfigInputV2
 ): HostConfigInputV2 {
-  // `seedFromHostTemplate` is typed as `HostTemplateId` but the runtime
-  // falls back to MCPJam on unknown ids; the cast keeps the call site
-  // tolerant of BYO host-style ids registered client-side without a
-  // matching template entry.
-  const seed = seedFromHostTemplate(hostStyle as HostTemplateId);
+  const seed = getCatalogTemplate(
+    bundledHostCompatCatalog(),
+    hostStyle
+  ) as HostConfigInputV2 | undefined;
   return {
     ...current,
     hostStyle,
-    hostContext: seed.hostContext,
-    mcpProfile: seed.mcpProfile,
-    hostCapabilitiesOverride: seed.hostCapabilitiesOverride,
-    chatUiOverride: seed.chatUiOverride,
+    hostContext: seed ? seed.hostContext : current.hostContext,
+    mcpProfile: seed ? seed.mcpProfile : current.mcpProfile,
+    hostCapabilitiesOverride: seed
+      ? seed.hostCapabilitiesOverride
+      : current.hostCapabilitiesOverride,
+    chatUiOverride: seed ? seed.chatUiOverride : current.chatUiOverride,
   };
 }

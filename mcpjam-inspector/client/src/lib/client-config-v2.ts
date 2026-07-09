@@ -21,6 +21,7 @@
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
 import { stableStringifyJson } from "@/lib/client-config";
+import type { ThemeMode } from "@/types/preferences/theme";
 import {
   buildHostCapabilities,
   findHostStyle,
@@ -298,6 +299,20 @@ export const DEFAULT_HOST_STYLE_V2: HostStyleId = "mcpjam";
 export const emptyHostConfigInputV2 = sdkEmptyHostConfigInputV2 as unknown as (
   partial?: Partial<HostConfigInputV2>
 ) => HostConfigInputV2;
+
+export function cloneHostTemplateInput(
+  value: unknown,
+  options: { themeMode?: ThemeMode } = {}
+): HostConfigInputV2 {
+  const input = deepCloneJsonValue(value) as HostConfigInputV2;
+  if (options.themeMode !== undefined) {
+    input.hostContext = {
+      ...input.hostContext,
+      theme: options.themeMode,
+    };
+  }
+  return input;
+}
 
 export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
   // Deep-clone the JSON record fields. clientCapabilities and
@@ -734,8 +749,10 @@ export function setMcpAppsOverridesOnDraft(
     (baseProfile.initialize.clientInfo !== undefined ||
       (baseProfile.initialize.supportedProtocolVersions &&
         baseProfile.initialize.supportedProtocolVersions.length > 0));
+  const hasMcpProtocolVersion = baseProfile.mcpProtocolVersion !== undefined;
   const hasExtensions = baseProfile.extensions !== undefined;
-  const profileEmpty = appsEmpty && !hasInitialize && !hasExtensions;
+  const profileEmpty =
+    appsEmpty && !hasInitialize && !hasMcpProtocolVersion && !hasExtensions;
 
   return {
     ...prev,

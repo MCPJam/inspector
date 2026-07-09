@@ -29,3 +29,10 @@ export function filterProfilesByFeatureFlags<T extends { id: string }>(
     isHostVisibleByFeatureFlags(profile.id, visibility)
   );
 }
+
+export function filterHostsByFeatureFlags<T extends { id: string }>(
+  hosts: T[],
+  visibility: HostFeatureVisibility
+): T[] {
+  return hosts.filter((host) => isHostVisibleByFeatureFlags(host.id, visibility));
+}

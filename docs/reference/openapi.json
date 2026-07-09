@@ -140,6 +140,7 @@
                               "provenance": {
                                 "type": "string",
                                 "enum": [
+                                  "observed",
                                   "probe",
                                   "vendor-doc",
                                   "assumed"
@@ -481,7 +482,7 @@
         "operationId": "createHost",
         "tags": ["Hosts"],
         "summary": "Create a host (from a template or a full config)",
-        "description": "Creates a host in the project and responds `201` with the new host's detail. Seed the host config one of two ways: pass `template` (a built-in template id, optional `theme`) to seed server-side from the same presets the inspector UI uses, OR pass `config` (a full host config v2). Exactly one of `template` or `config` is required.\n\nGuest callers are denied (host creation is a write).",
+        "description": "Creates a host in the project and responds `201` with the new host's detail. Seed the host config one of two ways: pass `template` (a built-in template id, optional `theme`) to seed server-side from the live backend host catalog, falling back to the bundled SDK catalog snapshot if the live catalog is unavailable, OR pass `config` (a full host config v2). Exactly one of `template` or `config` is required.\n\nGuest callers are denied (host creation is a write).",
         "parameters": [{ "$ref": "#/components/parameters/projectId" }],
         "requestBody": {
           "required": true,

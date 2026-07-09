@@ -15,6 +15,7 @@ import {
 import { useSearchParams } from "react-router";
 import { useHost, useHostList } from "@/hooks/useClients";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import type {
@@ -112,11 +113,13 @@ export function HostConfigCompareView({
   // comparison columns even when the user hasn't created them.
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
+  const codexEnabled = useCodexHostEnabled();
   const excludedPresetTemplateIds = useMemo(() => {
-    const excluded = new Set<"claude-code">();
+    const excluded = new Set<string>();
     if (!claudeCodeEnabled) excluded.add("claude-code");
+    if (!codexEnabled) excluded.add("codex");
     return excluded;
-  }, [claudeCodeEnabled]);
+  }, [claudeCodeEnabled, codexEnabled]);
   const presets = useMemo(
     () =>
       catalogState.catalog
@@ -752,11 +755,7 @@ function CompareSearchBar({
             aria-label="Open MCPJam"
           >
             <span>Brought to you by</span>
-            <img
-              src={mcpJamLogoSrc}
-              alt="MCPJam"
-              className="h-3.5 w-auto"
-            />
+            <img src={mcpJamLogoSrc} alt="MCPJam" className="h-3.5 w-auto" />
           </a>
         </div>
       ) : (

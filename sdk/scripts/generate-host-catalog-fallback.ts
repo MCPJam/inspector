@@ -2,25 +2,23 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import prettier from "prettier";
+import { imageSupportToHostConfigFields } from "../src/host-compat/catalog.js";
+import type { HostImageSupport } from "../src/host-compat/types.js";
 
 type BackendSeedModule = {
   SEED_DOCUMENT: unknown;
 };
 
-type ImagePlacement = "none" | "collapsed" | "inline";
 type ImageSourceSupport = { model: boolean; ui: boolean };
-type HostImageSupport = {
-  toolImageContent: ImageSourceSupport;
-  embeddedResourceImages: ImageSourceSupport;
-  resourceLinkImages: ImageSourceSupport;
-  placement: ImagePlacement;
-};
 
 const CHECK_ONLY = process.argv.includes("--check");
 
-const backendDir =
-  process.env.MCPJAM_BACKEND_DIR ??
-  path.resolve(process.cwd(), "../../mcpjam-backend");
+const backendDir = process.env.MCPJAM_BACKEND_DIR;
+if (!backendDir) {
+  throw new Error(
+    "Set MCPJAM_BACKEND_DIR to the mcpjam-backend checkout before generating the SDK host catalog fallback."
+  );
+}
 const backendSeedPath = path.join(
   backendDir,
   "convex/marketHostCatalog/seed.ts"
@@ -46,7 +44,9 @@ function isImageSourceSupport(value: unknown): value is ImageSourceSupport {
   );
 }
 
-function isImagePlacement(value: unknown): value is ImagePlacement {
+function isImagePlacement(
+  value: unknown
+): value is HostImageSupport["placement"] {
   return value === "none" || value === "collapsed" || value === "inline";
 }
 
@@ -60,32 +60,15 @@ function isImageSupport(value: unknown): value is HostImageSupport {
   );
 }
 
-function imageSupportToHostConfigFields(imageSupport: HostImageSupport) {
-  return {
-    modelVisibleMcpToolResults: {
-      directContent: { image: imageSupport.toolImageContent.model },
-      embeddedResources: {
-        blob: { image: imageSupport.embeddedResourceImages.model },
-      },
-      linkedResources: {
-        blob: { image: imageSupport.resourceLinkImages.model },
-      },
-    },
-    mcpToolResultImageRendering: {
-      placement: imageSupport.placement,
-      directContent: { image: imageSupport.toolImageContent.ui },
-      embeddedResources: {
-        blob: { image: imageSupport.embeddedResourceImages.ui },
-      },
-      linkedResources: {
-        blob: { image: imageSupport.resourceLinkImages.ui },
-      },
-    },
-  };
-}
-
 function hydrateSeedDocument(seed: unknown): unknown {
-  if (!isRecord(seed) || !isRecord(seed.hostsById)) return seed;
+  if (!isRecord(seed)) {
+    throw new Error("Backend seed module must export a catalog object.");
+  }
+  if (!isRecord(seed.hostsById)) {
+    throw new Error(
+      "Backend seed catalog is missing hostsById; refusing to generate a partial SDK fallback."
+    );
+  }
   return {
     ...seed,
     hostsById: Object.fromEntries(
@@ -105,9 +88,9 @@ function hydrateSeedDocument(seed: unknown): unknown {
 const hydratedSeedDocument = hydrateSeedDocument(SEED_DOCUMENT);
 
 const rawContent = `// Generated SDK fallback snapshot copied from the backend host catalog seed.
-// Run \`npm run generate:host-catalog-fallback -w @mcpjam/sdk\` after backend
-// host catalog/template changes. Product UI should fetch the live backend
-// catalog instead of treating this fallback as canonical.
+// Run \`MCPJAM_BACKEND_DIR=/path/to/mcpjam-backend npm run generate:host-catalog-fallback -w @mcpjam/sdk\`
+// after backend host catalog/template changes. Product UI should fetch the
+// live backend catalog instead of treating this fallback as canonical.
 
 import type { HostCompatCatalog } from "./catalog.js";
 

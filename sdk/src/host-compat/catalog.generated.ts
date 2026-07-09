@@ -1,7 +1,7 @@
 // Generated SDK fallback snapshot copied from the backend host catalog seed.
-// Run `npm run generate:host-catalog-fallback -w @mcpjam/sdk` after backend
-// host catalog/template changes. Product UI should fetch the live backend
-// catalog instead of treating this fallback as canonical.
+// Run `MCPJAM_BACKEND_DIR=/path/to/mcpjam-backend npm run generate:host-catalog-fallback -w @mcpjam/sdk`
+// after backend host catalog/template changes. Product UI should fetch the
+// live backend catalog instead of treating this fallback as canonical.
 
 import type { HostCompatCatalog } from "./catalog.js";
 
@@ -12,6 +12,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "MCPJam",
       provenance: "assumed",
       rendersMcpApps: true,
+      verifiedAt: 1783468800000,
       imageSupport: {
         toolImageContent: {
           model: true,
@@ -249,6 +250,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "Claude",
       provenance: "assumed",
       rendersMcpApps: true,
+      verifiedAt: 1783468800000,
       imageSupport: {
         toolImageContent: {
           model: true,
@@ -562,6 +564,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "vendor-doc",
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-11-25"],
+      verifiedAt: 1783468800000,
       imageSupport: {
         toolImageContent: {
           model: false,
@@ -673,6 +676,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "ChatGPT",
       provenance: "vendor-doc",
       rendersMcpApps: true,
+      verifiedAt: 1783468800000,
       imageSupport: {
         toolImageContent: {
           model: true,
@@ -836,6 +840,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-11-25"],
+      verifiedAt: 1783468800000,
       imageSupport: {
         toolImageContent: {
           model: false,
@@ -1009,6 +1014,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-03-26"],
+      verifiedAt: 1783468800000,
       imageSupport: {
         toolImageContent: {
           model: true,
@@ -1250,6 +1256,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-06-18"],
+      verifiedAt: 1783468800000,
       imageSupport: {
         toolImageContent: {
           model: false,
@@ -1477,6 +1484,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "Cursor",
       provenance: "probe",
       rendersMcpApps: true,
+      verifiedAt: 1783468800000,
       imageSupport: {
         toolImageContent: {
           model: true,
@@ -1619,6 +1627,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "assumed",
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-06-18"],
+      verifiedAt: 1783468800000,
       imageSupport: {
         toolImageContent: {
           model: true,
@@ -1704,6 +1713,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "Copilot",
       provenance: "vendor-doc",
       rendersMcpApps: true,
+      verifiedAt: 1783468800000,
       imageSupport: {
         toolImageContent: {
           model: true,
@@ -1858,6 +1868,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "VS Code",
       provenance: "probe",
       rendersMcpApps: true,
+      verifiedAt: 1783468800000,
       imageSupport: {
         toolImageContent: {
           model: true,
@@ -2000,6 +2011,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "vendor-doc",
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-06-18"],
+      verifiedAt: 1783468800000,
       imageSupport: {
         toolImageContent: {
           model: false,
@@ -2084,6 +2096,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-11-25"],
+      verifiedAt: 1783468800000,
       imageSupport: {
         toolImageContent: {
           model: false,
@@ -2186,6 +2199,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-06-18"],
+      verifiedAt: 1783468800000,
       imageSupport: {
         toolImageContent: {
           model: false,
@@ -2288,6 +2302,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-11-25"],
+      verifiedAt: 1783468800000,
       imageSupport: {
         toolImageContent: {
           model: true,
@@ -2390,6 +2405,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-11-25"],
+      verifiedAt: 1783468800000,
       imageSupport: {
         toolImageContent: {
           model: false,

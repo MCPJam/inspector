@@ -151,7 +151,7 @@ describe("applyHostConfigToPlayground", () => {
     );
   });
 
-  it("falls back to MCPJam's default model for unknown host styles", () => {
+  it("leaves the model alone for unknown host styles with no catalog default", () => {
     applyHostConfigToPlayground(
       {
         hostStyle: "some-byo-host-style",
@@ -163,10 +163,7 @@ describe("applyHostConfigToPlayground", () => {
       setters
     );
 
-    // BYO style -> seedFromHostTemplate falls through to MCPJam.
-    expect(replaceLeadModelIdSpy).toHaveBeenCalledWith(
-      "anthropic/claude-haiku-4.5"
-    );
+    expect(replaceLeadModelIdSpy).not.toHaveBeenCalled();
   });
 
   it("clears override and resets device when the config has no overrides / dims / sandbox; model resolves from template", () => {

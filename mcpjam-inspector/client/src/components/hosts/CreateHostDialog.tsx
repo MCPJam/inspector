@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { useConvexAuth } from "convex/react";
@@ -18,28 +18,27 @@ import { useHostMutations } from "@/hooks/useClients";
 import { useProjectServers } from "@/hooks/useViews";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
-import {
-  DEFAULT_HOST_TEMPLATE_ID,
-  getHostTemplateLogoSrc,
-  HOST_TEMPLATES,
-  type HostTemplateId,
-} from "@/lib/client-templates";
-import type { HostConfigInputV2 } from "@/lib/client-config-v2";
+import { cloneHostTemplateInput } from "@/lib/client-config-v2";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
-import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
+import {
+  getCatalogHost,
+  getCatalogHosts,
+  getCatalogTemplate,
+} from "@mcpjam/sdk/host-compat";
+import {
+  DEFAULT_CATALOG_HOST_ID,
+  getHostLogoSrc,
+} from "@/lib/host-ui-metadata";
+import { filterHostsByFeatureFlags } from "@/lib/host-compat/feature-visibility";
 
 interface CreateHostDialogProps {
   isOpen: boolean;
   onClose: () => void;
   projectId: string;
   onCreated: (hostId: string) => void;
-  initialTemplateId?: HostTemplateId;
-}
-
-function cloneHostTemplateInput(value: unknown): HostConfigInputV2 {
-  return JSON.parse(JSON.stringify(value)) as HostConfigInputV2;
+  initialTemplateId?: string;
 }
 
 export function CreateHostDialog({
@@ -55,24 +54,31 @@ export function CreateHostDialog({
   const { servers } = useProjectServers({ isAuthenticated, projectId });
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const catalogState = useHostCatalog();
-  // The Claude Code and Codex host templates each run a real CLI harness and are
-  // gated behind a PostHog flag while their host profiles are iterated on. Off ⇒
-  // drop from the picker grid. Neither is a default or `initialTemplateId` (no
-  // caller seeds them), so hiding them here can't strand the selection on a
-  // missing tile. The codex template now seeds harness:"codex"+computer, so its
-  // gate also covers that; existing saved codex hosts are unaffected.
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
-  const harnessTemplateEnabled: Record<string, boolean> = {
-    "claude-code": claudeCodeEnabled,
-    codex: codexEnabled,
-  };
-  const visibleTemplates = HOST_TEMPLATES.filter(
-    (t) => harnessTemplateEnabled[t.id] ?? true
+  const visibleCatalogHosts = useMemo(
+    () =>
+      catalogState.status === "live"
+        ? filterHostsByFeatureFlags(getCatalogHosts(catalogState.catalog), {
+            claudeCode: claudeCodeEnabled,
+            codex: codexEnabled,
+          }).sort((a, b) => a.label.localeCompare(b.label))
+        : [],
+    [catalogState, claudeCodeEnabled, codexEnabled]
+  );
+  const defaultHostId =
+    visibleCatalogHosts.find((host) => host.id === DEFAULT_CATALOG_HOST_ID)
+      ?.id ??
+    visibleCatalogHosts[0]?.id ??
+    DEFAULT_CATALOG_HOST_ID;
+  const visibleHostIds = useMemo(
+    () => new Set(visibleCatalogHosts.map((host) => host.id)),
+    [visibleCatalogHosts]
   );
   const [name, setName] = useState("");
-  const [selectedTemplateId, setSelectedTemplateId] = useState<HostTemplateId>(
-    initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID
+  const defaultedNameRef = useRef<string | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(
+    initialTemplateId ?? DEFAULT_CATALOG_HOST_ID
   );
   const [isSaving, setIsSaving] = useState(false);
   const selectedTemplateInput =
@@ -82,9 +88,7 @@ export function CreateHostDialog({
   const selectedTemplateLabel =
     (catalogState.status === "live"
       ? getCatalogHost(catalogState.catalog, selectedTemplateId)?.label
-      : undefined) ??
-    HOST_TEMPLATES.find((t) => t.id === selectedTemplateId)?.label ??
-    "";
+      : undefined) ?? "";
   const templatesUnavailableMessage =
     catalogState.status === "loading"
       ? "Loading host templates..."
@@ -101,26 +105,27 @@ export function CreateHostDialog({
 
   useEffect(() => {
     if (!isOpen) return;
-    // Clamp the selection to a visible template. This enforces the
-    // flag at the selection source, not just in the grid render: a
-    // gated template (e.g. claude-code) can never become
-    // `selectedTemplateId`, so it can't flow into backend template lookup
-    // — even if a future caller passes it as `initialTemplateId` or the
-    // flag flips off after the dialog opened (claudeCodeEnabled is in
-    // the dep list so a flip-off re-clamps a stranded selection).
-    const requested = initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID;
-    const allowed = visibleTemplates.some((t) => t.id === requested);
-    setSelectedTemplateId(allowed ? requested : DEFAULT_HOST_TEMPLATE_ID);
-  }, [isOpen, initialTemplateId, claudeCodeEnabled, codexEnabled]);
+    if (visibleCatalogHosts.length === 0) return;
+    const requested = initialTemplateId ?? DEFAULT_CATALOG_HOST_ID;
+    const allowed = visibleHostIds.has(requested);
+    setSelectedTemplateId(allowed ? requested : defaultHostId);
+  }, [isOpen, initialTemplateId, visibleCatalogHosts.length, visibleHostIds, defaultHostId]);
 
   useEffect(() => {
     if (!isOpen) return;
-    setName(selectedTemplateLabel);
+    setName((current) => {
+      if (current.trim() !== "" && current !== defaultedNameRef.current) {
+        return current;
+      }
+      defaultedNameRef.current = selectedTemplateLabel;
+      return selectedTemplateLabel;
+    });
   }, [isOpen, selectedTemplateId, selectedTemplateLabel]);
 
   const handleClose = () => {
     setName("");
-    setSelectedTemplateId(initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID);
+    defaultedNameRef.current = null;
+    setSelectedTemplateId(initialTemplateId ?? DEFAULT_CATALOG_HOST_ID);
     onClose();
   };
 
@@ -141,7 +146,7 @@ export function CreateHostDialog({
       // storm. The current auto-connect toggle is project-scoped (see
       // preferences-store.ts:40), so the original storm risk is gone,
       // but the deliberate-creation framing stays.
-      const seed = cloneHostTemplateInput(selectedTemplateInput);
+      const seed = cloneHostTemplateInput(selectedTemplateInput, { themeMode });
       // Capture available-server count for analytics (we don't attach
       // them — see above — but knowing the count at creation time is
       // useful signal for onboarding funnels).
@@ -185,22 +190,17 @@ export function CreateHostDialog({
           <div className="flex flex-col gap-2">
             <Label>Start from template</Label>
             <div className="grid grid-cols-3 gap-2">
-              {visibleTemplates.map((template) => {
-                const isSelected = template.id === selectedTemplateId;
-                const catalogHost =
-                  catalogState.status === "live"
-                    ? getCatalogHost(catalogState.catalog, template.id)
-                    : undefined;
-                const templateLabel = catalogHost?.label ?? template.label;
+              {visibleCatalogHosts.map((host) => {
+                const isSelected = host.id === selectedTemplateId;
                 const templateAvailable =
                   catalogState.status === "live" &&
-                  getCatalogTemplate(catalogState.catalog, template.id) !==
+                  getCatalogTemplate(catalogState.catalog, host.id) !==
                     undefined;
                 return (
                   <button
-                    key={template.id}
+                    key={host.id}
                     type="button"
-                    onClick={() => setSelectedTemplateId(template.id)}
+                    onClick={() => setSelectedTemplateId(host.id)}
                     disabled={!templateAvailable}
                     className={cn(
                       "flex flex-col items-start gap-2 rounded-md border p-3 text-left transition-colors",
@@ -212,12 +212,12 @@ export function CreateHostDialog({
                     aria-pressed={isSelected}
                   >
                     <img
-                      src={getHostTemplateLogoSrc(template, themeMode)}
+                      src={getHostLogoSrc(host.id, themeMode)}
                       alt=""
                       className="h-6 w-6 object-contain"
                     />
                     <span className="text-sm font-medium leading-none">
-                      {templateLabel}
+                      {host.label}
                     </span>
                   </button>
                 );

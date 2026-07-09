@@ -44,8 +44,7 @@ type HostCatalogMetadata = {
  * One catalog host. Compare/display facts and the creation config live on the
  * same object.
  */
-export type HostCompatCatalogHost = HostCatalogMetadata &
-  SeededHostConfigInput;
+export type HostCompatCatalogHost = HostCatalogMetadata & SeededHostConfigInput;
 
 /**
  * The catalog document served by the backend and proxied by the inspector.
@@ -106,7 +105,9 @@ export function hydrateHostCompatCatalog(
   };
 }
 
-function hydrateCatalogHost(host: HostCompatCatalogHost): HostCompatCatalogHost {
+function hydrateCatalogHost(
+  host: HostCompatCatalogHost
+): HostCompatCatalogHost {
   return {
     ...host,
     ...(host.imageSupport
@@ -142,7 +143,7 @@ export function getCatalogTemplate(
 ): SeededHostConfigInput | undefined {
   const host = getCatalogHost(catalog, hostStyle);
   if (!host) return undefined;
-  return hostConfigFromCatalogHost(host);
+  return cloneJson(hostConfigFromCatalogHost(host));
 }
 
 export function getCatalogHosts(
@@ -167,7 +168,9 @@ function hostConfigFromCatalogHost(
   return config;
 }
 
-function imageSupportToHostConfigFields(imageSupport: HostImageSupport): {
+export function imageSupportToHostConfigFields(
+  imageSupport: HostImageSupport
+): {
   modelVisibleMcpToolResults: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering: McpToolResultImageRenderingPolicy;
 } {
@@ -208,6 +211,7 @@ function templateRendersOpenAiApps(
 function cloneProfile(p: HostCompatProfile): HostCompatProfile {
   return {
     ...p,
+    verifiedAt: p.verifiedAt,
     supportedProtocolVersions: p.supportedProtocolVersions
       ? [...p.supportedProtocolVersions]
       : undefined,
@@ -258,6 +262,7 @@ export function buildHostProfilesFromCatalog(
         id: host.id,
         label: host.label,
         provenance: host.provenance,
+        verifiedAt: host.verifiedAt,
         rendersMcpApps: host.rendersMcpApps,
         rendersOpenAiApps,
         supportedProtocolVersions: host.supportedProtocolVersions,
