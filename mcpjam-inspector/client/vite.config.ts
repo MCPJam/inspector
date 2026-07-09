@@ -171,6 +171,14 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: false,
         },
+        // PostHog same-origin relay (server/routes/relay.ts). In dev the
+        // client origin is Vite, not the Hono server, so /relay must be
+        // proxied or analytics/flags silently break in dev only.
+        "/relay": {
+          target: env.VITE_API_BASE_URL || "http://localhost:6274",
+          changeOrigin: true,
+          secure: false,
+        },
         ...(() => {
           const siteUrlFromEnv = env.VITE_CONVEX_SITE_URL;
           const cloudUrl = env.VITE_CONVEX_URL || "";

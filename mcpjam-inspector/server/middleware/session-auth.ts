@@ -38,6 +38,11 @@ const UNPROTECTED_ROUTES = [
  * SECURITY: Each prefix here must have a documented reason for being unprotected.
  */
 const UNPROTECTED_PREFIXES = [
+  // NOTE: only /api/* paths need listing here — everything else already
+  // bypasses this middleware (see the startsWith("/api/") check below).
+  // /relay (the PostHog reverse proxy, routes/relay.ts) relies on that
+  // non-/api bypass: analytics must flow before any session exists. It must
+  // never be moved under /api/ or it would silently gain session auth.
   "/assets/", // Static assets (JS, CSS, images) - no sensitive data
   "/api/apps/mcp-apps/", // MCP Apps widgets - loaded in sandboxed iframes, can't send headers
   // Widget file DOWNLOAD only. The download URL is fetched directly from
