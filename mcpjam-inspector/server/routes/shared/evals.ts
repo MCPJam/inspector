@@ -1652,15 +1652,19 @@ export async function prepareEvalRun(
     try {
       runPinnedSkills = await fetchRunPinnedSkillsWithRetry(convexClient, runId);
     } catch (error) {
-      await recorder
-        .finalize({
-          status: "failed",
-          notes: (error instanceof Error
-            ? error.message
-            : String(error)
-          ).slice(0, 500),
+      const cause = (
+        error instanceof Error ? error.message : String(error)
+      ).slice(0, 500);
+      // startSuiteRunWithRecorder already precreated the iteration rows, so
+      // finalizing only the run leaves every attempt stuck pending. Mirror the
+      // precreate-failure cleanup: fail the pending iterations, then the run.
+      await convexClient
+        .mutation("testSuites:markSetupPendingIterationsFailed" as any, {
+          runId,
+          error: cause,
         })
         .catch(() => {});
+      await recorder.finalize({ status: "failed", notes: cause }).catch(() => {});
       throw error;
     }
   }
