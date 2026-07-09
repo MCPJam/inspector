@@ -291,6 +291,15 @@ export type HostConfigDtoV2 = {
 
 export const DEFAULT_HOST_STYLE_V2: HostStyleId = "mcpjam";
 
+// Cheap MCPJam-provided model pinned onto auto-seeded "MCPJam" hosts (the
+// host bar / playground backstops for empty projects). Interactive chat
+// papers over an unset host model via getDefaultModel's picker fallback,
+// but synthetic/swarm runs consume the pinned value directly and fail on
+// "" — seeding a real model keeps the default host runnable everywhere.
+// Matches the top of getDefaultModel's priority list and the dominant
+// template choice; keep the three in sync.
+export const DEFAULT_SEEDED_HOST_MODEL_ID = "anthropic/claude-haiku-4.5";
+
 // Delegates to the Node-safe SDK builder so the empty-config defaults have a
 // single source of truth shared with the server `--template` resolver and the
 // CLI. Cast to the strict client aggregate — the runtime object is

@@ -14,7 +14,10 @@ import {
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
-import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
+import {
+  DEFAULT_SEEDED_HOST_MODEL_ID,
+  emptyHostConfigInputV2,
+} from "@/lib/client-config-v2";
 import { standardEventProps } from "@/lib/PosthogUtils";
 import {
   HOST_TEMPLATES,
@@ -62,7 +65,9 @@ export function HostOverlayBar({
   // Lazily seed a "MCPJam" host with SDK defaults only when the project has
   // no hosts at all. Once any host exists (including after the user deletes
   // MCPJam), we stop seeding — otherwise a deleted MCPJam respawns on every
-  // mount and duplicates accumulate.
+  // mount and duplicates accumulate. Pin a cheap default model: interactive
+  // chat would paper over "" via the picker fallback, but synthetic/swarm
+  // runs consume the pinned value directly and fail on a modelless host.
   const seededRef = useRef(false);
   useEffect(() => {
     if (
@@ -77,7 +82,7 @@ export function HostOverlayBar({
     createHost({
       projectId,
       name: MCPJAM_HOST_NAME,
-      input: emptyHostConfigInputV2(),
+      input: emptyHostConfigInputV2({ modelId: DEFAULT_SEEDED_HOST_MODEL_ID }),
     }).catch(() => {
       seededRef.current = false;
     });

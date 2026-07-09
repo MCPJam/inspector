@@ -850,6 +850,17 @@ const ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> = {
 export function buildSyntheticModelDefinition(
   modelId: string,
 ): ModelDefinition {
+  // An unpinned host persists modelId "" — without this guard the bare-id
+  // fallback below silently classifies it as an Ollama BYOK model and the
+  // failure surfaces many hops later as an opaque backend "model is
+  // required". Both interactive host-wins call sites gate on a truthy
+  // modelId before reaching here, so only genuinely modelless flows throw.
+  if (!modelId.trim()) {
+    throw new Error(
+      "No model selected for this chat. Pick a model on the host before running."
+    );
+  }
+
   const supported = getModelById(modelId);
   if (supported) return supported;
 
