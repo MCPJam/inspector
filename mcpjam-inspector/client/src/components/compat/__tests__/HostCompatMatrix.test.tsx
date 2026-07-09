@@ -51,6 +51,14 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
     selector({ themeMode: "light" }),
 }));
 
+vi.mock("@/hooks/useClaudeCodeHostEnabled", () => ({
+  useClaudeCodeHostEnabled: () => true,
+}));
+
+vi.mock("@/hooks/useCodexHostEnabled", () => ({
+  useCodexHostEnabled: () => true,
+}));
+
 import { HostCompatMatrix, summarizeColumn } from "../HostCompatMatrix";
 
 const rep = (hostId: string, verdict: HostCompatReport["verdict"]) =>

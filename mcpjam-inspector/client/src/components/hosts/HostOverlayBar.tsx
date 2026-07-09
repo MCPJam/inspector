@@ -19,6 +19,7 @@ import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { standardEventProps } from "@/lib/PosthogUtils";
 import { HOST_TEMPLATES, type HostTemplateId } from "@/lib/client-templates";
 import { CreateHostDialog } from "./CreateHostDialog";
+import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 
 const QUICK_ADD_TEMPLATES: HostTemplateId[] = ["claude", "chatgpt", "copilot"];
 
@@ -56,10 +57,18 @@ export function HostOverlayBar({
   >(undefined);
   const [isDeleting, setIsDeleting] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const mcpjamHostName =
+    catalogState.status === "live"
+      ? getCatalogHost(catalogState.catalog, "mcpjam")?.label ??
+        MCPJAM_HOST_NAME
+      : MCPJAM_HOST_NAME;
 
   const mcpjamHost = useMemo(
-    () => hosts.find((h) => h.name === MCPJAM_HOST_NAME) ?? null,
-    [hosts]
+    () =>
+      hosts.find((h) => h.name === mcpjamHostName) ??
+      hosts.find((h) => h.name === MCPJAM_HOST_NAME) ??
+      null,
+    [hosts, mcpjamHostName]
   );
 
   // Lazily seed a "MCPJam" host from the live backend template only when the
@@ -77,12 +86,12 @@ export function HostOverlayBar({
     ) {
       return;
     }
-    const template = catalogState.catalog.templatesById.mcpjam;
+    const template = getCatalogTemplate(catalogState.catalog, "mcpjam");
     if (!template) return;
     seededRef.current = true;
     createHost({
       projectId,
-      name: MCPJAM_HOST_NAME,
+      name: mcpjamHostName,
       input: cloneHostTemplateInput(template),
     }).catch(() => {
       seededRef.current = false;
@@ -94,6 +103,7 @@ export function HostOverlayBar({
     projectId,
     createHost,
     catalogState,
+    mcpjamHostName,
   ]);
 
   const validPreviewedHostId =
@@ -106,11 +116,15 @@ export function HostOverlayBar({
   // skeleton indefinitely (seeding skips when `hosts.length > 0`).
   const sortedHosts = useMemo(() => {
     return [...hosts].sort((a, b) => {
-      if (a.name === MCPJAM_HOST_NAME) return -1;
-      if (b.name === MCPJAM_HOST_NAME) return 1;
+      const aIsDefault =
+        a.name === mcpjamHostName || a.name === MCPJAM_HOST_NAME;
+      const bIsDefault =
+        b.name === mcpjamHostName || b.name === MCPJAM_HOST_NAME;
+      if (aIsDefault && !bIsDefault) return -1;
+      if (bIsDefault && !aIsDefault) return 1;
       return a.name.localeCompare(b.name);
     });
-  }, [hosts]);
+  }, [hosts, mcpjamHostName]);
   const effectiveHostId =
     validPreviewedHostId ??
     mcpjamHost?.hostId ??
@@ -330,12 +344,17 @@ export function HostOverlayBar({
                   {QUICK_ADD_TEMPLATES.map((id) => {
                     const template = HOST_TEMPLATES.find((t) => t.id === id);
                     if (!template) return null;
+                    const catalogHost =
+                      catalogState.status === "live"
+                        ? getCatalogHost(catalogState.catalog, id)
+                        : undefined;
+                    const templateLabel = catalogHost?.label ?? template.label;
                     return (
                       <button
                         key={id}
                         type="button"
-                        aria-label={`Add ${template.label} host`}
-                        title={`Add ${template.label}`}
+                        aria-label={`Add ${templateLabel} host`}
+                        title={`Add ${templateLabel}`}
                         data-testid={`host-overlay-quick-add-${id}`}
                         onClick={(e) => {
                           e.preventDefault();

@@ -25,6 +25,10 @@ const sdkHostConfigTemplatesEntry = path.resolve(
   rootDir,
   "../sdk/src/host-config/templates/index.ts",
 );
+const sdkHostCompatEntry = path.resolve(
+  rootDir,
+  "../sdk/src/host-compat/index.ts",
+);
 // Tier B Phase 2: @mcpjam/sdk/widget-runtime advertises ./dist via package
 // exports; alias it to source so inspector vitest resolves it without a prior
 // `npm run build -w @mcpjam/sdk` (mirrors the SDK subpath aliases above).
@@ -136,6 +140,10 @@ export default defineConfig({
       {
         find: "@mcpjam/sdk/widget-runtime",
         replacement: sdkWidgetRuntimeEntry,
+      },
+      {
+        find: "@mcpjam/sdk/host-compat",
+        replacement: sdkHostCompatEntry,
       },
       {
         find: "@mcpjam/sdk/host-config/templates",

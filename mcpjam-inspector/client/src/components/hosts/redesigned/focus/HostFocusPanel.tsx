@@ -94,6 +94,8 @@ export function HostFocusPanel({
         logoSrc={logoSrc}
         action={
           <UpdateCapabilitiesButton
+            hostDisplayName={hostDisplayName}
+            onHostDisplayNameChange={onHostDisplayNameChange}
             draft={draft}
             onDraftChange={onDraftChange}
           />

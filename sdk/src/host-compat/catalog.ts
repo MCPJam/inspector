@@ -1,4 +1,8 @@
-import type { McpAppsCapabilities } from "../host-config/types.js";
+import type {
+  McpAppsCapabilities,
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "../host-config/types.js";
 import type { SeededHostConfigInput } from "../host-config/templates/index.js";
 import { MCP_APPS_NO_CLAIMS } from "./capabilities.js";
 import { BUNDLED_HOST_COMPAT_CATALOG } from "./catalog.generated.js";
@@ -20,12 +24,7 @@ import type {
  * offline/CLI/dev paths.
  */
 
-/**
- * A market host's catalog facts. `id` is a plain string in fetched catalogs —
- * new hosts must not require an SDK release; the bundled generated snapshot is
- * only an offline fallback.
- */
-export type HostCompatCatalogHost = {
+type HostCatalogMetadata = {
   id: string;
   label: string;
   provenance: CompatProvenance;
@@ -42,14 +41,18 @@ export type HostCompatCatalogHost = {
 };
 
 /**
+ * One catalog host. Compare/display facts and the creation config live on the
+ * same object.
+ */
+export type HostCompatCatalogHost = HostCatalogMetadata &
+  SeededHostConfigInput;
+
+/**
  * The catalog document served by the backend and proxied by the inspector.
- * `templatesById` contains full host creation templates for all built-in host
- * styles, including non-market hosts such as `mcpjam` and `claude-code`.
+ * `hostsById` is the single source of truth for each built-in host style.
  */
 export type HostCompatCatalog = {
-  marketHosts: HostCompatCatalogHost[];
-  openAiCompatByStyle: Record<string, boolean>;
-  templatesById: Record<string, SeededHostConfigInput>;
+  hostsById: Record<string, HostCompatCatalogHost>;
 };
 
 function cloneJson<T>(value: T): T {
@@ -79,39 +82,125 @@ let cachedBundledCatalog: HostCompatCatalog | null = null;
  * shared so consumers cannot accidentally mutate process-wide fallback facts.
  */
 export function bundledHostCompatCatalog(): HostCompatCatalog {
-  cachedBundledCatalog ??= deepFreeze(cloneJson(BUNDLED_HOST_COMPAT_CATALOG));
+  cachedBundledCatalog ??= deepFreeze(
+    hydrateHostCompatCatalog(cloneJson(BUNDLED_HOST_COMPAT_CATALOG))
+  );
   return cachedBundledCatalog;
+}
+
+/**
+ * Return a catalog whose `hostsById` entries are directly usable as full host
+ * objects. The backend keeps compact image facts in `imageSupport`; host config
+ * consumers need the concrete image policy fields too.
+ */
+export function hydrateHostCompatCatalog(
+  catalog: HostCompatCatalog
+): HostCompatCatalog {
+  return {
+    hostsById: Object.fromEntries(
+      Object.entries(catalog.hostsById).map(([id, host]) => [
+        id,
+        hydrateCatalogHost(host),
+      ])
+    ),
+  };
+}
+
+function hydrateCatalogHost(host: HostCompatCatalogHost): HostCompatCatalogHost {
+  return {
+    ...host,
+    ...(host.imageSupport
+      ? imageSupportToHostConfigFields(host.imageSupport)
+      : undefined),
+  };
 }
 
 export function getTemplateMcpAppsCapabilities(
   catalog: HostCompatCatalog,
   hostStyle: string
 ): McpAppsCapabilities | undefined {
-  const template = Object.hasOwn(catalog.templatesById, hostStyle)
-    ? catalog.templatesById[hostStyle]
-    : undefined;
-  const apps = template?.mcpProfile?.apps as
+  const host = getCatalogHost(catalog, hostStyle);
+  const apps = host?.mcpProfile?.apps as
     | { mcpAppsOverrides?: McpAppsCapabilities }
     | undefined;
-  if (apps?.mcpAppsOverrides !== undefined) return apps.mcpAppsOverrides;
-  return legacyHostCapabilitiesOverrideToMcpAppsCapabilities(
-    template?.hostCapabilitiesOverride
-  );
+  return apps?.mcpAppsOverrides;
 }
 
-function legacyHostCapabilitiesOverrideToMcpAppsCapabilities(
-  legacy: Record<string, unknown> | undefined
-): McpAppsCapabilities | undefined {
-  if (legacy === undefined) return undefined;
+export function getCatalogHost(
+  catalog: HostCompatCatalog,
+  hostStyle: string
+): HostCompatCatalogHost | undefined {
+  const host = Object.hasOwn(catalog.hostsById, hostStyle)
+    ? catalog.hostsById[hostStyle]
+    : undefined;
+  return host ? hydrateCatalogHost(host) : undefined;
+}
+
+export function getCatalogTemplate(
+  catalog: HostCompatCatalog,
+  hostStyle: string
+): SeededHostConfigInput | undefined {
+  const host = getCatalogHost(catalog, hostStyle);
+  if (!host) return undefined;
+  return hostConfigFromCatalogHost(host);
+}
+
+export function getCatalogHosts(
+  catalog: HostCompatCatalog
+): HostCompatCatalogHost[] {
+  return Object.values(catalog.hostsById).map(hydrateCatalogHost);
+}
+
+function hostConfigFromCatalogHost(
+  host: HostCompatCatalogHost
+): SeededHostConfigInput {
+  const {
+    id: _id,
+    label: _label,
+    provenance: _provenance,
+    rendersMcpApps: _rendersMcpApps,
+    supportedProtocolVersions: _supportedProtocolVersions,
+    verifiedAt: _verifiedAt,
+    imageSupport: _imageSupport,
+    ...config
+  } = host;
+  return config;
+}
+
+function imageSupportToHostConfigFields(imageSupport: HostImageSupport): {
+  modelVisibleMcpToolResults: ModelVisibleMcpToolResults;
+  mcpToolResultImageRendering: McpToolResultImageRenderingPolicy;
+} {
   return {
-    openLinks: legacy.openLinks !== undefined,
-    serverTools: legacy.serverTools !== undefined,
-    serverResources: legacy.serverResources !== undefined,
-    logging: legacy.logging !== undefined,
-    updateModelContext: legacy.updateModelContext !== undefined,
-    message: legacy.message !== undefined,
-    downloadFile: legacy.downloadFile !== undefined,
+    modelVisibleMcpToolResults: {
+      directContent: { image: imageSupport.toolImageContent.model },
+      embeddedResources: {
+        blob: { image: imageSupport.embeddedResourceImages.model },
+      },
+      linkedResources: {
+        blob: { image: imageSupport.resourceLinkImages.model },
+      },
+    },
+    mcpToolResultImageRendering: {
+      placement: imageSupport.placement,
+      directContent: { image: imageSupport.toolImageContent.ui },
+      embeddedResources: {
+        blob: { image: imageSupport.embeddedResourceImages.ui },
+      },
+      linkedResources: {
+        blob: { image: imageSupport.resourceLinkImages.ui },
+      },
+    },
   };
+}
+
+function templateRendersOpenAiApps(
+  host: HostCompatCatalogHost | undefined
+): boolean {
+  const apps = host?.mcpProfile?.apps as
+    | { compatRuntime?: { openaiApps?: boolean } }
+    | undefined;
+  return apps?.compatRuntime?.openaiApps === true;
 }
 
 /** Fresh copy of a profile (incl. its nested arrays) so callers can't mutate
@@ -145,11 +234,11 @@ function cloneProfile(p: HostCompatProfile): HostCompatProfile {
  * Build host-compat profiles from a catalog document — the derivation half of
  * the data/engine split. Load-bearing semantics:
  *
- *  - `rendersOpenAiApps = openAiCompatByStyle[id] === true` — independent of
- *    `rendersMcpApps`.
+ *  - `rendersOpenAiApps` comes from the host object's
+ *    `mcpProfile.apps.compatRuntime.openaiApps`.
  *  - `rendersWidgets = rendersMcpApps || rendersOpenAiApps`; the capability
  *    matrix applies only when the host renders widgets at all, reading the
- *    matrix from `templatesById[id].mcpProfile.apps.mcpAppsOverrides` and
+ *    matrix from `hostsById[id].mcpProfile.apps.mcpAppsOverrides` and
  *    defaulting to `MCP_APPS_NO_CLAIMS` when the template carries no matrix.
  *
  * Does not mutate or freeze the input catalog.
@@ -157,18 +246,11 @@ function cloneProfile(p: HostCompatProfile): HostCompatProfile {
 export function buildHostProfilesFromCatalog(
   catalog: HostCompatCatalog
 ): HostCompatProfile[] {
-  return catalog.marketHosts
-    .map((host) => {
-      // Own-property checks throughout: host ids are arbitrary strings in a
-      // fetched catalog and can collide with Object.prototype keys.
-      const rendersOpenAiApps =
-        Object.hasOwn(catalog.openAiCompatByStyle, host.id) &&
-        catalog.openAiCompatByStyle[host.id] === true;
+  return Object.entries(catalog.hostsById)
+    .map(([id, host]) => {
+      const rendersOpenAiApps = templateRendersOpenAiApps(host);
       const rendersWidgets = host.rendersMcpApps || rendersOpenAiApps;
-      const templateCapabilities = getTemplateMcpAppsCapabilities(
-        catalog,
-        host.id
-      );
+      const templateCapabilities = getTemplateMcpAppsCapabilities(catalog, id);
       const capabilities = rendersWidgets
         ? templateCapabilities ?? MCP_APPS_NO_CLAIMS
         : undefined;

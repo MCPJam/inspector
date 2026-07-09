@@ -13,7 +13,10 @@ vi.mock("@mcpjam/sdk/host-compat", async (importOriginal) => {
 import {
   bundledHostCompatCatalog,
   fetchHostCompatCatalog,
+  getCatalogHosts,
+  getCatalogTemplate,
   type FetchHostCompatCatalogResult,
+  type HostCompatCatalog,
 } from "@mcpjam/sdk/host-compat";
 import { evaluateAllHosts } from "../engine";
 import { getHostProfiles } from "../profiles";
@@ -27,8 +30,8 @@ const fetchMock = vi.mocked(fetchHostCompatCatalog);
 // mechanics live in the SDK (`sdk/tests/host-compat-catalog.test.ts`); the
 // proxy fallback lives in `server/routes/v1/__tests__/host-catalog.test.ts`.
 
-const cloneCatalog = () =>
-  JSON.parse(JSON.stringify(bundledHostCompatCatalog()));
+const cloneCatalog = (): HostCompatCatalog =>
+  JSON.parse(JSON.stringify(bundledHostCompatCatalog())) as HostCompatCatalog;
 
 const liveResult = (version = 5): FetchHostCompatCatalogResult => ({
   ok: true,
@@ -49,8 +52,8 @@ describe("getHostProfiles", () => {
         .map((p) => p.id)
         .sort()
     ).toEqual(
-      bundledHostCompatCatalog()
-        .marketHosts.map((h) => h.id)
+      getCatalogHosts(bundledHostCompatCatalog())
+        .map((h) => h.id)
         .sort()
     );
   });
@@ -63,12 +66,14 @@ describe("getHostProfiles", () => {
 
   it("gives an unknown live-catalog host the placeholder logo (no broken img)", () => {
     const catalog = cloneCatalog();
-    catalog.marketHosts.push({
+    catalog.hostsById["brand-new-host"] = {
+      ...catalog.hostsById.claude,
       id: "brand-new-host",
       label: "Brand New",
       provenance: "vendor-doc",
       rendersMcpApps: true,
-    });
+      hostStyle: "brand-new-host",
+    };
     const added = getHostProfiles(catalog).find(
       (p) => p.id === "brand-new-host"
     );
@@ -82,14 +87,16 @@ describe("evaluateAllHosts catalog threading", () => {
     const { reports } = evaluateAllHosts(null, undefined, undefined);
     // Track the bundled catalog rather than a hard-coded count so this stays
     // green when MARKET_HOSTS gains/loses a host.
-    expect(reports).toHaveLength(bundledHostCompatCatalog().marketHosts.length);
+    expect(reports).toHaveLength(
+      getCatalogHosts(bundledHostCompatCatalog()).length
+    );
   });
 
   it("live catalog drives both verdict rows and presentation join", () => {
     const catalog = cloneCatalog();
-    catalog.marketHosts = catalog.marketHosts.filter(
-      (h: { id: string }) => h.id === "claude"
-    );
+    for (const id of Object.keys(catalog.hostsById)) {
+      if (id !== "claude") delete catalog.hostsById[id];
+    }
     const { reports } = evaluateAllHosts(null, undefined, undefined, catalog);
     expect(reports.map((r) => r.hostId)).toEqual(["claude"]);
     expect(reports[0].logoSrc).toBe("/claude_logo.png");
@@ -120,9 +127,9 @@ describe("useHostCatalog", () => {
     const { result } = renderHook(() => useHostCatalog());
     await waitFor(() => expect(result.current.status).toBe("fallback"));
     expect(result.current.source).toBe("bundled");
-    expect(result.current.catalog?.templatesById.mcpjam.hostStyle).toBe(
-      "mcpjam"
-    );
+    expect(
+      getCatalogTemplate(result.current.catalog!, "mcpjam")?.hostStyle
+    ).toBe("mcpjam");
   });
 
   it("exposes error status when the fetch fails", async () => {

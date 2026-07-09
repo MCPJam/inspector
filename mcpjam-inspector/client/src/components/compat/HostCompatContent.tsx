@@ -38,21 +38,23 @@ import type {
 import { standardEventProps } from "@/lib/PosthogUtils";
 import { routePaths } from "@/lib/app-navigation";
 import { useHostMutations } from "@/hooks/useClients";
+import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { HOST_TEMPLATES, type HostTemplateId } from "@/lib/client-templates";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
+import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { filterReportsByFeatureFlags } from "@/lib/host-compat/feature-visibility";
 
 /** Compat profile ids (`claude`, `chatgpt`, …) are the same string literals
  * as the host template ids, so a verdict maps to a template with no lookup
  * table — but we still gate on the catalog so a profile id that ever drifts
  * away from a real template silently hides its CTA instead of crashing. */
-const COMPAT_TEMPLATE_LABEL = new Map<string, string>(
-  HOST_TEMPLATES.map((t) => [t.id, t.label])
-);
+const COMPAT_TEMPLATE_IDS = new Set<string>(HOST_TEMPLATES.map((t) => t.id));
 
 const isHostTemplateId = (id: string): id is HostTemplateId =>
-  COMPAT_TEMPLATE_LABEL.has(id);
+  COMPAT_TEMPLATE_IDS.has(id);
 
 function cloneHostTemplateInput(value: unknown): HostConfigInputV2 {
   return JSON.parse(JSON.stringify(value)) as HostConfigInputV2;
@@ -127,6 +129,16 @@ export function HostCompatContent({
       ),
     [toolsData, widgetUsage, protocolVersion, catalogState]
   );
+  const claudeCodeEnabled = useClaudeCodeHostEnabled();
+  const codexEnabled = useCodexHostEnabled();
+  const visibleReports = useMemo(
+    () =>
+      filterReportsByFeatureFlags(reports, {
+        claudeCode: claudeCodeEnabled,
+        codex: codexEnabled,
+      }),
+    [reports, claudeCodeEnabled, codexEnabled]
+  );
 
   // Tier-2: render the server's widget live in each host's emulation.
   const live = useLiveRenders(server.name, requirements);
@@ -155,12 +167,11 @@ export function HostCompatContent({
     posthog.capture("host_compat_tab_viewed", {
       ...standardEventProps(source),
       server_name: server.name,
-      host_count: reports.length,
+      host_count: visibleReports.length,
     });
     // Intentionally keyed on server.name only — reports churn as tools load,
     // but this is a once-per-server view signal, not a verdict snapshot.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [server.name]);
+  }, [server.name, posthog, source, visibleReports.length]);
 
   // The CTA that turns a verdict into a host: create a host from the
   // matching template with THIS server attached, select it, and jump to the
@@ -170,16 +181,18 @@ export function HostCompatContent({
   const handleTestInHost = async (report: HostCompatReport) => {
     const templateId = report.hostId;
     if (!projectId || !serverId || !isHostTemplateId(templateId)) return;
-    const template =
-      catalogState.status === "live" &&
-      Object.hasOwn(catalogState.catalog.templatesById, templateId)
-        ? catalogState.catalog.templatesById[templateId]
-        : undefined;
+    const catalog =
+      catalogState.status === "live" ? catalogState.catalog : null;
+    const template = catalog
+      ? getCatalogTemplate(catalog, templateId)
+      : undefined;
     if (!template) {
       toast.error("Could not load live host templates");
       return;
     }
-    const label = COMPAT_TEMPLATE_LABEL.get(templateId) ?? report.hostLabel;
+    const label =
+      (catalog ? getCatalogHost(catalog, templateId)?.label : undefined) ??
+      report.hostLabel;
 
     posthog.capture("compat_cta_clicked", {
       ...standardEventProps(source),
@@ -237,7 +250,7 @@ export function HostCompatContent({
       </p>
 
       <div className="divide-y divide-border/50">
-        {reports.map((report) => {
+        {visibleReports.map((report) => {
           const verdict = VERDICT_META[report.verdict];
           const hasFindings = report.findings.length > 0;
           const isOpen = expandedHostId === report.hostId;
@@ -250,7 +263,8 @@ export function HostCompatContent({
             : "";
           const canCreateFromLiveTemplate =
             catalogState.status === "live" &&
-            Object.hasOwn(catalogState.catalog.templatesById, report.hostId);
+            getCatalogTemplate(catalogState.catalog, report.hostId) !==
+              undefined;
           return (
             <div key={report.hostId} className="py-2.5 first:pt-1.5">
               <div className="flex items-center gap-2">

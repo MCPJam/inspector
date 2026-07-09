@@ -21,6 +21,8 @@ import { Hono } from "hono";
 import {
   bundledHostCompatCatalog,
   hostCompatCatalogEnvelopeSchema,
+  hydrateHostCompatCatalog,
+  SUPPORTED_CATALOG_SCHEMA_VERSION,
   type HostCompatCatalog,
   type HostCompatCatalogEnvelope,
 } from "@mcpjam/sdk/host-compat";
@@ -53,7 +55,7 @@ export function resetHostCatalogCacheForTests(): void {
 
 function bundledEnvelope(): CatalogEnvelope {
   return {
-    schemaVersion: 1,
+    schemaVersion: SUPPORTED_CATALOG_SCHEMA_VERSION,
     // Version 0 = "not a backend publish"; consumers compare against >=1.
     version: 0,
     contentHash: "",
@@ -82,7 +84,11 @@ async function fetchUpstreamEnvelope(
     // degrade to stale/bundled, never be proxied through to consumers.
     const parsed = hostCompatCatalogEnvelopeSchema.safeParse(body);
     if (!parsed.success) return null;
-    return { ...parsed.data, source: "live" };
+    return {
+      ...parsed.data,
+      catalog: hydrateHostCompatCatalog(parsed.data.catalog),
+      source: "live",
+    };
   } catch {
     return null;
   } finally {

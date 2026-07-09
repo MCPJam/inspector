@@ -28,6 +28,7 @@ import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
+import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 
 interface CreateHostDialogProps {
   isOpen: boolean;
@@ -74,12 +75,16 @@ export function CreateHostDialog({
     initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID
   );
   const [isSaving, setIsSaving] = useState(false);
-  const liveTemplates =
-    catalogState.status === "live" ? catalogState.catalog.templatesById : null;
   const selectedTemplateInput =
-    liveTemplates && Object.hasOwn(liveTemplates, selectedTemplateId)
-      ? liveTemplates[selectedTemplateId]
+    catalogState.status === "live"
+      ? getCatalogTemplate(catalogState.catalog, selectedTemplateId)
       : undefined;
+  const selectedTemplateLabel =
+    (catalogState.status === "live"
+      ? getCatalogHost(catalogState.catalog, selectedTemplateId)?.label
+      : undefined) ??
+    HOST_TEMPLATES.find((t) => t.id === selectedTemplateId)?.label ??
+    "";
   const templatesUnavailableMessage =
     catalogState.status === "loading"
       ? "Loading host templates..."
@@ -110,9 +115,8 @@ export function CreateHostDialog({
 
   useEffect(() => {
     if (!isOpen) return;
-    const template = HOST_TEMPLATES.find((t) => t.id === selectedTemplateId);
-    setName(template?.label ?? "");
-  }, [isOpen, selectedTemplateId]);
+    setName(selectedTemplateLabel);
+  }, [isOpen, selectedTemplateId, selectedTemplateLabel]);
 
   const handleClose = () => {
     setName("");
@@ -183,12 +187,15 @@ export function CreateHostDialog({
             <div className="grid grid-cols-3 gap-2">
               {visibleTemplates.map((template) => {
                 const isSelected = template.id === selectedTemplateId;
+                const catalogHost =
+                  catalogState.status === "live"
+                    ? getCatalogHost(catalogState.catalog, template.id)
+                    : undefined;
+                const templateLabel = catalogHost?.label ?? template.label;
                 const templateAvailable =
                   catalogState.status === "live" &&
-                  Object.hasOwn(
-                    catalogState.catalog.templatesById,
-                    template.id
-                  );
+                  getCatalogTemplate(catalogState.catalog, template.id) !==
+                    undefined;
                 return (
                   <button
                     key={template.id}
@@ -210,7 +217,7 @@ export function CreateHostDialog({
                       className="h-6 w-6 object-contain"
                     />
                     <span className="text-sm font-medium leading-none">
-                      {template.label}
+                      {templateLabel}
                     </span>
                   </button>
                 );

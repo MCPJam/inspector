@@ -11,6 +11,9 @@ import { useHostCompatReports } from "@/lib/host-compat/use-host-compat";
 import type { HostCompatReport } from "@/lib/host-compat/types";
 import { VERDICT_META } from "@/components/compat/verdict-meta";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { filterProfilesByFeatureFlags } from "@/lib/host-compat/feature-visibility";
 
 type HostColumn = {
   id: string;
@@ -149,18 +152,23 @@ export function HostCompatMatrix({
   onSelectServer: (name: string) => void;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  const claudeCodeEnabled = useClaudeCodeHostEnabled();
+  const codexEnabled = useCodexHostEnabled();
   // Live catalog so the column set matches the per-row verdicts (which also
   // recompute on catalogState via useHostCompatReports).
   const catalogState = useHostCatalog();
   const hosts = useMemo<HostColumn[]>(
     () =>
-      getHostProfiles(catalogState?.catalog).map((p) => ({
+      filterProfilesByFeatureFlags(getHostProfiles(catalogState?.catalog), {
+        claudeCode: claudeCodeEnabled,
+        codex: codexEnabled,
+      }).map((p) => ({
         id: p.id,
         label: p.label,
         logoSrc: p.logoSrc,
         logoSrcByTheme: p.logoSrcByTheme,
       })),
-    [catalogState],
+    [catalogState, claudeCodeEnabled, codexEnabled],
   );
 
   const [byServer, setByServer] = useState<Record<string, HostCompatReport[]>>(

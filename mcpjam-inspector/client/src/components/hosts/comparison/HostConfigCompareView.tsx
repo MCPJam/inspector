@@ -16,6 +16,7 @@ import { useSearchParams } from "react-router";
 import { useHost, useHostList } from "@/hooks/useClients";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import type {
   HostComparisonSubject,
   HostConfigFieldDef,
@@ -100,14 +101,15 @@ export function HostConfigCompareView({
       isAuthenticated: canQueryLiveHosts,
       projectId,
     });
+  const catalogState = useHostCatalog();
   const liveHosts = canQueryLiveHosts ? queriedLiveHosts : [];
-  const listLoading = canQueryLiveHosts ? queriedListLoading : false;
+  const listLoading =
+    (canQueryLiveHosts ? queriedListLoading : false) ||
+    catalogState.status === "loading";
   const selectionScopeId = presetOnly ? "public" : projectId ?? "";
 
-  // Static host profiles (Claude, ChatGPT, Cursor, …) offered as opt-in
-  // comparison columns even when the user hasn't created them — the same
-  // best-effort profiles the server detail modal's Hosts tab renders. Threaded
-  // with the current theme so preset configs match the rest of the app.
+  // Catalog host profiles (Claude, ChatGPT, Cursor, …) offered as opt-in
+  // comparison columns even when the user hasn't created them.
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const excludedPresetTemplateIds = useMemo(() => {
@@ -117,10 +119,12 @@ export function HostConfigCompareView({
   }, [claudeCodeEnabled]);
   const presets = useMemo(
     () =>
-      buildPresetCompareEntries(themeMode, {
-        excludedTemplateIds: excludedPresetTemplateIds,
-      }),
-    [themeMode, excludedPresetTemplateIds]
+      catalogState.catalog
+        ? buildPresetCompareEntries(catalogState.catalog, {
+            excludedTemplateIds: excludedPresetTemplateIds,
+          })
+        : { hosts: [], subjects: {} },
+    [catalogState.catalog, excludedPresetTemplateIds]
   );
 
   // Real created hosts first, then presets — what the selector chips iterate.

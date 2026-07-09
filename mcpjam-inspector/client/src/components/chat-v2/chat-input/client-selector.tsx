@@ -29,6 +29,8 @@ import {
   type HostTemplateId,
 } from "@/lib/client-templates";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
+import { getCatalogHost } from "@mcpjam/sdk/host-compat";
 
 // Quick-add priority. These templates surface first in the Add-host strip;
 // everything else follows in template order and spills into the overflow (⋯).
@@ -131,6 +133,7 @@ export function ClientSelector({
   const [createTemplateId, setCreateTemplateId] = useState<
     HostTemplateId | undefined
   >(undefined);
+  const catalogState = useHostCatalog();
   const keepPopoverOpenRef = useRef(false);
   const keepPopoverOpenTimeoutRef = useRef<number | null>(null);
   const onOpenChangeRef = useRef(onOpenChange);
@@ -555,23 +558,32 @@ export function ClientSelector({
                 </button>
                 <span className="flex flex-1 items-center justify-between gap-0.5">
                   {ORDERED_TEMPLATES.slice(0, QUICK_ADD_VISIBLE).map(
-                    (template) => (
-                      <button
-                        key={template.id}
-                        type="button"
-                        aria-label={`Add ${template.label} host`}
-                        title={`Add ${template.label}`}
-                        data-testid={`client-quick-add-${template.id}`}
-                        onClick={() => openCreateWithTemplate(template.id)}
-                        className="inline-flex size-5 shrink-0 items-center justify-center rounded-sm transition-colors hover:bg-accent"
-                      >
-                        <img
-                          src={getHostTemplateLogoSrc(template, modalThemeMode)}
-                          alt=""
-                          className="size-4 object-contain"
-                        />
-                      </button>
-                    )
+                    (template) => {
+                      const catalogHost = catalogState.catalog
+                        ? getCatalogHost(catalogState.catalog, template.id)
+                        : undefined;
+                      const templateLabel = catalogHost?.label ?? template.label;
+                      return (
+                        <button
+                          key={template.id}
+                          type="button"
+                          aria-label={`Add ${templateLabel} host`}
+                          title={`Add ${templateLabel}`}
+                          data-testid={`client-quick-add-${template.id}`}
+                          onClick={() => openCreateWithTemplate(template.id)}
+                          className="inline-flex size-5 shrink-0 items-center justify-center rounded-sm transition-colors hover:bg-accent"
+                        >
+                          <img
+                            src={getHostTemplateLogoSrc(
+                              template,
+                              modalThemeMode,
+                            )}
+                            alt=""
+                            className="size-4 object-contain"
+                          />
+                        </button>
+                      );
+                    }
                   )}
                 </span>
                 {ORDERED_TEMPLATES.length > QUICK_ADD_VISIBLE ? (

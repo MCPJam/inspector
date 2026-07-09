@@ -1,5 +1,8 @@
 import { DEFAULT_PLATFORM_API_BASE_URL } from "../platform/client.js";
-import type { HostCompatCatalog } from "./catalog.js";
+import {
+  hydrateHostCompatCatalog,
+  type HostCompatCatalog,
+} from "./catalog.js";
 import { hostCompatCatalogEnvelopeSchema } from "./catalog-schema.js";
 
 /**
@@ -86,7 +89,7 @@ export async function fetchHostCompatCatalog(
 
     return {
       ok: true,
-      catalog: parsed.data.catalog,
+      catalog: hydrateHostCompatCatalog(parsed.data.catalog),
       version: parsed.data.version,
       contentHash: parsed.data.contentHash,
       publishedAt: parsed.data.publishedAt,

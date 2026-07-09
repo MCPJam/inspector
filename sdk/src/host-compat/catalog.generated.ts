@@ -6,303 +6,27 @@
 import type { HostCompatCatalog } from "./catalog.js";
 
 export const BUNDLED_HOST_COMPAT_CATALOG = {
-  marketHosts: [
-    {
-      id: "claude",
-      label: "Claude",
-      provenance: "assumed",
-      rendersMcpApps: true,
-      imageSupport: {
-        toolImageContent: {
-          model: true,
-          ui: true,
-        },
-        embeddedResourceImages: {
-          model: true,
-          ui: true,
-        },
-        resourceLinkImages: {
-          model: false,
-          ui: false,
-        },
-        placement: "inline",
-      },
-    },
-    {
-      id: "chatgpt",
-      label: "ChatGPT",
-      provenance: "vendor-doc",
-      rendersMcpApps: true,
-      imageSupport: {
-        toolImageContent: {
-          model: true,
-          ui: true,
-        },
-        embeddedResourceImages: {
-          model: true,
-          ui: true,
-        },
-        resourceLinkImages: {
-          model: true,
-          ui: true,
-        },
-        placement: "inline",
-      },
-    },
-    {
-      id: "mistral",
-      label: "Mistral",
-      provenance: "probe",
-      rendersMcpApps: true,
-      supportedProtocolVersions: ["2025-11-25"],
-      imageSupport: {
-        toolImageContent: {
-          model: false,
-          ui: false,
-        },
-        embeddedResourceImages: {
-          model: false,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: false,
-          ui: false,
-        },
-        placement: "none",
-      },
-    },
-    {
-      id: "goose",
-      label: "Goose",
-      provenance: "probe",
-      rendersMcpApps: true,
-      supportedProtocolVersions: ["2025-03-26"],
-      imageSupport: {
-        toolImageContent: {
-          model: true,
-          ui: true,
-        },
-        embeddedResourceImages: {
-          model: false,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: false,
-          ui: false,
-        },
-        placement: "collapsed",
-      },
-    },
-    {
-      id: "cursor",
-      label: "Cursor",
-      provenance: "probe",
-      rendersMcpApps: true,
-      imageSupport: {
-        toolImageContent: {
-          model: true,
-          ui: false,
-        },
-        embeddedResourceImages: {
-          model: true,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: true,
-          ui: false,
-        },
-        placement: "none",
-      },
-    },
-    {
-      id: "copilot",
-      label: "Copilot",
-      provenance: "vendor-doc",
-      rendersMcpApps: true,
-      imageSupport: {
-        toolImageContent: {
-          model: true,
-          ui: false,
-        },
-        embeddedResourceImages: {
-          model: true,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: true,
-          ui: false,
-        },
-        placement: "none",
-      },
-    },
-    {
-      id: "codex",
-      label: "Codex",
-      provenance: "assumed",
-      rendersMcpApps: false,
-      supportedProtocolVersions: ["2025-06-18"],
-      imageSupport: {
-        toolImageContent: {
-          model: true,
-          ui: true,
-        },
-        embeddedResourceImages: {
-          model: true,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: true,
-          ui: false,
-        },
-        placement: "collapsed",
-      },
-    },
-    {
-      id: "n8n",
-      label: "n8n",
-      provenance: "probe",
-      rendersMcpApps: false,
-      supportedProtocolVersions: ["2025-11-25"],
-      imageSupport: {
-        toolImageContent: {
-          model: false,
-          ui: false,
-        },
-        embeddedResourceImages: {
-          model: false,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: false,
-          ui: false,
-        },
-        placement: "none",
-      },
-    },
-    {
-      id: "perplexity",
-      label: "Perplexity",
-      provenance: "probe",
-      rendersMcpApps: false,
-      supportedProtocolVersions: ["2025-06-18"],
-      imageSupport: {
-        toolImageContent: {
-          model: false,
-          ui: false,
-        },
-        embeddedResourceImages: {
-          model: false,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: false,
-          ui: false,
-        },
-        placement: "none",
-      },
-    },
-    {
-      id: "cline",
-      label: "Cline",
-      provenance: "probe",
-      rendersMcpApps: false,
-      supportedProtocolVersions: ["2025-11-25"],
-      imageSupport: {
-        toolImageContent: {
-          model: true,
-          ui: false,
-        },
-        embeddedResourceImages: {
-          model: false,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: false,
-          ui: false,
-        },
-        placement: "none",
-      },
-    },
-    {
-      id: "slack",
-      label: "Slackbot",
-      provenance: "probe",
-      rendersMcpApps: true,
-      supportedProtocolVersions: ["2025-06-18"],
-      imageSupport: {
-        toolImageContent: {
-          model: false,
-          ui: false,
-        },
-        embeddedResourceImages: {
-          model: false,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: false,
-          ui: false,
-        },
-        placement: "none",
-      },
-    },
-    {
-      id: "vscode",
-      label: "VS Code",
-      provenance: "probe",
-      rendersMcpApps: true,
-      imageSupport: {
-        toolImageContent: {
-          model: true,
-          ui: true,
-        },
-        embeddedResourceImages: {
-          model: true,
-          ui: true,
-        },
-        resourceLinkImages: {
-          model: true,
-          ui: true,
-        },
-        placement: "inline",
-      },
-    },
-    {
-      id: "notion",
-      label: "Notion",
-      provenance: "probe",
-      rendersMcpApps: false,
-      supportedProtocolVersions: ["2025-11-25"],
-      imageSupport: {
-        toolImageContent: {
-          model: false,
-          ui: true,
-        },
-        embeddedResourceImages: {
-          model: false,
-          ui: false,
-        },
-        resourceLinkImages: {
-          model: false,
-          ui: false,
-        },
-        placement: "collapsed",
-      },
-    },
-  ],
-  openAiCompatByStyle: {
-    chatgpt: true,
-    copilot: true,
-    mcpjam: true,
-    claude: false,
-    cursor: false,
-    codex: false,
-    goose: false,
-    slack: false,
-    vscode: false,
-    notion: false,
-  },
-  templatesById: {
+  hostsById: {
     mcpjam: {
+      id: "mcpjam",
+      label: "MCPJam",
+      provenance: "assumed",
+      rendersMcpApps: true,
+      imageSupport: {
+        toolImageContent: {
+          model: true,
+          ui: true,
+        },
+        embeddedResourceImages: {
+          model: true,
+          ui: true,
+        },
+        resourceLinkImages: {
+          model: true,
+          ui: true,
+        },
+        placement: "inline",
+      },
       hostStyle: "mcpjam",
       modelId: "anthropic/claude-haiku-4.5",
       systemPrompt: "",
@@ -433,21 +157,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
-      hostCapabilitiesOverride: {
-        experimental: {},
-        openLinks: {},
-        downloadFile: {},
-        serverTools: {},
-        serverResources: {},
-        logging: {},
-        updateModelContext: {
-          text: {},
-          image: {},
-        },
-        message: {
-          text: {},
-        },
-      },
       mcpProfile: {
         profileVersion: 1,
         initialize: {
@@ -466,6 +175,27 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           compatRuntime: {
             openaiApps: true,
           },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen", "pip"],
+            toolInputPartial: true,
+            toolCancelled: true,
+            hostContextChanged: true,
+            resourceTeardown: true,
+            toolInfo: true,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: true,
+            message: true,
+            sandboxPermissions: true,
+            cspFrameDomains: true,
+            cspBaseUriDomains: true,
+            resourcePrefersBorder: true,
+            downloadFile: true,
+            requestTeardown: true,
+            widgetDisplayModeRequests: "accept",
+          },
           sandbox: {
             csp: {
               mode: "declared",
@@ -482,8 +212,58 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: true,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "inline",
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: true,
+          },
+        },
+      },
     },
     claude: {
+      id: "claude",
+      label: "Claude",
+      provenance: "assumed",
+      rendersMcpApps: true,
+      imageSupport: {
+        toolImageContent: {
+          model: true,
+          ui: true,
+        },
+        embeddedResourceImages: {
+          model: true,
+          ui: true,
+        },
+        resourceLinkImages: {
+          model: false,
+          ui: false,
+        },
+        placement: "inline",
+      },
       hostStyle: "claude",
       modelId: "anthropic/claude-haiku-4.5",
       systemPrompt: "",
@@ -744,8 +524,59 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "inline",
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
     },
     "claude-code": {
+      id: "claude-code",
+      label: "Claude Code",
+      provenance: "vendor-doc",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-11-25"],
+      imageSupport: {
+        toolImageContent: {
+          model: false,
+          ui: false,
+        },
+        embeddedResourceImages: {
+          model: false,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: false,
+          ui: false,
+        },
+        placement: "none",
+      },
       hostStyle: "claude-code",
       modelId: "anthropic/claude-haiku-4.5",
       systemPrompt: "",
@@ -769,7 +600,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         elicitation: {},
       },
       hostContext: {},
-      hostCapabilitiesOverride: {},
       mcpProfile: {
         profileVersion: 1,
         initialize: {
@@ -782,9 +612,82 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             websiteUrl: "https://claude.com/claude-code",
           },
         },
+        apps: {
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline"],
+            toolInputPartial: false,
+            toolCancelled: false,
+            hostContextChanged: false,
+            resourceTeardown: false,
+            toolInfo: false,
+            openLinks: false,
+            serverTools: false,
+            serverResources: false,
+            logging: false,
+            updateModelContext: false,
+            message: false,
+            sandboxPermissions: false,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: false,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      },
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "none",
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
       },
     },
     chatgpt: {
+      id: "chatgpt",
+      label: "ChatGPT",
+      provenance: "vendor-doc",
+      rendersMcpApps: true,
+      imageSupport: {
+        toolImageContent: {
+          model: true,
+          ui: true,
+        },
+        embeddedResourceImages: {
+          model: true,
+          ui: true,
+        },
+        resourceLinkImages: {
+          model: true,
+          ui: true,
+        },
+        placement: "inline",
+      },
       hostStyle: "chatgpt",
       modelId: "openai/gpt-5-nano",
       systemPrompt: "",
@@ -895,8 +798,59 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: true,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "inline",
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: true,
+          },
+        },
+      },
     },
     mistral: {
+      id: "mistral",
+      label: "Mistral",
+      provenance: "probe",
+      rendersMcpApps: true,
+      supportedProtocolVersions: ["2025-11-25"],
+      imageSupport: {
+        toolImageContent: {
+          model: false,
+          ui: false,
+        },
+        embeddedResourceImages: {
+          model: false,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: false,
+          ui: false,
+        },
+        placement: "none",
+      },
       hostStyle: "mistral",
       modelId: "mistralai/mistral-large-2512",
       systemPrompt: "",
@@ -1017,8 +971,59 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "none",
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
     },
     goose: {
+      id: "goose",
+      label: "Goose",
+      provenance: "probe",
+      rendersMcpApps: true,
+      supportedProtocolVersions: ["2025-03-26"],
+      imageSupport: {
+        toolImageContent: {
+          model: true,
+          ui: true,
+        },
+        embeddedResourceImages: {
+          model: false,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: false,
+          ui: false,
+        },
+        placement: "collapsed",
+      },
       hostStyle: "goose",
       modelId: "openai/gpt-5-nano",
       systemPrompt: "",
@@ -1207,8 +1212,59 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "collapsed",
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
     },
     slack: {
+      id: "slack",
+      label: "Slackbot",
+      provenance: "probe",
+      rendersMcpApps: true,
+      supportedProtocolVersions: ["2025-06-18"],
+      imageSupport: {
+        toolImageContent: {
+          model: false,
+          ui: false,
+        },
+        embeddedResourceImages: {
+          model: false,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: false,
+          ui: false,
+        },
+        placement: "none",
+      },
       hostStyle: "slack",
       modelId: "openai/gpt-5-nano",
       systemPrompt: "",
@@ -1384,8 +1440,58 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "none",
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
     },
     cursor: {
+      id: "cursor",
+      label: "Cursor",
+      provenance: "probe",
+      rendersMcpApps: true,
+      imageSupport: {
+        toolImageContent: {
+          model: true,
+          ui: false,
+        },
+        embeddedResourceImages: {
+          model: true,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: true,
+          ui: false,
+        },
+        placement: "none",
+      },
       hostStyle: "cursor",
       modelId: "anthropic/claude-sonnet-4.5",
       systemPrompt: "",
@@ -1475,8 +1581,59 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: true,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "none",
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
     },
     codex: {
+      id: "codex",
+      label: "Codex",
+      provenance: "assumed",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-06-18"],
+      imageSupport: {
+        toolImageContent: {
+          model: true,
+          ui: true,
+        },
+        embeddedResourceImages: {
+          model: true,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: true,
+          ui: false,
+        },
+        placement: "collapsed",
+      },
       hostStyle: "codex",
       modelId: "openai/gpt-5-nano",
       systemPrompt: "",
@@ -1510,8 +1667,58 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: true,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "collapsed",
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
     },
     copilot: {
+      id: "copilot",
+      label: "Copilot",
+      provenance: "vendor-doc",
+      rendersMcpApps: true,
+      imageSupport: {
+        toolImageContent: {
+          model: true,
+          ui: false,
+        },
+        embeddedResourceImages: {
+          model: true,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: true,
+          ui: false,
+        },
+        placement: "none",
+      },
       hostStyle: "copilot",
       modelId: "openai/gpt-5.3-chat",
       systemPrompt: "",
@@ -1614,8 +1821,58 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: true,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "none",
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
     },
     vscode: {
+      id: "vscode",
+      label: "VS Code",
+      provenance: "probe",
+      rendersMcpApps: true,
+      imageSupport: {
+        toolImageContent: {
+          model: true,
+          ui: true,
+        },
+        embeddedResourceImages: {
+          model: true,
+          ui: true,
+        },
+        resourceLinkImages: {
+          model: true,
+          ui: true,
+        },
+        placement: "inline",
+      },
       hostStyle: "vscode",
       modelId: "anthropic/claude-sonnet-4.5",
       systemPrompt: "",
@@ -1705,8 +1962,59 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: true,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "inline",
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: true,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: true,
+          },
+        },
+      },
     },
     agentcore: {
+      id: "agentcore",
+      label: "AgentCore",
+      provenance: "vendor-doc",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-06-18"],
+      imageSupport: {
+        toolImageContent: {
+          model: false,
+          ui: false,
+        },
+        embeddedResourceImages: {
+          model: false,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: false,
+          ui: false,
+        },
+        placement: "none",
+      },
       hostStyle: "agentcore",
       modelId: "anthropic/claude-haiku-4.5",
       systemPrompt: "",
@@ -1738,8 +2046,59 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
         },
       },
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "none",
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
     },
     n8n: {
+      id: "n8n",
+      label: "n8n",
+      provenance: "probe",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-11-25"],
+      imageSupport: {
+        toolImageContent: {
+          model: false,
+          ui: false,
+        },
+        embeddedResourceImages: {
+          model: false,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: false,
+          ui: false,
+        },
+        placement: "none",
+      },
       hostStyle: "n8n",
       modelId: "openai/gpt-5-nano",
       systemPrompt: "",
@@ -1756,7 +2115,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       },
       clientCapabilities: {},
       hostContext: {},
-      hostCapabilitiesOverride: {},
       mcpProfile: {
         profileVersion: 1,
         initialize: {
@@ -1766,9 +2124,83 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             version: "1.3",
           },
         },
+        apps: {
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline"],
+            toolInputPartial: false,
+            toolCancelled: false,
+            hostContextChanged: false,
+            resourceTeardown: false,
+            toolInfo: false,
+            openLinks: false,
+            serverTools: false,
+            serverResources: false,
+            logging: false,
+            updateModelContext: false,
+            message: false,
+            sandboxPermissions: false,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: false,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      },
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "none",
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
       },
     },
     perplexity: {
+      id: "perplexity",
+      label: "Perplexity",
+      provenance: "probe",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-06-18"],
+      imageSupport: {
+        toolImageContent: {
+          model: false,
+          ui: false,
+        },
+        embeddedResourceImages: {
+          model: false,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: false,
+          ui: false,
+        },
+        placement: "none",
+      },
       hostStyle: "perplexity",
       modelId: "openai/gpt-5-nano",
       systemPrompt: "",
@@ -1785,7 +2217,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       },
       clientCapabilities: {},
       hostContext: {},
-      hostCapabilitiesOverride: {},
       mcpProfile: {
         profileVersion: 1,
         initialize: {
@@ -1795,9 +2226,83 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             version: "0.1.0",
           },
         },
+        apps: {
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline"],
+            toolInputPartial: false,
+            toolCancelled: false,
+            hostContextChanged: false,
+            resourceTeardown: false,
+            toolInfo: false,
+            openLinks: false,
+            serverTools: false,
+            serverResources: false,
+            logging: false,
+            updateModelContext: false,
+            message: false,
+            sandboxPermissions: false,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: false,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      },
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "none",
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
       },
     },
     cline: {
+      id: "cline",
+      label: "Cline",
+      provenance: "probe",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-11-25"],
+      imageSupport: {
+        toolImageContent: {
+          model: true,
+          ui: false,
+        },
+        embeddedResourceImages: {
+          model: false,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: false,
+          ui: false,
+        },
+        placement: "none",
+      },
       hostStyle: "cline",
       modelId: "anthropic/claude-haiku-4.5",
       systemPrompt: "",
@@ -1814,7 +2319,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       },
       clientCapabilities: {},
       hostContext: {},
-      hostCapabilitiesOverride: {},
       mcpProfile: {
         profileVersion: 1,
         initialize: {
@@ -1824,9 +2328,83 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             version: "3.89.2",
           },
         },
+        apps: {
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline"],
+            toolInputPartial: false,
+            toolCancelled: false,
+            hostContextChanged: false,
+            resourceTeardown: false,
+            toolInfo: false,
+            openLinks: false,
+            serverTools: false,
+            serverResources: false,
+            logging: false,
+            updateModelContext: false,
+            message: false,
+            sandboxPermissions: false,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: false,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      },
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "none",
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
       },
     },
     notion: {
+      id: "notion",
+      label: "Notion",
+      provenance: "probe",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-11-25"],
+      imageSupport: {
+        toolImageContent: {
+          model: false,
+          ui: true,
+        },
+        embeddedResourceImages: {
+          model: false,
+          ui: false,
+        },
+        resourceLinkImages: {
+          model: false,
+          ui: false,
+        },
+        placement: "collapsed",
+      },
       hostStyle: "notion",
       modelId: "anthropic/claude-haiku-4.5",
       systemPrompt: "",
@@ -1843,7 +2421,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       },
       clientCapabilities: {},
       hostContext: {},
-      hostCapabilitiesOverride: {},
       mcpProfile: {
         profileVersion: 1,
         initialize: {
@@ -1851,6 +2428,60 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           clientInfo: {
             name: "notion",
             version: "1.0.0",
+          },
+        },
+        apps: {
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline"],
+            toolInputPartial: false,
+            toolCancelled: false,
+            hostContextChanged: false,
+            resourceTeardown: false,
+            toolInfo: false,
+            openLinks: false,
+            serverTools: false,
+            serverResources: false,
+            logging: false,
+            updateModelContext: false,
+            message: false,
+            sandboxPermissions: false,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: false,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      },
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "collapsed",
+        directContent: {
+          image: true,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
           },
         },
       },
