@@ -110,6 +110,23 @@ function toSafeOpenInAppUrl(value: string): string | null {
   }
 }
 
+/**
+ * A widget-supplied `ui/download-file` `resource_link` may only target http(s):
+ * that gate is what keeps `javascript:`/`data:`/`file:` URLs out of the
+ * `window.open` the host performs on the widget's behalf. Resolves relative URIs
+ * against the host document. Returns the absolute href when allowed, else null —
+ * a single predicate shared by the pre-prompt reject and the download loop so
+ * the two can't drift apart and silently weaken the gate.
+ */
+function toSafeDownloadLinkUrl(uri: string): string | null {
+  try {
+    const parsed = new URL(uri, window.location.href);
+    return SAFE_OPEN_IN_APP_PROTOCOLS.has(parsed.protocol) ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
 function readExplicitBaseHref(html: string | null): string | null {
   if (!html) return null;
 
@@ -3256,13 +3273,7 @@ export function MCPAppsRendererSurface({
                   // prompting — the download loop below enforces the same
                   // scheme gate, so prompting for a link we'll refuse anyway
                   // would show the user a misleading confirmation.
-                  let protocol: string | undefined;
-                  try {
-                    protocol = new URL(link.uri, window.location.href).protocol;
-                  } catch {
-                    protocol = undefined;
-                  }
-                  if (protocol !== "http:" && protocol !== "https:") {
+                  if (toSafeDownloadLinkUrl(link.uri) === null) {
                     return { isError: true };
                   }
                   info = {
@@ -3317,14 +3328,15 @@ export function MCPAppsRendererSurface({
                   }
                 } else if (item.type === "resource_link") {
                   const link = item as { uri: string };
-                  // Refuse navigations that aren't a browser-fetchable scheme.
-                  const parsed = new URL(link.uri, window.location.href);
-                  if (!["http:", "https:"].includes(parsed.protocol)) {
+                  // Refuse navigations that aren't a browser-fetchable scheme
+                  // (shared gate with the pre-prompt check above).
+                  const safeHref = toSafeDownloadLinkUrl(link.uri);
+                  if (safeHref === null) {
                     throw new Error(
-                      `Unsupported download URI protocol: ${parsed.protocol}`
+                      `Unsupported download URI: ${link.uri}`
                     );
                   }
-                  window.open(parsed.href, "_blank", "noopener,noreferrer");
+                  window.open(safeHref, "_blank", "noopener,noreferrer");
                 }
               }
               return {};
