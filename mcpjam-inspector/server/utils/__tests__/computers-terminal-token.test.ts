@@ -191,19 +191,19 @@ describe("verifyComputerTerminalToken (RS256 via JWKS)", () => {
 
   async function signRs256(
     claims: Record<string, unknown>,
-    opts: { kid?: string; privateKey?: CryptoKey } = {}
+    opts: { kid?: string; privateKey?: CryptoKey; omitExp?: boolean } = {}
   ): Promise<string> {
     const { exp, iat, iss, ...rest } = claims as Record<string, unknown> & {
       exp: number;
       iat: number;
       iss: string;
     };
-    return new SignJWT(rest)
+    const jwt = new SignJWT(rest)
       .setProtectedHeader({ alg: "RS256", kid: opts.kid ?? KID })
       .setIssuer(iss)
-      .setIssuedAt(iat)
-      .setExpirationTime(exp)
-      .sign(opts.privateKey ?? (keys.privateKey as CryptoKey));
+      .setIssuedAt(iat);
+    if (!opts.omitExp) jwt.setExpirationTime(exp);
+    return jwt.sign(opts.privateKey ?? (keys.privateKey as CryptoKey));
   }
 
   it("accepts a backend-minted RS256 token against the published JWKS", async () => {
@@ -242,6 +242,25 @@ describe("verifyComputerTerminalToken (RS256 via JWKS)", () => {
     expect(
       await verifyComputerTerminalToken(await signRs256(wrongPurpose))
     ).toBeNull();
+  });
+
+  it("rejects an RS256 token that carries no exp (parity with the HS256 path)", async () => {
+    // jose rejects an expired exp but does not require one to be present; the
+    // verifier must, or RS256 tokens would be accepted as never-expiring.
+    const token = await signRs256(baseClaims(), { omitExp: true });
+    expect(await verifyComputerTerminalToken(token)).toBeNull();
+  });
+
+  it("collapses a burst of concurrent cold-cache verifies onto one JWKS fetch", async () => {
+    const tokens = await Promise.all(
+      Array.from({ length: 5 }, () => signRs256(baseClaims()))
+    );
+    const results = await Promise.all(
+      tokens.map((t) => verifyComputerTerminalToken(t))
+    );
+    expect(results.every((r) => r !== null)).toBe(true);
+    // Without in-flight memoization this would be 5 fetches.
+    expect(fetchCalls).toHaveLength(1);
   });
 
   it("forecloses alg-confusion: an HS256 token keyed on the public JWK bytes is rejected", async () => {

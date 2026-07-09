@@ -72,30 +72,22 @@ let cachedJwks: {
   keyset: ReturnType<typeof createLocalJWKSet> | null;
 } | null = null;
 
+type TerminalKeySet = ReturnType<typeof createLocalJWKSet>;
+
+/** A fetch in progress, shared by every concurrent caller for the same URL so
+ *  a cold cache under a burst of handshakes triggers ONE network call, not
+ *  one per handshake (and a broken endpoint one per cooldown window, not one
+ *  per handshake). Reset to null once it settles into `cachedJwks`. */
+let inFlightJwks: { url: string; promise: Promise<TerminalKeySet | null> } | null =
+  null;
+
 export function resetComputerTerminalJwksCacheForTests(): void {
   cachedJwks = null;
+  inFlightJwks = null;
 }
 
-/** The backend-published terminal JWKS, cached per URL. Returns null (fail
- *  closed) when CONVEX_HTTP_URL is unset, the fetch fails, or the document
- *  has no keys (backend keypair not configured/validated yet). */
-async function getTerminalJwks(): Promise<ReturnType<
-  typeof createLocalJWKSet
-> | null> {
-  const base = process.env.CONVEX_HTTP_URL?.trim();
-  if (!base) return null;
-  let url: string;
-  try {
-    url = new URL(JWKS_PATH, base).toString();
-  } catch {
-    return null;
-  }
-  if (cachedJwks && cachedJwks.url === url) {
-    const age = Date.now() - cachedJwks.fetchedAt;
-    const ttl = cachedJwks.keyset ? JWKS_CACHE_MS : JWKS_FAILURE_COOLDOWN_MS;
-    if (age < ttl) return cachedJwks.keyset;
-  }
-  let keyset: ReturnType<typeof createLocalJWKSet> | null = null;
+async function fetchTerminalJwks(url: string): Promise<TerminalKeySet | null> {
+  let keyset: TerminalKeySet | null = null;
   try {
     const response = await fetch(url, {
       signal: AbortSignal.timeout(JWKS_FETCH_TIMEOUT_MS),
@@ -117,6 +109,34 @@ async function getTerminalJwks(): Promise<ReturnType<
   }
   cachedJwks = { url, fetchedAt: Date.now(), keyset };
   return keyset;
+}
+
+/** The backend-published terminal JWKS, cached per URL. Returns null (fail
+ *  closed) when CONVEX_HTTP_URL is unset, the fetch fails, or the document
+ *  has no keys (backend keypair not configured/validated yet). */
+async function getTerminalJwks(): Promise<TerminalKeySet | null> {
+  const base = process.env.CONVEX_HTTP_URL?.trim();
+  if (!base) return null;
+  let url: string;
+  try {
+    url = new URL(JWKS_PATH, base).toString();
+  } catch {
+    return null;
+  }
+  if (cachedJwks && cachedJwks.url === url) {
+    const age = Date.now() - cachedJwks.fetchedAt;
+    const ttl = cachedJwks.keyset ? JWKS_CACHE_MS : JWKS_FAILURE_COOLDOWN_MS;
+    if (age < ttl) return cachedJwks.keyset;
+  }
+  // Collapse concurrent cold fetches onto one in-flight request.
+  if (inFlightJwks && inFlightJwks.url === url) return inFlightJwks.promise;
+  const promise = fetchTerminalJwks(url);
+  inFlightJwks = { url, promise };
+  try {
+    return await promise;
+  } finally {
+    if (inFlightJwks?.promise === promise) inFlightJwks = null;
+  }
 }
 
 /** Shape-checks the shared claim contract and narrows to our claims type. */
@@ -147,9 +167,14 @@ async function verifyRs256TerminalToken(
   const jwks = await getTerminalJwks();
   if (!jwks) return null;
   try {
+    // `requiredClaims: ["exp"]` keeps the RS256 path as strict about token
+    // lifetime as the HS256 path below: jose rejects an EXPIRED exp but does
+    // not, on its own, require exp to be PRESENT — a token minted without one
+    // would otherwise verify as never-expiring.
     const { payload } = await jwtVerify(token, jwks, {
       issuer: ISSUER,
       algorithms: ["RS256"],
+      requiredClaims: ["exp"],
     });
     return toTerminalClaims(payload as Record<string, unknown>);
   } catch {
