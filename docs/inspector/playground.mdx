@@ -215,6 +215,12 @@ Simulate notches, rounded corners, and gesture areas. Pick a preset (None, iPhon
 
 ## Widget Controls
 
+### Download confirmation
+
+When an MCP App widget triggers a `ui/download-file` request, the inspector shows a confirmation dialog before the download runs. The dialog displays the filename, MIME type, and URI so you can make an informed decision. Click **Download** to allow it or **Cancel** to deny it — a denial is surfaced to the widget as a `{ isError: true }` result so the widget can handle it gracefully.
+
+Only one confirmation prompt is shown at a time. If a second download request arrives while a prompt is open, it is automatically denied.
+
 ### Display Modes
 
 All three display modes are supported for both ChatGPT Apps and MCP Apps:
