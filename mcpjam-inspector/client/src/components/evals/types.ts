@@ -124,6 +124,11 @@ export type EvalSuite = {
   updatedAt: number;
   latestRunId?: string;
   source?: "ui" | "sdk";
+  /**
+   * Epoch ms of the newest CI (SDK-ingested) run — the durable server-side
+   * "suite has CI runs" signal (backfilled). The CI tab scopes on this.
+   */
+  lastSdkRunAt?: number;
   runCounter?: number;
   defaultPassCriteria?: {
     minimumPassRate: number;
@@ -251,6 +256,12 @@ export type EvalCase = {
   /** Pinned tool call for widget_probe cases. */
   probeConfig?: import("@/shared/probe-config").ProbeConfig;
   lastMessageRun?: string | null;
+  /**
+   * Epoch ms of the last SDK-ingest write to this case's definition.
+   * Present ⇒ the case is synced from CI and manual edits may be
+   * overwritten by the next CI report.
+   */
+  lastSdkWriteAt?: number;
   _creationTime?: number; // Convex auto field
 };
 

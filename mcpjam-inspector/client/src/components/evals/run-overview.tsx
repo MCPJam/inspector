@@ -26,6 +26,7 @@ import {
   compareRunsBySequence,
   evalStatusLeftBorderClasses,
   formatRunId,
+  getLatestRunMetricSource,
 } from "./helpers";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 import { computeIterationResult } from "./pass-criteria";
@@ -442,11 +443,14 @@ export function RunOverview({
       });
   }, [selectedRunIds, onDirectDeleteRun]);
 
+  // Mixed suites label by the newest run's origin, not suite provenance.
+  const metricSource = getLatestRunMetricSource(runs, suite.source);
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
       {runs.length > 0 && (
         <SuiteRunsChartGrid
-          suiteSource={suite.source}
+          suiteSource={metricSource}
           runTrendData={runTrendData}
           modelStats={modelStats}
           runsLoading={runsLoading}
@@ -625,7 +629,7 @@ export function RunOverview({
                   <div className="text-right">Failed</div>
                   <div className="text-right">Total</div>
                   <div className="text-right">
-                    {suite.source === "sdk" ? "Pass Rate" : "Accuracy"}
+                    {metricSource === "sdk" ? "Pass Rate" : "Accuracy"}
                   </div>
                   {hasTokenData && responsiveLayout.showTokens && (
                     <div className="text-right">Tokens</div>
