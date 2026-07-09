@@ -6,6 +6,7 @@ import {
   useMemo,
 } from "react";
 import { HOSTED_MODE } from "@/lib/config";
+import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { SkillsSource } from "@/lib/apis/mcp-skills-api";
 import type {
   ChangeEvent,
@@ -292,14 +293,17 @@ export function ChatInput({
 }: ChatInputProps) {
   // Cloud skill source for the `/` picker: in hosted mode, list/load skills
   // from the project's Convex/Computer source (Playground carries projectId via
-  // `clientSelector`). Local mode keeps the default (filesystem) path. Memoized
-  // so the popover's fetch effects don't re-run every render.
+  // `clientSelector`). Gated behind the `skills-enabled` flag until QA completes
+  // (flag off ⇒ no cloud source, so the picker lists no cloud skills). Local
+  // mode keeps the default (filesystem) path. Memoized so the popover's fetch
+  // effects don't re-run every render.
+  const skillsEnabled = useSkillsEnabled();
   const skillsSource = useMemo<SkillsSource | undefined>(
     () =>
-      HOSTED_MODE && clientSelector?.cloudProjectId
+      HOSTED_MODE && skillsEnabled && clientSelector?.cloudProjectId
         ? { kind: "cloud", projectId: clientSelector.cloudProjectId }
         : undefined,
-    [clientSelector?.cloudProjectId],
+    [clientSelector?.cloudProjectId, skillsEnabled],
   );
   const chatboxHostStyle = useChatboxHostStyle();
   const chatboxHostTheme = useChatboxHostTheme();
