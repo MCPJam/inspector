@@ -160,10 +160,13 @@ export function SuiteSwitcher({
                   {isActive ? (
                     <Check className="h-4 w-4 shrink-0 text-primary" />
                   ) : null}
-                  {/* CI-created suites can't be deleted from the switcher:
-                      their history is CI's record, and the next report would
-                      recreate the suite anyway. */}
-                  {onDeleteSuite && entry.suite.source !== "sdk" ? (
+                  {/* CI-active suites (created by CI, or reported into by
+                      CI) can't be deleted from the switcher: their history
+                      is CI's record, and the next report would recreate the
+                      suite anyway. */}
+                  {onDeleteSuite &&
+                  entry.suite.source !== "sdk" &&
+                  entry.suite.lastSdkRunAt == null ? (
                     <button
                       type="button"
                       onClick={(e) => {

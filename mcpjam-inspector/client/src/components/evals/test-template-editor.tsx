@@ -2712,6 +2712,13 @@ export function TestTemplateEditor({
                     </h2>
                   </button>
                 )}
+                {(currentTestCase as { lastSdkWriteAt?: number })
+                  ?.lastSdkWriteAt != null ? (
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+                    Synced from CI — the next CI report may overwrite manual
+                    edits.
+                  </p>
+                ) : null}
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                 {onExportDraft ? (
