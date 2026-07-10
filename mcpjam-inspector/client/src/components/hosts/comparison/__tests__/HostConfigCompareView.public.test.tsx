@@ -20,6 +20,18 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: () => undefined }),
 }));
 
+vi.mock("@/lib/host-compat/use-host-catalog", async () => {
+  const { bundledHostCompatCatalog } = await import("@mcpjam/sdk/host-compat");
+  return {
+    useHostCatalog: () => ({
+      status: "live",
+      catalog: bundledHostCompatCatalog(),
+      version: 1,
+      source: "live",
+    }),
+  };
+});
+
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: () => "light",
 }));

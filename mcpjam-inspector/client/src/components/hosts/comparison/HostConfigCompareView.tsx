@@ -83,7 +83,6 @@ const SEARCH_PICKER_HIDDEN_FIELD_IDS = new Set([
   "systemPrompt",
   "temperature",
 ]);
-
 function getInitialCompareViewMode(): CompareViewMode {
   if (
     typeof window === "undefined" ||
@@ -564,8 +563,9 @@ export function HostConfigCompareView({
         ) : hosts.length === 0 ? (
           <div className="rounded-xl border border-border bg-card p-10 text-center">
             <p className="text-sm text-muted-foreground">
-              No hosts yet. Create one from the Host tab to populate the
-              comparison.
+              {presetOnly
+                ? "No hosts are available in the live catalog."
+                : "No hosts yet. Create one from the Host tab to populate the comparison."}
             </p>
           </div>
         ) : (
