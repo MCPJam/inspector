@@ -15,10 +15,16 @@ import {
   initXAAIdpKeyPair,
 } from "../../services/xaa-idp-keypair.js";
 import {
+  issueAccessToken,
+  issueAuthorizationCode,
   issueIdJag,
   issueMockIdToken,
   issueNegativeIdJag,
+  verifyXaaJwt,
+  XAA_ACCESS_TOKEN_TYP,
+  XAA_CODE_JWT_TYP,
 } from "../../services/xaa-idjag-signer.js";
+import { createHash } from "crypto";
 import {
   buildJwtBearerBody,
   getIssuerForRequest,
@@ -44,7 +50,7 @@ import type {
   XaaResourceAppSecretResult,
 } from "../../utils/server-secrets.js";
 import { logger } from "../../utils/logger.js";
-import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
+import { MCPJAM_HOSTED_ORIGIN, XAA_OIDC_ENABLED } from "../../config.js";
 
 const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 const NEGATIVE_TEST_CASE_TIMEOUT_MS = 8_000;
@@ -96,6 +102,188 @@ function validateOrgSegment(c: Context): string | Response {
     });
   }
   return orgId;
+}
+
+// ── Mock OIDC IdP (authorization_code + userinfo) ─────────────────────────
+const TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange";
+const ID_JAG_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id-jag";
+const ID_TOKEN_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id_token";
+
+// Per-IP sliding-window cap on the public OIDC endpoints that sign something
+// (/token, /authorize/confirm). Same shape as the negative-test host cap.
+const OIDC_RATE_LIMIT_PER_MIN = 60;
+const OIDC_RATE_WINDOW_MS = 60 * 1000;
+const oidcIpCounters = new Map<string, { count: number; windowStart: number }>();
+
+function checkOidcIpCap(ip: string): boolean {
+  const now = Date.now();
+  const existing = oidcIpCounters.get(ip);
+  if (!existing || now - existing.windowStart >= OIDC_RATE_WINDOW_MS) {
+    oidcIpCounters.set(ip, { count: 1, windowStart: now });
+    return true;
+  }
+  if (existing.count >= OIDC_RATE_LIMIT_PER_MIN) {
+    return false;
+  }
+  existing.count += 1;
+  return true;
+}
+
+function getClientIp(c: { req: { header: (name: string) => string | undefined } }): string {
+  return c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || "local";
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function oauthError(
+  status: number,
+  error: string,
+  description: string
+): Response {
+  return Response.json(
+    { error, error_description: description },
+    { status, headers: { "Cache-Control": "no-store" } }
+  );
+}
+
+interface AuthorizeParams {
+  clientId: string;
+  redirectUri: string;
+  state?: string;
+  nonce?: string;
+  scope?: string;
+  codeChallenge?: string;
+  subject?: string;
+  email?: string;
+}
+
+// Shared validation for GET /authorize and POST /authorize/confirm — the
+// confirm form round-trips the same values, and nothing hidden is trusted
+// more than the original query. Returns an error string on failure.
+function parseAuthorizeParams(
+  raw: Record<string, string | undefined>
+): AuthorizeParams | { error: string } {
+  const clientId = raw.client_id?.trim();
+  if (!clientId || clientId.length > 256) {
+    return { error: "client_id is required" };
+  }
+  const redirectUri = raw.redirect_uri?.trim();
+  if (!redirectUri || redirectUri.length > 2048) {
+    return { error: "redirect_uri is required" };
+  }
+  let parsedRedirect: URL;
+  try {
+    parsedRedirect = new URL(redirectUri);
+  } catch {
+    return { error: "redirect_uri is not a valid URL" };
+  }
+  if (parsedRedirect.protocol !== "https:" && parsedRedirect.protocol !== "http:") {
+    return { error: "redirect_uri must be http(s)" };
+  }
+  if (parsedRedirect.hash) {
+    return { error: "redirect_uri must not contain a fragment" };
+  }
+  if ((raw.response_type ?? "code") !== "code") {
+    return { error: "Only response_type=code is supported" };
+  }
+  const codeChallenge = raw.code_challenge?.trim() || undefined;
+  if (codeChallenge) {
+    if (codeChallenge.length > 256) {
+      return { error: "code_challenge is too long" };
+    }
+    if (raw.code_challenge_method !== "S256") {
+      return { error: "Only code_challenge_method=S256 is supported" };
+    }
+  }
+  for (const field of ["state", "nonce", "scope", "subject", "email"] as const) {
+    const value = raw[field];
+    if (value !== undefined && value.length > 512) {
+      return { error: `${field} is too long` };
+    }
+  }
+  return {
+    clientId,
+    redirectUri,
+    state: raw.state || undefined,
+    nonce: raw.nonce || undefined,
+    scope: raw.scope || undefined,
+    codeChallenge,
+    subject: raw.subject?.trim() || undefined,
+    email: raw.email?.trim() || undefined,
+  };
+}
+
+// Self-contained interstitial: shows who is asking (client_id) and where the
+// browser will be sent (redirect host), with an editable mock identity. It
+// NEVER auto-redirects — the explicit click plus the visible destination host
+// is the open-redirect mitigation for a public authorize endpoint. Every
+// echoed value is HTML-escaped.
+function renderAuthorizePage(args: {
+  confirmUrl: string;
+  params: AuthorizeParams;
+}): string {
+  const { confirmUrl, params } = args;
+  const redirectHost = new URL(params.redirectUri).host;
+  const hidden = (name: string, value: string | undefined) =>
+    value
+      ? `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}" />`
+      : "";
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MCPJam test sign-in</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f5f5f5; margin: 0; display: flex; min-height: 100vh; align-items: center; justify-content: center; }
+    .card { background: #fff; border: 1px solid #e2e2e2; border-radius: 12px; padding: 32px; max-width: 26rem; width: 100%; box-shadow: 0 4px 16px rgba(0,0,0,.06); }
+    h1 { font-size: 1.1rem; margin: 0 0 8px; }
+    p { font-size: .85rem; color: #555; margin: 0 0 16px; line-height: 1.45; }
+    label { display: block; font-size: .75rem; font-weight: 600; color: #333; margin: 12px 0 4px; }
+    input[type="text"], input[type="email"] { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #ccc; border-radius: 8px; font-size: .9rem; }
+    button { margin-top: 20px; width: 100%; padding: 10px; border: 0; border-radius: 8px; background: #111; color: #fff; font-size: .9rem; font-weight: 600; cursor: pointer; }
+    code { background: #f0f0f0; border-radius: 4px; padding: 1px 4px; font-size: .8rem; }
+    .warn { font-size: .75rem; color: #777; margin-top: 14px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>MCPJam test identity provider</h1>
+    <p>
+      <code>${escapeHtml(params.clientId)}</code> is asking to sign you in.
+      Continuing sends the browser to
+      <strong>${escapeHtml(redirectHost)}</strong> with a sign-in code for the
+      identity below.
+    </p>
+    <form method="POST" action="${escapeHtml(confirmUrl)}">
+      ${hidden("client_id", params.clientId)}
+      ${hidden("redirect_uri", params.redirectUri)}
+      ${hidden("state", params.state)}
+      ${hidden("nonce", params.nonce)}
+      ${hidden("scope", params.scope)}
+      ${hidden("code_challenge", params.codeChallenge)}
+      ${params.codeChallenge ? hidden("code_challenge_method", "S256") : ""}
+      <input type="hidden" name="response_type" value="code" />
+      <label for="subject">Subject (sub)</label>
+      <input type="text" id="subject" name="subject" value="${escapeHtml(params.subject || "user-12345")}" />
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" value="${escapeHtml(params.email || "demo.user@example.com")}" />
+      <button type="submit">Continue to ${escapeHtml(redirectHost)}</button>
+    </form>
+    <p class="warn">
+      This is a mock IdP for testing — anyone can sign in as any identity.
+      Never trust it with real users or production data.
+    </p>
+  </div>
+</body>
+</html>`;
 }
 
 const authenticateSchema = z.object({
@@ -320,6 +508,11 @@ interface CreateXaaRouterOptions {
   // origin is config, never derived from the request. The hosted router never
   // sets this — hosted IS the hosted issuer and ignores `issuerMode`.
   forwardHostedIssuer?: { origin: string };
+  // Mock OIDC IdP surface (GET /authorize, POST /authorize/confirm,
+  // POST /token, GET /userinfo) + the matching discovery-document fields.
+  // Wired to the XAA_OIDC_ENABLED kill switch; when false the discovery doc
+  // is byte-identical to the pre-OIDC one and the routes don't exist.
+  enableOidcMode?: boolean;
 }
 
 type ParsedJwtPayload = {
@@ -587,19 +780,61 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     });
   };
 
-  const serveOpenidConfiguration = (c: Context, issuer: string) => {
+  const serveOpenidConfiguration = (
+    c: Context,
+    issuer: string,
+    // Whether THIS surface's /token serves the standard token-exchange grant.
+    // Unscoped hosted refuses it (public token exchange would launder the
+    // org-membership gate through the public /authorize mock sign-in), so its
+    // doc must not advertise it — advertise only what is served.
+    oidc?: { tokenExchangeAtToken: boolean }
+  ) => {
     initXAAIdpKeyPair();
+
+    if (!options.enableOidcMode || !oidc) {
+      // Pre-OIDC document, byte-identical to the historical one.
+      return c.json(
+        {
+          issuer,
+          jwks_uri: `${issuer}/.well-known/jwks.json`,
+          authorization_endpoint: `${issuer}/authenticate`,
+          token_endpoint: `${issuer}/token-exchange`,
+          response_types_supported: ["id_token"],
+          subject_types_supported: ["public"],
+          grant_types_supported: [TOKEN_EXCHANGE_GRANT],
+          token_endpoint_auth_methods_supported: ["none", "client_secret_post"],
+          id_token_signing_alg_values_supported: ["RS256"],
+        },
+        200,
+        {
+          "Cache-Control": "public, max-age=300",
+        }
+      );
+    }
+
     return c.json(
       {
         issuer,
         jwks_uri: `${issuer}/.well-known/jwks.json`,
-        authorization_endpoint: `${issuer}/authenticate`,
-        token_endpoint: `${issuer}/token-exchange`,
-        response_types_supported: ["id_token"],
+        authorization_endpoint: `${issuer}/authorize`,
+        token_endpoint: `${issuer}/token`,
+        userinfo_endpoint: `${issuer}/userinfo`,
+        response_types_supported: ["code"],
         subject_types_supported: ["public"],
         grant_types_supported: [
-          "urn:ietf:params:oauth:grant-type:token-exchange",
+          "authorization_code",
+          ...(oidc.tokenExchangeAtToken ? [TOKEN_EXCHANGE_GRANT] : []),
         ],
+        ...(oidc.tokenExchangeAtToken
+          ? {
+              identity_chaining_requested_token_types_supported: [
+                ID_JAG_TOKEN_TYPE,
+              ],
+            }
+          : {}),
+        code_challenge_methods_supported: ["S256"],
+        scopes_supported: ["openid", "profile", "email"],
+        claims_supported: ["sub", "email", "email_verified"],
         token_endpoint_auth_methods_supported: ["none", "client_secret_post"],
         id_token_signing_alg_values_supported: ["RS256"],
       },
@@ -612,8 +847,14 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
 
   router.get("/.well-known/jwks.json", (c) => serveJwks(c));
 
+  // Unscoped hosted /token refuses public token exchange (see handleToken);
+  // its doc must not advertise it. Local (no org gate available) serves it.
+  const unscopedTokenExchangeAtToken = !authorizeOrgIssuer;
+
   router.get("/.well-known/openid-configuration", (c) =>
-    serveOpenidConfiguration(c, unscopedIssuer(c))
+    serveOpenidConfiguration(c, unscopedIssuer(c), {
+      tokenExchangeAtToken: unscopedTokenExchangeAtToken,
+    })
   );
 
   const handleAuthenticate = async (c: Context, issuer: string) => {
@@ -1241,7 +1482,10 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     router.get("/o/:orgId/.well-known/openid-configuration", (c) => {
       const orgIdOrError = validateOrgSegment(c);
       if (orgIdOrError instanceof Response) return orgIdOrError;
-      return serveOpenidConfiguration(c, scopedIssuer(c, orgIdOrError));
+      // The scoped /token serves token exchange (bearer + membership gated).
+      return serveOpenidConfiguration(c, scopedIssuer(c, orgIdOrError), {
+        tokenExchangeAtToken: true,
+      });
     });
 
     router.post("/o/:orgId/authenticate", async (c) => {
@@ -1263,6 +1507,392 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     });
   }
 
+  // ── Mock OIDC IdP: real authorization_code flow + userinfo ──────────────
+  // Lets external services (e.g. Scalekit Full Stack Auth) configure MCPJam
+  // as a discovery-driven test OIDC IdP. All four endpoints are public
+  // front-channel/RP surfaces — but the token-exchange grant on /token issues
+  // ID-JAGs, so it inherits the same gate as the surface's mint endpoints:
+  // local = open, org-scoped = bearer + membership, unscoped hosted = refused
+  // (otherwise the public /authorize mock sign-in chained into a public token
+  // exchange would launder the org-membership gate).
+  if (options.enableOidcMode) {
+    const readForm = async (
+      c: Context
+    ): Promise<Record<string, string> | null> => {
+      try {
+        const formData = await c.req.formData();
+        const entries: Record<string, string> = {};
+        formData.forEach((value, key) => {
+          entries[key] = String(value);
+        });
+        return entries;
+      } catch {
+        return null;
+      }
+    };
+
+    const handleAuthorize = (c: Context, issuer: string) => {
+      const query: Record<string, string | undefined> = {
+        client_id: c.req.query("client_id"),
+        redirect_uri: c.req.query("redirect_uri"),
+        response_type: c.req.query("response_type"),
+        state: c.req.query("state"),
+        nonce: c.req.query("nonce"),
+        scope: c.req.query("scope"),
+        code_challenge: c.req.query("code_challenge"),
+        code_challenge_method: c.req.query("code_challenge_method"),
+      };
+      const parsed = parseAuthorizeParams(query);
+      if ("error" in parsed) {
+        // Never redirect on a validation failure — the redirect_uri may be
+        // the invalid part. A plain error page is the safe terminal.
+        return c.html(
+          `<!DOCTYPE html><html><body><h1>Invalid authorization request</h1><p>${escapeHtml(parsed.error)}</p></body></html>`,
+          400
+        );
+      }
+      return c.html(
+        renderAuthorizePage({
+          confirmUrl: `${issuer}/authorize/confirm`,
+          params: parsed,
+        }),
+        200,
+        { "Cache-Control": "no-store" }
+      );
+    };
+
+    const handleAuthorizeConfirm = async (c: Context, issuer: string) => {
+      if (!checkOidcIpCap(getClientIp(c))) {
+        return oauthError(429, "temporarily_unavailable", "Too many requests");
+      }
+      const form = await readForm(c);
+      if (!form) {
+        return oauthError(
+          400,
+          "invalid_request",
+          "Body must be application/x-www-form-urlencoded"
+        );
+      }
+      const parsed = parseAuthorizeParams(form);
+      if ("error" in parsed) {
+        return c.html(
+          `<!DOCTYPE html><html><body><h1>Invalid authorization request</h1><p>${escapeHtml(parsed.error)}</p></body></html>`,
+          400
+        );
+      }
+
+      const issued = issueAuthorizationCode({
+        issuer,
+        subject: parsed.subject || "user-12345",
+        email: parsed.email || "demo.user@example.com",
+        clientId: parsed.clientId,
+        redirectUri: parsed.redirectUri,
+        nonce: parsed.nonce,
+        codeChallenge: parsed.codeChallenge,
+      });
+
+      const redirect = new URL(parsed.redirectUri);
+      redirect.searchParams.set("code", issued.token);
+      if (parsed.state) {
+        redirect.searchParams.set("state", parsed.state);
+      }
+      return c.redirect(redirect.toString(), 302);
+    };
+
+    const handleAuthorizationCodeGrant = (
+      issuer: string,
+      form: Record<string, string>
+    ): Response => {
+      const { code, redirect_uri: redirectUri, client_id: clientId } = form;
+      if (!code || !redirectUri || !clientId) {
+        return oauthError(
+          400,
+          "invalid_request",
+          "code, redirect_uri and client_id are required"
+        );
+      }
+
+      let payload: Record<string, unknown>;
+      try {
+        payload = verifyXaaJwt(code, { issuer, typ: XAA_CODE_JWT_TYP });
+      } catch (error) {
+        return oauthError(
+          400,
+          "invalid_grant",
+          error instanceof Error ? error.message : "Invalid code"
+        );
+      }
+      if (payload.client_id !== clientId || payload.redirect_uri !== redirectUri) {
+        return oauthError(
+          400,
+          "invalid_grant",
+          "client_id and redirect_uri must match the authorization request"
+        );
+      }
+      // PKCE: enforced when the code carries a challenge, allowed absent for
+      // the plain mock flow.
+      if (typeof payload.code_challenge === "string") {
+        const verifier = form.code_verifier;
+        if (!verifier) {
+          return oauthError(
+            400,
+            "invalid_grant",
+            "code_verifier is required for a PKCE authorization code"
+          );
+        }
+        const computed = createHash("sha256").update(verifier).digest("base64url");
+        if (computed !== payload.code_challenge) {
+          return oauthError(
+            400,
+            "invalid_grant",
+            "code_verifier does not match the code_challenge"
+          );
+        }
+      }
+
+      const subject = String(payload.sub ?? "user-12345");
+      const email = String(payload.email ?? "demo.user@example.com");
+      const idToken = issueMockIdToken({
+        issuer,
+        subject,
+        email,
+        audience: clientId,
+        nonce: typeof payload.nonce === "string" ? payload.nonce : undefined,
+      });
+      const accessToken = issueAccessToken({ issuer, subject, email, clientId });
+
+      return Response.json(
+        {
+          id_token: idToken.token,
+          access_token: accessToken.token,
+          token_type: "Bearer",
+          expires_in: Math.max(
+            0,
+            Math.floor((accessToken.expiresAt - Date.now()) / 1000)
+          ),
+          scope: "openid profile email",
+        },
+        { headers: { "Cache-Control": "no-store" } }
+      );
+    };
+
+    const handleTokenExchangeGrant = (
+      issuer: string,
+      form: Record<string, string>
+    ): Response => {
+      if (form.requested_token_type !== ID_JAG_TOKEN_TYPE) {
+        return oauthError(
+          400,
+          "invalid_request",
+          `requested_token_type must be ${ID_JAG_TOKEN_TYPE}`
+        );
+      }
+      if (form.subject_token_type !== ID_TOKEN_TOKEN_TYPE) {
+        return oauthError(
+          400,
+          "invalid_request",
+          `subject_token_type must be ${ID_TOKEN_TOKEN_TYPE}`
+        );
+      }
+      const clientId = form.client_id;
+      if (!clientId) {
+        // The ID-JAG's client_id claim is REQUIRED by the draft.
+        return oauthError(400, "invalid_request", "client_id is required");
+      }
+      if (!form.subject_token || !form.audience || !form.resource) {
+        return oauthError(
+          400,
+          "invalid_request",
+          "subject_token, audience and resource are required"
+        );
+      }
+
+      let subjectPayload: Record<string, unknown>;
+      try {
+        // Stricter than the legacy JSON endpoint's unsafe decode: the subject
+        // token must be an ID token THIS issuer signed, unexpired.
+        subjectPayload = verifyXaaJwt(form.subject_token, {
+          issuer,
+          typ: "JWT",
+        });
+      } catch (error) {
+        return oauthError(
+          400,
+          "invalid_grant",
+          error instanceof Error ? error.message : "Invalid subject_token"
+        );
+      }
+      // Draft §4.3.3: the assertion's audience must match the client identity
+      // presenting it.
+      if (
+        typeof subjectPayload.aud === "string" &&
+        subjectPayload.aud !== clientId
+      ) {
+        return oauthError(
+          400,
+          "invalid_grant",
+          "The subject token's aud must match client_id"
+        );
+      }
+
+      const issued = issueIdJag({
+        issuer,
+        subject: String(subjectPayload.sub ?? "user-12345"),
+        email:
+          typeof subjectPayload.email === "string"
+            ? subjectPayload.email
+            : undefined,
+        audience: form.audience,
+        resource: form.resource,
+        clientId,
+        scope: form.scope || undefined,
+      });
+
+      return Response.json(
+        {
+          issued_token_type: ID_JAG_TOKEN_TYPE,
+          access_token: issued.token,
+          token_type: "N_A",
+          expires_in: Math.max(
+            0,
+            Math.floor((issued.expiresAt - Date.now()) / 1000)
+          ),
+          ...(form.scope ? { scope: form.scope } : {}),
+        },
+        { headers: { "Cache-Control": "no-store" } }
+      );
+    };
+
+    // gateTokenExchange: null = allowed; a Response = OAuth-shaped rejection.
+    const handleToken = async (
+      c: Context,
+      issuer: string,
+      gateTokenExchange: () => Promise<Response | null>
+    ): Promise<Response> => {
+      if (!checkOidcIpCap(getClientIp(c))) {
+        return oauthError(429, "temporarily_unavailable", "Too many requests");
+      }
+      const form = await readForm(c);
+      if (!form) {
+        return oauthError(
+          400,
+          "invalid_request",
+          "Body must be application/x-www-form-urlencoded"
+        );
+      }
+
+      if (form.grant_type === "authorization_code") {
+        return handleAuthorizationCodeGrant(issuer, form);
+      }
+      if (form.grant_type === TOKEN_EXCHANGE_GRANT) {
+        const rejection = await gateTokenExchange();
+        if (rejection) return rejection;
+        return handleTokenExchangeGrant(issuer, form);
+      }
+      return oauthError(
+        400,
+        "unsupported_grant_type",
+        "Supported grant types: authorization_code" +
+          (unscopedTokenExchangeAtToken || c.req.param("orgId")
+            ? `, ${TOKEN_EXCHANGE_GRANT}`
+            : "")
+      );
+    };
+
+    const handleUserinfo = (c: Context, issuer: string): Response => {
+      const authHeader = c.req.header("authorization");
+      const token = authHeader?.startsWith("Bearer ")
+        ? authHeader.slice("Bearer ".length)
+        : undefined;
+      if (!token) {
+        return new Response(null, {
+          status: 401,
+          headers: { "WWW-Authenticate": "Bearer" },
+        });
+      }
+      let payload: Record<string, unknown>;
+      try {
+        payload = verifyXaaJwt(token, { issuer, typ: XAA_ACCESS_TOKEN_TYP });
+      } catch {
+        return new Response(null, {
+          status: 401,
+          headers: { "WWW-Authenticate": 'Bearer error="invalid_token"' },
+        });
+      }
+      return Response.json(
+        {
+          sub: payload.sub,
+          email: payload.email,
+          email_verified: true,
+        },
+        { headers: { "Cache-Control": "no-store" } }
+      );
+    };
+
+    // Unscoped surface. Token exchange is served locally (no org gate exists)
+    // and refused on unscoped hosted.
+    router.get("/authorize", (c) => handleAuthorize(c, unscopedIssuer(c)));
+    router.post("/authorize/confirm", (c) =>
+      handleAuthorizeConfirm(c, unscopedIssuer(c))
+    );
+    router.post("/token", (c) =>
+      handleToken(c, unscopedIssuer(c), async () =>
+        unscopedTokenExchangeAtToken
+          ? null
+          : oauthError(
+              400,
+              "unsupported_grant_type",
+              "Standard token exchange is only served under an organization-scoped issuer (…/o/<orgId>/token)"
+            )
+      )
+    );
+    router.get("/userinfo", (c) => handleUserinfo(c, unscopedIssuer(c)));
+
+    // Org-scoped surface: public front-channel endpoints (anyone can sign in
+    // as anyone — it's a test IdP), but the token-exchange grant requires the
+    // caller to be a member of the org, mapped to OAuth-shaped errors.
+    if (authorizeOrgIssuer) {
+      const scopedIssuerFromParam = (c: Context): string | Response => {
+        const orgId = c.req.param("orgId");
+        if (!orgId || !ORG_ID_RE.test(orgId)) {
+          return oauthError(400, "invalid_request", "Invalid organization id");
+        }
+        return `${unscopedIssuer(c)}/o/${orgId}`;
+      };
+
+      router.get("/o/:orgId/authorize", (c) => {
+        const issuerOrError = scopedIssuerFromParam(c);
+        if (issuerOrError instanceof Response) return issuerOrError;
+        return handleAuthorize(c, issuerOrError);
+      });
+      router.post("/o/:orgId/authorize/confirm", (c) => {
+        const issuerOrError = scopedIssuerFromParam(c);
+        if (issuerOrError instanceof Response) return issuerOrError;
+        return handleAuthorizeConfirm(c, issuerOrError);
+      });
+      router.post("/o/:orgId/token", (c) => {
+        const issuerOrError = scopedIssuerFromParam(c);
+        if (issuerOrError instanceof Response) return issuerOrError;
+        return handleToken(c, issuerOrError, async () => {
+          const orgIdOrError = await requireScopedOrg(c);
+          if (!(orgIdOrError instanceof Response)) return null;
+          // Map the gate's JSON error shape onto OAuth token-endpoint errors.
+          const status = orgIdOrError.status;
+          return oauthError(
+            status,
+            status === 401 ? "invalid_client" : status === 403 ? "access_denied" : "invalid_request",
+            "Token exchange under an organization issuer requires an org member's bearer token"
+          );
+        });
+      });
+      router.get("/o/:orgId/userinfo", (c) => {
+        const issuerOrError = scopedIssuerFromParam(c);
+        if (issuerOrError instanceof Response) return issuerOrError;
+        return handleUserinfo(c, issuerOrError);
+      });
+    }
+  }
+
   return router;
 }
 
@@ -1279,6 +1909,7 @@ const xaa = createXaaRouter({
   // cloud AS can discover the issuer — no tunnel needed for the common
   // local-MCP-server + remote-AS setup.
   forwardHostedIssuer: { origin: MCPJAM_HOSTED_ORIGIN },
+  enableOidcMode: XAA_OIDC_ENABLED,
 });
 
 export default xaa;

@@ -93,6 +93,11 @@ export const MCPJAM_HOSTED_ORIGIN =
   process.env.MCPJAM_HOSTED_ORIGIN?.replace(/\/+$/, "") ||
   "https://app.mcpjam.com";
 
+// Kill switch for the mock OIDC IdP surface (authorize / token / userinfo).
+// Default on; set XAA_OIDC_ENABLED=false to remove the endpoints and revert
+// the discovery document without a deploy.
+export const XAA_OIDC_ENABLED = process.env.XAA_OIDC_ENABLED !== "false";
+
 // Allowed hosts for token delivery in hosted mode (comma-separated)
 // These hosts will be allowed to receive session tokens in addition to localhost
 export const ALLOWED_HOSTS = process.env.MCPJAM_ALLOWED_HOSTS
