@@ -15,6 +15,7 @@ import {
 
 import v1Routes from "../index.js";
 import { resetHostCatalogCacheForTests } from "../host-catalog.js";
+import { logger } from "../../../utils/logger.js";
 
 function makeApp(): Hono {
   const app = new Hono();
@@ -41,6 +42,7 @@ describe("GET /api/v1/host-catalog", () => {
   const originalEnv = process.env.CONVEX_HTTP_URL;
   const originalFetch = global.fetch;
   let fetchMock: ReturnType<typeof vi.fn>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -48,6 +50,7 @@ describe("GET /api/v1/host-catalog", () => {
     process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
     fetchMock = vi.fn();
     global.fetch = fetchMock as unknown as typeof fetch;
+    warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -56,6 +59,7 @@ describe("GET /api/v1/host-catalog", () => {
     if (originalEnv === undefined) delete process.env.CONVEX_HTTP_URL;
     else process.env.CONVEX_HTTP_URL = originalEnv;
     global.fetch = originalFetch;
+    warnSpy.mockRestore();
   });
 
   it("serves the live catalog unauthenticated (no bearer at all)", async () => {
@@ -78,34 +82,23 @@ describe("GET /api/v1/host-catalog", () => {
     );
   });
 
-  it("hydrates imageSupport into concrete image config fields before serving live catalog", async () => {
+  it("derives imageSupport from concrete image config fields before serving live catalog", async () => {
     const upstream = liveEnvelope();
     const notion = upstream.catalog.hostsById.notion as {
-      modelVisibleMcpToolResults?: unknown;
-      mcpToolResultImageRendering?: unknown;
+      imageSupport?: unknown;
     };
-    delete notion.modelVisibleMcpToolResults;
-    delete notion.mcpToolResultImageRendering;
+    delete notion.imageSupport;
 
     fetchMock.mockResolvedValue(jsonResponse(upstream));
     const res = await makeApp().request("/api/v1/host-catalog");
     const body = await res.json();
     expect(body.source).toBe("live");
-    expect(body.catalog.hostsById.notion.modelVisibleMcpToolResults).toMatchObject(
-      {
-        directContent: { image: false },
-        embeddedResources: { blob: { image: false } },
-        linkedResources: { blob: { image: false } },
-      }
-    );
-    expect(body.catalog.hostsById.notion.mcpToolResultImageRendering).toMatchObject(
-      {
-        placement: "collapsed",
-        directContent: { image: true },
-        embeddedResources: { blob: { image: false } },
-        linkedResources: { blob: { image: false } },
-      }
-    );
+    expect(body.catalog.hostsById.notion.imageSupport).toMatchObject({
+      toolImageContent: { model: false, ui: true },
+      embeddedResourceImages: { model: false, ui: false },
+      resourceLinkImages: { model: false, ui: false },
+      placement: "collapsed",
+    });
   });
 
   it("caches the live envelope (second request hits no upstream)", async () => {
@@ -132,6 +125,13 @@ describe("GET /api/v1/host-catalog", () => {
       "claude-code"
     );
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[host-catalog] degraded catalog path",
+      expect.objectContaining({
+        reason: "serve_bundled",
+        convexConfigured: false,
+      })
+    );
   });
 
   it("falls back to bundled on upstream failure with an empty cache", async () => {
@@ -139,18 +139,34 @@ describe("GET /api/v1/host-catalog", () => {
     const res = await makeApp().request("/api/v1/host-catalog");
     expect(res.status).toBe(200);
     expect((await res.json()).source).toBe("bundled");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[host-catalog] degraded catalog path",
+      expect.objectContaining({ reason: "upstream_fetch_error" })
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[host-catalog] degraded catalog path",
+      expect.objectContaining({ reason: "serve_bundled" })
+    );
   });
 
   it("falls back to bundled when the upstream body fails validation", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ not: "a catalog" }));
     const res = await makeApp().request("/api/v1/host-catalog");
     expect((await res.json()).source).toBe("bundled");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[host-catalog] degraded catalog path",
+      expect.objectContaining({ reason: "upstream_invalid_envelope" })
+    );
   });
 
   it("treats upstream 503 (unseeded) as bundled fallback", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ error: "not seeded" }, 503));
     const res = await makeApp().request("/api/v1/host-catalog");
     expect((await res.json()).source).toBe("bundled");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[host-catalog] degraded catalog path",
+      expect.objectContaining({ reason: "upstream_non_2xx", status: 503 })
+    );
   });
 
   it("serves the stale cached envelope with revalidation headers when a later refresh fails", async () => {
@@ -170,6 +186,10 @@ describe("GET /api/v1/host-catalog", () => {
       expect(body.version).toBe(3);
       expect(res.headers.get("Cache-Control")).toBe("no-cache");
       expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[host-catalog] degraded catalog path",
+        expect.objectContaining({ reason: "serve_stale", version: 3 })
+      );
     } finally {
       vi.useRealTimers();
     }
@@ -219,6 +239,14 @@ describe("GET /api/v1/host-catalog", () => {
       expect(body.source).toBe("live");
       expect(res.headers.get("Cache-Control")).toBe("public, max-age=300");
       expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[host-catalog] degraded catalog path",
+        expect.objectContaining({
+          reason: "upstream_older_version",
+          upstreamVersion: 2,
+          cachedVersion: 3,
+        })
+      );
 
       // The older-response refresh must still bump the TTL — a follow-up
       // request inside the window is served from cache without re-hitting

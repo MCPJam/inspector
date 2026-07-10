@@ -1,8 +1,4 @@
-import type {
-  McpAppsCapabilities,
-  McpToolResultImageRenderingPolicy,
-  ModelVisibleMcpToolResults,
-} from "../host-config/types.js";
+import type { McpAppsCapabilities } from "../host-config/types.js";
 import type { SeededHostConfigInput } from "../host-config/templates/index.js";
 import { MCP_APPS_NO_CLAIMS } from "./capabilities.js";
 import { BUNDLED_HOST_COMPAT_CATALOG } from "./catalog.generated.js";
@@ -11,6 +7,7 @@ import {
   type EvaluateAllHostsOptions,
   type HostCompatEvaluation,
 } from "./evaluator.js";
+import { hostConfigFieldsToImageSupport } from "./image-support.js";
 import type { HostCompatToolsInput } from "./server-requirements.js";
 import type {
   CompatProvenance,
@@ -89,8 +86,8 @@ export function bundledHostCompatCatalog(): HostCompatCatalog {
 
 /**
  * Return a catalog whose `hostsById` entries are directly usable as full host
- * objects. The backend keeps compact image facts in `imageSupport`; host config
- * consumers need the concrete image policy fields too.
+ * objects. `imageSupport` is a compare/display summary derived from the
+ * concrete host-template image fields.
  */
 export function hydrateHostCompatCatalog(
   catalog: HostCompatCatalog
@@ -108,11 +105,11 @@ export function hydrateHostCompatCatalog(
 function hydrateCatalogHost(
   host: HostCompatCatalogHost
 ): HostCompatCatalogHost {
+  const imageSupport =
+    hostConfigFieldsToImageSupport(host) ?? host.imageSupport;
   return {
     ...host,
-    ...(host.imageSupport
-      ? imageSupportToHostConfigFields(host.imageSupport)
-      : undefined),
+    ...(imageSupport ? { imageSupport } : undefined),
   };
 }
 
@@ -166,35 +163,6 @@ function hostConfigFromCatalogHost(
     ...config
   } = host;
   return config;
-}
-
-export function imageSupportToHostConfigFields(
-  imageSupport: HostImageSupport
-): {
-  modelVisibleMcpToolResults: ModelVisibleMcpToolResults;
-  mcpToolResultImageRendering: McpToolResultImageRenderingPolicy;
-} {
-  return {
-    modelVisibleMcpToolResults: {
-      directContent: { image: imageSupport.toolImageContent.model },
-      embeddedResources: {
-        blob: { image: imageSupport.embeddedResourceImages.model },
-      },
-      linkedResources: {
-        blob: { image: imageSupport.resourceLinkImages.model },
-      },
-    },
-    mcpToolResultImageRendering: {
-      placement: imageSupport.placement,
-      directContent: { image: imageSupport.toolImageContent.ui },
-      embeddedResources: {
-        blob: { image: imageSupport.embeddedResourceImages.ui },
-      },
-      linkedResources: {
-        blob: { image: imageSupport.resourceLinkImages.ui },
-      },
-    },
-  };
 }
 
 function templateRendersOpenAiApps(

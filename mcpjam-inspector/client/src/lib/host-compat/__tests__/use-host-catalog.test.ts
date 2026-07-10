@@ -1,6 +1,10 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
+const { posthogCaptureMock } = vi.hoisted(() => ({
+  posthogCaptureMock: vi.fn(),
+}));
+
 // Partial-mock the SDK module so `fetchHostCompatCatalog` is controllable while
 // the real `bundledHostCompatCatalog`/profiles/engine keep working.
 vi.mock("@mcpjam/sdk/host-compat", async (importOriginal) => {
@@ -9,6 +13,10 @@ vi.mock("@mcpjam/sdk/host-compat", async (importOriginal) => {
   >();
   return { ...actual, fetchHostCompatCatalog: vi.fn() };
 });
+
+vi.mock("posthog-js", () => ({
+  default: { capture: posthogCaptureMock },
+}));
 
 import {
   bundledHostCompatCatalog,
@@ -105,12 +113,17 @@ describe("evaluateAllHosts catalog threading", () => {
 });
 
 describe("useHostCatalog", () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     resetHostCatalogForTests();
     fetchMock.mockReset();
+    posthogCaptureMock.mockReset();
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   });
   afterEach(() => {
     resetHostCatalogForTests();
+    warnSpy.mockRestore();
   });
 
   it("starts loading, then exposes the live catalog once the fetch resolves", async () => {
@@ -130,6 +143,15 @@ describe("useHostCatalog", () => {
     expect(
       getCatalogTemplate(result.current.catalog!, "mcpjam")?.hostStyle
     ).toBe("mcpjam");
+    expect(posthogCaptureMock).toHaveBeenCalledWith("host_catalog_degraded", {
+      status: "fallback",
+      source: "bundled",
+      version: 0,
+    });
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[host-catalog] client catalog degraded",
+      expect.objectContaining({ status: "fallback" })
+    );
   });
 
   it("exposes error status when the fetch fails", async () => {
@@ -137,6 +159,10 @@ describe("useHostCatalog", () => {
     const { result } = renderHook(() => useHostCatalog());
     await waitFor(() => expect(result.current.status).toBe("error"));
     expect(result.current.catalog).toBeNull();
+    expect(posthogCaptureMock).toHaveBeenCalledWith("host_catalog_degraded", {
+      status: "error",
+      reason: "network",
+    });
   });
 
   it("dedupes the fetch across concurrent consumers", async () => {

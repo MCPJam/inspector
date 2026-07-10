@@ -10,7 +10,7 @@ import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import type { ThemeMode } from "@/types/preferences/theme";
 
-interface UpdateCapabilitiesButtonProps {
+interface UpdateHostToLatestButtonProps {
   draft: HostConfigInputV2;
   hostDisplayName: string;
   onHostDisplayNameChange: (value: string) => void;
@@ -41,13 +41,13 @@ function applyCatalogTemplateToDraft(
   };
 }
 
-export function UpdateCapabilitiesButton({
+export function UpdateHostToLatestButton({
   draft,
   hostDisplayName,
   onHostDisplayNameChange,
   themeMode,
   onDraftChange,
-}: UpdateCapabilitiesButtonProps) {
+}: UpdateHostToLatestButtonProps) {
   const catalogState = useHostCatalog();
   const catalogHost =
     catalogState.status === "live"

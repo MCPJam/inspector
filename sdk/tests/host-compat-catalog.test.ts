@@ -102,11 +102,12 @@ describe("bundledHostCompatCatalog", () => {
     });
   });
 
-  it("maps imageSupport into host creation template image fields", () => {
+  it("uses template image fields as source and derives imageSupport for profiles", () => {
     const catalog = bundledHostCompatCatalog();
     const rawGeneratedHost = BUNDLED_HOST_COMPAT_CATALOG.hostsById.notion;
     const host = getCatalogHost(catalog, "notion");
     const template = getCatalogTemplate(catalog, "notion");
+    expect(rawGeneratedHost).not.toHaveProperty("imageSupport");
     expect(rawGeneratedHost.modelVisibleMcpToolResults).toMatchObject({
       directContent: { image: false },
       embeddedResources: { blob: { image: false } },
@@ -139,6 +140,12 @@ describe("bundledHostCompatCatalog", () => {
       directContent: { image: true },
       embeddedResources: { blob: { image: false } },
       linkedResources: { blob: { image: false } },
+    });
+    expect(host?.imageSupport).toMatchObject({
+      toolImageContent: { model: false, ui: true },
+      embeddedResourceImages: { model: false, ui: false },
+      resourceLinkImages: { model: false, ui: false },
+      placement: "collapsed",
     });
   });
 
@@ -444,16 +451,48 @@ describe("fetchHostCompatCatalog", () => {
   });
 
   it("maps parse failures to invalid", async () => {
-    expect(
-      await fetchHostCompatCatalog({
-        fetchImpl: async () => okResponse({ nope: true }),
-      })
-    ).toEqual({ ok: false, reason: "invalid" });
-    expect(
-      await fetchHostCompatCatalog({
-        fetchImpl: async () => new Response("not json", { status: 200 }),
-      })
-    ).toEqual({ ok: false, reason: "invalid" });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(
+        await fetchHostCompatCatalog({
+          fetchImpl: async () => okResponse({ nope: true }),
+        })
+      ).toEqual({ ok: false, reason: "invalid" });
+      expect(
+        await fetchHostCompatCatalog({
+          fetchImpl: async () => new Response("not json", { status: 200 }),
+        })
+      ).toEqual({ ok: false, reason: "invalid" });
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[host-catalog] rejected live catalog envelope",
+        expect.objectContaining({ reason: "invalid_envelope" })
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("warns specifically when the live catalog schema version is unsupported", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = await fetchHostCompatCatalog({
+        fetchImpl: async () =>
+          okResponse(
+            envelopeFor(bundledHostCompatCatalog(), { schemaVersion: 3 })
+          ),
+      });
+      expect(result).toEqual({ ok: false, reason: "invalid" });
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[host-catalog] rejected live catalog envelope",
+        expect.objectContaining({
+          reason: "schema_version_mismatch",
+          schemaVersion: 3,
+          expectedSchemaVersion: 2,
+        })
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("maps thrown fetch errors to network", async () => {

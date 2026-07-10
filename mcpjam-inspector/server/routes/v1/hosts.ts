@@ -22,10 +22,9 @@ import {
   getCatalogTemplate,
   type HostCompatCatalog,
 } from "@mcpjam/sdk/host-compat";
-import { HOST_TEMPLATE_IDS } from "@mcpjam/sdk/host-config/templates";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
-import { createConvexClients } from "../shared/evals.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { logger } from "../../utils/logger.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { synthesizeServerBody } from "./adapter.js";
 
@@ -70,15 +69,26 @@ function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function warnHostTemplateFallback(details: Record<string, unknown>): void {
+  logger.warn("[host-catalog] v1 host template fallback", details);
+}
+
 async function fetchBackendHostCatalog(): Promise<HostCompatCatalog | null> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexHttpUrl) return null;
+  if (!convexHttpUrl) {
+    warnHostTemplateFallback({ reason: "missing_convex_http_url" });
+    return null;
+  }
   const baseUrl = new URL("/public", convexHttpUrl).toString();
   const result = await fetchHostCompatCatalog({
     baseUrl,
     timeoutMs: HOST_CATALOG_FETCH_TIMEOUT_MS,
   });
-  return result.ok ? result.catalog : null;
+  if (!result.ok) {
+    warnHostTemplateFallback({ reason: result.reason });
+    return null;
+  }
+  return result.catalog;
 }
 
 async function resolveHostTemplateInput(
@@ -110,7 +120,7 @@ async function resolveHostTemplateInput(
   return input;
 }
 
-function createConvexReadClient(convexAuthToken: string): ConvexHttpClient {
+function createConvexClient(convexAuthToken: string): ConvexHttpClient {
   const convexUrl = process.env.CONVEX_URL;
   if (!convexUrl) {
     throw new WebRouteError(
@@ -157,7 +167,7 @@ async function readHostDetail(
   projectId: string,
   hostId: string
 ): Promise<HostDetailRow> {
-  const readClient = createConvexReadClient(convexAuthToken);
+  const readClient = createConvexClient(convexAuthToken);
   let detail: HostDetailRow | null;
   try {
     // Convex `hosts:getHost` enforces project scope: passing `projectId` means
@@ -185,7 +195,7 @@ const hostConfigSchema = z.record(z.string(), z.unknown());
 const createHostSchema = z
   .object({
     name: z.string().trim().min(1),
-    template: z.enum(HOST_TEMPLATE_IDS).optional(),
+    template: z.string().trim().min(1).optional(),
     theme: z.enum(["light", "dark"]).optional(),
     config: hostConfigSchema.optional(),
   })
@@ -215,7 +225,7 @@ const updateHostSchema = z
 // GET /v1/projects/:projectId/hosts — list a project's hosts.
 hosts.get("/projects/:projectId/hosts", async (c) => {
   const projectId = c.req.param("projectId");
-  const readClient = createConvexReadClient(await getConvexBearerForRequest(c));
+  const readClient = createConvexClient(await getConvexBearerForRequest(c));
   let rows: HostListRow[] | null | undefined;
   try {
     rows = (await readClient.query(
@@ -246,7 +256,7 @@ hosts.post("/projects/:projectId/hosts", async (c) => {
   const projectId = c.req.param("projectId");
   const body = parseWithSchema(createHostSchema, await synthesizeServerBody(c));
   const token = await getConvexBearerForRequest(c);
-  const { convexClient } = createConvexClients(token);
+  const convexClient = createConvexClient(token);
 
   const input = body.template
     ? await resolveHostTemplateInput(body.template, body.theme)
@@ -284,7 +294,7 @@ hosts.patch("/projects/:projectId/hosts/:hostId", async (c) => {
   const updateArgs: Record<string, unknown> = { hostId, projectId };
   if (body.name !== undefined) updateArgs.name = body.name;
   if (body.config !== undefined) updateArgs.input = body.config;
-  const { convexClient } = createConvexClients(token);
+  const convexClient = createConvexClient(token);
   try {
     await convexClient.mutation("hosts:updateHost" as any, updateArgs);
   } catch (error) {
@@ -338,7 +348,7 @@ hosts.delete("/projects/:projectId/hosts/:hostId", async (c) => {
   }
   const token = await getConvexBearerForRequest(c);
   // `hosts:deleteHost` enforces project scope from `projectId`.
-  const { convexClient } = createConvexClients(token);
+  const convexClient = createConvexClient(token);
   try {
     await convexClient.mutation("hosts:deleteHost" as any, {
       hostId,

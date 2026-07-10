@@ -12,7 +12,7 @@ import {
   emptyHostConfigInputV2,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
-import { UpdateCapabilitiesButton } from "../UpdateCapabilitiesButton";
+import { UpdateHostToLatestButton } from "../UpdateHostToLatestButton";
 
 const liveCatalog = bundledHostCompatCatalog();
 
@@ -66,7 +66,7 @@ function renderButton(args: {
     draftRef.current = draft;
     nameRef.current = name;
     return (
-      <UpdateCapabilitiesButton
+      <UpdateHostToLatestButton
         draft={draft}
         hostDisplayName={name}
         onHostDisplayNameChange={(next) => {
@@ -89,7 +89,7 @@ function renderButton(args: {
   return { draftRef, nameRef, ...utils };
 }
 
-describe("UpdateCapabilitiesButton", () => {
+describe("UpdateHostToLatestButton", () => {
   it("copies the latest catalog template, including image settings", async () => {
     const user = userEvent.setup();
     const serverConnectionOverrides = {

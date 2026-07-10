@@ -1,9 +1,9 @@
 import { DEFAULT_PLATFORM_API_BASE_URL } from "../platform/client.js";
+import { hydrateHostCompatCatalog, type HostCompatCatalog } from "./catalog.js";
 import {
-  hydrateHostCompatCatalog,
-  type HostCompatCatalog,
-} from "./catalog.js";
-import { hostCompatCatalogEnvelopeSchema } from "./catalog-schema.js";
+  hostCompatCatalogEnvelopeSchema,
+  SUPPORTED_CATALOG_SCHEMA_VERSION,
+} from "./catalog-schema.js";
 
 /**
  * Fetch the live host-compat catalog from the platform API. Deliberately NOT
@@ -41,6 +41,24 @@ export type FetchHostCompatCatalogResult =
        */
       reason: "network" | "timeout" | "invalid" | "unavailable";
     };
+
+function warnInvalidCatalogEnvelope(body: unknown): void {
+  const schemaVersion =
+    body !== null && typeof body === "object" && !Array.isArray(body)
+      ? (body as { schemaVersion?: unknown }).schemaVersion
+      : undefined;
+  const reason =
+    typeof schemaVersion === "number" &&
+    schemaVersion !== SUPPORTED_CATALOG_SCHEMA_VERSION
+      ? "schema_version_mismatch"
+      : "invalid_envelope";
+
+  console.warn("[host-catalog] rejected live catalog envelope", {
+    reason,
+    schemaVersion,
+    expectedSchemaVersion: SUPPORTED_CATALOG_SCHEMA_VERSION,
+  });
+}
 
 export async function fetchHostCompatCatalog(
   options?: FetchHostCompatCatalogOptions
@@ -85,7 +103,10 @@ export async function fetchHostCompatCatalog(
     }
 
     const parsed = hostCompatCatalogEnvelopeSchema.safeParse(body);
-    if (!parsed.success) return { ok: false, reason: "invalid" };
+    if (!parsed.success) {
+      warnInvalidCatalogEnvelope(body);
+      return { ok: false, reason: "invalid" };
+    }
 
     return {
       ok: true,
