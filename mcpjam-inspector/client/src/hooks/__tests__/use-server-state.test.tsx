@@ -1810,6 +1810,65 @@ describe("useServerState OAuth callback failures", () => {
     });
   });
 
+  it("treats a superseded client-switch reconnect as in-progress, not a failure", async () => {
+    // Repro of the client-switch toast bug: when the user switches clients
+    // faster than a reconnect completes, the in-flight reconnect's op token
+    // goes stale (a newer op now owns the server). That must NOT surface as a
+    // reconnect failure — `reconnectServerForClientSwitch` should resolve, so
+    // the auto-connect recycle never toasts "Failed to reconnect".
+    const { ensureAuthorizedForReconnect } = await import(
+      "@/state/oauth-orchestrator"
+    );
+    vi.mocked(ensureAuthorizedForReconnect).mockResolvedValue({
+      kind: "ready",
+      serverConfig: createAppState().projects.default.servers["demo-server"]
+        .config,
+      tokens: undefined,
+    } as any);
+
+    // The first reconnect hangs inside guardedReconnectServer so a second op
+    // can bump the per-server op token and mark the first one stale.
+    let releaseFirst: (value: unknown) => void = () => {};
+    const firstReconnect = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    reconnectServerMock
+      .mockReturnValueOnce(firstReconnect)
+      .mockResolvedValue({
+        success: true,
+        initInfo: { clientCapabilities: {} },
+      } as any);
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, createAppState());
+
+    let firstOpOutcome: unknown = "pending";
+    await act(async () => {
+      // op1: starts, calls reconnectServer, then blocks on `firstReconnect`.
+      const firstOp = result.current
+        .reconnectServerForClientSwitch("demo-server")
+        .then(() => {
+          firstOpOutcome = "resolved";
+        })
+        .catch((error) => {
+          firstOpOutcome = error;
+        });
+      await flushAsyncWork();
+
+      // op2: a newer reconnect for the SAME server bumps the op token, which
+      // makes op1 stale. It completes on its own success path.
+      await result.current.reconnectServerForClientSwitch("demo-server");
+
+      // Let op1 resume; it observes the stale token and returns "superseded".
+      releaseFirst({ success: true, initInfo: { clientCapabilities: {} } });
+      await firstOp;
+    });
+
+    // Superseded is not a failure: op1 resolves (does not reject), so the
+    // caller has nothing to aggregate into a "Failed to reconnect" toast.
+    expect(firstOpOutcome).toBe("resolved");
+  });
+
   it("strips OAuth bearer headers from reconnect fallback configs", async () => {
     const { reconnectServer } = await import("@/state/mcp-api");
     const { ensureAuthorizedForReconnect } = await import(
