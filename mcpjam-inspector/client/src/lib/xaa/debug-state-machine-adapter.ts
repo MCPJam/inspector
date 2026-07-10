@@ -1,6 +1,5 @@
 import { HOSTED_MODE } from "@/lib/config";
 import { authFetch } from "@/lib/session-token";
-import { getApiAuthorizationHeader } from "@/lib/apis/web/context";
 import { getHostedXaaIdpUrls } from "./idp-endpoints";
 import { createDebugRequestExecutor } from "@/lib/oauth/debug-state-machine-adapter";
 import { createXAAStateMachine } from "./state-machine";
@@ -52,51 +51,20 @@ async function readResponseBody(response: Response): Promise<any> {
   }
 }
 
-export function createXAADebugRequestExecutor(options?: {
-  /** Local hosted-issuer runs: the mint endpoints need the Convex/WorkOS
-   * bearer so the local server can forward it to app.mcpjam.com. authFetch
-   * doesn't attach it to the local mint paths on its own (they aren't in its
-   * hosted-path allowlist), so set it explicitly — same-origin loopback, and
-   * caller-provided Authorization is preserved by authFetch. */
-  attachHostedBearer?: boolean;
-}): XAARequestExecutor {
+export function createXAADebugRequestExecutor(): XAARequestExecutor {
   const debugRequestExecutor = createDebugRequestExecutor();
-  const isMintPath = (path: string) =>
-    path.endsWith("/authenticate") || path.endsWith("/token-exchange");
 
   return {
     internalRequest: async (
       path: string,
       init?: RequestInit,
     ): Promise<XAARequestResult> => {
-      let requestInit = init;
-      if (options?.attachHostedBearer && isMintPath(path)) {
-        const authorization = await getApiAuthorizationHeader();
-        if (!authorization) {
-          // Fail loudly instead of sending an unauthenticated mint that the
-          // hosted issuer rejects with a bare 401 — which reads as "not signed
-          // in" to a user who is. Happens transiently right after sign-in or
-          // when the cached bearer expired mid-session.
-          return {
-            status: 401,
-            statusText: "Unauthorized",
-            headers: {},
-            ok: false,
-            body: {
-              error:
-                "Couldn't attach your session to the hosted issuer. Sign in again and retry.",
-            },
-          };
-        }
-        requestInit = {
-          ...init,
-          headers: {
-            ...normalizeHeaders(init?.headers),
-            Authorization: authorization,
-          },
-        };
-      }
-      const response = await authFetch(`${XAA_API_BASE}${path}`, requestInit);
+      // authFetch attaches the hosted bearer to the local mint paths (see
+      // HOSTED_AUTH_PATH_PREFIXES) and, crucially, refreshes-and-retries on a
+      // 401 — so a stale/expired hosted token self-heals rather than stranding
+      // the flow. Manual header injection would have made authFetch treat the
+      // auth as caller-provided and skip that retry.
+      const response = await authFetch(`${XAA_API_BASE}${path}`, init);
       const body = await readResponseBody(response);
 
       return {
@@ -151,8 +119,6 @@ export function createInspectorXAAStateMachine(
     issuerBaseUrl: issuerBaseUrl ?? defaultIssuerBaseUrl,
     mintPathPrefix,
     ...(hostedIssuerOptIn ? { issuerMode: "hosted", organizationId } : {}),
-    requestExecutor: createXAADebugRequestExecutor({
-      attachHostedBearer: hostedIssuerOptIn,
-    }),
+    requestExecutor: createXAADebugRequestExecutor(),
   });
 }

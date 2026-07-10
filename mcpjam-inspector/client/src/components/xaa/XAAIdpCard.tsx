@@ -160,14 +160,17 @@ export function XAAIdpCard({
   issuerMode = "local",
   onIssuerModeChange,
   canUseHostedIssuer = false,
+  hostedIssuerDisabledReason,
 }: {
   organizationId?: string | null;
   /** LOCAL builds only: which issuer mints this run's assertions. */
   issuerMode?: XaaIssuerMode;
   onIssuerModeChange?: (mode: XaaIssuerMode) => void;
-  /** Signed-in gate: a local guest bearer is signed with a local key and the
-   * hosted issuer would reject it, so the toggle needs a real session. */
+  /** Signed-in + active-org gate: a local guest bearer is signed with a local
+   * key the hosted issuer rejects, and the mint targets the org-scoped issuer. */
   canUseHostedIssuer?: boolean;
+  /** Why the toggle is disabled (signed out vs no active org), for the hint. */
+  hostedIssuerDisabledReason?: string;
 }) {
   const hostedIssuerOn =
     !HOSTED_MODE && issuerMode === "hosted" && canUseHostedIssuer;
@@ -251,8 +254,8 @@ export function XAAIdpCard({
               <span className="font-medium text-foreground">
                 Use hosted issuer (app.mcpjam.com)
               </span>
-              {!canUseHostedIssuer && (
-                <span>— sign in to mint through the hosted issuer</span>
+              {!canUseHostedIssuer && hostedIssuerDisabledReason && (
+                <span>— {hostedIssuerDisabledReason}</span>
               )}
             </label>
           )}

@@ -151,6 +151,14 @@ export function XAAFlowTab({
   // signed with a local key the hosted issuer rejects.)
   const canUseHostedIssuer =
     !HOSTED_MODE && Boolean(signedInUser) && Boolean(organizationId);
+  // Why the toggle is disabled — the two gates fail for different reasons and
+  // the hint must name the one the user can act on.
+  const hostedIssuerDisabledReason =
+    HOSTED_MODE || canUseHostedIssuer
+      ? undefined
+      : !signedInUser
+      ? "sign in to mint through the hosted issuer"
+      : "select an organization to mint through the hosted issuer";
   const hostedIssuerOptIn =
     canUseHostedIssuer && runSettings.issuerMode === "hosted";
   const target = useXaaTestTarget({
@@ -591,6 +599,7 @@ export function XAAFlowTab({
         issuerMode={runSettings.issuerMode}
         onIssuerModeChange={runSettings.setIssuerMode}
         canUseHostedIssuer={canUseHostedIssuer}
+        hostedIssuerDisabledReason={hostedIssuerDisabledReason}
       />
       <XAAResourceAppsSection
         organizationId={organizationId ?? null}
