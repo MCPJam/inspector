@@ -102,6 +102,7 @@ const LEGACY_RAW_CAPTURE_FILES = new Set([
   "hooks/useCreditTopup.ts",
   "hooks/useCreditTopupReturnFlow.ts",
   "lib/evals/excalidraw-quickstart.ts",
+  "lib/host-compat/use-host-catalog.ts",
   "lib/mcpjam-agent/agent-chat-instances.ts",
   "lib/session-token.ts",
 ]);
