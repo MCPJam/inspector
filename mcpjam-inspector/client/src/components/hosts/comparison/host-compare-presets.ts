@@ -41,7 +41,7 @@ interface PresetCompareOptions {
  */
 export function buildPresetCompareEntries(
   catalog: HostCompatCatalog,
-  options: PresetCompareOptions = {},
+  options: PresetCompareOptions = {}
 ): PresetCompareEntries {
   const hosts: HostListItem[] = [];
   const subjects: Record<string, HostComparisonSubject> = {};
@@ -73,6 +73,7 @@ export function buildPresetCompareEntries(
       hostName: host.label,
       hostStyle: config.hostStyle,
       configHashShort: host.id,
+      verifiedAt: host.verifiedAt,
       config,
     };
   }
