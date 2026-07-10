@@ -154,6 +154,7 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "x-ai/grok-4.1-fast",
   "x-ai/grok-4-fast",
   "x-ai/grok-4.20",
+  "x-ai/grok-4.5",
   "z-ai/glm-4.7",
   "z-ai/glm-4.7-flash",
   "z-ai/glm-5.1",
@@ -338,6 +339,7 @@ export enum Model {
   GROK_3 = "grok-3",
   GROK_3_MINI = "grok-3-mini",
   GROK_CODE_FAST_1 = "grok-code-fast-1",
+  GROK_4_5 = "grok-4.5",
   GROK_4_FAST_NON_REASONING = "grok-4-fast-non-reasoning",
   GROK_4_FAST_REASONING = "grok-4-fast-reasoning",
 }
@@ -667,6 +669,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "xai",
     contextLength: 2000000,
   },
+  {
+    id: "x-ai/grok-4.5",
+    name: "Grok 4.5 (Free)",
+    provider: "xai",
+    contextLength: 500000,
+  },
   freeModel("x-ai/grok-4-fast", "Grok 4 Fast", "xai"),
   freeModel("x-ai/grok-4.20", "Grok 4.20", "xai"),
   {
@@ -780,6 +788,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     name: "Grok Code Fast 1",
     provider: "xai",
     contextLength: 256000,
+  },
+  {
+    id: Model.GROK_4_5,
+    name: "Grok 4.5",
+    provider: "xai",
+    contextLength: 500000,
   },
   {
     id: Model.GROK_4_FAST_NON_REASONING,
