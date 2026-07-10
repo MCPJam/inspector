@@ -76,7 +76,8 @@ export function parseHostsParam(raw: string | null | undefined): string[] | null
     .map((s) => s.trim())
     .filter((s) => s.length > 0)
     .map(normalizeHostComparePermalinkId);
-  return parts.length > 0 ? parts : null;
+  const deduped = [...new Set(parts)];
+  return deduped.length > 0 ? deduped : null;
 }
 
 function normalizeHostComparePermalinkId(hostId: string): string {

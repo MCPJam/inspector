@@ -5,8 +5,9 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type ReactNode,
 } from "react";
-import { Check, Copy, Loader2, Share2 } from "lucide-react";
+import { Bell, Check, Copy, Filter, Flag, Loader2, Share2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -20,7 +21,14 @@ import {
   Popover,
   PopoverAnchor,
   PopoverContent,
+  PopoverTrigger,
 } from "@mcpjam/design-system/popover";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@mcpjam/design-system/dropdown-menu";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import {
   Command,
@@ -59,9 +67,7 @@ import {
 import { HostConfigComparisonMatrix } from "./host-config-comparison-matrix";
 import { HostCapabilityListView } from "./HostCapabilityListView";
 import {
-  computeVisibleFieldIds,
   fieldMatchesQuery,
-  isSupportField,
   type SupportFilterMode,
 } from "./support-level";
 import {
@@ -78,6 +84,8 @@ const CAPABILITY_QUERY_PARAM = "capability";
 const SEARCH_QUERY_PARAM = "q";
 const MAIN_PRODUCT_URL = "https://app.mcpjam.com";
 const MOBILE_COMPARE_MEDIA_QUERY = "(max-width: 640px)";
+const CANIUSE_ACTION_BUTTON_CLASS =
+  "h-8 rounded-full border-border bg-background px-3 text-[12px] font-medium text-foreground hover:border-border hover:bg-muted hover:text-foreground";
 const SEARCH_PICKER_HIDDEN_FIELD_IDS = new Set([
   "modelId",
   "systemPrompt",
@@ -205,7 +213,9 @@ export function HostConfigCompareView({
       projectId,
     });
   const catalogState = useHostCatalog();
-  const compareCatalog = catalogState.catalog ?? bundledHostCompatCatalog();
+  const compareCatalog = presetOnly
+    ? catalogState.catalog ?? bundledHostCompatCatalog()
+    : catalogState.catalog;
   const liveHosts = canQueryLiveHosts ? queriedLiveHosts : [];
   const listLoading = canQueryLiveHosts ? queriedListLoading : false;
   const selectionScopeId = presetOnly ? "public" : projectId ?? "";
@@ -221,14 +231,14 @@ export function HostConfigCompareView({
     if (!codexEnabled) excluded.add("codex");
     return excluded;
   }, [claudeCodeEnabled, codexEnabled]);
-  const presets = useMemo(
-    () =>
-      buildPresetCompareEntries(compareCatalog, {
+  const presets = useMemo(() => {
+    if (!compareCatalog) {
+      return { hosts: [], subjects: {} as Record<string, HostComparisonSubject> };
+    }
+    return buildPresetCompareEntries(compareCatalog, {
         excludedTemplateIds: excludedPresetTemplateIds,
-      }),
-    [compareCatalog, excludedPresetTemplateIds]
-  );
-
+    });
+  }, [compareCatalog, excludedPresetTemplateIds]);
   // Real created hosts first, then presets — what the selector chips iterate.
   const hosts = useMemo(() => {
     if (!presetOnly) return [...liveHosts, ...presets.hosts];
@@ -475,48 +485,15 @@ export function HostConfigCompareView({
     }
   }, []);
 
+  const handleResetCompareView = useCallback(() => {
+    setFieldSearchQuery("");
+    setSupportFilter("all");
+  }, []);
+
   useEffect(() => {
     if (hasFieldSearchQuery || supportFilter === "all") return;
     setSupportFilter("all");
   }, [hasFieldSearchQuery, supportFilter]);
-
-  // "N / M fields" count for the search header — same predicate the matrix and
-  // list view use, so the number always matches what's rendered. In list mode
-  // only support-shaped rows render, so the count narrows to that subset too.
-  const matchCount = useMemo(() => {
-    const useCellSupportFilter =
-      hasFieldSearchQuery && effectiveSupportFilter !== "all";
-    const ids = computeVisibleFieldIds({
-      fields: compareFields,
-      configs: orderedSubjects.map((s) => s.config),
-      divergingOnly,
-      supportFilter: useCellSupportFilter ? "all" : effectiveSupportFilter,
-      searchQuery: fieldSearchQuery,
-    });
-    if (viewMode !== "list") return ids.size;
-    let n = 0;
-    for (const id of ids) {
-      const field = compareFields.find((candidate) => candidate.id === id);
-      if (field && isSupportField(field)) n += 1;
-    }
-    return n;
-  }, [
-    compareFields,
-    orderedSubjects,
-    divergingOnly,
-    effectiveSupportFilter,
-    fieldSearchQuery,
-    hasFieldSearchQuery,
-    viewMode,
-  ]);
-
-  const totalFieldCount = useMemo(
-    () =>
-      viewMode === "list"
-        ? compareFields.filter(isSupportField).length
-        : compareFields.length,
-    [compareFields, viewMode]
-  );
 
   if (!presetOnly && !projectId) {
     return (
@@ -574,13 +551,26 @@ export function HostConfigCompareView({
               query={fieldSearchQuery}
               onQueryChange={setFieldSearchQuery}
               fields={compareFields}
-              matchCount={matchCount}
-              totalCount={totalFieldCount}
-              showCount={orderedSubjects.length > 0}
               viewMode={viewMode}
               onViewModeChange={handleViewModeChange}
               disableListView={showDescriptions}
               mobileOptimized={presetOnly}
+              onReset={handleResetCompareView}
+              supportFilter={supportFilter}
+              onSupportFilterChange={setSupportFilter}
+              actions={
+                presetOnly ? (
+                  <div className="flex items-center gap-1.5">
+                    <ReportInconsistencyDialog />
+                    <NotifyButton />
+                    <ShareComparisonDialog
+                      selectedHostIds={selectedHostIds}
+                      searchQuery={fieldSearchQuery}
+                      fields={compareFields}
+                    />
+                  </div>
+                ) : undefined
+              }
             />
 
             <HostCompareSelector
@@ -588,9 +578,6 @@ export function HostConfigCompareView({
               selectedHostIds={selectedHostIds}
               subjectsByHost={allSubjects}
               onToggleHost={handleToggleHost}
-              matchCount={matchCount}
-              totalCount={totalFieldCount}
-              showCount={orderedSubjects.length > 0}
               viewMode={viewMode}
               onViewModeChange={handleViewModeChange}
               disableListView={showDescriptions}
@@ -606,20 +593,6 @@ export function HostConfigCompareView({
               themeMode={themeMode}
               mobileOptimized={presetOnly}
             />
-
-            {presetOnly ? (
-              <>
-                <div className="-mt-2 mb-4 flex justify-end">
-                  <ReportInconsistencyDialog />
-                </div>
-                <ShareComparisonDialog
-                  selectedHostIds={selectedHostIds}
-                  subjects={orderedSubjects}
-                  searchQuery={fieldSearchQuery}
-                  fields={compareFields}
-                />
-              </>
-            ) : null}
 
             {totalSelectedCount === 0 ? (
               <div className="rounded-xl border border-border bg-card p-10 text-center">
@@ -671,6 +644,120 @@ export function HostConfigCompareView({
   );
 }
 
+function NotifyButton() {
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState<
+    "idle" | "submitting" | "succeeded" | "error"
+  >("idle");
+  const trimmedEmail = email.trim();
+
+  const handleOpenChange = useCallback((nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (nextOpen) return;
+    setEmail("");
+    setStatus("idle");
+  }, []);
+
+  const handleSubmit = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (status === "submitting") return;
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+        setStatus("error");
+        return;
+      }
+      setStatus("submitting");
+      try {
+        const response = await fetch("/api/web/caniuse/subscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: trimmedEmail }),
+        });
+        if (!response.ok) throw new Error("Subscribe failed");
+        setStatus("succeeded");
+      } catch {
+        setStatus("error");
+      }
+    },
+    [status, trimmedEmail]
+  );
+
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          aria-label="Notify me of host changes"
+          title="Notify me of host changes"
+          className={cn(
+            "gap-1.5",
+            CANIUSE_ACTION_BUTTON_CLASS
+          )}
+        >
+          <Bell className="size-3.5" />
+          <span>Notify</span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[300px]">
+        {status === "succeeded" ? (
+          <div className="flex items-center gap-2 text-sm font-medium text-emerald-600 dark:text-emerald-400">
+            <Check className="size-4 shrink-0" />
+            You&apos;re on the list — we&apos;ll email you when hosts change.
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-3" noValidate>
+            <div>
+              <div className="text-sm font-semibold text-foreground">
+                Stay up to date
+              </div>
+              <div className="text-[12px] text-muted-foreground">
+                Get an email when a host adds or changes a capability.
+              </div>
+            </div>
+            <div>
+              <input
+                type="email"
+                value={email}
+                onChange={(event) => {
+                  setEmail(event.target.value);
+                  if (status === "error") setStatus("idle");
+                }}
+                placeholder="you@company.com"
+                aria-label="Email"
+                autoFocus
+                className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              />
+              {status === "error" ? (
+                <p className="mt-1 text-[11px] text-destructive">
+                  Enter a valid email address.
+                </p>
+              ) : null}
+            </div>
+            <Button
+              type="submit"
+              size="sm"
+              className="w-full"
+              disabled={status === "submitting"}
+            >
+              {status === "submitting" ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Sending
+                </>
+              ) : (
+                "Notify me"
+              )}
+            </Button>
+          </form>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function ReportInconsistencyDialog() {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState("");
@@ -714,10 +801,16 @@ function ReportInconsistencyDialog() {
         type="button"
         variant="outline"
         size="sm"
-        className="h-8 rounded-full px-3 text-[12px]"
+        aria-label="Report inconsistency"
+        title="Report inconsistency"
+        className={cn(
+          "gap-1.5",
+          CANIUSE_ACTION_BUTTON_CLASS
+        )}
         onClick={() => setOpen(true)}
       >
-        Report inconsistency
+        <Flag className="size-3.5" />
+        <span>Report</span>
       </Button>
       <DialogContent className="sm:max-w-[440px]">
         {status === "succeeded" ? (
@@ -829,30 +922,98 @@ function HostConfigFetcher({
   return null;
 }
 
-/** caniuse-style "Can I use ___" search header + result count + view toggle. */
+/** caniuse-style "Can I use ___" search header + view toggle. */
+const SUPPORT_FILTER_OPTIONS: ReadonlyArray<{
+  value: SupportFilterMode;
+  label: string;
+}> = [
+  { value: "all", label: "All fields" },
+  { value: "missing", label: "Missing" },
+  { value: "partial", label: "Partial" },
+  { value: "supported", label: "Full" },
+];
+
+/**
+ * Support-level filter for the caniuse search line, rendered right after the
+ * "?" glyph. Always present; the funnel only takes the accent colour once a
+ * non-default filter is applied.
+ */
+function SupportFilterFunnel({
+  supportFilter,
+  onSupportFilterChange,
+  disabled = false,
+}: {
+  supportFilter: SupportFilterMode;
+  onSupportFilterChange: (mode: SupportFilterMode) => void;
+  disabled?: boolean;
+}) {
+  const active = !disabled && supportFilter !== "all";
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label="Filter fields by support level"
+          disabled={disabled}
+          title={disabled ? "Search first to filter" : undefined}
+          className={cn(
+            "inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted-foreground",
+            active && "text-primary hover:text-primary"
+          )}
+        >
+          <Filter className="size-[18px]" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44 p-1">
+        <div className="px-2 pb-1 pt-1.5 text-[9.5px] font-bold uppercase tracking-wider text-muted-foreground/70">
+          Show
+        </div>
+        {SUPPORT_FILTER_OPTIONS.map((option) => (
+          <DropdownMenuItem
+            key={option.value}
+            data-testid={`support-filter-${option.value}`}
+            disabled={disabled}
+            onClick={() => {
+              if (!disabled) onSupportFilterChange(option.value);
+            }}
+            className="h-8 gap-2 rounded-md px-2 text-[12.5px]"
+          >
+            {option.label}
+            {supportFilter === option.value ? (
+              <Check className="ml-auto size-3.5 text-primary" />
+            ) : null}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function CompareSearchBar({
   query,
   onQueryChange,
   fields,
-  matchCount,
-  totalCount,
-  showCount,
   viewMode,
   onViewModeChange,
   disableListView = false,
   mobileOptimized = false,
+  onReset,
+  actions,
+  supportFilter,
+  onSupportFilterChange,
 }: {
   query: string;
   onQueryChange: (q: string) => void;
   fields: ReadonlyArray<HostConfigFieldDef>;
-  matchCount: number;
-  totalCount: number;
-  /** Hidden while hosts are still loading — the count would be meaningless. */
-  showCount: boolean;
   viewMode: CompareViewMode;
   onViewModeChange: (mode: CompareViewMode) => void;
   disableListView?: boolean;
   mobileOptimized?: boolean;
+  onReset?: () => void;
+  /** Utility actions rendered at the trailing edge of the search row. */
+  actions?: ReactNode;
+  supportFilter?: SupportFilterMode;
+  onSupportFilterChange?: (mode: SupportFilterMode) => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const searchAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -891,6 +1052,16 @@ function CompareSearchBar({
     [onQueryChange]
   );
 
+  const handleResetClick = useCallback(() => {
+    setPickerOpen(false);
+    onReset?.();
+  }, [onReset]);
+
+  const canResetSearch = query.trim().length > 0;
+  const canIUseLabelClass = mobileOptimized
+    ? "shrink-0 cursor-pointer rounded-md border-0 bg-transparent p-0 text-[24px] font-semibold leading-none tracking-normal text-foreground transition-opacity hover:opacity-80 disabled:cursor-default disabled:opacity-100 disabled:hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+    : "shrink-0 cursor-pointer rounded-md border-0 bg-transparent p-0 text-[15px] font-medium tracking-tight text-foreground transition-opacity hover:opacity-80 disabled:cursor-default disabled:opacity-100 disabled:hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40";
+
   const keepPickerOpenForSearchAnchor = useCallback(
     (event: CustomEvent<{ originalEvent?: Event }>) => {
       const target = (event.detail.originalEvent?.target ??
@@ -904,12 +1075,19 @@ function CompareSearchBar({
 
   const searchRow = (
     <>
-      {mobileOptimized ? (
-        <span className="shrink-0 text-[24px] font-semibold leading-none tracking-normal text-foreground">
+      {onReset ? (
+        <button
+          type="button"
+          className={canIUseLabelClass}
+          aria-label="Show all clients and capabilities"
+          disabled={!canResetSearch}
+          title={canResetSearch ? "Show all clients and capabilities" : undefined}
+          onClick={handleResetClick}
+        >
           Can I use…
-        </span>
+        </button>
       ) : (
-        <span className="shrink-0 text-[15px] font-medium tracking-tight text-foreground">
+        <span className={canIUseLabelClass}>
           Can I use…
         </span>
       )}
@@ -1012,6 +1190,13 @@ function CompareSearchBar({
           >
             ?
           </span>
+          {supportFilter !== undefined && onSupportFilterChange ? (
+            <SupportFilterFunnel
+              supportFilter={supportFilter}
+              onSupportFilterChange={onSupportFilterChange}
+              disabled={query.trim().length === 0}
+            />
+          ) : null}
         </span>
       )}
     </>
@@ -1029,9 +1214,14 @@ function CompareSearchBar({
           <div className="flex w-full min-w-0 flex-nowrap items-center justify-center gap-2 sm:col-start-2">
             {searchRow}
           </div>
+          {actions ? (
+            <div className="flex items-center gap-1.5 sm:col-start-1 sm:row-start-1 sm:justify-self-start">
+              {actions}
+            </div>
+          ) : null}
           <a
             href={MAIN_PRODUCT_URL}
-            className="inline-flex min-w-0 shrink-0 items-center gap-1.5 text-[11px] leading-none text-muted-foreground transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 sm:col-start-3 sm:justify-self-end"
+            className="inline-flex min-w-0 shrink-0 items-center gap-1.5 text-[11px] leading-none text-muted-foreground transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 sm:col-start-3 sm:row-start-1 sm:justify-self-end"
             aria-label="Open MCPJam"
           >
             <span>Brought to you by</span>
@@ -1041,16 +1231,11 @@ function CompareSearchBar({
       ) : (
         searchRow
       )}
-      {showCount && !mobileOptimized && (
-        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-          {matchCount} / {totalCount} fields
-        </span>
-      )}
       {!mobileOptimized && (
         <div
           role="group"
           aria-label="View mode"
-          className="flex shrink-0 items-center gap-0.5 rounded-full border border-border p-0.5"
+          className="ml-auto flex shrink-0 items-center gap-0.5 rounded-full border border-border p-0.5"
         >
           {(
             [
@@ -1094,12 +1279,10 @@ function CompareSearchBar({
 
 function ShareComparisonDialog({
   selectedHostIds,
-  subjects,
   searchQuery,
   fields,
 }: {
   selectedHostIds: ReadonlyArray<string>;
-  subjects: ReadonlyArray<HostComparisonSubject>;
   searchQuery: string;
   fields: ReadonlyArray<HostConfigFieldDef>;
 }) {
@@ -1110,11 +1293,6 @@ function ShareComparisonDialog({
     () => buildShareComparisonUrl(selectedHostIds, searchQuery, fields),
     [selectedHostIds, searchQuery, fields]
   );
-  const capability = useMemo(
-    () => capabilityForSearchQuery(searchQuery, fields),
-    [searchQuery, fields]
-  );
-  const clientNames = subjects.map((subject) => subject.hostName);
 
   const handleCopy = useCallback(async () => {
     try {
@@ -1128,55 +1306,33 @@ function ShareComparisonDialog({
     window.setTimeout(() => setCopied(false), 2000);
   }, [shareUrl]);
 
-  const tweetHref = useMemo(() => {
-    const text = capability
-      ? `Can I use ${capability.field.label} across MCP clients?`
-      : "MCP client capability support";
-    return `https://twitter.com/intent/tweet?${new URLSearchParams({
-      text,
-      url: shareUrl,
-    }).toString()}`;
-  }, [capability, shareUrl]);
-
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <Button
         type="button"
+        variant="outline"
+        size="sm"
+        aria-label="Share"
+        title="Share"
         onClick={() => setOpen(true)}
-        className="fixed bottom-4 right-4 z-40 h-10 gap-2 rounded-full px-4 shadow-lg"
+        className={cn(
+          "gap-1.5",
+          CANIUSE_ACTION_BUTTON_CLASS
+        )}
       >
-        <Share2 className="size-4" />
-        Share
+        <Share2 className="size-3.5" />
+        <span>Share</span>
       </Button>
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
           <DialogTitle>Share this comparison</DialogTitle>
           <DialogDescription>
-            A link that opens exactly the clients and capability you&apos;re
-            viewing.
+            Anyone with this link will see the same comparison you&apos;re
+            looking at.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-[12px]">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Clients
-            </span>
-            <span className="text-foreground">
-              {clientNames.length > 0 ? clientNames.join(", ") : "None selected"}
-            </span>
-            {capability ? (
-              <>
-                <span className="ml-auto text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Capability
-                </span>
-                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
-                  {capability.field.label}
-                </span>
-              </>
-            ) : null}
-          </div>
-
           <div className="flex items-center gap-2">
             <input
               readOnly
@@ -1197,14 +1353,6 @@ function ShareComparisonDialog({
                   Copy
                 </>
               )}
-            </Button>
-          </div>
-
-          <div className="flex justify-start">
-            <Button asChild variant="outline" size="sm" className="gap-2">
-              <a href={tweetHref} target="_blank" rel="noreferrer noopener">
-                Share on X
-              </a>
             </Button>
           </div>
         </div>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { Loader2, Save } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { useConvexAuth } from "convex/react";
@@ -36,6 +36,7 @@ import {
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { RedesignedHostCanvas } from "./canvas/RedesignedHostCanvas";
+import { parseHostVerifyTabParam } from "../host-verify-deep-link";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
 import { HostFocusPanel } from "./focus/HostFocusPanel";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
@@ -69,6 +70,7 @@ export function HostBuilderViewRedesigned({
   projectId,
 }: HostBuilderViewRedesignedProps) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { isAuthenticated } = useConvexAuth();
   const { host } = useHost({
     isAuthenticated,
@@ -96,6 +98,11 @@ export function HostBuilderViewRedesigned({
     tab: "behavior",
     selectedServerId: null,
   });
+  const requestedFocusTab = useMemo(
+    () => parseHostVerifyTabParam(location.search),
+    [location.search]
+  );
+  const appliedFocusTabRef = useRef<string | null>(null);
   // Diff snapshot — populated for ONE render after a host switch so the
   // canvas can mark changed leaves/fields. Cleared after the flash
   // duration so subsequent in-place edits don't keep re-firing the
@@ -182,6 +189,18 @@ export function HostBuilderViewRedesigned({
         : null,
     [host]
   );
+
+  useEffect(() => {
+    if (!requestedFocusTab) return;
+    const applyKey = `${hostId}:${requestedFocusTab}`;
+    if (appliedFocusTabRef.current === applyKey) return;
+    appliedFocusTabRef.current = applyKey;
+    setFocusState({
+      open: true,
+      tab: requestedFocusTab,
+      selectedServerId: null,
+    });
+  }, [hostId, requestedFocusTab]);
 
   const isDirty = useMemo(() => {
     if (!host || !draftConfig || !savedConfig) return false;

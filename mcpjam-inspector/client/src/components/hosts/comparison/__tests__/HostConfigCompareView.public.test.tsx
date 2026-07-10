@@ -112,6 +112,11 @@ describe("HostConfigCompareView public mode", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Can I use…")).toBeInTheDocument();
     expect(
+      screen.getByRole("button", {
+        name: "Show all clients and capabilities",
+      })
+    ).toBeDisabled();
+    expect(
       screen.getByTestId("host-compare-chip-preset:claude")
     ).toBeInTheDocument();
 
@@ -165,7 +170,6 @@ describe("HostConfigCompareView public mode", () => {
     expect(screen.getByLabelText("Search host config fields")).toHaveValue(
       "Elicitation"
     );
-    expect(screen.getByText(/1 \/ \d+ fields/)).toBeInTheDocument();
     await waitFor(() => {
       expect(
         screen.queryByText(/Select at least one client/i)
@@ -201,6 +205,69 @@ describe("HostConfigCompareView public mode", () => {
         "/embed/host-compare?hosts=preset%3Aclaude%2Cpreset%3Avscode&capability=elicitation"
       );
     });
+  });
+
+  it("disables the support filter until a search is entered", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter>
+        <HostConfigCompareView
+          projectId={null}
+          isAuthenticated={false}
+          presetOnly
+        />
+      </MemoryRouter>
+    );
+
+    const filterButton = screen.getByLabelText("Filter fields by support level");
+    expect(filterButton).toBeDisabled();
+
+    await user.type(
+      screen.getByLabelText("Search host config fields"),
+      "Elicitation"
+    );
+
+    expect(filterButton).not.toBeDisabled();
+  });
+
+  it("clears search filtering without changing selected clients when Can I use is clicked", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          "/embed/host-compare?hosts=preset%3Aclaude%2Cpreset%3Avscode&capability=elicitation",
+        ]}
+      >
+        <HostConfigCompareView
+          projectId={null}
+          isAuthenticated={false}
+          presetOnly
+        />
+      </MemoryRouter>
+    );
+
+    const search = screen.getByLabelText("Search host config fields");
+    const canIUseButton = screen.getByRole("button", {
+      name: "Show all clients and capabilities",
+    });
+    expect(search).toHaveValue("Elicitation");
+    expect(canIUseButton).not.toBeDisabled();
+    expect(screen.getByTestId("host-compare-chip-preset:chatgpt")).toHaveAttribute(
+      "data-selected",
+      "false"
+    );
+
+    await user.click(canIUseButton);
+
+    expect(search).toHaveValue("");
+    expect(canIUseButton).toBeDisabled();
+    expect(screen.getByLabelText("Filter fields by support level")).toBeDisabled();
+    expect(screen.getByTestId("host-compare-chip-preset:chatgpt")).toHaveAttribute(
+      "data-selected",
+      "false"
+    );
   });
 
   it("hides agent tuning and request timeout rows in public caniuse mode", async () => {

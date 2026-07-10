@@ -63,7 +63,6 @@ describe("host-compare-selection", () => {
   it("parseHostsParam maps preset permalink aliases to current catalog ids", () => {
     expect(parseHostsParam("preset:slackbot,preset:slack-bot")).toEqual([
       "preset:slack",
-      "preset:slack",
     ]);
   });
 

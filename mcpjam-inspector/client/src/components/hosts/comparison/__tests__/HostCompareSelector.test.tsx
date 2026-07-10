@@ -23,10 +23,7 @@ describe("HostCompareSelector", () => {
 
     render(
       <HostCompareSelector
-        hosts={[
-          makeHost("h_a", "Claude"),
-          makeHost("h_b", "Cursor"),
-        ]}
+        hosts={[makeHost("h_a", "Claude"), makeHost("h_b", "Cursor")]}
         selectedHostIds={["h_a"]}
         subjectsByHost={{}}
         onToggleHost={onToggleHost}
@@ -36,25 +33,53 @@ describe("HostCompareSelector", () => {
         onSupportFilterChange={vi.fn()}
         showDescriptions={false}
         onShowDescriptionsChange={vi.fn()}
-      />,
+      />
     );
 
     expect(screen.getByTestId("host-compare-chip-h_a")).toHaveAttribute(
       "data-selected",
-      "true",
+      "true"
     );
     expect(screen.getByTestId("host-compare-chip-h_b")).toHaveAttribute(
       "data-selected",
-      "false",
+      "false"
     );
 
     await user.click(screen.getByTestId("host-compare-chip-h_b"));
     expect(onToggleHost).toHaveBeenCalledWith("h_b");
   });
 
-  it("shows a More menu when there are more than six hosts", () => {
+  it("shows a More menu initially when there are more than six hosts", () => {
     const hosts = Array.from({ length: 7 }, (_, index) =>
-      makeHost(`h_${index}`, `Host ${index}`),
+      makeHost(`h_${index}`, `Host ${index}`)
+    );
+
+    render(
+      <HostCompareSelector
+        hosts={hosts}
+        selectedHostIds={[]}
+        subjectsByHost={{}}
+        onToggleHost={vi.fn()}
+        divergingOnly={false}
+        onDivergingOnlyChange={vi.fn()}
+        supportFilter="all"
+        onSupportFilterChange={vi.fn()}
+        showDescriptions={false}
+        onShowDescriptionsChange={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByTestId("host-compare-overflow-trigger")
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("host-compare-chip-h_6")
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows selected hosts inline even past the initial compact limit", () => {
+    const hosts = Array.from({ length: 8 }, (_, index) =>
+      makeHost(`h_${index}`, `Host ${index}`)
     );
 
     render(
@@ -69,12 +94,12 @@ describe("HostCompareSelector", () => {
         onSupportFilterChange={vi.fn()}
         showDescriptions={false}
         onShowDescriptionsChange={vi.fn()}
-      />,
+      />
     );
 
-    expect(screen.getByTestId("host-compare-overflow-trigger")).toBeInTheDocument();
+    expect(screen.getByTestId("host-compare-chip-h_7")).toBeInTheDocument();
     expect(
-      screen.queryByTestId("host-compare-chip-h_6"),
+      screen.queryByTestId("host-compare-overflow-trigger")
     ).not.toBeInTheDocument();
   });
 
@@ -94,7 +119,7 @@ describe("HostCompareSelector", () => {
         onSupportFilterChange={onSupportFilterChange}
         showDescriptions={false}
         onShowDescriptionsChange={vi.fn()}
-      />,
+      />
     );
 
     await user.click(screen.getByTestId("support-filter-missing"));
@@ -118,7 +143,7 @@ describe("HostCompareSelector", () => {
         supportFiltersDisabled
         showDescriptions={false}
         onShowDescriptionsChange={vi.fn()}
-      />,
+      />
     );
 
     const missingFilter = screen.getByTestId("support-filter-missing");

@@ -764,5 +764,7 @@ export interface HostComparisonSubject {
   hostStyle: HostStyleId;
   /** Short suffix of the hostConfigId — shown as `·a3f9d2` under the name. */
   configHashShort: string;
+  /** Catalog verification timestamp for preset/caniuse hosts. */
+  verifiedAt?: number;
   config: HostConfigDtoV2;
 }

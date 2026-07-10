@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Info, PlugZap, X } from "lucide-react";
+import { Info, TrendingUp, TriangleAlert, X } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   Popover,
@@ -23,6 +23,7 @@ import {
 } from "@/lib/host-config-field-schema";
 import { SupportChip } from "./support-chip";
 import { PRESET_HOST_ID_PREFIX } from "./host-compare-presets";
+import { buildHostVerifySearch } from "../host-verify-deep-link";
 import {
   cellPassesSupportFilter,
   computeVisibleFieldIds,
@@ -32,6 +33,14 @@ import {
   type SupportFilterMode,
   type SupportLevel,
 } from "./support-level";
+
+const VERIFIED_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "UTC",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+const STALE_VERIFICATION_MS = 30 * 24 * 60 * 60 * 1000;
 
 interface HostConfigComparisonMatrixProps {
   subjects: ReadonlyArray<HostComparisonSubject>;
@@ -83,6 +92,7 @@ export function HostConfigComparisonMatrix({
 }: HostConfigComparisonMatrixProps) {
   const groups = useMemo(() => groupHostConfigFields(fields), [fields]);
   const configs = useMemo(() => subjects.map((s) => s.config), [subjects]);
+  const showVerifiedAtRow = verifyBaseUrl !== undefined;
 
   const divergingIds = useMemo(() => {
     const set = new Set<string>();
@@ -172,7 +182,7 @@ export function HostConfigComparisonMatrix({
       >
         <table
           className={cn(
-            "border-collapse text-[13px]",
+            "border-collapse text-center text-[13px]",
             mobileOptimized ? "w-max min-w-full" : "w-full"
           )}
         >
@@ -198,7 +208,7 @@ export function HostConfigComparisonMatrix({
 
           <thead>
             <tr>
-              <th className="sticky left-0 top-0 z-30 bg-card border-b border-r border-border px-3 py-3 sm:px-5 sm:py-4 text-left">
+              <th className="sticky left-0 top-0 z-30 bg-card border-b border-border px-3 py-3 text-left after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border after:content-[''] sm:px-5 sm:py-4">
                 <span className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
                   Field
                 </span>
@@ -216,6 +226,12 @@ export function HostConfigComparisonMatrix({
           </thead>
 
           <tbody>
+            {showVerifiedAtRow ? (
+              <VerifiedAtRow
+                subjects={displaySubjects}
+                mobileOptimized={mobileOptimized}
+              />
+            ) : null}
             {groups.map((group, groupIndex) => {
               const visibleFieldsInGroup = group.subsections
                 .flatMap((sub) => sub.fields)
@@ -246,6 +262,58 @@ export function HostConfigComparisonMatrix({
         </table>
       </div>
     </motion.div>
+  );
+}
+
+function formatVerifiedAt(verifiedAt: number | undefined): string {
+  if (verifiedAt === undefined || !Number.isFinite(verifiedAt)) return "—";
+  return VERIFIED_DATE_FORMATTER.format(new Date(verifiedAt));
+}
+
+function isVerifiedAtStale(verifiedAt: number | undefined): boolean {
+  if (verifiedAt === undefined || !Number.isFinite(verifiedAt)) return false;
+  return Date.now() - verifiedAt > STALE_VERIFICATION_MS;
+}
+
+function VerifiedAtRow({
+  subjects,
+  mobileOptimized,
+}: {
+  subjects: ReadonlyArray<HostComparisonSubject>;
+  mobileOptimized: boolean;
+}) {
+  return (
+    <tr className="border-b border-border bg-card">
+      <td
+        className={cn(
+          "sticky left-0 z-10 bg-card px-3 py-1.5 text-left after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border after:content-[''] sm:px-5",
+          mobileOptimized && "min-w-0"
+        )}
+      >
+        <span className="text-[12px] font-medium leading-tight text-muted-foreground">
+          Verified at
+        </span>
+      </td>
+      {subjects.map((subject) => (
+        <td
+          key={subject.hostId}
+          className="min-w-[220px] border-l border-border px-3 py-1.5 text-center align-top sm:px-4"
+        >
+          <div className="flex min-h-5 items-center justify-center">
+            {isVerifiedAtStale(subject.verifiedAt) ? (
+              <span className="inline-flex items-center gap-1 whitespace-nowrap text-[12px] leading-tight text-muted-foreground">
+                <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
+                Last checked over 30 days ago
+              </span>
+            ) : (
+              <span className="text-[12px] tabular-nums text-muted-foreground">
+                {formatVerifiedAt(subject.verifiedAt)}
+              </span>
+            )}
+          </div>
+        </td>
+      ))}
+    </tr>
   );
 }
 
@@ -281,13 +349,14 @@ function SectionRows({
   return (
     <>
       <tr>
+        {/* Label lives in its own first-column cell so `sticky left-0` can pin
+            it — a colSpan cell spans the whole table and never sticks. */}
         <th
-          colSpan={colSpan}
           scope="colgroup"
-          className="sticky top-[64px] z-20 bg-muted border-y border-border px-5 py-2 text-left"
+          className="sticky left-0 z-20 border-y border-border bg-muted px-3 py-1 text-left after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border after:content-[''] sm:px-5"
         >
           <motion.div
-            className="flex items-baseline gap-3"
+            className="flex items-baseline gap-2"
             initial={{ opacity: 0, x: -8 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{
@@ -296,7 +365,7 @@ function SectionRows({
               ease: [0.22, 1, 0.36, 1],
             }}
           >
-            <span className="text-[15px] font-medium tracking-tight">
+            <span className="text-[13px] font-medium tracking-tight">
               {sectionLabel}
             </span>
             {divergeCount > 0 && (
@@ -313,11 +382,12 @@ function SectionRows({
                 }}
               />
             )}
-            <span className="ml-auto text-[10.5px] text-muted-foreground tabular-nums">
-              {divergeCount} diverging
-            </span>
           </motion.div>
         </th>
+        <td
+          colSpan={colSpan - 1}
+          className="border-y border-border bg-muted"
+        />
       </tr>
 
       {subsections.map((sub) => {
@@ -363,12 +433,13 @@ function SubsectionRows({
   return (
     <>
       <tr>
-        <td
-          colSpan={colSpan}
-          className="px-5 pt-5 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground"
-        >
+        <td className="sticky left-0 z-10 border-b border-border bg-card px-3 py-1.5 text-left text-[10px] uppercase tracking-wider text-muted-foreground after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border after:content-[''] sm:px-5">
           {label}
         </td>
+        <td
+          colSpan={colSpan - 1}
+          className="border-b border-border bg-card"
+        />
       </tr>
       {fields.map((field) => (
         <FieldRow
@@ -414,12 +485,10 @@ function FieldRow({
   );
   return (
     <tr className="border-b border-border last:border-b-0">
-      <td
-        className={cn(
-          "sticky left-0 z-10 bg-card border-r border-border px-3 sm:px-5 py-2.5",
-          "relative"
-        )}
-      >
+      {/* NOTE: no `relative` here — `cn` (tailwind-merge) treats it as
+          conflicting with `sticky` and would strip the sticky positioning.
+          `sticky` already anchors the absolute diverge gutter below. */}
+      <td className="sticky left-0 z-10 bg-card px-3 py-2.5 text-left after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border after:content-[''] sm:px-5">
         {diverges && (
           <motion.span
             aria-hidden="true"
@@ -471,7 +540,7 @@ function FieldRow({
           )}
         </div>
         {field.description && showDescriptions && (
-          <div className="text-[11px] text-muted-foreground mt-1 leading-snug">
+          <div className="mt-1 text-[11px] leading-snug text-muted-foreground">
             {field.description}
           </div>
         )}
@@ -479,7 +548,7 @@ function FieldRow({
       {subjects.map((s) => (
         <td
           key={s.hostId}
-          className="border-l border-border px-3 sm:px-4 py-2.5 align-top"
+          className="border-l border-border px-3 py-2.5 text-center align-top sm:px-4"
         >
           <FieldCell
             field={field}
@@ -541,7 +610,7 @@ function FieldCell({
           ? Object.keys(value as Record<string, unknown>)
           : [];
       return (
-        <span className="inline-flex items-center gap-2">
+        <span className="inline-flex items-center justify-center gap-2">
           <SupportChip level={level} label="Supported" />
           <CapabilityInfoTooltip
             caveats={caveats}
@@ -590,7 +659,7 @@ function FieldCell({
     case "mode-set": {
       const present = new Set(Array.isArray(value) ? (value as string[]) : []);
       return (
-        <span className="inline-flex flex-wrap items-center gap-1">
+        <span className="inline-flex flex-wrap items-center justify-center gap-1">
           {kind.modes.map((mode) => (
             <SupportChip
               key={mode}
@@ -614,7 +683,7 @@ function FieldCell({
       const s = String(value);
       const firstLine = s.split("\n", 1)[0] ?? "";
       return (
-        <div className="flex flex-col gap-0.5">
+        <div className="flex flex-col items-center gap-0.5 text-center">
           <div className="text-[12px] truncate max-w-[200px]">
             {firstLine || (
               <span className="italic text-muted-foreground">empty</span>
@@ -685,7 +754,7 @@ function FieldCell({
         );
       }
       return (
-        <div className="flex flex-col gap-0.5 font-mono text-[11.5px] leading-snug">
+        <div className="flex flex-col items-center gap-0.5 text-center font-mono text-[11.5px] leading-snug">
           {entries.map(([k, v]) => (
             <div key={k} className="break-all">
               <span className="text-muted-foreground">{k}: </span>
@@ -764,10 +833,13 @@ function HostColumnHeader({
   const verifyHref = buildVerifyHref(verifyBaseUrl, subject.hostId);
 
   return (
-    <th className="sticky top-0 z-20 bg-card border-b border-l border-border px-3 py-3 sm:px-4 sm:py-4 text-left align-top">
+    <th className="sticky top-0 z-20 border-b border-l border-border bg-card px-3 py-3 text-center align-top sm:px-4 sm:py-4">
       <motion.div
         key={subject.hostId}
-        className="flex items-start gap-2"
+        className={cn(
+          "relative flex items-start justify-center gap-2",
+          onRemove && "pl-5"
+        )}
         initial={reduceMotion ? false : { opacity: 0, x: -6 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
@@ -777,7 +849,7 @@ function HostColumnHeader({
             type="button"
             aria-label={`Remove ${subject.hostName} from comparison`}
             data-testid={`host-compare-remove-${subject.hostId}`}
-            className="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+            className="absolute left-0 top-0 inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
             onClick={() => onRemove(subject.hostId)}
             whileHover={reduceMotion ? undefined : { scale: 1.15 }}
             whileTap={reduceMotion ? undefined : { scale: 0.85, rotate: 90 }}
@@ -792,7 +864,7 @@ function HostColumnHeader({
           className="mt-0.5 size-4 shrink-0 object-contain"
         />
         <div
-          className="min-w-0 flex-1 font-medium text-[14px] truncate leading-tight"
+          className="min-w-0 max-w-[160px] truncate text-center text-[14px] font-medium leading-tight"
           title={subject.hostName}
         >
           {subject.hostName}
@@ -806,7 +878,7 @@ function HostColumnHeader({
                 aria-label={`Verify ${subject.hostName} against your server`}
                 className="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
               >
-                <PlugZap className="size-3.5" />
+                <TrendingUp className="size-3.5" />
               </a>
             </TooltipTrigger>
             <TooltipContent side="top" variant="muted">
@@ -832,7 +904,7 @@ function buildVerifyHref(
   if (!baseUrl) return null;
   if (!hostId.startsWith(PRESET_HOST_ID_PREFIX)) return baseUrl;
   const templateId = hostId.slice(PRESET_HOST_ID_PREFIX.length);
-  return `${baseUrl}/hosts?template=${encodeURIComponent(templateId)}`;
+  return `${baseUrl}/hosts?${buildHostVerifySearch(templateId, "behavior")}`;
 }
 
 /** Compact one-line rendering of an object entry's value for inline display. */
@@ -857,7 +929,7 @@ function ExpandablePreview({
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="text-left text-[11px] text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+          className="text-center text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
         >
           {label}
         </button>

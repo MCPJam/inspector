@@ -213,7 +213,14 @@ import {
   HOST_TEMPLATES,
   seedFromHostTemplate,
   type HostTemplateId,
-} from "@/lib/client-templates";
+} from "@mcpjam/sdk/host-config/templates";
+import {
+  HOST_VERIFY_TAB_PARAM,
+  HOST_VERIFY_TEMPLATE_PARAM,
+  hostFocusTabToVerifyParam,
+  parseHostVerifyTabParam,
+} from "./components/hosts/host-verify-deep-link";
+import type { HostFocusTabId } from "./components/hosts/redesigned/types";
 import {
   buildHostsPath,
   buildOrganizationPath,
@@ -708,11 +715,17 @@ function useTemplateVerifyDeepLink({
   const { createHost } = useHostMutations();
   const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
     if (typeof window === "undefined") return null;
-    const raw = new URLSearchParams(window.location.search).get("template");
+    const raw = new URLSearchParams(window.location.search).get(
+      HOST_VERIFY_TEMPLATE_PARAM
+    );
     if (!raw) return null;
     return HOST_TEMPLATES.some((t) => t.id === raw)
       ? (raw as HostTemplateId)
       : null;
+  }, []);
+  const requestedFocusTab = useMemo<HostFocusTabId | null>(() => {
+    if (typeof window === "undefined") return null;
+    return parseHostVerifyTabParam(window.location.search);
   }, []);
   const handledRef = useRef(false);
 
@@ -728,7 +741,9 @@ function useTemplateVerifyDeepLink({
 
     const existing = hosts.find((h) => h.name === template.label);
     if (existing) {
-      navigate(buildHostsPath(existing.hostId), { replace: true });
+      navigate(buildHostVerifyLandingPath(existing.hostId, requestedFocusTab), {
+        replace: true,
+      });
       return;
     }
 
@@ -740,7 +755,9 @@ function useTemplateVerifyDeepLink({
           name: template.label,
           input: { ...seed, serverIds: [] },
         });
-        navigate(buildHostsPath(hostId), { replace: true });
+        navigate(buildHostVerifyLandingPath(hostId, requestedFocusTab), {
+          replace: true,
+        });
       } catch (err) {
         // Let the user retry (e.g. via the same link) after a transient failure.
         handledRef.current = false;
@@ -755,10 +772,23 @@ function useTemplateVerifyDeepLink({
     hostsLoading,
     hosts,
     projectId,
+    requestedFocusTab,
     themeMode,
     createHost,
     navigate,
   ]);
+}
+
+function buildHostVerifyLandingPath(
+  hostId: string,
+  tab: HostFocusTabId | null
+): string {
+  const path = buildHostsPath(hostId);
+  if (!tab) return path;
+  const tabParam = hostFocusTabToVerifyParam(tab);
+  if (!tabParam) return path;
+  const params = new URLSearchParams({ [HOST_VERIFY_TAB_PARAM]: tabParam });
+  return `${path}?${params.toString()}`;
 }
 
 export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
