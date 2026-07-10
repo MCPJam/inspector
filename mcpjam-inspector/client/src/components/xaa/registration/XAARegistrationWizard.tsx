@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import posthog from "posthog-js";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -12,7 +11,7 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { cn } from "@/lib/utils";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { useXaaResourceApps } from "@/hooks/useXaaResourceApps";
 import type { XaaResourceApp } from "@/lib/xaa/types";
 import { BasicInfoStep } from "./BasicInfoStep";
@@ -112,11 +111,10 @@ export function XAARegistrationWizard({
     setSaveError(null);
     try {
       const { id } = await upsert(draftToInput(draft, editing?.id));
-      posthog.capture("xaa_resource_app_saved", {
+      track("xaa_resource_app_saved", {
+        location: "xaa_registration_wizard",
         resource_type: draft.resourceType,
         auth_server_mode: draft.authServerMode,
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
       });
       onSaved?.(id);
       onOpenChange(false);

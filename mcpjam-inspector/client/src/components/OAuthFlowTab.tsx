@@ -12,8 +12,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "./ui/resizable";
-import posthog from "posthog-js";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { OAuthProfileModal } from "./oauth/OAuthProfileModal";
 import { type OAuthTestProfile } from "@/lib/oauth/profile";
 import { OAuthFlowLogger } from "./oauth/OAuthFlowLogger";
@@ -310,10 +309,8 @@ export const OAuthFlowTab = ({
   }, [oauthStateMachine]);
 
   const handleAdvance = useCallback(async () => {
-    posthog.capture("oauth_flow_tab_next_step_button_clicked", {
+    track("oauth_flow_tab_next_step_button_clicked", {
       location: "oauth_flow_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       currentStep: oauthFlowState.currentStep,
       protocolVersion,
       registrationStrategy,
@@ -550,10 +547,8 @@ export const OAuthFlowTab = ({
   }, [oauthStateMachine, updateOAuthFlowState]);
 
   useEffect(() => {
-    posthog.capture("oauth_flow_tab_viewed", {
+    track("oauth_flow_tab_viewed", {
       location: "oauth_flow_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
   }, []);
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useFeatureFlagEnabled, usePostHog } from "posthog-js/react";
-import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
+import { useFeatureFlagEnabled } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import {
   Dialog,
   DialogContent,
@@ -141,7 +141,6 @@ export function ShareProjectDialog({
   activeProjectId,
 }: ShareProjectDialogProps) {
   const appNavigate = useAppNavigate();
-  const posthog = usePostHog();
   const [email, setEmail] = useState("");
   const [isInviting, setIsInviting] = useState(false);
   const [currentVisibility, setCurrentVisibility] =
@@ -294,13 +293,12 @@ export function ShareProjectDialog({
 
   useEffect(() => {
     if (isOpen) {
-      posthog.capture("share_dialog_opened", {
+      track("share_dialog_opened", {
+        location: "share_project_dialog",
         project_name: selectedProject.name,
         is_already_shared: !!selectedProject.sharedProjectId,
         member_count: activeMembers.length + pendingMembers.length,
         project_visibility: currentVisibility,
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
       });
     }
     // Only fire when the dialog opens, not on downstream state changes
@@ -322,11 +320,10 @@ export function ShareProjectDialog({
       toast.success(
         `Project visibility changed to ${newVisibility === "public" ? "organization" : "private"}`,
       );
-      posthog.capture("project_visibility_changed", {
+      track("project_visibility_changed", {
+        location: "share_project_dialog",
         project_name: selectedProject.name,
         new_visibility: newVisibility,
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
       });
     } catch {
       setCurrentVisibility(prev);
@@ -382,13 +379,12 @@ export function ShareProjectDialog({
 
       toast.success(buildInviteToastMessage(result, normalizedEmail));
       setEmail("");
-      posthog.capture("project_invite_sent", {
+      track("project_invite_sent", {
+        location: "share_project_dialog",
         project_name: selectedProject.name,
         is_new_share: !selectedProject.sharedProjectId,
         invite_kind: result.kind,
         project_visibility: currentVisibility,
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
       });
     } catch (error) {
       toast.error(getBillingErrorMessage(error, "Failed to invite member"));
@@ -443,12 +439,11 @@ export function ShareProjectDialog({
           ? "Invite cancelled"
           : "Project access removed",
       );
-      posthog.capture("project_member_removed", {
+      track("project_member_removed", {
+        location: "share_project_dialog",
         project_name: selectedProject.name,
         removed_kind: result.removed,
         project_visibility: currentVisibility,
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
       });
     } catch (error) {
       toast.error((error as Error).message || "Failed to remove member");

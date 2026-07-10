@@ -22,7 +22,7 @@ import {
   saveAgentRequireToolApproval,
   subscribeAgentRequireToolApproval,
 } from "@/lib/agent-tool-approval-storage";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
 import {
@@ -86,7 +86,6 @@ export function useMcpjamAgentSession(
   args: UseMcpjamAgentSessionArgs
 ): UseMcpjamAgentSessionResult {
   const { projectId, organizationId, chatSessionId: providedSessionId } = args;
-  const posthog = usePostHog();
   const surface = args.surface ?? "unknown";
 
   const [chatSessionId, setChatSessionId] = useState<string>(
@@ -260,7 +259,8 @@ export function useMcpjamAgentSession(
           (p as { type: string }).type.startsWith("tool-")
         ).length;
       }
-      posthog?.capture("mcpjam_agent_response_finished", {
+      track("mcpjam_agent_response_finished", {
+        location: "mcpjam_agent",
         surface,
         session_id: chatSessionId,
         message_index: turnIndexRef.current,
@@ -271,7 +271,8 @@ export function useMcpjamAgentSession(
     } else if (status === "error") {
       const startedAt = turnStartedAtRef.current;
       turnStartedAtRef.current = null;
-      posthog?.capture("mcpjam_agent_response_error", {
+      track("mcpjam_agent_response_error", {
+        location: "mcpjam_agent",
         surface,
         session_id: chatSessionId,
         message_index: turnIndexRef.current,
@@ -279,7 +280,7 @@ export function useMcpjamAgentSession(
         error_message: error?.message ?? null,
       });
     }
-  }, [chatSessionId, error, messages, posthog, status, surface]);
+  }, [chatSessionId, error, messages, status, surface]);
 
   // Orphaned-defer fallback: a UI tool call deferred for approval whose
   // approval request never arrived (client/server flag disagreement for one
@@ -341,7 +342,8 @@ export function useMcpjamAgentSession(
       }
       turnIndexRef.current += 1;
       turnStartedAtRef.current = Date.now();
-      posthog?.capture("mcpjam_agent_message_sent", {
+      track("mcpjam_agent_message_sent", {
+        location: "mcpjam_agent",
         surface,
         session_id: chatSessionId,
         message_index: turnIndexRef.current,
@@ -351,7 +353,7 @@ export function useMcpjamAgentSession(
       });
       void sendMessage({ text: trimmed });
     },
-    [chatSessionId, config, posthog, providedSessionId, sendMessage, surface]
+    [chatSessionId, config, providedSessionId, sendMessage, surface]
   );
 
   return {

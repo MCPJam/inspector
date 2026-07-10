@@ -16,9 +16,8 @@ import type {
   FormEvent,
   KeyboardEvent,
 } from "react";
-import { usePostHog } from "posthog-js/react";
 import { cn } from "@/lib/chat-utils";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PromptsPopover } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
@@ -457,7 +456,6 @@ export function ChatInput({
   const [voiceInputState, setVoiceInputState] =
     useState<VoiceInputState>("idle");
   const [voiceInputError, setVoiceInputError] = useState<string | null>(null);
-  const posthog = usePostHog();
   const { balance: creditBalance } = useCreditBalance({ includeGuests: true });
   const voiceSecondsRemaining = creditBalance
     ? creditBalance.voiceSecondsRemaining
@@ -486,10 +484,7 @@ export function ChatInput({
   const [plusPopoverOpen, setPlusPopoverOpen] = useState(false);
   const handlePlusPopoverOpenChange = (nextOpen: boolean) => {
     if (nextOpen && !plusPopoverOpen) {
-      posthog.capture(
-        "chat_options_plus_clicked",
-        standardEventProps("chat_input")
-      );
+      track("chat_options_plus_clicked", { location: "chat_input" });
     }
     setPlusPopoverOpen(nextOpen);
   };
@@ -1016,10 +1011,7 @@ export function ChatInput({
           }
         }
       }, voiceRecordingCapSeconds * 1000);
-      posthog.capture(
-        "chat_voice_input_recording_started",
-        standardEventProps("chat_input")
-      );
+      track("chat_voice_input_recording_started", { location: "chat_input" });
     } catch (error) {
       stopAudioStream();
       mediaRecorderRef.current = null;
@@ -1032,7 +1024,6 @@ export function ChatInput({
     clearRecordingCapTimer,
     clearStopFallbackTimer,
     finalizeRecordedAudio,
-    posthog,
     stopAudioStream,
     voiceBudgetExhausted,
     voiceRecordingCapSeconds,
@@ -1067,15 +1058,11 @@ export function ChatInput({
       );
       return;
     }
-    posthog.capture(
-      "chat_voice_input_recording_stopped",
-      standardEventProps("chat_input")
-    );
+    track("chat_voice_input_recording_stopped", { location: "chat_input" });
   }, [
     clearRecordingCapTimer,
     clearStopFallbackTimer,
     finalizeRecordedAudio,
-    posthog,
     stopAudioStream,
   ]);
 
@@ -1102,16 +1089,8 @@ export function ChatInput({
     mediaRecorderRef.current = null;
     setVoiceInputError(null);
     setVoiceInputState("idle");
-    posthog.capture(
-      "chat_voice_input_recording_canceled",
-      standardEventProps("chat_input")
-    );
-  }, [
-    clearRecordingCapTimer,
-    clearStopFallbackTimer,
-    posthog,
-    stopAudioStream,
-  ]);
+    track("chat_voice_input_recording_canceled", { location: "chat_input" });
+  }, [clearRecordingCapTimer, clearStopFallbackTimer, stopAudioStream]);
 
   useEffect(() => {
     if (voiceInputState !== "transcribing") return;
@@ -1625,10 +1604,9 @@ export function ChatInput({
                           type="button"
                           className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted/60 cursor-pointer"
                           onClick={() => {
-                            posthog.capture(
-                              "chat_attachment_button_clicked",
-                              standardEventProps("chat_input")
-                            );
+                            track("chat_attachment_button_clicked", {
+                              location: "chat_input",
+                            });
                             setPlusPopoverOpen(false);
                             openFilePicker();
                           }}

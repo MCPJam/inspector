@@ -3,9 +3,8 @@ import { useNavigate } from "react-router";
 import { Loader2, Save } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { useConvexAuth } from "convex/react";
-import { usePostHog } from "posthog-js/react";
 import { ReactFlowProvider } from "@xyflow/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
@@ -70,7 +69,6 @@ export function HostBuilderViewRedesigned({
   projectId,
 }: HostBuilderViewRedesignedProps) {
   const navigate = useNavigate();
-  const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
   const { host } = useHost({
     isAuthenticated,
@@ -158,8 +156,8 @@ export function HostBuilderViewRedesigned({
     if (capturedBuilderHostIdRef.current === hostId) return;
     capturedBuilderHostIdRef.current = hostId;
     try {
-      posthog.capture("client_builder_viewed", {
-        ...standardEventProps("client_builder"),
+      track("client_builder_viewed", {
+        location: "client_builder",
         client_id: hostId,
       });
     } catch {
@@ -349,8 +347,8 @@ export function HostBuilderViewRedesigned({
       // shared catch and surface "Failed to save host" after the config
       // has already been persisted.
       try {
-        posthog.capture("client_config_saved", {
-          ...standardEventProps("client_builder"),
+        track("client_config_saved", {
+          location: "client_builder",
           client_id: hostId,
           client_config_id: hostConfigId,
           server_count: draftConfig.serverIds?.length ?? 0,
@@ -364,7 +362,7 @@ export function HostBuilderViewRedesigned({
     } finally {
       setIsSaving(false);
     }
-  }, [hostId, draftName, draftConfig, savedConfig, updateHost, posthog]);
+  }, [hostId, draftName, draftConfig, savedConfig, updateHost]);
 
   const handleAddServer = useCallback(
     async (formData: ServerFormData) => {

@@ -6,7 +6,7 @@ import {
   ExternalLink,
   Undo2,
 } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Card, CardContent } from "@mcpjam/design-system/card";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
@@ -153,7 +153,6 @@ export function PaymentsHistorySection({
     isLoading: invoicesLoading,
     error: invoicesError,
   } = useInvoiceHistory(canViewInvoices ? organizationId : null);
-  const posthog = usePostHog();
   const viewedRef = useRef(false);
 
   const rows = useMemo<BillingRow[]>(() => {
@@ -193,12 +192,13 @@ export function PaymentsHistorySection({
     if (rows.length === 0) return;
     viewedRef.current = true;
     const topupList = topups ?? [];
-    posthog?.capture("credit_topup_history_viewed", {
+    track("credit_topup_history_viewed", {
+      location: "billing_payments_history",
       entry_count_bucket: bucketEntryCount(topupList.length),
       has_failed: topupList.some((e) => e.status === "failed"),
       has_pending: topupList.some((e) => e.status === "pending"),
     });
-  }, [isLoading, posthog, rows, topups]);
+  }, [isLoading, rows, topups]);
 
   if (!canViewHistory && !canViewInvoices) return null;
 
@@ -566,8 +566,6 @@ function StatusBadge({ entry }: { entry: PaymentHistoryEntry }) {
 }
 
 function ReceiptCell({ entry }: { entry: PaymentHistoryEntry }) {
-  const posthog = usePostHog();
-
   if (entry.receiptUrl) {
     const ageDays = Math.max(
       0,
@@ -585,7 +583,8 @@ function ReceiptCell({ entry }: { entry: PaymentHistoryEntry }) {
         )} payment (opens in new tab)`}
         className="inline-flex items-center gap-1 text-sm text-primary underline-offset-4 hover:underline"
         onClick={() => {
-          posthog?.capture("credit_topup_receipt_opened", {
+          track("credit_topup_receipt_opened", {
+            location: "billing_payments_history",
             entry_age_days: ageDays,
           });
         }}

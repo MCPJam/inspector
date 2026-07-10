@@ -48,8 +48,7 @@ import {
   getServerCommandDisplay,
   getServerUrl,
 } from "./server-card-utils";
-import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import type { ServerDetailTab } from "./ServerDetailModal";
 import { downloadJsonFile } from "@/lib/json-config-parser";
 import { generateAgentBrief } from "@/lib/generate-agent-brief";
@@ -145,7 +144,6 @@ export function ServerConnectionCard({
 }: ServerConnectionCardProps) {
   useExploreCasesPrefetchOnConnect(projectId ?? null, server, hostedServerId);
 
-  const posthog = usePostHog();
   const { getAccessToken } = useAuth();
   const { isAuthenticated } = useConvexAuth();
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -372,10 +370,8 @@ export function ServerConnectionCard({
       const markdown = generateAgentBrief(data, { serverUrl });
       await navigator.clipboard.writeText(markdown);
       toast.success("Agent brief copied to clipboard");
-      posthog.capture("copy_agent_brief_clicked", {
+      track("copy_agent_brief_clicked", {
         location: "server_connection_card",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         server_id: server.name,
       });
     } catch (error) {
@@ -388,10 +384,8 @@ export function ServerConnectionCard({
   };
 
   const handleCreateTunnel = () => {
-    posthog.capture("create_tunnel_button_clicked", {
+    track("create_tunnel_button_clicked", {
       location: "server_connection_card",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       server_id: server.name,
     });
 
@@ -411,10 +405,8 @@ export function ServerConnectionCard({
       const result = await createServerTunnel(server.name, accessToken);
       setTunnelUrl(result.url);
       toast.success("Tunnel is ready to use!");
-      posthog.capture("tunnel_created", {
+      track("tunnel_created", {
         location: "server_connection_card",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         server_id: server.name,
       });
       setShowTunnelExplanation(false);
@@ -446,10 +438,8 @@ export function ServerConnectionCard({
       setShowTunnelRequests(false);
       setTunnelRequests([]);
       toast.success("Tunnel closed successfully");
-      posthog.capture("tunnel_closed", {
+      track("tunnel_closed", {
         location: "server_connection_card",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         server_id: server.name,
       });
     } catch (error) {
@@ -469,10 +459,8 @@ export function ServerConnectionCard({
       const result = await rotateServerTunnel(server.name, accessToken);
       setTunnelUrl(result.url);
       toast.success("Tunnel secret rotated — the old URL no longer works");
-      posthog.capture("tunnel_rotated", {
+      track("tunnel_rotated", {
         location: "server_connection_card",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         server_id: server.name,
       });
     } catch (error) {
@@ -502,15 +490,14 @@ export function ServerConnectionCard({
         return;
       }
       onOpenDetailModal(server, tab);
-      posthog.capture("server_detail_modal_opened", {
+      track("server_detail_modal_opened", {
+        location: "server_connection_card",
         source,
         default_tab: tab,
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         server_id: server.name,
       });
     },
-    [onOpenDetailModal, posthog, server]
+    [onOpenDetailModal, server]
   );
 
   const handleCardContextMenu = useCallback(
@@ -537,21 +524,13 @@ export function ServerConnectionCard({
         return;
       }
 
-      posthog.capture("server_card_clicked", {
+      track("server_card_clicked", {
         location: "server_connection_card",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         server_id: server.name,
       });
       openDetailModal("configuration", "card_click");
     },
-    [
-      isActionsMenuOpen,
-      isDetailModalEnabled,
-      server.name,
-      posthog,
-      openDetailModal,
-    ]
+    [isActionsMenuOpen, isDetailModalEnabled, server.name, openDetailModal]
   );
 
   return (
@@ -651,10 +630,8 @@ export function ServerConnectionCard({
                   data-server-card-context-menu-exempt
                   checked={server.connectionStatus === "connected"}
                   onCheckedChange={(checked) => {
-                    posthog.capture("connection_switch_toggled", {
+                    track("connection_switch_toggled", {
                       location: "server_connection_card",
-                      platform: detectPlatform(),
-                      environment: detectEnvironment(),
                     });
                     if (checked && isHostedHttpReconnectBlocked) {
                       toast.error(
@@ -694,10 +671,8 @@ export function ServerConnectionCard({
                           );
                           return;
                         }
-                        posthog.capture("reconnect_server_clicked", {
+                        track("reconnect_server_clicked", {
                           location: "server_connection_card",
-                          platform: detectPlatform(),
-                          environment: detectEnvironment(),
                         });
                         const shouldForceOAuth =
                           server.useOAuth === true ||
@@ -720,10 +695,8 @@ export function ServerConnectionCard({
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={() => {
-                        posthog.capture("edit_server_clicked", {
+                        track("edit_server_clicked", {
                           location: "server_connection_card",
-                          platform: detectPlatform(),
-                          environment: detectEnvironment(),
                         });
                         openDetailModal("configuration", "kebab_edit");
                       }}
@@ -734,10 +707,8 @@ export function ServerConnectionCard({
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={() => {
-                        posthog.capture("export_server_clicked", {
+                        track("export_server_clicked", {
                           location: "server_connection_card",
-                          platform: detectPlatform(),
-                          environment: detectEnvironment(),
                         });
                         handleExport();
                       }}
@@ -796,14 +767,9 @@ export function ServerConnectionCard({
                               key={target.id}
                               className="text-xs cursor-pointer"
                               onClick={() => {
-                                posthog.capture(
-                                  "move_server_to_project_clicked",
-                                  {
-                                    location: "server_connection_card",
-                                    platform: detectPlatform(),
-                                    environment: detectEnvironment(),
-                                  }
-                                );
+                                track("move_server_to_project_clicked", {
+                                  location: "server_connection_card",
+                                });
                                 void onMoveToProject(server.name, target.id);
                               }}
                             >
@@ -820,10 +786,8 @@ export function ServerConnectionCard({
                     <DropdownMenuItem
                       className="text-destructive text-xs cursor-pointer"
                       onClick={() => {
-                        posthog.capture("remove_server_clicked", {
+                        track("remove_server_clicked", {
                           location: "server_connection_card",
-                          platform: detectPlatform(),
-                          environment: detectEnvironment(),
                         });
                         onDisconnect(server.name);
                         onRemove?.(server.name);

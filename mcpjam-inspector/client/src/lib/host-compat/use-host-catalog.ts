@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import posthog from "posthog-js";
+import { track } from "@/lib/analytics";
 import {
   fetchHostCompatCatalog,
   type HostCompatCatalog,
@@ -58,7 +58,7 @@ function reportHostCatalogDegradation(
 ): void {
   console.warn("[host-catalog] client catalog degraded", details);
   try {
-    posthog.capture("host_catalog_degraded", details);
+    track("host_catalog_degraded", { location: "host_catalog", ...details });
   } catch {
     // Telemetry must not affect catalog loading.
   }

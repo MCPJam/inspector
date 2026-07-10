@@ -6,15 +6,8 @@ import { XAAFlowTab } from "../xaa/XAAFlowTab";
 import type { XaaTestTarget } from "@/hooks/useXaaTestTarget";
 
 const captureMock = vi.fn();
-vi.mock("posthog-js", () => ({
-  default: {
-    capture: (...args: unknown[]) => captureMock(...args),
-  },
-}));
-
-vi.mock("@/lib/PosthogUtils", () => ({
-  detectEnvironment: vi.fn().mockReturnValue("test"),
-  detectPlatform: vi.fn().mockReturnValue("web"),
+vi.mock("@/lib/analytics", () => ({
+  track: (...args: unknown[]) => captureMock(...args),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({

@@ -100,7 +100,7 @@ import type { BillingFeatureName } from "./hooks/useOrganizationBilling";
 
 // Import global styles
 import "./index.css";
-import { detectEnvironment, detectPlatform } from "./lib/PosthogUtils";
+import { track } from "./lib/analytics";
 import {
   getInitialThemeMode,
   updateThemeMode,
@@ -1032,7 +1032,6 @@ export function OAuthFlowRoute() {
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
     oauthServerModalNonce,
-    posthog,
   } = useAppRouteContext();
 
   return (
@@ -1072,7 +1071,8 @@ export function OAuthFlowRoute() {
       }}
       onError={(error, errorInfo) => {
         const sanitizedError = sanitizeOAuthDebuggerError(error);
-        posthog.capture("oauth_debugger_error_boundary", {
+        track("oauth_debugger_error_boundary", {
+          location: "oauth_flow",
           name: sanitizedError.name,
           message: sanitizedError.message,
           stack: sanitizedError.stack,
@@ -1577,9 +1577,8 @@ export default function App() {
     if (!actorKey) return;
     if (lastLaunchedActorRef.current === actorKey) return;
     lastLaunchedActorRef.current = actorKey;
-    posthog.capture("app_launched", {
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
+    track("app_launched", {
+      location: "app",
       user_agent: navigator.userAgent,
       version: __APP_VERSION__,
       is_authenticated: Boolean(workOsUser),
