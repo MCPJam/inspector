@@ -1,0 +1,47 @@
+---
+title: "Local MCP server, cloud AS — no tunnel"
+description: "Use the hosted issuer toggle to test XAA with a cloud authorization server without exposing your machine via ngrok"
+icon: "cloud"
+---
+
+The most common XAA dev setup is a local MCP server paired with a cloud authorization server (Okta, Auth0, Scalekit, …). Out of the box this breaks at issuer discovery: a local MCPJam run advertises an issuer like `http://127.0.0.1:6274/api/mcp/xaa`, and a cloud authorization server validating the ID-JAG can't fetch that issuer's discovery document or JWKS. The historical workaround was moving everything to `app.mcpjam.com` and exposing your MCP server with ngrok.
+
+The **"Use hosted issuer"** toggle removes the tunnel entirely. Only the minting of the mock ID token and ID-JAG needs a publicly reachable issuer. With the toggle on, your local MCPJam forwards just those mint calls to `app.mcpjam.com`. Everything else stays on your machine:
+
+| Step | Where it runs |
+| --- | --- |
+| Mock SSO + ID-JAG mint | `app.mcpjam.com` (signed by the hosted key) |
+| ID-JAG → access token at your AS | your machine → your cloud AS |
+| MCP request with the access token | your machine → `localhost` MCP server |
+
+## Setup
+
+1. **Sign in to MCPJam locally.** The toggle is disabled for guests — a local guest session can't authenticate to the hosted issuer.
+2. **Select an organization.** The hosted issuer is organization-scoped; the toggle is also disabled when no active organization is selected.
+3. In the XAA tab, flip **Use hosted issuer (app.mcpjam.com)**. The issuer / OpenID config / JWKS chips switch to your organization-scoped hosted issuer:
+
+   ```
+   https://app.mcpjam.com/api/web/xaa/o/<your-org-id>
+   ```
+
+4. In your authorization server, trust that issuer for ID-JAGs (the issuer URL or JWKS URL — both resolve to the same keys) and register the client ID the debugger presents.
+5. Run the flow. The decoded ID-JAG's `iss` is the hosted issuer; the token request and the final MCP call originate from your machine.
+
+## Why the issuer is organization-scoped
+
+Minting under `…/xaa/o/<orgId>` requires being a signed-in member of that organization, so an authorization server that trusts your scoped issuer can only receive assertions minted by your org's members. The unscoped issuer (`https://app.mcpjam.com/api/web/xaa`) is mintable by anyone with an MCPJam session — prefer the org-scoped issuer whenever you register MCPJam in a real authorization server.
+
+## Known limitation: runtime XAA connect
+
+The debugger advertises and mints under the org-scoped issuer. The runtime XAA connect path (a normal server connection that authenticates via XAA) still mints under the unscoped issuer. A customer who registers the org-scoped issuer from the debugger can pass the debugger but have a real connect/token-exchange fail on `iss` mismatch. Until org-scoped issuers are plumbed into runtime connect, register the unscoped issuer for live connections, or use the debugger only for issuer/JWKS validation.
+
+## Notes and limits
+
+- **This mode is for a remote authorization server.** The hosted issuer only helps when your AS is publicly reachable over https. If your AS is on `localhost` or plain http, keep the toggle off and use the local issuer — the negative test scorecard runs from the hosted service and will reject loopback/http endpoints.
+- **Negative tests are forwarded too.** The broken assertions carry the same hosted `iss` as the positive run, so the scorecard tests actual AS behavior rather than trivially passing on issuer mismatch.
+- **Sign in to the same organization the hosted issuer validates against.** The mint targets `…/o/<your-org-id>` and membership is checked against the production backend. The toggle is disabled when you have no active organization.
+
+## Next steps
+
+- [Use MCPJam as a test IdP](/inspector/xaa-test-idp) — register the issuer and JWKS with your authorization server.
+- [XAA Debugger](/inspector/xaa-debugger) — walk through and debug the full flow.
