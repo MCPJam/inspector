@@ -44,6 +44,18 @@ export const ANALYTICS_EVENTS = {
   skill_uploaded: { source: "client" },
   skill_injected: { source: "client" },
   skill_loaded: { source: "client" },
+
+  // --- Auth / activation funnel (migrated) ---
+  login_button_clicked: { source: "client" },
+  sign_up_button_clicked: { source: "client" },
+  signup_occupation_submitted: { source: "client" },
+
+  // --- Billing / revenue funnel (migrated) ---
+  billing_upsell_gate_viewed: { source: "client" },
+  credit_topup_checkout_started: { source: "client" },
+  credit_topup_checkout_failed: { source: "client" },
+  credit_topup_return_cancelled: { source: "client" },
+  credit_topup_return_success: { source: "client" },
 } as const satisfies Record<string, { source: "client" | "server" }>;
 
 export type AnalyticsEventName = keyof typeof ANALYTICS_EVENTS;
