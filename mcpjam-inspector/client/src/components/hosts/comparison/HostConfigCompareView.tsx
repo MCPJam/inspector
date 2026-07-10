@@ -21,7 +21,6 @@ import {
   Popover,
   PopoverAnchor,
   PopoverContent,
-  PopoverTrigger,
 } from "@mcpjam/design-system/popover";
 import {
   DropdownMenu,
@@ -684,39 +683,41 @@ function NotifyButton() {
   );
 
   return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          aria-label="Notify me of host changes"
-          title="Notify me of host changes"
-          className={cn(
-            "gap-1.5",
-            CANIUSE_ACTION_BUTTON_CLASS
-          )}
-        >
-          <Bell className="size-3.5" />
-          <span>Notify</span>
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-[300px]">
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        aria-label="Notify me of host changes"
+        title="Notify me of host changes"
+        className={cn("gap-1.5", CANIUSE_ACTION_BUTTON_CLASS)}
+        onClick={() => setOpen(true)}
+      >
+        <Bell className="size-3.5" />
+        <span>Notify</span>
+      </Button>
+      <DialogContent className="sm:max-w-[420px]">
         {status === "succeeded" ? (
-          <div className="flex items-center gap-2 text-sm font-medium text-emerald-600 dark:text-emerald-400">
-            <Check className="size-4 shrink-0" />
-            You&apos;re on the list — we&apos;ll email you when hosts change.
-          </div>
+          <>
+            <DialogHeader>
+              <DialogTitle>You&apos;re on the list.</DialogTitle>
+              <DialogDescription>
+                We&apos;ll email you when hosts change.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex items-center gap-2 text-sm font-medium text-emerald-600 dark:text-emerald-400">
+              <Check className="size-4 shrink-0" />
+              Saved.
+            </div>
+          </>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-3" noValidate>
-            <div>
-              <div className="text-sm font-semibold text-foreground">
-                Stay up to date
-              </div>
-              <div className="text-[12px] text-muted-foreground">
+            <DialogHeader>
+              <DialogTitle>Stay up to date</DialogTitle>
+              <DialogDescription>
                 Get an email when a host adds or changes a capability.
-              </div>
-            </div>
+              </DialogDescription>
+            </DialogHeader>
             <div>
               <input
                 type="email"
@@ -739,7 +740,6 @@ function NotifyButton() {
             <Button
               type="submit"
               size="sm"
-              className="w-full"
               disabled={status === "submitting"}
             >
               {status === "submitting" ? (
@@ -753,8 +753,8 @@ function NotifyButton() {
             </Button>
           </form>
         )}
-      </PopoverContent>
-    </Popover>
+      </DialogContent>
+    </Dialog>
   );
 }
 

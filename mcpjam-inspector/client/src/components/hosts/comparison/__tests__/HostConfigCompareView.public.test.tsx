@@ -332,6 +332,44 @@ describe("HostConfigCompareView public mode", () => {
     ).toBeInTheDocument();
   });
 
+  it("opens notify in a centered dialog and subscribes an email", async () => {
+    const user = userEvent.setup();
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), { status: 200 })
+    );
+
+    render(
+      <MemoryRouter>
+        <HostConfigCompareView
+          projectId={null}
+          isAuthenticated={false}
+          presetOnly
+        />
+      </MemoryRouter>
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Notify me of host changes" })
+    );
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("Stay up to date");
+
+    await user.type(screen.getByLabelText("Email"), "founders@mcpjam.com");
+    await user.click(screen.getByRole("button", { name: "Notify me" }));
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/web/caniuse/subscribe",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ email: "founders@mcpjam.com" }),
+      })
+    );
+    expect(
+      await screen.findByText("We'll email you when hosts change.")
+    ).toBeInTheDocument();
+  });
+
   it("keeps the full app no-project state behind sign-in", () => {
     render(
       <MemoryRouter>

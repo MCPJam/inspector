@@ -204,6 +204,7 @@ import {
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import {
+  cloneHostTemplateInput,
   gateMcpToolResultImageRenderingByModelVisibility,
   resolveEffectiveMcpProtocolVersion,
 } from "./lib/client-config-v2";
@@ -749,7 +750,10 @@ function useTemplateVerifyDeepLink({
 
     void (async () => {
       try {
-        const seed = seedFromHostTemplate(template.id, { theme: themeMode });
+        const seed = cloneHostTemplateInput(
+          seedFromHostTemplate(template.id, { theme: themeMode }),
+          { themeMode }
+        );
         const { hostId } = await createHost({
           projectId,
           name: template.label,
