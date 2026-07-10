@@ -6,7 +6,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
-import { Loader2 } from "lucide-react";
+import { Check, Copy, Loader2, Share2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -152,6 +152,30 @@ function writeFieldSearchParams(
   }
 
   next.set(SEARCH_QUERY_PARAM, trimmed);
+}
+
+/**
+ * Absolute, shareable URL for the current comparison. Unlike the URL the view
+ * mirrors into (which drops `hosts=` for the default selection to keep the bar
+ * clean), a shared link always pins the exact clients — so it opens the same
+ * comparison for the recipient even if the default set changes later.
+ */
+function buildShareComparisonUrl(
+  hostIds: ReadonlyArray<string>,
+  query: string,
+  fields: ReadonlyArray<HostConfigFieldDef>
+): string {
+  const params = new URLSearchParams();
+  if (hostIds.length > 0) {
+    params.set(HOSTS_QUERY_PARAM, hostIds.join(","));
+  }
+  writeFieldSearchParams(params, query, fields);
+  const search = params.toString();
+  if (typeof window === "undefined") {
+    return search ? `?${search}` : "";
+  }
+  const { origin, pathname } = window.location;
+  return `${origin}${pathname}${search ? `?${search}` : ""}`;
 }
 
 interface HostConfigCompareViewProps {
@@ -584,9 +608,17 @@ export function HostConfigCompareView({
             />
 
             {presetOnly ? (
-              <div className="-mt-2 mb-4 flex justify-end">
-                <ReportInconsistencyDialog />
-              </div>
+              <>
+                <div className="-mt-2 mb-4 flex justify-end">
+                  <ReportInconsistencyDialog />
+                </div>
+                <ShareComparisonDialog
+                  selectedHostIds={selectedHostIds}
+                  subjects={orderedSubjects}
+                  searchQuery={fieldSearchQuery}
+                  fields={compareFields}
+                />
+              </>
             ) : null}
 
             {totalSelectedCount === 0 ? (
@@ -1057,6 +1089,127 @@ function CompareSearchBar({
         </div>
       )}
     </div>
+  );
+}
+
+function ShareComparisonDialog({
+  selectedHostIds,
+  subjects,
+  searchQuery,
+  fields,
+}: {
+  selectedHostIds: ReadonlyArray<string>;
+  subjects: ReadonlyArray<HostComparisonSubject>;
+  searchQuery: string;
+  fields: ReadonlyArray<HostConfigFieldDef>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const shareUrl = useMemo(
+    () => buildShareComparisonUrl(selectedHostIds, searchQuery, fields),
+    [selectedHostIds, searchQuery, fields]
+  );
+  const capability = useMemo(
+    () => capabilityForSearchQuery(searchQuery, fields),
+    [searchQuery, fields]
+  );
+  const clientNames = subjects.map((subject) => subject.hostName);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+    } catch {
+      // Clipboard blocked (e.g. insecure context) — the URL stays visible in
+      // the field, so the user can still select and copy it manually.
+      return;
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
+  }, [shareUrl]);
+
+  const tweetHref = useMemo(() => {
+    const text = capability
+      ? `Can I use ${capability.field.label} across MCP clients?`
+      : "MCP client capability support";
+    return `https://twitter.com/intent/tweet?${new URLSearchParams({
+      text,
+      url: shareUrl,
+    }).toString()}`;
+  }, [capability, shareUrl]);
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <Button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="fixed bottom-4 right-4 z-40 h-10 gap-2 rounded-full px-4 shadow-lg"
+      >
+        <Share2 className="size-4" />
+        Share
+      </Button>
+      <DialogContent className="sm:max-w-[460px]">
+        <DialogHeader>
+          <DialogTitle>Share this comparison</DialogTitle>
+          <DialogDescription>
+            A link that opens exactly the clients and capability you&apos;re
+            viewing.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-[12px]">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Clients
+            </span>
+            <span className="text-foreground">
+              {clientNames.length > 0 ? clientNames.join(", ") : "None selected"}
+            </span>
+            {capability ? (
+              <>
+                <span className="ml-auto text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Capability
+                </span>
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                  {capability.field.label}
+                </span>
+              </>
+            ) : null}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              readOnly
+              value={shareUrl}
+              onFocus={(event) => event.currentTarget.select()}
+              aria-label="Shareable link"
+              className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 font-mono text-[11.5px] text-muted-foreground"
+            />
+            <Button type="button" onClick={handleCopy} className="gap-2">
+              {copied ? (
+                <>
+                  <Check className="size-4" />
+                  Copied
+                </>
+              ) : (
+                <>
+                  <Copy className="size-4" />
+                  Copy
+                </>
+              )}
+            </Button>
+          </div>
+
+          <div className="flex justify-start">
+            <Button asChild variant="outline" size="sm" className="gap-2">
+              <a href={tweetHref} target="_blank" rel="noreferrer noopener">
+                Share on X
+              </a>
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
