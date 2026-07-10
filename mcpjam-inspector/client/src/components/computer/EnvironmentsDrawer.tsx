@@ -30,15 +30,31 @@ import {
 } from "@/hooks/useComputerEnvironments";
 import { EnvironmentBuildBadge } from "./EnvironmentBuildBadge";
 
-const NEW_ENVIRONMENT_TEMPLATE = `# Base must be an allowlisted official image (debian, ubuntu, node, python)
-# pinned by @sha256 digest. Only FROM + RUN are supported today.
-FROM debian:bookworm-slim@sha256:REPLACE_WITH_DIGEST
+// Ships a real, buildable default so "Create → Build" works out of the box.
+// The base must be an allowlisted official image (debian, ubuntu, node,
+// python) pinned by @sha256 digest — swap in your own base/digest as needed.
+// Only FROM + RUN are supported today.
+const NEW_ENVIRONMENT_TEMPLATE = `# Allowlisted official base (debian, ubuntu, node, python) pinned by digest.
+# Only FROM + RUN are supported today. Change the base or digest as needed.
+FROM debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df
 RUN echo "customize me"
 `;
 
 function errMessage(err: unknown, fallback: string): string {
+  // Convex `ConvexError` payloads land on `err.data` (a string, or a record
+  // with `message`) — e.g. the backend's DockerfileValidationError. Prefer that
+  // over `err.message`, which for an application error is the redacted
+  // "Server Error"/Request-ID string.
+  if (err && typeof err === "object" && "data" in err) {
+    const data = (err as { data: unknown }).data;
+    if (typeof data === "string" && data.trim()) return data.slice(0, 400);
+    if (data && typeof data === "object" && "message" in data) {
+      const msg = (data as { message: unknown }).message;
+      if (typeof msg === "string" && msg.trim()) return msg.slice(0, 400);
+    }
+  }
   if (err instanceof Error && err.message) {
-    // Convex surfaces the thrown message; strip the noisy server prefix.
+    // Fallback: strip the noisy server prefix from a plain thrown message.
     return err.message.replace(/^\[.*?\]\s*/, "").slice(0, 400) || fallback;
   }
   return fallback;
@@ -287,6 +303,12 @@ function NewEnvironmentForm({
   const create = async () => {
     if (!name.trim()) {
       toast.error("Give the environment a name.");
+      return;
+    }
+    if (/REPLACE_WITH_DIGEST/.test(dockerfile)) {
+      toast.error(
+        "Pin the base image to a real @sha256 digest before creating."
+      );
       return;
     }
     setSaving(true);
