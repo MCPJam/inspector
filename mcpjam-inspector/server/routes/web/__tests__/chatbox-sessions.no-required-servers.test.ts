@@ -46,6 +46,21 @@ describe("web routes — chatbox-sessions with no required servers", () => {
     createRunMock.mockReset();
     generatePersonasMock.mockReset();
     startSimulationMock.mockReset();
+    // Default runtime config so the provenance guard can verify the chatbox's
+    // project (generate-personas resolves it too). Per-test mocks override.
+    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        chatboxId: "cbx-1",
+        accessVersion: 0,
+        executionScope: { kind: "project", projectId: "proj-1" },
+        modelId: "openai/gpt-4o-mini",
+        systemPrompt: "",
+        temperature: 0.7,
+        requireToolApproval: false,
+        hostStyle: "default",
+      },
+    });
     createRunMock.mockResolvedValue({ runId: "run-1" });
     startSimulationMock.mockResolvedValue(undefined);
     generatePersonasMock.mockResolvedValue([
@@ -114,6 +129,7 @@ describe("web routes — chatbox-sessions with no required servers", () => {
       config: {
         chatboxId: "cbx-1",
         accessVersion: 0,
+        executionScope: { kind: "project", projectId: "proj-1" },
         modelId: "openai/gpt-4o-mini",
         systemPrompt: "",
         temperature: 0.7,

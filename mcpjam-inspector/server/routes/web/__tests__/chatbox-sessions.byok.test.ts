@@ -69,6 +69,7 @@ describe("web routes — chatbox-sessions BYOK gate removed", () => {
       config: {
         chatboxId: "cbx-1",
         accessVersion: 0,
+        executionScope: { kind: "project", projectId: "proj-1" },
         // Bare gpt-4o (no openai/ prefix) is BYOK, not MCPJam-provided.
         modelId: "gpt-4o",
         systemPrompt: "",
@@ -103,6 +104,7 @@ describe("web routes — chatbox-sessions BYOK gate removed", () => {
       config: {
         chatboxId: "cbx-2",
         accessVersion: 0,
+        executionScope: { kind: "project", projectId: "proj-1" },
         modelId: "openai/gpt-4o-mini",
         systemPrompt: "",
         temperature: 0.7,
@@ -129,6 +131,7 @@ describe("web routes — chatbox-sessions BYOK gate removed", () => {
       config: {
         chatboxId: "cbx-computer",
         accessVersion: 0,
+        executionScope: { kind: "project", projectId: "proj-1" },
         modelId: "openai/gpt-4o-mini",
         systemPrompt: "",
         temperature: 0.7,
@@ -176,6 +179,7 @@ describe("web routes — chatbox-sessions BYOK gate removed", () => {
       config: {
         chatboxId: "cbx-images",
         accessVersion: 0,
+        executionScope: { kind: "project", projectId: "proj-1" },
         modelId: "openai/gpt-4o-mini",
         systemPrompt: "",
         temperature: 0.7,
@@ -203,5 +207,58 @@ describe("web routes — chatbox-sessions BYOK gate removed", () => {
         mcpToolResultImageRendering,
       })
     );
+  });
+
+  it("rejects a body projectId that mismatches the chatbox's project (403)", async () => {
+    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        chatboxId: "cbx-x",
+        accessVersion: 0,
+        // Chatbox actually belongs to a DIFFERENT project than the body.
+        executionScope: { kind: "project", projectId: "proj-OTHER" },
+        modelId: "openai/gpt-4o-mini",
+        systemPrompt: "",
+        temperature: 0.7,
+        requireToolApproval: false,
+        hostStyle: "default",
+      },
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/chatboxes/cbx-x/simulate-sessions/start",
+      validBody, // projectId: "proj-1"
+      token,
+    );
+    const { status } = await expectJson<{ runId?: string }>(response);
+    expect(status).toBe(403);
+    expect(createRunMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the runtime config can't surface the chatbox's project (403)", async () => {
+    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        chatboxId: "cbx-noscope",
+        accessVersion: 0,
+        // No executionScope -> project binding unverifiable.
+        modelId: "openai/gpt-4o-mini",
+        systemPrompt: "",
+        temperature: 0.7,
+        requireToolApproval: false,
+        hostStyle: "default",
+      },
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/chatboxes/cbx-noscope/simulate-sessions/start",
+      validBody,
+      token,
+    );
+    const { status } = await expectJson<{ runId?: string }>(response);
+    expect(status).toBe(403);
+    expect(createRunMock).not.toHaveBeenCalled();
   });
 });
