@@ -60,8 +60,7 @@ import {
   type CreateSuitePayload,
 } from "./evals/create-suite-dialog";
 import { getEvalIterationQuotaDisabledReason } from "@/lib/eval-iteration-quota";
-import posthog from "posthog-js";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 
@@ -338,10 +337,8 @@ function EvalsTabContent({
   // double-fire (once on the null mount, once on the resolved mount).
   useEffect(() => {
     if (isLoading) return;
-    posthog.capture("evaluate_tab_viewed", {
+    track("evaluate_tab_viewed", {
       location: "evals_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       project_id: projectId ?? null,
     });
   }, [isLoading, projectId]);
@@ -349,10 +346,8 @@ function EvalsTabContent({
   useEffect(() => {
     if (isLoading) return;
     if (!selectedSuiteId) return;
-    posthog.capture("suite_viewed", {
+    track("suite_viewed", {
       location: "evals_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       project_id: projectId ?? null,
       suite_id: selectedSuiteId,
       route_type: route.type,

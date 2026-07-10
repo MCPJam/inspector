@@ -137,6 +137,7 @@ vi.mock("posthog-js/react", () => ({
   }),
   useFeatureFlagEnabled: () => false,
 }));
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 // Mock PosthogUtils
 vi.mock("@/lib/PosthogUtils", () => ({

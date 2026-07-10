@@ -4,8 +4,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { ShareProjectDialog } from "./ShareProjectDialog";
-import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import {
   Tooltip,
   TooltipContent,
@@ -37,15 +36,13 @@ export function ProjectShareButton({
 }: ProjectShareButtonProps) {
   const { user } = useAuth();
   const { isAuthenticated } = useConvexAuth();
-  const posthog = usePostHog();
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const isShareEnabled = isAuthenticated && !!user;
 
   const handleClick = () => {
-    posthog.capture("project_share_button_clicked", {
+    track("project_share_button_clicked", {
+      location: "project_share_button",
       project_name: projectName,
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
     setIsShareDialogOpen(true);
   };

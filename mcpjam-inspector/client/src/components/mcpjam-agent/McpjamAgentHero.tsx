@@ -16,9 +16,9 @@ import {
   useState,
 } from "react";
 import { MessageSquareText } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
 import { generateId } from "ai";
 import { cn } from "@/lib/utils";
+import { track } from "@/lib/analytics";
 import { McpjamAgentComposer } from "@/components/mcpjam-agent/McpjamAgentComposer";
 import {
   appendRecentMcpjamAgentSession,
@@ -65,7 +65,6 @@ export function McpjamAgentHero({
   ready = true,
   className,
 }: McpjamAgentHeroProps) {
-  const posthog = usePostHog();
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -105,7 +104,8 @@ export function McpjamAgentHero({
         title,
         ts: Date.now(),
       });
-      posthog?.capture("mcpjam_agent_submit", {
+      track("mcpjam_agent_submit", {
+        location: "mcpjam_agent_hero",
         surface,
         source,
         prompt_length: trimmed.length,
@@ -113,12 +113,13 @@ export function McpjamAgentHero({
       setValue("");
       onSessionStart(sessionId, trimmed);
     },
-    [onSessionStart, posthog, ready, surface]
+    [onSessionStart, ready, surface]
   );
 
   const onSuggestedClick = useCallback(
     (prompt: string) => {
-      posthog?.capture("mcpjam_agent_suggested_prompt", {
+      track("mcpjam_agent_suggested_prompt", {
+        location: "mcpjam_agent_hero",
         surface,
         prompt,
       });
@@ -128,17 +129,18 @@ export function McpjamAgentHero({
         textareaRef.current?.focus();
       });
     },
-    [posthog, surface]
+    [surface]
   );
 
   const onRecentClick = useCallback(() => {
     if (!latestRecent || !onResumeSession) return;
-    posthog?.capture("mcpjam_agent_resume", {
+    track("mcpjam_agent_resume", {
+      location: "mcpjam_agent_hero",
       surface,
       session_id: latestRecent.id,
     });
     onResumeSession(latestRecent.id);
-  }, [latestRecent, onResumeSession, posthog, surface]);
+  }, [latestRecent, onResumeSession, surface]);
 
   const recentHeader =
     latestRecent && onResumeSession ? (

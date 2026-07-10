@@ -9,9 +9,7 @@ import {
 import { useOnboarding } from "../use-onboarding";
 
 const mockState = vi.hoisted(() => ({
-  posthog: {
-    capture: vi.fn(),
-  },
+  track: vi.fn(),
   convexUser: undefined as
     | {
         _id: string;
@@ -29,8 +27,8 @@ vi.mock("convex/react", () => ({
   useMutation: () => mockState.markOnboardingShownMutation,
 }));
 
-vi.mock("posthog-js/react", () => ({
-  usePostHog: () => mockState.posthog,
+vi.mock("@/lib/analytics", () => ({
+  track: mockState.track,
 }));
 
 vi.mock("@/lib/PosthogUtils", () => ({

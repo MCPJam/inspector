@@ -37,6 +37,10 @@ vi.mock("@/lib/PosthogUtils", () => ({
   detectPlatform: vi.fn(() => "web"),
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
+}));
+
 vi.mock("@/hooks/use-json-rpc-panel", () => ({
   useJsonRpcPanelVisibility: () => ({
     isVisible: false,

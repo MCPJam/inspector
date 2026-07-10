@@ -24,6 +24,10 @@ vi.mock("posthog-js/react", () => ({
     flag === "billing-entitlements-ui" ? mockBillingUiFlag : false,
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: (...args: unknown[]) => mockCapture(...args),
+}));
+
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({
     isAuthenticated: true,

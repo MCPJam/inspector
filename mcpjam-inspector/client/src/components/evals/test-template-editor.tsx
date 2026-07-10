@@ -7,7 +7,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
-import posthog from "posthog-js";
+import { track } from "@/lib/analytics";
 import {
   Circle,
   Code2,
@@ -18,7 +18,6 @@ import {
   Square,
 } from "lucide-react";
 import { toast } from "sonner";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { listEvalTools, streamEvalTestCase } from "@/lib/apis/evals-api";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -1619,10 +1618,8 @@ export function TestTemplateEditor({
         models: currentTestCase?.models ?? [],
         ...savePayload,
       });
-      posthog.capture("eval_test_case_created", {
+      track("eval_test_case_created", {
         location: "test_template_editor",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         suite_id: suiteId ?? null,
         test_case_id: newTestCaseId,
         num_models: currentTestCase?.models?.length ?? 0,
@@ -1665,10 +1662,8 @@ export function TestTemplateEditor({
         // Same null-clears-the-field convention for the predicate override.
         predicates: savePayload.predicates ?? null,
       });
-      posthog.capture("eval_test_case_edited", {
+      track("eval_test_case_edited", {
         location: "test_template_editor",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         suite_id: suiteId ?? null,
         test_case_id: currentTestCase._id,
         num_models: currentTestCase.models?.length ?? 0,
@@ -1923,10 +1918,8 @@ export function TestTemplateEditor({
           ? current
           : selectedModelValues[0] ?? null,
       );
-      posthog.capture("compare_run_view_opened", {
+      track("compare_run_view_opened", {
         location: "test_template_editor",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         suite_id: suiteId,
         test_case_id: currentTestCase?._id ?? null,
         source,
@@ -2206,10 +2199,8 @@ export function TestTemplateEditor({
       setPreviewTab("preview");
     }
 
-    posthog.capture("compare_run_started", {
+    track("compare_run_started", {
       location: "test_template_editor",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       suite_id: suiteId,
       test_case_id: currentTestCase._id,
       compare_run_id: compareRunId,
@@ -2274,10 +2265,8 @@ export function TestTemplateEditor({
                     },
                   }));
 
-                  posthog.capture("compare_model_completed", {
+                  track("compare_model_completed", {
                     location: "test_template_editor",
-                    platform: detectPlatform(),
-                    environment: detectEnvironment(),
                     suite_id: suiteId,
                     test_case_id: currentTestCase._id,
                     compare_run_id: compareRunId,
@@ -2449,10 +2438,8 @@ export function TestTemplateEditor({
               }));
             }
 
-            posthog.capture("compare_model_completed", {
+            track("compare_model_completed", {
               location: "test_template_editor",
-              platform: detectPlatform(),
-              environment: detectEnvironment(),
               suite_id: suiteId,
               test_case_id: currentTestCase._id,
               compare_run_id: compareRunId,
@@ -2522,10 +2509,8 @@ export function TestTemplateEditor({
       ...previous,
       [modelValue]: tab,
     }));
-    posthog.capture("compare_run_tab_changed", {
+    track("compare_run_tab_changed", {
       location: "test_template_editor",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       suite_id: suiteId,
       test_case_id: currentTestCase?._id ?? null,
       model: modelValue,

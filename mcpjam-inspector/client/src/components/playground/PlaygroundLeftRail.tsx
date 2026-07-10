@@ -1,7 +1,6 @@
 import { useCallback, useState } from "react";
 import { Hammer, History } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
 import { usePlaygroundStateContext } from "@/components/ui-playground/hooks/use-playground-state";
 import { PlaygroundLeft } from "@/components/ui-playground/PlaygroundLeft";
@@ -27,18 +26,17 @@ export function PlaygroundLeftRail({
 }) {
   const [activeTab, setActiveTab] = useState<LeftRailTab>("tools");
 
-  const posthog = usePostHog();
   const handleTabClick = useCallback(
     (next: LeftRailTab) => {
       if (next === activeTab) return;
-      posthog?.capture("playground_left_rail_tab_changed", {
-        ...standardEventProps("playground_left_rail"),
+      track("playground_left_rail_tab_changed", {
+        location: "playground_left_rail",
         from: activeTab,
         to: next,
       });
       setActiveTab(next);
     },
-    [activeTab, posthog],
+    [activeTab],
   );
 
   return (

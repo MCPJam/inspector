@@ -14,7 +14,7 @@ import {
 } from "@/lib/apis/mcp-skills-api";
 import type { SkillResult } from "./skill-types";
 import { isValidSkillName } from "../../../../../../shared/skill-types";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 
 interface SkillUploadDialogProps {
   open: boolean;
@@ -54,7 +54,6 @@ export function SkillUploadDialog({
   onSkillCreated,
   source,
 }: SkillUploadDialogProps) {
-  const posthog = usePostHog();
   const [files, setFiles] = useState<File[]>([]);
   const [skillInfo, setSkillInfo] = useState<ParsedSkillInfo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -217,7 +216,8 @@ export function SkillUploadDialog({
         source,
         sharing,
       );
-      posthog.capture("skill_uploaded", {
+      track("skill_uploaded", {
+        location: "skill_upload_dialog",
         skill_name: skillInfo.name,
         file_count: files.length,
         sharing,

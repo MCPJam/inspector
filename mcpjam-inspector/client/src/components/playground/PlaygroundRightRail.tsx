@@ -6,9 +6,8 @@ import {
   PanelRightClose,
   TerminalSquare,
 } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 import { LoggerView } from "@/components/logger-view";
 import { ComputerStatusChip } from "@/components/computer/ComputerStatusChip";
@@ -77,7 +76,6 @@ function RightRailTabbed({
   // Bumped to remount (and thus reconnect) the terminal into the latest harness
   // workdir on demand — cwd only applies at connect time.
   const [reloadKey, setReloadKey] = useState(0);
-  const posthog = usePostHog();
   // One controller for the rail so the terminal session survives Logs ⇄ Shell
   // toggles (both bodies stay mounted; we only show/hide).
   const ct = useComputerTerminal({ projectId, isAuthenticated });
@@ -100,14 +98,14 @@ function RightRailTabbed({
   const handleTabClick = useCallback(
     (next: RightRailTab) => {
       if (next === activeTab) return;
-      posthog?.capture("playground_right_rail_tab_changed", {
-        ...standardEventProps("playground_right_rail"),
+      track("playground_right_rail_tab_changed", {
+        location: "playground_right_rail",
         from: activeTab,
         to: next,
       });
       setActiveTab(next);
     },
-    [activeTab, posthog],
+    [activeTab],
   );
 
   return (
