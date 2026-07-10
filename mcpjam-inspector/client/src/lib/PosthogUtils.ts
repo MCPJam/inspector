@@ -1,3 +1,5 @@
+import { getCachedGuestSession } from "./guest-session";
+
 export const VITE_PUBLIC_POSTHOG_KEY =
   "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
 export const VITE_PUBLIC_POSTHOG_HOST = "https://us.i.posthog.com";
@@ -19,10 +21,30 @@ export function getPostHogApiHost(): string {
   return VITE_PUBLIC_POSTHOG_HOST;
 }
 
+// Guest identity bootstrap. Without it, posthog-js mints a random anonymous
+// distinct_id at init and only converges on the guestId when
+// usePostHogIdentify's async actor resolution calls identify() — every cold
+// load that races that fetch creates a throwaway person and inflates guest
+// DAU. In hosted prod the server injects the guest session into the page
+// (window.__MCP_GUEST_BOOTSTRAP__, seeded synchronously into
+// getCachedGuestSession at module import), so the guestId is known before
+// PostHogProvider mounts. posthog-js handles the edge cases safely: an
+// existing IDENTIFIED persisted id wins over the bootstrap value (returning
+// signed-in users are untouched), and an existing anonymous id is merged
+// into the bootstrap id via identify(). Local/npm has no blob — this
+// returns {} there and the async identify path behaves as before.
+function getPostHogBootstrap() {
+  const guestId = getCachedGuestSession()?.guestId;
+  return guestId
+    ? { bootstrap: { distinctID: guestId, isIdentifiedID: true } }
+    : {};
+}
+
 export const options = {
   api_host: getPostHogApiHost(),
   // Toolbar/app links must point at PostHog itself once api_host is proxied.
   ui_host: "https://us.posthog.com",
+  ...getPostHogBootstrap(),
   capture_pageview: false,
   person_profiles: "always" as const,
 
@@ -61,6 +83,7 @@ export const getPostHogOptions = () =>
         // calls hit us.i.posthog.com directly and stay ad-blocked.
         api_host: getPostHogApiHost(),
         ui_host: "https://us.posthog.com",
+        ...getPostHogBootstrap(),
         capture_pageview: false,
         person_profiles: "always" as const,
         // Disable event capture but keep /decide enabled for feature flag evaluation.
