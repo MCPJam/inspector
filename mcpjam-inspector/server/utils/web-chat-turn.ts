@@ -53,7 +53,6 @@ import {
   type WidgetModelContextEntry,
 } from "./chat-v2-orchestration.js";
 import {
-  persistChatSessionToConvex,
   pickEnrichmentHeaders,
   stampSenderUserIdsOnSessionMessages,
   type ChatOrigin,
@@ -61,7 +60,7 @@ import {
   type PersistedTurnTrace,
 } from "./chat-ingestion.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
-import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
+import { persistHostSessionTurn } from "./persist-host-session-turn.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
 import { bridgeHarnessRpcLogsToCollector } from "./../routes/web/hosted-rpc-logs.js";
@@ -333,76 +332,66 @@ export async function streamWebChatTurn(
       harnessSessionCommit?: HarnessSessionCommitPayload,
     ) => {
       const isDirectChat = !isChatboxSession;
-      // Capture the live tool catalog. Failures must never block the persist.
-      // Surfaces with synthetic server ids (mcpjam-agent) opt out via
+      // Snapshot capture (best-effort) + persist run through the shared
+      // `persistHostSessionTurn` helper. Surfaces with synthetic server ids
+      // (mcpjam-agent) opt out of the snapshot via
       // `persist.captureToolSnapshot === false`.
-      let toolSnapshot: unknown;
-      if (persist.captureToolSnapshot !== false) {
-        try {
-          const knownIds =
-            typeof manager.hasServer === "function"
-              ? persist.selectedServerIds.filter((id) => manager.hasServer(id))
-              : persist.selectedServerIds;
-          if (knownIds.length > 0) {
-            toolSnapshot =
-              await exportConnectedServerToolSnapshotForEvalAuthoring(
-                manager,
-                knownIds,
-                { logPrefix: "chat-v2.persist" },
-              );
-          }
-        } catch {
-          toolSnapshot = undefined;
-        }
-      }
-
-      await persistChatSessionToConvex({
-        chatSessionId: hostedChatSessionId,
-        modelId,
-        modelSource,
-        projectId: persist.projectId,
-        sourceType: persist.sourceType,
-        origin: persist.origin,
-        ...(isChatboxSession && persist.surface
-          ? { surface: persist.surface }
+      await persistHostSessionTurn(manager, {
+        selectedServerIds: persist.selectedServerIds,
+        ...(persist.captureToolSnapshot !== undefined
+          ? { captureToolSnapshot: persist.captureToolSnapshot }
           : {}),
-        chatboxId: persist.chatboxId,
-        accessVersion: persist.accessVersion,
-        authHeader: runtime.authHeader,
-        sessionMessages: stampSenderUserIdsOnSessionMessages(
-          fullHistory,
-          persist.originalMessages as unknown[],
-          { authenticatedUserId: persist.authenticatedUserId },
-        ),
-        startedAt: sessionStartedAt,
-        lastActivityAt: Date.now(),
-        ...(toolSnapshot ? { toolSnapshot } : {}),
-        ...(isDirectChat
-          ? {
-              directVisibility: persist.directVisibility,
-              resumeConfig: {
-                systemPrompt: persist.systemPrompt,
-                temperature: persist.temperature,
-                requireToolApproval: persist.requireToolApproval,
-                respectToolVisibility: persist.respectToolVisibility,
-                modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
-                mcpToolResultImageRendering:
-                  persist.mcpToolResultImageRendering,
-                selectedServers:
-                  Array.isArray(persist.selectedServerNames) &&
-                  persist.selectedServerNames.length ===
-                    persist.selectedServerIds.length
-                    ? persist.selectedServerNames
-                    : persist.selectedServerIds,
-              },
-              ...(resolvedHostConfig ? { hostConfig: resolvedHostConfig } : {}),
-            }
-          : {}),
-        turnTrace,
-        // §3: chat-backed harness resume-state commit, applied atomically with
-        // the transcript inside the ingest mutation.
-        ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
-        forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
+        logPrefix: "chat-v2.persist",
+        persist: {
+          chatSessionId: hostedChatSessionId,
+          modelId,
+          modelSource,
+          projectId: persist.projectId,
+          sourceType: persist.sourceType,
+          origin: persist.origin,
+          ...(isChatboxSession && persist.surface
+            ? { surface: persist.surface }
+            : {}),
+          chatboxId: persist.chatboxId,
+          accessVersion: persist.accessVersion,
+          authHeader: runtime.authHeader,
+          sessionMessages: stampSenderUserIdsOnSessionMessages(
+            fullHistory,
+            persist.originalMessages as unknown[],
+            { authenticatedUserId: persist.authenticatedUserId },
+          ),
+          startedAt: sessionStartedAt,
+          lastActivityAt: Date.now(),
+          ...(isDirectChat
+            ? {
+                directVisibility: persist.directVisibility,
+                resumeConfig: {
+                  systemPrompt: persist.systemPrompt,
+                  temperature: persist.temperature,
+                  requireToolApproval: persist.requireToolApproval,
+                  respectToolVisibility: persist.respectToolVisibility,
+                  modelVisibleMcpToolResults:
+                    prepare.modelVisibleMcpToolResults,
+                  mcpToolResultImageRendering:
+                    persist.mcpToolResultImageRendering,
+                  selectedServers:
+                    Array.isArray(persist.selectedServerNames) &&
+                    persist.selectedServerNames.length ===
+                      persist.selectedServerIds.length
+                      ? persist.selectedServerNames
+                      : persist.selectedServerIds,
+                },
+                ...(resolvedHostConfig
+                  ? { hostConfig: resolvedHostConfig }
+                  : {}),
+              }
+            : {}),
+          turnTrace,
+          // §3: chat-backed harness resume-state commit, applied atomically
+          // with the transcript inside the ingest mutation.
+          ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
+          forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
+        },
       });
     };
   };
