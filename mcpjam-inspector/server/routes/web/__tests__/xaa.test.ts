@@ -1,9 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { mkdtempSync, rmSync } from "fs";
 import os from "os";
 import path from "path";
 import xaaWeb from "../xaa.js";
+import { createXaaRouter } from "../../mcp/xaa.js";
+import { bearerAuthMiddleware } from "../../../middleware/bearer-auth.js";
+import { guestRateLimitMiddleware } from "../../../middleware/guest-rate-limit.js";
+import { ErrorCode, WebRouteError } from "../errors.js";
 import {
   initXAAIdpKeyPair,
   resetXAAIdpKeyPairForTests,
@@ -162,5 +166,181 @@ describe("web xaa routes", () => {
     const payload = decodeJwtPayload(tokenExchangeBody.id_jag);
     expect(payload.client_id).toBe("mcpjam-debugger");
     expect(tokenExchangeBody.negative_test_mode).toBe("unknown_kid");
+  });
+});
+
+describe("org-scoped issuer routes", () => {
+  const originalKeyDir = process.env.XAA_IDP_KEY_DIR;
+  const ORG_ID = "org_a1B2-c3";
+  let tempDir: string;
+  let app: Hono;
+  let authorizeOrgIssuer: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-scoped-route-"));
+    process.env.XAA_IDP_KEY_DIR = tempDir;
+    resetXAAIdpKeyPairForTests();
+    initXAAIdpKeyPair();
+
+    authorizeOrgIssuer = vi.fn().mockResolvedValue(undefined);
+    app = new Hono();
+    app.route(
+      "/api/web/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/web",
+        httpsOnlyProxy: true,
+        trustForwardedHeaders: true,
+        protectedMiddlewares: [bearerAuthMiddleware, guestRateLimitMiddleware],
+        authorizeOrgIssuer,
+      }),
+    );
+  });
+
+  afterEach(() => {
+    resetXAAIdpKeyPairForTests();
+    rmSync(tempDir, { recursive: true, force: true });
+    if (originalKeyDir === undefined) {
+      delete process.env.XAA_IDP_KEY_DIR;
+    } else {
+      process.env.XAA_IDP_KEY_DIR = originalKeyDir;
+    }
+  });
+
+  it("serves scoped discovery publicly with the scoped issuer and shared JWKS", async () => {
+    const discoveryResponse = await app.request(
+      `https://app.mcpjam.com/api/web/xaa/o/${ORG_ID}/.well-known/openid-configuration`,
+    );
+    const jwksResponse = await app.request(
+      `https://app.mcpjam.com/api/web/xaa/o/${ORG_ID}/.well-known/jwks.json`,
+    );
+    const unscopedJwksResponse = await app.request(
+      "https://app.mcpjam.com/api/web/xaa/.well-known/jwks.json",
+    );
+
+    expect(discoveryResponse.status).toBe(200);
+    const discoveryBody = await discoveryResponse.json();
+    expect(discoveryBody.issuer).toBe(
+      `https://app.mcpjam.com/api/web/xaa/o/${ORG_ID}`,
+    );
+    expect(discoveryBody.jwks_uri).toBe(
+      `https://app.mcpjam.com/api/web/xaa/o/${ORG_ID}/.well-known/jwks.json`,
+    );
+
+    expect(jwksResponse.status).toBe(200);
+    // Same signing key on every issuer path — containment comes from gating
+    // the mint, not from key separation.
+    expect(await jwksResponse.json()).toEqual(await unscopedJwksResponse.json());
+    // Public documents never trigger a membership check.
+    expect(authorizeOrgIssuer).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed org segment on public and mint routes", async () => {
+    const badSegment = encodeURIComponent("org/../../etc");
+    const discoveryResponse = await app.request(
+      `/api/web/xaa/o/${badSegment}/.well-known/openid-configuration`,
+    );
+    expect(discoveryResponse.status).toBe(400);
+
+    const mintResponse = await app.request(
+      `/api/web/xaa/o/${badSegment}/authenticate`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer workos-token",
+        },
+        body: JSON.stringify({ userId: "user-12345" }),
+      },
+    );
+    expect(mintResponse.status).toBe(400);
+    expect(authorizeOrgIssuer).not.toHaveBeenCalled();
+  });
+
+  it("requires a bearer on scoped mint endpoints", async () => {
+    const response = await app.request(`/api/web/xaa/o/${ORG_ID}/authenticate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "user-12345" }),
+    });
+
+    expect(response.status).toBe(401);
+    expect(authorizeOrgIssuer).not.toHaveBeenCalled();
+  });
+
+  it("rejects the mint when the membership check fails", async () => {
+    authorizeOrgIssuer.mockRejectedValueOnce(
+      new WebRouteError(403, ErrorCode.FORBIDDEN, "Not a member"),
+    );
+
+    const response = await app.request(`/api/web/xaa/o/${ORG_ID}/authenticate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer workos-token",
+      },
+      body: JSON.stringify({ userId: "user-12345" }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(authorizeOrgIssuer).toHaveBeenCalledWith({
+      organizationId: ORG_ID,
+      bearerToken: "workos-token",
+    });
+  });
+
+  it("mints the ID token and ID-JAG with the org-scoped issuer", async () => {
+    const headers = {
+      "Content-Type": "application/json",
+      Authorization: "Bearer workos-token",
+      "x-forwarded-proto": "https",
+    };
+
+    const authenticateResponse = await app.request(
+      `http://app.mcpjam.com/api/web/xaa/o/${ORG_ID}/authenticate`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ userId: "user-12345" }),
+      },
+    );
+    expect(authenticateResponse.status).toBe(200);
+    const authenticateBody = await authenticateResponse.json();
+    expect(decodeJwtPayload(authenticateBody.id_token).iss).toBe(
+      `https://app.mcpjam.com/api/web/xaa/o/${ORG_ID}`,
+    );
+
+    const tokenExchangeResponse = await app.request(
+      `http://app.mcpjam.com/api/web/xaa/o/${ORG_ID}/token-exchange`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          identityAssertion: authenticateBody.id_token,
+          audience: "https://auth.example.com",
+          resource: "https://mcp.example.com",
+          clientId: "mcpjam-debugger",
+        }),
+      },
+    );
+
+    expect(tokenExchangeResponse.status).toBe(200);
+    const payload = decodeJwtPayload(
+      (await tokenExchangeResponse.json()).id_jag,
+    );
+    expect(payload.iss).toBe(
+      `https://app.mcpjam.com/api/web/xaa/o/${ORG_ID}`,
+    );
+    expect(authorizeOrgIssuer).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves the unscoped endpoints unchanged", async () => {
+    const response = await app.request(
+      "https://app.mcpjam.com/api/web/xaa/.well-known/openid-configuration",
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()).issuer).toBe(
+      "https://app.mcpjam.com/api/web/xaa",
+    );
+    expect(authorizeOrgIssuer).not.toHaveBeenCalled();
   });
 });

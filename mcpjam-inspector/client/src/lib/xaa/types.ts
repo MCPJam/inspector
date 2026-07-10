@@ -151,6 +151,10 @@ export interface BaseXAAStateMachineConfig {
   updateState: (updates: Partial<XAAFlowState>) => void;
   serverUrl: string;
   issuerBaseUrl: string;
+  /** Path prefix for the mint endpoints (`/authenticate`, `/token-exchange`),
+   * e.g. `/o/<orgId>` for the hosted org-scoped issuer. Never applied to the
+   * token proxy, which has no scoped variant. Defaults to "" (unscoped). */
+  mintPathPrefix?: string;
   requestExecutor: XAARequestExecutor;
   scheduleAutoAdvance?: (next: () => void) => void;
   negativeTestMode?: NegativeTestMode;

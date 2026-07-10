@@ -1,6 +1,7 @@
 import { HOSTED_MODE } from "@/lib/config";
 import { authFetch } from "@/lib/session-token";
 import type { NegativeTestDiff } from "@/shared/xaa.js";
+import { getOrgScopedIssuerSegment } from "./idp-endpoints";
 
 const XAA_API_BASE = HOSTED_MODE ? "/api/web/xaa" : "/api/mcp/xaa";
 
@@ -110,6 +111,9 @@ export interface NegativeTestsInput {
   // the token endpoint from the server's own config.
   serverId?: string;
   projectId?: string;
+  // Hosted runs mint the broken assertions under the org-scoped issuer so
+  // they carry the same `iss` the positive run used.
+  organizationId?: string | null;
 }
 
 /**
@@ -121,11 +125,16 @@ export interface NegativeTestsInput {
 export async function runNegativeTests(
   input: NegativeTestsInput
 ): Promise<NegativeTestsResult> {
-  const response = await authFetch(`${XAA_API_BASE}/negative-tests`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
+  const { organizationId, ...requestBody } = input;
+  const scopedSegment = getOrgScopedIssuerSegment(organizationId);
+  const response = await authFetch(
+    `${XAA_API_BASE}${scopedSegment}/negative-tests`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+    }
+  );
 
   const body = (await response.json().catch(() => null)) as
     | (NegativeTestsResult & { message?: string })

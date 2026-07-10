@@ -143,25 +143,47 @@ function IdpInfo() {
  * mints assertions with MCPJam as the IdP, so this surfaces the issuer + JWKS
  * URLs a developer registers with their own authorization server, inline with
  * copy buttons. The how-and-why detail lives behind the info icon.
+ *
+ * Hosted signed-in users get the org-scoped issuer (/o/<orgId>): minting under
+ * it requires org membership, so it is the issuer to register with a real
+ * authorization server. The legacy unscoped issuer is mintable by anyone and
+ * should be treated as test-only.
  */
-export function XAAIdpCard() {
+export function XAAIdpCard({
+  organizationId,
+}: {
+  organizationId?: string | null;
+}) {
   // Start from the browser-origin guess, then swap in the server-advertised
   // issuer once resolved — see fetchXaaIdpUrls for why the guess can be wrong.
-  const [urls, setUrls] = useState(() => getXaaIdpUrls());
+  const [urls, setUrls] = useState(() => getXaaIdpUrls(organizationId));
   const { issuerBaseUrl, openidConfigUrl, jwksUrl } = urls;
 
   // Resolve the real issuer from the server's discovery doc once on mount —
   // the URLs are always visible now, so there's no expand to defer it to.
+  const isFirstResolve = useRef(true);
   useEffect(() => {
     const controller = new AbortController();
-    void fetchXaaIdpUrls(controller.signal).then((serverUrls) => {
-      if (controller.signal.aborted || !serverUrls) {
-        return;
-      }
-      setUrls(serverUrls);
-    });
+    // The useState initializer already produced this value on first render;
+    // only reset synchronously when the org actually changes (so a stale
+    // prior-org URL never flashes) to avoid a wasted render on mount.
+    if (isFirstResolve.current) {
+      isFirstResolve.current = false;
+    } else {
+      setUrls(getXaaIdpUrls(organizationId));
+    }
+    void fetchXaaIdpUrls(controller.signal, organizationId).then(
+      (serverUrls) => {
+        if (controller.signal.aborted || !serverUrls) {
+          return;
+        }
+        setUrls(serverUrls);
+      },
+    );
     return () => controller.abort();
-  }, []);
+  }, [organizationId]);
+
+  const isOrgScoped = HOSTED_MODE && Boolean(organizationId);
 
   return (
     <div className="border-b border-border bg-background px-4 py-3">
@@ -189,6 +211,13 @@ export function XAAIdpCard() {
             cannot reach <code className="font-mono">localhost</code>. Expose
             MCPJam with a public tunnel (e.g. ngrok) first.
           </span>
+        </div>
+      )}
+
+      {isOrgScoped && (
+        <div className="mt-3 text-xs text-muted-foreground">
+          This issuer is scoped to your organization — only its members can
+          mint assertions under it.
         </div>
       )}
     </div>

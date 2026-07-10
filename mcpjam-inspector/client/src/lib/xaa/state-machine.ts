@@ -374,6 +374,7 @@ export function createXAAStateMachine(
     updateState,
     serverUrl,
     issuerBaseUrl,
+    mintPathPrefix = "",
     requestExecutor,
     negativeTestMode,
     userId,
@@ -739,7 +740,7 @@ export function createXAAStateMachine(
     const activeEmail = email ?? state.email;
     const request = {
       method: "POST",
-      url: "/authenticate",
+      url: `${mintPathPrefix}/authenticate`,
       headers: {
         "Content-Type": "application/json",
       },
@@ -752,7 +753,7 @@ export function createXAAStateMachine(
 
     try {
       const result = await runRequest("user_authentication", request, () =>
-        requestExecutor.internalRequest("/authenticate", {
+        requestExecutor.internalRequest(`${mintPathPrefix}/authenticate`, {
           method: "POST",
           headers: request.headers,
           body: JSON.stringify(request.body),
@@ -830,7 +831,7 @@ export function createXAAStateMachine(
 
     const request = {
       method: "POST",
-      url: "/token-exchange",
+      url: `${mintPathPrefix}/token-exchange`,
       headers: {
         "Content-Type": "application/json",
       },
@@ -846,7 +847,7 @@ export function createXAAStateMachine(
 
     try {
       const result = await runRequest("token_exchange_request", request, () =>
-        requestExecutor.internalRequest("/token-exchange", {
+        requestExecutor.internalRequest(`${mintPathPrefix}/token-exchange`, {
           method: "POST",
           headers: request.headers,
           body: JSON.stringify(request.body),

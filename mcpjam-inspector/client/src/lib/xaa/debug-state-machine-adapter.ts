@@ -84,17 +84,28 @@ export function createXAADebugRequestExecutor(): XAARequestExecutor {
 }
 
 export function createInspectorXAAStateMachine(
-  config: Omit<BaseXAAStateMachineConfig, "issuerBaseUrl" | "requestExecutor"> & {
+  config: Omit<
+    BaseXAAStateMachineConfig,
+    "issuerBaseUrl" | "mintPathPrefix" | "requestExecutor"
+  > & {
     // Ground-truth issuer resolved from the server's OpenID config. Falls back
     // to the browser-origin guess, which is wrong when the browser reaches the
     // API through the Vite dev proxy (browser :5173, backend :6274).
     issuerBaseUrl?: string;
+    // Hosted runs mint under the org-scoped issuer (/o/<orgId>) when the user
+    // belongs to an organization; local runs and guests stay unscoped.
+    organizationId?: string | null;
   },
 ): XAAStateMachine {
-  const { issuerBaseUrl, ...rest } = config;
+  const { issuerBaseUrl, organizationId, ...rest } = config;
+  const mintPathPrefix =
+    HOSTED_MODE && organizationId ? `/o/${organizationId}` : "";
   return createXAAStateMachine({
     ...rest,
-    issuerBaseUrl: issuerBaseUrl ?? `${window.location.origin}${XAA_API_BASE}`,
+    issuerBaseUrl:
+      issuerBaseUrl ??
+      `${window.location.origin}${XAA_API_BASE}${mintPathPrefix}`,
+    mintPathPrefix,
     requestExecutor: createXAADebugRequestExecutor(),
   });
 }
