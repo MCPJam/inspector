@@ -19,6 +19,12 @@ export function isUnsafeHostedOutboundHost(rawHost: string): boolean {
     return true;
   }
 
+  // Docker's magic hostnames resolve to the container's host machine, so a
+  // server reachable at these is local-only — the cloud can't route to it.
+  if (host === "host.docker.internal" || host === "gateway.docker.internal") {
+    return true;
+  }
+
   if (
     host === "metadata" ||
     host === "metadata.google.internal" ||

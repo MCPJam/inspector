@@ -256,4 +256,26 @@ describe("formatLocalStreamError", () => {
       "upstream failed"
     );
   });
+
+  it("does not serialize nested data/value objects into client details", () => {
+    const fromData = formatLocalStreamError({
+      statusCode: 500,
+      data: { apiKey: "sk-secret", requestId: "internal-42" },
+    });
+    expect(fromData).not.toContain("sk-secret");
+    expect(fromData).not.toContain("internal-42");
+
+    const fromValue = formatLocalStreamError({
+      value: { authorization: "Bearer lease-secret" },
+    });
+    expect(fromValue).not.toContain("lease-secret");
+  });
+
+  it("surfaces provider string body fields as details", () => {
+    const result = formatLocalStreamError({
+      message: "bad request",
+      responseBody: "provider says: invalid model",
+    });
+    expect(result).toContain("provider says: invalid model");
+  });
 });

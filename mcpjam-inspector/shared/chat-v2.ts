@@ -42,8 +42,10 @@ export interface ChatV2Request {
   /**
    * Local inspector must own the tool loop for this turn because at least one
    * selected MCP server is reachable only from this machine (stdio, localhost,
-   * or private IP HTTP). Org BYOK providers use a backend-minted model lease
-   * instead of sending raw provider keys to the inspector.
+   * or private IP HTTP). For org BYOK, the server forces the cloud runtime so
+   * the model call is proxied through Convex (`/stream/org`) — the org key
+   * stays in Convex and is never sent to the inspector — while the tool loop
+   * still runs locally against the local MCP connection.
    */
   localMcpRuntimeRequired?: boolean;
   requireToolApproval?: boolean;

@@ -187,32 +187,16 @@ function readLocalStreamErrorFields(error: unknown): {
 
   const statusCode =
     readErrorNumber(error, "statusCode") || readErrorNumber(error, "status");
+  // Only surface STRING body fields the provider SDK populates with its own
+  // error text. Never JSON-stringify arbitrary `data`/`value` objects into the
+  // client-visible details: those can carry request payloads, headers, or the
+  // scoped credential, which is exactly what this helper exists to withhold.
   const responseBody =
     readErrorString(error, "responseBody") ||
     readErrorString(error, "responseText") ||
     readErrorString(error, "body");
 
-  if (responseBody) return { message, statusCode, responseBody };
-
-  const data = (error as Record<string, unknown>).data;
-  if (data && typeof data === "object") {
-    try {
-      return { message, statusCode, responseBody: JSON.stringify(data) };
-    } catch {
-      return { message, statusCode };
-    }
-  }
-
-  const value = (error as Record<string, unknown>).value;
-  if (value && typeof value === "object") {
-    try {
-      return { message, statusCode, responseBody: JSON.stringify(value) };
-    } catch {
-      return { message, statusCode };
-    }
-  }
-
-  return { message, statusCode };
+  return { message, statusCode, responseBody };
 }
 
 export function formatLocalStreamError(error: unknown): string {
