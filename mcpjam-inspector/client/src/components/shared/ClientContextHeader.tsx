@@ -105,7 +105,7 @@ function HeaderTooltipBody({
       <p className="font-medium">{label}</p>
       {leadHostHint ? (
         <p className="text-[10px] text-muted-foreground">
-          Editing lead host: {leadHostHint}
+          Editing lead client: {leadHostHint}
         </p>
       ) : null}
     </>

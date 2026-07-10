@@ -2822,7 +2822,7 @@ export function TestTemplateEditor({
                               onChange={(event) =>
                                 setQuickRunHostSelection(event.target.value)
                               }
-                              aria-label="Host for the next run"
+                              aria-label="Client for the next run"
                               disabled={isRunningCompare}
                             >
                               {quickRunHostOptions.map((option) => (

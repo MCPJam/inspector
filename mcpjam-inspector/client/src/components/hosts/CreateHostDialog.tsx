@@ -233,7 +233,7 @@ export function CreateHostDialog({
             <Label htmlFor="host-name">Name</Label>
             <Input
               id="host-name"
-              placeholder="My Host"
+              placeholder="My Client"
               value={name}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) =>

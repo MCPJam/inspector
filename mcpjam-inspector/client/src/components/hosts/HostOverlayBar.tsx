@@ -250,7 +250,7 @@ export function HostOverlayBar({
         <div className="flex items-center rounded-md border border-border/40 bg-muted/30">
           <button
             type="button"
-            aria-label="Previous host"
+            aria-label="Previous client"
             data-testid="host-overlay-prev"
             disabled={arrowDisabled}
             onClick={() => cycle(-1)}
@@ -268,7 +268,7 @@ export function HostOverlayBar({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                aria-label="Host used for preview"
+                aria-label="Client used for preview"
                 data-testid="host-overlay-current"
                 className={cn(
                   "flex h-8 min-w-[7rem] max-w-[14rem] items-center justify-center border-x border-border/40 bg-transparent px-3 text-sm font-medium text-foreground transition-colors outline-none",
@@ -380,7 +380,7 @@ export function HostOverlayBar({
 
           <button
             type="button"
-            aria-label="Next host"
+            aria-label="Next client"
             data-testid="host-overlay-next"
             disabled={arrowDisabled}
             onClick={() => cycle(1)}

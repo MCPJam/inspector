@@ -68,7 +68,7 @@ type PublishPanelView = "preview" | "graph";
 const PUBLISH_PANEL_OPTIONS: Array<{ value: PublishPanelView; label: string }> =
   [
     { value: "preview", label: "Preview" },
-    { value: "graph", label: "Host graph" },
+    { value: "graph", label: "Client graph" },
   ];
 
 export function ChatboxesTab({

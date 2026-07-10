@@ -732,7 +732,7 @@ export function ServerDetailModal({
               </TabsTrigger>
               <TabsTrigger
                 value="compatibility"
-                aria-label="Host compatibility"
+                aria-label="Client compatibility"
                 className={tabTriggerClass}
               >
                 Hosts

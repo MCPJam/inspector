@@ -375,7 +375,7 @@ export function ClientSelector({
         >
           <Command shouldFilter={true}>
             <CommandInput
-              placeholder="Search hosts"
+              placeholder="Search clients"
               value={search}
               onValueChange={setSearch}
             />
@@ -389,7 +389,7 @@ export function ClientSelector({
                   <Switch
                     checked={multiHostEnabled}
                     onCheckedChange={handleToggleMultiHost}
-                    aria-label="Compare multiple hosts"
+                    aria-label="Compare multiple clients"
                     disabled={disabled || isLoading}
                   />
                 </div>
@@ -591,8 +591,8 @@ export function ClientSelector({
                 {orderedCatalogHosts.length > QUICK_ADD_VISIBLE ? (
                   <button
                     type="button"
-                    aria-label="More hosts"
-                    title="More hosts"
+                    aria-label="More clients"
+                    title="More clients"
                     data-testid="client-quick-add-more"
                     onClick={() => openCreateWithTemplate(undefined)}
                     className="inline-flex h-5 shrink-0 items-center justify-center rounded-sm px-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"

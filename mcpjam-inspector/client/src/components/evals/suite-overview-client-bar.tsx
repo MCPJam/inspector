@@ -143,7 +143,7 @@ export function SuiteOverviewClientBar({
         <button
           type="button"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/60 bg-background text-foreground outline-none transition-colors hover:bg-muted/45 focus-visible:ring-2 focus-visible:ring-ring dark:bg-background"
-          aria-label="Compare attached hosts"
+          aria-label="Compare attached clients"
           onClick={handleOpenCompare}
         >
           <GitCompare className="h-3.5 w-3.5" />
@@ -181,7 +181,7 @@ export function SuiteOverviewClientBar({
               : "border-border/60 bg-muted/40 hover:bg-muted/60",
             !editable && "cursor-not-allowed opacity-50",
           )}
-          aria-label="Attached hosts"
+          aria-label="Attached clients"
         >
           {triggerLogoLabel ? (
             <HostLogoMark label={triggerLogoLabel} />
