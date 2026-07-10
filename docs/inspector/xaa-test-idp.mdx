@@ -8,9 +8,17 @@ When you build an MCP resource server (or an authorization server) that accepts 
 
 To make that work, your authorization server has to **trust** MCPJam as an issuer. This page covers the three endpoints you register to establish that trust.
 
+## Org-scoped vs. global issuer
+
+When you are signed in to MCPJam as part of an organization, the IdP card shows an **org-scoped issuer** at `/api/web/xaa/o/<orgId>`. This is the issuer to register with a real authorization server.
+
+The global issuer (`/api/web/xaa`) is available to all MCPJam users, including guests. Because anyone can mint assertions under it, it is suitable only for quick local experiments — not for registering with a production or staging authorization server.
+
+The org-scoped issuer requires org membership to mint assertions, so an authorization server that trusts it will only accept tokens produced by members of your organization.
+
 ## Where to find the endpoints
 
-Open the **XAA Flow** tab in MCPJam Inspector. At the top of the tab, expand the **Use MCPJam as your test IdP** card. It lists three copy-able URLs and the active signing key id (`kid`).
+Open the **XAA Flow** tab in MCPJam Inspector. At the top of the tab, expand the **Use MCPJam as your test IdP** card. It lists three copy-able URLs and the active signing key id (`kid`). If you are signed in as part of an organization, the URLs shown are already scoped to your org.
 
 ## The three endpoints
 
