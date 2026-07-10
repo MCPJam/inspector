@@ -7,7 +7,7 @@ import type { HarnessId } from "../registry";
 
 const ENV_KEYS = [
   "CONVEX_HTTP_URL",
-  "COMPUTERS_DATA_PLANE_SECRET",
+  "INSPECTOR_SERVICE_TOKEN",
   "COMPUTERS_TERMINAL_TOKEN_SECRET",
   "E2B_API_KEY",
 ] as const;
@@ -29,7 +29,7 @@ function setFullyAvailable() {
   // Model credential is NOT an env var anymore (resolved from Convex per turn);
   // the preflight only checks the computers data plane + capability gates.
   process.env.CONVEX_HTTP_URL = "https://convex.example.com";
-  process.env.COMPUTERS_DATA_PLANE_SECRET = "secret";
+  process.env.INSPECTOR_SERVICE_TOKEN = "test-svc-token";
   process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = "terminal-secret-16+";
   process.env.E2B_API_KEY = "e2b-test";
 }

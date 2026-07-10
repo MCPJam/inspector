@@ -20,7 +20,6 @@ const ENV_KEYS = [
   "E2B_DOMAIN",
   "E2B_TEMPLATE_ID",
   "COMPUTERS_TERMINAL_TOKEN_SECRET",
-  "COMPUTERS_DATA_PLANE_SECRET",
 ] as const;
 
 const savedEnv: Record<string, string | undefined> = {};
@@ -96,9 +95,7 @@ describe("initComputersRuntimeConfigBootstrap", () => {
     );
     // Nulls in the payload set nothing.
     expect(process.env.E2B_API_URL).toBeUndefined();
-    // The bootstrap never manufactures the legacy secret.
-    expect(process.env.COMPUTERS_DATA_PLANE_SECRET).toBeUndefined();
-    // ...and the server now reports configured via the service token.
+    // The server now reports configured via the service token.
     expect(isComputersDataPlaneConfigured()).toBe(true);
   });
 
@@ -113,16 +110,6 @@ describe("initComputersRuntimeConfigBootstrap", () => {
 
   it("skips the fetch entirely without a service token", async () => {
     delete process.env.INSPECTOR_SERVICE_TOKEN;
-    expect(
-      await initComputersRuntimeConfigBootstrap({ sleep: instantSleep })
-    ).toBe("skipped");
-    expect(fetchCalls).toHaveLength(0);
-  });
-
-  it("skips the fetch when the legacy trio is already complete", async () => {
-    process.env.E2B_API_KEY = "k";
-    process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = "s";
-    process.env.COMPUTERS_DATA_PLANE_SECRET = "d";
     expect(
       await initComputersRuntimeConfigBootstrap({ sleep: instantSleep })
     ).toBe("skipped");
@@ -222,18 +209,13 @@ describe("resolveComputersLocalConfigured", () => {
   });
 
   it("reports NOT configured after a 401 even with stray E2B + terminal secret in env", async () => {
-    // Hybrid config: a wrong service token, no legacy secret, but leftover
-    // hand-set E2B key + terminal secret. Without marking the token rejected,
-    // the predicate would report localConfigured:true while every
-    // secret-gated /computers/* call hard-401s.
+    // Wrong service token + leftover hand-set E2B key + terminal secret.
+    // Without marking the token rejected, the predicate would report
+    // localConfigured:true while every /computers/* call hard-401s.
     process.env.E2B_API_KEY = "stray-key";
     process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = "stray-terminal-secret";
-    delete process.env.COMPUTERS_DATA_PLANE_SECRET;
     fetchImpl = () => jsonResponse(401, { error: "Unauthorized" });
 
     expect(await resolveComputersLocalConfigured()).toBe(false);
-    // A legacy secret is an independent credential and still counts.
-    process.env.COMPUTERS_DATA_PLANE_SECRET = "legacy-secret";
-    expect(isComputersDataPlaneConfigured()).toBe(true);
   });
 });
