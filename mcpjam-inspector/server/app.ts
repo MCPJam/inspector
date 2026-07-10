@@ -16,6 +16,7 @@ import appsRoutes from "./routes/apps/index.js";
 import webRoutes from "./routes/web/index.js";
 import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
+import relayRoutes, { relayBodyLimit } from "./routes/relay.js";
 import workosAuthkitRoutes from "./routes/workos-authkit.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
@@ -277,6 +278,15 @@ export async function createHonoApp() {
   // set. Mirror of the mount in server/index.ts — both production entries
   // must wire this up.
   app.route("/api/cli/auth", cliAuthRoutes);
+
+  // Same-origin PostHog reverse proxy (ad-blocker resilience). Deliberately
+  // OUTSIDE /api so it bypasses session auth (analytics flows before any
+  // session exists), and mounted before the static/SPA fallback, whose
+  // catch-all only skips /api/* and would otherwise swallow /relay GETs
+  // with index.html. Mirror of the mount in server/index.ts — both
+  // production entries must wire this up.
+  app.use("/relay/*", relayBodyLimit());
+  app.route("/relay", relayRoutes);
 
   // Health check
   app.get("/health", (c) => {
