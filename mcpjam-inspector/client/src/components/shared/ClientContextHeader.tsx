@@ -575,7 +575,7 @@ export function ClientContextHeader({
             >
               <Settings2 className="h-3.5 w-3.5" />
               <span className="whitespace-nowrap @max-[700px]/playground-header:sr-only">
-                Host Context
+                Client Context
               </span>
             </Button>
           </TooltipTrigger>
@@ -604,13 +604,13 @@ export function ClientContextHeader({
             >
               <Cpu className="h-3.5 w-3.5" />
               <span className="whitespace-nowrap @max-[700px]/playground-header:sr-only">
-                Host Capabilities
+                Client Capabilities
               </span>
             </Button>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP} className="max-w-sm">
             <HeaderTooltipBody
-              label="Host Capabilities"
+              label="Client Capabilities"
               leadHostHint={leadHostInMultiHost}
             />
             <p className="text-xs text-muted-foreground">

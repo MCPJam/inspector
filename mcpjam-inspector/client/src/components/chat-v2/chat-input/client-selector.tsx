@@ -397,7 +397,7 @@ export function ClientSelector({
                 {multiHostEnabled && effectiveSelectedHostIds.length > 1 ? (
                   <div
                     className="flex flex-wrap gap-1 border-b px-2.5 py-1.5"
-                    title="First chip is the lead host. Click a chip to promote it."
+                    title="First chip is the lead client. Click a chip to promote it."
                   >
                     {effectiveSelectedHostIds.map((hostId, index) => {
                       const host = hostsById.get(hostId);
@@ -466,7 +466,7 @@ export function ClientSelector({
                 overflowY: "auto",
               }}
             >
-              <CommandEmpty>No matching hosts.</CommandEmpty>
+              <CommandEmpty>No matching clients.</CommandEmpty>
               {hosts.map((host) => {
                 const isSelected = selectedIds.has(host.hostId);
                 const isLimitedOut =
@@ -558,7 +558,7 @@ export function ClientSelector({
                   data-testid="client-add-host"
                 >
                   <Plus className="size-3.5" />
-                  <span>Add host</span>
+                  <span>Add client</span>
                 </button>
                 <span className="flex flex-1 items-center justify-between gap-0.5">
                   {orderedCatalogHosts
