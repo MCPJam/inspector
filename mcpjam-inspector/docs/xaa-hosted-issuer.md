@@ -53,13 +53,25 @@ whenever you register MCPJam in a real authorization server.
 
 ## Notes and limits
 
-- **Negative tests** are forwarded too. They mint deliberately-broken
-  assertions, and those must carry the same hosted `iss` as the positive run —
-  otherwise every case would be rejected for issuer mismatch and the scorecard
-  would "pass" without testing anything.
-- Because forwarded runs execute the outbound token calls from the hosted
-  service, your authorization server must be reachable over **https** for the
-  negative-test scorecard. The positive flow's token request still runs
-  locally, so a localhost AS keeps working with the toggle **off**.
-- The hosted origin can be overridden for staging with the
-  `MCPJAM_HOSTED_ORIGIN` env var on the local inspector server.
+- **This mode is for a *remote* authorization server.** The hosted issuer only
+  helps when your AS is somewhere it can reach — i.e. a public https AS. A
+  `localhost`/plain-http AS is contradictory here: the positive flow's token
+  request still runs from your machine and may reach it, but the **negative
+  test scorecard** is fired from the hosted service and will reject a
+  loopback/http endpoint (`URL not allowed`). If your AS is local, keep the
+  toggle **off** and use the local issuer.
+- **Negative tests** are forwarded too, so the broken assertions carry the same
+  hosted `iss` as the positive run — otherwise every case would be rejected for
+  issuer mismatch and the scorecard would "pass" without testing anything.
+- **Sign in to the same organization the hosted issuer validates against.** The
+  mint targets `…/o/<your-org-id>`, and app.mcpjam.com checks org membership
+  against its own (production) backend. Point your local inspector's
+  `VITE_CONVEX_URL` at the same backend and be a member of that org, or the
+  hosted mint fails closed with an authorization error. The toggle is disabled
+  when you have no active organization.
+- **Staging / self-hosted origin:** override the hosted origin with
+  `MCPJAM_HOSTED_ORIGIN` on the inspector **server** and the matching
+  `VITE_MCPJAM_HOSTED_ORIGIN` at **client** build time. Set both — the server
+  relays the mint there and the client advertises that origin's discovery/JWKS
+  URLs, so a mismatch would name a different key than signs the token. Both
+  default to `https://app.mcpjam.com`.

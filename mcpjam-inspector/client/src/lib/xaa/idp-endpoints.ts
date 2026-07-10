@@ -33,8 +33,20 @@ export function getOrgScopedIssuerSegment(
  * These URLs are constructed, not fetched — hosted CORS blocks a local
  * browser from reading the hosted discovery doc directly.
  */
+// The LOCAL server relays hosted-issuer mints to its MCPJAM_HOSTED_ORIGIN
+// (server env), and we advertise THAT issuer's discovery/JWKS URLs — so the
+// client must resolve the same origin, not a hardcoded one. Read
+// VITE_MCPJAM_HOSTED_ORIGIN, defaulting to app.mcpjam.com exactly like the
+// server; set both together when pointing at a staging/self-hosted origin,
+// otherwise the advertised URLs would name a different key than signs the token.
+const HOSTED_ISSUER_ORIGIN =
+  (import.meta.env.VITE_MCPJAM_HOSTED_ORIGIN as string | undefined)?.replace(
+    /\/+$/,
+    "",
+  ) || MCPJAM_HOSTED_APP_ORIGIN;
+
 export function getHostedXaaIdpUrls(organizationId?: string | null): XaaIdpUrls {
-  const issuerBaseUrl = `${MCPJAM_HOSTED_APP_ORIGIN}/api/web/xaa${
+  const issuerBaseUrl = `${HOSTED_ISSUER_ORIGIN}/api/web/xaa${
     organizationId ? `/o/${organizationId}` : ""
   }`;
   return {

@@ -72,12 +72,29 @@ export function createXAADebugRequestExecutor(options?: {
       let requestInit = init;
       if (options?.attachHostedBearer && isMintPath(path)) {
         const authorization = await getApiAuthorizationHeader();
-        if (authorization) {
-          requestInit = {
-            ...init,
-            headers: { ...normalizeHeaders(init?.headers), Authorization: authorization },
+        if (!authorization) {
+          // Fail loudly instead of sending an unauthenticated mint that the
+          // hosted issuer rejects with a bare 401 — which reads as "not signed
+          // in" to a user who is. Happens transiently right after sign-in or
+          // when the cached bearer expired mid-session.
+          return {
+            status: 401,
+            statusText: "Unauthorized",
+            headers: {},
+            ok: false,
+            body: {
+              error:
+                "Couldn't attach your session to the hosted issuer. Sign in again and retry.",
+            },
           };
         }
+        requestInit = {
+          ...init,
+          headers: {
+            ...normalizeHeaders(init?.headers),
+            Authorization: authorization,
+          },
+        };
       }
       const response = await authFetch(`${XAA_API_BASE}${path}`, requestInit);
       const body = await readResponseBody(response);

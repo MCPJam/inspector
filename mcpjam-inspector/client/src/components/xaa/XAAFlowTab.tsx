@@ -144,9 +144,13 @@ export function XAAFlowTab({
   const runSettings = useXaaRunSettings();
   const { user: signedInUser } = useAuth();
   // Local-only hosted-issuer opt-in: mints route through app.mcpjam.com so a
-  // cloud AS can discover the issuer. Requires a signed-in session — a local
-  // guest bearer is signed with a local key the hosted issuer rejects.
-  const canUseHostedIssuer = !HOSTED_MODE && Boolean(signedInUser);
+  // cloud AS can discover the issuer. Requires a signed-in session AND an
+  // active org — the hosted mint targets the membership-gated org-scoped
+  // issuer (/o/<orgId>), and the server fails closed without one rather than
+  // downgrading to the forgeable unscoped issuer. (A local guest bearer is
+  // signed with a local key the hosted issuer rejects.)
+  const canUseHostedIssuer =
+    !HOSTED_MODE && Boolean(signedInUser) && Boolean(organizationId);
   const hostedIssuerOptIn =
     canUseHostedIssuer && runSettings.issuerMode === "hosted";
   const target = useXaaTestTarget({

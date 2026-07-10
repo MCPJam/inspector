@@ -185,17 +185,25 @@ export function XAAIdpCard({
   // the URLs are always visible now, so there's no expand to defer it to.
   const isFirstResolve = useRef(true);
   useEffect(() => {
+    // Clear the first-render flag up front, regardless of mode. Otherwise a
+    // mount in hosted mode (which takes the early return below) would leave it
+    // set, and a later hosted→local toggle would skip the synchronous reset —
+    // leaving the copy fields showing the hosted issuer/JWKS while the run
+    // mints locally. The useState initializer already produced the correct
+    // value for the first render, so only the reset on *changes* is needed.
+    const wasFirstRender = isFirstResolve.current;
+    isFirstResolve.current = false;
+
     if (hostedIssuerOn) {
-      setUrls(getHostedXaaIdpUrls(organizationId));
+      if (!wasFirstRender) {
+        setUrls(getHostedXaaIdpUrls(organizationId));
+      }
       return;
     }
     const controller = new AbortController();
-    // The useState initializer already produced this value on first render;
-    // only reset synchronously when the org actually changes (so a stale
-    // prior-org URL never flashes) to avoid a wasted render on mount.
-    if (isFirstResolve.current) {
-      isFirstResolve.current = false;
-    } else {
+    // Reset synchronously on any change (org switch or a hosted→local toggle)
+    // so a stale hosted/prior-org URL never lingers before discovery resolves.
+    if (!wasFirstRender) {
       setUrls(getXaaIdpUrls(organizationId));
     }
     void fetchXaaIdpUrls(controller.signal, organizationId).then(

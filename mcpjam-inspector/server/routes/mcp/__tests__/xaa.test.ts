@@ -807,8 +807,8 @@ describe("hosted-issuer forwarding on the local router", () => {
     expect(forwarded).toEqual({ userId: "user-12345" });
   });
 
-  it("falls back to the legacy unscoped issuer when no organizationId is sent", async () => {
-    const fetchMock = vi.fn(async () => jsonResponse({ id_token: "x" }));
+  it("fails closed (no unscoped fallback) when organizationId is missing", async () => {
+    const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
     const app = buildApp();
@@ -821,9 +821,40 @@ describe("hosted-issuer forwarding on the local router", () => {
       body: JSON.stringify({ userId: "user-12345", issuerMode: "hosted" }),
     });
 
-    expect(response.status).toBe(200);
-    expect(fetchMock.mock.calls[0][0]).toBe(
-      `${HOSTED_ORIGIN}/api/web/xaa/authenticate`
+    // No org → reject rather than silently mint under the forgeable unscoped
+    // issuer; never calls upstream.
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves the upstream status + WWW-Authenticate on a non-JSON hosted error", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response("forbidden", {
+          status: 403,
+          headers: { "WWW-Authenticate": "Bearer error=\"insufficient_scope\"" },
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = buildApp();
+    const response = await app.request("/api/mcp/xaa/authenticate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer workos-token",
+      },
+      body: JSON.stringify({
+        userId: "user-12345",
+        issuerMode: "hosted",
+        organizationId: "org_123",
+      }),
+    });
+
+    // The real hosted 403 must survive the relay, not become a 502 outage.
+    expect(response.status).toBe(403);
+    expect(response.headers.get("www-authenticate")).toContain(
+      "insufficient_scope"
     );
   });
 

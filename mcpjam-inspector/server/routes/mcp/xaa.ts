@@ -79,12 +79,17 @@ function checkNegativeTestHostCap(host: string): boolean {
 // is rejected rather than normalized.
 const ORG_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
-// Single source of truth for the `:orgId` path check, shared by the public
-// well-known routes and the gated mint routes so they can never validate org
-// ids differently. Returns the validated id or the 400 Response to send.
+// Single source of truth for what a legal org path segment looks like, shared
+// by the well-known routes, the gated mint routes, and the hosted-issuer
+// forward so they can never validate org ids differently.
+function isValidOrgId(value: unknown): value is string {
+  return typeof value === "string" && ORG_ID_RE.test(value);
+}
+
+// Validates the `:orgId` route param; returns the id or the 400 Response.
 function validateOrgSegment(c: Context): string | Response {
   const orgId = c.req.param("orgId");
-  if (!orgId || !ORG_ID_RE.test(orgId)) {
+  if (!isValidOrgId(orgId)) {
     return toJsonError("Invalid organization id in issuer path", {
       status: 400,
       code: "VALIDATION_ERROR",
@@ -429,25 +434,17 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     }
 
     const { issuerMode: _issuerMode, organizationId, ...forwardBody } = body;
-    let scopedSegment = "";
-    if (organizationId !== undefined) {
-      if (
-        typeof organizationId !== "string" ||
-        !ORG_ID_RE.test(organizationId)
-      ) {
-        return toJsonError("Invalid organization id", {
-          status: 400,
-          code: "VALIDATION_ERROR",
-        });
-      }
-      scopedSegment = `/o/${organizationId}`;
-    } else {
-      // Signed-in users should always have an org; the legacy unscoped hosted
-      // issuer is mintable by anyone, so a fall-through is worth noticing.
-      logger.info(
-        "[XAA] hosted-issuer forward without organizationId — using the legacy unscoped issuer"
+    // Fail closed: the hosted issuer must be the caller's membership-gated
+    // org-scoped issuer. Falling back to the unscoped issuer (mintable by
+    // anyone) would silently mint a forgeable token under the wrong `iss`, so
+    // a missing/invalid org is rejected rather than quietly downgraded.
+    if (!isValidOrgId(organizationId)) {
+      return toJsonError(
+        "Hosted issuer minting requires an active organization",
+        { status: 400, code: "VALIDATION_ERROR" }
       );
     }
+    const scopedSegment = `/o/${organizationId}`;
 
     let upstream: Response;
     try {
@@ -477,14 +474,51 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       );
     }
 
-    const upstreamBody = await upstream.json().catch(() => null);
-    if (upstreamBody === null) {
+    const upstreamText = await upstream.text();
+    let upstreamJson: unknown = null;
+    if (upstreamText) {
+      try {
+        upstreamJson = JSON.parse(upstreamText);
+      } catch {
+        // non-JSON body; handled below
+      }
+    }
+
+    // Preserve auth-relevant upstream headers so a hosted challenge survives
+    // the relay instead of being silently dropped.
+    const relayHeaders: Record<string, string> = {};
+    for (const name of ["www-authenticate", "retry-after"]) {
+      const value = upstream.headers.get(name);
+      if (value) relayHeaders[name] = value;
+    }
+
+    // Forward the hosted status verbatim. The normal case (incl. hosted's
+    // own {code,message} error envelopes) is JSON and passes through. A
+    // non-JSON/empty body still keeps the real status, so a hosted 401/403/429
+    // is never masked as a 502 "unreachable" outage.
+    if (upstreamJson !== null && typeof upstreamJson === "object") {
+      return Response.json(upstreamJson, {
+        status: upstream.status,
+        headers: relayHeaders,
+      });
+    }
+    if (upstream.ok) {
       return toJsonError("The hosted issuer returned a non-JSON response", {
         status: 502,
         code: "SERVER_UNREACHABLE",
       });
     }
-    return Response.json(upstreamBody, { status: upstream.status });
+    const message =
+      upstreamText.trim().slice(0, 300) ||
+      `The hosted issuer returned HTTP ${upstream.status}`;
+    return Response.json(
+      {
+        code: upstream.status >= 500 ? "SERVER_UNREACHABLE" : "HOSTED_ISSUER_ERROR",
+        message,
+        error: message,
+      },
+      { status: upstream.status, headers: relayHeaders }
+    );
   };
 
   // Reads the body (Hono caches it, so the handler's own c.req.json() still
