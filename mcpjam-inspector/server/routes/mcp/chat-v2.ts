@@ -29,8 +29,6 @@ import {
 import {
   deriveOrgProviderKey,
   isLocalRuntimeEligible,
-  mintOrgModelLease,
-  OrgModelLeaseError,
   resolveHostModelDefinition,
   resolveOrgProviderRuntime,
   type OrgProviderRuntime,
@@ -144,60 +142,6 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
     message: error.message,
     normalized,
   });
-}
-
-function describeLocalMcpProxyError(error: unknown): {
-  status: number;
-  code: string;
-  error: string;
-} {
-  const code =
-    error instanceof OrgModelLeaseError && error.code
-      ? error.code
-      : "org_byok_model_proxy_unavailable";
-  const status =
-    error instanceof OrgModelLeaseError && error.status
-      ? error.status
-      : 502;
-  const detail = error instanceof Error ? error.message : String(error);
-  return {
-    status,
-    code,
-    error:
-      `This org BYOK model needs the local runtime because one selected MCP server is local-only, ` +
-      `but MCPJam could not mint a scoped model proxy lease (${code}). ${detail}. ` +
-      `Use an MCPJam model, a locally stored provider key, or a public HTTPS MCP server URL.`,
-  };
-}
-
-function nativeOrgByokProxyModelId(
-  modelId: string,
-  providerKey: string,
-  protocol: "anthropic" | "openai"
-): string {
-  const trimmed = modelId.trim();
-  if (providerKey.startsWith("custom:")) {
-    const slug = providerKey.slice("custom:".length);
-    for (const prefix of [`custom:${slug}:`, `custom:${slug}/`]) {
-      if (trimmed.startsWith(prefix)) return trimmed.slice(prefix.length);
-    }
-    const customRest = trimmed.startsWith("custom:")
-      ? trimmed.slice("custom:".length)
-      : "";
-    const firstSeparator = customRest.search(/[:/]/);
-    if (firstSeparator >= 0) {
-      // Malformed ids like "custom:foo:" leave nothing after the separator —
-      // fall back to the trimmed id rather than sending an empty model.
-      const rest = customRest.slice(firstSeparator + 1);
-      if (rest) return rest;
-    }
-    return trimmed;
-  }
-
-  const protocolPrefix = `${protocol}/`;
-  return trimmed.startsWith(protocolPrefix)
-    ? trimmed.slice(protocolPrefix.length)
-    : trimmed;
 }
 
 function toPersistedUsage(
@@ -966,22 +910,28 @@ chatV2.post("/", async (c) => {
       const modelId = String(modelDefinition.id);
       const inboundAbortSignalOrg = c.req.raw.signal as AbortSignal | undefined;
       warnIfChatAbortSignalMissing(inboundAbortSignalOrg, "mcp/chat-v2");
+      // When a selected MCP server is local-only (stdio / localhost / private
+      // IP), the tool loop must run in THIS inspector process — only it can
+      // reach that server. Force the CLOUD runtime so the org key stays in
+      // Convex and the model call is proxied through /stream/org; the tool loop
+      // still executes locally against the local MCP connection. Without this,
+      // a local-eligible provider would resolve to the "local" runtime and pull
+      // the org key onto this machine, which org BYOK must never do.
       const localMcpRuntimeRequired = body.localMcpRuntimeRequired === true;
-      const runtime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
-        ? await resolveOrgProviderRuntime(
-            body.projectId,
-            providerKey,
-            modelId,
-            {
-              authHeader: requestAuthHeader,
-              chatboxId: bodyChatboxId,
-              accessVersion: bodyAccessVersion,
-              serverIds: hostConfigServerIds,
-            }
-          )
-        : { runtimeLocation: "cloud", providerKey };
-      const persistsAsLocalByok =
-        runtime.runtimeLocation === "local" || localMcpRuntimeRequired;
+      const runtime: OrgProviderRuntime =
+        !localMcpRuntimeRequired && isLocalRuntimeEligible(providerKey)
+          ? await resolveOrgProviderRuntime(
+              body.projectId,
+              providerKey,
+              modelId,
+              {
+                authHeader: requestAuthHeader,
+                chatboxId: bodyChatboxId,
+                accessVersion: bodyAccessVersion,
+                serverIds: hostConfigServerIds,
+              }
+            )
+          : { runtimeLocation: "cloud", providerKey };
       const onConversationComplete = chatSessionId
         ? async (
             fullHistory: ModelMessage[],
@@ -990,7 +940,8 @@ chatV2.post("/", async (c) => {
             await persistChatSessionToConvex({
               chatSessionId,
               modelId,
-              modelSource: persistsAsLocalByok ? "local_byok" : "byok",
+              modelSource:
+                runtime.runtimeLocation === "local" ? "local_byok" : "byok",
               sourceType: chatSessionSourceType,
               origin: chatSessionOrigin,
               ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
@@ -1053,64 +1004,6 @@ chatV2.post("/", async (c) => {
           abortSignal: inboundAbortSignalOrg,
           onConversationComplete,
         });
-      }
-
-      if (localMcpRuntimeRequired) {
-        try {
-          const lease = await mintOrgModelLease(
-            body.projectId,
-            providerKey,
-            modelId,
-            {
-              authHeader: requestAuthHeader,
-              serverIds: hostConfigServerIds,
-            }
-          );
-          const proxyModelDefinition = {
-            ...modelDefinition,
-            id: nativeOrgByokProxyModelId(modelId, providerKey, lease.protocol),
-            provider: lease.protocol,
-            customProviderName: undefined,
-          };
-          const proxyModel = createLlmModel(
-            proxyModelDefinition,
-            lease.lease,
-            lease.protocol === "anthropic"
-              ? { anthropic: lease.proxyBaseUrl }
-              : { openai: lease.proxyBaseUrl }
-          );
-          return handleLocalOrgChatModel({
-            provider: { providerKey },
-            llmModel: proxyModel as unknown as Parameters<
-              typeof handleLocalOrgChatModel
-            >[0]["llmModel"],
-            skipLocalUsage: true,
-            projectId: body.projectId,
-            modelId,
-            chatSessionId,
-            sourceType: chatSessionSourceType,
-            messages: modelMessages,
-            systemPrompt: effectiveEnhancedSystemPrompt,
-            temperature: resolvedTemperature,
-            tools: allTools as ToolSet,
-            progressivePlan,
-            discoveryState,
-            authHeader: requestAuthHeader,
-            chatboxId: bodyChatboxId,
-            accessVersion: bodyAccessVersion,
-            selectedServers,
-            serverIds: hostConfigServerIds,
-            requireToolApproval,
-            abortSignal: inboundAbortSignalOrg,
-            onConversationComplete,
-          });
-        } catch (error) {
-          const described = describeLocalMcpProxyError(error);
-          return c.json(
-            { error: described.error, code: described.code },
-            described.status as any
-          );
-        }
       }
 
       return handleHostedOrgChatModel({

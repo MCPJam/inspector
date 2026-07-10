@@ -441,28 +441,6 @@ export type OrgProviderRuntimeLocal = {
 
 export type OrgProviderRuntime = OrgProviderRuntimeCloud | OrgProviderRuntimeLocal;
 
-export type OrgModelLeaseProtocol = "anthropic" | "openai";
-
-export type OrgModelLease = {
-  lease: string;
-  expiresAt: number;
-  runId: string;
-  protocol: OrgModelLeaseProtocol;
-  proxyBaseUrl: string;
-};
-
-export class OrgModelLeaseError extends Error {
-  status?: number;
-  code?: string;
-
-  constructor(message: string, options?: { status?: number; code?: string }) {
-    super(message);
-    this.name = "OrgModelLeaseError";
-    this.status = options?.status;
-    this.code = options?.code;
-  }
-}
-
 const RUNTIME_CACHE_TTL_MS = 60_000;
 const RUNTIME_CACHE_MAX_ENTRIES = 1_000;
 const runtimeResolveCache = new Map<
@@ -655,87 +633,6 @@ export async function resolveOrgProviderRuntimeForTarget(
     expiresAt: writeNow + RUNTIME_CACHE_TTL_MS,
   });
   return result;
-}
-
-export async function mintOrgModelLease(
-  projectId: string,
-  providerKey: string,
-  model: string,
-  auth?: ResolveOrgModelConfigAuth & { runId?: string },
-): Promise<OrgModelLease> {
-  const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexHttpUrl) throw new Error("CONVEX_HTTP_URL is not set");
-
-  const authHeader = normalizeAuthHeader(auth);
-  const serverIds = normalizeServerIds(auth?.serverIds);
-  const url = `${convexHttpUrl.replace(/\/$/, "")}/stream/org/model-lease`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), RESOLVE_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(authHeader ? { Authorization: authHeader } : {}),
-      },
-      body: JSON.stringify({
-        projectId,
-        providerKey,
-        modelId: model,
-        ...(serverIds.length > 0 ? { serverIds } : {}),
-        ...(auth?.runId ? { runId: auth.runId } : {}),
-      }),
-      signal: controller.signal,
-    });
-
-    const data = (await response.json().catch(() => null)) as
-      | {
-          ok?: boolean;
-          error?: string;
-          code?: string;
-          lease?: unknown;
-          expiresAt?: unknown;
-          runId?: unknown;
-          protocol?: unknown;
-          proxyBaseUrl?: unknown;
-        }
-      | null;
-
-    if (!response.ok || !data?.ok) {
-      throw new OrgModelLeaseError(
-        data?.error ??
-          `Org BYOK model lease mint failed (${response.status})`,
-        {
-          status: response.status,
-          code: typeof data?.code === "string" ? data.code : undefined,
-        },
-      );
-    }
-
-    if (
-      typeof data.lease !== "string" ||
-      typeof data.expiresAt !== "number" ||
-      typeof data.runId !== "string" ||
-      (data.protocol !== "anthropic" && data.protocol !== "openai") ||
-      typeof data.proxyBaseUrl !== "string"
-    ) {
-      throw new OrgModelLeaseError(
-        "Org BYOK model lease response was malformed",
-        { status: response.status, code: "invalid_lease_response" },
-      );
-    }
-
-    return {
-      lease: data.lease,
-      expiresAt: data.expiresAt,
-      runId: data.runId,
-      protocol: data.protocol,
-      proxyBaseUrl: data.proxyBaseUrl,
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 // ---------------------------------------------------------------------------

@@ -1906,34 +1906,40 @@ describe("POST /api/mcp/chat-v2", () => {
       }
     });
 
-    it("mints a model proxy lease for local-only MCP with cloud org BYOK", async () => {
-      const { createLlmModel } = await import("../../../utils/chat-helpers");
+    it("forces the cloud /stream/org proxy for local-only MCP even with a local-eligible provider", async () => {
+      // A `custom:` provider is local-runtime-eligible, so without the flag this
+      // chat resolves + runs the model locally (see the test above). When a
+      // selected MCP server is local-only, `localMcpRuntimeRequired` must force
+      // the CLOUD runtime so the org key stays in Convex and the model call is
+      // proxied through /stream/org — the tool loop still runs locally against
+      // the local MCP connection.
       const originalFetch = global.fetch;
       const fetchMock = vi.fn().mockImplementation(async (input, init) => {
         const url = String(input);
-        if (url === "https://test-convex.example.com/stream/org/model-lease") {
+        if (url === "https://test-convex.example.com/stream/org") {
           const headers = new Headers(
             (init as RequestInit | undefined)?.headers
           );
+          expect(headers.get("X-Inspector-Service-Token")).toBeNull();
           expect(headers.get("Authorization")).toBe(
             "Bearer signed-in-test-token"
           );
           const body = JSON.parse(String((init as RequestInit).body ?? "{}"));
           expect(body).toMatchObject({
             projectId: "project-1",
-            providerKey: "openai",
-            modelId: "openai/gpt-5.5",
-            serverIds: ["server-1"],
+            providerKey: "custom:local-one",
           });
-          return Response.json({
-            ok: true,
-            lease: "lease.jwt",
-            expiresAt: Date.now() + 60_000,
-            runId: "run-1",
-            protocol: "openai",
-            proxyBaseUrl:
-              "https://test-convex.example.com/stream/org/model-proxy/openai/v1",
-          });
+          return createSseResponse([
+            {
+              type: "finish",
+              finishReason: "stop",
+              messageMetadata: {
+                inputTokens: 1,
+                outputTokens: 1,
+                totalTokens: 2,
+              },
+            },
+          ]);
         }
         throw new Error(`Unexpected fetch URL: ${url}`);
       });
@@ -1942,7 +1948,11 @@ describe("POST /api/mcp/chat-v2", () => {
       try {
         const res = await postAuthenticatedJson({
           messages: [{ role: "user", content: "Hello" }],
-          model: { id: "openai/gpt-5.5", provider: "openai" },
+          model: {
+            id: "custom:local-one:m-1",
+            provider: "custom",
+            customProviderName: "local-one",
+          },
           projectId: "project-1",
           selectedServers: ["server-1"],
           selectedServerIds: ["server-1"],
@@ -1951,58 +1961,19 @@ describe("POST /api/mcp/chat-v2", () => {
 
         expect(res.status).toBe(200);
         await lastStreamExecution;
-        expect(fetchMock).toHaveBeenCalledTimes(1);
-        expect(vi.mocked(createLlmModel)).toHaveBeenCalledWith(
-          expect.objectContaining({
-            id: "gpt-5.5",
-            provider: "openai",
-          }),
-          "lease.jwt",
-          {
-            openai:
-              "https://test-convex.example.com/stream/org/model-proxy/openai/v1",
-          }
-        );
-      } finally {
-        global.fetch = originalFetch;
-      }
-    });
-
-    it("fails closed when the local MCP model proxy lease cannot be minted", async () => {
-      const originalFetch = global.fetch;
-      const fetchMock = vi.fn().mockImplementation(async (input) => {
-        const url = String(input);
-        if (url === "https://test-convex.example.com/stream/org/model-lease") {
-          return Response.json(
-            {
-              ok: false,
-              code: "org_byok_model_proxy_disabled",
-              error: "Org BYOK local MCP model proxy is not enabled.",
-            },
-            { status: 403 }
-          );
-        }
-        throw new Error(`Unexpected fetch URL: ${url}`);
-      });
-      global.fetch = fetchMock;
-
-      try {
-        const res = await postAuthenticatedJson({
-          messages: [{ role: "user", content: "Hello" }],
-          model: { id: "gpt-4-turbo", provider: "openai" },
-          projectId: "project-1",
-          localMcpRuntimeRequired: true,
-        });
-        const { status, data } = await expectJson<{
-          error: string;
-          code: string;
-        }>(res);
-
-        expect(status).toBe(403);
-        expect(data.code).toBe("org_byok_model_proxy_disabled");
-        expect(data.error).toContain("local runtime");
-        expect(data.error).toContain("public HTTPS MCP server URL");
-        expect(fetchMock).toHaveBeenCalledTimes(1);
+        // Cloud proxy hit; the local-runtime resolve path is never taken, so
+        // the org key never leaves Convex.
+        expect(
+          fetchMock.mock.calls.some(
+            ([input]) =>
+              String(input) === "https://test-convex.example.com/stream/org"
+          )
+        ).toBe(true);
+        expect(
+          fetchMock.mock.calls.some(([input]) =>
+            String(input).includes("/stream/org/resolve")
+          )
+        ).toBe(false);
       } finally {
         global.fetch = originalFetch;
       }
