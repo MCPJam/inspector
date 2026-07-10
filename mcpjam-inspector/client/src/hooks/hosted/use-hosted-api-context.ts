@@ -1,6 +1,6 @@
 import { useLayoutEffect } from "react";
 import { setApiContext } from "@/lib/apis/web/context";
-import type { McpProtocolVersion } from "@mcpjam/sdk/browser";
+import type { McpProtocolVersionPin } from "@mcpjam/sdk/browser";
 
 interface UseApiContextOptions {
   projectId: string | null;
@@ -8,7 +8,7 @@ interface UseApiContextOptions {
   clientCapabilities?: Record<string, unknown>;
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
-  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersionPin>;
   clientConfigSyncPending?: boolean;
   getAccessToken: () => Promise<string | undefined | null>;
   oauthTokensByServerId?: Record<string, string>;

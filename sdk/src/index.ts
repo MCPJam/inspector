@@ -97,9 +97,13 @@ export {
 } from "./mcp-client-manager/index.js";
 export {
   MCP_PROTOCOL_VERSIONS,
+  MCP_PROTOCOL_VERSION_AUTO,
+  isAutoProtocolVersion,
   isKnownProtocolVersion,
+  isKnownProtocolVersionPin,
   isStatelessProtocolVersion,
   type McpProtocolVersion,
+  type McpProtocolVersionPin,
 } from "./mcp-client-manager/index.js";
 
 // Error classes

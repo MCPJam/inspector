@@ -22,6 +22,7 @@ These come from the MCP transport itself. Numeric codes are defined by the [JSON
 | `-32000` | [Connection closed](#connection-closed) |
 | `-32001` | [Request timed out](#request-timeout) / [Header mismatch](#header-mismatch) |
 | `-32004` | [Unsupported protocol version](#unsupported-protocol-version) |
+| `-32022` | [Protocol version rejected](#protocol-version-rejected) |
 | `-32042` | [URL elicitation required](#url-elicitation-required) |
 
 ### Parse error
@@ -158,6 +159,27 @@ The server does not support any protocol version this inspector offered.
 **Next steps**
 - Update the inspector to a newer build.
 - Check the supported versions list in the server's `initialize` response.
+
+### Protocol version rejected
+
+`-32022 — jsonrpc/protocol_version_rejected`
+
+The server rejected the MCP protocol version this connection is pinned to. Unlike `-32004`, the server reports exactly which versions it supports — the inspector surfaces that list in the error so you can pick a working version.
+
+This is the error you hit when a host or per-server override pins a **legacy** version (e.g. `2025-11-25`) against a **stateless-only** server built on the 2026 RC (`2026-07-28`). The raw JSON-RPC payload looks like:
+
+```json
+{"code":-32022,"message":"Unsupported protocol version: 2025-11-25","data":{"supported":["2026-07-28"],"requested":"2025-11-25"}}
+```
+
+**Likely causes**
+- The pinned protocol version is not one the server supports.
+- The server is stateless-only (2026 RC) but this connection is pinned to a legacy version.
+- A per-server or host protocol-version override is stricter than what the server actually speaks.
+
+**Next steps**
+- Set this server's protocol version to **Auto** so the inspector detects the right version at connect time (it probes for the stateless RC and falls back to the legacy handshake).
+- Or pin one of the versions the server reports as supported in the protocol setting (host **Protocol** tab, or the per-server Advanced connection settings).
 
 ### URL elicitation required
 

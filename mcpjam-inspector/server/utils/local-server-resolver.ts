@@ -2,8 +2,8 @@ import type { Context } from "hono";
 import type { MCPClientManager, MCPServerConfig } from "@mcpjam/sdk";
 import {
   describeError,
-  isKnownProtocolVersion,
-  type McpProtocolVersion,
+  isKnownProtocolVersionPin,
+  type McpProtocolVersionPin,
 } from "@mcpjam/sdk";
 import {
   ErrorCode,
@@ -341,13 +341,15 @@ export function parseConnectionDefaults(
   }
 
   // Pinned MCP protocol version. Membership-gate against
-  // MCP_PROTOCOL_VERSIONS at this trust boundary (per the
-  // validate-then-route discipline) so typo strings drop to undefined
-  // instead of slipping through to the factory's open-routing
-  // predicate.
+  // the known pins (MCP_PROTOCOL_VERSIONS plus the config-only "auto"
+  // sentinel) at this trust boundary — validate-then-route — so typo
+  // strings drop to undefined instead of slipping through to the
+  // factory's open-routing predicate. "auto" never reaches the wire:
+  // the SDK resolves it at connect time (server/discover probe with
+  // legacy initialize fallback).
   if (
     typeof input.mcpProtocolVersion === "string" &&
-    isKnownProtocolVersion(input.mcpProtocolVersion)
+    isKnownProtocolVersionPin(input.mcpProtocolVersion)
   ) {
     out.mcpProtocolVersion = input.mcpProtocolVersion;
   }
@@ -415,7 +417,7 @@ export function toMCPServerConfig(
      * rather than crash a non-HTTP server config a user toggled the
      * host default on for.
      */
-    mcpProtocolVersion?: McpProtocolVersion;
+    mcpProtocolVersion?: McpProtocolVersionPin;
   }
 ): MCPServerConfig {
   const { serverConfig } = authResult;
@@ -987,7 +989,7 @@ export async function executeLocalServerConnect(
     mcpClientManager,
     serverDisplayName,
     serverId,
-    { logPrefix: "connect-inspection" },
+    { logPrefix: "connect-inspection" }
   );
   void persistConnectInspection({
     convexBearer: bearer,

@@ -24,7 +24,7 @@ import {
 import type {
   HostConfigDtoV2,
   HostStyleId,
-  McpProtocolVersion,
+  McpProtocolVersionPin,
 } from "@/lib/client-config-v2";
 import type { ResolvedMcpAppsCapabilities } from "@/lib/client-styles";
 import {
@@ -454,15 +454,16 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     label: "Protocol version",
     path: "mcpProfile.mcpProtocolVersion",
     description:
-      "Host default pin. Per-server overrides win. Undefined = SDK chooses at request time.",
+      "Host default pin. Per-server overrides win. Undefined = SDK chooses at request time; auto = detect per server at connect time.",
     kind: {
       kind: "enum",
       options: [
+        "auto",
         "2025-03-26",
         "2025-06-18",
         "2025-11-25",
         "2026-07-28",
-      ] as ReadonlyArray<McpProtocolVersion>,
+      ] as ReadonlyArray<McpProtocolVersionPin>,
     },
     read: (cfg) => mcpProfile(cfg)?.mcpProtocolVersion,
   },

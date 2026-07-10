@@ -8,22 +8,36 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { isKnownProtocolVersion } from "@mcpjam/sdk/browser";
+import { useStatelessMcpEnabled } from "@/hooks/use-stateless-mcp-enabled";
+import {
+  isKnownProtocolVersion,
+  isKnownProtocolVersionPin,
+  isStatelessProtocolVersion,
+} from "@mcpjam/sdk/browser";
 import {
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
-  type McpProtocolVersion,
+  type McpProtocolVersionPin,
 } from "@/lib/client-config-v2";
 import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
-type HostProtocolDropdownValue = "latest" | "rc";
+type HostProtocolDropdownValue = "auto" | "latest" | "rc";
+
+/**
+ * The concrete wire version the "Latest" option pins. Single source for
+ * both the option label and the dropdown handler so a future stable-MCP
+ * bump can't update one and silently leave "Latest" pinning the old
+ * version via the other.
+ */
+const LATEST_STABLE_PROTOCOL_VERSION = "2025-11-25" as const;
 
 const HOST_PROTOCOL_OPTIONS: Array<{
   value: HostProtocolDropdownValue;
   label: string;
 }> = [
-  { value: "latest", label: "Latest (2025-11-25)" },
+  { value: "auto", label: "Auto (detect per server)" },
+  { value: "latest", label: `Latest (${LATEST_STABLE_PROTOCOL_VERSION})` },
   { value: "rc", label: "2026 RC (2026-07-28)" },
 ];
 
@@ -58,9 +72,11 @@ type ProtocolDoc = {
    * skip initialize — nesting it under either of those would be
    * misleading. Maps onto `mcpProfile.mcpProtocolVersion` on
    * persistence; per-server pins live on the server card's Connection
-   * overrides section.
+   * overrides section. `"auto"` defers the choice to connect time —
+   * the SDK probes `server/discover` and falls back to the legacy
+   * handshake when the server isn't stateless.
    */
-  mcpProtocolVersion?: McpProtocolVersion;
+  mcpProtocolVersion?: McpProtocolVersionPin;
   capabilities?: Record<string, unknown>;
   connectionDefaults: {
     requestTimeout: number;
@@ -169,16 +185,17 @@ function applyJsonToDraft(
     if (cleaned.length > 0) supportedProtocolVersions = cleaned;
   }
 
-  // mcpProtocolVersion — membership-gate via `isKnownProtocolVersion`
-  // so typo strings fall back to `undefined` (= "SDK default") rather
-  // than slipping through to the SDK's open-routing predicate. Absent
-  // / wrong type also collapses to undefined for the same canonical-
-  // hash-stability reason documented in the type.
-  let mcpProtocolVersion: McpProtocolVersion | undefined;
+  // mcpProtocolVersion — membership-gate via `isKnownProtocolVersionPin`
+  // ("auto" + the wire literals) so typo strings fall back to
+  // `undefined` (= "SDK default") rather than slipping through to the
+  // SDK's open-routing predicate. Absent / wrong type also collapses to
+  // undefined for the same canonical-hash-stability reason documented
+  // in the type.
+  let mcpProtocolVersion: McpProtocolVersionPin | undefined;
   const rawProtocolVersion = parsed.mcpProtocolVersion;
   if (
     typeof rawProtocolVersion === "string" &&
-    isKnownProtocolVersion(rawProtocolVersion)
+    isKnownProtocolVersionPin(rawProtocolVersion)
   ) {
     mcpProtocolVersion = rawProtocolVersion;
   }
@@ -271,24 +288,57 @@ export function ProtocolTab({
     applyParsedToDraft: applyJsonToDraft,
     onDraftChange,
   });
-  // Stored stateful literals (legacy carry-over) collapse to "Latest"
-  // since they route to the same code path; saving normalizes back to
-  // undefined.
+  const statelessMcpEnabled = useStatelessMcpEnabled();
+  // With the stateless-MCP flag on, Auto is the host default: an absent pin
+  // (`undefined`) means "detect per server at connect" and is shown — and
+  // behaves — as Auto; `"auto"` maps to it explicitly. With the flag off,
+  // unpinned hosts keep the legacy SDK-default behavior and display as
+  // "Latest" (the pre-Auto reading). Any concrete stateful literal (2025-*,
+  // legacy carry-over) surfaces as "Latest"; the 2026 RC has its own option.
+  const storedPin = draft.mcpProfile?.mcpProtocolVersion;
   const selectedDropdownValue: HostProtocolDropdownValue =
-    draft.mcpProfile?.mcpProtocolVersion === "2026-07-28" ? "rc" : "latest";
+    storedPin === "2026-07-28"
+      ? "rc"
+      : storedPin === "auto" || (storedPin === undefined && statelessMcpEnabled)
+      ? "auto"
+      : "latest";
 
   // Dropdown handler. Writes through to `draft.mcpProfile.mcpProtocolVersion`
   // directly (parallel to the JSON editor's applyJsonToDraft path) so the
-  // JSON view round-trips immediately. Maps the UI-only "default" sentinel
-  // to `undefined` — preserves canonical-hash stability so the SDK can
-  // upgrade its default version without churning every stored host config.
-  const setProtocolVersion = (next: McpProtocolVersion | undefined) => {
+  // JSON view round-trips immediately. Auto is written as the `"auto"`
+  // sentinel; unpinned rows (`undefined`) also resolve to Auto at connect, so
+  // the two are equivalent and the dropdown never needs to write `undefined`.
+  const setProtocolVersion = (next: McpProtocolVersionPin | undefined) => {
     onDraftChange((prev) => {
       const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
         profileVersion: 1,
       };
+      // Undo the canonicalizer's stateful-pin derivation when the pin
+      // changes. `canonicalizeMcpProfile` materializes
+      // `initialize.supportedProtocolVersions: [pin]` into the stored row
+      // for stateful pins; if that list survived a dropdown change it
+      // would keep constraining the legacy initialize accept-list under
+      // the new pin — e.g. an Auto fallback proposing the stale version
+      // and failing against anything newer. Only the exact derived shape
+      // (single entry equal to the old stateful pin) is dropped;
+      // hand-written multi-version lists pass through untouched.
+      const prevPin = base.mcpProtocolVersion;
+      const prevList = base.initialize?.supportedProtocolVersions;
+      const prevListWasDerived =
+        prevPin !== undefined &&
+        prevPin !== next &&
+        isKnownProtocolVersion(prevPin) &&
+        !isStatelessProtocolVersion(prevPin) &&
+        prevList?.length === 1 &&
+        prevList[0] === prevPin;
+      let nextInitialize = base.initialize;
+      if (prevListWasDerived && nextInitialize !== undefined) {
+        const { supportedProtocolVersions: _dropped, ...rest } = nextInitialize;
+        nextInitialize = Object.keys(rest).length > 0 ? rest : undefined;
+      }
       const updated: HostConfigMcpProfileV1 = {
         ...base,
+        initialize: nextInitialize,
         mcpProtocolVersion: next,
       };
       const allEmpty =
@@ -305,6 +355,11 @@ export function ProtocolTab({
 
   // Shared with the cross-host comparison matrix via the field schema.
   const fProtocolVersion = hostConfigField("mcpProtocolVersion");
+  // The Auto option only appears with the stateless-MCP flag on — without
+  // the connect-time default wiring it would store a pin with no effect.
+  const visibleOptions = statelessMcpEnabled
+    ? HOST_PROTOCOL_OPTIONS
+    : HOST_PROTOCOL_OPTIONS.filter((opt) => opt.value !== "auto");
 
   return (
     <div className="flex h-full min-h-[480px] flex-col gap-3">
@@ -312,22 +367,37 @@ export function ProtocolTab({
         <div className="flex items-center gap-3">
           <span
             className="text-[12px] font-medium"
-            title="Latest: current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
+            title="Auto: detect per server at connect time — stateless servers get the 2026 RC preview, everything else the legacy handshake. Latest: current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
           >
             {fProtocolVersion.label}
           </span>
           <Select
             value={selectedDropdownValue}
             onValueChange={(next) => {
-              setProtocolVersion(next === "rc" ? "2026-07-28" : undefined);
+              setProtocolVersion(
+                next === "rc"
+                  ? "2026-07-28"
+                  : next === "auto"
+                  ? "auto"
+                  : // With the flag on, "Latest" pins the current stable
+                  // wire version explicitly — it must NOT map to
+                  // `undefined` because absence means Auto. With the flag
+                  // off, absence still means "SDK default", so Latest
+                  // keeps mapping to `undefined` for hash stability.
+                  statelessMcpEnabled
+                  ? LATEST_STABLE_PROTOCOL_VERSION
+                  : undefined
+              );
             }}
             disabled={readOnly}
           >
             <SelectTrigger className="h-9 text-xs">
-              <SelectValue placeholder="Latest" />
+              <SelectValue
+                placeholder={statelessMcpEnabled ? "Auto" : "Latest"}
+              />
             </SelectTrigger>
             <SelectContent>
-              {HOST_PROTOCOL_OPTIONS.map((opt) => (
+              {visibleOptions.map((opt) => (
                 <SelectItem key={opt.value} value={opt.value}>
                   {opt.label}
                 </SelectItem>

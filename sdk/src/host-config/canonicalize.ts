@@ -10,10 +10,12 @@
  */
 
 import {
-  isKnownProtocolVersion,
+  isAutoProtocolVersion,
+  isKnownProtocolVersionPin,
   isStatelessProtocolVersion,
   MCP_PROTOCOL_VERSIONS,
-  type McpProtocolVersion,
+  MCP_PROTOCOL_VERSION_AUTO,
+  type McpProtocolVersionPin,
 } from "../mcp-client-manager/mcp-protocol-version.js";
 import {
   HARNESS_IDS,
@@ -601,11 +603,13 @@ function canonicalizeMcpProfile(
   // Host-default pinned MCP protocol version. Absent → SDK chooses at resolve
   // time; we drop the field when absent so pre-feature rows hash identically.
   if (input.mcpProtocolVersion !== undefined) {
-    if (!isKnownProtocolVersion(input.mcpProtocolVersion)) {
+    if (!isKnownProtocolVersionPin(input.mcpProtocolVersion)) {
       throw new Error(
         `hostConfigV2: mcpProfile.mcpProtocolVersion must be one of ${MCP_PROTOCOL_VERSIONS.join(
-          ", "
-        )} (got "${String(input.mcpProtocolVersion)}")`
+          ", ",
+        )}, ${MCP_PROTOCOL_VERSION_AUTO} (got "${String(
+          input.mcpProtocolVersion,
+        )}")`,
       );
     }
     out.mcpProtocolVersion = input.mcpProtocolVersion;
@@ -687,8 +691,14 @@ function canonicalizeMcpProfile(
   // advertise that exact version. Derive when caller didn't set one; throw if
   // they set both AND the pin isn't in the list. Stateless versions skip
   // initialize entirely, so leave `supportedProtocolVersions` alone there.
+  // "auto" also skips the derivation — which handshake (if any) runs is
+  // unknown until connect time, so pinning an advertise list here would
+  // be wrong for the stateless outcome. (The open `isStatelessProtocolVersion`
+  // predicate happens to return true for "auto" too, but the guard is
+  // explicit so the sentinel never rides on that accident.)
   if (
     out.mcpProtocolVersion !== undefined &&
+    !isAutoProtocolVersion(out.mcpProtocolVersion) &&
     !isStatelessProtocolVersion(out.mcpProtocolVersion)
   ) {
     const advertised = out.initialize?.supportedProtocolVersions;
@@ -1135,7 +1145,7 @@ function canonicalizeServerConnectionOverrides(
     {
       headersOverride?: Record<string, string>;
       requestTimeoutOverride?: number;
-      mcpProtocolVersionOverride?: McpProtocolVersion;
+      mcpProtocolVersionOverride?: McpProtocolVersionPin;
     }
   > = {};
   for (const [serverId, entry] of Object.entries(overrides)) {
@@ -1149,13 +1159,15 @@ function canonicalizeServerConnectionOverrides(
       entry.headersOverride && Object.keys(entry.headersOverride).length > 0
         ? sortStringKeys(entry.headersOverride)
         : undefined;
-    let mcpProtocolVersionOverride: McpProtocolVersion | undefined;
+    let mcpProtocolVersionOverride: McpProtocolVersionPin | undefined;
     if (entry.mcpProtocolVersionOverride !== undefined) {
-      if (!isKnownProtocolVersion(entry.mcpProtocolVersionOverride)) {
+      if (!isKnownProtocolVersionPin(entry.mcpProtocolVersionOverride)) {
         throw new Error(
           `hostConfigV2: serverConnectionOverrides["${serverId}"].mcpProtocolVersionOverride must be one of ${MCP_PROTOCOL_VERSIONS.join(
-            ", "
-          )} (got "${String(entry.mcpProtocolVersionOverride)}")`
+            ", ",
+          )}, ${MCP_PROTOCOL_VERSION_AUTO} (got "${String(
+            entry.mcpProtocolVersionOverride,
+          )}")`,
         );
       }
       mcpProtocolVersionOverride = entry.mcpProtocolVersionOverride;
@@ -1176,7 +1188,7 @@ function canonicalizeServerConnectionOverrides(
       const entryOut: {
         headersOverride?: Record<string, string>;
         requestTimeoutOverride?: number;
-        mcpProtocolVersionOverride?: McpProtocolVersion;
+        mcpProtocolVersionOverride?: McpProtocolVersionPin;
       } = {
         ...(normalizedHeaders !== undefined
           ? { headersOverride: normalizedHeaders }

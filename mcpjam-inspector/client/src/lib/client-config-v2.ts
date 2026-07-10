@@ -58,6 +58,7 @@ import type {
   McpToolResultImageRenderPlacement,
   McpToolResultImageRenderingPolicy,
   McpProtocolVersion,
+  McpProtocolVersionPin,
 } from "@mcpjam/sdk/host-config/internal";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config";
 
@@ -73,6 +74,7 @@ export type {
   McpToolResultImageRenderPlacement,
   McpToolResultImageRenderingPolicy,
   McpProtocolVersion,
+  McpProtocolVersionPin,
   ModelVisibleMcpToolResults,
 };
 
@@ -218,7 +220,7 @@ export type HostConfigInputV2 = {
        * fanned out from `projectServerRefs.mcpProtocolVersionOverride` by
        * `fanOutProjectServerConfigToHosts`.
        */
-      mcpProtocolVersionOverride?: McpProtocolVersion;
+      mcpProtocolVersionOverride?: McpProtocolVersionPin;
     }
   >;
 };
@@ -285,7 +287,7 @@ export type HostConfigDtoV2 = {
     {
       headersOverride?: Record<string, string>;
       requestTimeoutOverride?: number;
-      mcpProtocolVersionOverride?: McpProtocolVersion;
+      mcpProtocolVersionOverride?: McpProtocolVersionPin;
     }
   >;
 };
@@ -1094,7 +1096,7 @@ export function serverConnectionOverridesEqual(
     {
       headersOverride?: Record<string, string>;
       requestTimeoutOverride?: number;
-      mcpProtocolVersionOverride?: McpProtocolVersion;
+      mcpProtocolVersionOverride?: McpProtocolVersionPin;
     }
   > => {
     if (!overrides) return {};
@@ -1103,7 +1105,7 @@ export function serverConnectionOverridesEqual(
       {
         headersOverride?: Record<string, string>;
         requestTimeoutOverride?: number;
-        mcpProtocolVersionOverride?: McpProtocolVersion;
+        mcpProtocolVersionOverride?: McpProtocolVersionPin;
       }
     > = {};
     for (const [key, entry] of Object.entries(overrides)) {

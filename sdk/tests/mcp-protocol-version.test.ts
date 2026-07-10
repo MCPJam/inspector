@@ -12,7 +12,10 @@
 import { describe, test, expect } from "vitest";
 import {
   MCP_PROTOCOL_VERSIONS,
+  MCP_PROTOCOL_VERSION_AUTO,
+  isAutoProtocolVersion,
   isKnownProtocolVersion,
+  isKnownProtocolVersionPin,
   isStatelessProtocolVersion,
 } from "../src/mcp-client-manager/mcp-protocol-version.js";
 
@@ -28,14 +31,12 @@ describe("MCP_PROTOCOL_VERSIONS", () => {
 });
 
 describe("isKnownProtocolVersion (membership gate)", () => {
-  test.each([
-    "2025-03-26",
-    "2025-06-18",
-    "2025-11-25",
-    "2026-07-28",
-  ])("accepts %s", (v) => {
-    expect(isKnownProtocolVersion(v)).toBe(true);
-  });
+  test.each(["2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"])(
+    "accepts %s",
+    (v) => {
+      expect(isKnownProtocolVersion(v)).toBe(true);
+    }
+  );
 
   test.each([
     "",
@@ -52,8 +53,47 @@ describe("isKnownProtocolVersion (membership gate)", () => {
     // accepted set; if it does, the validate-then-route discipline
     // silently widens.
     "DRAFT-2026-v1",
+    // "auto" is a config-only sentinel, NOT a wire literal — the strict
+    // gate must keep rejecting it so wire-building code can never emit
+    // `MCP-Protocol-Version: auto`. Pin-accepting boundaries use
+    // `isKnownProtocolVersionPin` instead.
+    "auto",
   ])("rejects %j", (v) => {
     expect(isKnownProtocolVersion(v)).toBe(false);
+  });
+});
+
+describe("isKnownProtocolVersionPin (config-pin membership gate)", () => {
+  test.each(["auto", "2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"])(
+    "accepts %s",
+    (v) => {
+      expect(isKnownProtocolVersionPin(v)).toBe(true);
+    }
+  );
+
+  test.each(["", "Auto", "AUTO", " auto", "automatic", "DRAFT-2026-v1"])(
+    "rejects %j",
+    (v) => {
+      expect(isKnownProtocolVersionPin(v)).toBe(false);
+    }
+  );
+});
+
+describe("isAutoProtocolVersion", () => {
+  test("matches only the exact sentinel", () => {
+    expect(isAutoProtocolVersion(MCP_PROTOCOL_VERSION_AUTO)).toBe(true);
+    expect(isAutoProtocolVersion("auto")).toBe(true);
+    expect(isAutoProtocolVersion("Auto")).toBe(false);
+    expect(isAutoProtocolVersion("2026-07-28")).toBe(false);
+    expect(isAutoProtocolVersion("")).toBe(false);
+  });
+
+  test("auto is intentionally NOT in MCP_PROTOCOL_VERSIONS — see open-predicate hazard below", () => {
+    expect(MCP_PROTOCOL_VERSIONS).not.toContain("auto");
+    // The open routing predicate would classify "auto" as stateless;
+    // that's exactly why it must never pass the strict membership gate
+    // or reach routing code unresolved.
+    expect(isStatelessProtocolVersion("auto")).toBe(true);
   });
 });
 

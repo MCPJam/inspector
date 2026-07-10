@@ -40,6 +40,7 @@ export type {
   HostStyleId,
   Harness,
   McpProtocolVersion,
+  McpProtocolVersionPin,
   McpToolResultImageRendering,
   McpToolResultImageRenderingPolicy,
   McpToolResultImageRenderPlacement,

@@ -58,7 +58,9 @@ export type ConnectionDefaults = {
    * (today: `"2026-07-28"`), the SDK routes through
    * `StatelessMcpHttpPreviewClient` — HTTP POST only; factory throws
    * `StatelessRequiresHttpTransport` for stdio / SSE, so the resolver
-   * never has to gate on transport here.
+   * never has to gate on transport here. `"auto"` defers the choice to
+   * the SDK, which probes `server/discover` at connect time and falls
+   * back to the legacy handshake — safe for every transport.
    */
-  mcpProtocolVersion?: import("@mcpjam/sdk/browser").McpProtocolVersion;
+  mcpProtocolVersion?: import("@mcpjam/sdk/browser").McpProtocolVersionPin;
 };

@@ -38,6 +38,7 @@ export type {
   HostConfigConnectionDefaults,
   CspDomainSet,
   McpProtocolVersion,
+  McpProtocolVersionPin,
   McpToolResultImageRendering,
   McpToolResultImageRenderingPolicy,
   McpToolResultImageRenderPlacement,

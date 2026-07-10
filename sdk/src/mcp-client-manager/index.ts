@@ -180,6 +180,10 @@ export {
 } from "./managed-mcp-client-factory.js";
 export {
   MCP_PROTOCOL_VERSIONS,
+  MCP_PROTOCOL_VERSION_AUTO,
+  isAutoProtocolVersion,
   isKnownProtocolVersion,
+  isKnownProtocolVersionPin,
   isStatelessProtocolVersion,
+  type McpProtocolVersionPin,
 } from "./mcp-protocol-version.js";

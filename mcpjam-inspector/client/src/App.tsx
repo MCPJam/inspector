@@ -195,12 +195,14 @@ import {
   handleOAuthCallback,
 } from "./lib/oauth/mcp-oauth";
 import { buildElectronMcpCallbackUrl } from "./hooks/use-server-state";
+import { useStatelessMcpEnabled } from "./hooks/use-stateless-mcp-enabled";
 import { disconnectAllRuntimeServers } from "./state/mcp-api";
 import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import {
   getDefaultClientCapabilities,
-  isKnownProtocolVersion,
-  type McpProtocolVersion,
+  isKnownProtocolVersionPin,
+  MCP_PROTOCOL_VERSION_AUTO,
+  type McpProtocolVersionPin,
 } from "@mcpjam/sdk/browser";
 import {
   gateMcpToolResultImageRenderingByModelVisibility,
@@ -1322,6 +1324,9 @@ export default function App() {
   );
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
+  // Master switch for the Auto / stateless-MCP feature (forced on in the dev
+  // server). Gates the hosted connect-time Auto default below.
+  const statelessMcpEnabled = useStatelessMcpEnabled();
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
@@ -2209,13 +2214,15 @@ export default function App() {
         : undefined;
 
     const rawHostPin = activeMcpProfile?.mcpProtocolVersion;
-    const hostPin: McpProtocolVersion | undefined =
-      typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
+    const hostPin: McpProtocolVersionPin | undefined =
+      typeof rawHostPin === "string" && isKnownProtocolVersionPin(rawHostPin)
         ? rawHostPin
         : undefined;
 
-    const mcpProtocolVersionsByServerId: Record<string, McpProtocolVersion> =
-      {};
+    const mcpProtocolVersionsByServerId: Record<
+      string,
+      McpProtocolVersionPin
+    > = {};
     for (const serverId of new Set(Object.values(hostedServerIdsByName))) {
       // Project-server config is the control-plane source for per-server
       // protocol overrides. Host config mirrors it through Convex fan-out,
@@ -2226,15 +2233,24 @@ export default function App() {
           ?.mcpProtocolVersionOverride ??
         activeHost?.serverConnectionOverrides?.[serverId]
           ?.mcpProtocolVersionOverride;
-      const serverOverride: McpProtocolVersion | undefined =
+      const serverOverride: McpProtocolVersionPin | undefined =
         typeof rawServerOverride === "string" &&
-        isKnownProtocolVersion(rawServerOverride)
+        isKnownProtocolVersionPin(rawServerOverride)
           ? rawServerOverride
           : undefined;
-      const effective = resolveEffectiveMcpProtocolVersion(
+      const resolved = resolveEffectiveMcpProtocolVersion(
         serverOverride,
         hostPin
       );
+      // Auto is the host default once the stateless-MCP feature is live: an
+      // unpinned hosted server connects with the `"auto"` sentinel (probe +
+      // legacy fallback per server) instead of the SDK default. Gated on the
+      // same flag as the hosted Auto UI so production only flips this once the
+      // backend accepts `"auto"` — with the flag off, unpinned stays legacy
+      // (byte-identical to prior behavior). Mirrors the local-mode default in
+      // `buildResolverConnectionDefaults`.
+      const effective =
+        resolved ?? (statelessMcpEnabled ? MCP_PROTOCOL_VERSION_AUTO : undefined);
       if (!effective) continue;
       mcpProtocolVersionsByServerId[serverId] = effective;
     }
@@ -2252,6 +2268,7 @@ export default function App() {
     activeMcpProfile,
     hostedServerIdsByName,
     projectServerConfigDto?.overrides,
+    statelessMcpEnabled,
   ]);
   useApiContext({
     projectId: convexProjectId,

@@ -24,7 +24,7 @@ describe("describeError — catalog completeness", () => {
       expect(entry.likelyCauses.length).toBeGreaterThan(0);
       expect(entry.nextSteps.length).toBeGreaterThan(0);
       expect(entry.docsAnchor.startsWith("/troubleshooting/error-codes#")).toBe(
-        true,
+        true
       );
       expect(["info", "warning", "error"]).toContain(entry.severity);
     }
@@ -100,6 +100,13 @@ const CASES: Case[] = [
     expectRawCode: -32004,
   },
   {
+    name: "-32022 protocol version rejected",
+    build: () =>
+      makeError("Unsupported protocol version: 2025-11-25", { code: -32022 }),
+    expectSlug: "jsonrpc/protocol_version_rejected",
+    expectRawCode: -32022,
+  },
+  {
     name: "-32042 url elicitation required",
     build: () => makeError("URL elicitation required", { code: -32042 }),
     expectSlug: "jsonrpc/url_elicitation_required",
@@ -108,7 +115,10 @@ const CASES: Case[] = [
   // Node errno
   {
     name: "ECONNREFUSED",
-    build: () => makeError("connect ECONNREFUSED 127.0.0.1:9999", { code: "ECONNREFUSED" }),
+    build: () =>
+      makeError("connect ECONNREFUSED 127.0.0.1:9999", {
+        code: "ECONNREFUSED",
+      }),
     expectSlug: "transport/econnrefused",
     expectRawCode: "ECONNREFUSED",
   },
@@ -183,7 +193,9 @@ const CASES: Case[] = [
   // OAuth body
   {
     name: "oauth invalid_grant body",
-    build: () => ({ body: { error: "invalid_grant", error_description: "Bad code" } }),
+    build: () => ({
+      body: { error: "invalid_grant", error_description: "Bad code" },
+    }),
     expectSlug: "oauth/invalid_grant",
   },
   {
@@ -241,6 +253,99 @@ describe("describeError — table-driven", () => {
   }
 });
 
+describe("describeError — -32022 protocol version rejected enrichment", () => {
+  it("names the server's supported versions and the requested version", () => {
+    const out = describeError(
+      makeError("Unsupported protocol version: 2025-11-25", {
+        code: -32022,
+        data: { supported: ["2026-07-28"], requested: "2025-11-25" },
+      })
+    );
+    expect(out.slug).toBe("jsonrpc/protocol_version_rejected");
+    expect(out.oneLine).toContain("2025-11-25");
+    expect(out.oneLine).toContain("2026-07-28");
+    // Points the user at the actionable fix (Auto / protocol setting).
+    expect(out.oneLine.toLowerCase()).toContain("auto");
+    expect(out.nextSteps.join(" ").toLowerCase()).toContain("auto");
+  });
+
+  it("reads JSON-RPC data nested under .error.data", () => {
+    const out = describeError({
+      error: {
+        code: -32022,
+        message: "Unsupported protocol version: 2025-06-18",
+        data: {
+          supported: ["2026-07-28", "2025-11-25"],
+          requested: "2025-06-18",
+        },
+      },
+    });
+    expect(out.slug).toBe("jsonrpc/protocol_version_rejected");
+    expect(out.oneLine).toContain("2025-06-18");
+    expect(out.oneLine).toContain("2026-07-28");
+    expect(out.oneLine.toLowerCase()).toContain("auto");
+  });
+
+  it("keeps the actionable fix even when the supported list is huge", () => {
+    const many = Array.from(
+      { length: 40 },
+      (_, i) => `2099-12-${String((i % 28) + 1).padStart(2, "0")}`
+    );
+    const out = describeError(
+      makeError("Unsupported protocol version", {
+        code: -32022,
+        data: { supported: many, requested: "2025-11-25" },
+      })
+    );
+    // The fix text is placed before the server-controlled list, so the 200-char
+    // truncation drops the list — never the "set to Auto" guidance.
+    expect(out.oneLine.toLowerCase()).toContain("auto");
+    expect(out.oneLine).toContain("2025-11-25");
+  });
+
+  it("redacts secrets echoed back in server-supplied version data", () => {
+    // Keep the secret shorter than PV_VALUE_MAX (24): with a longer token the
+    // length clamp alone would truncate the tail and this test could pass
+    // even if redaction regressed. "Bearer sk-abc123" (16 chars) survives the
+    // clamp intact, so the [REDACTED] marker assertion is unambiguous.
+    const out = describeError(
+      makeError("Unsupported protocol version", {
+        code: -32022,
+        data: {
+          supported: ["2026-07-28"],
+          requested: "Bearer sk-abc123",
+        },
+      })
+    );
+    expect(out.slug).toBe("jsonrpc/protocol_version_rejected");
+    expect(out.oneLine).not.toContain("sk-abc123");
+    expect(out.oneLine).toContain("Bearer [REDACTED]");
+  });
+
+  it("falls back to the static catalog copy when data is absent", () => {
+    const out = describeError(
+      makeError("Unsupported protocol version", { code: -32022 })
+    );
+    expect(out.slug).toBe("jsonrpc/protocol_version_rejected");
+    expect(out.oneLine).toBe(
+      ERROR_CATALOG["jsonrpc/protocol_version_rejected"].oneLine
+    );
+  });
+
+  it("ignores malformed data (non-array supported / non-string requested)", () => {
+    const out = describeError(
+      makeError("Unsupported protocol version", {
+        code: -32022,
+        data: { supported: "nope", requested: 7 },
+      })
+    );
+    expect(out.slug).toBe("jsonrpc/protocol_version_rejected");
+    expect(out.oneLine).toBe(
+      ERROR_CATALOG["jsonrpc/protocol_version_rejected"].oneLine
+    );
+  });
+});
+
 describe("describeError — fallback shapes (>= 8)", () => {
   const cases: Array<[string, unknown, string]> = [
     ["plain Error", new Error("something exploded"), "internal/unknown"],
@@ -263,7 +368,11 @@ describe("describeError — fallback shapes (>= 8)", () => {
       { code: "INTERNAL_ERROR", message: "Hosted failure" },
       "internal/unknown",
     ],
-    ["unknown numeric code", makeError("weird", { code: -42 }), "internal/unknown"],
+    [
+      "unknown numeric code",
+      makeError("weird", { code: -42 }),
+      "internal/unknown",
+    ],
     ["bare number", 42, "internal/unknown"],
   ];
   for (const [name, input, expectSlug] of cases) {
@@ -278,14 +387,20 @@ describe("describeError — fallback shapes (>= 8)", () => {
 describe("describeError — redaction", () => {
   it("redacts bearer tokens from raw message", () => {
     const out = describeError(
-      new Error("Authorization: Bearer abcdef.ghi.jkl failed"),
+      new Error("Authorization: Bearer abcdef.ghi.jkl failed")
     );
     expect(out.rawMessage).not.toContain("abcdef.ghi.jkl");
     expect(out.rawMessage.toLowerCase()).toContain("redacted");
   });
 
   it("never throws on truly unusual input", () => {
-    expect(() => describeError({ get code() { throw new Error("nope"); } })).not.toThrow();
+    expect(() =>
+      describeError({
+        get code() {
+          throw new Error("nope");
+        },
+      })
+    ).not.toThrow();
   });
 
   it("crash-safe fallback still redacts bearer tokens", () => {
@@ -295,9 +410,7 @@ describe("describeError — redaction", () => {
     // through rawMessage. The fallback must still call redactString.
     // `Object.defineProperty` is required — `Object.assign({}, {get x(){}})`
     // invokes the getter at copy time.
-    const err = new Error(
-      "Authorization: Bearer leaky.deadbeef.token failed",
-    );
+    const err = new Error("Authorization: Bearer leaky.deadbeef.token failed");
     Object.defineProperty(err, "code", {
       get(): string {
         throw new Error("classification boom");
@@ -338,9 +451,12 @@ describe("extractNodeErrno — cause walking", () => {
   it("walks one level of cause (undici fetch wrapping)", () => {
     // Reproduces Node's typical fetch-failed shape:
     // TypeError("fetch failed") with cause = SystemError carrying the errno.
-    const cause = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:9999"), {
-      code: "ECONNREFUSED",
-    });
+    const cause = Object.assign(
+      new Error("connect ECONNREFUSED 127.0.0.1:9999"),
+      {
+        code: "ECONNREFUSED",
+      }
+    );
     const wrapper = Object.assign(new TypeError("fetch failed"), { cause });
     expect(extractNodeErrno(wrapper)).toBe("ECONNREFUSED");
   });
@@ -365,9 +481,12 @@ describe("describeError — fetch failed surfaces specific transport slug", () =
     // Before the cause-walking fix this fell through to the message-regex
     // fallback and produced the generic "fetch failed" slug, defeating the
     // entire point of the transport catalog for the #1 docs-chat query.
-    const cause = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:9999"), {
-      code: "ECONNREFUSED",
-    });
+    const cause = Object.assign(
+      new Error("connect ECONNREFUSED 127.0.0.1:9999"),
+      {
+        code: "ECONNREFUSED",
+      }
+    );
     const wrapper = Object.assign(new TypeError("fetch failed"), { cause });
     const out = describeError(wrapper);
     expect(out.slug).toBe("transport/econnrefused");
@@ -437,10 +556,10 @@ describe("describeError — specific message wording wins over generic HTTP 401"
     // MCPAuthError still maps to auth/http_401 even if its message
     // happens to contain the word "bearer". This is the desired
     // behavior — MCPAuthError specifically means MCP-server auth.
-    const err = Object.assign(
-      new Error("Server rejected bearer token"),
-      { name: "MCPAuthError", statusCode: 401 },
-    );
+    const err = Object.assign(new Error("Server rejected bearer token"), {
+      name: "MCPAuthError",
+      statusCode: 401,
+    });
     const out = describeError(err);
     expect(out.slug).toBe("auth/http_401");
   });
@@ -482,12 +601,10 @@ describe("describeError — unclassified errors surface their raw message", () =
     const out = describeError(
       Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:9999"), {
         code: "ECONNREFUSED",
-      }),
+      })
     );
     expect(out.slug).toBe("transport/econnrefused");
-    expect(out.oneLine).toBe(
-      ERROR_CATALOG["transport/econnrefused"].oneLine,
-    );
+    expect(out.oneLine).toBe(ERROR_CATALOG["transport/econnrefused"].oneLine);
     expect(out.rawMessage).toBe("connect ECONNREFUSED 127.0.0.1:9999");
   });
 
@@ -539,7 +656,7 @@ describe("describeAsSlug — explicit catalog pinning", () => {
     // the route knows it's a provider-key issue.
     const out = describeAsSlug(
       "provider/auth_error",
-      Object.assign(new Error("Invalid API key"), { statusCode: 401 }),
+      Object.assign(new Error("Invalid API key"), { statusCode: 401 })
     );
     expect(out.slug).toBe("provider/auth_error");
     expect(out.title).toBe(ERROR_CATALOG["provider/auth_error"].title);

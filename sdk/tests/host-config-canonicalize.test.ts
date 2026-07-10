@@ -450,6 +450,48 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
       )
     ).toThrow(/ConflictingProtocolVersionPin/);
   });
+
+  it('accepts the "auto" pin and does not derive supportedProtocolVersions', () => {
+    // "auto" defers the wire mode to connect time, so the canonicalizer
+    // must neither reject it nor pin an initialize accept-list (which
+    // handshake — if any — runs is unknown until the probe).
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: { profileVersion: 1, mcpProtocolVersion: "auto" },
+      }),
+    );
+    expect(c.mcpProfile?.mcpProtocolVersion).toBe("auto");
+    expect(c.mcpProfile?.initialize).toBeUndefined();
+  });
+
+  it('accepts the "auto" pin on serverConnectionOverrides', () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        serverIds: ["srv_a"],
+        serverConnectionOverrides: {
+          srv_a: { mcpProtocolVersionOverride: "auto" },
+        },
+      }),
+    );
+    expect(c.serverConnectionOverrides?.srv_a?.mcpProtocolVersionOverride).toBe(
+      "auto",
+    );
+  });
+
+  it('rejects casing / typo variants of "auto"', () => {
+    for (const bad of ["Auto", "AUTO", "automatic", " auto"]) {
+      expect(() =>
+        canonicalizeHostConfigV2(
+          base({
+            mcpProfile: {
+              profileVersion: 1,
+              mcpProtocolVersion: bad as never,
+            },
+          }),
+        ),
+      ).toThrow(/mcpProtocolVersion must be one of/);
+    }
+  });
 });
 
 describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {

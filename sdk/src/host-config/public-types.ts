@@ -22,6 +22,7 @@ import type {
   HostStyleId,
   McpAppsCapabilities,
   McpProtocolVersion,
+  McpProtocolVersionPin,
   McpToolResultImageRendering,
   McpToolResultImageRenderingPolicy,
   McpToolResultImageRenderPlacement,
@@ -32,6 +33,7 @@ import type {
 
 export type {
   McpProtocolVersion,
+  McpProtocolVersionPin,
   McpToolResultImageRendering,
   McpToolResultImageRenderingPolicy,
   McpToolResultImageRenderPlacement,
@@ -74,8 +76,11 @@ export type HostMcp = Omit<
   HostConfigMcpProfileV1,
   "profileVersion" | "mcpProtocolVersion"
 > & {
-  /** Host-default pinned MCP protocol version (e.g. "2025-11-25"). */
-  protocolVersion?: McpProtocolVersion;
+  /**
+   * Host-default pinned MCP protocol version (e.g. "2025-11-25"), or
+   * "auto" to detect stateless-vs-stateful per server at connect time.
+   */
+  protocolVersion?: McpProtocolVersionPin;
 };
 
 /**
@@ -120,7 +125,7 @@ export interface HostJson {
 export interface HostServerOverride {
   headers?: Record<string, string>;
   requestTimeout?: number;
-  protocolVersion?: McpProtocolVersion;
+  protocolVersion?: McpProtocolVersionPin;
 }
 
 /**

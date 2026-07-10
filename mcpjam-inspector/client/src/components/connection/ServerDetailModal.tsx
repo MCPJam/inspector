@@ -41,7 +41,7 @@ import { EditServerFormContent } from "./EditServerFormContent";
 import { ServerHistoryContent } from "./ServerHistoryContent";
 import { ServerHistoryDriftChip } from "./ServerHistoryDriftChip";
 import { HostCompatContent } from "@/components/compat/HostCompatContent";
-import type { McpProtocolVersion } from "@/lib/client-config-v2";
+import type { McpProtocolVersionPin } from "@/lib/client-config-v2";
 import type {
   ProjectServerConfigDto,
   ProjectServerConfigInput,
@@ -49,6 +49,7 @@ import type {
 } from "@/lib/project-server-config";
 import { EffectiveProtocolVersionChip } from "./shared/EffectiveProtocolVersionChip";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
+import { useStatelessMcpEnabled } from "@/hooks/use-stateless-mcp-enabled";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 
 export type ServerDetailTab =
@@ -90,7 +91,7 @@ interface ServerDetailModalProps {
    * the user toggled on the client. Undefined = no host-level pin =
    * "Legacy · default" attribution on the chip.
    */
-  hostDefaultMcpProtocolVersion?: McpProtocolVersion;
+  hostDefaultMcpProtocolVersion?: McpProtocolVersionPin;
 }
 
 type ProtocolOverrideAutoEnrollRecord = {
@@ -193,6 +194,7 @@ export function ServerDetailModal({
   // round-trip rather than a server-update. Read/write here so the
   // form control inside `EditServerFormContent` can stay a pure prop
   // consumer.
+  const statelessMcpEnabled = useStatelessMcpEnabled();
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
     projectId ? ({ projectId } as never) : "skip"
@@ -215,12 +217,12 @@ export function ServerDetailModal({
   // Both surfaces key off `showHistory`, so this is the single gate.
   const showHistory = Boolean(projectId && serverId);
   const currentMcpProtocolVersionOverride = useMemo<
-    McpProtocolVersion | undefined
+    McpProtocolVersionPin | undefined
   >(
     () =>
       serverId
         ? (projectServerConfigDto?.overrides?.[serverId]
-            ?.mcpProtocolVersionOverride as McpProtocolVersion | undefined)
+            ?.mcpProtocolVersionOverride as McpProtocolVersionPin | undefined)
         : undefined,
     [projectServerConfigDto, serverId]
   );
@@ -232,7 +234,9 @@ export function ServerDetailModal({
   // without forcing the Servers tab to also wire up the provider just
   // for the chip's source attribution.
   const activeMcpProfile = useActiveMcpProfile();
-  const resolvedHostDefaultMcpProtocolVersion: McpProtocolVersion | undefined =
+  const resolvedHostDefaultMcpProtocolVersion:
+    | McpProtocolVersionPin
+    | undefined =
     hostDefaultMcpProtocolVersion ?? activeMcpProfile?.mcpProtocolVersion;
   const canEditMcpProtocolVersionOverride = Boolean(
     projectId && serverId && projectServerConfigDto !== undefined
@@ -249,7 +253,7 @@ export function ServerDetailModal({
   // fires, even if the Convex value hasn't changed (e.g. a hung
   // refetch).
   const pendingReconnectRef = useRef<{
-    target: McpProtocolVersion | undefined;
+    target: McpProtocolVersionPin | undefined;
   } | null>(null);
   const [pendingReconnectTick, setPendingReconnectTick] = useState(0);
   useEffect(() => {
@@ -270,7 +274,7 @@ export function ServerDetailModal({
   ]);
 
   const handleMcpProtocolVersionOverrideChange = async (
-    next: McpProtocolVersion | undefined
+    next: McpProtocolVersionPin | undefined
   ): Promise<void> => {
     if (!projectId) {
       toast.error(
@@ -662,6 +666,7 @@ export function ServerDetailModal({
               <EffectiveProtocolVersionChip
                 hostDefault={resolvedHostDefaultMcpProtocolVersion}
                 serverOverride={currentMcpProtocolVersionOverride}
+                flagEnabled={Boolean(statelessMcpEnabled)}
               />
               <span className="inline-flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
                 {isReconnecting ? (

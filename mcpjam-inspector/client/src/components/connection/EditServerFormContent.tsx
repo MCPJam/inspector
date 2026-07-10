@@ -7,6 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import { useStatelessMcpEnabled } from "@/hooks/use-stateless-mcp-enabled";
 import { useAuth } from "@workos-inc/authkit-react";
 import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSettingsSection";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
@@ -14,7 +15,7 @@ import { EnvVarsSection } from "./shared/EnvVarsSection";
 import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeControl";
 import type { useServerForm } from "./hooks/use-server-form";
 import { HOSTED_MODE } from "@/lib/config";
-import type { McpProtocolVersion } from "@/lib/client-config-v2";
+import type { McpProtocolVersionPin } from "@/lib/client-config-v2";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 
 interface EditServerFormContentProps {
@@ -29,9 +30,9 @@ interface EditServerFormContentProps {
    * goes back through `projectServerConfig:setConfig`, NOT through the
    * server's own config blob — wire mode is a project-server-refs field.
    */
-  mcpProtocolVersionOverride?: McpProtocolVersion;
+  mcpProtocolVersionOverride?: McpProtocolVersionPin;
   onMcpProtocolVersionOverrideChange?: (
-    mode: McpProtocolVersion | undefined
+    mode: McpProtocolVersionPin | undefined
   ) => void;
 }
 
@@ -45,6 +46,7 @@ export function EditServerFormContent({
 }: EditServerFormContentProps) {
   const { user: signedInUser } = useAuth();
   const hostedUrlPlaceholder = "https://example.com/mcp";
+  const statelessMcpEnabled = useStatelessMcpEnabled();
   const [revealingEnv, setRevealingEnv] = useState(false);
   const [revealingHeaders, setRevealingHeaders] = useState(false);
   const [revealingBearer, setRevealingBearer] = useState(false);
@@ -329,6 +331,7 @@ export function EditServerFormContent({
            id, or project config still loading), the select disables but
            remains visible for discoverability. */
         showMcpProtocolVersionOverride
+        showAutoOption={Boolean(statelessMcpEnabled)}
         mcpProtocolVersionOverride={mcpProtocolVersionOverride}
         onMcpProtocolVersionOverrideChange={onMcpProtocolVersionOverrideChange}
         transportKind={formState.type}

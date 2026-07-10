@@ -770,5 +770,6 @@ export type {
   HostConnectionDefaults,
   HostStyleId,
   McpProtocolVersion,
+  McpProtocolVersionPin,
   ServerId,
 } from "./public-types.js";
