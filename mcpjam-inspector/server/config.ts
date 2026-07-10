@@ -86,6 +86,13 @@ export const WEB_CONNECT_TIMEOUT_MS = 10_000;
 export const WEB_CALL_TIMEOUT_MS = 30_000;
 export const WEB_STREAM_TIMEOUT_MS = 120_000;
 
+// Hosted app origin the LOCAL inspector server forwards XAA hosted-issuer
+// mint requests to (server-to-server; hosted CORS blocks the browser from
+// calling it directly). Override for staging. Never derived from a request.
+export const MCPJAM_HOSTED_ORIGIN =
+  process.env.MCPJAM_HOSTED_ORIGIN?.replace(/\/+$/, "") ||
+  "https://app.mcpjam.com";
+
 // Allowed hosts for token delivery in hosted mode (comma-separated)
 // These hosts will be allowed to receive session tokens in addition to localhost
 export const ALLOWED_HOSTS = process.env.MCPJAM_ALLOWED_HOSTS

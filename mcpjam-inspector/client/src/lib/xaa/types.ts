@@ -155,6 +155,10 @@ export interface BaseXAAStateMachineConfig {
    * e.g. `/o/<orgId>` for the hosted org-scoped issuer. Never applied to the
    * token proxy, which has no scoped variant. Defaults to "" (unscoped). */
   mintPathPrefix?: string;
+  /** LOCAL runs only: "hosted" adds `issuerMode`/`organizationId` to the mint
+   * request bodies so the local server forwards them to the hosted issuer. */
+  issuerMode?: "local" | "hosted";
+  organizationId?: string | null;
   requestExecutor: XAARequestExecutor;
   scheduleAutoAdvance?: (next: () => void) => void;
   negativeTestMode?: NegativeTestMode;

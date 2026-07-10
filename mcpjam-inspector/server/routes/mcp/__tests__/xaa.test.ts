@@ -752,3 +752,226 @@ describe("org-scoped issuer paths on the local router", () => {
     expect(mint.status).toBe(404);
   });
 });
+
+describe("hosted-issuer forwarding on the local router", () => {
+  const HOSTED_ORIGIN = "https://app.example.com";
+
+  function buildApp() {
+    const app = new Hono();
+    app.route(
+      "/api/mcp/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/mcp",
+        httpsOnlyProxy: false,
+        forwardHostedIssuer: { origin: HOSTED_ORIGIN },
+      })
+    );
+    return app;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("forwards issuerMode:hosted mints to the scoped hosted endpoint with the bearer", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ id_token: "hosted-token", token_type: "Bearer" })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = buildApp();
+    const response = await app.request("/api/mcp/xaa/authenticate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer workos-token",
+      },
+      body: JSON.stringify({
+        userId: "user-12345",
+        issuerMode: "hosted",
+        organizationId: "org_123",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ id_token: "hosted-token" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${HOSTED_ORIGIN}/api/web/xaa/o/org_123/authenticate`);
+    expect((init.headers as Record<string, string>).Authorization).toBe(
+      "Bearer workos-token"
+    );
+    // The opt-in fields are stripped before the upstream call.
+    const forwarded = JSON.parse(String(init.body));
+    expect(forwarded).toEqual({ userId: "user-12345" });
+  });
+
+  it("falls back to the legacy unscoped issuer when no organizationId is sent", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ id_token: "x" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = buildApp();
+    const response = await app.request("/api/mcp/xaa/authenticate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer workos-token",
+      },
+      body: JSON.stringify({ userId: "user-12345", issuerMode: "hosted" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      `${HOSTED_ORIGIN}/api/web/xaa/authenticate`
+    );
+  });
+
+  it("rejects a hosted mint without a bearer, without calling upstream", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = buildApp();
+    const response = await app.request("/api/mcp/xaa/token-exchange", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        identityAssertion: "a.b.c",
+        audience: "https://auth.example.com",
+        resource: "https://mcp.example.com",
+        clientId: "mcpjam-debugger",
+        issuerMode: "hosted",
+      }),
+    });
+
+    expect(response.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed organizationId before calling upstream", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = buildApp();
+    const response = await app.request("/api/mcp/xaa/authenticate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer workos-token",
+      },
+      body: JSON.stringify({
+        issuerMode: "hosted",
+        organizationId: "not/valid",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the upstream status verbatim", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(
+          { code: "RATE_LIMITED", message: "Too many requests" },
+          { status: 429 }
+        )
+      )
+    );
+
+    const app = buildApp();
+    const response = await app.request("/api/mcp/xaa/authenticate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer workos-token",
+      },
+      body: JSON.stringify({ issuerMode: "hosted", organizationId: "org1" }),
+    });
+
+    expect(response.status).toBe(429);
+    expect((await response.json()).code).toBe("RATE_LIMITED");
+  });
+
+  it("mints locally when issuerMode is absent, without touching fetch", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-fwd-local-"));
+    const originalDir = process.env.XAA_IDP_KEY_DIR;
+    process.env.XAA_IDP_KEY_DIR = tempDir;
+    resetXAAIdpKeyPairForTests();
+    initXAAIdpKeyPair();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const app = buildApp();
+      const response = await app.request(
+        "http://127.0.0.1:6274/api/mcp/xaa/authenticate",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: "user-12345" }),
+        }
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(decodeJwtPayload(body.id_token).iss).toBe(
+        "http://127.0.0.1:6274/api/mcp/xaa"
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      resetXAAIdpKeyPairForTests();
+      rmSync(tempDir, { recursive: true, force: true });
+      if (originalDir === undefined) {
+        delete process.env.XAA_IDP_KEY_DIR;
+      } else {
+        process.env.XAA_IDP_KEY_DIR = originalDir;
+      }
+    }
+  });
+
+  it("ignores issuerMode on a router without forwarding configured (hosted)", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-fwd-hosted-"));
+    const originalDir = process.env.XAA_IDP_KEY_DIR;
+    process.env.XAA_IDP_KEY_DIR = tempDir;
+    resetXAAIdpKeyPairForTests();
+    initXAAIdpKeyPair();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const app = new Hono();
+      app.route(
+        "/api/web/xaa",
+        createXaaRouter({
+          issuerBasePath: "/api/web",
+          httpsOnlyProxy: true,
+        })
+      );
+      const response = await app.request(
+        "https://app.mcpjam.com/api/web/xaa/authenticate",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: "user-12345", issuerMode: "hosted" }),
+        }
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(decodeJwtPayload(body.id_token).iss).toBe(
+        "https://app.mcpjam.com/api/web/xaa"
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      resetXAAIdpKeyPairForTests();
+      rmSync(tempDir, { recursive: true, force: true });
+      if (originalDir === undefined) {
+        delete process.env.XAA_IDP_KEY_DIR;
+      } else {
+        process.env.XAA_IDP_KEY_DIR = originalDir;
+      }
+    }
+  });
+});

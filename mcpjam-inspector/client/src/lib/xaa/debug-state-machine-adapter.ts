@@ -1,5 +1,7 @@
 import { HOSTED_MODE } from "@/lib/config";
 import { authFetch } from "@/lib/session-token";
+import { getApiAuthorizationHeader } from "@/lib/apis/web/context";
+import { getHostedXaaIdpUrls } from "./idp-endpoints";
 import { createDebugRequestExecutor } from "@/lib/oauth/debug-state-machine-adapter";
 import { createXAAStateMachine } from "./state-machine";
 import type {
@@ -50,15 +52,34 @@ async function readResponseBody(response: Response): Promise<any> {
   }
 }
 
-export function createXAADebugRequestExecutor(): XAARequestExecutor {
+export function createXAADebugRequestExecutor(options?: {
+  /** Local hosted-issuer runs: the mint endpoints need the Convex/WorkOS
+   * bearer so the local server can forward it to app.mcpjam.com. authFetch
+   * doesn't attach it to the local mint paths on its own (they aren't in its
+   * hosted-path allowlist), so set it explicitly — same-origin loopback, and
+   * caller-provided Authorization is preserved by authFetch. */
+  attachHostedBearer?: boolean;
+}): XAARequestExecutor {
   const debugRequestExecutor = createDebugRequestExecutor();
+  const isMintPath = (path: string) =>
+    path.endsWith("/authenticate") || path.endsWith("/token-exchange");
 
   return {
     internalRequest: async (
       path: string,
       init?: RequestInit,
     ): Promise<XAARequestResult> => {
-      const response = await authFetch(`${XAA_API_BASE}${path}`, init);
+      let requestInit = init;
+      if (options?.attachHostedBearer && isMintPath(path)) {
+        const authorization = await getApiAuthorizationHeader();
+        if (authorization) {
+          requestInit = {
+            ...init,
+            headers: { ...normalizeHeaders(init?.headers), Authorization: authorization },
+          };
+        }
+      }
+      const response = await authFetch(`${XAA_API_BASE}${path}`, requestInit);
       const body = await readResponseBody(response);
 
       return {
@@ -95,17 +116,26 @@ export function createInspectorXAAStateMachine(
     // Hosted runs mint under the org-scoped issuer (/o/<orgId>) when the user
     // belongs to an organization; local runs and guests stay unscoped.
     organizationId?: string | null;
+    // LOCAL runs only: "hosted" mints via app.mcpjam.com (forwarded by the
+    // local server) so a cloud AS can discover the issuer. Ignored on hosted
+    // builds — hosted IS the hosted issuer.
+    issuerMode?: "local" | "hosted";
   },
 ): XAAStateMachine {
-  const { issuerBaseUrl, organizationId, ...rest } = config;
+  const { issuerBaseUrl, organizationId, issuerMode, ...rest } = config;
+  const hostedIssuerOptIn = !HOSTED_MODE && issuerMode === "hosted";
   const mintPathPrefix =
     HOSTED_MODE && organizationId ? `/o/${organizationId}` : "";
+  const defaultIssuerBaseUrl = hostedIssuerOptIn
+    ? getHostedXaaIdpUrls(organizationId).issuerBaseUrl
+    : `${window.location.origin}${XAA_API_BASE}${mintPathPrefix}`;
   return createXAAStateMachine({
     ...rest,
-    issuerBaseUrl:
-      issuerBaseUrl ??
-      `${window.location.origin}${XAA_API_BASE}${mintPathPrefix}`,
+    issuerBaseUrl: issuerBaseUrl ?? defaultIssuerBaseUrl,
     mintPathPrefix,
-    requestExecutor: createXAADebugRequestExecutor(),
+    ...(hostedIssuerOptIn ? { issuerMode: "hosted", organizationId } : {}),
+    requestExecutor: createXAADebugRequestExecutor({
+      attachHostedBearer: hostedIssuerOptIn,
+    }),
   });
 }

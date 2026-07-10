@@ -41,6 +41,7 @@ import {
 } from "@/lib/xaa/types";
 import { createInspectorXAAStateMachine } from "@/lib/xaa/debug-state-machine-adapter";
 import { fetchXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
+import { HOSTED_MODE } from "@/lib/config";
 import { hashXaaTargetId } from "@/lib/xaa/target-telemetry";
 
 // Captured at module load: the XAA route returns null while the feature flag
@@ -142,6 +143,12 @@ export function XAAFlowTab({
   // ── Global run settings + resolved target ──────────────────────────
   const runSettings = useXaaRunSettings();
   const { user: signedInUser } = useAuth();
+  // Local-only hosted-issuer opt-in: mints route through app.mcpjam.com so a
+  // cloud AS can discover the issuer. Requires a signed-in session — a local
+  // guest bearer is signed with a local key the hosted issuer rejects.
+  const canUseHostedIssuer = !HOSTED_MODE && Boolean(signedInUser);
+  const hostedIssuerOptIn =
+    canUseHostedIssuer && runSettings.issuerMode === "hosted";
   const target = useXaaTestTarget({
     server: selectedServer,
     selectedServerName,
@@ -461,10 +468,20 @@ export function XAAFlowTab({
       ...(target.usesServerSideSecret && target.serverId
         ? { serverId: target.serverId, projectId: target.projectId }
         : {}),
-      issuerBaseUrl: resolvedIssuerBaseUrl,
+      // Hosted-issuer runs let the adapter derive the app.mcpjam.com issuer;
+      // the locally-fetched discovery doc would lint against the wrong `iss`.
+      issuerBaseUrl: hostedIssuerOptIn ? undefined : resolvedIssuerBaseUrl,
       organizationId,
+      issuerMode: hostedIssuerOptIn ? "hosted" : "local",
     });
-  }, [runInput, target, updateFlowState, resolvedIssuerBaseUrl, organizationId]);
+  }, [
+    runInput,
+    target,
+    updateFlowState,
+    resolvedIssuerBaseUrl,
+    organizationId,
+    hostedIssuerOptIn,
+  ]);
 
   const handleAdvance = useCallback(async () => {
     if (!isTestable) {
@@ -557,7 +574,12 @@ export function XAAFlowTab({
 
   return (
     <div className="h-full flex flex-col bg-background">
-      <XAAIdpCard organizationId={organizationId ?? null} />
+      <XAAIdpCard
+        organizationId={organizationId ?? null}
+        issuerMode={runSettings.issuerMode}
+        onIssuerModeChange={runSettings.setIssuerMode}
+        canUseHostedIssuer={canUseHostedIssuer}
+      />
       <XAAResourceAppsSection
         organizationId={organizationId ?? null}
         selectedId={selectedRegistrationId}
@@ -685,7 +707,11 @@ export function XAAFlowTab({
         <NegativeTestScorecard
           input={
             scorecard.input
-              ? { ...scorecard.input, organizationId: organizationId ?? null }
+              ? {
+                  ...scorecard.input,
+                  organizationId: organizationId ?? null,
+                  ...(hostedIssuerOptIn ? { issuerMode: "hosted" as const } : {}),
+                }
               : null
           }
           unlocked={positiveRunTargets.has(targetKey)}

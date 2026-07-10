@@ -1,4 +1,5 @@
 import { HOSTED_MODE } from "@/lib/config";
+import { MCPJAM_HOSTED_APP_ORIGIN } from "@/lib/oauth/constants";
 
 export interface XaaIdpUrls {
   issuerBaseUrl: string;
@@ -21,6 +22,26 @@ export function getOrgScopedIssuerSegment(
   organizationId?: string | null,
 ): string {
   return HOSTED_MODE && organizationId ? `/o/${organizationId}` : "";
+}
+
+/**
+ * The hosted issuer a LOCAL run advertises when the "Use hosted issuer"
+ * opt-in is on: minting is forwarded server-to-server to app.mcpjam.com, so
+ * the token's `iss` (and the JWKS a remote AS fetches) live on the hosted
+ * origin regardless of this build's mode. Signed-in users mint under their
+ * org-scoped issuer; without an org the legacy unscoped issuer applies.
+ * These URLs are constructed, not fetched — hosted CORS blocks a local
+ * browser from reading the hosted discovery doc directly.
+ */
+export function getHostedXaaIdpUrls(organizationId?: string | null): XaaIdpUrls {
+  const issuerBaseUrl = `${MCPJAM_HOSTED_APP_ORIGIN}/api/web/xaa${
+    organizationId ? `/o/${organizationId}` : ""
+  }`;
+  return {
+    issuerBaseUrl,
+    openidConfigUrl: `${issuerBaseUrl}/.well-known/openid-configuration`,
+    jwksUrl: `${issuerBaseUrl}/.well-known/jwks.json`,
+  };
 }
 
 /**
