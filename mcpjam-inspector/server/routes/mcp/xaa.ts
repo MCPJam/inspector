@@ -44,6 +44,7 @@ import type {
   XaaResourceAppSecretResult,
 } from "../../utils/server-secrets.js";
 import { logger } from "../../utils/logger.js";
+import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 
 const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 const NEGATIVE_TEST_CASE_TIMEOUT_MS = 8_000;
@@ -78,12 +79,17 @@ function checkNegativeTestHostCap(host: string): boolean {
 // is rejected rather than normalized.
 const ORG_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
-// Single source of truth for the `:orgId` path check, shared by the public
-// well-known routes and the gated mint routes so they can never validate org
-// ids differently. Returns the validated id or the 400 Response to send.
+// Single source of truth for what a legal org path segment looks like, shared
+// by the well-known routes, the gated mint routes, and the hosted-issuer
+// forward so they can never validate org ids differently.
+function isValidOrgId(value: unknown): value is string {
+  return typeof value === "string" && ORG_ID_RE.test(value);
+}
+
+// Validates the `:orgId` route param; returns the id or the 400 Response.
 function validateOrgSegment(c: Context): string | Response {
   const orgId = c.req.param("orgId");
-  if (!orgId || !ORG_ID_RE.test(orgId)) {
+  if (!isValidOrgId(orgId)) {
     return toJsonError("Invalid organization id in issuer path", {
       status: 400,
       code: "VALIDATION_ERROR",
@@ -308,6 +314,12 @@ interface CreateXaaRouterOptions {
     organizationId: string;
     bearerToken: string;
   }) => Promise<void>;
+  // LOCAL-only: when a mint request carries `issuerMode: "hosted"`, forward it
+  // server-to-server to this hosted origin so the token is signed by the key
+  // the hosted JWKS serves and carries a publicly discoverable `iss`. The
+  // origin is config, never derived from the request. The hosted router never
+  // sets this — hosted IS the hosted issuer and ignores `issuerMode`.
+  forwardHostedIssuer?: { origin: string };
 }
 
 type ParsedJwtPayload = {
@@ -398,6 +410,135 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       router.use("/o/:orgId/negative-tests", ...protectedMiddlewares);
     }
   }
+
+  const HOSTED_FORWARD_TIMEOUT_MS = 15_000;
+
+  // Server-to-server relay of a mint request to the hosted issuer. The local
+  // server is a pure relay: the caller's bearer is forwarded verbatim (only
+  // to the fixed config origin, never to an AS or MCP server) and the hosted
+  // side's middleware + Convex membership check remain the real authz. The
+  // upstream response body/status surface unchanged so hosted 401/403/429
+  // stay explainable in the debugger.
+  const forwardToHostedIssuer = async (
+    c: Context,
+    path: "/authenticate" | "/token-exchange" | "/negative-tests",
+    body: Record<string, unknown>
+  ): Promise<Response> => {
+    const origin = options.forwardHostedIssuer!.origin;
+    const authHeader = c.req.header("authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return toJsonError(
+        "Minting through the hosted issuer requires signing in",
+        { status: 401, code: "UNAUTHORIZED" }
+      );
+    }
+
+    const { issuerMode: _issuerMode, organizationId, ...forwardBody } = body;
+    // Fail closed: the hosted issuer must be the caller's membership-gated
+    // org-scoped issuer. Falling back to the unscoped issuer (mintable by
+    // anyone) would silently mint a forgeable token under the wrong `iss`, so
+    // a missing/invalid org is rejected rather than quietly downgraded.
+    if (!isValidOrgId(organizationId)) {
+      return toJsonError(
+        "Hosted issuer minting requires an active organization",
+        { status: 400, code: "VALIDATION_ERROR" }
+      );
+    }
+    const scopedSegment = `/o/${organizationId}`;
+
+    let upstream: Response;
+    try {
+      upstream = await fetch(
+        `${origin}/api/web/xaa${scopedSegment}${path}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: authHeader,
+          },
+          body: JSON.stringify(forwardBody),
+          signal: AbortSignal.timeout(HOSTED_FORWARD_TIMEOUT_MS),
+        }
+      );
+    } catch (error) {
+      const isTimeout =
+        error instanceof Error &&
+        (error.name === "TimeoutError" || error.name === "AbortError");
+      return toJsonError(
+        isTimeout
+          ? `The hosted issuer did not respond within ${HOSTED_FORWARD_TIMEOUT_MS}ms`
+          : `Failed to reach the hosted issuer: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+        { status: isTimeout ? 504 : 502, code: "SERVER_UNREACHABLE" }
+      );
+    }
+
+    const upstreamText = await upstream.text();
+    let upstreamJson: unknown = null;
+    if (upstreamText) {
+      try {
+        upstreamJson = JSON.parse(upstreamText);
+      } catch {
+        // non-JSON body; handled below
+      }
+    }
+
+    // Preserve auth-relevant upstream headers so a hosted challenge survives
+    // the relay instead of being silently dropped.
+    const relayHeaders: Record<string, string> = {};
+    for (const name of ["www-authenticate", "retry-after"]) {
+      const value = upstream.headers.get(name);
+      if (value) relayHeaders[name] = value;
+    }
+
+    // Forward the hosted status verbatim. The normal case (incl. hosted's
+    // own {code,message} error envelopes) is JSON and passes through. A
+    // non-JSON/empty body still keeps the real status, so a hosted 401/403/429
+    // is never masked as a 502 "unreachable" outage.
+    if (upstreamJson !== null && typeof upstreamJson === "object") {
+      return Response.json(upstreamJson, {
+        status: upstream.status,
+        headers: relayHeaders,
+      });
+    }
+    if (upstream.ok) {
+      return toJsonError("The hosted issuer returned a non-JSON response", {
+        status: 502,
+        code: "SERVER_UNREACHABLE",
+      });
+    }
+    const message =
+      upstreamText.trim().slice(0, 300) ||
+      `The hosted issuer returned HTTP ${upstream.status}`;
+    return Response.json(
+      {
+        code: upstream.status >= 500 ? "SERVER_UNREACHABLE" : "HOSTED_ISSUER_ERROR",
+        message,
+        error: message,
+      },
+      { status: upstream.status, headers: relayHeaders }
+    );
+  };
+
+  // Reads the body (Hono caches it, so the handler's own c.req.json() still
+  // works) and returns the forwarded Response when the request opts into the
+  // hosted issuer; null means "mint locally as usual".
+  const maybeForwardHostedIssuer = async (
+    c: Context,
+    path: "/authenticate" | "/token-exchange" | "/negative-tests"
+  ): Promise<Response | null> => {
+    if (!options.forwardHostedIssuer) return null;
+    const body = await c.req.json().catch(() => null);
+    if (
+      !body ||
+      typeof body !== "object" ||
+      (body as Record<string, unknown>).issuerMode !== "hosted"
+    ) {
+      return null;
+    }
+    return forwardToHostedIssuer(c, path, body as Record<string, unknown>);
+  };
 
   const unscopedIssuer = (c: Context): string =>
     getIssuerForRequest(c, options.issuerBasePath, trustForwardedHeaders);
@@ -511,7 +652,11 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     }
   };
 
-  router.post("/authenticate", (c) => handleAuthenticate(c, unscopedIssuer(c)));
+  router.post("/authenticate", async (c) => {
+    const forwarded = await maybeForwardHostedIssuer(c, "/authenticate");
+    if (forwarded) return forwarded;
+    return handleAuthenticate(c, unscopedIssuer(c));
+  });
 
   const handleTokenExchange = async (c: Context, issuer: string) => {
     try {
@@ -571,9 +716,11 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     }
   };
 
-  router.post("/token-exchange", (c) =>
-    handleTokenExchange(c, unscopedIssuer(c))
-  );
+  router.post("/token-exchange", async (c) => {
+    const forwarded = await maybeForwardHostedIssuer(c, "/token-exchange");
+    if (forwarded) return forwarded;
+    return handleTokenExchange(c, unscopedIssuer(c));
+  });
 
   router.post("/proxy/token", async (c) => {
     try {
@@ -1064,9 +1211,15 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     });
   };
 
-  router.post("/negative-tests", (c) =>
-    handleNegativeTests(c, unscopedIssuer(c))
-  );
+  // Forwarding matters most here: negative tests mint AND fire in one
+  // endpoint, so a local mint would carry the local `iss` and a strict AS
+  // would reject every case for issuer mismatch — a scorecard that "passes"
+  // without testing anything.
+  router.post("/negative-tests", async (c) => {
+    const forwarded = await maybeForwardHostedIssuer(c, "/negative-tests");
+    if (forwarded) return forwarded;
+    return handleNegativeTests(c, unscopedIssuer(c));
+  });
 
   // Org-scoped issuer surface: the same mock IdP under /o/:orgId, where the
   // path segment becomes part of `iss` and minting requires org membership.
@@ -1122,6 +1275,10 @@ const xaa = createXaaRouter({
   // Convex using the caller's bearer; works locally when the user is signed in.
   resolveRegistrationSecret: (args) => fetchXaaResourceAppSecret(args),
   resolveServerSecret: (args) => fetchServerClientSecret(args),
+  // Opt-in per request (issuerMode: "hosted"): mint via app.mcpjam.com so a
+  // cloud AS can discover the issuer — no tunnel needed for the common
+  // local-MCP-server + remote-AS setup.
+  forwardHostedIssuer: { origin: MCPJAM_HOSTED_ORIGIN },
 });
 
 export default xaa;

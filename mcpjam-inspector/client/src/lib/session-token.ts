@@ -310,6 +310,14 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // equivalents are already covered by the `/api/web/` prefix above).
   "/api/mcp/xaa/proxy/token",
   "/api/mcp/xaa/negative-tests",
+  // Local XAA mint paths for the "use hosted issuer" opt-in: the local
+  // server forwards these to app.mcpjam.com with the caller's bearer.
+  // Attaching via authFetch (rather than injecting the header manually) keeps
+  // the on-401 bearer-refresh-and-retry so a stale/expired hosted token
+  // self-heals instead of stranding the flow until a page refresh. Harmless
+  // in pure-local mode: the local mint ignores the header.
+  "/api/mcp/xaa/authenticate",
+  "/api/mcp/xaa/token-exchange",
   // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
   "/web/oauth/",
 ];

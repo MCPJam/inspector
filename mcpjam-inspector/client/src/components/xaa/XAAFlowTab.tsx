@@ -41,6 +41,7 @@ import {
 } from "@/lib/xaa/types";
 import { createInspectorXAAStateMachine } from "@/lib/xaa/debug-state-machine-adapter";
 import { fetchXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
+import { HOSTED_MODE } from "@/lib/config";
 import { hashXaaTargetId } from "@/lib/xaa/target-telemetry";
 
 // Captured at module load: the XAA route returns null while the feature flag
@@ -142,6 +143,24 @@ export function XAAFlowTab({
   // ── Global run settings + resolved target ──────────────────────────
   const runSettings = useXaaRunSettings();
   const { user: signedInUser } = useAuth();
+  // Local-only hosted-issuer opt-in: mints route through app.mcpjam.com so a
+  // cloud AS can discover the issuer. Requires a signed-in session AND an
+  // active org — the hosted mint targets the membership-gated org-scoped
+  // issuer (/o/<orgId>), and the server fails closed without one rather than
+  // downgrading to the forgeable unscoped issuer. (A local guest bearer is
+  // signed with a local key the hosted issuer rejects.)
+  const canUseHostedIssuer =
+    !HOSTED_MODE && Boolean(signedInUser) && Boolean(organizationId);
+  // Why the toggle is disabled — the two gates fail for different reasons and
+  // the hint must name the one the user can act on.
+  const hostedIssuerDisabledReason =
+    HOSTED_MODE || canUseHostedIssuer
+      ? undefined
+      : !signedInUser
+      ? "sign in to mint through the hosted issuer"
+      : "select an organization to mint through the hosted issuer";
+  const hostedIssuerOptIn =
+    canUseHostedIssuer && runSettings.issuerMode === "hosted";
   const target = useXaaTestTarget({
     server: selectedServer,
     selectedServerName,
@@ -151,6 +170,14 @@ export function XAAFlowTab({
   });
   const runInput = target.runInput;
   const { targetKey, isTestable } = target;
+
+  // The positive-run unlock must be specific to the exact issuer the run
+  // exercised: switching issuer mode (local↔hosted) or organization changes
+  // the minted `iss`, so a green run under one must NOT unlock negative tests
+  // under another. Key the gate on target + issuer mode + org.
+  const runGateKey = `${targetKey}|${
+    hostedIssuerOptIn ? "hosted" : "local"
+  }|${organizationId ?? ""}`;
 
   const [flowState, setFlowState] = useState<XAAFlowState>(() =>
     buildFlowStateFromInput(target.runInput)
@@ -216,13 +243,13 @@ export function XAAFlowTab({
       // A green run proves the user holds valid client credentials the AS
       // issued — that authorizes broken-token testing against it.
       setPositiveRunTargets((current) => {
-        if (current.has(targetKey)) return current;
+        if (current.has(runGateKey)) return current;
         const next = new Set(current);
-        next.add(targetKey);
+        next.add(runGateKey);
         return next;
       });
     }
-  }, [flowState.currentStep, authServerModeForTelemetry, targetKey]);
+  }, [flowState.currentStep, authServerModeForTelemetry, runGateKey]);
 
   // ── Negative-test scorecard input ───────────────────────────────────
   const scorecard = useMemo((): {
@@ -461,10 +488,20 @@ export function XAAFlowTab({
       ...(target.usesServerSideSecret && target.serverId
         ? { serverId: target.serverId, projectId: target.projectId }
         : {}),
-      issuerBaseUrl: resolvedIssuerBaseUrl,
+      // Hosted-issuer runs let the adapter derive the app.mcpjam.com issuer;
+      // the locally-fetched discovery doc would lint against the wrong `iss`.
+      issuerBaseUrl: hostedIssuerOptIn ? undefined : resolvedIssuerBaseUrl,
       organizationId,
+      issuerMode: hostedIssuerOptIn ? "hosted" : "local",
     });
-  }, [runInput, target, updateFlowState, resolvedIssuerBaseUrl, organizationId]);
+  }, [
+    runInput,
+    target,
+    updateFlowState,
+    resolvedIssuerBaseUrl,
+    organizationId,
+    hostedIssuerOptIn,
+  ]);
 
   const handleAdvance = useCallback(async () => {
     if (!isTestable) {
@@ -557,7 +594,13 @@ export function XAAFlowTab({
 
   return (
     <div className="h-full flex flex-col bg-background">
-      <XAAIdpCard organizationId={organizationId ?? null} />
+      <XAAIdpCard
+        organizationId={organizationId ?? null}
+        issuerMode={runSettings.issuerMode}
+        onIssuerModeChange={runSettings.setIssuerMode}
+        canUseHostedIssuer={canUseHostedIssuer}
+        hostedIssuerDisabledReason={hostedIssuerDisabledReason}
+      />
       <XAAResourceAppsSection
         organizationId={organizationId ?? null}
         selectedId={selectedRegistrationId}
@@ -685,10 +728,14 @@ export function XAAFlowTab({
         <NegativeTestScorecard
           input={
             scorecard.input
-              ? { ...scorecard.input, organizationId: organizationId ?? null }
+              ? {
+                  ...scorecard.input,
+                  organizationId: organizationId ?? null,
+                  ...(hostedIssuerOptIn ? { issuerMode: "hosted" as const } : {}),
+                }
               : null
           }
-          unlocked={positiveRunTargets.has(targetKey)}
+          unlocked={positiveRunTargets.has(runGateKey)}
           unavailableReason={scorecard.unavailableReason}
         />
       )}

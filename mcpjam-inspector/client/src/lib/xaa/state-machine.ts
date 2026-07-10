@@ -375,6 +375,8 @@ export function createXAAStateMachine(
     serverUrl,
     issuerBaseUrl,
     mintPathPrefix = "",
+    issuerMode,
+    organizationId,
     requestExecutor,
     negativeTestMode,
     userId,
@@ -387,6 +389,14 @@ export function createXAAStateMachine(
     serverId,
     projectId,
   } = config;
+
+  // Body fields the LOCAL server uses to forward the mint to the hosted
+  // issuer (server-to-server); stripped before the upstream call. Hosted
+  // routers ignore them.
+  const hostedIssuerBodyExtras =
+    issuerMode === "hosted"
+      ? { issuerMode, ...(organizationId ? { organizationId } : {}) }
+      : {};
 
   const state: Partial<XAAFlowState> = initialState ?? {};
 
@@ -748,6 +758,7 @@ export function createXAAStateMachine(
         userId: activeUserId,
         email: activeEmail,
         audience: state.clientId || "mcpjam-xaa-debugger",
+        ...hostedIssuerBodyExtras,
       },
     };
 
@@ -842,6 +853,7 @@ export function createXAAStateMachine(
         clientId: state.clientId,
         scope: state.scope,
         negativeTestMode: state.negativeTestMode,
+        ...hostedIssuerBodyExtras,
       },
     };
 
