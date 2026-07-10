@@ -43,6 +43,7 @@ export const routePaths = {
   xaaFlow: "/xaa-flow",
   tracing: "/tracing",
   chatboxes: "/chatboxes",
+  swarms: "/swarms",
   playground: "/playground",
   support: "/support",
   settings: "/settings",
@@ -82,9 +83,14 @@ export function buildHostComparePath(
 export function buildChatboxSessionPath(
   hostId: string,
   threadId: string,
+  // Which product surface the session link should open on. Both surfaces host
+  // a Sessions tab over the same chatbox; the agent Swarm keeps links on
+  // `/swarms` so a shared link doesn't bounce the recipient to the human
+  // Chatbox surface.
+  basePath: string = routePaths.chatboxes,
 ): string {
   const search = new URLSearchParams({ host: hostId, session: threadId });
-  return `${routePaths.chatboxes}?${search.toString()}`;
+  return `${basePath}?${search.toString()}`;
 }
 
 /** Build a path for a specific organization route. */
