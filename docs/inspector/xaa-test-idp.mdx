@@ -6,29 +6,58 @@ icon: "key-round"
 
 When you build an MCP resource server (or an authorization server) that accepts Cross-App Access (XAA) identity assertions, you need an identity provider (IdP) you can point it at. MCPJam ships one. The XAA Debugger plays the IdP for you — it mints ID tokens and signs the short-lived Identity Assertion Authorization Grant (ID-JAG) your authorization server redeems via the JWT-bearer grant (RFC 7523).
 
-To make that work, your authorization server has to **trust** MCPJam as an issuer. This page covers the three endpoints you register to establish that trust.
+MCPJam's mock IdP is a discovery-driven OIDC provider. It supports the `authorization_code` flow (with S256 PKCE) and a `userinfo` endpoint, so any OIDC consumer — for example a Full Stack Auth organization with a custom OIDC SSO connection — can use it as a throwaway test IdP end to end.
 
-## Where to find the endpoints
+**This is a mock.** The sign-in page lets anyone continue as any subject and email; there is no real authentication. Use it to test integrations, never to protect real users or data.
 
-Open the **XAA Flow** tab in MCPJam Inspector. At the top of the tab, expand the **Use MCPJam as your test IdP** card. It lists three copy-able URLs and the active signing key id (`kid`).
+## Issuers
 
-## The three endpoints
+The issuer to register depends on how you're running MCPJam:
 
-| Endpoint | What it is | Where it goes |
-| --- | --- | --- |
-| **Issuer URL** | The `iss` value MCPJam stamps on every assertion. | Register it as a trusted issuer at your authorization server. |
-| **OpenID configuration URL** | The `/.well-known/openid-configuration` document. Advertises the issuer, JWKS URI, and supported grant types. | Most authorization servers discover the JWKS automatically from here. |
-| **JWKS URL** | The public signing keys (`/.well-known/jwks.json`). | Register it directly if your authorization server doesn't auto-discover from the OpenID configuration. |
+| Surface | Issuer URL |
+| --- | --- |
+| Hosted, org-scoped (preferred) | `https://app.mcpjam.com/api/web/xaa/o/<orgId>` |
+| Hosted, unscoped | `https://app.mcpjam.com/api/web/xaa` |
+| Local | `http://localhost:<port>/api/mcp/xaa` (reachable only by local relying parties) |
+
+Discover all endpoints from `<issuer>/.well-known/openid-configuration`.
+
+## Endpoints
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET <issuer>/.well-known/openid-configuration` | Discovery document. Advertises the issuer, JWKS URI, supported grant types, and all OIDC endpoints. |
+| `GET <issuer>/.well-known/jwks.json` | Public signing keys. Register directly if your authorization server doesn't auto-discover from the OpenID configuration. |
+| `GET <issuer>/authorize` | Interstitial sign-in page. Shows the requesting `client_id` and the redirect destination host, with an editable mock identity. Never auto-redirects — the user's explicit click issues the redirect with `?code=…&state=…`. Supports `response_type=code` and optional S256 PKCE. |
+| `POST <issuer>/token` | Form-encoded token endpoint. Accepts `grant_type=authorization_code` (public, no client secret; `code_verifier` required when the code carries a PKCE challenge) and returns `id_token` + `access_token`. Also accepts `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` (RFC 8693) to issue ID-JAGs — see gating below. |
+| `GET <issuer>/userinfo` | Returns `{ sub, email, email_verified }` for a valid Bearer access token. |
 
 ## Registering trust
 
-1. Copy the **Issuer URL** from the card. Also copy the **JWKS URL** if your authorization server asks for the key-set endpoint directly.
-2. In your authorization server — Okta, Auth0, Keycloak, or your own — register MCPJam's **issuer URL** as the trusted identity issuer. The issuer is the trust anchor; use the JWKS URL only when the server explicitly asks for the key-set endpoint.
+1. Copy the **Issuer URL** from the **Use MCPJam as your test IdP** card in the XAA Flow tab.
+2. In your authorization server — Okta, Auth0, Keycloak, or your own — register MCPJam's issuer URL as the trusted identity issuer. Most servers discover the JWKS automatically from the OpenID configuration; copy the **JWKS URL** only if your server asks for the key-set endpoint directly.
 3. Set the ID-JAG `aud` claim to your authorization server's own issuer.
 4. Set the ID-JAG `resource` claim to your MCP server's resource identifier.
 5. Register MCPJam as a client at your authorization server using the client ID from your XAA target configuration.
 
 Once trust is established, run the flow from the XAA Flow tab. The sequence diagram shows each step — SSO, token exchange, JWT-bearer, and the authenticated MCP request — with every token decoded inline.
+
+## Token-exchange gating
+
+The token-exchange grant at `POST /token` issues ID-JAGs, so it inherits the same protection as the issuer's other mint endpoints:
+
+- **Org-scoped hosted issuer**: requires a bearer token belonging to a member of the org. Without it: `invalid_client` / `access_denied`.
+- **Unscoped hosted issuer**: refused (`unsupported_grant_type`) — a public token exchange chained onto the public mock sign-in would let anyone mint ID-JAGs under the shared issuer. Its discovery document advertises `authorization_code` only.
+- **Local**: open (it's your machine).
+
+Where token exchange is served, the discovery document also advertises `identity_chaining_requested_token_types_supported: ["urn:ietf:params:oauth:token-type:id-jag"]` per the Identity Assertion JWT Authorization Grant draft.
+
+## Caveats
+
+- **Authorization codes are stateless signed JWTs** (60-second TTL) so they work across replicas without shared storage. One-time use is not enforced — a replayed code within its 60 seconds re-issues tokens. Acceptable for a mock; don't model replay tests on this endpoint.
+- The subject token for token exchange must be an ID token this issuer signed (signature-verified, unexpired), and its `aud` must match the presenting `client_id`.
+- Public endpoints are rate-limited per IP.
+- The state-changing public endpoints (`/authorize/confirm`, `/token`) reject cross-site browser POSTs (foreign `Origin`), so a third-party page can't drive the flow; a relying party's server-to-server token call (no `Origin`) still works.
 
 ## Vendor notes
 
