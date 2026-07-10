@@ -15,6 +15,7 @@ import {
 } from "../../utils/chat-v2-orchestration.js";
 import { buildDirectHostConfig } from "../../utils/chat-ingestion.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
+import { captureServerEvent } from "../../utils/analytics.js";
 import {
   hostedChatSchema,
   createAuthorizedManager,
@@ -464,6 +465,14 @@ chatV2.post("/", async (c) => {
       // own route (mcpjam-agent.ts) and never lands here.
       const origin = isChatboxSession ? "chatbox" : "playground";
       const isDirectChat = !isChatboxSession;
+
+      // Server twin of the client's `send_message` — fires even when the
+      // browser can't reach PostHog. Identity comes from the authorize
+      // exchange above (createAuthorizedManager populated the log context).
+      captureServerEvent(c, "send_message_server", {
+        origin,
+        source_type: sourceType,
+      });
 
       return await streamWebChatTurn({
         manager,

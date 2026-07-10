@@ -53,6 +53,7 @@ import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal"
 import { createComputerUploadHandler } from "./routes/web/computer-upload";
 import { initComputersStartup } from "./utils/computers/remote-data-plane";
 import { registerSelfFetch } from "./utils/self-app";
+import { shutdownAnalytics } from "./utils/analytics";
 
 const sysLogger = getSystemLogger("process");
 
@@ -746,6 +747,9 @@ async function shutdown() {
     await shutdownRunningSimulations();
     await tunnelManager.closeAll();
     server.close();
+    // Flush queued server-side analytics (bounded internally; forceExitTimer
+    // is the backstop). Billing/funnel events must not die in the queue.
+    await shutdownAnalytics();
     await appLogger.flush();
     clearTimeout(forceExitTimer);
     process.exit(0);
