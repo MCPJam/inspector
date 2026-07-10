@@ -3,23 +3,67 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/inspector",
+          "name": "@mcpjam/sdk",
           "type": "patch"
         }
       ],
-      "summary": "Remove the guest free daily credits block from the sidebar.",
-      "id": "sidebar-guest-credit-block"
+      "summary": "Export shared host image-support mapping for backend catalog seeding.",
+      "id": "bright-hosts-share-images"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/widget-react",
+          "type": "patch"
+        }
+      ],
+      "summary": "Release the latest Inspector, SDK, and widget runtime updates.\n\n- Add voice messages and audio transcription support in Inspector.\n- Add same-origin analytics relay, typed analytics events, and server-side critical event capture.\n- Expand hosted Cloud Skills, evals, and swarm execution flows with better error surfacing, pinned-turn support, and run-source scoped CI views.\n- Harden computer and harness data-plane security, including loopback-only terminal access, token redaction, JWKS-backed terminal token verification, and service-token bootstrapping.\n- Improve host catalog and host compatibility behavior, including image-support mappings, generated fallback catalog support, host update affordances, and safer catalog fallback handling.\n- Improve MCP Apps/widget handling with download confirmation, spec/security polish, and widget runtime behavior fixes.",
+      "id": "release-rollup-2026-07-09"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/inspector",
-      "type": "patch",
-      "oldVersion": "2.22.0",
+      "name": "@mcpjam/sdk",
+      "type": "minor",
+      "oldVersion": "1.29.0",
       "changesets": [
-        "sidebar-guest-credit-block"
+        "bright-hosts-share-images",
+        "release-rollup-2026-07-09"
       ],
-      "newVersion": "2.22.1"
+      "newVersion": "1.30.0"
+    },
+    {
+      "name": "@mcpjam/inspector",
+      "type": "minor",
+      "oldVersion": "2.23.4",
+      "changesets": [
+        "release-rollup-2026-07-09"
+      ],
+      "newVersion": "2.24.0"
+    },
+    {
+      "name": "@mcpjam/widget-react",
+      "type": "patch",
+      "oldVersion": "0.1.1",
+      "changesets": [
+        "release-rollup-2026-07-09"
+      ],
+      "newVersion": "0.1.2"
+    },
+    {
+      "name": "@mcpjam/mcp",
+      "type": "none",
+      "oldVersion": "0.0.1",
+      "changesets": [],
+      "newVersion": "0.0.1"
     }
   ]
 }

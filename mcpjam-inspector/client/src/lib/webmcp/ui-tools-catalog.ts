@@ -12,6 +12,18 @@
  * Tool names live in the reserved `ui_` namespace (see
  * `shared/client-fulfilled-tools.ts`) and must satisfy the server-side
  * `validateUiToolEntries` boundary.
+ *
+ * REGISTRATION POLICY — global, deliberately NOT contextual. Chrome's WebMCP
+ * guidance suggests registering tools only when useful in the current page
+ * state, but that targets content sites where an absent tool is meaningless.
+ * Here every tool is reachable from any state via the auto-open fallback,
+ * and contextual registration would drop the playground tools from the
+ * advertised set whenever the playground is closed — so a one-shot prompt
+ * like "open the playground and run X" (the agent panel's core flow) would
+ * burn an extra model turn waiting for re-advertisement (`snapshotForChatBody`
+ * drains per POST). The registry fully supports scoped registration
+ * (`registerUiTool` with an abort signal; `shippedNames` makes mid-session
+ * unregister hang-safe) if a future surface-scoped tool actually needs it.
  */
 
 import { hasInspectorCommandHandler } from "@/lib/inspector-command-handlers";
@@ -96,6 +108,7 @@ async function ensurePlaygroundOpen(
 }
 
 const DEVICE_TYPES: InspectorAppDeviceType[] = [
+  "fill",
   "mobile",
   "tablet",
   "desktop",
@@ -127,6 +140,7 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         additionalProperties: false,
       },
       readOnly: false,
+      mayNavigate: true,
       execute: async (args) => {
         const target = asOptionalString(args.target);
         if (!target) return errorResult("Missing required 'target' string.");
@@ -169,6 +183,7 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         additionalProperties: false,
       },
       readOnly: false,
+      mayNavigate: true,
       execute: async (args) =>
         fromActionResult(
           await openPlaygroundAction(asOptionalString(args.serverName)),
@@ -177,7 +192,7 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
     {
       name: "ui_select_tool",
       description:
-        "Select an MCP tool in the UI Playground and prefill its parameter form WITHOUT running it. The user sees the form fill in. Opens the playground first if needed.",
+        "Prefill (do not run) an MCP tool's parameter form in the UI Playground — the safe, reversible counterpart of ui_execute_tool. The user sees the form fill in and can review or run it themselves. Opens the playground first if needed.",
       inputSchema: {
         type: "object",
         properties: {
@@ -195,6 +210,9 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         additionalProperties: false,
       },
       readOnly: false,
+      // Auto-opens the playground when its handler isn't mounted — from a
+      // non-playground route that is a navigation.
+      mayNavigate: true,
       execute: async (args) => {
         const toolName = asOptionalString(args.toolName);
         if (!toolName) return errorResult("Missing required 'toolName' string.");
@@ -218,7 +236,7 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
     {
       name: "ui_execute_tool",
       description:
-        "REALLY runs an MCP tool against the user's connected server from the UI Playground and renders the result there. This has real side effects on the user's MCP server. Opens the playground first if needed.",
+        "Execute an MCP tool against the user's connected server from the UI Playground and render the result there. This REALLY runs the tool — real side effects on the user's MCP server. Prefer ui_select_tool when the user has not clearly asked to run it. Opens the playground first if needed.",
       inputSchema: {
         type: "object",
         properties: {
@@ -236,6 +254,9 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         additionalProperties: false,
       },
       readOnly: false,
+      // Auto-opens the playground when its handler isn't mounted — from a
+      // non-playground route that is a navigation.
+      mayNavigate: true,
       execute: async (args) => {
         const toolName = asOptionalString(args.toolName);
         if (!toolName) return errorResult("Missing required 'toolName' string.");
@@ -264,7 +285,12 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         type: "object",
         properties: {
           theme: { type: "string", enum: ["light", "dark"] },
-          deviceType: { type: "string", enum: DEVICE_TYPES },
+          deviceType: {
+            type: "string",
+            enum: DEVICE_TYPES,
+            description:
+              "'fill' = the default, fits the panel; the rest are fixed-size presets.",
+          },
           displayMode: { type: "string", enum: DISPLAY_MODES },
           locale: {
             type: "string",
@@ -278,6 +304,9 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         additionalProperties: false,
       },
       readOnly: false,
+      // Auto-opens the playground when its handler isn't mounted — from a
+      // non-playground route that is a navigation.
+      mayNavigate: true,
       execute: async (args) => {
         const payload: SetAppContextInspectorCommand["payload"] = {};
         const theme = asOptionalString(args.theme);

@@ -1,4 +1,8 @@
 import type { ServerWithName, ConnectionStatus } from "@/state/app-types";
+import {
+  normalizeOAuthProtocolVersion,
+  normalizeOAuthRegistrationStrategy,
+} from "@/lib/oauth/profile";
 
 type SerializeOptions = {
   /**
@@ -54,6 +58,10 @@ function serializeServersInternal(
 
     if (server.xaaAuthzIssuer !== undefined) {
       serializedServer.xaaAuthzIssuer = server.xaaAuthzIssuer;
+    }
+    if (server.xaaAllowPathScopedIssuer !== undefined) {
+      serializedServer.xaaAllowPathScopedIssuer =
+        server.xaaAllowPathScopedIssuer;
     }
     if (server.useXaa !== undefined) {
       serializedServer.useXaa = server.useXaa;
@@ -241,6 +249,12 @@ export function deserializeServersFromConvex(
     if (xaaAuthzIssuer !== undefined) {
       server.xaaAuthzIssuer = xaaAuthzIssuer;
     }
+    const xaaAllowPathScopedIssuer =
+      serverData.xaaAllowPathScopedIssuer ??
+      serverData.config?.xaaAllowPathScopedIssuer;
+    if (xaaAllowPathScopedIssuer !== undefined) {
+      server.xaaAllowPathScopedIssuer = xaaAllowPathScopedIssuer === true;
+    }
     if (serverData.useXaa !== undefined) {
       server.useXaa = serverData.useXaa === true;
     }
@@ -259,13 +273,21 @@ export function deserializeServersFromConvex(
       server.oauthFlowProfile = serverData.oauthFlowProfile;
     }
 
-    // NEW: Handle flat oauthScopes/clientId from servers table
+    // NEW: Handle flat OAuth profile fields from the servers table
     // Convert oauthScopes array to comma-separated string for OAuthTestProfile.scopes
+    const flatProtocolVersion = normalizeOAuthProtocolVersion(
+      serverData.oauthProtocolVersion,
+    );
+    const flatRegistrationStrategy = normalizeOAuthRegistrationStrategy(
+      serverData.oauthRegistrationStrategy,
+    );
     if (
       serverData.oauthScopes ||
       serverData.clientId ||
       serverData.hasClientSecret ||
-      serverData.oauthResourceUrl
+      serverData.oauthResourceUrl ||
+      flatProtocolVersion ||
+      flatRegistrationStrategy
     ) {
       const existingProfile = (server.oauthFlowProfile as any) || {};
       server.oauthFlowProfile = {
@@ -277,6 +299,15 @@ export function deserializeServersFromConvex(
         clientSecret: "",
         resourceUrl:
           serverData.oauthResourceUrl || existingProfile.resourceUrl || "",
+        // Persisted debugger test-profile choices. Absent (legacy rows or an
+        // unknown wire value) keeps the legacy-nested value when present and
+        // otherwise falls to the reader-side defaults (DCR / 2025-11-25).
+        ...(flatProtocolVersion
+          ? { protocolVersion: flatProtocolVersion }
+          : {}),
+        ...(flatRegistrationStrategy
+          ? { registrationStrategy: flatRegistrationStrategy }
+          : {}),
       } as typeof server.oauthFlowProfile;
     }
 
@@ -313,6 +344,15 @@ export function serversHaveChanged(
     const remoteXaaAuthzIssuer =
       remoteServer.xaaAuthzIssuer ?? remoteServer.config?.xaaAuthzIssuer;
     if ((localServer.xaaAuthzIssuer ?? undefined) !== (remoteXaaAuthzIssuer ?? undefined))
+      return true;
+
+    const remoteXaaAllowPathScopedIssuer =
+      remoteServer.xaaAllowPathScopedIssuer ??
+      remoteServer.config?.xaaAllowPathScopedIssuer;
+    if (
+      (localServer.xaaAllowPathScopedIssuer ?? undefined) !==
+      (remoteXaaAllowPathScopedIssuer ?? undefined)
+    )
       return true;
 
     // Get local URL

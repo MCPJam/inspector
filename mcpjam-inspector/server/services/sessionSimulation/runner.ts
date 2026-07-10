@@ -84,7 +84,8 @@ async function tryUpdateRunWithRetry(
     | "failed"
     | "rate_limited"
     | undefined,
-  context: string
+  context: string,
+  errorMessage?: string
 ): Promise<void> {
   try {
     await updateRun(
@@ -93,7 +94,8 @@ async function tryUpdateRunWithRetry(
       projectId,
       runId,
       delta,
-      status
+      status,
+      errorMessage
     );
     return;
   } catch (err) {
@@ -113,7 +115,8 @@ async function tryUpdateRunWithRetry(
       projectId,
       runId,
       delta,
-      status
+      status,
+      errorMessage
     );
   } catch (err) {
     logger.error("[sessionSimulation.runner] updateRun failed after retry", {
@@ -354,6 +357,10 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
   let totalSucceeded = 0;
   let totalFailed = 0;
   let totalRateLimited = 0;
+  // First failure diagnostic — persisted onto the run record so the dialog
+  // can show *why* sessions failed (e.g. an org-resolve rejection) instead
+  // of a bare "Failed" while the real message rots in server logs.
+  let firstErrorMessage: string | undefined;
 
   const heartbeat = setInterval(() => {
     if (abortSignal?.aborted) return;
@@ -371,7 +378,7 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
     outer: for (const persona of personas) {
       for (let sessionIdx = 0; sessionIdx < sessionsPerPersona; sessionIdx++) {
         if (abortSignal?.aborted) break outer;
-        const outcome = await runOneSession({
+        const { outcome, errorMessage } = await runOneSession({
           persona,
           sessionIdx,
           runId,
@@ -401,6 +408,13 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
         else if (outcome === "rate_limited") totalRateLimited++;
         else totalFailed++;
 
+        // Persist the first failure's message with its own progress write
+        // so the dialog surfaces the diagnostic while the run is still
+        // going, not only at the terminal update.
+        const carriesFirstError =
+          outcome === "failed" && !firstErrorMessage && !!errorMessage;
+        if (carriesFirstError) firstErrorMessage = errorMessage;
+
         await tryUpdateRunWithRetry(
           convexHttpUrl,
           convexAuthToken,
@@ -412,7 +426,8 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
             rateLimited: outcome === "rate_limited" ? 1 : 0,
           },
           undefined,
-          "per-session-progress"
+          "per-session-progress",
+          carriesFirstError ? firstErrorMessage : undefined
         );
 
         if (outcome === "rate_limited") {
@@ -441,12 +456,14 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
       runId,
       {},
       status,
-      "final-status"
+      "final-status",
+      totalFailed > 0 ? firstErrorMessage : undefined
     );
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     logger.error("[sessionSimulation.runner] run failed", {
       runId,
-      error: error instanceof Error ? error.message : String(error),
+      error: message,
     });
     await tryUpdateRunWithRetry(
       convexHttpUrl,
@@ -455,7 +472,10 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
       runId,
       {},
       "failed",
-      "run-failed"
+      "run-failed",
+      // Run-level abort (setup/heartbeat-adjacent crash) trumps any earlier
+      // per-session diagnostic — it explains why the run stopped.
+      message
     );
   } finally {
     clearInterval(heartbeat);
@@ -463,6 +483,14 @@ async function runSimulationLoop(opts: RunSimulationOptions): Promise<void> {
 }
 
 type SessionOutcome = "succeeded" | "failed" | "rate_limited";
+
+// `errorMessage` rides along on failures so the batch loop can persist the
+// first one onto the run record (RunRecord.error) — previously the message
+// only reached server logs and the dialog rendered a bare "Failed".
+interface SessionResult {
+  outcome: SessionOutcome;
+  errorMessage?: string;
+}
 
 async function runOneSession(args: {
   persona: PersonaSlate;
@@ -488,7 +516,7 @@ async function runOneSession(args: {
   authHeader: string;
   managerFactory: SimulationManagerFactory;
   abortSignal?: AbortSignal;
-}): Promise<SessionOutcome> {
+}): Promise<SessionResult> {
   const {
     persona,
     sessionIdx,
@@ -592,6 +620,7 @@ async function runOneSession(args: {
         isGuest: false,
         harness,
         modelId: String(modelDefinition.id),
+        provider: modelDefinition.provider,
         hasProjectId: Boolean(projectId),
       });
 
@@ -645,7 +674,7 @@ async function runOneSession(args: {
     let sessionModelSource: SyntheticModelSource | undefined;
 
     for (let turn = 0; turn < maxTurns; turn++) {
-      if (abortSignal?.aborted) return "failed";
+      if (abortSignal?.aborted) return { outcome: "failed" };
 
       const next = await personaNextTurn(
         convexHttpUrl,
@@ -865,11 +894,11 @@ async function runOneSession(args: {
       });
     }
 
-    return "succeeded";
+    return { outcome: "succeeded" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (/rate.?limit|spend|cap/i.test(message)) {
-      return "rate_limited";
+      return { outcome: "rate_limited" };
     }
     logger.warn("[sessionSimulation.runner] session failed", {
       runId,
@@ -877,7 +906,7 @@ async function runOneSession(args: {
       sessionIdx,
       error: message,
     });
-    return "failed";
+    return { outcome: "failed", errorMessage: message };
   } finally {
     // Tear down the browser harness (and its headless Chromium, if launched)
     // before the manager: the harness's widget bridge dispatches tools/call

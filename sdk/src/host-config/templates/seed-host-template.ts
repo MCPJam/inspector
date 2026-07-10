@@ -1,16 +1,13 @@
 /**
  * Node-safe host-template seeds for built-in MCPJam host presets.
  *
- * GENERATED-FROM (verbatim port): inspector client
- * `client/src/lib/client-templates.ts`. Moved into the SDK so the server's
- * `--template` resolver and the CLI can seed a host config in Node without
- * importing browser-only client code. The client re-exports `seedHostTemplate`
- * from here (delegating its UI templates) so the seed logic has one source of
- * truth; UI-only metadata (logos) stays client-side.
+ * Historical origin: this was ported from the old inspector client template
+ * adapter. It now remains in the SDK for CLI/dev fallback paths; normal product
+ * host creation reads the backend-owned host catalog instead.
  *
  * Two deliberate edits vs the client source: the Vite `__APP_VERSION__`
- * constant is parametrized as `opts.appVersion`, and the UI `logoSrc` metadata
- * is dropped. A parity test asserts byte-identical output vs the client seeds.
+ * The old Vite `__APP_VERSION__` constant is parametrized as
+ * `opts.appVersion`, and UI `logoSrc` metadata is kept client-side.
  */
 
 import {

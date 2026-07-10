@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { usePostHog } from "posthog-js/react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { authFetch } from "@/lib/session-token";
 import { toast } from "@/lib/toast";
 import { AlertTriangle, Loader2, Sparkles } from "lucide-react";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
@@ -23,8 +23,6 @@ import {
   usePersonaRoster,
   useSortedRoster,
 } from "@/components/chatboxes/personas";
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:6274";
 
 // Mirrors the backend MAX_PERSONA_COUNT and the /start `.max(10)` validator.
 const MAX_PERSONAS = 10;
@@ -76,7 +74,6 @@ export function GenerateSessionsDialog({
   chatbox,
   initialPersonas,
 }: GenerateSessionsDialogProps) {
-  const { getAccessToken } = useAuth();
   const posthog = usePostHog();
 
   const [stage, setStage] = useState<DialogStage>("configure");
@@ -146,13 +143,23 @@ export function GenerateSessionsDialog({
   }));
   const hasRequiredServers = serversPayload.some((s) => !s.optional);
 
+  // An unpinned host persists modelId "" — synthetic sessions have no
+  // visitor picker to fall back to (unlike interactive chat), so the run
+  // is doomed before it starts. Gate both action buttons and show the
+  // fix-it notice instead of letting the user sail into a run where every
+  // session fails. The /start route enforces the same guard server-side.
+  const hasNoModel = !chatbox.modelId.trim();
+
   // BYOK is now supported on synthetic runs — the runner dispatches
   // org-BYOK models through /stream/org (or local-usage writeback) and
   // the backend forwarder stamps synthesisRunId onto the resulting
   // llmUsageRecord. The flag is kept to (a) show a spend-warning
   // notice so users know provider credits will be consumed, and (b)
-  // render the rough cost preview below.
-  const isByokChatbox = !isMCPJamProvidedModel(chatbox.modelId);
+  // render the rough cost preview below. A modelless chatbox is NOT
+  // BYOK — without the hasNoModel exclusion, isMCPJamProvidedModel("")
+  // → false used to show the org-key spend warning for a chatbox that
+  // has no model at all.
+  const isByokChatbox = !hasNoModel && !isMCPJamProvidedModel(chatbox.modelId);
 
   // Rough cost estimate (not an upper bound — uses a single blended
   // midpoint rate with no safety multiplier, so it can under-estimate
@@ -195,11 +202,6 @@ export function GenerateSessionsDialog({
     setStage("review");
   }
 
-  async function authHeader(): Promise<Record<string, string>> {
-    const token = await getAccessToken();
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  }
-
   async function handleGenerate() {
     setGenerating(true);
     posthog.capture("chatbox_generate_personas_started", {
@@ -208,14 +210,16 @@ export function GenerateSessionsDialog({
       persona_count: personaCount,
     });
     try {
-      const response = await fetch(
-        `${API_BASE}/api/web/chatboxes/${chatbox.chatboxId}/generate-personas`,
+      // Same-origin relative path via authFetch: the Vite dev proxy forwards
+      // `/api` locally, and authFetch attaches the right bearer (WorkOS,
+      // guest, or local session) only to allowlisted origins.
+      const response = await authFetch(
+        `/api/web/chatboxes/${encodeURIComponent(
+          chatbox.chatboxId
+        )}/generate-personas`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(await authHeader()),
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             projectId: chatbox.projectId,
             servers: serversPayload,
@@ -263,14 +267,13 @@ export function GenerateSessionsDialog({
     runStartAt.current = Date.now();
     setStarting(true);
     try {
-      const response = await fetch(
-        `${API_BASE}/api/web/chatboxes/${chatbox.chatboxId}/simulate-sessions/start`,
+      const response = await authFetch(
+        `/api/web/chatboxes/${encodeURIComponent(
+          chatbox.chatboxId
+        )}/simulate-sessions/start`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(await authHeader()),
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             projectId: chatbox.projectId,
             servers: serversPayload,
@@ -317,18 +320,13 @@ export function GenerateSessionsDialog({
     if (pollTimer.current) clearInterval(pollTimer.current);
     pollTimer.current = setInterval(async () => {
       try {
-        const response = await fetch(
-          `${API_BASE}/api/web/chatboxes/${
+        const response = await authFetch(
+          `/api/web/chatboxes/${encodeURIComponent(
             chatbox.chatboxId
-          }/simulate-sessions/${runId}?projectId=${encodeURIComponent(
-            chatbox.projectId
-          )}`,
-          {
-            method: "GET",
-            headers: {
-              ...(await authHeader()),
-            },
-          }
+          )}/simulate-sessions/${encodeURIComponent(
+            runId
+          )}?projectId=${encodeURIComponent(chatbox.projectId)}`,
+          { method: "GET" }
         );
         if (!response.ok) {
           setPollError(`Last update failed (${response.status})`);
@@ -400,6 +398,16 @@ export function GenerateSessionsDialog({
 
         {stage === "configure" ? (
           <div className="space-y-4">
+            {hasNoModel ? (
+              <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  This chatbox&apos;s host has no model selected. Pick a model
+                  on the host&apos;s Behavior tab, then come back to run
+                  sessions.
+                </span>
+              </div>
+            ) : null}
             {/* Stage 1 — roster selection. Pick saved characters to run, or
                 generate a fresh slate below. */}
             {roster && roster.length > 0 ? (
@@ -550,7 +558,14 @@ export function GenerateSessionsDialog({
               <Button variant="outline" size="sm" onClick={onClose}>
                 Cancel
               </Button>
-              <Button size="sm" onClick={handleGenerate} disabled={generating}>
+              <Button
+                size="sm"
+                onClick={handleGenerate}
+                // hasNoModel: persona generation itself would succeed (it
+                // runs on the backend's own LLM), but the subsequent run
+                // can't — block here so the user isn't led into a dead end.
+                disabled={generating || hasNoModel}
+              >
                 {generating ? (
                   <>
                     <Loader2 className="mr-1 size-3 animate-spin" /> Generating
@@ -565,6 +580,19 @@ export function GenerateSessionsDialog({
 
         {stage === "review" ? (
           <div className="space-y-3">
+            {/* No-model notice — also shown here because the Personas-tab
+                "Run swarm" path opens straight at Review, bypassing the
+                configure-stage notice. */}
+            {hasNoModel ? (
+              <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  This chatbox&apos;s host has no model selected. Pick a model
+                  on the host&apos;s Behavior tab, then come back to run
+                  sessions.
+                </span>
+              </div>
+            ) : null}
             {/* BYOK spend warning — also shown here because the Personas-tab
                 "Run swarm" path opens straight at Review, bypassing the
                 configure-stage warning. */}
@@ -657,6 +685,7 @@ export function GenerateSessionsDialog({
                   onClick={handleRun}
                   disabled={
                     starting ||
+                    hasNoModel ||
                     selectedReviewCount === 0 ||
                     selectedReviewCount > MAX_PERSONAS
                   }

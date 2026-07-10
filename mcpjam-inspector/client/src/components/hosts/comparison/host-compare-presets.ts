@@ -1,16 +1,18 @@
-import type { HostThemeMode } from "@/lib/client-styles/types";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import type { HostListItem } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
-import { HOST_TEMPLATES, type HostTemplateId } from "@/lib/client-templates";
+import {
+  getCatalogHosts,
+  getCatalogTemplate,
+  type HostCompatCatalog,
+} from "@mcpjam/sdk/host-compat";
 
 /**
  * Static host profiles surfaced in Host Compare so a user can compare against
  * Claude / ChatGPT / Cursor / Copilot / Codex … without having created (or
- * connected) those hosts — the same "best-effort host profiles" the server
- * detail modal's Hosts tab renders from `HOST_TEMPLATES`. Each preset is a
- * synthetic, immediately-available comparison subject derived from a template
- * `seed()`, never a real `hosts:listHosts` row.
+ * connected) those hosts. Each preset is a synthetic, immediately-available
+ * comparison subject derived from the catalog host row, never a real
+ * `hosts:listHosts` row.
  */
 
 /** Prefix that marks a synthetic preset host id (`preset:claude`, …). Chosen so
@@ -29,40 +31,36 @@ export interface PresetCompareEntries {
 }
 
 interface PresetCompareOptions {
-  excludedTemplateIds?: ReadonlySet<HostTemplateId>;
+  excludedTemplateIds?: ReadonlySet<string>;
 }
 
 /**
- * Build the preset selector chips + their comparison subjects from the host
- * template catalog. A template `seed()` returns a `HostConfigInputV2`, which is
- * structurally a `HostConfigDtoV2` minus the persisted `id` / `schemaVersion`
- * — the matrix only reads the shared config fields, so we stamp synthetic
- * values and use it directly instead of round-tripping through a real host.
- *
- * `theme` threads MCPJam's current theme into each seed so preset configs match
- * the rest of the app, mirroring the Hosts-tab CTA's `seedFromHostTemplate`.
+ * Build the preset selector chips + their comparison subjects from the live
+ * host catalog. The matrix reads the same host object used for creation/update,
+ * with only synthetic persisted fields stamped on for comparison.
  */
 export function buildPresetCompareEntries(
-  theme: HostThemeMode,
+  catalog: HostCompatCatalog,
   options: PresetCompareOptions = {},
 ): PresetCompareEntries {
   const hosts: HostListItem[] = [];
   const subjects: Record<string, HostComparisonSubject> = {};
 
-  for (const template of HOST_TEMPLATES) {
-    if (options.excludedTemplateIds?.has(template.id)) continue;
+  for (const host of getCatalogHosts(catalog)) {
+    if (options.excludedTemplateIds?.has(host.id)) continue;
 
-    const hostId = `${PRESET_HOST_ID_PREFIX}${template.id}`;
-    const input = template.seed({ theme });
+    const hostId = `${PRESET_HOST_ID_PREFIX}${host.id}`;
+    const input = getCatalogTemplate(catalog, host.id);
+    if (!input) continue;
     const config: HostConfigDtoV2 = {
       ...input,
       id: hostId,
       schemaVersion: 2,
-    };
+    } as HostConfigDtoV2;
 
     hosts.push({
       hostId,
-      name: template.label,
+      name: host.label,
       hostConfigId: hostId,
       modelId: config.modelId,
       serverCount: 0,
@@ -72,9 +70,9 @@ export function buildPresetCompareEntries(
 
     subjects[hostId] = {
       hostId,
-      hostName: template.label,
+      hostName: host.label,
       hostStyle: config.hostStyle,
-      configHashShort: template.id,
+      configHashShort: host.id,
       config,
     };
   }

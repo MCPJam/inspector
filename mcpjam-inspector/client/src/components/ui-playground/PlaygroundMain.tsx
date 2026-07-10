@@ -104,6 +104,7 @@ import {
   type HostDetail,
 } from "@/hooks/useClients";
 import {
+  DEFAULT_SEEDED_HOST_MODEL_ID,
   emptyHostConfigInputV2,
   gateMcpToolResultImageRenderingByModelVisibility,
 } from "@/lib/client-config-v2";
@@ -768,6 +769,7 @@ export function PlaygroundMain({
     resumedVersion,
     restoredToolRenderOverrides,
     status,
+    authHeaders,
   } = useChatSession({
     selectedServers,
     directVisibility: pendingDirectVisibility,
@@ -1062,7 +1064,9 @@ export function PlaygroundMain({
     createPlaygroundHost({
       projectId: multiHostProjectId,
       name: "MCPJam",
-      input: emptyHostConfigInputV2(),
+      // Pin a cheap default model — see HostOverlayBar's seed for why a
+      // modelless default host breaks synthetic/swarm runs.
+      input: emptyHostConfigInputV2({ modelId: DEFAULT_SEEDED_HOST_MODEL_ID }),
     })
       .then(({ hostId }) => {
         setPreviewedHostId(hostId);
@@ -3243,6 +3247,15 @@ export function PlaygroundMain({
     onReconnectServer: playgroundServerSelectorProps?.onReconnect,
     onDisconnectServer: playgroundServerSelectorProps?.onDisconnect,
     onAddServer: playgroundServerSelectorProps?.onConnect,
+    voiceInputContext: convexProjectId
+      ? {
+          projectId: convexProjectId,
+          ...(hostedSelectedServerIds.length > 0
+            ? { selectedServerIds: hostedSelectedServerIds }
+            : {}),
+        }
+      : undefined,
+    voiceInputAuthHeaders: authHeaders,
   };
 
   // Check if widget should take over the full container

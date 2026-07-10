@@ -82,6 +82,7 @@ function execTool(
 beforeEach(() => {
   vi.stubEnv("CONVEX_HTTP_URL", CONVEX_URL);
   vi.stubEnv("COMPUTERS_DATA_PLANE_SECRET", "test-data-plane-secret-000000");
+  vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "terminal-secret-16+");
   vi.stubEnv("E2B_API_KEY", "e2b_test");
   installFetchStub();
 });

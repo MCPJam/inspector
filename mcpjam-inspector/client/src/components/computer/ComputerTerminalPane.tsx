@@ -2,6 +2,8 @@ import { Button } from "@mcpjam/design-system/button";
 import { Loader2, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ComputerTerminal } from "./ComputerTerminal";
+import { ComputersUnavailableMessage } from "./ComputersUnavailableMessage";
+import { PaneMessage } from "./PaneMessage";
 import type { ComputerTerminalController } from "./useComputerTerminal";
 
 /**
@@ -39,17 +41,7 @@ export function ComputerTerminalPane({
 
   const body = () => {
     if (dataPlaneUnavailable) {
-      return (
-        <PaneMessage dashed>
-          <span className="max-w-md text-center">
-            This inspector server isn't set up to run computers: it has no
-            data-plane credentials and no remote data plane to delegate to. Set{" "}
-            <code>COMPUTERS_REMOTE_DATA_PLANE_URL</code> (or the data-plane
-            secrets) in the server environment to enable the terminal and the
-            bash tool.
-          </span>
-        </PaneMessage>
-      );
+      return <ComputersUnavailableMessage />;
     }
     if (!terminalOpen) {
       return (
@@ -143,22 +135,4 @@ export function ComputerTerminalPane({
   };
 
   return <div className={cn("min-h-0 flex-1", className)}>{body()}</div>;
-}
-
-export function PaneMessage({
-  children,
-  dashed = false,
-}: {
-  children: React.ReactNode;
-  dashed?: boolean;
-}) {
-  return (
-    <div
-      className={`flex h-full flex-col items-center justify-center gap-3 rounded-md border text-sm text-muted-foreground ${
-        dashed ? "border-dashed bg-muted/10" : "bg-muted/20"
-      }`}
-    >
-      {children}
-    </div>
-  );
 }

@@ -29,6 +29,10 @@ export interface OAuthTokensFromFlow {
   expiresIn?: number;
   clientId?: string;
   clientSecret?: string;
+  // AS URL discovered during the debugger flow. Forwarded to the hosted
+  // backend so it can refresh without re-discovering against a resource it
+  // can't reach itself (e.g. localhost).
+  authorizationServerUrl?: string;
 }
 
 declare global {
@@ -281,15 +285,21 @@ export const OAuthFlowTab = ({
       customScopes: profile.scopes.trim() || undefined,
       customHeaders,
       registrationStrategy,
+      preregisteredClientId: profile.clientId.trim() || undefined,
+      preregisteredClientSecret: profile.clientSecret.trim() || undefined,
+      hasClientSecret: Boolean(activeServer?.hasClientSecret),
     });
   }, [
     hasProfile,
     protocolVersion,
     profile.serverUrl,
     profile.scopes,
+    profile.clientId,
+    profile.clientSecret,
     serverIdentifier,
     customHeaders,
     registrationStrategy,
+    activeServer?.hasClientSecret,
     updateOAuthFlowState,
   ]);
 
@@ -363,6 +373,7 @@ export const OAuthFlowTab = ({
       expiresIn: oauthFlowState.expiresIn,
       clientId: oauthFlowState.clientId,
       clientSecret: oauthFlowState.clientSecret,
+      authorizationServerUrl: oauthFlowState.authorizationServerUrl,
     }),
     [
       oauthFlowState.accessToken,
@@ -371,6 +382,7 @@ export const OAuthFlowTab = ({
       oauthFlowState.expiresIn,
       oauthFlowState.clientId,
       oauthFlowState.clientSecret,
+      oauthFlowState.authorizationServerUrl,
     ],
   );
 

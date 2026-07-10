@@ -302,3 +302,76 @@ describe("project-serialization xaaAuthzIssuer round-trip", () => {
     ).toBe(true);
   });
 });
+
+describe("OAuth test-profile round-trip (protocol version + registration strategy)", () => {
+  it("restores persisted strategy and protocol version from flat Convex columns", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "prereg",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+        clientId: "client_abc",
+        oauthScopes: ["openid", "email"],
+        oauthProtocolVersion: "2025-06-18",
+        oauthRegistrationStrategy: "preregistered",
+      },
+    ]);
+
+    const profile = servers.prereg.oauthFlowProfile!;
+    expect(profile.registrationStrategy).toBe("preregistered");
+    expect(profile.protocolVersion).toBe("2025-06-18");
+    expect(profile.clientId).toBe("client_abc");
+  });
+
+  it("builds a profile even when only the strategy columns are present", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "cimd-only",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+        oauthRegistrationStrategy: "cimd",
+      },
+    ]);
+
+    expect(servers["cimd-only"].oauthFlowProfile?.registrationStrategy).toBe(
+      "cimd",
+    );
+  });
+
+  it("ignores unknown wire values so the reader-side defaults apply", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "future",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+        clientId: "client_abc",
+        oauthProtocolVersion: "2099-01-01",
+        oauthRegistrationStrategy: "quantum",
+      },
+    ]);
+
+    const profile = servers.future.oauthFlowProfile as any;
+    expect(profile.registrationStrategy).toBeUndefined();
+    expect(profile.protocolVersion).toBeUndefined();
+    expect(profile.clientId).toBe("client_abc");
+  });
+
+  it("legacy rows without the columns keep no strategy on the profile", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "legacy",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+        clientId: "client_abc",
+      },
+    ]);
+
+    const profile = servers.legacy.oauthFlowProfile as any;
+    expect(profile.registrationStrategy).toBeUndefined();
+    expect(profile.protocolVersion).toBeUndefined();
+  });
+});

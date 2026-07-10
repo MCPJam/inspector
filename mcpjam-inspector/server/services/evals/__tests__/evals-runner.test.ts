@@ -1297,6 +1297,135 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(Object.keys(options.builtInTools!)).toEqual(["web_search"]);
   });
 
+  it("threads the host progressiveToolDiscovery toggle into prepareChatV2 on the backend path", async () => {
+    // The host page's "progressive tool discovery" switch must reach the
+    // eval engine. Pre-fix the runner dropped it, so prepareChatV2 fell
+    // back to "auto" and minted search/load meta-tools whenever the tool
+    // set crossed the auto thresholds — even for hosts that disabled it.
+    fetchMock.mockResolvedValue(createBackendStreamResponse());
+    const orchestration = await import("../../../utils/chat-v2-orchestration");
+    const prepareMock = vi.mocked(orchestration.prepareChatV2);
+
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: {},
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+      suiteHostConfig: { progressiveToolDiscovery: false },
+    });
+
+    expect(prepareMock).toHaveBeenCalled();
+    const options = prepareMock.mock.calls[0]?.[0] as {
+      progressiveToolDiscovery?: { enabled?: boolean };
+    };
+    expect(options.progressiveToolDiscovery).toEqual({ enabled: false });
+  });
+
+  it("threads an enabled progressiveToolDiscovery toggle into prepareChatV2 on the local BYOK path", async () => {
+    const orchestration = await import("../../../utils/chat-v2-orchestration");
+    const prepareMock = vi.mocked(orchestration.prepareChatV2);
+
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            model: "gpt-4-turbo",
+            provider: "openai",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+      suiteHostConfig: { progressiveToolDiscovery: true },
+    });
+
+    expect(prepareMock).toHaveBeenCalled();
+    const options = prepareMock.mock.calls[0]?.[0] as {
+      progressiveToolDiscovery?: { enabled?: boolean };
+    };
+    expect(options.progressiveToolDiscovery).toEqual({ enabled: true });
+  });
+
+  it("omits progressiveToolDiscovery when the host config has no explicit value", async () => {
+    // Absent must stay absent — prepareChatV2's "auto" thresholds are the
+    // intended default when a host never touched the toggle (a host UI
+    // "default" serializes to undefined, not false).
+    fetchMock.mockResolvedValue(createBackendStreamResponse());
+    const orchestration = await import("../../../utils/chat-v2-orchestration");
+    const prepareMock = vi.mocked(orchestration.prepareChatV2);
+
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: {},
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+      suiteHostConfig: { systemPrompt: "hi" },
+    });
+
+    expect(prepareMock).toHaveBeenCalled();
+    const options = prepareMock.mock.calls[0]?.[0] as {
+      progressiveToolDiscovery?: { enabled?: boolean };
+    };
+    expect(options.progressiveToolDiscovery).toBeUndefined();
+  });
+
   it("runs org BYOK cloud eval models through Convex without raw provider keys", async () => {
     // Same migration as the previous test: assert against the engine's
     // `mode:"stream"` SSE request, not the legacy `mode:"step"` JSON. The

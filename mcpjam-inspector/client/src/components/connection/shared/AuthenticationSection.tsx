@@ -67,6 +67,8 @@ interface AuthenticationSectionProps {
   // above; these are XAA-specific.
   xaaAuthzIssuer?: string;
   onXaaAuthzIssuerChange?: (value: string) => void;
+  xaaAllowPathScopedIssuer?: boolean;
+  onXaaAllowPathScopedIssuerChange?: (value: boolean) => void;
   xaaSubject?: string;
   onXaaSubjectChange?: (value: string) => void;
   xaaEmail?: string;
@@ -127,6 +129,8 @@ export function AuthenticationSection({
   hostedServerId = null,
   xaaAuthzIssuer = "",
   onXaaAuthzIssuerChange,
+  xaaAllowPathScopedIssuer = false,
+  onXaaAllowPathScopedIssuerChange,
   xaaSubject = "",
   onXaaSubjectChange,
   xaaEmail = "",
@@ -494,6 +498,11 @@ export function AuthenticationSection({
                     value={oauthScopesInput}
                     onChange={(e) => onOauthScopesChange(e.target.value)}
                     placeholder="Optional scopes separated by spaces"
+                    spellCheck={false}
+                    autoComplete="off"
+                    data-1p-ignore
+                    data-lpignore="true"
+                    data-form-type="other"
                     className="h-10"
                   />
                 </div>
@@ -518,6 +527,11 @@ export function AuthenticationSection({
                             ? true
                             : undefined
                         }
+                        spellCheck={false}
+                        autoComplete="off"
+                        data-1p-ignore
+                        data-lpignore="true"
+                        data-form-type="other"
                         className={`h-10 ${clientIdError ? "border-red-500" : ""}`}
                       />
                       {clientIdError && (
@@ -602,6 +616,11 @@ export function AuthenticationSection({
                               }}
                               placeholder="Enter a new value to replace."
                               data-testid="revealed-client-secret"
+                              spellCheck={false}
+                              autoComplete="off"
+                              data-1p-ignore
+                              data-lpignore="true"
+                              data-form-type="other"
                               className={`h-10 pr-16 font-mono ${clientSecretError ? "border-red-500" : ""}`}
                             />
                             <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
@@ -667,6 +686,11 @@ export function AuthenticationSection({
                               ? "Enter a new value to replace."
                               : "Your OAuth Client Secret"
                           }
+                          spellCheck={false}
+                          autoComplete="off"
+                          data-1p-ignore
+                          data-lpignore="true"
+                          data-form-type="other"
                           className={`h-10 ${clientSecretError ? "border-red-500" : ""}`}
                         />
                       )}
@@ -704,6 +728,10 @@ export function AuthenticationSection({
               onScopesChange={onOauthScopesChange}
               xaaAuthzIssuer={xaaAuthzIssuer}
               onXaaAuthzIssuerChange={(v) => onXaaAuthzIssuerChange?.(v)}
+              xaaAllowPathScopedIssuer={xaaAllowPathScopedIssuer}
+              onXaaAllowPathScopedIssuerChange={(v) =>
+                onXaaAllowPathScopedIssuerChange?.(v)
+              }
               xaaSubject={xaaSubject}
               onXaaSubjectChange={(v) => onXaaSubjectChange?.(v)}
               xaaEmail={xaaEmail}

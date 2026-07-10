@@ -24,6 +24,7 @@ const {
   getStoredTokensMock,
   getInitializationInfoMock,
   mockUseDbUserReady,
+  posthogCaptureMock,
 } = vi.hoisted(() => ({
   reconnectServerMock: vi.fn(),
   tryResolveProjectServerMock: vi.fn<
@@ -32,6 +33,7 @@ const {
   getStoredTokensMock: vi.fn(),
   getInitializationInfoMock: vi.fn(),
   mockUseDbUserReady: vi.fn(() => true),
+  posthogCaptureMock: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({
@@ -44,6 +46,10 @@ vi.mock("convex/react", () => ({
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: mockUseDbUserReady,
+}));
+
+vi.mock("posthog-js/react", () => ({
+  usePostHog: () => ({ capture: posthogCaptureMock }),
 }));
 
 vi.mock("@/state/mcp-api", () => ({
@@ -160,7 +166,7 @@ function buildHostConfig(overrides?: HostOverrides): any {
 
 function renderRevalidationHook(
   dispatch: (action: AppAction) => void,
-  initial: { profile: Profile; hostConfig: any },
+  initial: { profile: Profile; hostConfig: any }
 ) {
   const appState = buildConnectedAppState();
   const state = { ...initial };
@@ -186,7 +192,7 @@ function renderRevalidationHook(
       activeMcpProfile: state.profile as any,
       activeHostConfig: state.hostConfig,
       logger,
-    }),
+    })
   );
   return {
     ...hook,
@@ -224,6 +230,7 @@ beforeEach(() => {
     initInfo: null,
   });
   mockUseDbUserReady.mockReturnValue(true);
+  posthogCaptureMock.mockReset();
 });
 
 describe("useServerState mcpProtocolVersion re-validation", () => {
@@ -237,10 +244,10 @@ describe("useServerState mcpProtocolVersion re-validation", () => {
     await flushAsyncWork(10);
     expect(reconnectServerMock).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: "CONNECT_FAILURE" }),
+      expect.objectContaining({ type: "CONNECT_FAILURE" })
     );
     expect(dispatch).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: "CONNECT_SUCCESS" }),
+      expect.objectContaining({ type: "CONNECT_SUCCESS" })
     );
   });
 
@@ -274,7 +281,7 @@ describe("useServerState mcpProtocolVersion re-validation", () => {
           type: "CONNECT_FAILURE",
           name: "demo-server",
           error: expect.stringContaining("UnsupportedProtocolVersionError"),
-        }),
+        })
       );
     });
   });
@@ -307,13 +314,65 @@ describe("useServerState mcpProtocolVersion re-validation", () => {
         expect.objectContaining({
           type: "CONNECT_SUCCESS",
           name: "demo-server",
-        }),
+        })
       );
     });
 
     expect(dispatch).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: "CONNECT_FAILURE" }),
+      expect.objectContaining({ type: "CONNECT_FAILURE" })
     );
+  });
+
+  it("captures stateless protocol connect metadata after a successful reconnect", async () => {
+    reconnectServerMock.mockResolvedValue({
+      success: true,
+      initInfo: { serverCapabilities: {} },
+    });
+
+    const dispatch = vi.fn();
+    const { rerender } = renderRevalidationHook(dispatch, {
+      profile: undefined,
+      hostConfig: buildHostConfig(),
+    });
+
+    await flushAsyncWork(5);
+
+    rerender({
+      profile: { mcpProtocolVersion: "2026-07-28" },
+      hostConfig: buildHostConfig(),
+    });
+
+    await waitFor(() => {
+      expect(posthogCaptureMock).toHaveBeenCalledWith(
+        "stateless_protocol_connect",
+        expect.objectContaining({
+          mcp_protocol_version: "2026-07-28",
+          protocol_pin_source: "host_default",
+          connection_transport: "http",
+          auth_mode: "none",
+          hosted_mode: false,
+          has_project_context: true,
+          has_host_config: true,
+          has_mcp_profile: true,
+          has_timeout_ms: true,
+          connection_defaults_header_count: 0,
+          client_capability_count: 0,
+          has_client_info: false,
+          supported_protocol_version_count: 0,
+          reconnect_attempt: "protocol_revalidation",
+          reconnect_attempt_index: 1,
+          reconnect_select: true,
+          reconnect_suppressed_errors: false,
+          allow_interactive_oauth_flow: false,
+          had_synced_oauth_retry: false,
+        })
+      );
+    });
+
+    expect(posthogCaptureMock.mock.calls[0]?.[1]).not.toHaveProperty(
+      "serverName"
+    );
+    expect(posthogCaptureMock.mock.calls[0]?.[1]).not.toHaveProperty("url");
   });
 
   it("re-tests when a per-server override moves while the host default stays", async () => {
@@ -377,5 +436,4 @@ describe("useServerState mcpProtocolVersion re-validation", () => {
     await flushAsyncWork(10);
     expect(reconnectServerMock).not.toHaveBeenCalled();
   });
-
 });

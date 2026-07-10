@@ -3,6 +3,7 @@ import { generateId } from "ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
+import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 
 const mockState = vi.hoisted(() => ({
   sendMessage: vi.fn(),
@@ -397,6 +398,52 @@ describe("useChatSession hosted mode", () => {
       surface: "preview",
     });
     unmount();
+  });
+
+  it("ships WebMCP ui_* tools on direct chats but never on chatbox sessions", async () => {
+    const unregister = useUiToolsRegistry.getState().registerUiTool({
+      name: "ui_navigate",
+      description: "Navigate the MCPJam inspector",
+      readOnly: false,
+      execute: async () => ({
+        content: [{ type: "text" as const, text: "{}" }],
+      }),
+    });
+    try {
+      // Direct hosted chat (no chatbox scope): the snapshot ships.
+      const direct = renderHook(() =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext: {
+            projectId: "project-1",
+            selectedServerIds: ["server-id-1"],
+          },
+        })
+      );
+      expect(lastTransportOptions.body().uiTools).toEqual([
+        expect.objectContaining({ name: "ui_navigate" }),
+      ]);
+      direct.unmount();
+
+      // Chatbox session (published/share-link or owner preview): the turn
+      // renders the end-user chatbox surface — inspector-driving tools are
+      // omitted entirely, not sent as an empty list.
+      const chatbox = renderHook(() =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext: {
+            projectId: "project-1",
+            selectedServerIds: ["server-id-1"],
+            chatboxId: "cbx_test",
+            accessVersion: 1,
+          },
+        })
+      );
+      expect(lastTransportOptions.body()).not.toHaveProperty("uiTools");
+      chatbox.unmount();
+    } finally {
+      unregister();
+    }
   });
 
   it("uses organization provider config to expose BYOK hosted models", async () => {

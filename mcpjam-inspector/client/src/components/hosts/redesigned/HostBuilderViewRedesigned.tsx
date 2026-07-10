@@ -7,6 +7,11 @@ import { usePostHog } from "posthog-js/react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
   ResizableHandle,
@@ -39,6 +44,7 @@ import { useComputerStatus } from "@/hooks/useProjectComputer";
 import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
 import {
   hasBlockingErrors,
+  saveDisabledReason as computeSaveDisabledReason,
   useHostDraftValidation,
 } from "./focus/useHostDraftValidation";
 import {
@@ -335,12 +341,12 @@ export function HostBuilderViewRedesigned({
         name: draftName,
         input: draftConfig,
       });
-      // The freshly persisted snapshot id arrives via the Convex
+      // The freshly persisted config id arrives via the Convex
       // subscription on the next tick; don't include it in this toast
-      // because `host?.config?.id` is still the *previous* snapshot here.
-      toast.success("Snapshot saved");
+      // because `host?.config?.id` is still the *previous* saved config here.
+      toast.success("Host saved");
       // Telemetry is best-effort: a posthog throw must not bubble into the
-      // shared catch and surface "Failed to save host" after the snapshot
+      // shared catch and surface "Failed to save host" after the config
       // has already been persisted.
       try {
         posthog.capture("client_config_saved", {
@@ -413,6 +419,17 @@ export function HostBuilderViewRedesigned({
   // non-positive timeout) and the write would only fail at the backend.
   const canSave = isDirty && !isSaving && !hasBlockingErrors(attention);
 
+  // Explain WHY the button is greyed out. A silently-disabled Save is what
+  // sent a Discord report chasing a phantom "you must pick a model" rule —
+  // the real gate is just "no unsaved changes" or a blocking validation
+  // error. Surface that verbatim on hover so the disabled state is never a
+  // guessing game. `null` ⇒ enabled (or actively saving) ⇒ no hint needed.
+  const saveDisabledReason = computeSaveDisabledReason({
+    isDirty,
+    isSaving,
+    issues: attention,
+  });
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <div className="relative shrink-0 border-b border-border/40 px-8 py-2.5">
@@ -426,24 +443,37 @@ export function HostBuilderViewRedesigned({
               if (next === "compare") navigate("/host-compare");
             }}
           />
-          <Button
-            size="sm"
-            onClick={() => void handleSave()}
-            disabled={!canSave}
-            variant={isDirty ? "default" : "ghost"}
-            className={
-              isDirty
-                ? "shrink-0"
-                : "shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-40"
-            }
-          >
-            {isSaving ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Save className="size-4" />
-            )}
-            {isDirty ? "Save host" : "Saved"}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              {/* Span wrapper: a disabled <button> swallows pointer events,
+                  so the tooltip must hang off an always-interactive parent. */}
+              <span className="inline-flex shrink-0">
+                <Button
+                  size="sm"
+                  onClick={() => void handleSave()}
+                  disabled={!canSave}
+                  variant={isDirty ? "default" : "ghost"}
+                  className={
+                    isDirty
+                      ? "shrink-0"
+                      : "shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-40"
+                  }
+                >
+                  {isSaving ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  {isDirty ? "Save host" : "Saved"}
+                </Button>
+              </span>
+            </TooltipTrigger>
+            {saveDisabledReason ? (
+              <TooltipContent side="bottom" variant="muted">
+                {saveDisabledReason}
+              </TooltipContent>
+            ) : null}
+          </Tooltip>
         </div>
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="pointer-events-auto">
@@ -527,6 +557,7 @@ export function HostBuilderViewRedesigned({
                     focusSubKey={focusState.focusSubKey}
                     hostDisplayName={draftName}
                     onHostDisplayNameChange={setDraftName}
+                    themeMode={themeMode}
                     draft={draftConfig}
                     onDraftChange={(updater) =>
                       setDraftConfig((prev) => (prev ? updater(prev) : prev))

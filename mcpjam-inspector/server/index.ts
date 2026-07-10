@@ -51,7 +51,9 @@ import { requestLogContextMiddleware } from "./middleware/request-log-context";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url";
 import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal";
 import { createComputerUploadHandler } from "./routes/web/computer-upload";
+import { initComputersStartup } from "./utils/computers/remote-data-plane";
 import { registerSelfFetch } from "./utils/self-app";
+import { shutdownAnalytics } from "./utils/analytics";
 
 const sysLogger = getSystemLogger("process");
 
@@ -117,6 +119,7 @@ import appsRoutes from "./routes/apps/index";
 import webRoutes from "./routes/web/index";
 import v1Routes from "./routes/v1/index";
 import cliAuthRoutes from "./routes/cli-auth/index";
+import relayRoutes, { relayBodyLimit } from "./routes/relay";
 import workosAuthkitRoutes from "./routes/workos-authkit";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
@@ -237,6 +240,13 @@ initXAAIdpKeyPair();
 
 startGuestAuthProvisioningInBackground();
 startLocalBrowserRenderingSetupInBackground();
+// Mirror of the call in server/app.ts::createHonoApp — both production
+// entries must wire this up. Memoized, so it's harmless if a process ever
+// ran both. Kicked off here so it overlaps route setup; AWAITED before
+// `serve()` below — synchronous gates (harness pre-flight, evals) read
+// `isComputersDataPlaneConfigured()`, which is only truthful once the
+// credential bootstrap has resolved.
+const computersStartup = initComputersStartup();
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
 
@@ -340,7 +350,8 @@ app.use(
 
 // 1MB JSON cap for /api/web/*, with a carve-out for the computer file-upload
 // route (multipart blobs; it applies its own higher bodyLimit at the mount
-// site below). See `webBodyLimit`.
+// site below) and a larger cap for base64 audio transcription bodies. See
+// `webBodyLimit`.
 app.use("/api/web/*", webBodyLimit());
 
 // Typed event logging context (matches app.ts)
@@ -425,6 +436,15 @@ registerSelfFetch((request) => app.fetch(request));
 // set. Mirror of the mount in server/app.ts::createHonoApp — both
 // production entries must wire this up.
 app.route("/api/cli/auth", cliAuthRoutes);
+
+// Same-origin PostHog reverse proxy (ad-blocker resilience). Deliberately
+// OUTSIDE /api so it bypasses session auth (analytics flows before any
+// session exists), and mounted before the production static/SPA fallback,
+// whose catch-all only skips /api/* and would otherwise swallow /relay GETs
+// with index.html. Mirror of the mount in server/app.ts::createHonoApp —
+// both production entries must wire this up.
+app.use("/relay/*", relayBodyLimit());
+app.route("/relay", relayRoutes);
 
 // Fallback for clients that post to "/sse/message" instead of the rewritten proxy messages URL.
 // We resolve the upstream messages endpoint via sessionId and forward with any injected auth.
@@ -665,6 +685,11 @@ const hostname = isDocker ? "0.0.0.0" : "127.0.0.1";
 
 appLogger.info(`🎵 MCPJam: http://127.0.0.1:${displayPort}`);
 
+// Readiness gate: computers credential bootstrap + data-plane discovery must
+// resolve before the first request — see initComputersStartup. Bounded (~11s
+// worst case, sub-second typical) and never throws.
+await computersStartup;
+
 // Start the Hono server
 const server = serve({
   fetch: app.fetch,
@@ -733,6 +758,9 @@ async function shutdown() {
     await shutdownRunningSimulations();
     await tunnelManager.closeAll();
     server.close();
+    // Flush queued server-side analytics (bounded internally; forceExitTimer
+    // is the backstop). Billing/funnel events must not die in the queue.
+    await shutdownAnalytics();
     await appLogger.flush();
     clearTimeout(forceExitTimer);
     process.exit(0);

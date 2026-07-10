@@ -298,9 +298,26 @@ export function registerHostBridgeHandlers(
 
   if (effectiveHostCapabilities.openLinks) {
     bridge.onopenlink = async ({ url }) => {
+      // The URL is widget-controlled and flows into the host's `window.open`.
+      // Only http(s) may be opened — `javascript:`/`data:`/`vbscript:`/`file:`
+      // and other schemes would let a malicious widget run script or smuggle
+      // content in the host origin. Per the ext-apps `App.openLink` contract, a
+      // host policy block resolves `{ isError: true }` (the widget's documented
+      // `const { isError } = await app.openLink(...)` path); a throw is reserved
+      // for transport/timeout, so we must NOT throw here or the widget's fallback
+      // never runs and it may surface an unhandled rejection.
+      let scheme: string | undefined;
       if (url) {
-        callbacks.onOpenLink?.(url);
+        try {
+          scheme = new URL(url).protocol;
+        } catch {
+          scheme = undefined;
+        }
       }
+      if (scheme !== "http:" && scheme !== "https:") {
+        return { isError: true };
+      }
+      callbacks.onOpenLink?.(url);
       return {};
     };
   }

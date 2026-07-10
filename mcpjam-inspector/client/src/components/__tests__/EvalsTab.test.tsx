@@ -189,7 +189,14 @@ vi.mock("../evals/use-eval-queries", () => ({
 
 import { EvalsTab } from "../EvalsTab";
 
-function makeSuiteEntry(serverNames: string[], suiteId: string) {
+function makeSuiteEntry(
+  serverNames: string[],
+  suiteId: string,
+  overrides?: {
+    source?: "ui" | "sdk";
+    latestRun?: { _id: string; completedAt: number } | null;
+  },
+) {
   return {
     suite: {
       _id: suiteId,
@@ -200,10 +207,10 @@ function makeSuiteEntry(serverNames: string[], suiteId: string) {
       environment: { servers: serverNames },
       createdAt: 1,
       updatedAt: 1,
-      source: "ui" as const,
+      source: overrides?.source ?? ("ui" as const),
       tags: ["explore"],
     },
-    latestRun: null,
+    latestRun: overrides?.latestRun ?? null,
     recentRuns: [],
     passRateTrend: [],
     totals: { passed: 0, failed: 0, runs: 0 },
@@ -289,6 +296,59 @@ describe("EvalsTab", () => {
       );
     });
     expect(screen.queryByTestId("suite-sidebar")).toBeNull();
+  });
+
+  it("redirects the bare eval list route into the most recently run suite", async () => {
+    mocks.route.current = { type: "list" };
+    mocks.useEvalQueries.mockImplementation(() => {
+      const suiteA = makeSuiteEntry(["server-a"], "suite-a");
+      const suiteB = makeSuiteEntry(["server-b"], "suite-b", {
+        latestRun: { _id: "run-b", completedAt: 500 },
+      });
+      const state = makeQueryState(null);
+      return { ...state, sortedSuites: [suiteA, suiteB] };
+    });
+
+    render(<EvalsTab projectId="ws-1" />);
+
+    await waitFor(() => {
+      expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
+        { type: "suite-overview", suiteId: "suite-b" },
+        { replace: true }
+      );
+    });
+  });
+
+  it("renders sdk-created suites instead of redirecting them away", () => {
+    mocks.route.current = { type: "suite-overview", suiteId: "suite-sdk" };
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
+        const sdkEntry = makeSuiteEntry(["server-a"], "suite-sdk", {
+          source: "sdk",
+        });
+        const state = makeQueryState(selectedSuiteId);
+        return {
+          ...state,
+          sortedSuites: [sdkEntry],
+          selectedSuiteEntry: selectedSuiteId === "suite-sdk" ? sdkEntry : null,
+          selectedSuite:
+            selectedSuiteId === "suite-sdk" ? sdkEntry.suite : null,
+          suiteDetails:
+            selectedSuiteId === "suite-sdk"
+              ? { testCases: [], iterations: [] }
+              : undefined,
+          suiteRuns: selectedSuiteId === "suite-sdk" ? [] : undefined,
+        };
+      }
+    );
+
+    render(<EvalsTab projectId="ws-1" />);
+
+    expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
+    expect(mocks.suiteIterationsView).toHaveBeenCalled();
+    expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
+      suite: expect.objectContaining({ _id: "suite-sdk", source: "sdk" }),
+    });
   });
 
   it("switches suites from the breadcrumb dropdown", async () => {

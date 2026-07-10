@@ -53,6 +53,7 @@ import { HostSectionTabs } from "./components/hosts/HostSectionTabs";
 import { ConnectViewHeader } from "./components/hosts/ConnectViewHeader";
 import { ComputerView } from "./components/computer/ComputerView";
 import { useComputersEnabledState } from "./hooks/useComputersEnabled";
+import { useSkillsEnabledState } from "./hooks/useSkillsEnabled";
 import { motion } from "framer-motion";
 import { SNAPPY_RAIL } from "./components/hosts/transition-tokens";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
@@ -212,10 +213,12 @@ import {
   buildEvalsPath,
   getInvalidOrganizationRouteNavigationTarget,
   getProjectSwitchNavigationTarget,
+  isDebugOAuthCallbackPath,
   navigationTargetToPath,
   navigateApp,
   pathnameToActiveTab,
   routePaths,
+  shouldSnapToServersOnActiveProjectChange,
   type OrganizationRouteSection,
   useActiveTab,
   useAppNavigate,
@@ -958,15 +961,30 @@ export function PromptsRoute() {
 export function SkillsRoute() {
   const { convexProjectId } = useAppRouteContext();
   const computersEnabled = useComputersEnabledState();
+  const skillsEnabled = useSkillsEnabledState();
 
   // Hosted skills are a project-MEMBERSHIP resource (authored in Convex,
-  // available even without a Computer) — NOT gated on the Computer flag. Access
-  // is enforced server-side. We only wait for the project to resolve, since
-  // hosted skills have no local FS to fall back to (rendering early would hit
-  // the unavailable /api/mcp/skills/* routes). `computersEnabled` is passed
-  // through only for the local-mode Local/Cloud toggle.
-  if (HOSTED_MODE && !convexProjectId) {
-    return null;
+  // available even without a Computer) but gated behind the `skills-enabled`
+  // PostHog flag until QA completes. Access is also enforced server-side.
+  // `computersEnabled` is passed through only for the local-mode Local/Cloud
+  // toggle; the skills flag applies to hosted mode only (local FS skills are
+  // always available).
+  if (HOSTED_MODE) {
+    // Wait for the project to resolve before rendering, since hosted skills
+    // have no local FS to fall back to (rendering early would hit the
+    // unavailable /api/mcp/skills/* routes).
+    if (!convexProjectId) {
+      return null;
+    }
+    // Only redirect on an explicit `false`. While PostHog hydrates the flag is
+    // `undefined`; bouncing then would strand a flagged-in user who cold-loads
+    // /skills directly. Render nothing until it settles.
+    if (skillsEnabled === false) {
+      return <Navigate to={routePaths.servers} replace />;
+    }
+    if (skillsEnabled === undefined) {
+      return null;
+    }
   }
 
   return (
@@ -1579,9 +1597,7 @@ export default function App() {
   // Set up Electron OAuth callback handling
   useElectronOAuth();
 
-  const isDebugCallback = window.location.pathname.startsWith(
-    "/oauth/callback/debug"
-  );
+  const isDebugCallback = isDebugOAuthCallbackPath(window.location.pathname);
   const isOAuthCallback = window.location.pathname === "/callback";
   const electronMcpCallbackUrl = buildElectronMcpCallbackUrl();
 
@@ -1752,8 +1768,10 @@ export default function App() {
   useInspectorCommandBus();
   // WebMCP UI tools: registered in both modes; advertised to MCPJam's chat
   // agents via the chat POST snapshot and mirrored to the browser's native
-  // modelContext when present.
-  useRegisterUiTools();
+  // modelContext when present. Disabled on the standalone chatbox chat route:
+  // its end user is not the inspector operator, so inspector-driving tools
+  // must not exist on that page (chat snapshot OR native mirror).
+  useRegisterUiTools({ enabled: !isChatboxChatRoute });
   // One-time migration from legacy localStorage state to Convex. No-op in
   // hosted mode and after the first successful run; safe to keep in the tree.
   useLocalStateMigration({
@@ -2449,19 +2467,23 @@ export default function App() {
       return;
     }
 
+    // Advance the ref regardless so this project change is consumed and can't
+    // trigger a stale snap on a later render (e.g. once the user leaves the
+    // org route). The snap decision itself lives in a pure, unit-tested helper.
     const previousActiveProjectId = previousActiveProjectIdRef.current;
     previousActiveProjectIdRef.current = activeProjectId;
     if (
-      previousActiveProjectId == null ||
-      previousActiveProjectId === activeProjectId ||
-      previousActiveProjectId === "none" ||
-      activeProjectId === "none"
+      shouldSnapToServersOnActiveProjectChange({
+        previousActiveProjectId,
+        nextActiveProjectId: activeProjectId,
+        activeTab,
+      })
     ) {
-      return;
+      navigateToServers();
     }
-    navigateToServers();
   }, [
     activeProjectId,
+    activeTab,
     isAuthLoading,
     isLoadingRemoteProjects,
     isWorkOsLoading,

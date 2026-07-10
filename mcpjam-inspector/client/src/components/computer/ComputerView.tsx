@@ -25,6 +25,8 @@ import {
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { ComputerStatusChip } from "./ComputerStatusChip";
 import { ComputerTerminal } from "./ComputerTerminal";
+import { ComputersUnavailableMessage } from "./ComputersUnavailableMessage";
+import { PaneMessage } from "./PaneMessage";
 
 /**
  * The "Computer" tab — manage the project's personal cloud computer (one per
@@ -180,17 +182,7 @@ export function ComputerView({
 
   const renderTerminalPane = () => {
     if (dataPlaneUnavailable) {
-      return (
-        <PaneMessage dashed>
-          <span className="max-w-md text-center">
-            This inspector server isn't set up to run computers: it has no
-            data-plane credentials and no remote data plane to delegate to. Set{" "}
-            <code>COMPUTERS_REMOTE_DATA_PLANE_URL</code> (or the data-plane
-            secrets) in the server environment to enable the terminal and the
-            bash tool.
-          </span>
-        </PaneMessage>
-      );
+      return <ComputersUnavailableMessage />;
     }
     if (!terminalOpen) {
       return (
@@ -544,20 +536,3 @@ function Empty({ children }: { children: React.ReactNode }) {
   );
 }
 
-function PaneMessage({
-  children,
-  dashed = false,
-}: {
-  children: React.ReactNode;
-  dashed?: boolean;
-}) {
-  return (
-    <div
-      className={`flex h-full flex-col items-center justify-center gap-3 rounded-md border text-sm text-muted-foreground ${
-        dashed ? "border-dashed bg-muted/10" : "bg-muted/20"
-      }`}
-    >
-      {children}
-    </div>
-  );
-}

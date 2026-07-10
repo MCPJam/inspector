@@ -833,8 +833,18 @@ export function TestCasesOverview({
 
                   const caseAndLast = (
                     <>
-                      <span className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-foreground">
-                        {caseTitle}
+                      <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                        <span className="min-w-0 truncate text-left text-xs font-semibold text-foreground">
+                          {caseTitle}
+                        </span>
+                        {testCase.lastSdkWriteAt != null ? (
+                          <span
+                            className="inline-flex shrink-0 items-center rounded border border-border/50 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-muted-foreground"
+                            title="Synced from CI — the next CI report may overwrite manual edits"
+                          >
+                            CI
+                          </span>
+                        ) : null}
                       </span>
                       {showClientRail ? null : lastPart}
                     </>

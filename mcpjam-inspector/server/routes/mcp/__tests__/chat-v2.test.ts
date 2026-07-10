@@ -194,6 +194,14 @@ vi.mock("../../../utils/guest-auth.js", () => ({
     .mockResolvedValue("Bearer guest-test-token"),
 }));
 
+// Chatbox turns must NEVER skip host-owned config resolution — the route
+// resolves a guest bearer for the fetch when the request carries none.
+const fetchChatboxRuntimeConfigMock = vi.hoisted(() => vi.fn());
+vi.mock("../../../utils/chatbox-runtime-config.js", () => ({
+  fetchChatboxRuntimeConfig: (...args: unknown[]) =>
+    fetchChatboxRuntimeConfigMock(...args),
+}));
+
 // Mock http-tool-calls for testing unresolved tool calls scenario
 vi.mock("@/shared/http-tool-calls", () => ({
   hasUnresolvedToolCalls: vi.fn().mockReturnValue(false),
@@ -231,6 +239,80 @@ describe("POST /api/mcp/chat-v2", () => {
       getToolsForAiSdk: vi.fn().mockResolvedValue({}),
     });
     app = createTestApp(manager, "chat-v2");
+  });
+
+  describe("MCPJam model classification", () => {
+    it("classifies the model PROVIDER-AWARE (bare hosted ids must canonicalize)", async () => {
+      const { isMCPJamProvidedModel } = await import("@/shared/types");
+
+      await postAuthenticatedJson({
+        messages: [{ role: "user", content: "hi" }],
+        model: { id: "gpt-5-nano", provider: "openai" },
+      });
+
+      // The harness preflight is provider-aware; a provider-blind dispatch
+      // here would treat a bare hosted id as non-MCPJam and route it into
+      // org/BYOK after it passed preflight (same class of bug as the
+      // streamWebChatTurn dispatch).
+      expect(vi.mocked(isMCPJamProvidedModel)).toHaveBeenCalledWith(
+        "gpt-5-nano",
+        "openai"
+      );
+    });
+  });
+
+  describe("chatbox runtime-config gate", () => {
+    it("resolves the process guest bearer for a BEARER-LESS chatbox turn (config never skipped)", async () => {
+      fetchChatboxRuntimeConfigMock.mockResolvedValue({ ok: true, config: {} });
+
+      await postJson(app, "/api/mcp/chat-v2", {
+        chatboxId: "cbx_1",
+        messages: [{ role: "user", content: "hi" }],
+        model: { id: "gpt-4", provider: "openai" },
+      });
+
+      // The route mints a guest bearer later for MCPJam models, so "no
+      // incoming bearer" is not a hard stop — the config fetch must use the
+      // same process-cached guest bearer rather than being skipped.
+      expect(fetchChatboxRuntimeConfigMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chatboxId: "cbx_1",
+          bearer: "Bearer guest-test-token",
+        })
+      );
+    });
+
+    it("FAILS CLOSED (401) when a bearer-less chatbox turn can't resolve any bearer", async () => {
+      const { getProductionGuestAuthHeader } = await import(
+        "../../../utils/guest-auth.js"
+      );
+      vi.mocked(getProductionGuestAuthHeader).mockResolvedValueOnce(null);
+
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        chatboxId: "cbx_1",
+        messages: [{ role: "user", content: "hi" }],
+        model: { id: "gpt-4", provider: "openai" },
+      });
+
+      expect(res.status).toBe(401);
+      expect(fetchChatboxRuntimeConfigMock).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when the chatbox config fetch itself fails", async () => {
+      fetchChatboxRuntimeConfigMock.mockResolvedValue({
+        ok: false,
+        status: 502,
+        error: "backend unreachable",
+      });
+
+      const res = await postAuthenticatedJson({
+        chatboxId: "cbx_1",
+        messages: [{ role: "user", content: "hi" }],
+        model: { id: "gpt-4", provider: "openai" },
+      });
+
+      expect(res.status).toBe(502);
+    });
   });
 
   describe("validation", () => {

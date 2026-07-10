@@ -26,8 +26,8 @@ describe("hostSupportsWidgetRendering", () => {
   });
 
   it("returns false when the UI extension is explicitly stripped (Codex)", () => {
-    // Mirrors the Codex template in client-templates.ts:803-810, which
-    // REPLACES clientCapabilities (no spread) so the SDK-default UI
+    // Mirrors the Codex catalog host definition, which REPLACES
+    // clientCapabilities (no spread) so the SDK-default UI
     // extension is gone.
     const codex = { elicitation: {} };
     expect(hostSupportsWidgetRendering(codex)).toBe(false);

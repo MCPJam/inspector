@@ -60,13 +60,17 @@ export function SkillUploadDialog({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  // Cloud-only: share the new skill with every project member (else personal).
+  const [shareWithProject, setShareWithProject] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isCloud = source?.kind === "cloud";
 
   const resetForm = () => {
     setFiles([]);
     setSkillInfo(null);
     setError(null);
     setIsDragOver(false);
+    setShareWithProject(false);
   };
 
   const handleOpenChange = (newOpen: boolean) => {
@@ -206,10 +210,17 @@ export function SkillUploadDialog({
     setIsLoading(true);
 
     try {
-      const skill = await uploadSkillFolder(files, skillInfo.name, source);
+      const sharing = isCloud && shareWithProject ? "project" : "user";
+      const skill = await uploadSkillFolder(
+        files,
+        skillInfo.name,
+        source,
+        sharing,
+      );
       posthog.capture("skill_uploaded", {
         skill_name: skillInfo.name,
         file_count: files.length,
+        sharing,
       });
       onSkillCreated?.(skill);
       handleOpenChange(false);
@@ -250,9 +261,9 @@ export function SkillUploadDialog({
           <DialogDescription>
             {source?.kind === "cloud" ? (
               <>
-                Upload a skill folder containing a SKILL.md file. Cloud skills are{" "}
-                <strong>SKILL.md-only for now</strong> — folders with supporting
-                files are rejected (inline anything SKILL.md needs).
+                Upload a skill folder containing a SKILL.md file. Supporting files
+                (scripts, references, assets) are uploaded alongside it and
+                available to the skill at runtime.
               </>
             ) : (
               <>
@@ -388,6 +399,26 @@ export function SkillUploadDialog({
                 </p>
               </div>
             </div>
+          )}
+
+          {/* Cloud-only: share with the whole project (else personal). */}
+          {isCloud && (
+            <label className="flex items-start gap-2 text-sm cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={shareWithProject}
+                onChange={(e) => setShareWithProject(e.target.checked)}
+                disabled={isLoading}
+                className="mt-0.5"
+              />
+              <span>
+                Share with the project
+                <span className="block text-xs text-muted-foreground">
+                  Every member can see and use it. Otherwise it stays personal
+                  (only you). Publishing to a project requires admin.
+                </span>
+              </span>
+            </label>
           )}
 
           {/* Error message */}

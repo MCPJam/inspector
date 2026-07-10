@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
+import { Switch } from "@mcpjam/design-system/switch";
 import {
   Check,
   ChevronDown,
@@ -52,6 +53,10 @@ export interface XaaCredentialFieldsProps {
   // Advanced
   xaaAuthzIssuer: string;
   onXaaAuthzIssuerChange: (value: string) => void;
+  /** Opt-in: accept a path-scoped authorization server whose metadata
+   * advertises the same-origin root as issuer. */
+  xaaAllowPathScopedIssuer: boolean;
+  onXaaAllowPathScopedIssuerChange: (value: boolean) => void;
   xaaSubject: string;
   onXaaSubjectChange: (value: string) => void;
   xaaEmail: string;
@@ -85,6 +90,8 @@ export function XaaCredentialFields({
   onScopesChange,
   xaaAuthzIssuer,
   onXaaAuthzIssuerChange,
+  xaaAllowPathScopedIssuer,
+  onXaaAllowPathScopedIssuerChange,
   xaaSubject,
   onXaaSubjectChange,
   xaaEmail,
@@ -191,6 +198,7 @@ export function XaaCredentialFields({
     clientSecret: `${baseId}-client-secret`,
     scopes: `${baseId}-scopes`,
     issuer: `${baseId}-issuer`,
+    pathScoped: `${baseId}-path-scoped`,
     subject: `${baseId}-subject`,
     email: `${baseId}-email`,
   };
@@ -500,6 +508,28 @@ export function XaaCredentialFields({
               autoComplete="off"
               className="h-10"
             />
+            <div className="flex items-start gap-2 pt-1">
+              <Switch
+                id={ids.pathScoped}
+                checked={xaaAllowPathScopedIssuer}
+                onCheckedChange={onXaaAllowPathScopedIssuerChange}
+              />
+              <div className="space-y-0.5">
+                <label
+                  htmlFor={ids.pathScoped}
+                  className="block text-xs font-medium text-foreground"
+                >
+                  Path-scoped authorization server
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  Allow the metadata to advertise the origin root as issuer
+                  while the OAuth endpoints live under a path (multi-tenant
+                  setups with paths like{" "}
+                  <code className="font-mono">/resources/…</code>). Off keeps
+                  the strict RFC 8414 issuer match.
+                </p>
+              </div>
+            </div>
           </div>
 
           <div className="rounded-md border border-border bg-background/40 p-3 space-y-2">

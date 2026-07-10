@@ -11,6 +11,7 @@ import {
   probeIdentityKey,
   assertTestCaseRunWithinCap,
   buildManagerKeyToDisplayNameMap,
+  fetchRunPinnedSkillsWithRetry,
   filterAndRemapReplayConfigs,
   remapSnapshotServerIdsForAttachment,
 } from "../evals";
@@ -783,5 +784,72 @@ describe("assertBareRerunCasesRunnable (bare suite reruns)", () => {
     expect(() => assertBareRerunCasesRunnable([{ models: [] }])).toThrow(
       /\(untitled\)/
     );
+  });
+});
+
+describe("fetchRunPinnedSkillsWithRetry (strict pin fetch)", () => {
+  const pin = {
+    name: "pdf",
+    description: "d",
+    content: "c",
+    contentHash: "hash",
+  };
+  const noSleep = async () => {};
+
+  it("returns the mapped pinned skills on first success", async () => {
+    const query = async () => ({ pinnedSkills: [pin] });
+    const result = await fetchRunPinnedSkillsWithRetry(
+      { query },
+      "run_1",
+      noSleep
+    );
+    expect(result).toEqual([pin]);
+  });
+
+  it("returns undefined when the run has no pins (no retry)", async () => {
+    let calls = 0;
+    const query = async () => {
+      calls += 1;
+      return { pinnedSkills: [] };
+    };
+    const result = await fetchRunPinnedSkillsWithRetry(
+      { query },
+      "run_1",
+      noSleep
+    );
+    expect(result).toBeUndefined();
+    expect(calls).toBe(1);
+  });
+
+  it("retries transient failures with backoff and succeeds", async () => {
+    let calls = 0;
+    const delays: number[] = [];
+    const query = async () => {
+      calls += 1;
+      if (calls < 3) throw new Error("convex blip");
+      return { pinnedSkills: [pin] };
+    };
+    const result = await fetchRunPinnedSkillsWithRetry(
+      { query },
+      "run_1",
+      async (ms) => {
+        delays.push(ms);
+      }
+    );
+    expect(result).toEqual([pin]);
+    expect(calls).toBe(3);
+    expect(delays).toEqual([250, 1000]);
+  });
+
+  it("THROWS after 3 failed attempts instead of degrading to no skills", async () => {
+    let calls = 0;
+    const query = async () => {
+      calls += 1;
+      throw new Error("convex down");
+    };
+    await expect(
+      fetchRunPinnedSkillsWithRetry({ query }, "run_1", noSleep)
+    ).rejects.toThrow(/pinned skills after 3 attempts/);
+    expect(calls).toBe(3);
   });
 });

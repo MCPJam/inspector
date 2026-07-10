@@ -16,6 +16,7 @@ import appsRoutes from "./routes/apps/index.js";
 import webRoutes from "./routes/web/index.js";
 import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
+import relayRoutes, { relayBodyLimit } from "./routes/relay.js";
 import workosAuthkitRoutes from "./routes/workos-authkit.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
@@ -60,11 +61,12 @@ import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair.js";
 import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
 import { registerSelfFetch } from "./utils/self-app.js";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url.js";
+import { initComputersStartup } from "./utils/computers/remote-data-plane.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-export function createHonoApp() {
+export async function createHonoApp() {
   // Load environment variables early so route handlers can read CONVEX_HTTP_URL
   const loadedEnv = loadInspectorEnv(__dirname);
   warnOnConvexDevMisconfiguration(loadedEnv);
@@ -81,6 +83,13 @@ export function createHonoApp() {
 
   startGuestAuthProvisioningInBackground();
   startLocalBrowserRenderingSetupInBackground();
+  // Mirror of the call in server/index.ts — both production entries must
+  // wire this up so the Electron/embedded path also gets a working Computer
+  // tab. Memoized, so it's harmless if a process ever ran both. AWAITED (the
+  // factory is async for exactly this): synchronous gates read
+  // `isComputersDataPlaneConfigured()`, which is only truthful once the
+  // credential bootstrap has resolved — no requests before that.
+  await initComputersStartup();
 
   const app = new Hono();
   const strictModeResponse = (c: any, path: string) =>
@@ -89,7 +98,7 @@ export function createHonoApp() {
         code: "FEATURE_NOT_SUPPORTED",
         message: `${path} is disabled in hosted mode`,
       },
-      410,
+      410
     );
   const isElectron = process.env.ELECTRON_APP === "true";
   const isProduction = process.env.NODE_ENV === "production";
@@ -130,7 +139,7 @@ export function createHonoApp() {
           timestamp: new Date().toISOString(),
         });
       },
-    },
+    }
   );
 
   // Initialize elicitation callback immediately so tasks/result calls work
@@ -165,7 +174,7 @@ export function createHonoApp() {
   // 3. Hosted mode partition blocks legacy API families (health endpoints exempt).
   if (HOSTED_MODE) {
     app.use("/api/session-token", (c) =>
-      strictModeResponse(c, "/api/session-token"),
+      strictModeResponse(c, "/api/session-token")
     );
     app.use("/api/mcp", (c, next) => {
       if (c.req.path === "/api/mcp/health") return next();
@@ -200,7 +209,7 @@ export function createHonoApp() {
       "*",
       logger((message) => {
         appLogger.info(scrubTokenFromUrl(message));
-      }),
+      })
     );
   }
   app.use(
@@ -208,11 +217,12 @@ export function createHonoApp() {
     cors({
       origin: CORS_ORIGINS,
       credentials: true,
-    }),
+    })
   );
 
   // Hosted web APIs enforce a 1MB max JSON body — except the cloud-skills
-  // folder upload, which is multipart and bounded by the service caps. See
+  // folder upload, which is multipart and bounded by the service caps. Audio
+  // transcription gets its own larger cap inside the helper. See
   // `webBodyLimit`.
   app.use("/api/web/*", webBodyLimit());
 
@@ -227,14 +237,14 @@ export function createHonoApp() {
         service: "MCP API",
         status: "ready",
         timestamp: new Date().toISOString(),
-      }),
+      })
     );
     app.get("/api/apps/health", (c) =>
       c.json({
         service: "Apps API",
         status: "ready",
         timestamp: new Date().toISOString(),
-      }),
+      })
     );
   }
   app.route("/api/web", webRoutes);
@@ -270,6 +280,15 @@ export function createHonoApp() {
   // must wire this up.
   app.route("/api/cli/auth", cliAuthRoutes);
 
+  // Same-origin PostHog reverse proxy (ad-blocker resilience). Deliberately
+  // OUTSIDE /api so it bypasses session auth (analytics flows before any
+  // session exists), and mounted before the static/SPA fallback, whose
+  // catch-all only skips /api/* and would otherwise swallow /relay GETs
+  // with index.html. Mirror of the mount in server/index.ts — both
+  // production entries must wire this up.
+  app.use("/relay/*", relayBodyLimit());
+  app.route("/relay", relayRoutes);
+
   // Health check
   app.get("/health", (c) => {
     return c.json({
@@ -293,7 +312,7 @@ export function createHonoApp() {
             "Cache-Control": "no-store",
             "Content-Type": "application/json",
           },
-        },
+        }
       );
     }
 
@@ -319,7 +338,7 @@ export function createHonoApp() {
 
     if (!isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
       appLogger.warn(
-        `[Security] Token request denied - Host not allowed: ${host}`,
+        `[Security] Token request denied - Host not allowed: ${host}`
       );
       return c.json({ error: "Token only available via allowed hosts" }, 403);
     }
@@ -372,7 +391,7 @@ export function createHonoApp() {
         } else {
           // Host not allowed - no token (security measure)
           appLogger.warn(
-            `[Security] Token not injected - Host not allowed: ${host}`,
+            `[Security] Token not injected - Host not allowed: ${host}`
           );
           const warningScript = `<script>console.error("MCPJam: Access via allowed host required for full functionality");</script>`;
           html = html.replace("</head>", `${warningScript}</head>`);
