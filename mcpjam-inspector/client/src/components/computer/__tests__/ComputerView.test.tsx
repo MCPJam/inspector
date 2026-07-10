@@ -1,4 +1,4 @@
-import { render, fireEvent, waitFor } from "@testing-library/react";
+import { render, fireEvent, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   ComputerUsageView,
@@ -60,6 +60,7 @@ afterEach(() => {
   mockUsage = undefined;
   mockEnvironments = [];
   mockDataPlane = { localConfigured: true, remoteDataPlaneUrl: null };
+  window.localStorage.clear();
 });
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -383,5 +384,117 @@ describe("ComputerView usage meter", () => {
     mockUsage = null;
     const second = render(<ComputerView projectId="p1" isAuthenticated />);
     expect(second.queryByTestId("computer-usage-meter")).toBeNull();
+  });
+});
+
+describe("ComputerView billing-pause warning banner (COMP-7)", () => {
+  it("shows the 80% warning banner when the backend signals it", () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    mockUsage = usage({ awakeMs: 24 * HOUR_MS, billingPauseWarning: true });
+    const { getByTestId, getByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(getByTestId("computer-billing-warning")).toBeTruthy();
+    expect(
+      getByText(/You've used 80% of your included compute hours/i)
+    ).toBeTruthy();
+    expect(
+      getByText(/Files are preserved when your computer pauses/i)
+    ).toBeTruthy();
+    expect(getByText("Add credits")).toBeTruthy();
+  });
+
+  it("does not show the banner when the backend does not signal a warning", () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    mockUsage = usage({ awakeMs: 24 * HOUR_MS, billingPauseWarning: false });
+    const { queryByTestId } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(queryByTestId("computer-billing-warning")).toBeNull();
+  });
+
+  it("does not show the banner against a backend that omits the field", () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    // No billingPauseWarning key at all (older backend).
+    mockUsage = usage({ awakeMs: 24 * HOUR_MS });
+    const { queryByTestId } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(queryByTestId("computer-billing-warning")).toBeNull();
+  });
+
+  it("dismisses the banner and keeps it hidden for the billing window", () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    mockUsage = usage({
+      awakeMs: 24 * HOUR_MS,
+      billingPauseWarning: true,
+      windowStartAt: 1000,
+    });
+    const first = render(<ComputerView projectId="p1" isAuthenticated />);
+    fireEvent.click(first.getByLabelText("Dismiss"));
+    expect(first.queryByTestId("computer-billing-warning")).toBeNull();
+    first.unmount();
+
+    // A later mount in the same billing window stays dismissed (localStorage).
+    const second = render(<ComputerView projectId="p1" isAuthenticated />);
+    expect(second.queryByTestId("computer-billing-warning")).toBeNull();
+  });
+
+  it("re-appears in a new billing window even after a prior dismissal", () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    mockUsage = usage({
+      awakeMs: 24 * HOUR_MS,
+      billingPauseWarning: true,
+      windowStartAt: 1000,
+    });
+    const first = render(<ComputerView projectId="p1" isAuthenticated />);
+    fireEvent.click(first.getByLabelText("Dismiss"));
+    first.unmount();
+
+    // Next month → new windowStartAt → new dismissal key → banner returns.
+    mockUsage = usage({
+      awakeMs: 24 * HOUR_MS,
+      billingPauseWarning: true,
+      windowStartAt: 2000,
+    });
+    const second = render(<ComputerView projectId="p1" isAuthenticated />);
+    expect(second.queryByTestId("computer-billing-warning")).toBeTruthy();
+  });
+});
+
+describe("ComputerView post-hibernate billing state (COMP-7)", () => {
+  it("shows a 'Paused for billing' state with the remedy, not a wake spinner", () => {
+    mockStatus = {
+      computerId: "c1",
+      status: "hibernating",
+      provider: "e2b",
+      hibernatedReason: "billing",
+    };
+    const { getByTestId, queryByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    const notice = getByTestId("computer-paused-for-billing");
+    // The status chip also reads "Paused for billing"; scope to the notice.
+    expect(within(notice).getByText("Paused for billing")).toBeTruthy();
+    expect(
+      within(notice).getByText(/Files are preserved when your computer pauses/i)
+    ).toBeTruthy();
+    expect(within(notice).getByText("Add credits")).toBeTruthy();
+    // Not the generic idle spinner.
+    expect(queryByText(/Starting your computer/i)).toBeNull();
+  });
+
+  it("leaves idle hibernation messaging unchanged (no billing state)", () => {
+    mockStatus = {
+      computerId: "c1",
+      status: "hibernating",
+      provider: "e2b",
+      hibernatedReason: "idle",
+    };
+    const { queryByTestId, queryByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(queryByTestId("computer-paused-for-billing")).toBeNull();
+    expect(queryByText("Paused for billing")).toBeNull();
   });
 });
