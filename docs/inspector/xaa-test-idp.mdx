@@ -30,7 +30,7 @@ Open the **XAA Flow** tab in MCPJam Inspector. At the top of the tab, expand the
 
 ## Registering trust
 
-1. Copy the **Issuer URL** from the card. Also copy the **JWKS URL** if your authorization server asks for the key-set endpoint directly.
+1. Copy the **Issuer URL** from the card. If you are signed in as part of an organization, use the org-scoped URL shown — it is the safe issuer to register with a real authorization server. Also copy the **JWKS URL** if your authorization server asks for the key-set endpoint directly.
 2. In your authorization server — Okta, Auth0, Keycloak, or your own — register MCPJam's **issuer URL** as the trusted identity issuer. The issuer is the trust anchor; use the JWKS URL only when the server explicitly asks for the key-set endpoint.
 3. Set the ID-JAG `aud` claim to your authorization server's own issuer.
 4. Set the ID-JAG `resource` claim to your MCP server's resource identifier.
