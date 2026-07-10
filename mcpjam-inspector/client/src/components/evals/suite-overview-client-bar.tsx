@@ -149,12 +149,12 @@ export function SuiteOverviewClientBar({
           <GitCompare className="h-3.5 w-3.5" />
         </button>
       </TooltipTrigger>
-      <TooltipContent>Compare attached hosts side by side</TooltipContent>
+      <TooltipContent>Compare attached clients side by side</TooltipContent>
     </Tooltip>
   ) : null;
 
   const triggerLabel = useMemo(() => {
-    if (attachments.length === 0) return "No hosts · pick one";
+    if (attachments.length === 0) return "No clients · pick one";
     const firstName =
       hostNameByAttachment.get(attachments[0]!.namedHostId) ??
       projectHosts.find((h) => h.hostId === attachments[0]!.namedHostId)
@@ -209,7 +209,7 @@ export function SuiteOverviewClientBar({
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  aria-label="What is a host attachment?"
+                  aria-label="What is a client attachment?"
                   className="rounded-full p-0.5 text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <Info className="size-3" />
@@ -308,7 +308,7 @@ export function SuiteOverviewClientBar({
               className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
             >
               <span className="size-3.5 shrink-0" aria-hidden />
-              <span>Manage hosts…</span>
+              <span>Manage clients…</span>
             </button>
           </div>
         </div>

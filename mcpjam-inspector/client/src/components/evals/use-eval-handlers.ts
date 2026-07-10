@@ -598,7 +598,7 @@ export function useEvalHandlers({
           await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
           return;
         }
-        toast.error("Attach a host to this suite before running it.");
+        toast.error("Attach a client to this suite before running it.");
         return;
       }
 
@@ -773,7 +773,7 @@ export function useEvalHandlers({
         if (failures.length === 0) {
           toast.success(
             runPlans.length > 1
-              ? `All ${runPlans.length} host runs started.`
+              ? `All ${runPlans.length} client runs started.`
               : "Eval run started!",
           );
 
@@ -806,17 +806,17 @@ export function useEvalHandlers({
           }
         } else if (failures.length < runPlans.length) {
           const failedHostNames = failures
-            .map((failure) => failure.plan.hostName ?? "(unnamed host)")
+            .map((failure) => failure.plan.hostName ?? "(unnamed client)")
             .join(", ");
           toast.error(
-            `${failures.length} of ${runPlans.length} host runs failed: ${failedHostNames}`,
+            `${failures.length} of ${runPlans.length} client runs failed: ${failedHostNames}`,
           );
         } else {
           // All failed — surface the first error for actionable detail.
           const firstError = failures[0]?.reason;
           throw firstError instanceof Error
             ? firstError
-            : new Error(String(firstError ?? "All host runs failed"));
+            : new Error(String(firstError ?? "All client runs failed"));
         }
       } catch (error) {
         console.error("Failed to rerun evals:", error);
@@ -891,7 +891,7 @@ export function useEvalHandlers({
       );
 
       if (suiteServers.length === 0) {
-        toast.error("Attach a host to this suite before running it.");
+        toast.error("Attach a client to this suite before running it.");
         return null;
       }
 

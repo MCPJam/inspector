@@ -191,7 +191,7 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     label: "availableDisplayModes",
     path: "mcpProfile.apps.mcpAppsOverrides.availableDisplayModes (effective)",
     description:
-      "Display modes the host offers widgets (inline / fullscreen / pip).",
+      "Display modes the client offers widgets (inline / fullscreen / pip).",
     kind: { kind: "mode-set", modes: ALL_DISPLAY_MODES },
     read: (cfg) => effMcpApps(cfg).availableDisplayModes,
   },
@@ -299,7 +299,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     subsection: "Model & sampling",
     label: "Model",
     path: "modelId",
-    description: "LLM the host runs the agent on.",
+    description: "LLM the client runs the agent on.",
     kind: { kind: "string" },
     read: (cfg) => cfg.modelId,
   },
@@ -425,7 +425,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     label: "Progressive tools",
     path: "progressiveToolDiscovery",
     description:
-      "search_mcp_tools / load_mcp_tools meta-tools above context thresholds. Undefined = host decides.",
+      "search_mcp_tools / load_mcp_tools meta-tools above context thresholds. Undefined = client decides.",
     kind: { kind: "tri-state" },
     read: (cfg) => cfg.progressiveToolDiscovery,
   },

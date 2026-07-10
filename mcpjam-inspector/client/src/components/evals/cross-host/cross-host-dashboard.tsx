@@ -144,9 +144,9 @@ export function CrossHostDashboard({
           <Network className="size-5 text-muted-foreground" />
         </div>
         <div className="space-y-1">
-          <p className="text-sm font-medium">No host attachments</p>
+          <p className="text-sm font-medium">No client attachments</p>
           <p className="text-xs text-muted-foreground max-w-xs">
-            Attach MCP host applications to this suite to compare results across
+            Attach MCP client applications to this suite to compare results across
             Claude Desktop, Cursor, ChatGPT, and others.
           </p>
         </div>
@@ -156,7 +156,7 @@ export function CrossHostDashboard({
             onClick={onConfigureHosts}
             className="text-xs text-primary hover:underline"
           >
-            Configure host attachments
+            Configure client attachments
           </button>
         )}
       </div>
@@ -170,9 +170,9 @@ export function CrossHostDashboard({
           <Network className="size-5 text-muted-foreground" />
         </div>
         <div className="space-y-1">
-          <p className="text-sm font-medium">No cross-host data yet</p>
+          <p className="text-sm font-medium">No cross-client data yet</p>
           <p className="text-xs text-muted-foreground max-w-xs">
-            Run the suite across its attached hosts to see per-host pass rates,
+            Run the suite across its attached clients to see per-client pass rates,
             latency, and token usage in this matrix.
           </p>
         </div>

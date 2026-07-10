@@ -783,7 +783,7 @@ export function ServersTab({
         )}
         title={
           canManageProjectServers
-            ? "Auto-connect every project server when a host opens"
+            ? "Auto-connect every project server when a client opens"
             : "Only project admins can change auto-connect"
         }
       >

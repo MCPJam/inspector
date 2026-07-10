@@ -2807,7 +2807,7 @@ export function TestTemplateEditor({
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <label className="inline-flex cursor-pointer items-center">
-                          <span className="sr-only">Host</span>
+                          <span className="sr-only">Client</span>
                           <span className="inline-flex h-8 max-w-[7.5rem] items-center gap-1 rounded-md border border-input/80 bg-background px-1.5">
                             {selectedQuickRunHostLogoSrc ? (
                               <img

@@ -71,7 +71,7 @@ export function ServerAttachmentPicker({
   onChange,
   disabled = false,
   emptyTriggerLabel = "No server group · pick one",
-  infoText = "A server group is a named set of MCP servers that every host in the suite runs against.",
+  infoText = "A server group is a named set of MCP servers that every client in the suite runs against.",
   selectedDeleteHint = "In use by this suite — pick another first",
   onClearSelection,
   inModal = false,

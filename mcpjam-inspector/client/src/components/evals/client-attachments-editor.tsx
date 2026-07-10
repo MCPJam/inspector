@@ -88,7 +88,7 @@ export function ClientAttachmentsEditor({
       </div>
 
       <div className="space-y-1">
-        <Label className="text-xs text-muted-foreground">Attach a host</Label>
+        <Label className="text-xs text-muted-foreground">Attach a client</Label>
         <div className="flex items-center gap-2">
           <div className="flex-1 min-w-0">
             <HostPicker
@@ -98,8 +98,8 @@ export function ClientAttachmentsEditor({
               location="eval_runner"
               placeholder={
                 attachedIds.size === hosts.length && hosts.length > 0
-                  ? "All hosts attached"
-                  : "Choose a host to attach"
+                  ? "All clients attached"
+                  : "Choose a client to attach"
               }
               includeNone={false}
               disabled={
