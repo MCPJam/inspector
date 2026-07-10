@@ -63,7 +63,9 @@
             "pages": [
               "inspector/playground",
               "inspector/evals",
-              "inspector/host-templates"
+              "inspector/host-templates",
+              "inspector/chatbox",
+              "inspector/swarms"
             ]
           },
           {
