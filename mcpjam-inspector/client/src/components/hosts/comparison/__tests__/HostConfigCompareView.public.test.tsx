@@ -7,6 +7,9 @@ import { HostConfigCompareView } from "../HostConfigCompareView";
 const mockHostListState = vi.hoisted(() => ({
   hosts: [] as any[],
 }));
+const mockCatalogState = vi.hoisted(() => ({
+  current: null as any,
+}));
 
 const originalMatchMedia = window.matchMedia;
 
@@ -23,12 +26,13 @@ vi.mock("posthog-js/react", () => ({
 vi.mock("@/lib/host-compat/use-host-catalog", async () => {
   const { bundledHostCompatCatalog } = await import("@mcpjam/sdk/host-compat");
   return {
-    useHostCatalog: () => ({
-      status: "live",
-      catalog: bundledHostCompatCatalog(),
-      version: 1,
-      source: "live",
-    }),
+    useHostCatalog: () =>
+      mockCatalogState.current ?? {
+        status: "live",
+        catalog: bundledHostCompatCatalog(),
+        version: 1,
+        source: "live",
+      },
   };
 });
 
@@ -79,6 +83,7 @@ describe("HostConfigCompareView public mode", () => {
 
   beforeEach(() => {
     mockHostListState.hosts = [];
+    mockCatalogState.current = null;
     global.fetch = vi.fn();
   });
 
@@ -269,6 +274,30 @@ describe("HostConfigCompareView public mode", () => {
 
     expect(
       screen.getByText(/Sign in to compare your hosts/i)
+    ).toBeInTheDocument();
+  });
+
+  it("does not fall back to SDK preset hosts in the full app compare page", () => {
+    mockCatalogState.current = {
+      status: "fallback",
+      catalog: null,
+      version: 0,
+      source: "bundled",
+    };
+
+    render(
+      <MemoryRouter>
+        <HostConfigCompareView projectId="abc123" isAuthenticated />
+      </MemoryRouter>
+    );
+
+    expect(
+      screen.queryByTestId("host-compare-chip-preset:claude")
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "No hosts yet. Create one from the Host tab to populate the comparison."
+      )
     ).toBeInTheDocument();
   });
 
