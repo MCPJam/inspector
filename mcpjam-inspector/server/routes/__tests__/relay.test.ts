@@ -172,6 +172,7 @@ describe("posthog relay proxy", () => {
       body: threeMb,
     });
     expect(eventRes.status).toBe(413);
+    expect(await eventRes.json()).toEqual({ error: "payload_too_large" });
     expect(fetch).not.toHaveBeenCalled();
 
     const replayRes = await app.request("http://localhost:6274/relay/s/", {

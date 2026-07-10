@@ -36,9 +36,9 @@ describe("posthog relay rate limit (hosted mode)", () => {
     // x-real-ip (trusted edge header) is fixed; the client rotates its own
     // XFF every request trying to dodge the limiter. getClientIp prefers
     // x-real-ip, so all requests land in one bucket and the 601st is 429.
-    let lastStatus = 0;
+    let lastRes: Response | undefined;
     for (let i = 0; i < 601; i++) {
-      const res = await app.request("http://localhost:6274/relay/i/v0/e/", {
+      lastRes = await app.request("http://localhost:6274/relay/i/v0/e/", {
         method: "POST",
         body: "{}",
         headers: {
@@ -46,10 +46,10 @@ describe("posthog relay rate limit (hosted mode)", () => {
           "X-Forwarded-For": `10.0.${Math.floor(i / 250)}.${i % 250}`,
         },
       });
-      lastStatus = res.status;
     }
 
-    expect(lastStatus).toBe(429);
+    expect(lastRes?.status).toBe(429);
+    expect(await lastRes!.json()).toEqual({ error: "rate_limited" });
     expect(vi.mocked(fetch).mock.calls.length).toBe(600);
 
     // A different edge IP is a different bucket and still passes.
