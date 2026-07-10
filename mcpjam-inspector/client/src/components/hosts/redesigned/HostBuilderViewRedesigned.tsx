@@ -341,12 +341,12 @@ export function HostBuilderViewRedesigned({
         name: draftName,
         input: draftConfig,
       });
-      // The freshly persisted snapshot id arrives via the Convex
+      // The freshly persisted config id arrives via the Convex
       // subscription on the next tick; don't include it in this toast
-      // because `host?.config?.id` is still the *previous* snapshot here.
-      toast.success("Snapshot saved");
+      // because `host?.config?.id` is still the *previous* saved config here.
+      toast.success("Host saved");
       // Telemetry is best-effort: a posthog throw must not bubble into the
-      // shared catch and surface "Failed to save host" after the snapshot
+      // shared catch and surface "Failed to save host" after the config
       // has already been persisted.
       try {
         posthog.capture("client_config_saved", {
