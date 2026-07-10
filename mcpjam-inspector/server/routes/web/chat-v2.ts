@@ -15,6 +15,7 @@ import {
 } from "../../utils/chat-v2-orchestration.js";
 import { buildDirectHostConfig } from "../../utils/chat-ingestion.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
+import { captureServerEvent } from "../../utils/analytics.js";
 import {
   hostedChatSchema,
   createAuthorizedManager,
@@ -464,6 +465,24 @@ chatV2.post("/", async (c) => {
       // own route (mcpjam-agent.ts) and never lands here.
       const origin = isChatboxSession ? "chatbox" : "playground";
       const isDirectChat = !isChatboxSession;
+
+      // Server twin of the client's `send_message` — fires even when the
+      // browser can't reach PostHog. Identity: guests always resolve (the
+      // bearer-auth middleware sets c.get("guestId") before this handler,
+      // independent of the authorize exchange); signed-in identity comes from
+      // the authorize exchange above. One slice is intentionally not twinned:
+      // a signed-in user chatting with ZERO MCP servers selected, where
+      // createAuthorizedManager short-circuits before the exchange so no
+      // client-matching WorkOS id is available — capturing with the Convex
+      // internal id would split the person from their client events. That
+      // slice is small (model-only chats are dominated by guests, who are
+      // covered) and captureServerEvent drops it rather than mis-attribute;
+      // the client `send_message` still fires, so the block-rate ratio stays
+      // directionally correct.
+      captureServerEvent(c, "send_message_server", {
+        origin,
+        source_type: sourceType,
+      });
 
       return await streamWebChatTurn({
         manager,

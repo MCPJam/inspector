@@ -53,6 +53,7 @@ import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal"
 import { createComputerUploadHandler } from "./routes/web/computer-upload";
 import { initComputersStartup } from "./utils/computers/remote-data-plane";
 import { registerSelfFetch } from "./utils/self-app";
+import { shutdownAnalytics } from "./utils/analytics";
 
 const sysLogger = getSystemLogger("process");
 
@@ -118,6 +119,7 @@ import appsRoutes from "./routes/apps/index";
 import webRoutes from "./routes/web/index";
 import v1Routes from "./routes/v1/index";
 import cliAuthRoutes from "./routes/cli-auth/index";
+import relayRoutes, { relayBodyLimit } from "./routes/relay";
 import workosAuthkitRoutes from "./routes/workos-authkit";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
@@ -435,6 +437,15 @@ registerSelfFetch((request) => app.fetch(request));
 // production entries must wire this up.
 app.route("/api/cli/auth", cliAuthRoutes);
 
+// Same-origin PostHog reverse proxy (ad-blocker resilience). Deliberately
+// OUTSIDE /api so it bypasses session auth (analytics flows before any
+// session exists), and mounted before the production static/SPA fallback,
+// whose catch-all only skips /api/* and would otherwise swallow /relay GETs
+// with index.html. Mirror of the mount in server/app.ts::createHonoApp —
+// both production entries must wire this up.
+app.use("/relay/*", relayBodyLimit());
+app.route("/relay", relayRoutes);
+
 // Fallback for clients that post to "/sse/message" instead of the rewritten proxy messages URL.
 // We resolve the upstream messages endpoint via sessionId and forward with any injected auth.
 // CORS preflight
@@ -747,6 +758,9 @@ async function shutdown() {
     await shutdownRunningSimulations();
     await tunnelManager.closeAll();
     server.close();
+    // Flush queued server-side analytics (bounded internally; forceExitTimer
+    // is the backstop). Billing/funnel events must not die in the queue.
+    await shutdownAnalytics();
     await appLogger.flush();
     clearTimeout(forceExitTimer);
     process.exit(0);

@@ -152,6 +152,24 @@ export type RequestEventMap = {
 export type SystemEventMap = {
   "mcp.connection.closed_with_pending_requests": { errorCode: string };
   "process.unhandled_rejection": { errorCode: string };
+  // Aggregated PostHog relay proxy counters, one line per flush interval
+  // (see routes/relay.ts). Low-cardinality by construction; never emitted
+  // per-request.
+  "relay.stats": {
+    requests: number;
+    res2xx: number;
+    res3xx: number;
+    res4xx: number;
+    res5xx: number;
+    upstream4xx: number;
+    upstream5xx: number;
+    timeouts: number;
+    upstreamErrors: number;
+    bodyLimitRejects: number;
+    rateLimitRejects: number;
+    latencyP50Ms: number;
+    latencyP95Ms: number;
+  };
 };
 
 export type LogEventName = keyof RequestEventMap | keyof SystemEventMap;

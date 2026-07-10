@@ -2,8 +2,27 @@ export const VITE_PUBLIC_POSTHOG_KEY =
   "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
 export const VITE_PUBLIC_POSTHOG_HOST = "https://us.i.posthog.com";
 
+// posthog-js talks to the same-origin /relay reverse proxy (server/routes/
+// relay.ts) instead of *.posthog.com directly: ad blockers block PostHog by
+// hostname, which drops events AND breaks feature-flag evaluation for
+// blocker users. Same-origin works on every platform — hosted web, local
+// npm, and packaged Electron are all served by the Hono server that hosts
+// /relay; Vite dev (web and Electron renderer) proxies /relay to it.
+export function getPostHogApiHost(): string {
+  if (
+    typeof window !== "undefined" &&
+    window.location?.origin?.startsWith("http")
+  ) {
+    return `${window.location.origin}/relay`;
+  }
+  // Non-browser context (tests) — no relay origin to derive.
+  return VITE_PUBLIC_POSTHOG_HOST;
+}
+
 export const options = {
-  api_host: VITE_PUBLIC_POSTHOG_HOST,
+  api_host: getPostHogApiHost(),
+  // Toolbar/app links must point at PostHog itself once api_host is proxied.
+  ui_host: "https://us.posthog.com",
   capture_pageview: false,
   person_profiles: "always" as const,
 
@@ -38,7 +57,10 @@ export const getPostHogKey = () => VITE_PUBLIC_POSTHOG_KEY;
 export const getPostHogOptions = () =>
   isPostHogDisabled
     ? {
-        api_host: VITE_PUBLIC_POSTHOG_HOST,
+        // Same relay host as the enabled branch — otherwise dev-mode /flags
+        // calls hit us.i.posthog.com directly and stay ad-blocked.
+        api_host: getPostHogApiHost(),
+        ui_host: "https://us.posthog.com",
         capture_pageview: false,
         person_profiles: "always" as const,
         // Disable event capture but keep /decide enabled for feature flag evaluation.
