@@ -12,7 +12,8 @@
  *   - The browser mints a ~60s Convex terminal token and sends it as
  *     `Authorization: Bearer <jwt>` — headers stay out of access/proxy logs,
  *     query strings don't. No `?token=` fallback.
- *   - We verify it LOCALLY (shared HS256 secret) → `computerId`, then exchange
+ *   - We verify its RS256 signature against the backend-published JWKS
+ *     (`/computers/terminal-jwks`, short-cached) → `computerId`, then exchange
  *     it for the vendor sandbox id via the secret-gated `/computers/sandbox-info`
  *     control-plane route. The browser never sees vendor ids or credentials.
  *
