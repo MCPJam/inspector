@@ -148,6 +148,21 @@ export interface RunAssistantTurnOptions {
   heartbeatIntervalMs?: number;
   maxSteps?: number;
 
+  // --- Superset pass-throughs the live MCPJam chat path supplies today
+  //     (`web-chat-turn.ts` → `handleMCPJamFreeChatModel`) but which were
+  //     missing here. Required BEFORE routing the live path through
+  //     `runAssistantTurn`, or the live turn silently loses harness /
+  //     sandbox / built-in behavior. All flow verbatim into the handler. ---
+
+  /** Runtime-config execution scope (sandbox reserve, skills, broker, commit). */
+  executionScope?: MCPJamHandlerOptions["executionScope"];
+  /** UI tools exempt from the dispatch-time approval gate. */
+  approvalFreeUiToolNames?: MCPJamHandlerOptions["approvalFreeUiToolNames"];
+  /** Harness MCP-proxy strategy for the real-runtime path. */
+  harnessMcpProxy?: MCPJamHandlerOptions["harnessMcpProxy"];
+  /** Server-executed built-ins (e.g. `web_search`) handed to the harness. */
+  builtInTools?: MCPJamHandlerOptions["builtInTools"];
+
   /**
    * Callback invoked when the chat-ingestion handler path runs. Only
    * consumed when `persistMode === "handler"`; ignored when
@@ -315,13 +330,21 @@ function buildHandlerOptions(
   ) => void
 ): MCPJamHandlerOptions {
   const wrappedOnConversationComplete: MCPJamHandlerOptions["onConversationComplete"] =
-    async (fullHistory, turnTrace) => {
+    async (fullHistory, turnTrace, harnessSessionCommit) => {
       captureTranscript(fullHistory, turnTrace);
       if (
         opts.persistMode === "handler" &&
         typeof opts.onConversationComplete === "function"
       ) {
-        await opts.onConversationComplete(fullHistory, turnTrace);
+        // Forward `harnessSessionCommit` (3rd arg) so harness-backed live chat
+        // keeps its atomic transcript + resume-state commit. TypeScript won't
+        // catch a dropped trailing param (2-arg fn assignable to 3-param type),
+        // and the live MCPJam path now routes through here via runAssistantTurn.
+        await opts.onConversationComplete(
+          fullHistory,
+          turnTrace,
+          harnessSessionCommit
+        );
       }
     };
 
@@ -351,6 +374,17 @@ function buildHandlerOptions(
     // unified harness turns reach runHarnessTurn with harness=undefined (the old
     // `?? "claude-code"` default silently mis-ran a codex eval as claude-code).
     ...(opts.harness ? { harness: opts.harness } : {}),
+    // Superset pass-throughs (see `RunAssistantTurnOptions`): forward the
+    // runtime scope, harness proxy, built-ins, and approval-free UI tool
+    // set the live MCPJam path already supplies today.
+    ...(opts.executionScope ? { executionScope: opts.executionScope } : {}),
+    ...(opts.harnessMcpProxy
+      ? { harnessMcpProxy: opts.harnessMcpProxy }
+      : {}),
+    ...(opts.builtInTools ? { builtInTools: opts.builtInTools } : {}),
+    ...(opts.approvalFreeUiToolNames
+      ? { approvalFreeUiToolNames: opts.approvalFreeUiToolNames }
+      : {}),
     ...(opts.requireToolApproval !== undefined
       ? { requireToolApproval: opts.requireToolApproval }
       : {}),

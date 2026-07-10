@@ -32,10 +32,7 @@ import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
-import {
-  handleMCPJamFreeChatModel,
-  warnIfChatAbortSignalMissing,
-} from "./mcpjam-stream-handler.js";
+import { warnIfChatAbortSignalMissing } from "./mcpjam-stream-handler.js";
 import type { ExecutionScope } from "./execution-scope.js";
 import {
   handleHostedOrgChatModel,
@@ -56,7 +53,6 @@ import {
   type WidgetModelContextEntry,
 } from "./chat-v2-orchestration.js";
 import {
-  persistChatSessionToConvex,
   pickEnrichmentHeaders,
   stampSenderUserIdsOnSessionMessages,
   type ChatOrigin,
@@ -64,12 +60,13 @@ import {
   type PersistedTurnTrace,
 } from "./chat-ingestion.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
-import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
+import { persistHostSessionTurn } from "./persist-host-session-turn.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
 import { bridgeHarnessRpcLogsToCollector } from "./../routes/web/hosted-rpc-logs.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getClientIp } from "./client-ip.js";
+import { runAssistantTurn } from "./assistant-turn.js";
 import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
 import {
   resolveWebAuthorizedHarnessStrategy,
@@ -335,76 +332,66 @@ export async function streamWebChatTurn(
       harnessSessionCommit?: HarnessSessionCommitPayload,
     ) => {
       const isDirectChat = !isChatboxSession;
-      // Capture the live tool catalog. Failures must never block the persist.
-      // Surfaces with synthetic server ids (mcpjam-agent) opt out via
+      // Snapshot capture (best-effort) + persist run through the shared
+      // `persistHostSessionTurn` helper. Surfaces with synthetic server ids
+      // (mcpjam-agent) opt out of the snapshot via
       // `persist.captureToolSnapshot === false`.
-      let toolSnapshot: unknown;
-      if (persist.captureToolSnapshot !== false) {
-        try {
-          const knownIds =
-            typeof manager.hasServer === "function"
-              ? persist.selectedServerIds.filter((id) => manager.hasServer(id))
-              : persist.selectedServerIds;
-          if (knownIds.length > 0) {
-            toolSnapshot =
-              await exportConnectedServerToolSnapshotForEvalAuthoring(
-                manager,
-                knownIds,
-                { logPrefix: "chat-v2.persist" },
-              );
-          }
-        } catch {
-          toolSnapshot = undefined;
-        }
-      }
-
-      await persistChatSessionToConvex({
-        chatSessionId: hostedChatSessionId,
-        modelId,
-        modelSource,
-        projectId: persist.projectId,
-        sourceType: persist.sourceType,
-        origin: persist.origin,
-        ...(isChatboxSession && persist.surface
-          ? { surface: persist.surface }
+      await persistHostSessionTurn(manager, {
+        selectedServerIds: persist.selectedServerIds,
+        ...(persist.captureToolSnapshot !== undefined
+          ? { captureToolSnapshot: persist.captureToolSnapshot }
           : {}),
-        chatboxId: persist.chatboxId,
-        accessVersion: persist.accessVersion,
-        authHeader: runtime.authHeader,
-        sessionMessages: stampSenderUserIdsOnSessionMessages(
-          fullHistory,
-          persist.originalMessages as unknown[],
-          { authenticatedUserId: persist.authenticatedUserId },
-        ),
-        startedAt: sessionStartedAt,
-        lastActivityAt: Date.now(),
-        ...(toolSnapshot ? { toolSnapshot } : {}),
-        ...(isDirectChat
-          ? {
-              directVisibility: persist.directVisibility,
-              resumeConfig: {
-                systemPrompt: persist.systemPrompt,
-                temperature: persist.temperature,
-                requireToolApproval: persist.requireToolApproval,
-                respectToolVisibility: persist.respectToolVisibility,
-                modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
-                mcpToolResultImageRendering:
-                  persist.mcpToolResultImageRendering,
-                selectedServers:
-                  Array.isArray(persist.selectedServerNames) &&
-                  persist.selectedServerNames.length ===
-                    persist.selectedServerIds.length
-                    ? persist.selectedServerNames
-                    : persist.selectedServerIds,
-              },
-              ...(resolvedHostConfig ? { hostConfig: resolvedHostConfig } : {}),
-            }
-          : {}),
-        turnTrace,
-        // §3: chat-backed harness resume-state commit, applied atomically with
-        // the transcript inside the ingest mutation.
-        ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
-        forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
+        logPrefix: "chat-v2.persist",
+        persist: {
+          chatSessionId: hostedChatSessionId,
+          modelId,
+          modelSource,
+          projectId: persist.projectId,
+          sourceType: persist.sourceType,
+          origin: persist.origin,
+          ...(isChatboxSession && persist.surface
+            ? { surface: persist.surface }
+            : {}),
+          chatboxId: persist.chatboxId,
+          accessVersion: persist.accessVersion,
+          authHeader: runtime.authHeader,
+          sessionMessages: stampSenderUserIdsOnSessionMessages(
+            fullHistory,
+            persist.originalMessages as unknown[],
+            { authenticatedUserId: persist.authenticatedUserId },
+          ),
+          startedAt: sessionStartedAt,
+          lastActivityAt: Date.now(),
+          ...(isDirectChat
+            ? {
+                directVisibility: persist.directVisibility,
+                resumeConfig: {
+                  systemPrompt: persist.systemPrompt,
+                  temperature: persist.temperature,
+                  requireToolApproval: persist.requireToolApproval,
+                  respectToolVisibility: persist.respectToolVisibility,
+                  modelVisibleMcpToolResults:
+                    prepare.modelVisibleMcpToolResults,
+                  mcpToolResultImageRendering:
+                    persist.mcpToolResultImageRendering,
+                  selectedServers:
+                    Array.isArray(persist.selectedServerNames) &&
+                    persist.selectedServerNames.length ===
+                      persist.selectedServerIds.length
+                      ? persist.selectedServerNames
+                      : persist.selectedServerIds,
+                },
+                ...(resolvedHostConfig
+                  ? { hostConfig: resolvedHostConfig }
+                  : {}),
+              }
+            : {}),
+          turnTrace,
+          // §3: chat-backed harness resume-state commit, applied atomically
+          // with the transcript inside the ingest mutation.
+          ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
+          forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
+        },
       });
     };
   };
@@ -531,30 +518,49 @@ export async function streamWebChatTurn(
   // leave a live subscription) and torn down with the stream.
   let stopHarnessRpcLogBridge: (() => void) | undefined;
 
-  return handleMCPJamFreeChatModel({
+  // Live MCPJam chat runs through the shared `runAssistantTurn` surface (the
+  // same engine seam the synthetic runner uses) rather than calling
+  // `handleMCPJamFreeChatModel` directly — `runAssistantTurn` is a faithful
+  // wrapper (streamSink "ui" → runChatEngineLoop / runHarnessTurn, identical to
+  // the direct call) and now carries the superset fields (executionScope,
+  // harnessMcpProxy, builtInTools, approvalFreeUiToolNames) the live path needs.
+  // Harness eligibility is already gated by the chat-v2 preflight, so the
+  // useHarness decision matches the old direct dispatch.
+  const engineResult = await runAssistantTurn({
     messages: modelMessages,
-    modelId: mcpjamModelId,
-    provider: prepare.modelDefinition.provider,
-    chatSessionId: hostedChatSessionId,
-    sourceType: persist.sourceType,
+    modelDefinition: prepare.modelDefinition,
     systemPrompt: effectiveEnhancedSystemPrompt,
-    temperature: resolvedTemperature,
+    ...(resolvedTemperature !== undefined
+      ? { temperature: resolvedTemperature }
+      : {}),
     tools: allTools as ToolSet,
-    progressivePlan,
-    discoveryState,
-    authHeader: runtime.authHeader,
-    clientIp: runtime.clientIp ?? getClientIp(c),
-    chatboxId: persist.chatboxId,
-    accessVersion: persist.accessVersion,
-    projectId: persist.projectId,
+    mcpClientManager: manager,
+    authContext: {
+      kind: "user_bearer",
+      token: runtime.authHeader ?? "",
+      clientIp: runtime.clientIp ?? getClientIp(c),
+    },
+    sourceType: persist.sourceType,
+    origin: persist.origin,
+    streamSink: "ui",
+    persistMode: "handler",
+    chatSessionId: hostedChatSessionId,
+    ...(persist.projectId ? { projectId: persist.projectId } : {}),
+    ...(persist.chatboxId ? { chatboxId: persist.chatboxId } : {}),
+    ...(persist.accessVersion !== undefined
+      ? { accessVersion: persist.accessVersion }
+      : {}),
     // Phase 3: thread the runtime-config execution scope into the harness path
     // (sandbox reserve, skills, broker, session-state, commit).
     ...(persist.executionScope
       ? { executionScope: persist.executionScope }
       : {}),
-    mcpClientManager: manager,
-    selectedServers: persist.selectedServerIds,
-    requireToolApproval: persist.requireToolApproval,
+    ...(persist.selectedServerIds
+      ? { selectedServerIds: persist.selectedServerIds }
+      : {}),
+    ...(persist.requireToolApproval !== undefined
+      ? { requireToolApproval: persist.requireToolApproval }
+      : {}),
     approvalFreeUiToolNames: approvalFreeUiToolNamesFrom(prepare.uiTools),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     ...(persist.harness ? { harness: persist.harness } : {}),
@@ -564,7 +570,9 @@ export async function streamWebChatTurn(
     // (web_search) to HarnessAgent without the MCP-server tools, which the
     // harness gets via .mcp.json.
     ...(prepare.builtInTools ? { builtInTools: prepare.builtInTools } : {}),
-    abortSignal: runtime.abortSignal,
+    ...(progressivePlan ? { progressivePlan } : {}),
+    ...(discoveryState ? { discoveryState } : {}),
+    ...(runtime.abortSignal ? { abortSignal: runtime.abortSignal } : {}),
     onConversationComplete,
     onStreamComplete: async () => {
       stopHarnessRpcLogBridge?.();
@@ -581,4 +589,12 @@ export async function streamWebChatTurn(
       }
     },
   });
+
+  if (!engineResult.response) {
+    throw new Error(
+      'runAssistantTurn(streamSink: "ui") returned no Response for the ' +
+        "MCPJam chat path",
+    );
+  }
+  return engineResult.response;
 }

@@ -161,7 +161,7 @@ export interface PersistedTurnTrace {
 // inspector pins to the closed set.
 export type ChatOrigin = "playground" | "mcpjam_agent" | "chatbox" | "eval";
 
-interface PersistChatSessionOptions {
+export interface PersistChatSessionOptions {
   chatSessionId: string;
   modelId: string;
   modelSource: "mcpjam" | "byok" | "local_byok";

@@ -36,7 +36,7 @@ import {
   persistChatSessionToConvex,
   type PersistedTurnTrace,
 } from "../../utils/chat-ingestion.js";
-import { exportConnectedServerToolSnapshotForEvalAuthoring } from "../../utils/export-helpers.js";
+import { persistHostSessionTurn } from "../../utils/persist-host-session-turn.js";
 import { captureMcpAppWidgetSnapshots } from "../../utils/mcp-app-widget-capture.js";
 import {
   createBrowserSessionContext,
@@ -769,51 +769,36 @@ async function runOneSession(args: {
 
       // Mirror chat-v2's per-turn persistence so the Trace tab and the
       // tool-snapshot/serverInspections fan-out work identically for
-      // synthetic sessions and Playground sessions. Snapshot failures
-      // must never block the persist.
-      let toolSnapshot: unknown;
-      try {
-        const liveManager = built.manager;
-        const knownIds =
-          typeof liveManager.hasServer === "function"
-            ? selectedServerIds.filter((id) => liveManager.hasServer(id))
-            : selectedServerIds;
-        if (knownIds.length > 0) {
-          toolSnapshot =
-            await exportConnectedServerToolSnapshotForEvalAuthoring(
-              liveManager,
-              knownIds,
-              { logPrefix: "sessionSimulation.persist" }
-            );
-        }
-      } catch {
-        toolSnapshot = undefined;
-      }
-
-      await persistChatSessionToConvex({
-        chatSessionId,
-        modelId: String(modelDefinition.id),
-        modelSource: sessionModelSource ?? "mcpjam",
-        authHeader,
-        projectId,
-        sourceType: "chatbox",
-        // Synthetic chatbox simulation — distinguished from real chatbox
-        // traffic by the `synthetic: true` flag already on the row, not by
-        // origin. Training filters should combine `origin === 'chatbox'`
-        // with `synthetic !== true` to keep these out.
-        origin: "chatbox",
-        surface: "share_link",
-        chatboxId,
-        sessionMessages: messageHistory,
-        startedAt: sessionStartedAt,
-        lastActivityAt: Date.now(),
-        synthetic: true,
-        personaId: persona.id,
-        personaLabel: persona.name,
-        synthesisRunId: runId,
-        turnTrace,
-        resumeConfig,
-        ...(toolSnapshot ? { toolSnapshot } : {}),
+      // synthetic sessions and Playground sessions. Snapshot capture +
+      // persist run through the shared `persistHostSessionTurn` helper
+      // (best-effort snapshot; failures never block the persist).
+      await persistHostSessionTurn(built.manager, {
+        selectedServerIds,
+        logPrefix: "sessionSimulation.persist",
+        persist: {
+          chatSessionId,
+          modelId: String(modelDefinition.id),
+          modelSource: sessionModelSource ?? "mcpjam",
+          authHeader,
+          projectId,
+          sourceType: "chatbox",
+          // Synthetic chatbox simulation — distinguished from real chatbox
+          // traffic by the `synthetic: true` flag already on the row, not by
+          // origin. Training filters should combine `origin === 'chatbox'`
+          // with `synthetic !== true` to keep these out.
+          origin: "chatbox",
+          surface: "share_link",
+          chatboxId,
+          sessionMessages: messageHistory,
+          startedAt: sessionStartedAt,
+          lastActivityAt: Date.now(),
+          synthetic: true,
+          personaId: persona.id,
+          personaLabel: persona.name,
+          synthesisRunId: runId,
+          turnTrace,
+          resumeConfig,
+        },
       });
       anyTurnPersisted = true;
 

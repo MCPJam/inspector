@@ -81,6 +81,60 @@ const startSimulationSchema = z.object({
   maxTurns: z.number().int().min(1).max(20),
 });
 
+/**
+ * Provenance guard: the body `projectId` must match the chatbox's OWN project,
+ * resolved server-side from the chatbox runtime config's `executionScope`.
+ * `createAuthorizedManager` already verifies the bearer's membership of the
+ * supplied `projectId`, but NOT that the chatbox belongs to it — without this,
+ * a caller who is a member of both the chatbox's project A AND some project B
+ * could launch chatbox A's run/personas attributed to project B. Reject the
+ * mismatch before any run/manager/simulation exists.
+ *
+ * Fails CLOSED: if the runtime config didn't surface the chatbox's project
+ * (`executionScope.projectId` absent), we can't verify the chatbox↔project
+ * binding, so we reject rather than trust the caller-supplied `projectId`.
+ */
+function assertBodyProjectMatchesChatbox(
+  bodyProjectId: string,
+  executionScope: { projectId?: string } | undefined
+): void {
+  const scopeProjectId = executionScope?.projectId;
+  if (!scopeProjectId) {
+    throw new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      "Unable to verify this chatbox's project; refusing to run under an unverified projectId."
+    );
+  }
+  if (bodyProjectId !== scopeProjectId) {
+    throw new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      "projectId does not match this chatbox's project"
+    );
+  }
+}
+
+/**
+ * Map a chatbox runtime-config fetch's HTTP status onto the matching
+ * `ErrorCode` so an upstream 401/403/404 doesn't surface to the client as a
+ * generic `INTERNAL_ERROR`.
+ */
+function errorCodeForRuntimeStatus(
+  status: number
+): (typeof ErrorCode)[keyof typeof ErrorCode] {
+  switch (status) {
+    case 401:
+      return ErrorCode.UNAUTHORIZED;
+    case 403:
+      return ErrorCode.FORBIDDEN;
+    case 404:
+      return ErrorCode.NOT_FOUND;
+    default:
+      return ErrorCode.INTERNAL_ERROR;
+  }
+}
+
 function resolveRequiredServers(
   servers: Array<{ serverId: string; serverName?: string; optional?: boolean }>
 ): { selectedServerIds: string[]; selectedServerNames: string[] } {
@@ -109,6 +163,26 @@ chatboxSessions.post("/:chatboxId/generate-personas", async (c) =>
       await readJsonBody<unknown>(c)
     );
     const convexHttpUrl = requireConvexHttpUrl();
+
+    // Provenance guard (same as the start route): resolve the chatbox's own
+    // project server-side and reject a mismatched body projectId before the
+    // authorized manager + backend persona generation run under it.
+    const runtime = await fetchChatboxRuntimeConfig({
+      chatboxId,
+      bearer: bearerToken,
+    });
+    if (!runtime.ok) {
+      throw new WebRouteError(
+        runtime.status,
+        errorCodeForRuntimeStatus(runtime.status),
+        runtime.error
+      );
+    }
+    assertBodyProjectMatchesChatbox(
+      body.projectId,
+      runtime.config.executionScope
+    );
+
     // selectedServerIds may be empty (no required servers): the manager
     // comes back connection-less, the snapshot captures zero servers, and
     // the backend grounds personas in the chatbox name instead of tools.
@@ -196,10 +270,17 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
     if (!runtime.ok) {
       throw new WebRouteError(
         runtime.status,
-        ErrorCode.INTERNAL_ERROR,
+        errorCodeForRuntimeStatus(runtime.status),
         runtime.error
       );
     }
+
+    // Bind the run to the chatbox's own project (server-authoritative) before
+    // createRun/manager/startSimulation run under a caller-supplied projectId.
+    assertBodyProjectMatchesChatbox(
+      body.projectId,
+      runtime.config.executionScope
+    );
 
     // Fail fast before the run record exists. An unpinned host persists
     // modelId "" (a fully supported host state — Save never gates on it),
