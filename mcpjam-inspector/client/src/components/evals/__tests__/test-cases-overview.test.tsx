@@ -18,6 +18,10 @@ vi.mock("posthog-js", () => ({
   },
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
+}));
+
 vi.mock("@/lib/PosthogUtils", () => ({
   detectEnvironment: vi.fn().mockReturnValue("test"),
   detectPlatform: vi.fn().mockReturnValue("web"),

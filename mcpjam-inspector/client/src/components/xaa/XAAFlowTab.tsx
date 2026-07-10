@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import posthog from "posthog-js";
+import { track } from "@/lib/analytics";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -20,7 +20,6 @@ import {
 } from "@/components/ui/resizable";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { ServerFormData } from "@/shared/types.js";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useXaaResourceApps } from "@/hooks/useXaaResourceApps";
 import { useXaaRunSettings } from "@/hooks/useXaaRunSettings";
 import {
@@ -219,26 +218,24 @@ export function XAAFlowTab({
 
   const fireFlowStarted = useCallback(() => {
     completedFired.current = false;
-    posthog.capture("xaa_flow_started", {
+    track("xaa_flow_started", {
+      location: "xaa_flow_tab",
       mode: runInput.mode,
       target_source: target.targetSource,
       // Salted one-way bucket id — never a server name/URL/hostname.
       target_id: hashXaaTargetId(targetKey),
       auth_server_mode: authServerModeForTelemetry,
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
   }, [runInput.mode, target.targetSource, targetKey, authServerModeForTelemetry]);
 
   useEffect(() => {
     if (flowState.currentStep === "complete" && !completedFired.current) {
       completedFired.current = true;
-      posthog.capture("xaa_flow_completed", {
+      track("xaa_flow_completed", {
+        location: "xaa_flow_tab",
         success: true,
         target_source: targetSourceRef.current,
         auth_server_mode: authServerModeForTelemetry,
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
       });
       // A green run proves the user holds valid client credentials the AS
       // issued — that authorizes broken-token testing against it.
@@ -434,11 +431,9 @@ export function XAAFlowTab({
   }, [runSettings.userId, runSettings.email, rebuildFlow]);
 
   useEffect(() => {
-    posthog.capture("xaa_tab_viewed", {
+    track("xaa_tab_viewed", {
       location: "xaa_flow_tab",
       target_count: resourceApps.length + Object.keys(serverConfigs).length,
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
     // Fires once per mount; the counts are a point-in-time anchor.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -536,14 +531,13 @@ export function XAAFlowTab({
     const final = flowStateRef.current;
     if (final.currentStep !== "complete" && !completedFired.current) {
       completedFired.current = true;
-      posthog.capture("xaa_flow_completed", {
+      track("xaa_flow_completed", {
+        location: "xaa_flow_tab",
         success: false,
         target_source: targetSourceRef.current,
         // The step the run stopped on — an enum, never a raw error string.
         error_category: final.currentStep,
         auth_server_mode: authServerModeForTelemetry,
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
       });
     }
   }, [

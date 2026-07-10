@@ -8,7 +8,7 @@ import {
 import { useQuery } from "convex/react";
 import { useSearchParams } from "react-router";
 import { useAuth } from "@workos-inc/authkit-react";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import { ArrowLeft, Plus } from "lucide-react";
 import { useAppNavigate } from "@/lib/app-navigation";
 import { Button } from "@mcpjam/design-system/button";
@@ -141,7 +141,6 @@ export function HomeTab({
   isContextLoading = false,
 }: HomeTabProps) {
   const navigate = useAppNavigate();
-  const posthog = usePostHog();
   const [searchParams, setSearchParams] = useSearchParams();
   const sessionParam = searchParams.get("session");
   const composeParam = searchParams.get("compose") === "1";
@@ -218,7 +217,8 @@ export function HomeTab({
         // otherwise a later resume of the same id replays the prompt and
         // re-renders the optimistic bubble over the hydrated transcript.
         clearPendingForSession(prev.get("session"));
-        posthog?.capture("mcpjam_agent_back", {
+        track("mcpjam_agent_back", {
+          location: "home",
           surface: "home",
           had_session: Boolean(prev.get("session")),
         });
@@ -229,7 +229,7 @@ export function HomeTab({
       },
       { replace: false }
     );
-  }, [posthog, setSearchParams]);
+  }, [setSearchParams]);
 
   // "New chat" inside the takeover keeps the user on the agent surface and
   // swaps the thread for an empty composer (Hero). A session id is minted
@@ -241,7 +241,8 @@ export function HomeTab({
         // Same rationale as handleBackToHome — drop the leaving session's
         // unconsumed pending payload so a later resume doesn't double-send.
         clearPendingForSession(prev.get("session"));
-        posthog?.capture("mcpjam_agent_new_chat", {
+        track("mcpjam_agent_new_chat", {
+          location: "home",
           surface: "home",
           had_session: Boolean(prev.get("session")),
         });
@@ -252,7 +253,7 @@ export function HomeTab({
       },
       { replace: false }
     );
-  }, [posthog, setSearchParams]);
+  }, [setSearchParams]);
   const { user } = useAuth();
   const convexUser = useQuery("users:getCurrentUser" as any) as
     | { name?: string }

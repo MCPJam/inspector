@@ -56,6 +56,7 @@ const {
   mockOrganizationsTab,
   mockPosthogCapture,
   mockPosthogState,
+  mockTrack,
   mockChatboxesTab,
   mockGetGuestBearerToken,
   mockUseAuth,
@@ -133,6 +134,7 @@ const {
     },
     mockOrganizationsTab: vi.fn(() => <div />),
     mockPosthogCapture: vi.fn(),
+    mockTrack: vi.fn(),
     mockPosthogState: {
       featureFlags: {
         hasLoadedFlags: true,
@@ -233,6 +235,10 @@ vi.mock("posthog-js/react", () => ({
   }),
   useFeatureFlagEnabled: (...args: unknown[]) =>
     mockUseFeatureFlagEnabled(...args),
+}));
+
+vi.mock("@/lib/analytics", () => ({
+  track: mockTrack,
 }));
 
 vi.mock("sonner", () => ({
@@ -523,6 +529,7 @@ describe("App hosted OAuth callback handling", () => {
     mockOAuthFlowTabState.error = new Error("OAuth debugger failed");
     mockOAuthFlowTabState.lastProps = undefined;
     mockPosthogCapture.mockReset();
+    mockTrack.mockReset();
     mockPlaygroundTabMounts.mockReset();
     mockPlaygroundTabProps.mockReset();
     mockCompleteHostedOAuthCallback.mockImplementation(
@@ -622,15 +629,13 @@ describe("App hosted OAuth callback handling", () => {
     expect(
       await screen.findByText("OAuth Debugger crashed")
     ).toBeInTheDocument();
-    expect(mockPosthogCapture).toHaveBeenCalledWith(
+    expect(mockTrack).toHaveBeenCalledWith(
       "oauth_debugger_error_boundary",
       expect.objectContaining({
         message: expect.stringContaining("[redacted]"),
       })
     );
-    expect(JSON.stringify(mockPosthogCapture.mock.calls)).not.toContain(
-      "super-secret"
-    );
+    expect(JSON.stringify(mockTrack.mock.calls)).not.toContain("super-secret");
 
     fireEvent.click(screen.getByRole("button", { name: /copy details/i }));
 

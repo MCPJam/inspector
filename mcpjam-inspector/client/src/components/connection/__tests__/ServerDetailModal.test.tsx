@@ -26,6 +26,10 @@ vi.mock("posthog-js/react", () => ({
     mockUseFeatureFlagEnabled(...args),
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: (...args: unknown[]) => mockCapture(...args),
+}));
+
 // ServerDetailModal reads + writes the project-server config via Convex
 // (`useQuery("projectServerConfig:getConfig")` + `useMutation` for save).
 // The tests don't exercise that round-trip; stub both to no-ops so the

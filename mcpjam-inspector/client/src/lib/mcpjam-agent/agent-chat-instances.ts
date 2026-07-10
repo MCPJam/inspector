@@ -22,7 +22,7 @@ import {
   lastAssistantMessageIsCompleteWithApprovalResponses,
   lastAssistantMessageIsCompleteWithToolCalls,
 } from "ai";
-import posthog from "posthog-js";
+import { track } from "@/lib/analytics";
 import { authFetch } from "@/lib/session-token";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 import { handleUiToolCall } from "@/lib/webmcp/ui-tool-executor";
@@ -113,7 +113,8 @@ function maybeHandoffToPanel(config: AgentChatConfig, toolName: string): void {
   if (!config.projectId) {
     // The panel's project-mismatch GC (AgentSidePanelMount) would clear a
     // null-project pointer immediately — skip rather than flicker.
-    posthog.capture("mcpjam_agent_panel_handoff_skipped", {
+    track("mcpjam_agent_panel_handoff_skipped", {
+      location: "mcpjam_agent",
       session_id: config.chatSessionId,
       tool_name: toolName,
       reason: "no_project_id",
@@ -122,7 +123,8 @@ function maybeHandoffToPanel(config: AgentChatConfig, toolName: string): void {
   }
   panel.setActiveSession(config.chatSessionId, config.projectId);
   panel.setOpen(true);
-  posthog.capture("mcpjam_agent_panel_handoff", {
+  track("mcpjam_agent_panel_handoff", {
+    location: "mcpjam_agent",
     from_surface: "home",
     session_id: config.chatSessionId,
     tool_name: toolName,

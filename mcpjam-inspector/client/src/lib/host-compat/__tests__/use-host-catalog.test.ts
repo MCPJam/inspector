@@ -1,8 +1,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
-const { posthogCaptureMock } = vi.hoisted(() => ({
-  posthogCaptureMock: vi.fn(),
+const { trackMock } = vi.hoisted(() => ({
+  trackMock: vi.fn(),
 }));
 
 // Partial-mock the SDK module so `fetchHostCompatCatalog` is controllable while
@@ -14,8 +14,8 @@ vi.mock("@mcpjam/sdk/host-compat", async (importOriginal) => {
   return { ...actual, fetchHostCompatCatalog: vi.fn() };
 });
 
-vi.mock("posthog-js", () => ({
-  default: { capture: posthogCaptureMock },
+vi.mock("@/lib/analytics", () => ({
+  track: trackMock,
 }));
 
 import {
@@ -118,7 +118,7 @@ describe("useHostCatalog", () => {
   beforeEach(() => {
     resetHostCatalogForTests();
     fetchMock.mockReset();
-    posthogCaptureMock.mockReset();
+    trackMock.mockReset();
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   });
   afterEach(() => {
@@ -143,7 +143,8 @@ describe("useHostCatalog", () => {
     expect(
       getCatalogTemplate(result.current.catalog!, "mcpjam")?.hostStyle
     ).toBe("mcpjam");
-    expect(posthogCaptureMock).toHaveBeenCalledWith("host_catalog_degraded", {
+    expect(trackMock).toHaveBeenCalledWith("host_catalog_degraded", {
+      location: "host_catalog",
       status: "fallback",
       source: "bundled",
       version: 0,
@@ -159,7 +160,8 @@ describe("useHostCatalog", () => {
     const { result } = renderHook(() => useHostCatalog());
     await waitFor(() => expect(result.current.status).toBe("error"));
     expect(result.current.catalog).toBeNull();
-    expect(posthogCaptureMock).toHaveBeenCalledWith("host_catalog_degraded", {
+    expect(trackMock).toHaveBeenCalledWith("host_catalog_degraded", {
+      location: "host_catalog",
       status: "error",
       reason: "network",
     });

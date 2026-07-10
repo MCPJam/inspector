@@ -1,6 +1,6 @@
 import { Component, useCallback, useState } from "react";
 import { toast } from "@/lib/toast";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
 import { Boxes, Loader2, RotateCcw, TerminalSquare, Trash2 } from "lucide-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -45,7 +45,6 @@ export function ComputerView({
   const reserve = useReserveComputer();
   const deleteComputer = useDeleteComputer();
   const mintTerminalToken = useMintTerminalToken();
-  const posthog = usePostHog();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const terminalTheme = themeMode === "dark" ? "dark" : "light";
 
@@ -101,7 +100,8 @@ export function ComputerView({
 
   const openTerminal = useCallback(async () => {
     if (!effectiveProjectId) return;
-    posthog?.capture("computer_terminal_opened", {
+    track("computer_terminal_opened", {
+      location: "computer_view",
       computer_status: liveStatus ?? "none",
     });
     setTerminalOpen(true);
@@ -116,7 +116,7 @@ export function ComputerView({
         if (isComputerStartLimitError(err)) {
           // Daily start cap — the limit dialog carries the conversion CTA
           // (sign-in for guests, top-up for signed-in users).
-          posthog?.capture("computer_start_limit_hit");
+          track("computer_start_limit_hit", { location: "computer_view" });
           useMCPJamLimitDialogStore.getState().notifyLimitHit();
         } else {
           toast.error(
@@ -127,7 +127,7 @@ export function ComputerView({
         setStarting(false);
       }
     }
-  }, [effectiveProjectId, liveStatus, posthog, reserve]);
+  }, [effectiveProjectId, liveStatus, reserve]);
 
   const onDelete = useCallback(async () => {
     if (!effectiveProjectId) return;
