@@ -175,7 +175,7 @@ describe("ComputerView", () => {
     const { getByText, queryByText } = render(
       <ComputerView projectId="p1" isAuthenticated />
     );
-    expect(getByText(/isn't set up to run computers/i)).toBeTruthy();
+    expect(getByText(/Computers aren't available here/i)).toBeTruthy();
     expect(queryByText("Open terminal")).toBeNull();
     // The computer itself still exists (it lives in Convex/E2B, not on this
     // server), so Delete must stay available.
