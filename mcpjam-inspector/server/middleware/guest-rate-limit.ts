@@ -21,6 +21,10 @@ setInterval(() => {
   }
 }, 5 * 60_000).unref();
 
+export function resetGuestRateLimitForTests(): void {
+  guestWindows.clear();
+}
+
 export async function guestRateLimitMiddleware(
   c: Context,
   next: Next,

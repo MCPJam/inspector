@@ -90,6 +90,9 @@ describe("useCreditBalance", () => {
       walletLocked: false,
       billingModel: "daily",
       monthlyResetAt: null,
+      // Backend response omits voiceSecondsRemaining → stays undefined so the
+      // mic falls back to the global cap instead of reading as out of budget.
+      voiceSecondsRemaining: undefined,
     });
     expect(result.current.isLoading).toBe(false);
     expect(result.current.isAuthenticated).toBe(true);
