@@ -63,6 +63,7 @@ describe("web routes — simulate-sessions/start on a modelless host", () => {
     config: {
       chatboxId: "cbx-1",
       accessVersion: 0,
+      executionScope: { kind: "project", projectId: "proj-1" },
       modelId,
       systemPrompt: "",
       temperature: 0.7,
