@@ -27,6 +27,7 @@ import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ChatboxesTab } from "./components/ChatboxesTab";
+import { SwarmsTab } from "./components/swarms/SwarmsTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
@@ -1086,7 +1087,12 @@ export function ChatboxesRoute() {
 }
 
 export function SwarmsRoute() {
-  return <ChatboxProductRoute product="swarm" />;
+  // Project-scoped Swarms surface (Persona → Journey → Run redesign) — no
+  // longer a per-host chatbox tab.
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  return (
+    <SwarmsTab projectId={convexProjectId} isAuthenticated={isAuthenticated} />
+  );
 }
 
 export function ResourcesRoute() {
