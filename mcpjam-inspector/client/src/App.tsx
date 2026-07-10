@@ -473,6 +473,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <ComputerRoute />;
     case "chatboxes":
       return <ChatboxesRoute />;
+    case "swarms":
+      return <SwarmsRoute />;
     case "playground":
       return <PlaygroundRoute />;
     case "support":
@@ -905,7 +907,11 @@ export function CompatibilityRoute() {
 // Navigation between chatboxes flows through the global host bar — pick
 // a host, manage its chatbox here. There is no chatbox list; the host
 // list lives in Connect.
-export function ChatboxesRoute() {
+// Both the human Chatbox surface (`/chatboxes`) and the agent Swarm surface
+// (`/swarms`) render `ChatboxesTab` over the same underlying chatbox; only the
+// `product` (tab set + affordances) differs. Both share the `chatboxes`
+// billing feature + `sandboxes-enabled` flag.
+function ChatboxProductRoute({ product }: { product: "chatbox" | "swarm" }) {
   const {
     billingUiEnabled,
     activeTabBillingLocked,
@@ -922,8 +928,17 @@ export function ChatboxesRoute() {
     <ChatboxesTab
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
+      product={product}
     />
   );
+}
+
+export function ChatboxesRoute() {
+  return <ChatboxProductRoute product="chatbox" />;
+}
+
+export function SwarmsRoute() {
+  return <ChatboxProductRoute product="swarm" />;
 }
 
 export function ResourcesRoute() {

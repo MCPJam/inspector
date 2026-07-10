@@ -206,8 +206,15 @@ const navigationSections: NavSection[] = [
     id: "mcp-apps",
     items: [
       {
-        title: "Swarms",
+        title: "Chatbox",
         url: "/chatboxes",
+        icon: Box,
+        featureFlag: "sandboxes-enabled",
+        billingFeature: "chatboxes",
+      },
+      {
+        title: "Swarms",
+        url: "/swarms",
         icon: Box,
         featureFlag: "sandboxes-enabled",
         billingFeature: "chatboxes",

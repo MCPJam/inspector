@@ -26,6 +26,7 @@ import App, {
   SettingsRoute,
   SkillsRoute,
   SupportRoute,
+  SwarmsRoute,
   TasksRoute,
   ToolsRoute,
   TracingRoute,
@@ -110,6 +111,10 @@ export function createAppRouter(): AppRouter {
         // exercise the hosted-OAuth callback path via `/hosts` rather
         // than this route directly.
         { path: "chatboxes", element: <ChatboxesRoute /> },
+        // `/swarms` — agent Swarm surface (Publish / Personas / Sessions) over
+        // the same host-backed chatbox as `/chatboxes`. Same billing feature +
+        // `sandboxes-enabled` flag.
+        { path: "swarms", element: <SwarmsRoute /> },
         { path: "playground", element: <PlaygroundRoute /> },
         { path: "support", element: <SupportRoute /> },
         { path: "settings", element: <SettingsRoute /> },

@@ -13,6 +13,7 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "host-compare",
   "registry",
   "chatboxes",
+  "swarms",
   "playground",
   "client-config",
   "evals",
