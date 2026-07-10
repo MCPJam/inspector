@@ -67,6 +67,7 @@ async function postToConvexAuthorized(args: {
     CONVEX_POST_TIMEOUT_MS
   );
 
+  let body: any = null;
   let response: Response;
   try {
     response = await fetch(`${convexUrl}${args.path}`, {
@@ -78,6 +79,15 @@ async function postToConvexAuthorized(args: {
       body: JSON.stringify(args.body),
       signal: controller.signal,
     });
+    // Read the body while the abort signal is still armed: a Convex action
+    // that flushes headers and then stalls the body would otherwise hang here
+    // indefinitely (the timeout only covered the header round-trip).
+    const text = await response.text();
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      // non-JSON body; body stays null
+    }
   } catch (error) {
     const isAbort =
       error instanceof Error &&
@@ -85,20 +95,13 @@ async function postToConvexAuthorized(args: {
         (error as { code?: string }).code === "ABORT_ERR");
     throw new WebRouteError(
       isAbort ? 504 : 502,
-      ErrorCode.SERVER_UNREACHABLE,
+      isAbort ? ErrorCode.TIMEOUT : ErrorCode.SERVER_UNREACHABLE,
       isAbort
         ? `The ${args.serviceName} timed out after ${CONVEX_POST_TIMEOUT_MS}ms`
         : `Failed to reach the ${args.serviceName}: ${parseErrorMessage(error)}`
     );
   } finally {
     clearTimeout(timeoutId);
-  }
-
-  let body: any = null;
-  try {
-    body = await response.json();
-  } catch {
-    // ignored
   }
 
   if (!response.ok || !body?.success) {
