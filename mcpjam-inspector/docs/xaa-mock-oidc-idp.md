@@ -2,7 +2,7 @@
 
 The XAA mock IdP also speaks real OIDC: a discovery-driven
 `authorization_code` flow (with S256 PKCE) plus a `userinfo` endpoint. That
-lets any service that consumes OIDC — for example a Scalekit Full Stack Auth
+lets any service that consumes OIDC — for example a Full Stack Auth
 organization with a custom OIDC SSO connection — use MCPJam as a throwaway
 test IdP end to end.
 
