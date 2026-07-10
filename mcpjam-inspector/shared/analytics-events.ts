@@ -47,3 +47,20 @@ export const ANALYTICS_EVENTS = {
 } as const satisfies Record<string, { source: "client" | "server" }>;
 
 export type AnalyticsEventName = keyof typeof ANALYTICS_EVENTS;
+
+type EventNamesBySource<S extends "client" | "server"> = {
+  [K in AnalyticsEventName]: (typeof ANALYTICS_EVENTS)[K]["source"] extends S
+    ? K
+    : never;
+}[AnalyticsEventName];
+
+/**
+ * Event names whose authoritative source is the browser. The client `track()`
+ * wrapper accepts only these, so server-authoritative twins (e.g.
+ * `send_message_server`) can't be emitted from the client and corrupt the
+ * client/server block-rate ratio.
+ */
+export type ClientAnalyticsEventName = EventNamesBySource<"client">;
+
+/** Event names whose authoritative source is the server. */
+export type ServerAnalyticsEventName = EventNamesBySource<"server">;
