@@ -1,7 +1,7 @@
 import { PostHog } from "posthog-node";
 import type { Context } from "hono";
 import { randomUUID } from "crypto";
-import type { AnalyticsEventName } from "@/shared/analytics-events";
+import type { ServerAnalyticsEventName } from "@/shared/analytics-events";
 import type { RequestLogContext } from "./log-events.js";
 import { resolveEnvironment } from "./log-events.js";
 import { HOSTED_MODE } from "../config.js";
@@ -76,7 +76,7 @@ function getClient(): PostHog | null {
  */
 export function captureServerEvent(
   c: Context,
-  event: AnalyticsEventName,
+  event: ServerAnalyticsEventName,
   properties: Record<string, unknown> = {},
 ): void {
   try {
@@ -92,6 +92,10 @@ export function captureServerEvent(
       distinctId,
       event,
       properties: {
+        // Caller props spread FIRST so the generated dedupe key, source
+        // marker, platform/environment, and request-context attribution below
+        // always win — a caller can't override them by passing the same keys.
+        ...properties,
         // Retry-dedupe key: posthog-node may resend on transient failures.
         $insert_id: randomUUID(),
         platform: serverPlatform(),
@@ -99,7 +103,6 @@ export function captureServerEvent(
         source: "server",
         ...(ctx?.orgId ? { organization_id: ctx.orgId } : {}),
         ...(ctx?.projectId ? { project_id: ctx.projectId } : {}),
-        ...properties,
       },
     });
   } catch {

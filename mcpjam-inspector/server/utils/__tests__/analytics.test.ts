@@ -72,8 +72,17 @@ describe("captureServerEvent", () => {
     expect(captureMock).not.toHaveBeenCalled();
   });
 
-  it("honors the opt-out env vars", () => {
+  it("honors DO_NOT_TRACK", () => {
     process.env.DO_NOT_TRACK = "1";
+    captureServerEvent(
+      fakeContext({ requestLogContext: { userExternalId: "u1" } }),
+      "send_message_server",
+    );
+    expect(captureMock).not.toHaveBeenCalled();
+  });
+
+  it("honors VITE_DISABLE_POSTHOG_LOCAL", () => {
+    process.env.VITE_DISABLE_POSTHOG_LOCAL = "true";
     captureServerEvent(
       fakeContext({ requestLogContext: { userExternalId: "u1" } }),
       "send_message_server",
