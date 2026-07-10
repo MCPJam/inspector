@@ -11,9 +11,9 @@
  * `isComputersDataPlaneConfigured()` gate stays synchronous.
  *
  * Invariants:
- *   - Env always wins: a key is only written when currently unset, and the
- *     fetch is skipped entirely when the legacy hand-mirrored trio is already
- *     present — zero behavior change for existing three-var setups.
+ *   - Env always wins: a key is only written when currently unset, so a
+ *     hand-set value is never overwritten (the fetch still runs, but applies
+ *     nothing it can't overwrite).
  *   - Atomic apply: the whole response must validate (zod) before ANY env key
  *     is written; a malformed payload writes nothing, so the process can
  *     never run on mixed old/new credentials.

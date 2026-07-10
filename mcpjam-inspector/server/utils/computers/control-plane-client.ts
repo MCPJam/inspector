@@ -237,10 +237,13 @@ export async function getComputerSandboxInfo(args: {
 }): Promise<ControlPlaneResult<ComputerSandboxInfo>> {
   const headers = authHeaders();
   if (!headers) {
+    // authHeaders() is null when the token is unset OR was rejected by the
+    // bootstrap (markServiceTokenRejected) — name both so operators don't
+    // chase a "not set" that is actually a wrong token.
     return {
       ok: false,
       status: 0,
-      error: "INSPECTOR_SERVICE_TOKEN is not set",
+      error: "INSPECTOR_SERVICE_TOKEN is not set or was rejected",
     };
   }
   return postJson<ComputerSandboxInfo>(
