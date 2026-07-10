@@ -219,7 +219,9 @@ export function issueMockIdToken(params: IssueMockIdTokenParams): {
     iat: now,
     exp: now + ID_TOKEN_TTL_S,
     auth_time: now,
-    nonce: params.nonce || randomUUID(),
+    // Echo the RP's nonce; omit it when none was requested. Inventing a nonce
+    // the RP never sent trips strict OIDC clients that validate its absence.
+    ...(params.nonce ? { nonce: params.nonce } : {}),
   };
   const token = signJwt(header, payload, getXAAIdpPrivateKey());
 

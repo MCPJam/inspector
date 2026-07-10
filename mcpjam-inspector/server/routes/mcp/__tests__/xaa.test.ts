@@ -1372,6 +1372,94 @@ describe("mock OIDC IdP endpoints", () => {
     }
     expect(lastStatus).toBe(429);
   });
+
+  it("does not rate limit local (no X-Forwarded-For) requests", async () => {
+    let lastStatus = 0;
+    for (let i = 0; i < 61; i++) {
+      const response = await app.request(`${BASE}/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "password" }).toString(),
+      });
+      lastStatus = response.status;
+    }
+    // No proxy in front → no shared "local" bucket self-DoS; unsupported grant
+    // returns 400, never 429.
+    expect(lastStatus).toBe(400);
+  });
+
+  it("rejects a cross-origin POST to /authorize/confirm (no open redirect)", async () => {
+    const response = await app.request(`${BASE}/authorize/confirm`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Origin: "https://evil.example.com",
+      },
+      body: new URLSearchParams({
+        client_id: "client-1",
+        redirect_uri: REDIRECT_URI,
+        response_type: "code",
+      }).toString(),
+    });
+    expect(response.status).toBe(403);
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("rejects a cross-origin POST to /token (no unauthenticated mint via CSRF)", async () => {
+    const response = await app.request(`${BASE}/token`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Origin: "https://evil.example.com",
+      },
+      body: new URLSearchParams({ grant_type: "authorization_code" }).toString(),
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it("allows a same-origin confirm POST", async () => {
+    const response = await app.request(`${BASE}/authorize/confirm`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Origin: "http://127.0.0.1:6274",
+      },
+      body: new URLSearchParams({
+        client_id: "client-1",
+        redirect_uri: REDIRECT_URI,
+        response_type: "code",
+        subject: "alice-123",
+        email: "alice@example.com",
+      }).toString(),
+    });
+    expect(response.status).toBe(302);
+    expect(new URL(response.headers.get("location")!).searchParams.get("code")).toBeTruthy();
+  });
+
+  it("rejects code_challenge_method without a code_challenge", async () => {
+    const response = await app.request(
+      authorizeUrl({
+        client_id: "client-1",
+        redirect_uri: REDIRECT_URI,
+        response_type: "code",
+        code_challenge_method: "S256",
+      })
+    );
+    expect(response.status).toBe(400);
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("omits nonce from the id_token when the RP did not request one", async () => {
+    const { code } = await getCode({ nonce: "" });
+    const tokenResponse = await postToken({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: REDIRECT_URI,
+      client_id: "client-1",
+    });
+    const idToken = decodeJwtPayload((await tokenResponse.json()).id_token);
+    expect(idToken.nonce).toBeUndefined();
+  });
 });
 
 describe("mock OIDC IdP disabled (kill switch)", () => {

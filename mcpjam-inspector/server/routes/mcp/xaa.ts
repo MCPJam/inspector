@@ -109,14 +109,31 @@ const TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange";
 const ID_JAG_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id-jag";
 const ID_TOKEN_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id_token";
 
-// Per-IP sliding-window cap on the public OIDC endpoints that sign something
-// (/token, /authorize/confirm). Same shape as the negative-test host cap.
+// Best-effort per-IP sliding-window cap on the public OIDC endpoints that sign
+// something (/token, /authorize/confirm). X-Forwarded-For is client-spoofable
+// so this only slows casual abuse, not a determined attacker — acceptable for
+// a flag-gated mock IdP that only signs low-value mock tokens. The map is
+// bounded so a spoofed-key flood can't exhaust memory.
 const OIDC_RATE_LIMIT_PER_MIN = 60;
 const OIDC_RATE_WINDOW_MS = 60 * 1000;
+const OIDC_RATE_MAX_KEYS = 10_000;
 const oidcIpCounters = new Map<string, { count: number; windowStart: number }>();
 
 function checkOidcIpCap(ip: string): boolean {
   const now = Date.now();
+  // Bound the map: prune expired windows, and if it's still oversized (an
+  // active spoofed-key flood where every window is fresh) drop everything so
+  // memory can't grow without limit.
+  if (oidcIpCounters.size >= OIDC_RATE_MAX_KEYS) {
+    for (const [key, value] of oidcIpCounters) {
+      if (now - value.windowStart >= OIDC_RATE_WINDOW_MS) {
+        oidcIpCounters.delete(key);
+      }
+    }
+    if (oidcIpCounters.size >= OIDC_RATE_MAX_KEYS) {
+      oidcIpCounters.clear();
+    }
+  }
   const existing = oidcIpCounters.get(ip);
   if (!existing || now - existing.windowStart >= OIDC_RATE_WINDOW_MS) {
     oidcIpCounters.set(ip, { count: 1, windowStart: now });
@@ -129,8 +146,36 @@ function checkOidcIpCap(ip: string): boolean {
   return true;
 }
 
-function getClientIp(c: { req: { header: (name: string) => string | undefined } }): string {
-  return c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || "local";
+// The client IP for rate limiting, or null when there is no proxy in front
+// (local desktop): a no-proxy deployment has no public DoS surface, and
+// bucketing every local request under one key would self-DoS legitimate
+// bursts (test loops, batch mints).
+function getClientIp(c: {
+  req: { header: (name: string) => string | undefined };
+}): string | null {
+  const forwarded = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
+  return forwarded || null;
+}
+
+// Reject cross-site browser POSTs to the state-changing OIDC endpoints. A
+// legitimate caller is either our own interstitial form (same-origin Origin)
+// or a relying party's server-to-server token call (no Origin header). Only a
+// cross-site browser request carries a foreign Origin — blocking it stops a
+// third-party page from driving /authorize/confirm (open redirect) or /token
+// (unauthenticated ID-JAG mint) against the user's issuer.
+function rejectCrossOriginPost(c: Context): Response | null {
+  const origin = c.req.header("origin");
+  if (!origin) return null;
+  let originHost: string;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    return oauthError(403, "access_denied", "Invalid Origin header");
+  }
+  if (originHost !== new URL(c.req.url).host) {
+    return oauthError(403, "access_denied", "Cross-origin request rejected");
+  }
+  return null;
 }
 
 function escapeHtml(value: string): string {
@@ -194,13 +239,18 @@ function parseAuthorizeParams(
     return { error: "Only response_type=code is supported" };
   }
   const codeChallenge = raw.code_challenge?.trim() || undefined;
+  const codeChallengeMethod = raw.code_challenge_method?.trim() || undefined;
   if (codeChallenge) {
     if (codeChallenge.length > 256) {
       return { error: "code_challenge is too long" };
     }
-    if (raw.code_challenge_method !== "S256") {
+    if (codeChallengeMethod !== "S256") {
       return { error: "Only code_challenge_method=S256 is supported" };
     }
+  } else if (codeChallengeMethod) {
+    // A method without a challenge would otherwise mint a non-PKCE code under
+    // a PKCE-looking request, which redeems with no verifier — reject it.
+    return { error: "code_challenge_method requires code_challenge" };
   }
   for (const field of ["state", "nonce", "scope", "subject", "email"] as const) {
     const value = raw[field];
@@ -1562,7 +1612,13 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     };
 
     const handleAuthorizeConfirm = async (c: Context, issuer: string) => {
-      if (!checkOidcIpCap(getClientIp(c))) {
+      // The confirm POST issues a code and 302s to redirect_uri, so it must be
+      // driven by our own interstitial, never a cross-site auto-submit (which
+      // would make this a POST-triggered open redirector).
+      const crossOrigin = rejectCrossOriginPost(c);
+      if (crossOrigin) return crossOrigin;
+      const ip = getClientIp(c);
+      if (ip && !checkOidcIpCap(ip)) {
         return oauthError(429, "temporarily_unavailable", "Too many requests");
       }
       const form = await readForm(c);
@@ -1769,7 +1825,13 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       issuer: string,
       gateTokenExchange: () => Promise<Response | null>
     ): Promise<Response> => {
-      if (!checkOidcIpCap(getClientIp(c))) {
+      // A relying party's token call is server-to-server (no Origin). Block a
+      // cross-site browser POST so a third-party page can't chain the public
+      // /authorize mock sign-in into an unauthenticated ID-JAG mint.
+      const crossOrigin = rejectCrossOriginPost(c);
+      if (crossOrigin) return crossOrigin;
+      const ip = getClientIp(c);
+      if (ip && !checkOidcIpCap(ip)) {
         return oauthError(429, "temporarily_unavailable", "Too many requests");
       }
       const form = await readForm(c);
