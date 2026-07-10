@@ -205,7 +205,7 @@ describe("HostOverlayBar", () => {
     expect(deleteBtn).toBeDisabled();
     expect(deleteBtn).toHaveAttribute(
       "title",
-      expect.stringContaining("at least one host")
+      expect.stringContaining("at least one client")
     );
   });
 

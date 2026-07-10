@@ -2835,7 +2835,7 @@ export function TestTemplateEditor({
                         </label>
                       </TooltipTrigger>
                       <TooltipContent variant="muted" side="top" sideOffset={6}>
-                        Host for the next run
+                        Client for the next run
                       </TooltipContent>
                     </Tooltip>
                   ) : (
@@ -2846,7 +2846,7 @@ export function TestTemplateEditor({
                       <TooltipTrigger asChild>
                         <span
                           className="inline-flex h-8 max-w-[7.5rem] items-center gap-1 rounded-md border border-input/80 bg-background px-1.5 text-xs text-foreground"
-                          aria-label="Host for the next run"
+                          aria-label="Client for the next run"
                         >
                           {suiteHostLogoSrc ? (
                             <img
@@ -2859,7 +2859,7 @@ export function TestTemplateEditor({
                         </span>
                       </TooltipTrigger>
                       <TooltipContent variant="muted" side="top" sideOffset={6}>
-                        Host for the next run
+                        Client for the next run
                       </TooltipContent>
                     </Tooltip>
                   )}

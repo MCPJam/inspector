@@ -412,7 +412,7 @@ describe("ServerDetailModal", () => {
 
     await user.click(latestSelect);
     await user.click(
-      await screen.findByRole("option", { name: "Host default" })
+      await screen.findByRole("option", { name: "Client default" })
     );
 
     await waitFor(() => {
@@ -457,7 +457,7 @@ describe("ServerDetailModal", () => {
 
     await user.click(protocolSelect);
     await user.click(
-      await screen.findByRole("option", { name: "Host default" })
+      await screen.findByRole("option", { name: "Client default" })
     );
 
     await waitFor(() => {
