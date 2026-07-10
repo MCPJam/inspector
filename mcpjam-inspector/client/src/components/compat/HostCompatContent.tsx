@@ -193,7 +193,7 @@ export function HostCompatContent({
       ? getCatalogTemplate(catalog, templateId)
       : undefined;
     if (!template) {
-      toast.error("Could not load live host templates");
+      toast.error("Could not load live client templates");
       return;
     }
     const label =
@@ -355,8 +355,8 @@ export function HostCompatContent({
                       onClick={() => handleTestInHost(report)}
                       title={
                         canCreateFromLiveTemplate
-                          ? "Test in host"
-                          : "Live host template unavailable"
+                          ? "Test in client"
+                          : "Live client template unavailable"
                       }
                     >
                       {creatingTemplateId === report.hostId ? (

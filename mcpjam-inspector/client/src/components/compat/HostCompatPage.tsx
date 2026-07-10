@@ -45,7 +45,7 @@ export function HostCompatPage({
       <EmptyState
         icon={Boxes}
         title="No connected server"
-        description="Connect a server above to check whether it works on each host."
+        description="Connect a server above to check whether it works on each client."
         className="h-full"
       />
     );

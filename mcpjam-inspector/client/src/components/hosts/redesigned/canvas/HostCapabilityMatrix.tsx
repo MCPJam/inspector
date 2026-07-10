@@ -315,7 +315,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
                 onSelectNode(APPS_HUB_NODE_ID);
               }}
             >
-              <span className="hp-section-title">Host capabilities</span>
+              <span className="hp-section-title">Client capabilities</span>
             </button>
             <div className="hp-caps">
               {appsCaps.map((row) => {
@@ -449,8 +449,8 @@ function ViewIframeInjectedGlobals({
           compatRuntime.openaiApps
             ? compatRuntime.hasMethodOverrides
               ? `Inspector injects window.openai with a custom per-method surface (${compatRuntime.methodCount}/${compatRuntime.methodTotal} methods active). Click to view the matrix.`
-              : "Inspector injects window.openai into widget HTML before sandboxing, so OpenAI Apps SDK widgets keep working on this host."
-            : "Inspector does NOT inject window.openai for this host. SEP-1865-only — widgets that rely on the OpenAI Apps SDK compatibility layer will not run."
+              : "Inspector injects window.openai into widget HTML before sandboxing, so OpenAI Apps SDK widgets keep working on this client."
+            : "Inspector does NOT inject window.openai for this client. SEP-1865-only — widgets that rely on the OpenAI Apps SDK compatibility layer will not run."
         }
       >
         <span className="hp-cap-dot" aria-hidden />

@@ -43,7 +43,7 @@ export function ConnectViewHeader({
               { value: "servers", label: "Servers" },
               {
                 value: "host",
-                label: "Host",
+                label: "Client",
                 disabled: !previewedHostId,
               },
               // "Compare" now lives as a sub-tab inside the Host section

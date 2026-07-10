@@ -493,7 +493,7 @@ export function HostBuilderViewRedesigned({
               }}
               options={[
                 { value: "servers", label: "Servers" },
-                { value: "host", label: "Host" },
+                { value: "host", label: "Client" },
                 // "Compare" is reached from the inline Host|Compare pill, not
                 // this primary nav — keep it out so it isn't duplicated.
                 ...(computersEnabled

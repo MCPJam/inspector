@@ -650,7 +650,7 @@ function CompareSearchBar({
                 }}
                 onFocus={() => setPickerOpen(true)}
                 placeholder="Search capabilities, fields, descriptions…"
-                aria-label="Search host config fields"
+                aria-label="Search client config fields"
                 type="search"
                 autoComplete="off"
                 spellCheck={false}
@@ -665,7 +665,7 @@ function CompareSearchBar({
                 }}
                 onFocus={() => setPickerOpen(true)}
                 placeholder="Search capabilities, fields, descriptions…"
-                aria-label="Search host config fields"
+                aria-label="Search client config fields"
                 className="w-full"
               />
             )}

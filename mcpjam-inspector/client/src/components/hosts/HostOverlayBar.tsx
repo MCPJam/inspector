@@ -26,7 +26,7 @@ const QUICK_ADD_TEMPLATES = ["claude", "chatgpt", "copilot"] as const;
 
 const MCPJAM_HOST_NAME = "MCPJam";
 const LAST_HOST_DELETE_REASON =
-  "A project needs at least one host. Create another host first.";
+  "A project needs at least one client. Create another client first.";
 
 interface HostOverlayBarProps {
   projectId: string;
@@ -337,7 +337,7 @@ export function HostOverlayBar({
                 className="group pr-1.5"
               >
                 <Plus className="size-3.5" />
-                <span className="flex-1">Add host</span>
+                <span className="flex-1">Add client</span>
                 <span
                   className="ml-2 flex shrink-0 items-center gap-0.5"
                   onPointerDown={(e) => e.stopPropagation()}
