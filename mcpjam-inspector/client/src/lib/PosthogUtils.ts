@@ -24,19 +24,30 @@ export function getPostHogApiHost(): string {
 // Guest identity bootstrap. Without it, posthog-js mints a random anonymous
 // distinct_id at init and only converges on the guestId when
 // usePostHogIdentify's async actor resolution calls identify() — every cold
-// load that races that fetch creates a throwaway person and inflates guest
-// DAU. In hosted prod the server injects the guest session into the page
-// (window.__MCP_GUEST_BOOTSTRAP__, seeded synchronously into
+// load that races that fetch attributes early events to a throwaway id and
+// inflates guest DAU. In hosted prod the server injects the guest session
+// into the page (window.__MCP_GUEST_BOOTSTRAP__, seeded synchronously into
 // getCachedGuestSession at module import), so the guestId is known before
-// PostHogProvider mounts. posthog-js handles the edge cases safely: an
-// existing IDENTIFIED persisted id wins over the bootstrap value (returning
-// signed-in users are untouched), and an existing anonymous id is merged
-// into the bootstrap id via identify(). Local/npm has no blob — this
-// returns {} there and the async identify path behaves as before.
+// PostHogProvider mounts.
+//
+// isIdentifiedID is deliberately FALSE: the bootstrap guestId seeds the
+// ANONYMOUS distinct_id, not an identified person. This matters because the
+// hosted document handler injects the guest blob for every allow-listed
+// request — including the first load of a signed-in user whose PostHog
+// persistence is empty. If we marked it identified, the subsequent
+// usePostHogIdentify() call to identify(workosUserId) would run from an
+// already-identified state and posthog-js would refuse the switch (no
+// $identify merge), stranding that user's early events under the guest id.
+// As anonymous, identify() correctly merges the pre-identify guest activity
+// into the real actor: guests stay stably keyed on guestId (fixing DAU
+// inflation), and signed-in users' events migrate onto their WorkOS id.
+// A returning user with existing persistence keeps their stored id either
+// way — bootstrap only seeds when persistence is empty. Local/npm has no
+// blob, so this returns {} and the async identify path is unchanged.
 function getPostHogBootstrap() {
   const guestId = getCachedGuestSession()?.guestId;
   return guestId
-    ? { bootstrap: { distinctID: guestId, isIdentifiedID: true } }
+    ? { bootstrap: { distinctID: guestId, isIdentifiedID: false } }
     : {};
 }
 
