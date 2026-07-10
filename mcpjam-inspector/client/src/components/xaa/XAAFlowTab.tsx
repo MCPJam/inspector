@@ -163,6 +163,14 @@ export function XAAFlowTab({
   const runInput = target.runInput;
   const { targetKey, isTestable } = target;
 
+  // The positive-run unlock must be specific to the exact issuer the run
+  // exercised: switching issuer mode (local↔hosted) or organization changes
+  // the minted `iss`, so a green run under one must NOT unlock negative tests
+  // under another. Key the gate on target + issuer mode + org.
+  const runGateKey = `${targetKey}|${
+    hostedIssuerOptIn ? "hosted" : "local"
+  }|${organizationId ?? ""}`;
+
   const [flowState, setFlowState] = useState<XAAFlowState>(() =>
     buildFlowStateFromInput(target.runInput)
   );
@@ -227,13 +235,13 @@ export function XAAFlowTab({
       // A green run proves the user holds valid client credentials the AS
       // issued — that authorizes broken-token testing against it.
       setPositiveRunTargets((current) => {
-        if (current.has(targetKey)) return current;
+        if (current.has(runGateKey)) return current;
         const next = new Set(current);
-        next.add(targetKey);
+        next.add(runGateKey);
         return next;
       });
     }
-  }, [flowState.currentStep, authServerModeForTelemetry, targetKey]);
+  }, [flowState.currentStep, authServerModeForTelemetry, runGateKey]);
 
   // ── Negative-test scorecard input ───────────────────────────────────
   const scorecard = useMemo((): {
@@ -718,7 +726,7 @@ export function XAAFlowTab({
                 }
               : null
           }
-          unlocked={positiveRunTargets.has(targetKey)}
+          unlocked={positiveRunTargets.has(runGateKey)}
           unavailableReason={scorecard.unavailableReason}
         />
       )}

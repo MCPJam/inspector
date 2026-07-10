@@ -51,6 +51,19 @@ issuer (`https://app.mcpjam.com/api/web/xaa`) is mintable by anyone with an
 MCPJam session — treat it as throwaway/test-only and prefer the scoped issuer
 whenever you register MCPJam in a real authorization server.
 
+## Known limitation: runtime XAA connect still uses the unscoped issuer
+
+The **debugger** advertises and mints under the org-scoped issuer
+(`…/o/<orgId>`). The **runtime** XAA connect path (a normal server connection
+that authenticates via XAA, in `server/routes/web/auth.ts` /
+`server/utils/local-server-resolver.ts`) still mints under the unscoped issuer
+(`resolveXaaIssuer` → `/api/web/xaa`). So a customer who registers the
+org-scoped issuer from the debugger can pass the debugger but have a real
+connect/token-exchange fail on `iss` mismatch. Plumbing org-scoped issuers into
+runtime connect (with the same membership gate) is a follow-up; until then, for
+a live connection register the unscoped issuer, or use the debugger only for
+issuer/JWKS validation.
+
 ## Notes and limits
 
 - **This mode is for a *remote* authorization server.** The hosted issuer only
