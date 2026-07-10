@@ -2,6 +2,13 @@ import { PRESET_HOST_ID_PREFIX } from "./host-compare-presets";
 
 const STORAGE_PREFIX = "host-compare-selected:";
 
+// Shared compare URLs should survive host id cleanups. Keep this scoped to
+// permalink parsing; catalog ids and host creation stay strict.
+const PRESET_HOST_ID_ALIASES: Record<string, string> = {
+  slackbot: "slack",
+  "slack-bot": "slack",
+};
+
 /**
  * Default compare columns when nothing else (URL param, stored preference,
  * prior in-memory selection) picks a selection. ChatGPT and Claude give fresh
@@ -67,8 +74,16 @@ export function parseHostsParam(raw: string | null | undefined): string[] | null
   const parts = raw
     .split(",")
     .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+    .filter((s) => s.length > 0)
+    .map(normalizeHostComparePermalinkId);
   return parts.length > 0 ? parts : null;
+}
+
+function normalizeHostComparePermalinkId(hostId: string): string {
+  if (!hostId.startsWith(PRESET_HOST_ID_PREFIX)) return hostId;
+  const presetId = hostId.slice(PRESET_HOST_ID_PREFIX.length);
+  const canonicalId = PRESET_HOST_ID_ALIASES[presetId];
+  return canonicalId ? `${PRESET_HOST_ID_PREFIX}${canonicalId}` : hostId;
 }
 
 export function resolveInitialHostCompareSelection(args: {

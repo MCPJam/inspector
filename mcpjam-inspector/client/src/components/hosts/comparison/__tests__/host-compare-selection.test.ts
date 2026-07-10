@@ -60,6 +60,13 @@ describe("host-compare-selection", () => {
     expect(parseHostsParam(undefined)).toBeNull();
   });
 
+  it("parseHostsParam maps preset permalink aliases to current catalog ids", () => {
+    expect(parseHostsParam("preset:slackbot,preset:slack-bot")).toEqual([
+      "preset:slack",
+      "preset:slack",
+    ]);
+  });
+
   it("resolveInitialHostCompareSelection prefers urlSelection over storage", () => {
     writeHostCompareSelection("proj_1", ["b"]);
     expect(
@@ -96,6 +103,18 @@ describe("host-compare-selection", () => {
         urlSelection: ["a", "preset:claude"],
       }),
     ).toEqual(["a", "preset:claude"]);
+  });
+
+  it("resolveInitialHostCompareSelection keeps aliased preset ids from the URL", () => {
+    expect(
+      resolveInitialHostCompareSelection({
+        projectId: "proj_1",
+        liveHostIds: [],
+        knownHostIds: ["preset:slack"],
+        previousSelection: [],
+        urlSelection: parseHostsParam("preset:slackbot"),
+      }),
+    ).toEqual(["preset:slack"]);
   });
 
   it("resolveInitialHostCompareSelection resolves a preset selection with zero live hosts", () => {
