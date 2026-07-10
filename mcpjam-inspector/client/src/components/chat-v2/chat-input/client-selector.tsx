@@ -92,7 +92,7 @@ interface ClientSelectorProps extends ClientSelectorData {
 }
 
 function compactHostLabel(name: string): string {
-  return name || "Host";
+  return name || "Client";
 }
 
 export function ClientSelector({
@@ -361,7 +361,7 @@ export function ClientSelector({
             </PopoverTrigger>
           </TooltipTrigger>
           <TooltipContent side="top">
-            {isComparing ? "Hosts" : "Host"}
+            {isComparing ? "Clients" : "Client"}
           </TooltipContent>
         </Tooltip>
 

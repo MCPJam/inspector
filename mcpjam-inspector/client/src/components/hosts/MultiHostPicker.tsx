@@ -79,7 +79,7 @@ function sameHostIdOrder(left: string[], right: string[]): boolean {
 }
 
 function compactHostLabel(name: string): string {
-  if (!name) return "Host";
+  if (!name) return "Client";
   return name;
 }
 
@@ -288,7 +288,7 @@ export function MultiHostPicker({
         </TooltipTrigger>
         <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
           <p className="font-medium">
-            {isActiveCompareMode ? "Hosts" : "Compare hosts"}
+            {isActiveCompareMode ? "Clients" : "Compare clients"}
           </p>
           {isActiveCompareMode ? (
             <p className="text-xs font-light text-muted-foreground">
