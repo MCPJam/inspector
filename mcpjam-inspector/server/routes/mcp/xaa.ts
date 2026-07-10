@@ -78,6 +78,20 @@ function checkNegativeTestHostCap(host: string): boolean {
 // is rejected rather than normalized.
 const ORG_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
+// Single source of truth for the `:orgId` path check, shared by the public
+// well-known routes and the gated mint routes so they can never validate org
+// ids differently. Returns the validated id or the 400 Response to send.
+function validateOrgSegment(c: Context): string | Response {
+  const orgId = c.req.param("orgId");
+  if (!orgId || !ORG_ID_RE.test(orgId)) {
+    return toJsonError("Invalid organization id in issuer path", {
+      status: 400,
+      code: "VALIDATION_ERROR",
+    });
+  }
+  return orgId;
+}
+
 const authenticateSchema = z.object({
   userId: z.string().trim().min(1).optional(),
   email: z.string().trim().email().optional(),
@@ -393,13 +407,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   // membership via the backend. Returns the validated orgId, or the error
   // Response to send. Fail-closed: any backend failure blocks the mint.
   const requireScopedOrg = async (c: Context): Promise<string | Response> => {
-    const orgId = c.req.param("orgId");
-    if (!orgId || !ORG_ID_RE.test(orgId)) {
-      return toJsonError("Invalid organization id in issuer path", {
-        status: 400,
-        code: "VALIDATION_ERROR",
-      });
-    }
+    const orgIdOrError = validateOrgSegment(c);
+    if (orgIdOrError instanceof Response) return orgIdOrError;
+    const orgId = orgIdOrError;
     const authHeader = c.req.header("authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return toJsonError(
@@ -1068,17 +1078,6 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   if (authorizeOrgIssuer) {
     const scopedIssuer = (c: Context, orgId: string): string =>
       `${unscopedIssuer(c)}/o/${orgId}`;
-
-    const validateOrgSegment = (c: Context): string | Response => {
-      const orgId = c.req.param("orgId");
-      if (!orgId || !ORG_ID_RE.test(orgId)) {
-        return toJsonError("Invalid organization id in issuer path", {
-          status: 400,
-          code: "VALIDATION_ERROR",
-        });
-      }
-      return orgId;
-    };
 
     router.get("/o/:orgId/.well-known/jwks.json", (c) => {
       const orgIdOrError = validateOrgSegment(c);

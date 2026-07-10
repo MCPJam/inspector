@@ -429,6 +429,12 @@ export function XAAFlowTab({
   >(undefined);
   useEffect(() => {
     const controller = new AbortController();
+    // Reset synchronously on org change (mirrors XAAIdpCard). Otherwise the
+    // prior org's issuer lingers until the async fetch resolves — and stays
+    // forever if it returns null — so the ID-JAG inspection would compare the
+    // new org's `iss` against the old issuer and report a spurious mismatch.
+    // With it cleared, the machine falls back to the correct current-org guess.
+    setResolvedIssuerBaseUrl(undefined);
     void fetchXaaIdpUrls(controller.signal, organizationId).then((urls) => {
       if (urls && !controller.signal.aborted) {
         setResolvedIssuerBaseUrl(urls.issuerBaseUrl);

@@ -37,6 +37,84 @@ function statusToErrorCode(status: number): ErrorCode {
   return ErrorCode.INTERNAL_ERROR;
 }
 
+const CONVEX_POST_TIMEOUT_MS = 10_000;
+
+/**
+ * POST to a Convex authorized HTTP endpoint, forwarding the caller's bearer so
+ * Convex resolves the identity and enforces membership/ownership. Shared by
+ * every secret-reveal / authorization gate here so the CONVEX_HTTP_URL guard,
+ * timeout, abort/unreachable classification, and `{ success }` envelope check
+ * can't drift across copies. Returns the parsed success body; throws
+ * WebRouteError on any failure. `serviceName` only shapes error copy.
+ */
+async function postToConvexAuthorized(args: {
+  path: string;
+  bearerToken: string;
+  body: Record<string, unknown>;
+  serviceName: string;
+}): Promise<any> {
+  const convexUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexUrl) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing CONVEX_HTTP_URL configuration"
+    );
+  }
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    CONVEX_POST_TIMEOUT_MS
+  );
+
+  let response: Response;
+  try {
+    response = await fetch(`${convexUrl}${args.path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${args.bearerToken}`,
+      },
+      body: JSON.stringify(args.body),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    const isAbort =
+      error instanceof Error &&
+      (error.name === "AbortError" ||
+        (error as { code?: string }).code === "ABORT_ERR");
+    throw new WebRouteError(
+      isAbort ? 504 : 502,
+      ErrorCode.SERVER_UNREACHABLE,
+      isAbort
+        ? `The ${args.serviceName} timed out after ${CONVEX_POST_TIMEOUT_MS}ms`
+        : `Failed to reach the ${args.serviceName}: ${parseErrorMessage(error)}`
+    );
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  let body: any = null;
+  try {
+    body = await response.json();
+  } catch {
+    // ignored
+  }
+
+  if (!response.ok || !body?.success) {
+    const message =
+      typeof body?.error === "string"
+        ? body.error
+        : `The ${args.serviceName} request failed (${response.status})`;
+    throw new WebRouteError(
+      response.ok ? 500 : response.status,
+      statusToErrorCode(response.ok ? 500 : response.status),
+      message
+    );
+  }
+  return body;
+}
+
 export async function fetchRuntimeServerSecrets(args: {
   bearerToken: string;
   projectId: string;
@@ -180,63 +258,12 @@ export async function fetchXaaResourceAppSecret(args: {
   bearerToken: string;
   registrationId: string;
 }): Promise<XaaResourceAppSecretResult> {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexUrl) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
-    );
-  }
-  const REVEAL_TIMEOUT_MS = 10_000;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REVEAL_TIMEOUT_MS);
-
-  let response: Response;
-  try {
-    response = await fetch(`${convexUrl}/web/xaa/resource-app/reveal-secret`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${args.bearerToken}`,
-      },
-      body: JSON.stringify({ id: args.registrationId }),
-      signal: controller.signal,
-    });
-  } catch (error) {
-    const isAbort =
-      error instanceof Error &&
-      (error.name === "AbortError" ||
-        (error as { code?: string }).code === "ABORT_ERR");
-    throw new WebRouteError(
-      isAbort ? 504 : 502,
-      ErrorCode.SERVER_UNREACHABLE,
-      isAbort
-        ? `Secret reveal service timed out after ${REVEAL_TIMEOUT_MS}ms`
-        : `Failed to reach secret reveal service: ${parseErrorMessage(error)}`
-    );
-  } finally {
-    clearTimeout(timeoutId);
-  }
-
-  let body: any = null;
-  try {
-    body = await response.json();
-  } catch {
-    // ignored
-  }
-
-  if (!response.ok || !body?.success) {
-    const message =
-      typeof body?.error === "string"
-        ? body.error
-        : `Secret reveal failed (${response.status})`;
-    throw new WebRouteError(
-      response.ok ? 500 : response.status,
-      statusToErrorCode(response.ok ? 500 : response.status),
-      message
-    );
-  }
+  const body = await postToConvexAuthorized({
+    path: "/web/xaa/resource-app/reveal-secret",
+    bearerToken: args.bearerToken,
+    body: { id: args.registrationId },
+    serviceName: "secret-reveal service",
+  });
 
   if (typeof body.clientSecret !== "string") {
     throw new WebRouteError(
@@ -286,66 +313,12 @@ export async function fetchServerClientSecret(args: {
   serverId: string;
   projectId: string;
 }): Promise<ServerClientSecretResult> {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexUrl) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
-    );
-  }
-  const REVEAL_TIMEOUT_MS = 10_000;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REVEAL_TIMEOUT_MS);
-
-  let response: Response;
-  try {
-    response = await fetch(`${convexUrl}/web/xaa/server/reveal-secret`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${args.bearerToken}`,
-      },
-      body: JSON.stringify({
-        serverId: args.serverId,
-        projectId: args.projectId,
-      }),
-      signal: controller.signal,
-    });
-  } catch (error) {
-    const isAbort =
-      error instanceof Error &&
-      (error.name === "AbortError" ||
-        (error as { code?: string }).code === "ABORT_ERR");
-    throw new WebRouteError(
-      isAbort ? 504 : 502,
-      ErrorCode.SERVER_UNREACHABLE,
-      isAbort
-        ? `Secret reveal service timed out after ${REVEAL_TIMEOUT_MS}ms`
-        : `Failed to reach secret reveal service: ${parseErrorMessage(error)}`
-    );
-  } finally {
-    clearTimeout(timeoutId);
-  }
-
-  let body: any = null;
-  try {
-    body = await response.json();
-  } catch {
-    // ignored
-  }
-
-  if (!response.ok || !body?.success) {
-    const message =
-      typeof body?.error === "string"
-        ? body.error
-        : `Secret reveal failed (${response.status})`;
-    throw new WebRouteError(
-      response.ok ? 500 : response.status,
-      statusToErrorCode(response.ok ? 500 : response.status),
-      message
-    );
-  }
+  const body = await postToConvexAuthorized({
+    path: "/web/xaa/server/reveal-secret",
+    bearerToken: args.bearerToken,
+    body: { serverId: args.serverId, projectId: args.projectId },
+    serviceName: "secret-reveal service",
+  });
 
   return {
     clientSecret:
@@ -371,61 +344,10 @@ export async function authorizeXaaOrgIssuer(args: {
   bearerToken: string;
   organizationId: string;
 }): Promise<void> {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexUrl) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
-    );
-  }
-  const AUTHORIZE_TIMEOUT_MS = 10_000;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), AUTHORIZE_TIMEOUT_MS);
-
-  let response: Response;
-  try {
-    response = await fetch(`${convexUrl}/web/xaa/issuer/authorize`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${args.bearerToken}`,
-      },
-      body: JSON.stringify({ organizationId: args.organizationId }),
-      signal: controller.signal,
-    });
-  } catch (error) {
-    const isAbort =
-      error instanceof Error &&
-      (error.name === "AbortError" ||
-        (error as { code?: string }).code === "ABORT_ERR");
-    throw new WebRouteError(
-      isAbort ? 504 : 502,
-      ErrorCode.SERVER_UNREACHABLE,
-      isAbort
-        ? `Issuer authorization timed out after ${AUTHORIZE_TIMEOUT_MS}ms`
-        : `Failed to reach issuer authorization service: ${parseErrorMessage(error)}`
-    );
-  } finally {
-    clearTimeout(timeoutId);
-  }
-
-  let body: any = null;
-  try {
-    body = await response.json();
-  } catch {
-    // ignored
-  }
-
-  if (!response.ok || !body?.success) {
-    const message =
-      typeof body?.error === "string"
-        ? body.error
-        : `Issuer authorization failed (${response.status})`;
-    throw new WebRouteError(
-      response.ok ? 500 : response.status,
-      statusToErrorCode(response.ok ? 500 : response.status),
-      message
-    );
-  }
+  await postToConvexAuthorized({
+    path: "/web/xaa/issuer/authorize",
+    bearerToken: args.bearerToken,
+    body: { organizationId: args.organizationId },
+    serviceName: "issuer-authorization service",
+  });
 }

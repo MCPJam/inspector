@@ -161,9 +161,17 @@ export function XAAIdpCard({
 
   // Resolve the real issuer from the server's discovery doc once on mount —
   // the URLs are always visible now, so there's no expand to defer it to.
+  const isFirstResolve = useRef(true);
   useEffect(() => {
     const controller = new AbortController();
-    setUrls(getXaaIdpUrls(organizationId));
+    // The useState initializer already produced this value on first render;
+    // only reset synchronously when the org actually changes (so a stale
+    // prior-org URL never flashes) to avoid a wasted render on mount.
+    if (isFirstResolve.current) {
+      isFirstResolve.current = false;
+    } else {
+      setUrls(getXaaIdpUrls(organizationId));
+    }
     void fetchXaaIdpUrls(controller.signal, organizationId).then(
       (serverUrls) => {
         if (controller.signal.aborted || !serverUrls) {
