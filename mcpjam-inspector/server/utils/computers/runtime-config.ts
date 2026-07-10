@@ -57,10 +57,9 @@ export function getInspectorServiceToken(): string | null {
   return process.env.INSPECTOR_SERVICE_TOKEN?.trim() || null;
 }
 
-/** The env keys bootstrap may fill. COMPUTERS_DATA_PLANE_SECRET is absent on
- *  purpose: a bootstrapped server authenticates to Convex with the service
- *  token itself (control-plane-client `authHeaders`), so the legacy secret
- *  never needs to exist on it. */
+/** The env keys bootstrap may fill. No data-plane secret here: the data plane
+ *  authenticates to Convex with the service token (control-plane-client
+ *  `authHeaders`). */
 function applyRuntimeConfigToEnv(config: {
   e2bApiKey: string;
   e2bApiUrl: string | null;
@@ -84,7 +83,7 @@ function applyRuntimeConfigToEnv(config: {
 
 type BootstrapOutcome =
   | "applied"
-  | "skipped" // env already complete, or no service token / convex url
+  | "skipped" // no service token / convex url
   | "unavailable" // backend said enabled:false, or 401/404 (old backend)
   | "failed"; // network-ish; eligible for cooldown re-init
 
@@ -94,14 +93,6 @@ let lastFailureAtMs: number | null = null;
 export function resetComputersRuntimeConfigBootstrapForTests(): void {
   bootstrapPromise = null;
   lastFailureAtMs = null;
-}
-
-function hasCompleteLegacyEnv(): boolean {
-  return Boolean(
-    process.env.E2B_API_KEY?.trim() &&
-      process.env.COMPUTERS_TERMINAL_TOKEN_SECRET?.trim() &&
-      process.env.COMPUTERS_DATA_PLANE_SECRET?.trim()
-  );
 }
 
 async function fetchRuntimeConfigOnce(
@@ -178,7 +169,6 @@ async function runBootstrap(sleep: (ms: number) => Promise<void>): Promise<Boots
   if (!token) return "skipped";
   const base = getConvexHttpUrl();
   if (!base) return "skipped";
-  if (hasCompleteLegacyEnv()) return "skipped";
 
   for (let attempt = 0; ; attempt += 1) {
     const outcome = await fetchRuntimeConfigOnce(base, token);
