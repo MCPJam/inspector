@@ -47,6 +47,17 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+// The unauthenticated state now renders <GuestSignInMessage>, which reads the
+// WorkOS + PostHog hooks. Stub both so the guest sign-in affordance mounts
+// without an AuthKitProvider / PostHog provider.
+const signInMock = vi.fn();
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ signIn: signInMock }),
+}));
+vi.mock("posthog-js/react", () => ({
+  usePostHog: () => ({ capture: vi.fn() }),
+}));
+
 // Stub the xterm terminal so the orchestration test needs no real terminal.
 vi.mock("../ComputerTerminal", () => ({
   ComputerTerminal: (props: { baseUrl?: string }) => (
@@ -86,11 +97,16 @@ function usage(overrides: Partial<ComputerUsageView> = {}): ComputerUsageView {
 mockDataPlane = { localConfigured: true, remoteDataPlaneUrl: null };
 
 describe("ComputerView", () => {
-  it("prompts to sign in when unauthenticated", () => {
-    const { getByText } = render(
+  it("prompts to sign in when unauthenticated with an actionable Sign in button", () => {
+    const { getByText, getByRole } = render(
       <ComputerView projectId="p1" isAuthenticated={false} />
     );
+    // Honest one-liner naming why it's off for guests...
     expect(getByText(/Sign in to use a personal computer/i)).toBeTruthy();
+    // ...and a working sign-in affordance, not a dead-end message.
+    const button = getByRole("button", { name: /Sign in/i });
+    fireEvent.click(button);
+    expect(signInMock).toHaveBeenCalledTimes(1);
   });
 
   it("asks for a synced project when there is no projectId", () => {

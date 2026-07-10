@@ -6,6 +6,7 @@ const {
   handleMCPJamFreeChatModelMock,
   fetchHostRuntimeConfigMock,
   checkHarnessRuntimeAvailableMock,
+  resolveHostToolsMock,
   validateAppToolEntriesMock,
   validateUiToolEntriesMock,
   validateWidgetModelContextEntriesMock,
@@ -18,6 +19,7 @@ const {
   handleMCPJamFreeChatModelMock: vi.fn(),
   fetchHostRuntimeConfigMock: vi.fn(),
   checkHarnessRuntimeAvailableMock: vi.fn(),
+  resolveHostToolsMock: vi.fn(() => ({})),
   validateAppToolEntriesMock: vi.fn(() => []),
   validateUiToolEntriesMock: vi.fn(() => []),
   validateWidgetModelContextEntriesMock: vi.fn(() => []),
@@ -70,7 +72,7 @@ vi.mock("../../../utils/harness/harness-availability.js", () => ({
 }));
 
 vi.mock("../../../utils/built-in-tools/registry.js", () => ({
-  resolveHostTools: vi.fn(() => ({})),
+  resolveHostTools: resolveHostToolsMock,
 }));
 
 import chatV2 from "../chat-v2.js";
@@ -163,5 +165,68 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
     expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
       expect.objectContaining({ harness: "claude-code" }),
     );
+  });
+
+  it("routes a guest turn through the emulated engine (runtime-config omits harness/computer)", async () => {
+    // COMP-3 guest-gate regression. A guest actor's server-resolved runtime
+    // config OMITS `harness` and `computer` (the backend gates them behind the
+    // account-scoped PHASE3 flags — see mcpjam-backend convex/lib/
+    // executionAccess.ts). The route must then run the EMULATED engine: no
+    // harness threaded to prepare/stream, no harness preflight, and no
+    // computer-backed capability. Even a body that tries to smuggle a harness/
+    // computer can't win — the resolver never reads them from the body.
+    fetchHostRuntimeConfigMock.mockResolvedValueOnce({
+      ok: true,
+      config: {
+        hostId: "host-guest",
+        modelId: "anthropic/claude-haiku-4.5",
+        systemPrompt: "host system",
+        temperature: 0.2,
+        requireToolApproval: false,
+        respectToolVisibility: true,
+        selectedServerIds: ["server-id-1"],
+        // harness + computer intentionally omitted (guest actor).
+      },
+    });
+
+    const app = createApp();
+
+    const response = await app.request("/api/mcp/chat-v2", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer guest-test-token",
+      },
+      body: JSON.stringify({
+        projectId: "project-1",
+        hostId: "host-guest",
+        selectedServers: ["server-1"],
+        selectedServerIds: ["server-id-1"],
+        messages: [{ role: "user", content: "create empty.txt" }],
+        model: {
+          id: "anthropic/claude-haiku-4.5",
+          provider: "anthropic",
+          name: "Claude Haiku 4.5",
+        },
+        // Tampered body: a guest tries to force the real harness + a computer.
+        harness: "claude-code",
+        computer: { kind: "personal" },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    // Emulated path: harness is never threaded into prepare or the stream.
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.not.objectContaining({ harness: expect.anything() }),
+    );
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+      expect.not.objectContaining({ harness: expect.anything() }),
+    );
+    // No harness ⇒ no availability preflight runs.
+    expect(checkHarnessRuntimeAvailableMock).not.toHaveBeenCalled();
+    // No computer capability: resolveHostTools sees `computer: undefined`
+    // (sourced from the runtime config, never the tampered body).
+    expect(resolveHostToolsMock).toHaveBeenCalled();
+    expect(resolveHostToolsMock.mock.calls[0][0].computer).toBeUndefined();
   });
 });

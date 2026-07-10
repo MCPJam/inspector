@@ -42,6 +42,7 @@ import { ComputerStatusChip } from "./ComputerStatusChip";
 import { ComputerTerminal } from "./ComputerTerminal";
 import { ComputersUnavailableMessage } from "./ComputersUnavailableMessage";
 import { PaneMessage } from "./PaneMessage";
+import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
 
 /**
  * The "Computer" tab — manage the project's personal cloud computer (one per
@@ -369,7 +370,19 @@ export function ComputerView({
   });
 
   if (!isAuthenticated) {
-    return <Empty>Sign in to use a personal computer for this project.</Empty>;
+    // Guest actor: the personal computer (and the Claude Code harness that
+    // runs inside it) is account-scoped, so the backend omits it from a
+    // guest's runtime config. Offer the honest next step with a working
+    // sign-in button instead of a dead-end line of copy.
+    return (
+      <div className="flex h-full items-center justify-center p-6">
+        <GuestSignInMessage
+          compact
+          location="computer_view"
+          message="Sign in to use a personal computer for this project — it runs on a per-account cloud workstation, so it's off for guests."
+        />
+      </div>
+    );
   }
   if (!projectId) {
     return (
