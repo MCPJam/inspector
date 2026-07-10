@@ -1028,7 +1028,6 @@ describe("mock OIDC IdP endpoints", () => {
       createXaaRouter({
         issuerBasePath: "/api/mcp",
         httpsOnlyProxy: false,
-        enableOidcMode: true,
       })
     );
   });
@@ -1460,71 +1459,28 @@ describe("mock OIDC IdP endpoints", () => {
     const idToken = decodeJwtPayload((await tokenResponse.json()).id_token);
     expect(idToken.nonce).toBeUndefined();
   });
-});
 
-describe("mock OIDC IdP disabled (kill switch)", () => {
-  const originalKeyDir = process.env.XAA_IDP_KEY_DIR;
-  let tempDir: string;
-  let app: Hono;
-
-  beforeEach(() => {
-    tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-oidc-off-"));
-    process.env.XAA_IDP_KEY_DIR = tempDir;
-    resetXAAIdpKeyPairForTests();
-    initXAAIdpKeyPair();
-    app = new Hono();
-    app.route(
+  it("registers the OIDC routes unconditionally (no enable flag)", async () => {
+    // The mock OIDC IdP is always on — a router built with no OIDC option
+    // still serves /authorize, and the discovery doc advertises the OIDC
+    // shape rather than the retired token-exchange-only one.
+    const plain = new Hono();
+    plain.route(
       "/api/mcp/xaa",
-      createXaaRouter({
-        issuerBasePath: "/api/mcp",
-        httpsOnlyProxy: false,
-        enableOidcMode: false,
-      })
+      createXaaRouter({ issuerBasePath: "/api/mcp", httpsOnlyProxy: false })
     );
-  });
-
-  afterEach(() => {
-    resetXAAIdpKeyPairForTests();
-    rmSync(tempDir, { recursive: true, force: true });
-    if (originalKeyDir === undefined) {
-      delete process.env.XAA_IDP_KEY_DIR;
-    } else {
-      process.env.XAA_IDP_KEY_DIR = originalKeyDir;
-    }
-  });
-
-  it("registers none of the OIDC routes", async () => {
-    const base = "http://127.0.0.1:6274/api/mcp/xaa";
-    for (const [method, url] of [
-      ["GET", `${base}/authorize?client_id=c&redirect_uri=https://x.example`],
-      ["POST", `${base}/authorize/confirm`],
-      ["POST", `${base}/token`],
-      ["GET", `${base}/userinfo`],
-    ] as const) {
-      const response = await app.request(url, { method });
-      expect(response.status).toBe(404);
-    }
-  });
-
-  it("keeps the discovery document byte-identical to the pre-OIDC one", async () => {
-    const response = await app.request(
-      "http://127.0.0.1:6274/api/mcp/xaa/.well-known/openid-configuration"
+    const authorize = await plain.request(
+      `${BASE}/authorize?client_id=c&redirect_uri=${encodeURIComponent(
+        REDIRECT_URI
+      )}&response_type=code`
     );
-    const doc = await response.json();
-    expect(doc).toEqual({
-      issuer: "http://127.0.0.1:6274/api/mcp/xaa",
-      jwks_uri:
-        "http://127.0.0.1:6274/api/mcp/xaa/.well-known/jwks.json",
-      authorization_endpoint:
-        "http://127.0.0.1:6274/api/mcp/xaa/authenticate",
-      token_endpoint: "http://127.0.0.1:6274/api/mcp/xaa/token-exchange",
-      response_types_supported: ["id_token"],
-      subject_types_supported: ["public"],
-      grant_types_supported: [
-        "urn:ietf:params:oauth:grant-type:token-exchange",
-      ],
-      token_endpoint_auth_methods_supported: ["none", "client_secret_post"],
-      id_token_signing_alg_values_supported: ["RS256"],
-    });
+    expect(authorize.status).toBe(200);
+
+    const doc = await (
+      await plain.request(`${BASE}/.well-known/openid-configuration`)
+    ).json();
+    expect(doc.authorization_endpoint).toBe(`${ISSUER}/authorize`);
+    expect(doc.userinfo_endpoint).toBe(`${ISSUER}/userinfo`);
+    expect(doc.response_types_supported).toEqual(["code"]);
   });
 });

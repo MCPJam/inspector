@@ -369,7 +369,6 @@ describe("mock OIDC IdP gating on the hosted router", () => {
         trustForwardedHeaders: true,
         protectedMiddlewares: [bearerAuthMiddleware, guestRateLimitMiddleware],
         authorizeOrgIssuer,
-        enableOidcMode: true,
       }),
     );
   });

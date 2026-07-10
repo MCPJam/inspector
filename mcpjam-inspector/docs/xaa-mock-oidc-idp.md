@@ -52,5 +52,7 @@ Authorization Grant draft.
   (signature-verified, unexpired), and its `aud` must match the presenting
   `client_id`.
 - Public endpoints are rate-limited per IP.
-- Kill switch: `XAA_OIDC_ENABLED=false` removes all four endpoints and reverts
-  the discovery document to the pre-OIDC shape.
+- The state-changing public endpoints (`/authorize/confirm`, `/token`) reject
+  cross-site browser POSTs (foreign `Origin`), so a third-party page can't
+  drive the flow; a relying party's server-to-server token call (no `Origin`)
+  still works.

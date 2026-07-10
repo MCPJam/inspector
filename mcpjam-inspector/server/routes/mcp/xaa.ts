@@ -50,7 +50,7 @@ import type {
   XaaResourceAppSecretResult,
 } from "../../utils/server-secrets.js";
 import { logger } from "../../utils/logger.js";
-import { MCPJAM_HOSTED_ORIGIN, XAA_OIDC_ENABLED } from "../../config.js";
+import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 
 const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 const NEGATIVE_TEST_CASE_TIMEOUT_MS = 8_000;
@@ -558,11 +558,6 @@ interface CreateXaaRouterOptions {
   // origin is config, never derived from the request. The hosted router never
   // sets this — hosted IS the hosted issuer and ignores `issuerMode`.
   forwardHostedIssuer?: { origin: string };
-  // Mock OIDC IdP surface (GET /authorize, POST /authorize/confirm,
-  // POST /token, GET /userinfo) + the matching discovery-document fields.
-  // Wired to the XAA_OIDC_ENABLED kill switch; when false the discovery doc
-  // is byte-identical to the pre-OIDC one and the routes don't exist.
-  enableOidcMode?: boolean;
 }
 
 type ParsedJwtPayload = {
@@ -837,30 +832,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     // Unscoped hosted refuses it (public token exchange would launder the
     // org-membership gate through the public /authorize mock sign-in), so its
     // doc must not advertise it — advertise only what is served.
-    oidc?: { tokenExchangeAtToken: boolean }
+    oidc: { tokenExchangeAtToken: boolean }
   ) => {
     initXAAIdpKeyPair();
-
-    if (!options.enableOidcMode || !oidc) {
-      // Pre-OIDC document, byte-identical to the historical one.
-      return c.json(
-        {
-          issuer,
-          jwks_uri: `${issuer}/.well-known/jwks.json`,
-          authorization_endpoint: `${issuer}/authenticate`,
-          token_endpoint: `${issuer}/token-exchange`,
-          response_types_supported: ["id_token"],
-          subject_types_supported: ["public"],
-          grant_types_supported: [TOKEN_EXCHANGE_GRANT],
-          token_endpoint_auth_methods_supported: ["none", "client_secret_post"],
-          id_token_signing_alg_values_supported: ["RS256"],
-        },
-        200,
-        {
-          "Cache-Control": "public, max-age=300",
-        }
-      );
-    }
 
     return c.json(
       {
@@ -1559,13 +1533,16 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
 
   // ── Mock OIDC IdP: real authorization_code flow + userinfo ──────────────
   // Lets external services (e.g. Scalekit Full Stack Auth) configure MCPJam
-  // as a discovery-driven test OIDC IdP. All four endpoints are public
-  // front-channel/RP surfaces — but the token-exchange grant on /token issues
-  // ID-JAGs, so it inherits the same gate as the surface's mint endpoints:
-  // local = open, org-scoped = bearer + membership, unscoped hosted = refused
-  // (otherwise the public /authorize mock sign-in chained into a public token
-  // exchange would launder the org-membership gate).
-  if (options.enableOidcMode) {
+  // as a discovery-driven test OIDC IdP. Always registered. All four endpoints
+  // are public front-channel/RP surfaces — every state-changing one is guarded
+  // (foreign-Origin CSRF reject, S256 PKCE, per-IP rate limit, typ
+  // segregation). The token-exchange grant on /token issues ID-JAGs, so it
+  // inherits the same gate as the surface's mint endpoints: local = open,
+  // org-scoped = bearer + membership, unscoped hosted = refused (otherwise the
+  // public /authorize mock sign-in chained into a public token exchange would
+  // launder the org-membership gate). A bare block keeps the handler closures
+  // scoped without an enclosing conditional.
+  {
     const readForm = async (
       c: Context
     ): Promise<Record<string, string> | null> => {
@@ -1971,7 +1948,6 @@ const xaa = createXaaRouter({
   // cloud AS can discover the issuer — no tunnel needed for the common
   // local-MCP-server + remote-AS setup.
   forwardHostedIssuer: { origin: MCPJAM_HOSTED_ORIGIN },
-  enableOidcMode: XAA_OIDC_ENABLED,
 });
 
 export default xaa;

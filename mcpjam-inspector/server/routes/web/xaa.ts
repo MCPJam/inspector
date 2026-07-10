@@ -6,7 +6,6 @@ import {
   fetchXaaResourceAppSecret,
 } from "../../utils/server-secrets.js";
 import { createXaaRouter } from "../mcp/xaa.js";
-import { XAA_OIDC_ENABLED } from "../../config.js";
 
 const xaaWeb = createXaaRouter({
   issuerBasePath: "/api/web",
@@ -18,7 +17,6 @@ const xaaWeb = createXaaRouter({
   // Org-scoped issuer minting (/o/:orgId/...) is hosted-only: membership is
   // enforced by Convex with the caller's bearer.
   authorizeOrgIssuer: (args) => authorizeXaaOrgIssuer(args),
-  enableOidcMode: XAA_OIDC_ENABLED,
 });
 
 export default xaaWeb;
