@@ -315,7 +315,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
                 onSelectNode(APPS_HUB_NODE_ID);
               }}
             >
-              <span className="hp-section-title">Client capabilities</span>
+              <span className="hp-section-title">Host capabilities</span>
             </button>
             <div className="hp-caps">
               {appsCaps.map((row) => {

@@ -77,7 +77,7 @@ describe("HostConfigCompareView public mode", () => {
 
     expect(screen.queryByText(/Sign in to compare/i)).not.toBeInTheDocument();
     expect(
-      screen.getByLabelText("Search host config fields")
+      screen.getByLabelText("Search client config fields")
     ).toBeInTheDocument();
     expect(screen.getByText("Can I use…")).toBeInTheDocument();
     expect(
@@ -99,7 +99,7 @@ describe("HostConfigCompareView public mode", () => {
     );
 
     expect(
-      screen.getByText(/Sign in to compare your hosts/i)
+      screen.getByText(/Sign in to compare your clients/i)
     ).toBeInTheDocument();
   });
 

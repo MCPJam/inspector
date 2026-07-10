@@ -170,7 +170,7 @@ describe("GenerateSessionsDialog — plan v4 §J affordances", () => {
       />,
     );
     expect(
-      screen.getByText(/host has no model selected/i),
+      screen.getByText(/client has no model selected/i),
     ).toBeInTheDocument();
     expect(
       (screen.getByRole("button", { name: "Generate personas" }) as HTMLButtonElement)
