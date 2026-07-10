@@ -2008,9 +2008,16 @@ export default function App() {
   // reach HostsRoute so it can open/create that client's host. Without this
   // guard the first-run onboarding redirect below fires on the fresh load and
   // navigates to Playground, dropping the `?template` param before it's handled.
+  // Only a *known* template id suppresses onboarding — an unknown/stale value
+  // (e.g. `?template=bogus` from an old link) is never consumed by the deep-link
+  // handler, so treating it as a real deep-link would strand new users on an
+  // empty surface with onboarding silently disabled.
   const hasHostTemplateVerifyParam =
     typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).has("template");
+    (() => {
+      const raw = new URLSearchParams(window.location.search).get("template");
+      return raw != null && HOST_TEMPLATES.some((t) => t.id === raw);
+    })();
   const shouldRouteToFirstRunOnboarding =
     !isHostedChatRoute &&
     !isBareCaniuseRoute &&
