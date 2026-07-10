@@ -13,10 +13,11 @@
  *     custom headers to a WS handshake, and a `?token=` query string would
  *     land in proxy/CDN access logs, so the subprotocol slot is the only
  *     place left to put it. There is no query-string fallback.
- *   - We verify the token LOCALLY (shared HS256 secret) — no Convex round
- *     trip — then exchange the token's `computerId` for the vendor sandbox id
- *     via the secret-gated `/computers/sandbox-info` route. The browser never
- *     sees vendor ids or credentials.
+ *   - We verify the token's RS256 signature against the backend-published
+ *     JWKS (`/computers/terminal-jwks`, short-cached), then exchange the
+ *     token's `computerId` for the vendor sandbox id via the secret-gated
+ *     `/computers/sandbox-info` route. The browser never sees vendor ids or
+ *     credentials.
  *   - Invalid/expired/missing token ⇒ the socket opens and immediately closes
  *     with code 4401 (createEvents cannot return an HTTP rejection once the
  *     client requested an upgrade).
