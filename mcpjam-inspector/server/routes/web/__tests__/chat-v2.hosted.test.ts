@@ -3,7 +3,7 @@ import { Hono } from "hono";
 
 const {
   prepareChatV2Mock,
-  handleMCPJamFreeChatModelMock,
+  runAssistantTurnMock,
   fetchHostRuntimeConfigMock,
   fetchChatboxRuntimeConfigMock,
   persistChatSessionToConvexMock,
@@ -20,7 +20,7 @@ const {
   WidgetModelContextValidationErrorMock,
 } = vi.hoisted(() => ({
   prepareChatV2Mock: vi.fn(),
-  handleMCPJamFreeChatModelMock: vi.fn(),
+  runAssistantTurnMock: vi.fn(),
   fetchHostRuntimeConfigMock: vi.fn(),
   fetchChatboxRuntimeConfigMock: vi.fn(),
   persistChatSessionToConvexMock: vi.fn(),
@@ -107,11 +107,21 @@ vi.mock("../../../utils/chat-v2-orchestration.js", () => ({
 }));
 
 vi.mock("../../../utils/mcpjam-stream-handler.js", () => ({
-  handleMCPJamFreeChatModel: handleMCPJamFreeChatModelMock,
+  // The live MCPJam path now dispatches through runAssistantTurn (mocked
+  // below), so this handler is no longer called directly — keep a stub so the
+  // module still exports the symbol.
+  handleMCPJamFreeChatModel: vi.fn(),
   // No-op dev-only diagnostic; tests don't need real signal-missing
   // logging behavior but must surface the symbol so the route module
   // can import it without ReferenceError.
   warnIfChatAbortSignalMissing: () => {},
+}));
+
+// The live MCPJam chat path routes through runAssistantTurn (streamSink "ui"),
+// which returns `{ response }`. Mock it here so the route's engine dispatch is
+// exercised without the real chat-engine loop.
+vi.mock("../../../utils/assistant-turn.js", () => ({
+  runAssistantTurn: runAssistantTurnMock,
 }));
 
 vi.mock("../../../utils/chat-ingestion.js", async () => {
@@ -180,7 +190,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       config: {},
     });
 
-    handleMCPJamFreeChatModelMock.mockImplementation(async (options: any) => {
+    runAssistantTurnMock.mockImplementation(async (options: any) => {
       await options.onConversationComplete?.(
         [{ role: "user", content: "preview request" }],
         {
@@ -193,7 +203,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         }
       );
       options.onStreamComplete?.();
-      return new Response("ok", { status: 200 });
+      return { response: new Response("ok", { status: 200 }) };
     });
 
     global.fetch = vi.fn(async (input, init) => {
@@ -360,7 +370,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(fetchHostRuntimeConfigMock).toHaveBeenCalledWith(
       expect.objectContaining({ hostId: "host-1" })
     );
-    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledTimes(1);
+    expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
   });
 
   it("FAILS CLOSED when the host runtime-config fetch fails — never runs the engine", async () => {
@@ -386,7 +396,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     );
 
     expect(response.status).not.toBe(200);
-    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    expect(runAssistantTurnMock).not.toHaveBeenCalled();
   });
 
   it("FAILS CLOSED when the chatbox runtime-config fetch fails — never runs the engine", async () => {
@@ -426,7 +436,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(body.code).toBe("INTERNAL_ERROR");
     expect(body.message).toContain("Couldn't load this chatbox's settings");
     expect(body.message).toContain("backend unreachable");
-    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    expect(runAssistantTurnMock).not.toHaveBeenCalled();
   });
 
   it("a chatbox session ignores a stray hostId (chatbox path wins)", async () => {
@@ -475,7 +485,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+    expect(runAssistantTurnMock).toHaveBeenCalledWith(
       expect.objectContaining({
         chatboxId: "cbx_shared",
         accessVersion: 2,

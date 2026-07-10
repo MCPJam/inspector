@@ -7,18 +7,24 @@
  * branched into org-BYOK handling and skipped `runHarnessTurn` even though
  * `persist.harness` was set.
  *
- * The stream handlers are mocked; these are pure dispatch tests.
+ * The MCPJam path now dispatches through the shared `runAssistantTurn` surface
+ * (streamSink "ui") instead of calling `handleMCPJamFreeChatModel` directly;
+ * live org-BYOK still uses its specialized streaming handlers. The engine +
+ * handlers are mocked; these are pure dispatch tests.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const handlers = vi.hoisted(() => ({
-  mcpjamFree: vi.fn(async () => new Response("mcpjam")),
+  assistantTurn: vi.fn(async () => ({ response: new Response("mcpjam") })),
   hostedOrg: vi.fn(async () => new Response("org-hosted")),
   localOrg: vi.fn(async () => new Response("org-local")),
 }));
 
+vi.mock("../assistant-turn.js", () => ({
+  runAssistantTurn: handlers.assistantTurn,
+}));
+
 vi.mock("../mcpjam-stream-handler.js", () => ({
-  handleMCPJamFreeChatModel: handlers.mcpjamFree,
   warnIfChatAbortSignalMissing: vi.fn(),
 }));
 
@@ -100,7 +106,7 @@ function args(modelDefinition: {
 
 describe("streamWebChatTurn model dispatch", () => {
   beforeEach(() => {
-    handlers.mcpjamFree.mockClear();
+    handlers.assistantTurn.mockClear();
     handlers.hostedOrg.mockClear();
     handlers.localOrg.mockClear();
     // stubEnv (not a bare assignment) so the value is restored after each
@@ -116,20 +122,22 @@ describe("streamWebChatTurn model dispatch", () => {
     await streamWebChatTurn(
       args({ id: "gpt-5-nano", provider: "openai" }) as never,
     );
-    expect(handlers.mcpjamFree).toHaveBeenCalledTimes(1);
+    expect(handlers.assistantTurn).toHaveBeenCalledTimes(1);
     expect(handlers.hostedOrg).not.toHaveBeenCalled();
-    const opts = handlers.mcpjamFree.mock.calls[0]?.[0] as Record<
+    const opts = handlers.assistantTurn.mock.calls[0]?.[0] as Record<
       string,
       unknown
     >;
     expect(opts.harness).toBe("claude-code");
+    // MCPJam live chat dispatches through runAssistantTurn's UI stream sink.
+    expect(opts.streamSink).toBe("ui");
   });
 
   it("routes a prefixed MCPJam id to the MCPJam path (sanity)", async () => {
     await streamWebChatTurn(
       args({ id: "openai/gpt-5-nano", provider: "openai" }) as never,
     );
-    expect(handlers.mcpjamFree).toHaveBeenCalledTimes(1);
+    expect(handlers.assistantTurn).toHaveBeenCalledTimes(1);
     expect(handlers.hostedOrg).not.toHaveBeenCalled();
   });
 
@@ -138,6 +146,6 @@ describe("streamWebChatTurn model dispatch", () => {
       args({ id: "gpt-4.1-mini-custom", provider: "openai" }) as never,
     );
     expect(handlers.hostedOrg).toHaveBeenCalledTimes(1);
-    expect(handlers.mcpjamFree).not.toHaveBeenCalled();
+    expect(handlers.assistantTurn).not.toHaveBeenCalled();
   });
 });

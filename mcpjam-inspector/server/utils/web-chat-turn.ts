@@ -32,10 +32,7 @@ import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
-import {
-  handleMCPJamFreeChatModel,
-  warnIfChatAbortSignalMissing,
-} from "./mcpjam-stream-handler.js";
+import { warnIfChatAbortSignalMissing } from "./mcpjam-stream-handler.js";
 import type { ExecutionScope } from "./execution-scope.js";
 import {
   handleHostedOrgChatModel,
@@ -70,6 +67,7 @@ import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-log
 import { bridgeHarnessRpcLogsToCollector } from "./../routes/web/hosted-rpc-logs.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getClientIp } from "./client-ip.js";
+import { runAssistantTurn } from "./assistant-turn.js";
 import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
 import {
   resolveWebAuthorizedHarnessStrategy,
@@ -531,30 +529,49 @@ export async function streamWebChatTurn(
   // leave a live subscription) and torn down with the stream.
   let stopHarnessRpcLogBridge: (() => void) | undefined;
 
-  return handleMCPJamFreeChatModel({
+  // Live MCPJam chat runs through the shared `runAssistantTurn` surface (the
+  // same engine seam the synthetic runner uses) rather than calling
+  // `handleMCPJamFreeChatModel` directly — `runAssistantTurn` is a faithful
+  // wrapper (streamSink "ui" → runChatEngineLoop / runHarnessTurn, identical to
+  // the direct call) and now carries the superset fields (executionScope,
+  // harnessMcpProxy, builtInTools, approvalFreeUiToolNames) the live path needs.
+  // Harness eligibility is already gated by the chat-v2 preflight, so the
+  // useHarness decision matches the old direct dispatch.
+  const engineResult = await runAssistantTurn({
     messages: modelMessages,
-    modelId: mcpjamModelId,
-    provider: prepare.modelDefinition.provider,
-    chatSessionId: hostedChatSessionId,
-    sourceType: persist.sourceType,
+    modelDefinition: prepare.modelDefinition,
     systemPrompt: effectiveEnhancedSystemPrompt,
-    temperature: resolvedTemperature,
+    ...(resolvedTemperature !== undefined
+      ? { temperature: resolvedTemperature }
+      : {}),
     tools: allTools as ToolSet,
-    progressivePlan,
-    discoveryState,
-    authHeader: runtime.authHeader,
-    clientIp: runtime.clientIp ?? getClientIp(c),
-    chatboxId: persist.chatboxId,
-    accessVersion: persist.accessVersion,
-    projectId: persist.projectId,
+    mcpClientManager: manager,
+    authContext: {
+      kind: "user_bearer",
+      token: runtime.authHeader ?? "",
+      clientIp: runtime.clientIp ?? getClientIp(c),
+    },
+    sourceType: persist.sourceType,
+    origin: persist.origin,
+    streamSink: "ui",
+    persistMode: "handler",
+    chatSessionId: hostedChatSessionId,
+    ...(persist.projectId ? { projectId: persist.projectId } : {}),
+    ...(persist.chatboxId ? { chatboxId: persist.chatboxId } : {}),
+    ...(persist.accessVersion !== undefined
+      ? { accessVersion: persist.accessVersion }
+      : {}),
     // Phase 3: thread the runtime-config execution scope into the harness path
     // (sandbox reserve, skills, broker, session-state, commit).
     ...(persist.executionScope
       ? { executionScope: persist.executionScope }
       : {}),
-    mcpClientManager: manager,
-    selectedServers: persist.selectedServerIds,
-    requireToolApproval: persist.requireToolApproval,
+    ...(persist.selectedServerIds
+      ? { selectedServerIds: persist.selectedServerIds }
+      : {}),
+    ...(persist.requireToolApproval !== undefined
+      ? { requireToolApproval: persist.requireToolApproval }
+      : {}),
     approvalFreeUiToolNames: approvalFreeUiToolNamesFrom(prepare.uiTools),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     ...(persist.harness ? { harness: persist.harness } : {}),
@@ -564,7 +581,9 @@ export async function streamWebChatTurn(
     // (web_search) to HarnessAgent without the MCP-server tools, which the
     // harness gets via .mcp.json.
     ...(prepare.builtInTools ? { builtInTools: prepare.builtInTools } : {}),
-    abortSignal: runtime.abortSignal,
+    ...(progressivePlan ? { progressivePlan } : {}),
+    ...(discoveryState ? { discoveryState } : {}),
+    ...(runtime.abortSignal ? { abortSignal: runtime.abortSignal } : {}),
     onConversationComplete,
     onStreamComplete: async () => {
       stopHarnessRpcLogBridge?.();
@@ -581,4 +600,12 @@ export async function streamWebChatTurn(
       }
     },
   });
+
+  if (!engineResult.response) {
+    throw new Error(
+      'runAssistantTurn(streamSink: "ui") returned no Response for the ' +
+        "MCPJam chat path",
+    );
+  }
+  return engineResult.response;
 }
