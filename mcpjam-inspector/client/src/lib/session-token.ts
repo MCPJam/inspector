@@ -20,7 +20,7 @@ import {
 } from "@/lib/apis/web/context";
 import { getConvexSiteUrl } from "@/lib/convex-site-url";
 import { forceRefreshGuestSession } from "@/lib/guest-session";
-import posthog from "posthog-js";
+import { track } from "@/lib/analytics";
 
 // Extend window type for the injected token
 declare global {
@@ -484,7 +484,8 @@ export async function authFetch(
   const refreshedGuestToken = await forceRefreshGuestSession();
   if (!refreshedGuestToken) {
     if (surface) {
-      posthog.capture("guest_refresh_failure", {
+      track("guest_refresh_failure", {
+        location: "auth_fetch",
         surface,
         auth_mode: "guest",
         status: "failure",
@@ -495,7 +496,8 @@ export async function authFetch(
   }
 
   if (surface) {
-    posthog.capture("guest_refresh_success", {
+    track("guest_refresh_success", {
+      location: "auth_fetch",
       surface,
       auth_mode: "guest",
       status: "success",

@@ -86,7 +86,7 @@ import {
 import { resolveServerConnectionSettings } from "@/lib/client-connection-resolve";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { standardEventProps } from "@/lib/PosthogUtils";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import type { ConnectionDefaults } from "@/shared/connection-defaults";
 
 /** Skip noisy connect toast while first-run App Builder onboarding is in progress. */
@@ -769,7 +769,6 @@ export function useServerState({
 }: UseServerStateParams) {
   const isUserReady = useDbUserReady();
   const convex = useConvex();
-  const posthog = usePostHog();
   const {
     createServerIfMissing: convexCreateServerIfMissing,
     updateServer: convexUpdateServer,
@@ -1374,7 +1373,7 @@ export function useServerState({
           if (telemetry?.capture) {
             telemetry.capture(metadata);
           } else {
-            posthog?.capture("stateless_protocol_connect", metadata);
+            track("stateless_protocol_connect", metadata);
           }
         }
         return result;
@@ -1387,7 +1386,6 @@ export function useServerState({
       activeMcpProfile,
       withProjectConnectionDefaults,
       buildStatelessProtocolConnectMetadata,
-      posthog,
     ]
   );
 
@@ -3970,7 +3968,7 @@ export function useServerState({
           return;
         }
         statelessProtocolConnectCaptured = true;
-        posthog?.capture("stateless_protocol_connect", metadata);
+        track("stateless_protocol_connect", metadata);
       };
       const buildStatelessTelemetry = (
         attempt: StatelessProtocolConnectAttempt
@@ -4409,7 +4407,6 @@ export function useServerState({
       mergeWithProjectHeaders,
       updateServerOAuthTrace,
       withProjectConnectionDefaults,
-      posthog,
     ]
   );
 

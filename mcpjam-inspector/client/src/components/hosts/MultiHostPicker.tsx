@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Columns2, X } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
+import type { ClientAnalyticsEventName } from "@/shared/analytics-events";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Popover,
@@ -208,15 +208,11 @@ export function MultiHostPicker({
   // client enters compare; removing back to one client exits.
   // `multiHostEnabled` is derived from `nextIds.length > 1` instead
   // of being driven by a separate toggle.
-  const posthog = usePostHog();
   const captureCompare = useCallback(
-    (event: string, props?: Record<string, unknown>) => {
-      posthog?.capture(event, {
-        ...standardEventProps("playground_multi_host_picker"),
-        ...props,
-      });
+    (event: ClientAnalyticsEventName, props?: Record<string, unknown>) => {
+      track(event, { location: "playground_multi_host_picker", ...props });
     },
-    [posthog],
+    [],
   );
 
   const handleHostRowToggle = (hostId: string) => {

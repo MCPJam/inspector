@@ -6,9 +6,8 @@ import {
   MessageSquare,
   Monitor,
 } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
 import { cn } from "@/lib/utils";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 
 export type TraceViewMode = "timeline" | "chat" | "raw" | "tools";
 
@@ -63,14 +62,13 @@ export function TraceViewModeTabs({
 }) {
   const fullWidth = layout === "fullWidth";
   const segment = appearance === "segment";
-  const posthog = usePostHog();
   // When the App or Steps tab is active no standard tab is highlighted.
   const standardActive = (m: TraceViewMode) =>
     !browserActive && !stepsActive && mode === m;
 
   const handleModeChange = (nextMode: TraceViewMode) => {
-    posthog.capture("trace_view_mode_changed", {
-      ...standardEventProps("trace_view_mode_tabs"),
+    track("trace_view_mode_changed", {
+      location: "trace_view_mode_tabs",
       mode: nextMode,
     });
     onModeChange(nextMode);
@@ -94,8 +92,8 @@ export function TraceViewModeTabs({
       key="steps"
       type="button"
       onClick={() => {
-        posthog.capture("trace_view_mode_changed", {
-          ...standardEventProps("trace_view_mode_tabs"),
+        track("trace_view_mode_changed", {
+          location: "trace_view_mode_tabs",
           mode: "steps",
         });
         onSelectSteps?.();
@@ -150,8 +148,8 @@ export function TraceViewModeTabs({
       key="browser"
       type="button"
       onClick={() => {
-        posthog.capture("trace_view_mode_changed", {
-          ...standardEventProps("trace_view_mode_tabs"),
+        track("trace_view_mode_changed", {
+          location: "trace_view_mode_tabs",
           mode: "browser",
         });
         onSelectBrowser?.();

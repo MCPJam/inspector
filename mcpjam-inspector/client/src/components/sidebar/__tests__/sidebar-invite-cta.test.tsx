@@ -24,6 +24,10 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (flag: string) => mockFeatureFlags[flag] ?? false,
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
+}));
+
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (selector: (state: { themeMode: string }) => unknown) =>
     selector({ themeMode: "light" }),
