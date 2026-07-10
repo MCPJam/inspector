@@ -38,9 +38,14 @@ Once trust is established, run the flow from the XAA Flow tab. The sequence diag
 
 ## Local mode
 
-If you're running the inspector locally, the endpoint URLs point at your own machine. Your authorization server can only reach them if it can route to that machine — expose the inspector through a public tunnel first.
+If you're running the inspector locally, the endpoint URLs point at your own machine. Your authorization server can only reach them if it can route to that machine.
+
+If your authorization server is cloud-hosted (Okta, Auth0, Scalekit, …), use the **"Use hosted issuer"** toggle in the identity-provider bar instead of a tunnel. The toggle routes mint calls through `app.mcpjam.com` so the issuer and JWKS are publicly reachable — your MCP server and token requests still run from your machine. See [Local MCP server, cloud AS — no tunnel](/inspector/xaa-hosted-issuer) for setup steps.
+
+If your authorization server is also local, keep the toggle off and expose the inspector through a public tunnel (e.g. ngrok) so the AS can reach the discovery document and JWKS.
 
 ## Next steps
 
+- [Local MCP server, cloud AS — no tunnel](/inspector/xaa-hosted-issuer) — use the hosted issuer toggle to skip ngrok.
 - [XAA Debugger](/inspector/xaa-debugger) — walk through and debug the full flow.
 - Review the [MCP authorization specification](https://modelcontextprotocol.io/specification/draft/basic/authorization) for XAA requirements.
