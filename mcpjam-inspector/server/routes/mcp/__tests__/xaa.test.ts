@@ -727,3 +727,28 @@ describe("POST /negative-tests", () => {
     expect(body.message).toContain("its own auth server");
   });
 });
+
+describe("org-scoped issuer paths on the local router", () => {
+  it("does not register /o/:orgId routes when authorizeOrgIssuer is absent", async () => {
+    const app = new Hono();
+    app.route(
+      "/api/mcp/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/mcp",
+        httpsOnlyProxy: false,
+      })
+    );
+
+    const discovery = await app.request(
+      "/api/mcp/xaa/o/org-123/.well-known/openid-configuration"
+    );
+    const mint = await app.request("/api/mcp/xaa/o/org-123/authenticate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "user-12345" }),
+    });
+
+    expect(discovery.status).toBe(404);
+    expect(mint.status).toBe(404);
+  });
+});

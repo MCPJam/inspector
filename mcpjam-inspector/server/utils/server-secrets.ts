@@ -359,3 +359,73 @@ export async function fetchServerClientSecret(args: {
     xaaAllowPathScopedIssuer: body.xaaAllowPathScopedIssuer === true,
   };
 }
+
+/**
+ * Membership gate for the org-scoped MCPJam XAA test issuer
+ * (`/api/web/xaa/o/<orgId>`). Forwards the caller's bearer to Convex, which
+ * resolves the identity and requires org membership (guests are always
+ * rejected there). Throws a WebRouteError on any failure — minting under a
+ * scoped issuer is fail-closed.
+ */
+export async function authorizeXaaOrgIssuer(args: {
+  bearerToken: string;
+  organizationId: string;
+}): Promise<void> {
+  const convexUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexUrl) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing CONVEX_HTTP_URL configuration"
+    );
+  }
+  const AUTHORIZE_TIMEOUT_MS = 10_000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), AUTHORIZE_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(`${convexUrl}/web/xaa/issuer/authorize`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${args.bearerToken}`,
+      },
+      body: JSON.stringify({ organizationId: args.organizationId }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    const isAbort =
+      error instanceof Error &&
+      (error.name === "AbortError" ||
+        (error as { code?: string }).code === "ABORT_ERR");
+    throw new WebRouteError(
+      isAbort ? 504 : 502,
+      ErrorCode.SERVER_UNREACHABLE,
+      isAbort
+        ? `Issuer authorization timed out after ${AUTHORIZE_TIMEOUT_MS}ms`
+        : `Failed to reach issuer authorization service: ${parseErrorMessage(error)}`
+    );
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  let body: any = null;
+  try {
+    body = await response.json();
+  } catch {
+    // ignored
+  }
+
+  if (!response.ok || !body?.success) {
+    const message =
+      typeof body?.error === "string"
+        ? body.error
+        : `Issuer authorization failed (${response.status})`;
+    throw new WebRouteError(
+      response.ok ? 500 : response.status,
+      statusToErrorCode(response.ok ? 500 : response.status),
+      message
+    );
+  }
+}

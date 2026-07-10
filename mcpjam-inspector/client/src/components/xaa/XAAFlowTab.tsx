@@ -429,13 +429,13 @@ export function XAAFlowTab({
   >(undefined);
   useEffect(() => {
     const controller = new AbortController();
-    void fetchXaaIdpUrls(controller.signal).then((urls) => {
+    void fetchXaaIdpUrls(controller.signal, organizationId).then((urls) => {
       if (urls && !controller.signal.aborted) {
         setResolvedIssuerBaseUrl(urls.issuerBaseUrl);
       }
     });
     return () => controller.abort();
-  }, []);
+  }, [organizationId]);
 
   const xaaStateMachine = useMemo(() => {
     return createInspectorXAAStateMachine({
@@ -456,8 +456,9 @@ export function XAAFlowTab({
         ? { serverId: target.serverId, projectId: target.projectId }
         : {}),
       issuerBaseUrl: resolvedIssuerBaseUrl,
+      organizationId,
     });
-  }, [runInput, target, updateFlowState, resolvedIssuerBaseUrl]);
+  }, [runInput, target, updateFlowState, resolvedIssuerBaseUrl, organizationId]);
 
   const handleAdvance = useCallback(async () => {
     if (!isTestable) {
@@ -550,7 +551,7 @@ export function XAAFlowTab({
 
   return (
     <div className="h-full flex flex-col bg-background">
-      <XAAIdpCard />
+      <XAAIdpCard organizationId={organizationId ?? null} />
       <XAAResourceAppsSection
         organizationId={organizationId ?? null}
         selectedId={selectedRegistrationId}
@@ -676,7 +677,11 @@ export function XAAFlowTab({
 
       {isTestable && (
         <NegativeTestScorecard
-          input={scorecard.input}
+          input={
+            scorecard.input
+              ? { ...scorecard.input, organizationId: organizationId ?? null }
+              : null
+          }
           unlocked={positiveRunTargets.has(targetKey)}
           unavailableReason={scorecard.unavailableReason}
         />

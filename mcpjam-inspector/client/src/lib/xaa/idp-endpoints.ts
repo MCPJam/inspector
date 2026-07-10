@@ -11,6 +11,19 @@ function getIssuerBasePath(): string {
 }
 
 /**
+ * Org-scoped issuer path segment, e.g. `/o/<orgId>`. Hosted-only: the local
+ * router has no org concept, so a missing org (or local mode) yields "" and
+ * every caller falls back to the unscoped issuer. Signed-in hosted users
+ * should always prefer the scoped issuer — minting under it is gated on org
+ * membership, unlike the legacy unscoped issuer.
+ */
+export function getOrgScopedIssuerSegment(
+  organizationId?: string | null,
+): string {
+  return HOSTED_MODE && organizationId ? `/o/${organizationId}` : "";
+}
+
+/**
  * Resolve the MCPJam-as-IdP endpoints the user pastes into their own
  * authorization server, derived from the browser origin. This is a synchronous
  * best-effort guess used for the initial render and as a fallback — in local
@@ -18,9 +31,9 @@ function getIssuerBasePath(): string {
  * that actually mints the ID-JAG `iss`, so prefer `fetchXaaIdpUrls` when an
  * accurate value matters (registration, issuer-trust comparisons).
  */
-export function getXaaIdpUrls(): XaaIdpUrls {
+export function getXaaIdpUrls(organizationId?: string | null): XaaIdpUrls {
   const origin = typeof window === "undefined" ? "" : window.location.origin;
-  const issuerBaseUrl = `${origin}${getIssuerBasePath()}`;
+  const issuerBaseUrl = `${origin}${getIssuerBasePath()}${getOrgScopedIssuerSegment(organizationId)}`;
   return {
     issuerBaseUrl,
     openidConfigUrl: `${issuerBaseUrl}/.well-known/openid-configuration`,
@@ -38,8 +51,9 @@ export function getXaaIdpUrls(): XaaIdpUrls {
  */
 export async function fetchXaaIdpUrls(
   signal?: AbortSignal,
+  organizationId?: string | null,
 ): Promise<XaaIdpUrls | null> {
-  const { openidConfigUrl } = getXaaIdpUrls();
+  const { openidConfigUrl } = getXaaIdpUrls(organizationId);
   try {
     const response = await fetch(openidConfigUrl, { signal });
     if (!response.ok) {

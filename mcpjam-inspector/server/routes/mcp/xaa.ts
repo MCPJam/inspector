@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { z } from "zod";
 import {
   DEFAULT_NEGATIVE_TEST_MODE,
@@ -71,6 +71,12 @@ function checkNegativeTestHostCap(host: string): boolean {
   existing.count += 1;
   return true;
 }
+
+// Path-segment allowlist for the org-scoped issuer. The segment is embedded
+// into the ID-JAG `iss`, so it must be validated before URL-embedding. Convex
+// org ids are opaque strings; real ones fit [A-Za-z0-9_-], and anything else
+// is rejected rather than normalized.
+const ORG_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 const authenticateSchema = z.object({
   userId: z.string().trim().min(1).optional(),
@@ -281,6 +287,13 @@ interface CreateXaaRouterOptions {
     projectId: string;
     bearerToken: string;
   }) => Promise<ServerClientSecretResult>;
+  // Confirms the caller is a member of the organization before minting under
+  // the org-scoped issuer path (/o/:orgId/...). When absent, the scoped
+  // routes are not registered at all — the local router has no org concept.
+  authorizeOrgIssuer?: (args: {
+    organizationId: string;
+    bearerToken: string;
+  }) => Promise<void>;
 }
 
 type ParsedJwtPayload = {
@@ -356,6 +369,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   const router = new Hono();
   const protectedMiddlewares = options.protectedMiddlewares ?? [];
   const trustForwardedHeaders = options.trustForwardedHeaders ?? false;
+  const authorizeOrgIssuer = options.authorizeOrgIssuer;
 
   if (protectedMiddlewares.length > 0) {
     router.use("/authenticate", ...protectedMiddlewares);
@@ -364,23 +378,66 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     router.use("/discover-as", ...protectedMiddlewares);
     router.use("/health-check", ...protectedMiddlewares);
     router.use("/negative-tests", ...protectedMiddlewares);
+    if (authorizeOrgIssuer) {
+      router.use("/o/:orgId/authenticate", ...protectedMiddlewares);
+      router.use("/o/:orgId/token-exchange", ...protectedMiddlewares);
+      router.use("/o/:orgId/negative-tests", ...protectedMiddlewares);
+    }
   }
 
-  router.get("/.well-known/jwks.json", (c) => {
+  const unscopedIssuer = (c: Context): string =>
+    getIssuerForRequest(c, options.issuerBasePath, trustForwardedHeaders);
+
+  // Gate for the org-scoped mint routes: validate the path segment (it is
+  // embedded into the ID-JAG `iss`), require a bearer, and confirm org
+  // membership via the backend. Returns the validated orgId, or the error
+  // Response to send. Fail-closed: any backend failure blocks the mint.
+  const requireScopedOrg = async (c: Context): Promise<string | Response> => {
+    const orgId = c.req.param("orgId");
+    if (!orgId || !ORG_ID_RE.test(orgId)) {
+      return toJsonError("Invalid organization id in issuer path", {
+        status: 400,
+        code: "VALIDATION_ERROR",
+      });
+    }
+    const authHeader = c.req.header("authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return toJsonError(
+        "Minting under an organization issuer requires signing in",
+        { status: 401, code: "UNAUTHORIZED" }
+      );
+    }
+    try {
+      await authorizeOrgIssuer!({
+        organizationId: orgId,
+        bearerToken: authHeader.slice("Bearer ".length),
+      });
+    } catch (error) {
+      if (error instanceof WebRouteError) {
+        return toJsonError(error.message, {
+          status: error.status,
+          code: error.code,
+          details: error.details,
+        });
+      }
+      logger.error("[XAA Org Issuer] authorization failed", error);
+      return toJsonError("Couldn't authorize the organization issuer", {
+        status: 500,
+        code: "INTERNAL_ERROR",
+      });
+    }
+    return orgId;
+  };
+
+  const serveJwks = (c: Context) => {
     initXAAIdpKeyPair();
     return c.json(getXAAIdpJwks(), 200, {
       "Cache-Control": "public, max-age=300",
     });
-  });
+  };
 
-  router.get("/.well-known/openid-configuration", (c) => {
+  const serveOpenidConfiguration = (c: Context, issuer: string) => {
     initXAAIdpKeyPair();
-    const issuer = getIssuerForRequest(
-      c,
-      options.issuerBasePath,
-      trustForwardedHeaders
-    );
-
     return c.json(
       {
         issuer,
@@ -400,19 +457,20 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         "Cache-Control": "public, max-age=300",
       }
     );
-  });
+  };
 
-  router.post("/authenticate", async (c) => {
+  router.get("/.well-known/jwks.json", (c) => serveJwks(c));
+
+  router.get("/.well-known/openid-configuration", (c) =>
+    serveOpenidConfiguration(c, unscopedIssuer(c))
+  );
+
+  const handleAuthenticate = async (c: Context, issuer: string) => {
     try {
       const body = await c.req.json();
       const { userId, email, audience } = parseRequest(
         authenticateSchema,
         body
-      );
-      const issuer = getIssuerForRequest(
-        c,
-        options.issuerBasePath,
-        trustForwardedHeaders
       );
       const subject = userId || "user-12345";
       const resolvedEmail = email || "demo.user@example.com";
@@ -441,18 +499,15 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         { status: 400, code: "VALIDATION_ERROR" }
       );
     }
-  });
+  };
 
-  router.post("/token-exchange", async (c) => {
+  router.post("/authenticate", (c) => handleAuthenticate(c, unscopedIssuer(c)));
+
+  const handleTokenExchange = async (c: Context, issuer: string) => {
     try {
       const body = await c.req.json();
       const parsed = parseRequest(tokenExchangeSchema, body);
       const negativeTestMode = resolveNegativeTestMode(parsed.negativeTestMode);
-      const issuer = getIssuerForRequest(
-        c,
-        options.issuerBasePath,
-        trustForwardedHeaders
-      );
       const identityPayload = decodeJwtPayloadUnsafe(parsed.identityAssertion);
       const subject = identityPayload.sub || "user-12345";
       // Carry the ID token's email into the ID-JAG (spec RECOMMENDED) so the
@@ -504,7 +559,11 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         { status: 400, code: "VALIDATION_ERROR" }
       );
     }
-  });
+  };
+
+  router.post("/token-exchange", (c) =>
+    handleTokenExchange(c, unscopedIssuer(c))
+  );
 
   router.post("/proxy/token", async (c) => {
     try {
@@ -757,7 +816,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   // Negative-test scorecard: fire each deliberately-broken ID-JAG mode at the
   // user's authorization server and report whether the server correctly
   // rejected it (pass) or wrongly issued a token (fail — a real finding).
-  router.post("/negative-tests", async (c) => {
+  const handleNegativeTests = async (c: Context, issuer: string) => {
     let parsed;
     try {
       parsed = parseRequest(negativeTestsSchema, await c.req.json());
@@ -874,11 +933,6 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       );
     }
 
-    const issuer = getIssuerForRequest(
-      c,
-      options.issuerBasePath,
-      trustForwardedHeaders
-    );
     const subject = parsed.subject || "user-12345";
 
     const runCase = async (
@@ -998,7 +1052,64 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       results,
       failures: results.filter((r) => r.verdict === "fail").length,
     });
-  });
+  };
+
+  router.post("/negative-tests", (c) =>
+    handleNegativeTests(c, unscopedIssuer(c))
+  );
+
+  // Org-scoped issuer surface: the same mock IdP under /o/:orgId, where the
+  // path segment becomes part of `iss` and minting requires org membership.
+  // The well-known documents stay public — remote authorization servers fetch
+  // them unauthenticated — and serve the same global JWKS (one signing key;
+  // containment comes from gating the mint, not from key separation). Each
+  // org-scoped issuer is modeled as a single-tenant issuer: `iss` alone
+  // identifies the tenant, so ID-JAGs carry no `tenant` claim.
+  if (authorizeOrgIssuer) {
+    const scopedIssuer = (c: Context, orgId: string): string =>
+      `${unscopedIssuer(c)}/o/${orgId}`;
+
+    const validateOrgSegment = (c: Context): string | Response => {
+      const orgId = c.req.param("orgId");
+      if (!orgId || !ORG_ID_RE.test(orgId)) {
+        return toJsonError("Invalid organization id in issuer path", {
+          status: 400,
+          code: "VALIDATION_ERROR",
+        });
+      }
+      return orgId;
+    };
+
+    router.get("/o/:orgId/.well-known/jwks.json", (c) => {
+      const orgIdOrError = validateOrgSegment(c);
+      if (orgIdOrError instanceof Response) return orgIdOrError;
+      return serveJwks(c);
+    });
+
+    router.get("/o/:orgId/.well-known/openid-configuration", (c) => {
+      const orgIdOrError = validateOrgSegment(c);
+      if (orgIdOrError instanceof Response) return orgIdOrError;
+      return serveOpenidConfiguration(c, scopedIssuer(c, orgIdOrError));
+    });
+
+    router.post("/o/:orgId/authenticate", async (c) => {
+      const orgIdOrError = await requireScopedOrg(c);
+      if (orgIdOrError instanceof Response) return orgIdOrError;
+      return handleAuthenticate(c, scopedIssuer(c, orgIdOrError));
+    });
+
+    router.post("/o/:orgId/token-exchange", async (c) => {
+      const orgIdOrError = await requireScopedOrg(c);
+      if (orgIdOrError instanceof Response) return orgIdOrError;
+      return handleTokenExchange(c, scopedIssuer(c, orgIdOrError));
+    });
+
+    router.post("/o/:orgId/negative-tests", async (c) => {
+      const orgIdOrError = await requireScopedOrg(c);
+      if (orgIdOrError instanceof Response) return orgIdOrError;
+      return handleNegativeTests(c, scopedIssuer(c, orgIdOrError));
+    });
+  }
 
   return router;
 }
