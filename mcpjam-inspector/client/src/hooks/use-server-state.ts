@@ -670,7 +670,13 @@ type EnsureServerConnectionStatus =
   | "connected"
   | "failed"
   | "missing"
-  | "reauth";
+  | "reauth"
+  // A newer connect/reconnect op for the same server started while this one
+  // was in flight (stale op token). The connection isn't failing — it's just
+  // still in progress under the newer op, which now owns the outcome. Callers
+  // should treat this as "leave it alone", NOT as a reconnect failure, so it
+  // never surfaces a spurious "Failed to reconnect" toast.
+  | "superseded";
 
 interface EnsureServerConnectionResult {
   status: EnsureServerConnectionStatus;
@@ -4081,7 +4087,7 @@ export function useServerState({
         } catch (error) {
           if (isStaleOp(serverName, token)) {
             return {
-              status: "failed",
+              status: "superseded",
               error:
                 error instanceof Error ? error.message : "OAuth flow failed",
             };
@@ -4111,7 +4117,7 @@ export function useServerState({
         if (!oauthResult.success) {
           if (isStaleOp(serverName, token)) {
             return {
-              status: "failed",
+              status: "superseded",
               error: oauthResult.error || "OAuth flow failed",
             };
           }
@@ -4138,7 +4144,7 @@ export function useServerState({
         );
         if (isStaleOp(serverName, token)) {
           return {
-            status: "failed",
+            status: "superseded",
             error: result.error || "Reconnection failed after OAuth",
           };
         }
@@ -4185,7 +4191,7 @@ export function useServerState({
           );
           if (isStaleOp(serverName, token)) {
             return {
-              status: "failed",
+              status: "superseded",
               error: result.error || "Reconnection failed",
             };
           }
@@ -4230,7 +4236,7 @@ export function useServerState({
         } catch (error) {
           if (isStaleOp(serverName, token)) {
             return {
-              status: "failed",
+              status: "superseded",
               error: error instanceof Error ? error.message : "Unknown error",
             };
           }
@@ -4308,7 +4314,7 @@ export function useServerState({
         if (authResult.kind === "error") {
           if (isStaleOp(serverName, token)) {
             return {
-              status: "failed",
+              status: "superseded",
               error: authResult.error,
             };
           }
@@ -4335,7 +4341,7 @@ export function useServerState({
         );
         if (isStaleOp(serverName, token)) {
           return {
-            status: "failed",
+            status: "superseded",
             error: result.error || "Reconnection failed",
           };
         }
@@ -4376,7 +4382,7 @@ export function useServerState({
           error instanceof Error ? error.message : "Unknown error";
         if (isStaleOp(serverName, token)) {
           return {
-            status: "failed",
+            status: "superseded",
             error: errorMessage,
           };
         }
@@ -4446,9 +4452,16 @@ export function useServerState({
         select: false,
         suppressErrors: true,
       });
-      if (result.status !== "connected") {
-        throw new Error(result.error || `Failed to reconnect ${serverName}`);
+      // "superseded" means a newer connect/reconnect op for this server took
+      // over while this one was in flight (e.g. the user kept switching
+      // clients). The connection is just in progress under the newer op, which
+      // owns the outcome — not a failure. Treat it as a no-op so the
+      // client-switch recycle doesn't surface a spurious "Failed to reconnect"
+      // toast.
+      if (result.status === "connected" || result.status === "superseded") {
+        return;
       }
+      throw new Error(result.error || `Failed to reconnect ${serverName}`);
     },
     [reconnectServerInternal]
   );
@@ -4573,6 +4586,12 @@ export function useServerState({
             break;
           case "reauth":
             reauthServerNames.push(serverName);
+            break;
+          case "superseded":
+            // A newer op is already handling this server; it owns the
+            // outcome. Don't classify it as failed — that would produce a
+            // false "failed to connect" signal for a connection that's just
+            // still in progress.
             break;
           case "failed":
           default:
