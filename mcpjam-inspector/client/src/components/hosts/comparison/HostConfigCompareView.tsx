@@ -384,7 +384,7 @@ export function HostConfigCompareView({
   if (!presetOnly && !projectId) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        Sign in to compare your hosts.
+        Sign in to compare your clients.
       </div>
     );
   }

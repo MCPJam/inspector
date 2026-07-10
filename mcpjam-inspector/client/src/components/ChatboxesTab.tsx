@@ -170,7 +170,7 @@ export function ChatboxesTab({
         toast.error(
           err instanceof Error
             ? err.message
-            : "Failed to provision swarm for host"
+            : "Failed to provision swarm for client"
         );
       });
     return () => {
@@ -326,7 +326,7 @@ export function ChatboxesTab({
                     chatboxId={chatbox.chatboxId}
                     projectId={chatbox.projectId}
                     hostId={chatbox.namedHostId}
-                    hostName={host?.name ?? chatbox.namedHostName ?? "Host"}
+                    hostName={host?.name ?? chatbox.namedHostName ?? "Client"}
                     isAuthenticated={effectiveAuth}
                     currentServerIds={chatbox.servers.map((s) => s.serverId)}
                   />
