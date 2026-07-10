@@ -954,19 +954,28 @@ chatV2.post("/", async (c) => {
       const modelId = String(modelDefinition.id);
       const inboundAbortSignalOrg = c.req.raw.signal as AbortSignal | undefined;
       warnIfChatAbortSignalMissing(inboundAbortSignalOrg, "mcp/chat-v2");
-      const runtime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
-        ? await resolveOrgProviderRuntime(
-            body.projectId,
-            providerKey,
-            modelId,
-            {
-              authHeader: requestAuthHeader,
-              chatboxId: bodyChatboxId,
-              accessVersion: bodyAccessVersion,
-              serverIds: hostConfigServerIds,
-            },
-          )
-        : { runtimeLocation: "cloud", providerKey };
+      // When a selected MCP server is local-only (stdio / localhost / private
+      // IP), the tool loop must run in THIS inspector process — only it can
+      // reach that server. Force the CLOUD runtime so the org key stays in
+      // Convex and the model call is proxied through /stream/org; the tool loop
+      // still executes locally against the local MCP connection. Without this,
+      // a local-eligible provider would resolve to the "local" runtime and pull
+      // the org key onto this machine, which org BYOK must never do.
+      const localMcpRuntimeRequired = body.localMcpRuntimeRequired === true;
+      const runtime: OrgProviderRuntime =
+        !localMcpRuntimeRequired && isLocalRuntimeEligible(providerKey)
+          ? await resolveOrgProviderRuntime(
+              body.projectId,
+              providerKey,
+              modelId,
+              {
+                authHeader: requestAuthHeader,
+                chatboxId: bodyChatboxId,
+                accessVersion: bodyAccessVersion,
+                serverIds: hostConfigServerIds,
+              }
+            )
+          : { runtimeLocation: "cloud", providerKey };
       const onConversationComplete = chatSessionId
         ? async (
             fullHistory: ModelMessage[],

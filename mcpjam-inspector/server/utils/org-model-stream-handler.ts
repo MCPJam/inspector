@@ -140,16 +140,76 @@ export interface OrgModelHandlerOptions {
 // Helpers shared between local and hosted handlers
 // ---------------------------------------------------------------------------
 
-function formatLocalStreamError(error: unknown): string {
+function readErrorString(value: unknown, key: string): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = (value as Record<string, unknown>)[key];
+  return typeof candidate === "string" && candidate.trim()
+    ? candidate
+    : undefined;
+}
+
+function readErrorNumber(value: unknown, key: string): number | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = (value as Record<string, unknown>)[key];
+  return typeof candidate === "number" && Number.isFinite(candidate)
+    ? candidate
+    : undefined;
+}
+
+function stringifyErrorObject(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (value instanceof Error) return value.message;
+  if (value && typeof value === "object") {
+    const direct =
+      readErrorString(value, "message") ||
+      readErrorString(value, "error") ||
+      readErrorString(value, "details");
+    if (direct) return direct;
+
+    const nested = (value as Record<string, unknown>).error;
+    const nestedMessage =
+      readErrorString(nested, "message") ||
+      readErrorString(nested, "error") ||
+      readErrorString(nested, "details");
+    if (nestedMessage) return nestedMessage;
+  }
+  return String(value);
+}
+
+function readLocalStreamErrorFields(error: unknown): {
+  message: string;
+  statusCode?: number;
+  responseBody?: string;
+} {
+  const message = stringifyErrorObject(error);
+  if (!error || typeof error !== "object") return { message };
+
+  const statusCode =
+    readErrorNumber(error, "statusCode") || readErrorNumber(error, "status");
+  // Only surface STRING body fields the provider SDK populates with its own
+  // error text. Never JSON-stringify arbitrary `data`/`value` objects into the
+  // client-visible details: those can carry request payloads, headers, or the
+  // scoped credential, which is exactly what this helper exists to withhold.
+  const responseBody =
+    readErrorString(error, "responseBody") ||
+    readErrorString(error, "responseText") ||
+    readErrorString(error, "body");
+
+  return { message, statusCode, responseBody };
+}
+
+export function formatLocalStreamError(error: unknown): string {
   if (error instanceof OrgProviderConfigError) {
     return JSON.stringify({ code: error.code, message: error.message });
   }
-  if (!(error instanceof Error)) return String(error);
-  const statusCode = (error as any).statusCode as number | undefined;
-  const responseBody = (error as any).responseBody as string | undefined;
+  const { message, statusCode, responseBody } =
+    readLocalStreamErrorFields(error);
   if (
     isProviderOverloadError({
-      message: error.message,
+      message,
       statusCode,
       responseBody,
     })
@@ -174,9 +234,9 @@ function formatLocalStreamError(error: unknown): string {
     });
   }
   if (responseBody && typeof responseBody === "string") {
-    return JSON.stringify({ message: error.message, details: responseBody });
+    return JSON.stringify({ message, details: responseBody });
   }
-  return error.message;
+  return message;
 }
 
 // ---------------------------------------------------------------------------
