@@ -60,12 +60,12 @@ import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair.js";
 import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
 import { registerSelfFetch } from "./utils/self-app.js";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url.js";
-import { initComputersRemoteDataPlaneDiscovery } from "./utils/computers/remote-data-plane.js";
+import { initComputersStartup } from "./utils/computers/remote-data-plane.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-export function createHonoApp() {
+export async function createHonoApp() {
   // Load environment variables early so route handlers can read CONVEX_HTTP_URL
   const loadedEnv = loadInspectorEnv(__dirname);
   warnOnConvexDevMisconfiguration(loadedEnv);
@@ -84,8 +84,11 @@ export function createHonoApp() {
   startLocalBrowserRenderingSetupInBackground();
   // Mirror of the call in server/index.ts — both production entries must
   // wire this up so the Electron/embedded path also gets a working Computer
-  // tab. Memoized, so it's harmless if a process ever ran both.
-  void initComputersRemoteDataPlaneDiscovery();
+  // tab. Memoized, so it's harmless if a process ever ran both. AWAITED (the
+  // factory is async for exactly this): synchronous gates read
+  // `isComputersDataPlaneConfigured()`, which is only truthful once the
+  // credential bootstrap has resolved — no requests before that.
+  await initComputersStartup();
 
   const app = new Hono();
   const strictModeResponse = (c: any, path: string) =>

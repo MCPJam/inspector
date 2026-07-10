@@ -3,9 +3,11 @@ import {
   getComputersRemoteDataPlaneUrl,
   execViaRemoteDataPlane,
   initComputersRemoteDataPlaneDiscovery,
+  initComputersStartup,
   resolveComputersRemoteDataPlaneUrl,
   resetComputersRemoteDataPlaneDiscoveryForTests,
 } from "../computers/remote-data-plane";
+import { resetComputersRuntimeConfigBootstrapForTests } from "../computers/runtime-config";
 import { buildBashTool } from "../built-in-tools/bash";
 
 // The remote data plane is reached through global fetch; stub it and assert
@@ -121,6 +123,7 @@ describe("initComputersRemoteDataPlaneDiscovery", () => {
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
     vi.stubEnv("COMPUTERS_DATA_PLANE_SECRET", "secret");
     vi.stubEnv("E2B_API_KEY", "e2b_test");
+    vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "terminal-secret-16+");
     installFetchStub();
 
     await initComputersRemoteDataPlaneDiscovery();
@@ -134,6 +137,41 @@ describe("initComputersRemoteDataPlaneDiscovery", () => {
     await expect(initComputersRemoteDataPlaneDiscovery()).resolves.toBeUndefined();
     expect(fetchCalls).toHaveLength(0);
     expect(getComputersRemoteDataPlaneUrl()).toBeNull();
+  });
+
+  it("initComputersStartup: a bootstrap-configured server never discovers/delegates", async () => {
+    // Only the service token — the boot bootstrap supplies the rest. The
+    // startup wrapper must resolve the bootstrap BEFORE discovery runs, so
+    // this soon-to-be data plane skips discovery instead of racing into a
+    // remote URL while also being locally configured.
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-tok");
+    resetComputersRuntimeConfigBootstrapForTests();
+    installFetchStub();
+    fetchResponse = () =>
+      jsonResponse(200, {
+        enabled: true,
+        e2bApiKey: "boot-key",
+        e2bApiUrl: null,
+        e2bDomain: null,
+        e2bTemplateId: null,
+        terminalTokenSecret: "boot-terminal-secret",
+      });
+
+    try {
+      await initComputersStartup();
+
+      // Exactly one fetch: the runtime-config bootstrap. No discovery call.
+      expect(fetchCalls).toHaveLength(1);
+      expect(fetchCalls[0]!.url).toContain(
+        "/internal/v1/computers/runtime-config"
+      );
+      expect(getComputersRemoteDataPlaneUrl()).toBeNull();
+    } finally {
+      resetComputersRuntimeConfigBootstrapForTests();
+      delete process.env.E2B_API_KEY;
+      delete process.env.COMPUTERS_TERMINAL_TOKEN_SECRET;
+    }
   });
 
   it("stays unconfigured (does not throw) on a network failure", async () => {
@@ -358,6 +396,7 @@ describe("bash tool delegation", () => {
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
     vi.stubEnv("COMPUTERS_DATA_PLANE_SECRET", "secret");
     vi.stubEnv("E2B_API_KEY", "e2b_test");
+    vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "terminal-secret-16+");
     fetchResponse = () =>
       jsonResponse(200, {
         computerId: "comp_1",

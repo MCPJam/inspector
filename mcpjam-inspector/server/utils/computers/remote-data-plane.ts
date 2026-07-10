@@ -39,6 +39,26 @@ import {
   getConvexHttpUrl,
   isComputersDataPlaneConfigured,
 } from "./control-plane-client.js";
+import { initComputersRuntimeConfigBootstrap } from "./runtime-config.js";
+
+/**
+ * The one computers startup entrypoint. Order matters: the credential
+ * bootstrap must resolve BEFORE discovery, because discovery skips itself on
+ * `isComputersDataPlaneConfigured()` — and bootstrap is what makes that true
+ * for a service-token-only server. Run the other way, a soon-to-be data
+ * plane could race into discovering (and delegating to) a remote while also
+ * being locally configured.
+ *
+ * Both production entries (server/index.ts, server/app.ts) AWAIT this before
+ * accepting traffic: several gates read the sync predicate (harness
+ * pre-flight, evals), and a fire-and-forget init would let first requests
+ * see a false "unconfigured". Bounded by the bootstrap's fetch timeout and
+ * two retries (~11s worst case, sub-second typical).
+ */
+export async function initComputersStartup(): Promise<void> {
+  await initComputersRuntimeConfigBootstrap();
+  await initComputersRemoteDataPlaneDiscovery();
+}
 
 function isLoopbackHost(hostname: string): boolean {
   // WHATWG URL bracket-wraps IPv6 hosts (new URL("http://[::1]").hostname

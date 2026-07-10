@@ -53,8 +53,9 @@ export async function resolveHarnessSandbox(args: {
 }): Promise<ResolvedHarnessSandbox> {
   if (!isComputersDataPlaneConfigured()) {
     throw new HarnessSandboxResolutionError(
-      "computers data plane is not configured (need CONVEX_HTTP_URL, " +
-        "COMPUTERS_DATA_PLANE_SECRET, and E2B_API_KEY)",
+      "this server is not a computers data plane (deployed servers " +
+        "bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see " +
+        "docs/project-computers.md)",
       503,
     );
   }
