@@ -119,7 +119,7 @@ describe("ComputerView", () => {
   it("always shows the honest no-backup durability note", () => {
     mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
     const { getByText } = render(
-      <ComputerView projectId="p1" isAuthenticated />
+      <ComputerView projectId="p1" isSignedInMember />
     );
     expect(
       getByText(
@@ -173,7 +173,7 @@ describe("ComputerView", () => {
   it("hibernate requires confirmation then calls hibernateComputer", async () => {
     mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
     const { getByText } = render(
-      <ComputerView projectId="p1" isAuthenticated />
+      <ComputerView projectId="p1" isSignedInMember />
     );
     fireEvent.click(getByText("Hibernate now"));
     expect(getByText("Hibernate now?")).toBeTruthy();
@@ -187,7 +187,7 @@ describe("ComputerView", () => {
   it("does not offer Hibernate unless the computer is ready", () => {
     mockStatus = { computerId: "c1", status: "hibernating", provider: "e2b" };
     const { queryByText } = render(
-      <ComputerView projectId="p1" isAuthenticated />
+      <ComputerView projectId="p1" isSignedInMember />
     );
     expect(queryByText("Hibernate now")).toBeNull();
   });
@@ -446,7 +446,7 @@ describe("ComputerView billing-pause warning banner (COMP-7)", () => {
     mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
     mockUsage = usage({ awakeMs: 24 * HOUR_MS, billingPauseWarning: true });
     const { getByTestId, getByText } = render(
-      <ComputerView projectId="p1" isAuthenticated />
+      <ComputerView projectId="p1" isSignedInMember />
     );
     expect(getByTestId("computer-billing-warning")).toBeTruthy();
     expect(
@@ -462,7 +462,7 @@ describe("ComputerView billing-pause warning banner (COMP-7)", () => {
     mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
     mockUsage = usage({ awakeMs: 24 * HOUR_MS, billingPauseWarning: false });
     const { queryByTestId } = render(
-      <ComputerView projectId="p1" isAuthenticated />
+      <ComputerView projectId="p1" isSignedInMember />
     );
     expect(queryByTestId("computer-billing-warning")).toBeNull();
   });
@@ -472,7 +472,7 @@ describe("ComputerView billing-pause warning banner (COMP-7)", () => {
     // No billingPauseWarning key at all (older backend).
     mockUsage = usage({ awakeMs: 24 * HOUR_MS });
     const { queryByTestId } = render(
-      <ComputerView projectId="p1" isAuthenticated />
+      <ComputerView projectId="p1" isSignedInMember />
     );
     expect(queryByTestId("computer-billing-warning")).toBeNull();
   });
@@ -484,13 +484,13 @@ describe("ComputerView billing-pause warning banner (COMP-7)", () => {
       billingPauseWarning: true,
       windowStartAt: 1000,
     });
-    const first = render(<ComputerView projectId="p1" isAuthenticated />);
+    const first = render(<ComputerView projectId="p1" isSignedInMember />);
     fireEvent.click(first.getByLabelText("Dismiss"));
     expect(first.queryByTestId("computer-billing-warning")).toBeNull();
     first.unmount();
 
     // A later mount in the same billing window stays dismissed (localStorage).
-    const second = render(<ComputerView projectId="p1" isAuthenticated />);
+    const second = render(<ComputerView projectId="p1" isSignedInMember />);
     expect(second.queryByTestId("computer-billing-warning")).toBeNull();
   });
 
@@ -501,7 +501,7 @@ describe("ComputerView billing-pause warning banner (COMP-7)", () => {
       billingPauseWarning: true,
       windowStartAt: 1000,
     });
-    const first = render(<ComputerView projectId="p1" isAuthenticated />);
+    const first = render(<ComputerView projectId="p1" isSignedInMember />);
     fireEvent.click(first.getByLabelText("Dismiss"));
     first.unmount();
 
@@ -511,7 +511,7 @@ describe("ComputerView billing-pause warning banner (COMP-7)", () => {
       billingPauseWarning: true,
       windowStartAt: 2000,
     });
-    const second = render(<ComputerView projectId="p1" isAuthenticated />);
+    const second = render(<ComputerView projectId="p1" isSignedInMember />);
     expect(second.queryByTestId("computer-billing-warning")).toBeTruthy();
   });
 });
@@ -525,7 +525,7 @@ describe("ComputerView post-hibernate billing state (COMP-7)", () => {
       hibernatedReason: "billing",
     };
     const { getByTestId, queryByText } = render(
-      <ComputerView projectId="p1" isAuthenticated />
+      <ComputerView projectId="p1" isSignedInMember />
     );
     const notice = getByTestId("computer-paused-for-billing");
     // The status chip also reads "Paused for billing"; scope to the notice.
@@ -546,7 +546,7 @@ describe("ComputerView post-hibernate billing state (COMP-7)", () => {
       hibernatedReason: "idle",
     };
     const { queryByTestId, queryByText } = render(
-      <ComputerView projectId="p1" isAuthenticated />
+      <ComputerView projectId="p1" isSignedInMember />
     );
     expect(queryByTestId("computer-paused-for-billing")).toBeNull();
     expect(queryByText("Paused for billing")).toBeNull();
