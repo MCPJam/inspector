@@ -84,6 +84,11 @@
             ]
           },
           {
+            "group": "Computer",
+            "icon": "monitor",
+            "pages": ["inspector/computer"]
+          },
+          {
             "group": "Embedding",
             "icon": "code",
             "pages": ["inspector/launch-from-code"]
