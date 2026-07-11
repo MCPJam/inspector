@@ -110,11 +110,21 @@ export interface ResolvedTurnRuntime {
  * the amber `rate_limited` outcome vs a hard `failed`. Both `runOneSession`'s
  * catch AND the per-runtime `classifyFailure` delegate here so the regex can't
  * drift between the two call sites.
+ *
+ * Matches provider rate-limits (`rate limit`, `429`-phrased) AND org spend-cap
+ * wording (`spend`, `cap`, `quota`, `budget`) — an org cap surfaced as
+ * "quota exceeded" / "budget exhausted" must land in `rate_limited` so the
+ * swarm fan-out's whole-run stop can fire on it (it re-inspects the message via
+ * `classifyRateLimit`). `cap`/`quota`/`budget` are word-anchored so genuine
+ * spend-cap wording matches but "capacity", "recap", "escape" do NOT
+ * (a provider capacity error is a hard `failed`, not a spend cap).
  */
 export function classifyTurnFailure(
   message: string,
 ): "rate_limited" | "failed" {
-  return /rate.?limit|spend|cap/i.test(message) ? "rate_limited" : "failed";
+  return /rate.?limit|spend|\bquota\b|\bbudget\b|\bcap\b/i.test(message)
+    ? "rate_limited"
+    : "failed";
 }
 
 const HOSTED_NOOP_FINALIZE = async (): Promise<void> => {

@@ -15,6 +15,8 @@ const swarmPersonaNextTurnMock = vi.fn();
 const heartbeatJourneyRunMock = vi.fn();
 const runSyntheticHostSessionMock = vi.fn();
 
+const finalizePendingAttemptsMock = vi.fn();
+
 vi.mock("../../swarm-agent.js", async () => {
   const actual =
     await vi.importActual<typeof import("../../swarm-agent.js")>(
@@ -26,6 +28,8 @@ vi.mock("../../swarm-agent.js", async () => {
     swarmPersonaNextTurn: (...args: unknown[]) =>
       swarmPersonaNextTurnMock(...args),
     heartbeatJourneyRun: (...args: unknown[]) => heartbeatJourneyRunMock(...args),
+    finalizePendingAttempts: (...args: unknown[]) =>
+      finalizePendingAttemptsMock(...args),
   };
 });
 
@@ -42,6 +46,7 @@ vi.mock("../runner.js", async () => {
 import {
   startJourneyRun,
   shutdownRunningJourneyRuns,
+  MAX_CONCURRENT_HOSTS,
 } from "../swarm-runner.js";
 
 const HOST = {
@@ -54,11 +59,21 @@ const HOST = {
   serverIds: ["server-1"],
 };
 
+const HOST_2 = {
+  hostId: "host-2",
+  hostName: "Host Two",
+  hostConfigId: "hc-2",
+  modelId: "anthropic/claude-haiku-4.5",
+  systemPrompt: "sys",
+  requireToolApproval: false,
+  serverIds: ["server-2"],
+};
+
 function baseOpts(overrides: Record<string, unknown> = {}) {
   return {
     runId: "run-1",
     projectId: "proj-1",
-    host: HOST,
+    hosts: [HOST],
     personaSnapshot: {
       personaId: "p1",
       name: "Persona One",
@@ -85,6 +100,7 @@ beforeEach(() => {
   reportAttemptMock.mockReset().mockResolvedValue({ ok: true, applied: true });
   swarmPersonaNextTurnMock.mockReset();
   heartbeatJourneyRunMock.mockReset().mockResolvedValue(undefined);
+  finalizePendingAttemptsMock.mockReset().mockResolvedValue(undefined);
   runSyntheticHostSessionMock.mockReset().mockResolvedValue({
     outcome: "succeeded",
   });
@@ -233,7 +249,7 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
   });
 });
 
-describe("swarm single-host runner — shutdown unwinds via cancellable persona", () => {
+describe("swarm fan-out runner — shutdown unwinds via cancellable persona", () => {
   it("forwards the run signal into the persona call so a PARKED session unwinds and self-reports its terminal ONCE via the normal path (no eager runner_shutdown race)", async () => {
     // The persona driver models the previously-uncancellable park: it resolves
     // ONLY when its forwarded signal aborts (as `AbortSignal.any` → fetch abort
@@ -311,6 +327,318 @@ describe("swarm single-host runner — shutdown unwinds via cancellable persona"
     expect(terminals).toHaveLength(1);
     expect(terminals[0].status).toBe("succeeded");
     expect(terminals[0].chatSessionId).toBe("synth_run-1_host-1_0");
+  });
+});
+
+describe("swarm fan-out runner — worker pool + host isolation", () => {
+  const attemptAdapter = (call: unknown[]) => call[0] as any;
+  const executedForHost = (hostId: string) =>
+    runSyntheticHostSessionMock.mock.calls
+      .map(attemptAdapter)
+      .filter((a) => a.persist.hostId === hostId);
+  const terminals = () =>
+    reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.status !== "running");
+
+  it("fans out sessionsPerHost sessions per host across a 2-host journey (2/host = 4)", async () => {
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+    );
+
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(4);
+    const sessionIds = runSyntheticHostSessionMock.mock.calls
+      .map((c) => (c[0] as any).chatSessionId)
+      .sort();
+    expect(sessionIds).toEqual([
+      "synth_run-1_host-1_0",
+      "synth_run-1_host-1_1",
+      "synth_run-1_host-2_0",
+      "synth_run-1_host-2_1",
+    ]);
+    // A fresh manager per attempt: managerFactory bound to each host.
+    expect(executedForHost("host-1")).toHaveLength(2);
+    expect(executedForHost("host-2")).toHaveLength(2);
+  });
+
+  it(`runs at most ${MAX_CONCURRENT_HOSTS} hosts concurrently (pool bound)`, async () => {
+    let active = 0;
+    let maxActive = 0;
+    runSyntheticHostSessionMock.mockImplementation(async () => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((r) => setTimeout(r, 5));
+      active--;
+      return { outcome: "succeeded" };
+    });
+    const hosts = Array.from({ length: 5 }, (_, i) => ({
+      ...HOST,
+      hostId: `host-${i}`,
+      serverIds: [`server-${i}`],
+    }));
+
+    await startJourneyRun(baseOpts({ hosts, sessionsPerHost: 1 }));
+
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(5);
+    expect(maxActive).toBeLessThanOrEqual(MAX_CONCURRENT_HOSTS);
+    expect(maxActive).toBe(MAX_CONCURRENT_HOSTS);
+  });
+
+  it("keeps one active session per host (sessions run sequentially within a host)", async () => {
+    const activeByHost = new Map<string, number>();
+    let maxPerHost = 0;
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      const hostId = adapter.persist.hostId;
+      const n = (activeByHost.get(hostId) ?? 0) + 1;
+      activeByHost.set(hostId, n);
+      maxPerHost = Math.max(maxPerHost, n);
+      await new Promise((r) => setTimeout(r, 3));
+      activeByHost.set(hostId, n - 1);
+      return { outcome: "succeeded" };
+    });
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 3 })
+    );
+
+    expect(maxPerHost).toBe(1);
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(6);
+  });
+
+  it("a forced failure on one host does not stop the other host", async () => {
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      if (adapter.persist.hostId === "host-1") {
+        return { outcome: "failed", errorMessage: "boom" };
+      }
+      return { outcome: "succeeded" };
+    });
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+    );
+
+    // Every session on both hosts ran — a failure isolates to its attempt.
+    expect(executedForHost("host-1")).toHaveLength(2);
+    expect(executedForHost("host-2")).toHaveLength(2);
+    const host2 = terminals().filter((t) => t.hostId === "host-2");
+    expect(host2.map((t) => t.status)).toEqual(["succeeded", "succeeded"]);
+    const host1 = terminals().filter((t) => t.hostId === "host-1");
+    expect(host1.every((t) => t.status === "failed")).toBe(true);
+    // No run-level finalize on ordinary failures.
+    expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+  });
+
+  it("a PROVIDER rate-limit stops that host's remaining sessions (rate_limited) but not other hosts", async () => {
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      if (adapter.chatSessionId === "synth_run-1_host-1_0") {
+        return {
+          outcome: "rate_limited",
+          errorMessage: "429 provider rate limit exceeded",
+        };
+      }
+      return { outcome: "succeeded" };
+    });
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+    );
+
+    // host-1: only session 0 EXECUTED; session 1 short-circuited (never ran).
+    expect(executedForHost("host-1")).toHaveLength(1);
+    // host-2: both sessions still ran.
+    expect(executedForHost("host-2")).toHaveLength(2);
+    // host-1 sessions 0 AND 1 reach a rate_limited terminal (0 from its own
+    // outcome, 1 from the remaining-attempt sweep).
+    const host1RateLimited = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.hostId === "host-1" && a.status === "rate_limited")
+      .map((a) => a.sessionIdx)
+      .sort();
+    expect(host1RateLimited).toEqual([0, 1]);
+    // A provider rate-limit is per-host — no whole-run finalize.
+    expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+  });
+
+  it("an ORG spend-cap stops the whole run and finalizes pending attempts", async () => {
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      if (adapter.chatSessionId === "synth_run-1_host-1_0") {
+        return {
+          outcome: "rate_limited",
+          errorMessage: "Org daily spend cap exceeded",
+        };
+      }
+      return { outcome: "succeeded" };
+    });
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+    );
+
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
+    const finalizeArgs = finalizePendingAttemptsMock.mock.calls[0]![2] as any;
+    expect(finalizeArgs).toMatchObject({
+      projectId: "proj-1",
+      runId: "run-1",
+      terminalStatus: "rate_limited",
+      errorCode: "spend_cap_exceeded",
+    });
+  });
+
+  it("an org cap phrased as 'quota exceeded' / 'budget exhausted' ALSO stops the whole run (finding 6)", async () => {
+    for (const capMessage of ["quota exceeded", "monthly budget exhausted"]) {
+      finalizePendingAttemptsMock.mockClear();
+      runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+        if (adapter.chatSessionId === "synth_run-1_host-1_0") {
+          return { outcome: "rate_limited", errorMessage: capMessage };
+        }
+        return { outcome: "succeeded" };
+      });
+
+      await startJourneyRun(
+        baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+      );
+
+      expect(
+        finalizePendingAttemptsMock,
+        `"${capMessage}" should trip the whole-run spend-cap stop`
+      ).toHaveBeenCalledTimes(1);
+      expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+        errorCode: "spend_cap_exceeded",
+      });
+    }
+  });
+
+  it("a 'capacity' rate-limit is a PER-HOST provider stop, NOT a whole-run spend-cap (finding 7)", async () => {
+    // "capacity" must not be misread as a spend cap: only THIS host stops; the
+    // run does not finalize-pending.
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      if (adapter.chatSessionId === "synth_run-1_host-1_0") {
+        return {
+          outcome: "rate_limited",
+          errorMessage: "rate capacity exceeded",
+        };
+      }
+      return { outcome: "succeeded" };
+    });
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+    );
+
+    // No whole-run finalize — it stayed a per-host provider rate-limit.
+    expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+    // host-2 kept running to completion.
+    expect(executedForHost("host-2")).toHaveLength(2);
+    // host-1 short-circuited after session 0 (session 1 never executed).
+    expect(executedForHost("host-1")).toHaveLength(1);
+  });
+
+  it("a throwing host worker (e.g. model-less spec) finalizes ITS attempts failed and does not abort the other hosts (finding 8)", async () => {
+    // Force a worker-level throw for host-1 (a stand-in for a model-less pinned
+    // spec whose modelId can't resolve). host-2's worker must keep running.
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      if (adapter.persist.hostId === "host-1") {
+        throw new Error("model-less host: cannot resolve modelId");
+      }
+      return { outcome: "succeeded" };
+    });
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+    );
+
+    // The other host completed all its sessions — the pool was not aborted.
+    expect(executedForHost("host-2")).toHaveLength(2);
+    const host2Terminals = terminals().filter((t) => t.hostId === "host-2");
+    expect(host2Terminals.map((t) => t.status)).toEqual([
+      "succeeded",
+      "succeeded",
+    ]);
+
+    // The failing host's attempts are all finalized failed(host_worker_failed)
+    // rather than left dangling.
+    const host1Failed = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter(
+        (a) =>
+          a.hostId === "host-1" &&
+          a.status === "failed" &&
+          a.errorCode === "host_worker_failed"
+      )
+      .map((a) => a.sessionIdx)
+      .sort();
+    expect(host1Failed).toEqual([0, 1]);
+  });
+});
+
+describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)", () => {
+  const HOST_3 = {
+    hostId: "host-3",
+    hostName: "Host Three",
+    hostConfigId: "hc-3",
+    modelId: "anthropic/claude-haiku-4.5",
+    systemPrompt: "sys",
+    requireToolApproval: false,
+    serverIds: ["server-3"],
+  };
+
+  it("reports an in-flight session that the spend-cap abort cancelled as rate_limited/spend_cap_exceeded (NOT session_failed), while a genuinely-succeeded session keeps its outcome", async () => {
+    // Concurrent barrier: host-1 trips the org spend cap while host-2 has a
+    // session PARKED in-flight. The cap's `runStop.abort()` cancels host-2's
+    // turns and the shared core returns `outcome: "failed"` — an abort artifact,
+    // NOT a genuine failure. host-3 genuinely succeeds and must be untouched.
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      const hostId = adapter.persist.hostId;
+      if (hostId === "host-1") {
+        // Trip the org spend cap.
+        return {
+          outcome: "rate_limited",
+          errorMessage: "Org daily spend cap exceeded",
+        };
+      }
+      if (hostId === "host-3") {
+        // Genuinely succeeds (before/independent of the cap).
+        return { outcome: "succeeded" };
+      }
+      // host-2: park until the run-stop aborts this session, then return the
+      // abort artifact the real core returns (`{ outcome: "failed" }`).
+      return await new Promise((resolve) => {
+        const finish = () => resolve({ outcome: "failed" });
+        if (adapter.abortSignal?.aborted) {
+          finish();
+          return;
+        }
+        adapter.abortSignal?.addEventListener("abort", finish, { once: true });
+      });
+    });
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2, HOST_3], sessionsPerHost: 1 })
+    );
+
+    const terminals = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.status !== "running");
+
+    // host-2's aborted attempt: reported terminal rate_limited /
+    // spend_cap_exceeded — NOT the generic session_failed.
+    const host2 = terminals.find((t) => t.hostId === "host-2")!;
+    expect(host2.status).toBe("rate_limited");
+    expect(host2.errorCode).toBe("spend_cap_exceeded");
+    expect(host2.errorCode).not.toBe("session_failed");
+    // Persist-before-terminal invariant preserved: same deterministic id.
+    expect(host2.chatSessionId).toBe("synth_run-1_host-2_0");
+
+    // host-3's genuinely-succeeded session is untouched.
+    const host3 = terminals.find((t) => t.hostId === "host-3")!;
+    expect(host3.status).toBe("succeeded");
+
+    // The whole-run finalize still runs for the spend-cap breach.
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+      terminalStatus: "rate_limited",
+      errorCode: "spend_cap_exceeded",
+    });
   });
 });
 

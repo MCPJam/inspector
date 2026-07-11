@@ -7,10 +7,69 @@
  *
  * Consumes the project-scoped backend: personas:*, journeys:*, journeyRuns:*.
  */
-import { useMemo, useState } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useMutation, usePaginatedQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { toast } from "@/lib/toast";
+import {
+  launchJourneyRun,
+  SWARM_QUERIES,
+  DEFAULT_PAGE_SIZE,
+  type JourneyRun,
+  type JourneySessionRow,
+  type PersonaTrackRecord,
+  type JourneyRollup,
+} from "@/lib/swarm-api";
+import {
+  EMPTY_SESSION_FILTER,
+  sessionMatchesFilter,
+  toggleSessionFilter,
+  type SessionFilterState,
+} from "@/lib/session-usage-filters";
+import {
+  SessionReadinessBadge,
+  type SessionReadiness,
+} from "@/components/chatboxes/session-readiness";
+import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
+import {
+  buildSwarmSessionPath,
+  parseSwarmSessionParams,
+} from "@/lib/app-navigation";
+import { getShareableAppOrigin } from "@/lib/chatbox-session";
+
+// Valid readiness enums (mirror `session-readiness.tsx`). The backend
+// denormalizes a WIDE `{ status?: string; verdict?: string }` subset onto the
+// session row, so guard it into a well-typed `SessionReadiness` before handing
+// it to the badge instead of an unchecked `as` cast — an unexpected string must
+// degrade to "no badge", not render a bogus pill.
+const READINESS_STATUSES = ["pending", "completed", "partial", "failed"] as const;
+const READINESS_VERDICTS = ["ready", "needs_attention", "not_ready"] as const;
+
+function toSessionReadiness(
+  raw: JourneySessionRow["readiness"],
+): SessionReadiness | undefined {
+  if (!raw) return undefined;
+  const status = (READINESS_STATUSES as readonly string[]).includes(
+    raw.status ?? "",
+  )
+    ? (raw.status as SessionReadiness["status"])
+    : undefined;
+  // Without a valid status the badge has nothing meaningful to show.
+  if (!status) return undefined;
+  const verdict = (READINESS_VERDICTS as readonly string[]).includes(
+    raw.verdict ?? "",
+  )
+    ? (raw.verdict as SessionReadiness["verdict"])
+    : undefined;
+  return {
+    status,
+    ...(verdict ? { verdict } : {}),
+    issueCount:
+      typeof raw.issueCount === "number" && Number.isFinite(raw.issueCount)
+        ? raw.issueCount
+        : 0,
+  };
+}
 
 type Persona = {
   _id: string;
@@ -27,19 +86,6 @@ type Journey = {
   hostIds: string[];
   config: { sessionsPerHost: number; maxTurns: number };
 };
-type JourneyRun = {
-  _id: string;
-  status: string;
-  summary: { total: number; succeeded: number; failed: number; rateLimited: number };
-  hostSummaries: Array<{
-    hostId: string;
-    total: number;
-    succeeded: number;
-    failed: number;
-    rateLimited: number;
-  }>;
-  createdAt: number;
-};
 type HostItem = { hostId: string; name: string };
 
 interface SwarmsTabProps {
@@ -50,21 +96,27 @@ interface SwarmsTabProps {
 // ── hooks ─────────────────────────────────────────────────────────────────
 function usePersonas(projectId: string | null) {
   return useQuery(
-    "personas:listPersonas" as any,
+    SWARM_QUERIES.listPersonas as any,
     projectId ? ({ projectId } as any) : "skip"
   ) as Persona[] | undefined;
 }
 function useJourneys(personaRefId: string | null) {
   return useQuery(
-    "journeys:listJourneysByPersona" as any,
+    SWARM_QUERIES.listJourneysByPersona as any,
     personaRefId ? ({ personaRefId } as any) : "skip"
   ) as Journey[] | undefined;
 }
 function useProjectHosts(projectId: string | null) {
   return useQuery(
-    "hosts:listHosts" as any,
+    SWARM_QUERIES.listHosts as any,
     projectId ? ({ projectId } as any) : "skip"
   ) as HostItem[] | undefined;
+}
+function usePersonaTrackRecord(personaRefId: string | null) {
+  return useQuery(
+    SWARM_QUERIES.personaTrackRecord as any,
+    personaRefId ? ({ personaRefId } as any) : "skip"
+  ) as PersonaTrackRecord | undefined;
 }
 
 export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
@@ -74,7 +126,15 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   const effectiveProjectId = isAuthenticated ? projectId : null;
   const personas = usePersonas(effectiveProjectId);
   const hosts = useProjectHosts(effectiveProjectId);
-  const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(null);
+  // Restore a copied session deep-link (`/swarms?persona=&run=&host=&session=`).
+  // Parse ONCE on mount so later user navigation isn't clobbered by the URL.
+  const deepLink = useMemo(
+    () => parseSwarmSessionParams(window.location.search),
+    [],
+  );
+  const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(
+    () => deepLink.personaRefId ?? null,
+  );
   const journeys = useJourneys(selectedPersonaId);
 
   const createPersona = useMutation("personas:createPersona" as any);
@@ -169,6 +229,8 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
               </Button>
             </div>
 
+            <PersonaTrackRecordStrip personaRefId={selectedPersona._id} />
+
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-sm font-semibold">Journeys</h3>
               <NewJourneyButton
@@ -193,7 +255,14 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
             ) : (
               <div className="flex flex-col gap-3">
                 {journeys.map((j) => (
-                  <JourneyCard key={j._id} journey={j} hosts={hosts ?? []} />
+                  <JourneyCard
+                    key={j._id}
+                    journey={j}
+                    hosts={hosts ?? []}
+                    projectId={projectId}
+                    initialRunId={deepLink.runId}
+                    initialThreadId={deepLink.threadId}
+                  />
                 ))}
               </div>
             )}
@@ -204,22 +273,121 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   );
 }
 
+// ── persona track record ─────────────────────────────────────────────────────
+function PersonaTrackRecordStrip({ personaRefId }: { personaRefId: string }) {
+  const record = usePersonaTrackRecord(personaRefId);
+  if (!record || record.sessionCount === 0) return null;
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-xs">
+      <span className="font-medium text-muted-foreground">Track record</span>
+      <span className="text-muted-foreground">
+        {record.sessionCount} session{record.sessionCount === 1 ? "" : "s"} ·{" "}
+        {record.runCount} run{record.runCount === 1 ? "" : "s"}
+      </span>
+    </div>
+  );
+}
+
+// ── run status treatment ─────────────────────────────────────────────────────
+function runStatusClass(status: string): string {
+  switch (status) {
+    case "completed":
+      return "text-emerald-600 dark:text-emerald-400";
+    case "partial":
+      return "text-amber-600 dark:text-amber-400";
+    case "rate_limited":
+      return "text-amber-600 dark:text-amber-400";
+    case "failed":
+      return "text-red-600 dark:text-red-400";
+    case "stale":
+      return "text-muted-foreground";
+    default:
+      return "text-foreground"; // running
+  }
+}
+
 // ── journey card + runs ──────────────────────────────────────────────────────
 function JourneyCard({
   journey,
   hosts,
+  projectId,
+  initialRunId,
+  initialThreadId,
 }: {
   journey: Journey;
   hosts: HostItem[];
+  projectId: string;
+  /** Deep-link run to auto-open (only the card that owns it reacts). */
+  initialRunId?: string;
+  /** Deep-link session to auto-select inside the opened run. */
+  initialThreadId?: string;
 }) {
-  const runs = useQuery(
-    "journeyRuns:listJourneyRuns" as any,
-    { journeyRefId: journey._id, paginationOpts: { numItems: 10, cursor: null } } as any
-  ) as { page: JourneyRun[] } | undefined;
-  const createJourneyRun = useMutation("journeyRuns:createJourneyRun" as any);
-  const [running, setRunning] = useState(false);
+  // Real Convex pagination (numItems + cursor) over the journey's runs.
+  const {
+    results: runs,
+    status: runsStatus,
+    loadMore,
+  } = usePaginatedQuery(
+    SWARM_QUERIES.listJourneyRuns as any,
+    { journeyRefId: journey._id } as any,
+    { initialNumItems: DEFAULT_PAGE_SIZE }
+  );
+  const rollup = useQuery(
+    SWARM_QUERIES.journeyRollup as any,
+    { journeyRefId: journey._id } as any
+  ) as JourneyRollup | undefined;
+
+  // One launch key per click, reused verbatim if the HTTP call is retried so a
+  // network retry can't spawn a duplicate run.
+  const launchKeyRef = useRef<string | null>(null);
+  const [launching, setLaunching] = useState(false);
+  const [launchError, setLaunchError] = useState<string | null>(null);
+  const [openRunId, setOpenRunId] = useState<string | null>(null);
+
+  // Deep-link restore: once this journey's runs load, if the linked run belongs
+  // to THIS card, open it (so RunSessionsView mounts and can select the
+  // session). Runs itself once — later user toggling isn't overridden.
+  const appliedInitialRunRef = useRef(false);
+  useEffect(() => {
+    if (appliedInitialRunRef.current || !initialRunId) return;
+    if ((runs as JourneyRun[]).some((r) => r._id === initialRunId)) {
+      appliedInitialRunRef.current = true;
+      setOpenRunId(initialRunId);
+    }
+  }, [initialRunId, runs]);
+
   const hostName = (id: string) =>
     hosts.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
+
+  const onRun = async () => {
+    if (launching) return;
+    setLaunchError(null);
+    setLaunching(true);
+    if (!launchKeyRef.current) {
+      launchKeyRef.current = crypto.randomUUID();
+    }
+    try {
+      await launchJourneyRun({
+        journeyId: journey._id,
+        projectId,
+        launchKey: launchKeyRef.current,
+      });
+      // Accepted (confirmed 2xx {runId}) — the ONLY place we mint a fresh key.
+      launchKeyRef.current = null;
+      toast.success("Journey run started");
+    } catch (e) {
+      // RETAIN the launch key after ANY unsuccessful response — 4xx, 5xx, OR a
+      // network/transport failure — and reuse it on retry. A 5xx or a dropped
+      // connection can land AFTER the backend already created the run, so
+      // minting a new key would spawn a SECOND run (duplicate spend). The
+      // backend dedupes a reused key to the existing run (or, if the create
+      // never inserted, creates exactly one). The key is cleared only on a
+      // confirmed 2xx above.
+      setLaunchError(e instanceof Error ? e.message : "Failed to start run");
+    } finally {
+      setLaunching(false);
+    }
+  };
 
   return (
     <div className="rounded-lg border p-4">
@@ -230,43 +398,39 @@ function JourneyCard({
             {journey.hostIds.map(hostName).join(", ")} ·{" "}
             {journey.config.sessionsPerHost}/host · {journey.config.maxTurns} turns
           </p>
+          {rollup && rollup.runCount > 0 && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {rollup.runCount} run{rollup.runCount === 1 ? "" : "s"} total
+            </p>
+          )}
         </div>
-        <Button
-          type="button"
-          size="sm"
-          // Disabled until the fan-out execution runner + route land (next PR).
-          // Creating a run now would leave a permanently-`running` record with
-          // pending attempts and no executor.
-          disabled
-          title="Execution runner ships in the next PR"
-          onClick={async () => {
-            setRunning(true);
-            try {
-              await createJourneyRun({ journeyRefId: journey._id } as any);
-              toast.success("Journey run started");
-            } catch (e) {
-              toast.error(
-                e instanceof Error ? e.message : "Failed to start run"
-              );
-            } finally {
-              setRunning(false);
-            }
-          }}
-        >
-          {running ? "Starting…" : "Run (soon)"}
+        <Button type="button" size="sm" disabled={launching} onClick={onRun}>
+          {launching ? "Starting…" : "Run journey"}
         </Button>
       </div>
-      {runs && runs.page.length > 0 && (
+
+      {launchError && (
+        <p className="mt-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-600 dark:text-red-400">
+          {launchError}
+        </p>
+      )}
+
+      {runs.length > 0 && (
         <div className="mt-3 border-t pt-3">
-          {runs.page.slice(0, 3).map((r) => (
-            <div key={r._id} className="mb-2 last:mb-0">
+          {(runs as JourneyRun[]).map((r) => (
+            <div key={r._id} className="mb-3 last:mb-0">
               <div className="flex items-center justify-between text-xs">
-                <span className="font-medium">{r.status}</span>
+                <span className={`font-medium ${runStatusClass(r.status)}`}>
+                  {r.status}
+                </span>
                 <span className="text-muted-foreground">
                   {r.summary.succeeded}/{r.summary.total} ok
+                  {r.summary.failed > 0 && ` · ${r.summary.failed} failed`}
+                  {r.summary.rateLimited > 0 &&
+                    ` · ${r.summary.rateLimited} rate-limited`}
                 </span>
               </div>
-              <div className="mt-1 flex flex-wrap gap-2">
+              <div className="mt-1 flex flex-wrap items-center gap-2">
                 {r.hostSummaries.map((hs) => (
                   <span
                     key={hs.hostId}
@@ -275,9 +439,172 @@ function JourneyCard({
                     {hostName(hs.hostId)}: {hs.succeeded}/{hs.total}
                   </span>
                 ))}
+                <button
+                  type="button"
+                  className="text-[11px] font-medium text-primary hover:underline"
+                  onClick={() =>
+                    setOpenRunId((cur) => (cur === r._id ? null : r._id))
+                  }
+                >
+                  {openRunId === r._id ? "Hide sessions" : "View sessions"}
+                </button>
               </div>
+              {openRunId === r._id && (
+                <RunSessionsView
+                  runId={r._id}
+                  personaRefId={journey.personaRefId}
+                  hosts={hosts}
+                  hostSummaries={r.hostSummaries}
+                  initialThreadId={
+                    initialRunId === r._id ? initialThreadId : undefined
+                  }
+                />
+              )}
             </div>
           ))}
+          {runsStatus === "CanLoadMore" && (
+            <button
+              type="button"
+              className="mt-1 text-[11px] font-medium text-primary hover:underline"
+              onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
+            >
+              Load more runs
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── sessions by host (per run) ───────────────────────────────────────────────
+function RunSessionsView({
+  runId,
+  personaRefId,
+  hosts,
+  hostSummaries,
+  initialThreadId,
+}: {
+  runId: string;
+  /** Owning persona — encoded into copied session links for deep-link restore. */
+  personaRefId: string;
+  hosts: HostItem[];
+  hostSummaries: JourneyRun["hostSummaries"];
+  /** Deep-link session (`id`) to auto-select once it's on a loaded page. */
+  initialThreadId?: string;
+}) {
+  // Paginated sessions for this run; grouped/filterable by host client-side.
+  const {
+    results: sessions,
+    status,
+    loadMore,
+  } = usePaginatedQuery(
+    SWARM_QUERIES.listSessionsByJourneyRun as any,
+    // Backend arg name is `journeyRunId` (NOT `runId`).
+    { journeyRunId: runId } as any,
+    { initialNumItems: DEFAULT_PAGE_SIZE }
+  );
+  const [filter, setFilter] = useState<SessionFilterState>(EMPTY_SESSION_FILTER);
+  const [selected, setSelected] = useState<JourneySessionRow | null>(null);
+
+  const hostName = (id: string) =>
+    hosts.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
+
+  const rows = sessions as JourneySessionRow[];
+  const visible = useMemo(
+    () => rows.filter((s) => sessionMatchesFilter(s, filter)),
+    [rows, filter]
+  );
+
+  // Deep-link restore: auto-select the linked session once it appears on a
+  // loaded page. Runs once. NOTE (remainder): a session on a not-yet-loaded
+  // page won't auto-select until the user pages to it — full cross-page
+  // restore would need the backend list query to accept a session cursor.
+  const appliedInitialThreadRef = useRef(false);
+  useEffect(() => {
+    if (appliedInitialThreadRef.current || !initialThreadId) return;
+    const match = rows.find((s) => s.id === initialThreadId);
+    if (match) {
+      appliedInitialThreadRef.current = true;
+      setSelected(match);
+    }
+  }, [initialThreadId, rows]);
+
+  return (
+    <div className="mt-2 rounded-lg border bg-muted/20 p-2">
+      {/* Host filter chips */}
+      <div className="mb-2 flex flex-wrap gap-1.5">
+        {hostSummaries.map((hs) => (
+          <button
+            key={hs.hostId}
+            type="button"
+            onClick={() =>
+              setFilter((f) => toggleSessionFilter(f, "hostId", hs.hostId))
+            }
+            className={`rounded-full border px-2 py-0.5 text-[11px] ${
+              filter.hostId === hs.hostId
+                ? "border-primary bg-primary/10"
+                : "hover:bg-muted"
+            }`}
+          >
+            {hostName(hs.hostId)}
+          </button>
+        ))}
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="px-1 py-2 text-[11px] text-muted-foreground">
+          No sessions recorded yet for this run.
+        </p>
+      ) : (
+        <div className="flex flex-col divide-y">
+          {visible.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => setSelected(s)}
+              className={`flex items-center justify-between gap-2 px-1 py-1.5 text-left hover:bg-muted/50 ${
+                selected?.id === s.id ? "bg-muted" : ""
+              }`}
+            >
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate text-[11px] font-medium">
+                  {hostName(s.hostId)}
+                </span>
+                <span className="truncate text-[10px] text-muted-foreground">
+                  {s.status ?? "—"}
+                  {s.modelId ? ` · ${s.modelId}` : ""}
+                </span>
+              </span>
+              <SessionReadinessBadge readiness={toSessionReadiness(s.readiness)} />
+            </button>
+          ))}
+        </div>
+      )}
+
+      {status === "CanLoadMore" && (
+        <button
+          type="button"
+          className="mt-1 text-[11px] font-medium text-primary hover:underline"
+          onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
+        >
+          Load more sessions
+        </button>
+      )}
+
+      {/* Reuse the existing project-scoped session viewer — do NOT build a new
+          one. `ShareUsageThreadDetail` takes the session row's `id`. */}
+      {selected && (
+        <div className="mt-2 h-[420px] overflow-hidden rounded-lg border">
+          <ShareUsageThreadDetail
+            threadId={selected.id}
+            sessionLink={`${getShareableAppOrigin()}${buildSwarmSessionPath({
+              personaRefId,
+              runId,
+              hostId: selected.hostId,
+              threadId: selected.id,
+            })}`}
+          />
         </div>
       )}
     </div>

@@ -996,9 +996,13 @@ export async function runSyntheticHostSession(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     // Single source of truth for the spend-cap / rate-limit fold — shared with
-    // the per-runtime `classifyFailure` so the regex can't drift.
+    // the per-runtime `classifyFailure` so the regex can't drift. Return the
+    // message on the rate-limited branch too: the swarm fan-out runner inspects
+    // it to distinguish a provider 429 (stop THIS host) from an org spend-cap
+    // breach (stop the WHOLE run). The chatbox runner ignores it for
+    // rate-limited outcomes, so this is a safe additive change.
     if (classifyTurnFailure(message) === "rate_limited") {
-      return { outcome: "rate_limited" };
+      return { outcome: "rate_limited", errorMessage: message };
     }
     logger.warn("[sessionSimulation.runner] session failed", {
       runId,

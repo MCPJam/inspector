@@ -170,13 +170,13 @@ function buildPinnedConnectionSettings(
 }
 
 /**
- * Launch a hidden single-host swarm (journey-execution) run (PR 3c).
+ * Launch a multi-host swarm (journey-execution) run (PR 3d).
  *
- * Creates a journey run capped to a single host (`maxHosts: 1` — a multi-host
- * journey is rejected transactionally before any run row exists), then starts
- * the runner fire-and-forget and returns HTTP 202 with the runId. The Run
- * button in the UI stays DISABLED; this route is the only way to exercise the
- * slice until fan-out (PR 3d).
+ * Creates a journey run (the backend pins the journey's full host set — no
+ * `maxHosts` cap; a backend rejection such as a hard host-count ceiling or a
+ * journey with no hosts surfaces as a 4xx), then starts the fan-out runner
+ * fire-and-forget and returns HTTP 202 with the runId. This is the route the
+ * enabled "Run journey" button in the UI calls.
  */
 swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
   handleRoute(
@@ -207,16 +207,16 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
       );
       const convexHttpUrl = requireConvexHttpUrl();
 
-      // Create the run capped to a single host. A journey with >1 host is
-      // rejected transactionally BEFORE any run row is created — surface the
-      // backend's 4xx as a clear client error instead of a bare 500.
+      // Create the run over the journey's full pinned host set (no maxHosts
+      // cap). A backend rejection (a hard host-count ceiling, a journey with no
+      // hosts, a duplicate launchKey, …) surfaces as a clear 4xx instead of a
+      // bare 500.
       let created;
       try {
         created = await createJourneyRun(convexHttpUrl, bearerToken, {
           projectId: body.projectId,
           journeyRefId: journeyId,
           launchKey: body.launchKey,
-          maxHosts: 1,
         });
       } catch (err) {
         if (
@@ -227,8 +227,7 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
           throw new WebRouteError(
             err.status,
             ErrorCode.VALIDATION_ERROR,
-            err.bodyText ||
-              "This journey can't be launched by the single-host runner (it may have more than one host)."
+            err.bodyText || "This journey can't be launched."
           );
         }
         throw err;
@@ -258,24 +257,14 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
         return { runId, deduped: true };
       }
 
-      if (!Array.isArray(snapshot.hosts) || snapshot.hosts.length !== 1) {
+      if (!Array.isArray(snapshot.hosts) || snapshot.hosts.length === 0) {
         throw new WebRouteError(
           400,
           ErrorCode.VALIDATION_ERROR,
-          "The single-host runner requires exactly one pinned host"
+          "This journey has no pinned hosts to run"
         );
       }
-      const host = snapshot.hosts[0]!;
-      // Connect ONLY the pinned required servers (optionalServerIds stay off,
-      // matching a real no-opt-in visitor's session).
-      const serverIds = host.serverIds;
-      // Reconnect with the snapshot's non-secret connection settings (timeout +
-      // protocol pins) so the run is reproducible — NOT whatever the host's
-      // current live config would negotiate. Secrets/headers stay live-resolved.
-      const connection = buildPinnedConnectionSettings(
-        host,
-        WEB_STREAM_TIMEOUT_MS
-      );
+      const hosts = snapshot.hosts;
 
       // Resolve the MCPJam test-IdP issuer NOW, while the request `Context` is
       // still live (it reads `x-forwarded-proto` off `c`). `createAuthorized
@@ -290,14 +279,25 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
         startJourneyRun({
           runId,
           projectId,
-          host,
+          hosts,
           personaSnapshot: snapshot.personaSnapshot,
           sessionsPerHost: snapshot.sessionsPerHost,
           maxTurns: snapshot.maxTurns,
           convexHttpUrl,
           bearer: bearerToken,
           authHeader,
-          managerFactory: async () => {
+          // Host-aware: each host connects ONLY its own pinned required servers
+          // (optionalServerIds stay off, matching a real no-opt-in visitor).
+          managerFactory: async (host) => {
+            const serverIds = host.serverIds;
+            // Reconnect with THIS host's non-secret connection settings
+            // (per-request timeout + MCP protocol pins) so the run reproduces
+            // the pinned snapshot rather than the host's current live config.
+            // Secrets/headers stay live-resolved by the authorize batch.
+            const connection = buildPinnedConnectionSettings(
+              host,
+              WEB_STREAM_TIMEOUT_MS
+            );
             const { manager } = await createAuthorizedManager(
               callerContextFromHono(c),
               bearerToken,
