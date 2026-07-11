@@ -688,8 +688,8 @@ function NotifyButton() {
         type="button"
         variant="outline"
         size="sm"
-        aria-label="Notify me of host changes"
-        title="Notify me of host changes"
+        aria-label="Notify me of client changes"
+        title="Notify me of client changes"
         className={cn("gap-1.5", CANIUSE_ACTION_BUTTON_CLASS)}
         onClick={() => setOpen(true)}
       >
