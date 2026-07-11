@@ -221,7 +221,11 @@ function JourneyCard({
         <Button
           type="button"
           size="sm"
-          disabled={running}
+          // Disabled until the fan-out execution runner + route land (next PR).
+          // Creating a run now would leave a permanently-`running` record with
+          // pending attempts and no executor.
+          disabled
+          title="Execution runner ships in the next PR"
           onClick={async () => {
             setRunning(true);
             try {
@@ -236,7 +240,7 @@ function JourneyCard({
             }
           }}
         >
-          {running ? "Starting…" : "Run"}
+          {running ? "Starting…" : "Run (soon)"}
         </Button>
       </div>
       {runs && runs.page.length > 0 && (
