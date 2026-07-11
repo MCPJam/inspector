@@ -15,7 +15,10 @@ import { SegmentedControl } from "@/components/ui/json-editor/segmented-control"
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
 import { PersonasTab } from "@/components/chatboxes/PersonasTab";
-import { ChatboxPublishClientBar } from "@/components/chatboxes/ChatboxPublishClientBar";
+import {
+  ChatboxHostPickerPill,
+  ChatboxPublishClientBar,
+} from "@/components/chatboxes/ChatboxPublishClientBar";
 import { ChatboxHostCanvasPanel } from "@/components/chatboxes/ChatboxHostCanvasPanel";
 import {
   ResizableHandle,
@@ -33,9 +36,9 @@ import { cn } from "@/lib/utils";
 
 /**
  * `/chatboxes` — the publish surface for the currently-selected host's
- * chatbox. Hosts and chatboxes are 1:1, so the global host bar at the top
- * of the app chrome is the navigation control: switching hosts switches
- * the chatbox shown here. Tabs:
+ * chatbox. Hosts and chatboxes are 1:1; host switching lives in the
+ * publish-tab `ChatboxPublishClientBar` (and a matching pill on other
+ * sub-tabs). The app-chrome `HostOverlayBar` is hidden on this route. Tabs:
  *
  *   - Publish   — link, mode, members, chatUi (`ChatboxShareSection`) on the
  *                 left; the right pane toggles between a live preview of the
@@ -299,6 +302,19 @@ export function ChatboxesTab({
         className="relative shrink-0 border-b border-border/40 px-8 py-2.5"
         data-testid="chatboxes-tab-header-chrome"
       >
+        {/* Publish already has the host pill in ChatboxPublishClientBar;
+            other sub-tabs need the same switcher here so host changes
+            aren't stuck behind returning to Publish. */}
+        {activeTab !== "publish" ? (
+          <div className="absolute left-8 top-1/2 z-10 -translate-y-1/2">
+            <ChatboxHostPickerPill
+              projectId={chatbox.projectId}
+              isAuthenticated={effectiveAuth}
+              hostId={chatbox.namedHostId}
+              hostName={host?.name ?? chatbox.namedHostName ?? "Host"}
+            />
+          </div>
+        ) : null}
         <div className="flex min-w-0 items-center justify-center">
           <ViewModeSelector
             value={activeTab}

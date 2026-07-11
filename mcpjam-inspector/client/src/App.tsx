@@ -1052,9 +1052,10 @@ export function CompatibilityRoute() {
 
 // `/chatboxes` is the publish surface (link / mode / members / sessions /
 // clusters) for the chatbox bound 1:1 to the currently-selected host.
-// Navigation between chatboxes flows through the global host bar — pick
-// a host, manage its chatbox here. There is no chatbox list; the host
-// list lives in Connect.
+// Navigation between chatboxes flows through the in-page host pill
+// (`ChatboxPublishClientBar` / `ChatboxHostPickerPill`) — pick a host,
+// manage its chatbox here. There is no chatbox list; identity edits
+// still live in Connect.
 // Both the human Chatbox surface (`/chatboxes`) and the agent Swarm surface
 // (`/swarms`) render `ChatboxesTab` over the same underlying chatbox; only the
 // `product` (tab set + affordances) differs. Both share the `chatboxes`
@@ -3256,8 +3257,11 @@ export default function App() {
     !isEvalsTab &&
     // The playground has its own client chip in the chat-input toolbar
     // (switch / compare / add host), so the global host bar is redundant
-    // there. It stays on every other tab.
-    activeTab !== "playground"
+    // there. Chatboxes / Swarms pick hosts via `ChatboxPublishClientBar`
+    // on the publish surface (and a matching pill on other sub-tabs).
+    activeTab !== "playground" &&
+    activeTab !== "chatboxes" &&
+    activeTab !== "swarms"
       ? {
           projectId: convexProjectId,
           onEditHost: (hostId: string) => {
