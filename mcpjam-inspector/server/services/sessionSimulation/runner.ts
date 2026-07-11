@@ -1261,17 +1261,26 @@ export async function drainAssistantTurn(
       };
     }
 
+    // Bill on ANY non-aborted completion — INCLUDING a mid-stream engine error
+    // after token consumption. This matches the old `buildLocalOrgOnPersist`,
+    // where `postLocalUsage` fired unconditionally at the top of `onPersist`
+    // (which runs on non-aborted completion, error included) and ONLY transcript
+    // persistence was gated on the error. The engine's `onFinish` populates
+    // `traceTurn.turnUsage` even on error, so `result.usage` carries the
+    // consumed tokens. Finalize BEFORE throwing so a failed local-BYOK turn's
+    // real spend is still recorded (cubic P1: post-consumption undercount).
+    await rt.finalizeUsage(result);
+
     // The direct engine always produces a trace, so a turn-terminating failure
     // is signalled by `onEngineError` (its `onError` fires only for fatal
-    // errors; recovered per-step tool errors never reach here). Throw with the
-    // same message shape the old headless path did.
+    // errors; recovered per-step tool errors never reach here). Throw — AFTER
+    // billing — with the same message shape the old headless path did.
     if (lastEngineError) {
       throw new Error(
         lastEngineError.message || "Local org-BYOK turn failed mid-stream."
       );
     }
 
-    await rt.finalizeUsage(result);
     return {
       history: result.messages,
       turnTrace: result.turnTrace,

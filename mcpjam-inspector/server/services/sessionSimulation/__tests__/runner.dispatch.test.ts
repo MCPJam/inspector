@@ -453,7 +453,7 @@ describe("drainAssistantTurn — engine error surfacing", () => {
     expect(result.turnTrace).toEqual(TURN_TRACE);
   });
 
-  it("throws on a fatal direct-engine error and does NOT post the usage writeback", async () => {
+  it("bills the consumed usage on a fatal direct-engine error, THEN throws", async () => {
     const calls: unknown[] = [];
     stubDirectEngine(calls, { engineError: { message: "provider exploded" } });
     resolveSyntheticModelSourceMock.mockResolvedValue({
@@ -476,8 +476,14 @@ describe("drainAssistantTurn — engine error surfacing", () => {
         }) as Parameters<typeof drainAssistantTurn>[0],
       ),
     ).rejects.toThrow(/provider exploded/);
-    // finalizeUsage is gated on success — no billing on a fatal error turn.
-    expect(fetchMock).not.toHaveBeenCalled();
+    // A local-BYOK turn that consumed tokens then errored mid-stream must STILL
+    // post the /stream/org/local-usage writeback — matching the old
+    // `buildLocalOrgOnPersist`, which billed unconditionally on non-abort and
+    // only gated transcript persistence on the error (cubic P1: undercount).
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String((fetchMock.mock.calls[0] as any[])[0])).toContain(
+      "/stream/org/local-usage",
+    );
   });
 
   it("returns the aborted direct turn without persisting or billing", async () => {

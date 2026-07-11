@@ -172,8 +172,11 @@ export async function resolveTurnRuntime(
 
     const providerKey = orgRuntime.provider.providerKey;
     const finalizeUsage = async (result: UnifiedTurnResult): Promise<void> => {
-      // Success-only writeback (never on abort). Engine-error gating is
-      // enforced by the caller, which throws before reaching finalizeUsage.
+      // Bill on any NON-ABORTED completion, engine-error included: the old
+      // `postLocalUsage` fired unconditionally on non-abort and billed the
+      // consumed tokens even when the turn errored mid-stream. The caller
+      // invokes this BEFORE throwing on an engine error, so a failed turn's
+      // real spend is still recorded. Only abort suppresses the writeback.
       if (result.aborted) return;
       await postLocalUsage({
         projectId: args.projectId,
