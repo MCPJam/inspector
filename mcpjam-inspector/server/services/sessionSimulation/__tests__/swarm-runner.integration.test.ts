@@ -167,7 +167,7 @@ function baseOpts() {
 beforeEach(() => {
   callOrder.length = 0;
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.site");
-  reportAttemptMock.mockReset().mockResolvedValue(undefined);
+  reportAttemptMock.mockReset().mockResolvedValue({ ok: true, applied: true });
   heartbeatJourneyRunMock.mockReset().mockResolvedValue(undefined);
   persistChatSessionToConvexMock.mockReset().mockResolvedValue(undefined);
   resolveSyntheticModelSourceMock.mockReset().mockResolvedValue({
@@ -240,5 +240,55 @@ describe("swarm runner — real core integration", () => {
       .map((c) => c[2] as any)
       .find((a) => a.status === "succeeded")!;
     expect(terminal.chatSessionId).toBe("synth_run-1_host-1_0");
+  });
+
+  it("harness host: SUPPLIES a harnessMcpProxy + threads swarm continuity identity into the turn, and rides the swarm-chat resume-state commit into the transcript persist", async () => {
+    // A harness turn returns a §3 resume-state commit as its 3rd
+    // onConversationComplete arg; runAssistantTurn surfaces it on the result.
+    // For swarm it carries ownerType "swarm-chat" (the backend derives the
+    // lane's journeyRunId/hostId from the ingest's top-level swarm attribution).
+    const swarmCommit = {
+      ownerType: "swarm-chat" as const,
+      chatSessionId: "synth_run-1_host-1_0",
+      leaseId: "lease-1",
+      expectedStateVersion: 1,
+      harnessId: "claude-code" as const,
+      harnessSessionId: "hs-1",
+      resumeState: { cursor: 7 },
+      computerId: "computer-1",
+      runtimeFingerprint: "fp-1",
+    };
+    runAssistantTurnMock.mockReset().mockImplementation(async (opts: any) => ({
+      messages: [...opts.messages, { role: "assistant", content: "hi back" }],
+      assistantMessages: [],
+      toolCalls: [],
+      toolResults: [],
+      turnTrace: TURN_TRACE,
+      harnessSessionCommit: swarmCommit,
+    }));
+
+    await startJourneyRun({
+      ...baseOpts(),
+      host: { ...baseOpts().host, harness: "claude-code" as const },
+    } as any);
+
+    // (a) The harness turn was SUPPLIED a MCP-proxy plane strategy (without it
+    // runHarnessTurn throws for a harness host with MCP servers) + the swarm
+    // continuity identity (journeyRunId + hostId) for the swarm-chat owner lane.
+    const turnOpts = runAssistantTurnMock.mock.calls[0]![0] as any;
+    expect(turnOpts.harness).toBe("claude-code");
+    expect(turnOpts.harnessMcpProxy).toBeDefined();
+    expect(turnOpts.harnessMcpProxy.plane).toBe("web-authorized");
+    expect(turnOpts.journeyRunId).toBe("run-1");
+    expect(turnOpts.hostId).toBe("host-1");
+
+    // (b) The swarm-chat resume-state commit rides /ingest-chat atomically with
+    // the transcript (the caller-persist path — nothing else commits it).
+    const persistArgs = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+    expect(persistArgs.harnessSessionCommit).toMatchObject({
+      ownerType: "swarm-chat",
+      chatSessionId: "synth_run-1_host-1_0",
+      harnessSessionId: "hs-1",
+    });
   });
 });

@@ -222,8 +222,9 @@ async function runJourneySingleHost(
       // chatSessionId and is immutable thereafter. Persistence is LAUNCHER-gated
       // and requires the chatSessionId to match this claim, so it MUST come
       // after. A claim failure skips the session (we can't run without it).
+      let claim: { ok: true; applied: boolean };
       try {
-        await reportAttempt(convexHttpUrl, bearer, {
+        claim = await reportAttempt(convexHttpUrl, bearer, {
           projectId,
           runId,
           hostId,
@@ -238,6 +239,23 @@ async function runJourneySingleHost(
           sessionIdx,
           error: err instanceof Error ? err.message : String(err),
         });
+        continue;
+      }
+
+      // Duplicate-launch guard: a duplicate-delivered launchKey dedupes to the
+      // SAME runId, so two runners can iterate the SAME (run, host, sessionIdx)
+      // and both claim `running` with the identical deterministic chatSessionId.
+      // The backend applies the pending → running transition exactly once and
+      // returns `applied: false` to the LOSER (its claim was a no-op replay of a
+      // claim a sibling runner already made). The loser MUST NOT execute the
+      // session — running it would double-persist and DOUBLE-BILL the same
+      // attempt. Skip it: the winning runner (applied: true) owns execution and
+      // the terminal report.
+      if (!claim.applied) {
+        logger.warn(
+          "[swarm.runner] attempt already claimed by another runner; skipping session",
+          { runId, hostId, sessionIdx }
+        );
         continue;
       }
 

@@ -11,7 +11,8 @@ import {
   callerContextFromHono,
 } from "./auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
-import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
+import { WEB_STREAM_TIMEOUT_MS, HOSTED_MODE } from "../../config.js";
+import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import {
   createJourneyRun,
   SwarmAgentError,
@@ -90,32 +91,39 @@ function buildPinnedConnectionSettings(
 ): PinnedConnectionSettings {
   const defaults = asRecord(host.connectionDefaults);
 
-  // Timeout: accept either wire spelling (`timeoutMs` on the resolver shape,
-  // `requestTimeout` on the project-config shape); require a positive finite
-  // number, else fall back to the live default.
+  // Timeout: read from the (scrubbed) `connectionDefaults` — the ONLY field the
+  // backend retains there is `requestTimeout` (header values are stripped).
+  // Accept either wire spelling defensively; require a positive finite number,
+  // else fall back to the live default.
   const timeoutMs =
     coerceTimeoutMs(defaults?.timeoutMs ?? defaults?.requestTimeout) ??
     fallbackTimeoutMs;
 
+  // INITIALIZE pins come from the pinned `mcpProfile`, NOT `connectionDefaults`.
+  // The backend's `materializeHostSpec` copies the host's `mcpProfile` verbatim
+  // (`mcpProtocolVersion` + `initialize.{clientInfo,supportedProtocolVersions}`)
+  // and scrubs `connectionDefaults` down to just `{ requestTimeout }`, so reading
+  // the pins from `connectionDefaults` (the old behavior) always found nothing.
   const initializePins: NonNullable<
     PinnedConnectionSettings["initializePins"]
   > = {};
-  const clientInfo = asRecord(defaults?.clientInfo);
+  const initialize = asRecord(host.mcpProfile?.initialize);
+  const clientInfo = asRecord(initialize?.clientInfo);
   if (clientInfo) {
     initializePins.clientInfo = clientInfo as {
       name?: string;
       version?: string;
     } & Record<string, unknown>;
   }
-  if (Array.isArray(defaults?.supportedProtocolVersions)) {
-    const versions = defaults.supportedProtocolVersions.filter(
+  if (Array.isArray(initialize?.supportedProtocolVersions)) {
+    const versions = initialize.supportedProtocolVersions.filter(
       (v): v is string => typeof v === "string"
     );
     if (versions.length > 0) {
       initializePins.supportedProtocolVersions = versions;
     }
   }
-  const batchProtocol = coerceProtocolVersion(defaults?.mcpProtocolVersion);
+  const batchProtocol = coerceProtocolVersion(host.mcpProfile?.mcpProtocolVersion);
   if (batchProtocol) {
     initializePins.mcpProtocolVersion = batchProtocol;
   }
@@ -252,6 +260,15 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
         WEB_STREAM_TIMEOUT_MS
       );
 
+      // Resolve the MCPJam test-IdP issuer NOW, while the request `Context` is
+      // still live (it reads `x-forwarded-proto` off `c`). `createAuthorized
+      // Manager` fails closed for a `useXaa` server unless `options.xaaIssuer`
+      // is present, so a pinned host with a Cross-App-Access server would 500 in
+      // the manager factory without this. Resolved eagerly and captured so the
+      // fire-and-forget factory (which runs after the 202) doesn't depend on a
+      // possibly-finalized Context.
+      const xaaIssuer = resolveXaaIssuer(c, HOSTED_MODE);
+
       setImmediate(() => {
         startJourneyRun({
           runId,
@@ -271,9 +288,16 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
               serverIds,
               connection.timeoutMs,
               undefined,
-              undefined,
+              // Pinned MCP client capabilities from the snapshot — negotiate
+              // INITIALIZE with the SAME capabilities the host declared at
+              // run-create time (mirrors the chatbox path), not the current
+              // live config's.
+              host.clientCapabilities,
               {
                 accessScope: "project_member",
+                // XAA servers fail closed without the issuer; resolved above
+                // from the live request Context.
+                xaaIssuer,
                 ...(connection.initializePins
                   ? { initializePins: connection.initializePins }
                   : {}),

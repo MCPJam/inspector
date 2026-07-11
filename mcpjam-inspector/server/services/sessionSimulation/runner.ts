@@ -66,6 +66,8 @@ import {
   updateRun,
   type PersonaSlate,
 } from "../session-agent.js";
+import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
+import type { HarnessSessionCommitPayload } from "../../utils/harness/harness-session-state.js";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
@@ -747,6 +749,15 @@ export async function runSyntheticHostSession(
     // so this is stable across turns.
     let sessionModelSource: SyntheticModelSource | undefined;
 
+    // Harness MCP-proxy plane. A synthetic run builds an ephemeral authorized
+    // manager (like `/api/web/chat-v2`), so it's a WEB-authorized plane request:
+    // resolve the strategy the same way `web-chat-turn.ts` does. Only needed when
+    // this host runs a real harness — the emulated engine ignores it. Without it,
+    // a harness host WITH selected MCP servers throws in runHarnessTurn.
+    const harnessMcpProxy = harness
+      ? resolveWebAuthorizedHarnessStrategy()
+      : undefined;
+
     for (let turn = 0; turn < maxTurns; turn++) {
       if (abortSignal?.aborted) return { outcome: "failed" };
 
@@ -771,6 +782,7 @@ export async function runSyntheticHostSession(
         history: updatedHistory,
         turnTrace,
         modelSource: turnModelSource,
+        harnessSessionCommit,
       } = await drainAssistantTurn({
         messages: messageHistory,
         modelId: String(modelDefinition.id),
@@ -802,6 +814,12 @@ export async function runSyntheticHostSession(
         selectedServers: selectedServerIds,
         requireToolApproval,
         ...(harness ? { harness } : {}),
+        // Harness MCP-proxy plane (harness hosts with MCP servers) + swarm
+        // continuity identity (`swarm-chat` owner lane). `harnessMcpProxy` is
+        // resolved once above; `journeyRunId`/`hostId` are the swarm run + pinned
+        // host. All three are inert for the emulated engine / non-swarm surfaces.
+        ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+        ...(persist.hostId ? { hostId: persist.hostId } : {}),
         // Chatbox surface only. The chatbox runtime-config redeem returns an
         // accessVersion that /stream/org/resolve uses to authorize the actor
         // against the versioned chatbox; threading it (instead of undefined)
@@ -897,6 +915,13 @@ export async function runSyntheticHostSession(
         turnTrace,
         resumeConfig,
         ...(toolSnapshot ? { toolSnapshot } : {}),
+        // §3: ride this turn's harness resume-state commit into /ingest-chat
+        // atomically with the transcript (the caller-persist path — the harness
+        // turn ran with persistMode "caller", so nothing else commits it). For a
+        // swarm harness turn this carries `ownerType: "swarm-chat"`; the backend
+        // derives the lane's journeyRunId/hostId from the top-level swarm
+        // attribution above. Undefined for the emulated engine.
+        ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
       });
       anyTurnPersisted = true;
 
@@ -1364,9 +1389,23 @@ export async function drainAssistantTurn(
   history: ModelMessage[];
   turnTrace: PersistedTurnTrace | undefined;
   modelSource: SyntheticModelSource;
+  /**
+   * §3 harness resume-state commit from a successful harness turn. The caller
+   * (a synthetic/swarm session) forwards it into its own
+   * `persistChatSessionToConvex` so it rides `/ingest-chat` atomically with the
+   * transcript. Undefined for the emulated engine and non-continuity turns.
+   */
+  harnessSessionCommit?: HarnessSessionCommitPayload;
 }> {
-  const { modelDefinition, synthesisRunId, journeyRunId, extraBodyFields, hooks } =
-    args;
+  const {
+    modelDefinition,
+    synthesisRunId,
+    journeyRunId,
+    hostId,
+    harnessMcpProxy,
+    extraBodyFields,
+    hooks,
+  } = args;
 
   // Exactly one run-attribution key is set (chatbox sim vs swarm) — the XOR
   // that `resolveTurnRuntime` stamps onto the local-BYOK usage writeback.
@@ -1536,6 +1575,15 @@ export async function drainAssistantTurn(
     ...(args.selectedServers
       ? { selectedServerIds: args.selectedServers }
       : {}),
+    // Harness MCP-proxy plane — REQUIRED by runHarnessTurn when a harness host
+    // has MCP servers selected (it throws otherwise). Threaded here so a swarm/
+    // chatbox-sim harness turn reaches its MCP servers just like live chat.
+    ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+    // Swarm continuity identity → the harness `swarm-chat` owner lane. Both are
+    // set only on the swarm surface; the harness owner mapping needs them to
+    // key on (journeyRunId, hostId, chatSessionId) instead of direct-chat.
+    ...(journeyRunId ? { journeyRunId } : {}),
+    ...(hostId ? { hostId } : {}),
     ...(args.requireToolApproval !== undefined
       ? { requireToolApproval: args.requireToolApproval }
       : {}),
@@ -1588,6 +1636,11 @@ export async function drainAssistantTurn(
     history: result.messages,
     turnTrace: result.turnTrace,
     modelSource: rt.modelSource,
+    // Surfaced from the harness turn (undefined for the emulated engine) so the
+    // caller can ride it into its transcript persist.
+    ...(result.harnessSessionCommit
+      ? { harnessSessionCommit: result.harnessSessionCommit }
+      : {}),
   };
 }
 

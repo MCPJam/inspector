@@ -354,6 +354,8 @@ export async function runHarnessTurn(
     chatSessionId,
     chatboxId,
     sourceType,
+    journeyRunId,
+    hostId,
     harness,
     harnessMcpProxy,
     builtInTools,
@@ -662,6 +664,8 @@ export async function runHarnessTurn(
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
         sourceType === "chatbox"
           ? "chatbox-chat"
+          : sourceType === "swarm"
+          ? "swarm-chat"
           : sourceType === "eval" || sourceType === "sandbox"
           ? undefined
           : "direct-chat";
@@ -683,7 +687,11 @@ export async function runHarnessTurn(
         projectId &&
         authHeader &&
         ownerType &&
-        (ownerType !== "chatbox-chat" || chatboxId)
+        (ownerType !== "chatbox-chat" || chatboxId) &&
+        // The swarm (`swarm-chat`) lane is keyed on the run + host; the backend
+        // `resolveHarnessOwnerScope` throws without them. Skip continuity (run
+        // fresh) rather than fail if the swarm runner didn't thread both.
+        (ownerType !== "swarm-chat" || (journeyRunId && hostId))
       ) {
         const owner: HarnessOwnerRef = {
           projectId,
@@ -694,6 +702,10 @@ export async function runHarnessTurn(
           ownerType,
           chatSessionId,
           ...(chatboxId ? { chatboxId } : {}),
+          // Swarm continuity lane — the run + pinned host key the owner so a
+          // multi-turn swarm harness session resumes ONLY its own sidecar.
+          ...(ownerType === "swarm-chat" && journeyRunId ? { journeyRunId } : {}),
+          ...(ownerType === "swarm-chat" && hostId ? { hostId } : {}),
           // Phase 3: route owner resolution through resolveExecutionAccess so a
           // host-funded swarm guest can claim/resume their OWN lane.
           ...(executionScope ? { executionScope } : {}),
@@ -1781,7 +1793,8 @@ export async function runHarnessTurn(
             capturedHarnessCommit = {
               ownerType: continuity.owner.ownerType as
                 | "direct-chat"
-                | "chatbox-chat",
+                | "chatbox-chat"
+                | "swarm-chat",
               chatSessionId: continuity.owner.chatSessionId as string,
               ...(continuity.owner.chatboxId
                 ? { chatboxId: continuity.owner.chatboxId }

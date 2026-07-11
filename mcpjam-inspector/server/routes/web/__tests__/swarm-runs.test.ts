@@ -6,6 +6,7 @@ const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
 
 const createJourneyRunMock = vi.fn();
 const startJourneyRunMock = vi.fn();
+const createAuthorizedManagerMock = vi.fn();
 
 vi.mock("../../../services/swarm-agent.js", async () => {
   const actual =
@@ -26,6 +27,31 @@ vi.mock("../../../services/sessionSimulation/swarm-runner.js", async () => {
   return {
     ...actual,
     startJourneyRun: (...args: unknown[]) => startJourneyRunMock(...args),
+  };
+});
+
+// Partial mock: keep the real auth surface the test app needs; intercept only
+// the manager builder so the captured managerFactory can be invoked in-test
+// without a real MCP authorize batch.
+vi.mock("../auth.js", async () => {
+  const actual = await vi.importActual<typeof import("../auth.js")>(
+    "../auth.js"
+  );
+  return {
+    ...actual,
+    createAuthorizedManager: (...args: unknown[]) =>
+      createAuthorizedManagerMock(...args),
+  };
+});
+
+// Deterministic XAA issuer (the real resolver reads request headers).
+vi.mock("../../../services/xaa-mint.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../services/xaa-mint.js")
+  >("../../../services/xaa-mint.js");
+  return {
+    ...actual,
+    resolveXaaIssuer: () => "https://issuer.test/api/web/xaa",
   };
 });
 
@@ -60,6 +86,9 @@ describe("web routes — swarm single-host launch", () => {
     process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
     createJourneyRunMock.mockReset();
     startJourneyRunMock.mockReset().mockResolvedValue(undefined);
+    createAuthorizedManagerMock.mockReset().mockResolvedValue({
+      manager: { disconnectAllServers: async () => {} },
+    });
   });
 
   afterEach(() => {
@@ -169,5 +198,80 @@ describe("web routes — swarm single-host launch", () => {
     const startArgs = startJourneyRunMock.mock.calls[0]![0] as any;
     // Runner uses the backend-derived project, not the client's.
     expect(startArgs.projectId).toBe("proj-REAL");
+  });
+
+  it("threads pinned mcpProfile INITIALIZE pins + clientCapabilities (NOT the scrubbed connectionDefaults) into the manager", async () => {
+    const snap = snapshot(1);
+    // The backend snapshot carries INITIALIZE pins on `mcpProfile` and scrubs
+    // `connectionDefaults` down to just `{ requestTimeout }`. A stale reader that
+    // pulled pins from connectionDefaults would find nothing.
+    (snap.hosts[0] as any).mcpProfile = {
+      profileVersion: 1,
+      mcpProtocolVersion: "2025-06-18",
+      initialize: {
+        supportedProtocolVersions: ["2025-06-18"],
+        clientInfo: { name: "Pinned Host", version: "9.9.9" },
+      },
+    };
+    (snap.hosts[0] as any).clientCapabilities = { roots: { listChanged: true } };
+    (snap.hosts[0] as any).connectionDefaults = { requestTimeout: 12345 };
+    createJourneyRunMock.mockResolvedValue({
+      runId: "run-1",
+      projectId: "proj-1",
+      journeyRefId: "journey-1",
+      snapshot: snap,
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/journeys/journey-1/runs",
+      { projectId: "proj-1", launchKey: "lk-1" },
+      token
+    );
+    expect((await expectJson(response)).status).toBe(202);
+    await flushMacrotasks();
+
+    // Invoke the captured managerFactory (startJourneyRun is mocked, so the
+    // route's closure never ran on its own).
+    const startArgs = startJourneyRunMock.mock.calls[0]![0] as any;
+    await startArgs.managerFactory();
+
+    expect(createAuthorizedManagerMock).toHaveBeenCalledTimes(1);
+    const call = createAuthorizedManagerMock.mock.calls[0]!;
+    // 7th positional arg = clientCapabilities (mirrors the chatbox path).
+    expect(call[6]).toEqual({ roots: { listChanged: true } });
+    const options = call[7] as any;
+    // INITIALIZE pins come from mcpProfile, not connectionDefaults.
+    expect(options.initializePins).toEqual({
+      clientInfo: { name: "Pinned Host", version: "9.9.9" },
+      supportedProtocolVersions: ["2025-06-18"],
+      mcpProtocolVersion: "2025-06-18",
+    });
+    // Timeout still honors the retained connectionDefaults.requestTimeout.
+    expect(call[4]).toBe(12345);
+  });
+
+  it("passes a resolved xaaIssuer into the manager options (a useXaa server fails closed without it)", async () => {
+    createJourneyRunMock.mockResolvedValue({
+      runId: "run-1",
+      projectId: "proj-1",
+      journeyRefId: "journey-1",
+      snapshot: snapshot(1),
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/journeys/journey-1/runs",
+      { projectId: "proj-1", launchKey: "lk-1" },
+      token
+    );
+    expect((await expectJson(response)).status).toBe(202);
+    await flushMacrotasks();
+
+    const startArgs = startJourneyRunMock.mock.calls[0]![0] as any;
+    await startArgs.managerFactory();
+
+    const options = createAuthorizedManagerMock.mock.calls[0]![7] as any;
+    expect(options.xaaIssuer).toBe("https://issuer.test/api/web/xaa");
   });
 });

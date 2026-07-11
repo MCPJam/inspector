@@ -1,5 +1,6 @@
 import type { Harness } from "@mcpjam/sdk";
 import type {
+  HostConfigMcpProfileV1,
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
@@ -39,7 +40,27 @@ export interface PinnedHostExecutionSpec {
   progressiveToolDiscovery?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
-  /** Secret-free per-server connection defaults (transport/url/headers keys). */
+  /**
+   * Pinned host MCP profile — the INITIALIZE pins (`mcpProtocolVersion` +
+   * `initialize.{clientInfo,supportedProtocolVersions}`) captured at run-create
+   * time. The backend's `materializeHostSpec` copies the host's `mcpProfile`
+   * VERBATIM onto the snapshot (secret-free); the swarm route reads the
+   * initialize pins from HERE, not from the scrubbed `connectionDefaults` (which
+   * the backend strips down to just `{ requestTimeout }`).
+   */
+  mcpProfile?: HostConfigMcpProfileV1;
+  /**
+   * Pinned MCP client capabilities advertised on INITIALIZE, captured at
+   * run-create time. Passed into `createAuthorizedManager` so the run negotiates
+   * with the SAME capabilities the host declared (mirrors the chatbox path's
+   * `clientCapabilities`), not whatever the current live config would send.
+   */
+  clientCapabilities?: Record<string, unknown>;
+  /**
+   * Secret-free per-server connection defaults. The backend strips this to just
+   * `{ requestTimeout }` (header values are dropped) — INITIALIZE pins live on
+   * `mcpProfile`, NOT here.
+   */
   connectionDefaults?: Record<string, unknown>;
   /** Secret-free per-server connection overrides keyed by serverId. */
   serverConnectionOverrides?: Record<string, unknown>;
@@ -198,6 +219,16 @@ export async function createJourneyRun(
  * So the caller must claim (`running` + the deterministic chatSessionId)
  * BEFORE executing the session and report the terminal only AFTER the
  * transcript is persisted.
+ *
+ * Returns the backend's `{ ok, applied }` outcome. `applied` is `true` when the
+ * transition actually applied and `false` when it was a no-op replay — i.e.
+ * ANOTHER runner already drove this exact (run, host, sessionIdx) attempt to (or
+ * past) the reported state. The CLAIM step (`status: "running"`) uses this to
+ * detect a duplicate-delivered launch: an `applied: false` claim means a sibling
+ * runner already owns the attempt, so this runner MUST NOT execute/persist/bill
+ * it (see swarm-runner). A conflicting transition (e.g. a terminal replay to a
+ * different state) is rejected by the backend with a 4xx and surfaces here as a
+ * thrown {@link SwarmAgentError}, never as `applied: false`.
  */
 export async function reportAttempt(
   convexHttpUrl: string,
@@ -212,8 +243,12 @@ export async function reportAttempt(
     errorCode?: string;
     errorMessage?: string;
   }
-): Promise<void> {
-  const data = await postJson<{ ok?: boolean; error?: string }>(
+): Promise<{ ok: true; applied: boolean }> {
+  const data = await postJson<{
+    ok?: boolean;
+    applied?: boolean;
+    error?: string;
+  }>(
     `${convexHttpUrl}/journey-execution/runs/attempt`,
     bearer,
     {
@@ -235,6 +270,11 @@ export async function reportAttempt(
       }`
     );
   }
+  // The backend (`journeyRuns.recordAttempt`, PR 3c backend #693) always returns
+  // an explicit `applied` boolean on a 200. Treat only an explicit `false` as a
+  // no-op replay; anything else (incl. a defensively-absent field) is "applied"
+  // so a missing field can never wrongly suppress a fresh claim's execution.
+  return { ok: true, applied: data.applied !== false };
 }
 
 export async function heartbeatJourneyRun(

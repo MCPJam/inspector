@@ -80,7 +80,9 @@ function baseOpts(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
-  reportAttemptMock.mockReset().mockResolvedValue(undefined);
+  // Default: every attempt transition APPLIES (a fresh, uncontended claim/
+  // terminal). Duplicate-launch tests override with `applied: false`.
+  reportAttemptMock.mockReset().mockResolvedValue({ ok: true, applied: true });
   swarmPersonaNextTurnMock.mockReset();
   heartbeatJourneyRunMock.mockReset().mockResolvedValue(undefined);
   runSyntheticHostSessionMock.mockReset().mockResolvedValue({
@@ -97,6 +99,7 @@ describe("swarm single-host runner — attempt ordering", () => {
     const order: string[] = [];
     reportAttemptMock.mockImplementation(async (_url, _bearer, args: any) => {
       order.push(`${args.status}:${args.sessionIdx}:${args.chatSessionId}`);
+      return { ok: true, applied: true };
     });
     runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
       order.push(`run:${adapter.chatSessionId}`);
@@ -186,6 +189,7 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
       if (args.status === "running" && args.sessionIdx === 0) {
         throw new Error("claim rejected");
       }
+      return { ok: true, applied: true };
     });
 
     await startJourneyRun(baseOpts());
@@ -195,6 +199,37 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
     expect(
       (runSyntheticHostSessionMock.mock.calls[0]![0] as any).chatSessionId
     ).toBe("synth_run-1_host-1_1");
+  });
+
+  it("duplicate launch: a claim the backend reports NOT applied (owned by another runner) skips the session — no run, no persist, no bill, no terminal", async () => {
+    // A duplicate-delivered launchKey dedupes to the SAME runId, so a sibling
+    // runner iterates the SAME (run, host, sessionIdx) and wins the pending →
+    // running transition. The backend returns `applied: false` to THIS runner's
+    // claim (a no-op replay). It must NOT execute — running would double-bill.
+    // Session 0 loses its claim; session 1 wins its own.
+    reportAttemptMock.mockImplementation(async (_url, _bearer, args: any) => {
+      if (args.status === "running") {
+        return { ok: true, applied: args.sessionIdx !== 0 };
+      }
+      return { ok: true, applied: true };
+    });
+
+    await startJourneyRun(baseOpts());
+
+    // Session 0 (applied:false) never executed; only session 1 (applied:true) ran.
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
+    expect(
+      (runSyntheticHostSessionMock.mock.calls[0]![0] as any).chatSessionId
+    ).toBe("synth_run-1_host-1_1");
+
+    // The lost claim reports NO terminal (only the winning runner does). The one
+    // running claim for session 0, the winning claim + terminal for session 1.
+    const calls = reportAttemptMock.mock.calls.map((c) => c[2] as any);
+    const session0 = calls.filter((a) => a.sessionIdx === 0);
+    expect(session0.map((a) => a.status)).toEqual(["running"]); // claim only
+    const session1 = calls.filter((a) => a.sessionIdx === 1);
+    expect(session1.some((a) => a.status === "running")).toBe(true);
+    expect(session1.some((a) => a.status !== "running")).toBe(true); // terminal
   });
 });
 
@@ -217,6 +252,7 @@ describe("swarm single-host runner — shutdown unwinds via cancellable persona"
     const reportTimeline: string[] = [];
     reportAttemptMock.mockImplementation(async (_u, _b, args: any) => {
       reportTimeline.push(args.status);
+      return { ok: true, applied: true };
     });
 
     // The shared core drives the persona, then — because the persona fetch is

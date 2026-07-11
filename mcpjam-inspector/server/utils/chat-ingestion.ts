@@ -203,7 +203,9 @@ interface PersistChatSessionOptions {
    * dimension (the backend keys per-harness), so it carries the full union.
    */
   harnessSessionCommit?: {
-    ownerType: "direct-chat" | "chatbox-chat";
+    // `swarm-chat` is the journey-runner continuity lane; the backend derives
+    // its journeyRunId/hostId from this ingest's top-level swarm attribution.
+    ownerType: "direct-chat" | "chatbox-chat" | "swarm-chat";
     chatSessionId: string;
     chatboxId?: string;
     leaseId: string;
