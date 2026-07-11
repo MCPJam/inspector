@@ -12,15 +12,13 @@ import type { ModelDefinition } from "@/shared/types";
 // when the chatbox modelId isn't in SUPPORTED_MODELS, which is the common
 // case for org-BYOK chatboxes (Ollama, custom: providers, OpenRouter ids).
 import { logger } from "../../utils/logger.js";
-import type {
-  MCPJamEngineErrorEvent,
-  MCPJamHandlerOptions,
-} from "../../utils/mcpjam-stream-handler.js";
-import { runAssistantTurn } from "../../utils/assistant-turn.js";
+import type { MCPJamHandlerOptions } from "../../utils/mcpjam-stream-handler.js";
 import {
-  runLocalOrgChatTurnHeadless,
+  resolveLocalOrgMaxSteps,
   type RunLocalOrgChatTurnHeadlessOptions,
 } from "../../utils/org-model-stream-handler.js";
+import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
+import { resolveTurnRuntime } from "../../utils/resolve-turn-runtime.js";
 import {
   buildSyntheticModelDefinition,
   resolveSyntheticModelSource,
@@ -1139,37 +1137,31 @@ export interface DrainAssistantTurnHooks {
 }
 
 /**
- * Drive one assistant turn through the appropriate headless turn driver:
- *   - MCPJam-provided modelId → `runAssistantTurn` (JAM-paid `/stream`)
- *   - Org-BYOK cloud runtime → `runAssistantTurn` with
- *     `endpointPath: "/stream/org"` + `extraBodyFields: { providerKey,
- *     serverIds }` (byte-matching what `handleHostedOrgChatModel` builds)
- *   - Org-BYOK local runtime → `runLocalOrgChatTurnHeadless`
+ * TEMPORARY COMPATIBILITY ADAPTER (PR 3a). `drainAssistantTurn` is now a thin
+ * wrapper over {@link resolveTurnRuntime} + {@link runUnifiedAssistantTurn}: it
+ * resolves the concrete {@link TurnRuntime} (MCPJam `/stream`, cloud-BYOK
+ * `/stream/org`, or the direct in-process engine for local BYOK), drives ONE
+ * turn through the shared facade, applies the synthetic error contract, and
+ * fires the local-BYOK usage writeback. It exists only to keep `runOneSession`
+ * unchanged while the shared adapter lands; it will be inlined/removed at
+ * legacy cleanup — it is NOT a permanent second facade.
  *
- * No SSE Response is built or drained: the engine branches run
- * `streamSink: "none"` / `persistMode: "caller"` (the agent loop and the
- * transcript capture complete before `runAssistantTurn` returns), and the
- * local branch consumes `runDirectChatTurn` headlessly. Synthetic runs own
- * persistence themselves (per-turn `persistChatSessionToConvex` from
+ * No SSE Response is built or drained: the facade runs `streamSink: "none"` /
+ * `persistMode: "caller"` (the hosted agent loop and transcript capture
+ * complete before it returns; the direct engine consumes headlessly). Synthetic
+ * runs own persistence themselves (per-turn `persistChatSessionToConvex` from
  * `runOneSession` with `synthetic: true`, `personaId`, `synthesisRunId`).
  *
- * User-API-key direct chats are NOT supported on the synthetic path —
- * there's no "visitor" whose key to use. Such chatboxes are rejected at
- * the route boundary; this dispatcher's only fallthrough is for an
- * unexpected `resolveOrgProviderRuntime` shape, which throws.
+ * Error contract (byte-preserved from the pre-facade dispatch): turn failures
+ * THROW. Hosted engines signal failure with a MISSING turnTrace on a
+ * non-aborted turn (recovered per-step errors keep their trace and succeed);
+ * the direct engine always produces a trace, so it signals failure via
+ * `onEngineError`. Surfacing the failure lets `runOneSession`'s classifier see
+ * real spend-cap / rate-limit errors (→ `"rate_limited"`) and genuine provider
+ * failures (→ `"failed"`).
  *
- * Error contract: turn failures THROW. The engine doesn't throw in
- * `streamSink: "none"` mode — it routes failures through `onEngineError`
- * and returns with no turnTrace — so this dispatcher converts that signal
- * into a throw. The old SSE-drain implementation discarded error chunks
- * into the drained stream, silently recording an empty assistant turn;
- * surfacing the failure lets `runOneSession`'s classifier see real spend-cap
- * / rate-limit errors (→ `"rate_limited"`) and genuine provider failures
- * (→ `"failed"`).
- *
- * Returns the post-turn message history, the per-turn trace, and the
- * resolved `modelSource` so the caller can stamp
- * `persistChatSessionToConvex` correctly.
+ * Returns the post-turn message history, the per-turn trace, and the resolved
+ * `modelSource` so the caller can stamp `persistChatSessionToConvex` correctly.
  */
 export async function drainAssistantTurn(
   args: Omit<
@@ -1190,98 +1182,109 @@ export async function drainAssistantTurn(
   modelSource: SyntheticModelSource;
 }> {
   const { modelDefinition, synthesisRunId, extraBodyFields, hooks } = args;
-  const modelIdStr = String(modelDefinition.id);
 
-  // Classify once, dispatch off the result. The same resolver is used by
-  // the empty-session fallback persist so the two attribution paths can't
-  // drift (e.g. if isLocalRuntimeEligible's allow-list ever changes, both
-  // sites pick it up automatically).
-  const resolution = await resolveSyntheticModelSource({
+  // Narrow MCPJamHandlerOptions' open `sourceType` string to the engine union;
+  // the simulation runner always passes "chatbox".
+  const sourceType =
+    args.sourceType === "direct" || args.sourceType === "eval"
+      ? args.sourceType
+      : ("chatbox" as const);
+
+  // Provider/runtime resolution + local usage writeback + approval guard, in
+  // one shared adapter. Uses the same resolver the empty-session fallback
+  // persist uses, so the two attribution paths can't drift.
+  const rt = await resolveTurnRuntime({
     modelDefinition,
     projectId: args.projectId ?? "",
     authHeader: args.authHeader,
     chatboxId: args.chatboxId,
     accessVersion: args.accessVersion,
     serverIds: args.selectedServers,
+    sourceType,
+    chatSessionId: args.chatSessionId,
+    requireToolApproval: args.requireToolApproval,
+    tools: args.tools as ToolSet,
+    ...(args.harness ? { harness: args.harness } : {}),
+    ...(extraBodyFields ? { extraBodyFields } : {}),
+    attribution: { synthesisRunId },
   });
 
-  // Narrow MCPJamHandlerOptions' open `sourceType` string to the engine
-  // union; the simulation runner always passes "chatbox".
-  const sourceType =
-    args.sourceType === "direct" || args.sourceType === "eval"
-      ? args.sourceType
-      : ("chatbox" as const);
+  // Engine-error signal. Structural type covers both the hosted
+  // `MCPJamEngineErrorEvent` and the direct `DirectChatTurnEngineErrorEvent`.
+  let lastEngineError:
+    | { message: string; code?: string; httpStatus?: number }
+    | undefined;
+  const captureEngineError = (event: {
+    message: string;
+    code?: string;
+    httpStatus?: number;
+  }) => {
+    lastEngineError = event;
+  };
 
-  if (resolution.source !== "mcpjam") {
-    // resolution.orgRuntime is guaranteed defined for non-"mcpjam" sources
-    // (the resolver only omits it when source === "mcpjam").
-    const orgRuntime = resolution.orgRuntime!;
+  if (rt.runtime.kind === "direct") {
+    // Local-runtime org BYOK → the in-process AI-SDK engine. `maxSteps` mirrors
+    // the local handler's 30-step default (the direct engine's own default is
+    // 20). Browser hooks flow through the facade's inert callback extensions.
+    const result = await runUnifiedAssistantTurn({
+      runtime: rt.runtime,
+      streamSink: "none",
+      messages: args.messages,
+      systemPrompt: args.systemPrompt,
+      ...(args.temperature !== undefined
+        ? { temperature: args.temperature }
+        : {}),
+      tools: args.tools as ToolSet,
+      maxSteps: resolveLocalOrgMaxSteps(args.maxSteps),
+      ...(args.progressivePlan
+        ? { progressivePlan: args.progressivePlan }
+        : {}),
+      ...(args.discoveryState ? { discoveryState: args.discoveryState } : {}),
+      ...(args.abortSignal ? { abortSignal: args.abortSignal } : {}),
+      ...(hooks?.prepareAdvertisedTools
+        ? { prepareAdvertisedTools: hooks.prepareAdvertisedTools }
+        : {}),
+      ...(hooks?.onToolResultChunk
+        ? { onToolResultChunk: hooks.onToolResultChunk }
+        : {}),
+      onEngineError: captureEngineError,
+    });
 
-    if (orgRuntime.runtimeLocation === "local") {
-      // Local-runtime org providers don't have an approval loop today —
-      // the local turn driver rejects with `tool_approval_unsupported`
-      // when requireToolApproval is true and any tools are exposed. Cloud
-      // BYOK paths handle this via `approvalMode: "auto-deny"` (the loop
-      // denies each call and continues); the local path has no equivalent
-      // yet, so a synthetic run on an approval-required chatbox would have
-      // every turn fail with the same error. Refuse upfront with a clear
-      // message rather than letting the per-turn errors stack up silently.
-      // Disable approval on the chatbox or switch the provider to cloud
-      // runtime to unblock.
-      if (
-        args.requireToolApproval === true &&
-        args.tools &&
-        Object.keys(args.tools as Record<string, unknown>).length > 0
-      ) {
-        throw new Error(
-          "Synthetic runs on local-runtime org BYOK models don't yet support approval-required tool calls. Disable tool approval on this chatbox or switch the provider to cloud runtime."
-        );
-      }
-      const headless = await runLocalOrgChatTurnHeadless({
-        provider: orgRuntime.provider,
-        projectId: args.projectId ?? "",
-        modelId: modelIdStr,
-        chatSessionId: args.chatSessionId,
-        sourceType,
-        messages: args.messages,
-        systemPrompt: args.systemPrompt,
-        temperature: args.temperature,
-        tools: args.tools as ToolSet,
-        progressivePlan: args.progressivePlan,
-        discoveryState: args.discoveryState,
-        authHeader: args.authHeader,
-        chatboxId: args.chatboxId,
-        accessVersion: args.accessVersion,
-        selectedServers: args.selectedServers,
-        serverIds: args.selectedServers,
-        requireToolApproval: args.requireToolApproval,
-        abortSignal: args.abortSignal,
-        // Forwarded to /stream/org/local-usage so the backend BYOK writer
-        // stamps synthesisRunId onto the resulting llmUsageRecord.
-        synthesisRunId,
-        ...(hooks?.prepareAdvertisedTools
-          ? { prepareAdvertisedTools: hooks.prepareAdvertisedTools }
-          : {}),
-        ...(hooks?.onToolResultChunk
-          ? { onToolResultChunk: hooks.onToolResultChunk }
-          : {}),
-      });
+    // Aborted mid-turn: drop it (no writeback, no persist). Return the INPUT
+    // history unchanged, matching the old `runLocalOrgChatTurnHeadless` abort
+    // contract (`{ messages, aborted: true }`).
+    if (result.aborted) {
       return {
-        history: headless.messages,
-        turnTrace: headless.turnTrace,
-        modelSource: "local_byok",
+        history: args.messages,
+        turnTrace: undefined,
+        modelSource: rt.modelSource,
       };
     }
+
+    // The direct engine always produces a trace, so a turn-terminating failure
+    // is signalled by `onEngineError` (its `onError` fires only for fatal
+    // errors; recovered per-step tool errors never reach here). Throw with the
+    // same message shape the old headless path did.
+    if (lastEngineError) {
+      throw new Error(
+        lastEngineError.message || "Local org-BYOK turn failed mid-stream."
+      );
+    }
+
+    await rt.finalizeUsage(result);
+    return {
+      history: result.messages,
+      turnTrace: result.turnTrace,
+      modelSource: rt.modelSource,
+    };
   }
 
-  // Engine branches (JAM-paid `/stream` and hosted org-BYOK `/stream/org`)
-  // share the runAssistantTurn surface; only the endpoint + extra body
-  // fields differ.
-  const modelSource: SyntheticModelSource =
-    resolution.source === "mcpjam" ? "mcpjam" : "byok";
-  let lastEngineError: MCPJamEngineErrorEvent | undefined;
-
-  const result = await runAssistantTurn({
+  // Hosted engines (JAM-paid `/stream`, cloud org-BYOK `/stream/org`). The
+  // endpoint + extra body fields + harness selector ride `rt.runtime`.
+  const result = await runUnifiedAssistantTurn({
+    runtime: rt.runtime,
+    streamSink: "none",
+    persistMode: "caller",
     messages: args.messages,
     modelDefinition,
     systemPrompt: args.systemPrompt,
@@ -1293,12 +1296,8 @@ export async function drainAssistantTurn(
     authContext: { kind: "user_bearer", token: args.authHeader ?? "" },
     sourceType,
     origin: "chatbox",
-    streamSink: "none",
-    persistMode: "caller",
-    // Synthetic runs have no human-in-the-loop. Auto-deny any
-    // approval-required tool call inside the loop so the run can make
-    // forward progress instead of pausing forever waiting for an approval
-    // that will never arrive.
+    // Synthetic runs have no human-in-the-loop. Auto-deny approval-required
+    // tool calls inside the loop so the run makes forward progress.
     approvalMode: "auto-deny",
     chatSessionId: args.chatSessionId,
     ...(args.projectId ? { projectId: args.projectId } : {}),
@@ -1315,50 +1314,25 @@ export async function drainAssistantTurn(
     ...(args.modelVisibleMcpToolResults !== undefined
       ? { modelVisibleMcpToolResults: args.modelVisibleMcpToolResults }
       : {}),
-    // Harness selector: when the chatbox host runs harness: "claude-code",
-    // synthetic turns run the real Claude Code runtime. requireToolApproval is
-    // already threaded above, so runHarnessTurn fail-closes correctly.
-    ...(args.harness ? { harness: args.harness } : {}),
     ...(args.progressivePlan ? { progressivePlan: args.progressivePlan } : {}),
     ...(args.discoveryState ? { discoveryState: args.discoveryState } : {}),
     ...(args.abortSignal ? { abortSignal: args.abortSignal } : {}),
-    // `runAssistantTurn` appends synthesisRunId to extraBodyFields last, so
-    // the merged `/stream` body matches the old handler-built shape.
+    // `runAssistantTurn` appends synthesisRunId to extraBodyFields last, so the
+    // merged `/stream` body matches the old handler-built shape.
     synthesisRunId,
-    ...(resolution.source === "mcpjam"
-      ? { ...(extraBodyFields ? { extraBodyFields } : {}) }
-      : {
-          // Hosted org-BYOK contract — byte-matching what
-          // `handleHostedOrgChatModel` constructs: providerKey + serverIds
-          // ride extraBodyFields on /stream/org.
-          endpointPath: "/stream/org",
-          extraBodyFields: {
-            ...(extraBodyFields ?? {}),
-            providerKey: resolution.orgRuntime!.providerKey,
-            ...(args.selectedServers?.length
-              ? { serverIds: args.selectedServers }
-              : {}),
-          },
-        }),
     ...(hooks?.onToolCall ? { onToolCall: hooks.onToolCall } : {}),
     ...(hooks?.onToolResult ? { onToolResult: hooks.onToolResult } : {}),
     ...(hooks?.prepareAdvertisedTools
       ? { prepareAdvertisedTools: hooks.prepareAdvertisedTools }
       : {}),
-    onEngineError: (event) => {
-      lastEngineError = event;
-    },
+    onEngineError: captureEngineError,
   });
 
-  // Surface engine failures as throws (see the error contract above). A
-  // produced turnTrace means the turn semantically succeeded — per-step
-  // engine errors that the loop recovered from don't fail the turn. A
-  // MISSING turnTrace on a non-aborted turn always means the engine failed
-  // (`runSucceeded === false`) — the same signal the eval runners' failure
-  // detection keys on — so throw even when no `onEngineError` event was
-  // captured (engine-internal aborts without our signal flipping, or error
-  // sites the callback doesn't cover). Without this, a failed turn would
-  // silently record an empty assistant reply and skip persistence.
+  // A produced turnTrace means the turn semantically succeeded (recovered
+  // per-step engine errors keep their trace). A MISSING turnTrace on a
+  // non-aborted turn always means the engine failed — throw even when no
+  // `onEngineError` event was captured, so a failed turn can't silently record
+  // an empty assistant reply and skip persistence.
   if (!result.turnTrace && !args.abortSignal?.aborted) {
     if (lastEngineError) {
       const detail = [
@@ -1380,10 +1354,11 @@ export async function drainAssistantTurn(
     );
   }
 
+  await rt.finalizeUsage(result); // no-op for hosted engines
   return {
     history: result.messages,
     turnTrace: result.turnTrace,
-    modelSource,
+    modelSource: rt.modelSource,
   };
 }
 
