@@ -100,12 +100,12 @@ describe("web routes — swarm single-host launch", () => {
     }
   });
 
-  it("passes maxHosts:1, returns 202 + runId, and starts the runner", async () => {
+  it("omits maxHosts, returns 202 + runId, and fans the runner over all hosts", async () => {
     createJourneyRunMock.mockResolvedValue({
       runId: "run-1",
       projectId: "proj-1",
       journeyRefId: "journey-1",
-      snapshot: snapshot(1),
+      snapshot: snapshot(3),
     });
 
     const response = await postJson(
@@ -119,7 +119,7 @@ describe("web routes — swarm single-host launch", () => {
     expect(status).toBe(202);
     expect(data.runId).toBe("run-1");
 
-    // maxHosts:1 (the single-host guard) + the journeyId as journeyRefId.
+    // No maxHosts cap — the backend pins the journey's full host set.
     expect(createJourneyRunMock).toHaveBeenCalledTimes(1);
     const createArgs = createJourneyRunMock.mock.calls[0]![2] as any;
     expect(createArgs).toMatchObject({
@@ -129,10 +129,10 @@ describe("web routes — swarm single-host launch", () => {
       projectId: "proj-1",
       journeyRefId: "journey-1",
       launchKey: "lk-1",
-      maxHosts: 1,
     });
+    expect(createArgs.maxHosts).toBeUndefined();
 
-    // The runner is started fire-and-forget after the response.
+    // The runner is started fire-and-forget with EVERY pinned host.
     await flushMacrotasks();
     expect(startJourneyRunMock).toHaveBeenCalledTimes(1);
     const startArgs = startJourneyRunMock.mock.calls[0]![0] as any;
@@ -142,7 +142,11 @@ describe("web routes — swarm single-host launch", () => {
       sessionsPerHost: 2,
       maxTurns: 3,
     });
-    expect(startArgs.host.hostId).toBe("host-0");
+    expect(startArgs.hosts.map((h: any) => h.hostId)).toEqual([
+      "host-0",
+      "host-1",
+      "host-2",
+    ]);
   });
 
   it("acknowledges a DEDUPED launch (launchKey replay) without starting a second runner", async () => {
@@ -177,11 +181,11 @@ describe("web routes — swarm single-host launch", () => {
     expect(startJourneyRunMock).not.toHaveBeenCalled();
   });
 
-  it("surfaces a multi-host journey rejection as a 4xx and never starts a runner", async () => {
+  it("surfaces a backend rejection (e.g. host-count ceiling) as a 4xx and never starts a runner", async () => {
     createJourneyRunMock.mockRejectedValue(
       new SwarmAgentError(
         400,
-        "journey has more than one host",
+        "journey exceeds the maximum host count",
         "swarm-agent create failed (400)"
       )
     );
@@ -197,7 +201,28 @@ describe("web routes — swarm single-host launch", () => {
     }>(response);
 
     expect(status).toBe(400);
-    expect(JSON.stringify(data)).toMatch(/more than one host/i);
+    expect(JSON.stringify(data)).toMatch(/maximum host count/i);
+    await flushMacrotasks();
+    expect(startJourneyRunMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a journey snapshot with no pinned hosts and never starts a runner", async () => {
+    createJourneyRunMock.mockResolvedValue({
+      runId: "run-1",
+      projectId: "proj-1",
+      journeyRefId: "journey-1",
+      snapshot: snapshot(0),
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/journeys/journey-1/runs",
+      { projectId: "proj-1", launchKey: "lk-1" },
+      token
+    );
+    const { status } = await expectJson(response);
+
+    expect(status).toBe(400);
     await flushMacrotasks();
     expect(startJourneyRunMock).not.toHaveBeenCalled();
   });

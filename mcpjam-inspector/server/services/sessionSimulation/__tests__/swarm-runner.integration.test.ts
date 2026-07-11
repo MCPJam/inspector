@@ -132,15 +132,17 @@ function baseOpts() {
   return {
     runId: "run-1",
     projectId: "proj-1",
-    host: {
-      hostId: "host-1",
-      hostName: "Host One",
-      hostConfigId: "hc-1",
-      modelId: "anthropic/claude-haiku-4.5",
-      systemPrompt: "sys",
-      requireToolApproval: false,
-      serverIds: ["server-1"],
-    },
+    hosts: [
+      {
+        hostId: "host-1",
+        hostName: "Host One",
+        hostConfigId: "hc-1",
+        modelId: "anthropic/claude-haiku-4.5",
+        systemPrompt: "sys",
+        requireToolApproval: false,
+        serverIds: ["server-1"],
+      },
+    ],
     personaSnapshot: {
       personaId: "p1",
       name: "Persona One",

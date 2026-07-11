@@ -162,10 +162,13 @@ async function postJson<T>(
 }
 
 /**
- * Create a journey run and return the pinned execution snapshot. Pass
- * `maxHosts: 1` for the single-host slice — the backend rejects a journey with
- * more than one host transactionally BEFORE any run row is created (surfaced
- * here as a {@link SwarmAgentError} with a 4xx status).
+ * Create a journey run and return the pinned execution snapshot.
+ *
+ * `maxHosts` is an optional upper bound the backend enforces transactionally
+ * BEFORE any run row is created (a journey exceeding it is rejected — surfaced
+ * here as a {@link SwarmAgentError} with a 4xx status). The single-host slice
+ * (PR 3c) passed `maxHosts: 1`; the fan-out runner (PR 3d) omits it and lets
+ * the backend pin the journey's full host set.
  */
 export async function createJourneyRun(
   convexHttpUrl: string,
@@ -174,7 +177,7 @@ export async function createJourneyRun(
     projectId: string;
     journeyRefId: string;
     launchKey: string;
-    maxHosts: number;
+    maxHosts?: number;
   }
 ): Promise<CreateJourneyRunResult> {
   const data = await postJson<{
@@ -194,7 +197,7 @@ export async function createJourneyRun(
       projectId: args.projectId,
       journeyRefId: args.journeyRefId,
       launchKey: args.launchKey,
-      maxHosts: args.maxHosts,
+      ...(args.maxHosts !== undefined ? { maxHosts: args.maxHosts } : {}),
     },
     NON_LLM_TIMEOUT_MS
   );
@@ -303,6 +306,51 @@ export async function heartbeatJourneyRun(
   if (data.ok !== true) {
     throw new Error(
       `Invalid response from backend heartbeatJourneyRun: ${
+        data.error ?? "unknown error"
+      }`
+    );
+  }
+}
+
+/**
+ * Best-effort finalize of a run's still-`pending` attempts to a terminal state.
+ * WHOLE-RUN scoped (the backend body carries no `hostId`), used by the fan-out
+ * runner for the two run-level short-circuits:
+ *   - org spend-cap breach → `terminalStatus: "rate_limited"`,
+ *     `errorCode: "spend_cap_exceeded"`
+ *   - controlled shutdown / cancel → `errorCode: "runner_shutdown"`
+ *
+ * A provider rate-limit is per-HOST (it stops one host, not the run), so it does
+ * NOT use this — the runner marks that host's remaining attempts via
+ * {@link reportAttempt} instead. The backend stale-run cron is the hard backstop
+ * for anything this best-effort call misses.
+ */
+export async function finalizePendingAttempts(
+  convexHttpUrl: string,
+  bearer: string,
+  args: {
+    projectId: string;
+    runId: string;
+    terminalStatus?: Exclude<SwarmAttemptStatus, "pending" | "running">;
+    errorCode?: string;
+    errorMessage?: string;
+  }
+): Promise<void> {
+  const data = await postJson<{ ok?: boolean; error?: string }>(
+    `${convexHttpUrl}/journey-execution/runs/finalize-pending`,
+    bearer,
+    {
+      projectId: args.projectId,
+      runId: args.runId,
+      ...(args.terminalStatus ? { terminalStatus: args.terminalStatus } : {}),
+      ...(args.errorCode ? { errorCode: args.errorCode } : {}),
+      ...(args.errorMessage ? { errorMessage: args.errorMessage } : {}),
+    },
+    NON_LLM_TIMEOUT_MS
+  );
+  if (data.ok !== true) {
+    throw new Error(
+      `Invalid response from backend finalizePendingAttempts: ${
         data.error ?? "unknown error"
       }`
     );
