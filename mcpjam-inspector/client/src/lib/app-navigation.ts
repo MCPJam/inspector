@@ -94,6 +94,53 @@ export function buildChatboxSessionPath(
   return `${basePath}?${search.toString()}`;
 }
 
+/**
+ * Build a Swarms deep-link to one synthetic session. Unlike the chatbox
+ * Sessions tab (host-anchored), the Swarms surface is Persona → Journey → Run →
+ * Session, so a link that only carried `host`/`session` couldn't restore the
+ * persona + run selection the recipient needs to reach the session. This
+ * encodes `persona` (personaRefId) and `run` (runId) alongside `host`/`session`
+ * so `SwarmsTab` can restore the full selection chain on load.
+ */
+export function buildSwarmSessionPath(args: {
+  personaRefId: string;
+  runId: string;
+  hostId: string;
+  threadId: string;
+}): string {
+  const search = new URLSearchParams({
+    persona: args.personaRefId,
+    run: args.runId,
+    host: args.hostId,
+    session: args.threadId,
+  });
+  return `${routePaths.swarms}?${search.toString()}`;
+}
+
+/**
+ * Parse a Swarms session deep-link's selection params (see
+ * {@link buildSwarmSessionPath}) from a search string. Every field is optional —
+ * a bare `/swarms` visit returns all-undefined.
+ */
+export function parseSwarmSessionParams(search: string): {
+  personaRefId?: string;
+  runId?: string;
+  hostId?: string;
+  threadId?: string;
+} {
+  const params = new URLSearchParams(search);
+  const pick = (key: string) => {
+    const value = params.get(key);
+    return value && value.trim() ? value : undefined;
+  };
+  return {
+    personaRefId: pick("persona"),
+    runId: pick("run"),
+    hostId: pick("host"),
+    threadId: pick("session"),
+  };
+}
+
 /** Build a path for a specific organization route. */
 export function buildOrganizationPath(
   orgId: string,

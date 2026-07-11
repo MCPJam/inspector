@@ -312,6 +312,25 @@ describe("classifyTurnFailure (exported single source of truth)", () => {
     expect(classifyTurnFailure("hard cap hit")).toBe("rate_limited");
   });
 
+  it("folds org spend-cap phrasings (quota / budget) into rate_limited", () => {
+    // An org spend-cap can surface as "quota"/"budget" wording; it must reach
+    // rate_limited so the swarm fan-out's whole-run stop can fire.
+    expect(classifyTurnFailure("Organization quota exceeded")).toBe(
+      "rate_limited",
+    );
+    expect(classifyTurnFailure("monthly budget exhausted")).toBe(
+      "rate_limited",
+    );
+  });
+
+  it("does NOT over-match 'capacity'/'recap'/'escape' as rate_limited", () => {
+    // `cap` is word-anchored — a provider capacity error is a hard failure.
+    expect(classifyTurnFailure("model capacity exceeded")).toBe("failed");
+    expect(classifyTurnFailure("rate capacity exceeded")).toBe("failed");
+    expect(classifyTurnFailure("here is a recap of the run")).toBe("failed");
+    expect(classifyTurnFailure("attempting to escape")).toBe("failed");
+  });
+
   it("maps everything else to failed", () => {
     expect(classifyTurnFailure("provider exploded")).toBe("failed");
     expect(classifyTurnFailure("")).toBe("failed");

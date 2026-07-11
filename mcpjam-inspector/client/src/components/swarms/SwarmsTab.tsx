@@ -7,7 +7,7 @@
  *
  * Consumes the project-scoped backend: personas:*, journeys:*, journeyRuns:*.
  */
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, usePaginatedQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { toast } from "@/lib/toast";
@@ -32,8 +32,45 @@ import {
   type SessionReadiness,
 } from "@/components/chatboxes/session-readiness";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
-import { buildChatboxSessionPath, routePaths } from "@/lib/app-navigation";
+import {
+  buildSwarmSessionPath,
+  parseSwarmSessionParams,
+} from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
+
+// Valid readiness enums (mirror `session-readiness.tsx`). The backend
+// denormalizes a WIDE `{ status?: string; verdict?: string }` subset onto the
+// session row, so guard it into a well-typed `SessionReadiness` before handing
+// it to the badge instead of an unchecked `as` cast — an unexpected string must
+// degrade to "no badge", not render a bogus pill.
+const READINESS_STATUSES = ["pending", "completed", "partial", "failed"] as const;
+const READINESS_VERDICTS = ["ready", "needs_attention", "not_ready"] as const;
+
+function toSessionReadiness(
+  raw: JourneySessionRow["readiness"],
+): SessionReadiness | undefined {
+  if (!raw) return undefined;
+  const status = (READINESS_STATUSES as readonly string[]).includes(
+    raw.status ?? "",
+  )
+    ? (raw.status as SessionReadiness["status"])
+    : undefined;
+  // Without a valid status the badge has nothing meaningful to show.
+  if (!status) return undefined;
+  const verdict = (READINESS_VERDICTS as readonly string[]).includes(
+    raw.verdict ?? "",
+  )
+    ? (raw.verdict as SessionReadiness["verdict"])
+    : undefined;
+  return {
+    status,
+    ...(verdict ? { verdict } : {}),
+    issueCount:
+      typeof raw.issueCount === "number" && Number.isFinite(raw.issueCount)
+        ? raw.issueCount
+        : 0,
+  };
+}
 
 type Persona = {
   _id: string;
@@ -90,7 +127,15 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   const effectiveProjectId = isAuthenticated ? projectId : null;
   const personas = usePersonas(effectiveProjectId);
   const hosts = useProjectHosts(effectiveProjectId);
-  const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(null);
+  // Restore a copied session deep-link (`/swarms?persona=&run=&host=&session=`).
+  // Parse ONCE on mount so later user navigation isn't clobbered by the URL.
+  const deepLink = useMemo(
+    () => parseSwarmSessionParams(window.location.search),
+    [],
+  );
+  const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(
+    () => deepLink.personaRefId ?? null,
+  );
   const journeys = useJourneys(selectedPersonaId);
 
   const createPersona = useMutation("personas:createPersona" as any);
@@ -216,6 +261,8 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                     journey={j}
                     hosts={hosts ?? []}
                     projectId={projectId}
+                    initialRunId={deepLink.runId}
+                    initialThreadId={deepLink.threadId}
                   />
                 ))}
               </div>
@@ -277,10 +324,16 @@ function JourneyCard({
   journey,
   hosts,
   projectId,
+  initialRunId,
+  initialThreadId,
 }: {
   journey: Journey;
   hosts: HostItem[];
   projectId: string;
+  /** Deep-link run to auto-open (only the card that owns it reacts). */
+  initialRunId?: string;
+  /** Deep-link session to auto-select inside the opened run. */
+  initialThreadId?: string;
 }) {
   // Real Convex pagination (numItems + cursor) over the journey's runs.
   const {
@@ -303,6 +356,18 @@ function JourneyCard({
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [openRunId, setOpenRunId] = useState<string | null>(null);
+
+  // Deep-link restore: once this journey's runs load, if the linked run belongs
+  // to THIS card, open it (so RunSessionsView mounts and can select the
+  // session). Runs itself once — later user toggling isn't overridden.
+  const appliedInitialRunRef = useRef(false);
+  useEffect(() => {
+    if (appliedInitialRunRef.current || !initialRunId) return;
+    if ((runs as JourneyRun[]).some((r) => r._id === initialRunId)) {
+      appliedInitialRunRef.current = true;
+      setOpenRunId(initialRunId);
+    }
+  }, [initialRunId, runs]);
 
   const hostName = (id: string) =>
     hosts.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
@@ -402,8 +467,12 @@ function JourneyCard({
               {openRunId === r._id && (
                 <RunSessionsView
                   runId={r._id}
+                  personaRefId={journey.personaRefId}
                   hosts={hosts}
                   hostSummaries={r.hostSummaries}
+                  initialThreadId={
+                    initialRunId === r._id ? initialThreadId : undefined
+                  }
                 />
               )}
             </div>
@@ -426,12 +495,18 @@ function JourneyCard({
 // ── sessions by host (per run) ───────────────────────────────────────────────
 function RunSessionsView({
   runId,
+  personaRefId,
   hosts,
   hostSummaries,
+  initialThreadId,
 }: {
   runId: string;
+  /** Owning persona — encoded into copied session links for deep-link restore. */
+  personaRefId: string;
   hosts: HostItem[];
   hostSummaries: JourneyRun["hostSummaries"];
+  /** Deep-link session (`_id`) to auto-select once it's on a loaded page. */
+  initialThreadId?: string;
 }) {
   // Paginated sessions for this run; grouped/filterable by host client-side.
   const {
@@ -454,6 +529,20 @@ function RunSessionsView({
     () => rows.filter((s) => sessionMatchesFilter(s, filter)),
     [rows, filter]
   );
+
+  // Deep-link restore: auto-select the linked session once it appears on a
+  // loaded page. Runs once. NOTE (remainder): a session on a not-yet-loaded
+  // page won't auto-select until the user pages to it — full cross-page
+  // restore would need the backend list query to accept a session cursor.
+  const appliedInitialThreadRef = useRef(false);
+  useEffect(() => {
+    if (appliedInitialThreadRef.current || !initialThreadId) return;
+    const match = rows.find((s) => s._id === initialThreadId);
+    if (match) {
+      appliedInitialThreadRef.current = true;
+      setSelected(match);
+    }
+  }, [initialThreadId, rows]);
 
   return (
     <div className="mt-2 rounded-lg border bg-muted/20 p-2">
@@ -501,9 +590,7 @@ function RunSessionsView({
                   {s.status ?? "—"} · {s.messageCount ?? 0} msgs
                 </span>
               </span>
-              <SessionReadinessBadge
-                readiness={s.readiness as SessionReadiness | undefined}
-              />
+              <SessionReadinessBadge readiness={toSessionReadiness(s.readiness)} />
             </button>
           ))}
         </div>
@@ -525,11 +612,12 @@ function RunSessionsView({
         <div className="mt-2 h-[420px] overflow-hidden rounded-lg border">
           <ShareUsageThreadDetail
             threadId={selected._id}
-            sessionLink={`${getShareableAppOrigin()}${buildChatboxSessionPath(
-              selected.hostId,
-              selected._id,
-              routePaths.swarms
-            )}`}
+            sessionLink={`${getShareableAppOrigin()}${buildSwarmSessionPath({
+              personaRefId,
+              runId,
+              hostId: selected.hostId,
+              threadId: selected._id,
+            })}`}
           />
         </div>
       )}

@@ -483,6 +483,92 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
       errorCode: "spend_cap_exceeded",
     });
   });
+
+  it("an org cap phrased as 'quota exceeded' / 'budget exhausted' ALSO stops the whole run (finding 6)", async () => {
+    for (const capMessage of ["quota exceeded", "monthly budget exhausted"]) {
+      finalizePendingAttemptsMock.mockClear();
+      runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+        if (adapter.chatSessionId === "synth_run-1_host-1_0") {
+          return { outcome: "rate_limited", errorMessage: capMessage };
+        }
+        return { outcome: "succeeded" };
+      });
+
+      await startJourneyRun(
+        baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+      );
+
+      expect(
+        finalizePendingAttemptsMock,
+        `"${capMessage}" should trip the whole-run spend-cap stop`
+      ).toHaveBeenCalledTimes(1);
+      expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+        errorCode: "spend_cap_exceeded",
+      });
+    }
+  });
+
+  it("a 'capacity' rate-limit is a PER-HOST provider stop, NOT a whole-run spend-cap (finding 7)", async () => {
+    // "capacity" must not be misread as a spend cap: only THIS host stops; the
+    // run does not finalize-pending.
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      if (adapter.chatSessionId === "synth_run-1_host-1_0") {
+        return {
+          outcome: "rate_limited",
+          errorMessage: "rate capacity exceeded",
+        };
+      }
+      return { outcome: "succeeded" };
+    });
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+    );
+
+    // No whole-run finalize — it stayed a per-host provider rate-limit.
+    expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+    // host-2 kept running to completion.
+    expect(executedForHost("host-2")).toHaveLength(2);
+    // host-1 short-circuited after session 0 (session 1 never executed).
+    expect(executedForHost("host-1")).toHaveLength(1);
+  });
+
+  it("a throwing host worker (e.g. model-less spec) finalizes ITS attempts failed and does not abort the other hosts (finding 8)", async () => {
+    // Force a worker-level throw for host-1 (a stand-in for a model-less pinned
+    // spec whose modelId can't resolve). host-2's worker must keep running.
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      if (adapter.persist.hostId === "host-1") {
+        throw new Error("model-less host: cannot resolve modelId");
+      }
+      return { outcome: "succeeded" };
+    });
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerHost: 2 })
+    );
+
+    // The other host completed all its sessions — the pool was not aborted.
+    expect(executedForHost("host-2")).toHaveLength(2);
+    const host2Terminals = terminals().filter((t) => t.hostId === "host-2");
+    expect(host2Terminals.map((t) => t.status)).toEqual([
+      "succeeded",
+      "succeeded",
+    ]);
+
+    // The failing host's attempts are all finalized failed(host_worker_failed)
+    // rather than left dangling.
+    const host1Failed = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter(
+        (a) =>
+          a.hostId === "host-1" &&
+          a.status === "failed" &&
+          a.errorCode === "host_worker_failed"
+      )
+      .map((a) => a.sessionIdx)
+      .sort();
+    expect(host1Failed).toEqual([0, 1]);
+  });
 });
 
 describe("swarm single-host runner — heartbeat", () => {

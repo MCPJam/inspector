@@ -37,10 +37,12 @@ import {
  *   - An ORG SPEND-CAP breach (message looks like an org/spend cap) stops
  *     scheduling ALL hosts, cancels in-flight turns, and finalizes the run's
  *     remaining pending attempts (`errorCode: "spend_cap_exceeded"`).
- *   - Abort (shutdown / user cancel) stops new scheduling, cancels in-flight
- *     turns, and best-effort finalizes unfinished attempts
- *     (`errorCode: "runner_shutdown"`); the backend stale-run cron is the hard
- *     backstop.
+ *   - Abort (shutdown / user cancel) stops new scheduling and cancels in-flight
+ *     turns AND the (now-cancellable) persona driver, so every in-flight session
+ *     unwinds promptly and self-reports its own accurate terminal via the normal
+ *     path. The run-level `finalizeRun` best-effort finalizes only the remaining
+ *     never-claimed `pending` attempts (`errorCode: "runner_shutdown"`); the
+ *     backend stale-run cron is the hard backstop.
  */
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -189,16 +191,21 @@ function terminalForOutcome(
 
 /**
  * Distinguish an ORG spend-cap breach from a PROVIDER rate-limit within the
- * shared core's `rate_limited` bucket (both fold there via `classifyTurnFailure`
- * `/rate.?limit|spend|cap/i`). A spend/cap/quota/budget message is the org cap
- * (WHOLE-RUN stop); anything else is a provider 429 (per-HOST stop). A missing
- * message defaults to the narrower per-host stop — never escalate to a
- * whole-run halt on ambiguous signal.
+ * shared core's `rate_limited` bucket (both fold there via `classifyTurnFailure`).
+ * A spend/cap/quota/budget message is the org cap (WHOLE-RUN stop); anything
+ * else (a provider 429 / rate limit) is a per-HOST stop. A missing message
+ * defaults to the narrower per-host stop — never escalate to a whole-run halt
+ * on ambiguous signal.
+ *
+ * `cap`/`quota`/`budget` are word-anchored so only genuine spend-cap wording
+ * matches: "spend cap exceeded" / "quota exceeded" / "budget exhausted" →
+ * org cap, but "capacity" / "rate capacity exceeded" / "recap" / "escape" →
+ * NOT a spend cap (they stay a per-host provider rate-limit).
  */
 function classifyRateLimit(
   message: string | undefined
 ): "org_spend_cap" | "provider_rate_limit" {
-  if (message && /spend|cap|quota|budget/i.test(message)) {
+  if (message && /spend|\bcap\b|\bquota\b|\bbudget\b/i.test(message)) {
     return "org_spend_cap";
   }
   return "provider_rate_limit";
@@ -285,13 +292,18 @@ async function runJourneyFanOut(
   const runHost = async (host: PinnedHostExecutionSpec): Promise<void> => {
     const hostId = host.hostId;
     const modelId = host.modelId;
+    // Hoisted so the worker-level catch below knows how far this host got and
+    // can finalize the attempts it left behind.
+    let sessionIdx = 0;
+    try {
     // Resolve the pinned host's modelId to a ModelDefinition once per host
     // (catalog hits pass through; BYOK shapes get a derived provider). NEVER
     // refetch the live host config — everything comes from the immutable
-    // snapshot.
+    // snapshot. A model-less / unresolvable pinned spec throws HERE, before any
+    // attempt is claimed — the catch finalizes this host's pending attempts.
     const modelDefinition = buildSyntheticModelDefinition(modelId);
 
-    for (let sessionIdx = 0; sessionIdx < sessionsPerHost; sessionIdx++) {
+    for (sessionIdx = 0; sessionIdx < sessionsPerHost; sessionIdx++) {
       // Run-level stop (spend cap or shutdown/cancel) halts THIS host too.
       if (stopScheduling()) return;
 
@@ -472,6 +484,33 @@ async function runJourneyFanOut(
         return;
       }
     }
+    } catch (err) {
+      // A worker-level throw (e.g. a model-less pinned spec whose modelId can't
+      // resolve) must NOT abort the pool or leave this host's attempts dangling.
+      // Finalize this host's not-yet-terminal attempts (`[sessionIdx..N)` — the
+      // in-flight claim, if any, plus every never-claimed pending) as `failed`
+      // and let the OTHER workers keep running (the pool continues; the run ends
+      // consistently). Best-effort; the stale-run cron backstops anything missed.
+      logEvent("host.worker_failed", { runId, hostId, sessionIdx });
+      logger.error(
+        "[swarm.runner] host worker failed; finalizing its attempts",
+        {
+          runId,
+          hostId,
+          sessionIdx,
+          error: err instanceof Error ? err.message : String(err),
+        }
+      );
+      // Finalize this host's not-yet-terminal attempts `[sessionIdx..N)`: the
+      // sweep re-claims the in-flight attempt (if the throw landed after a
+      // claim; an idempotent re-claim with the same chatSessionId) and every
+      // never-claimed pending, reporting each `failed`.
+      await markRemainingHostAttemptsFailed(
+        { convexHttpUrl, bearer, projectId, runId, hostId },
+        sessionIdx,
+        sessionsPerHost
+      );
+    }
   };
 
   try {
@@ -570,6 +609,63 @@ async function markRemainingHostAttemptsRateLimited(
     } catch (err) {
       logger.warn(
         "[swarm.runner] failed to mark remaining host attempt rate_limited",
+        {
+          runId,
+          hostId,
+          sessionIdx,
+          error: err instanceof Error ? err.message : String(err),
+        }
+      );
+    }
+  }
+}
+
+/**
+ * Mark a failed host-worker's not-yet-terminal attempts (`[fromIdx, toIdx)`)
+ * as `failed` (errorCode `host_worker_failed`). Sibling of
+ * {@link markRemainingHostAttemptsRateLimited}: walk the host's own attempts
+ * via the reportAttempt state machine (claim `running` + the deterministic
+ * chatSessionId, then report the terminal). Re-claiming an already-claimed
+ * `running` attempt with the SAME chatSessionId is idempotent; an already
+ * `succeeded`/`failed` attempt rejects the re-claim (terminal is immutable) and
+ * is skipped. Entirely best-effort — a failure is logged and the sweep
+ * continues; the backend stale-run cron backstops anything missed.
+ */
+async function markRemainingHostAttemptsFailed(
+  ctx: {
+    convexHttpUrl: string;
+    bearer: string;
+    projectId: string;
+    runId: string;
+    hostId: string;
+  },
+  fromIdx: number,
+  toIdx: number
+): Promise<void> {
+  const { convexHttpUrl, bearer, projectId, runId, hostId } = ctx;
+  for (let sessionIdx = fromIdx; sessionIdx < toIdx; sessionIdx++) {
+    const chatSessionId = `synth_${runId}_${hostId}_${sessionIdx}`;
+    try {
+      await reportAttempt(convexHttpUrl, bearer, {
+        projectId,
+        runId,
+        hostId,
+        sessionIdx,
+        status: "running",
+        chatSessionId,
+      });
+      await reportAttempt(convexHttpUrl, bearer, {
+        projectId,
+        runId,
+        hostId,
+        sessionIdx,
+        status: "failed",
+        chatSessionId,
+        errorCode: "host_worker_failed",
+      });
+    } catch (err) {
+      logger.warn(
+        "[swarm.runner] failed to mark remaining host attempt failed",
         {
           runId,
           hostId,
