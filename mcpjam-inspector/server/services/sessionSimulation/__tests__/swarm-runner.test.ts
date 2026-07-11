@@ -39,7 +39,10 @@ vi.mock("../runner.js", async () => {
   };
 });
 
-import { startJourneyRun } from "../swarm-runner.js";
+import {
+  startJourneyRun,
+  shutdownRunningJourneyRuns,
+} from "../swarm-runner.js";
 
 const HOST = {
   hostId: "host-1",
@@ -192,6 +195,42 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
     expect(
       (runSyntheticHostSessionMock.mock.calls[0]![0] as any).chatSessionId
     ).toBe("synth_run-1_host-1_1");
+  });
+});
+
+describe("swarm single-host runner — shutdown finalizes in-flight attempt", () => {
+  it("on shutdown/abort while a claimed session is in-flight, best-effort reports it terminal failed(runner_shutdown) instead of leaving it running", async () => {
+    // Model the runner being parked inside the (uncancellable) persona call:
+    // the shared core only resolves once the run is aborted.
+    runSyntheticHostSessionMock.mockImplementation(
+      (adapter: any) =>
+        new Promise((resolve) => {
+          adapter.abortSignal?.addEventListener("abort", () =>
+            resolve({ outcome: "failed" })
+          );
+        })
+    );
+
+    const runPromise = startJourneyRun(baseOpts({ sessionsPerHost: 1 }));
+    // Let the claim resolve and the core be entered (attempt now in-flight).
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Graceful shutdown aborts the run.
+    await shutdownRunningJourneyRuns(1_000);
+    await runPromise;
+
+    const calls = reportAttemptMock.mock.calls.map((c) => c[2] as any);
+    const shutdownReport = calls.find((a) => a.errorCode === "runner_shutdown");
+    expect(shutdownReport).toBeDefined();
+    expect(shutdownReport.status).toBe("failed");
+    expect(shutdownReport.chatSessionId).toBe("synth_run-1_host-1_0");
+
+    // The in-flight attempt is reported exactly once — the abort finalize and
+    // the normal terminal path must not double-report it.
+    const terminals = calls.filter((a) => a.status !== "running");
+    expect(terminals).toHaveLength(1);
   });
 });
 

@@ -137,7 +137,12 @@ describe("web routes — swarm single-host launch", () => {
     expect(startJourneyRunMock).not.toHaveBeenCalled();
   });
 
-  it("rejects when the client projectId does not match the journey's project", async () => {
+  it("does NOT orphan the run on a client/backend projectId mismatch: a successful create always starts the runner using the backend-derived projectId", async () => {
+    // The backend derives + authorizes the project from the journey. Even when
+    // the client-supplied projectId differs, the route must NOT reject
+    // post-create (which would leave a durable run row with no runner) — it
+    // trusts the backend's gating and starts the runner with the authoritative
+    // (backend) projectId.
     createJourneyRunMock.mockResolvedValue({
       runId: "run-1",
       projectId: "proj-REAL",
@@ -151,10 +156,14 @@ describe("web routes — swarm single-host launch", () => {
       { projectId: "proj-WRONG", launchKey: "lk-1" },
       token
     );
-    const { status } = await expectJson(response);
+    const { status, data } = await expectJson<{ runId?: string }>(response);
 
-    expect(status).toBe(400);
+    expect(status).toBe(202);
+    expect(data.runId).toBe("run-1");
     await flushMacrotasks();
-    expect(startJourneyRunMock).not.toHaveBeenCalled();
+    expect(startJourneyRunMock).toHaveBeenCalledTimes(1);
+    const startArgs = startJourneyRunMock.mock.calls[0]![0] as any;
+    // Runner uses the backend-derived project, not the client's.
+    expect(startArgs.projectId).toBe("proj-REAL");
   });
 });

@@ -143,6 +143,12 @@ function terminalForOutcome(
       ...(safeMessage ? { errorMessage: safeMessage } : {}),
     };
   }
+  // A `failed` attempt legitimately has NO chatSessions row: the shared core
+  // returns `outcome: "failed"` when it aborts before the first turn persisted
+  // (persona endSession on turn 0, or an abort caught at the turn-loop guard),
+  // in which case nothing was written. That's a consistent terminal — the
+  // backend does not require a session row for a failed attempt (unlike a
+  // `succeeded` terminal, which must carry the claim's chatSessionId).
   return {
     status: "failed",
     errorCode: "session_failed",
@@ -193,6 +199,44 @@ async function runJourneySingleHost(
       });
   }, HEARTBEAT_INTERVAL_MS);
 
+  // The attempt that has been CLAIMED (`running`) but not yet reported terminal.
+  // On shutdown/abort the runner can be parked for up to 120s inside the
+  // persona-next-turn call (which isn't cancelled by the abort), so the claimed
+  // attempt would linger `running` until the 90s stale-run cron. The abort
+  // listener below reports it terminal `failed` (errorCode `runner_shutdown`)
+  // immediately so it doesn't depend solely on the cron. Cleared the moment the
+  // normal terminal report claims it, so the two paths can't double-report.
+  let inFlightAttempt:
+    | { sessionIdx: number; chatSessionId: string }
+    | undefined;
+  const onAbort = () => {
+    const claimed = inFlightAttempt;
+    if (!claimed) return;
+    inFlightAttempt = undefined;
+    // Best-effort — a terminal-write failure here is swallowed; the backend
+    // stale-run cron remains the hard backstop.
+    reportAttempt(convexHttpUrl, bearer, {
+      projectId,
+      runId,
+      hostId,
+      sessionIdx: claimed.sessionIdx,
+      status: "failed",
+      chatSessionId: claimed.chatSessionId,
+      errorCode: "runner_shutdown",
+    }).catch((err) => {
+      logger.warn(
+        "[swarm.runner] shutdown finalize of in-flight attempt failed",
+        {
+          runId,
+          hostId,
+          sessionIdx: claimed.sessionIdx,
+          error: err instanceof Error ? err.message : String(err),
+        }
+      );
+    });
+  };
+  abortSignal?.addEventListener("abort", onAbort, { once: true });
+
   try {
     for (let sessionIdx = 0; sessionIdx < sessionsPerHost; sessionIdx++) {
       if (abortSignal?.aborted) break;
@@ -223,6 +267,9 @@ async function runJourneySingleHost(
         });
         continue;
       }
+      // Mark this attempt in-flight so an abort during the (uncancellable)
+      // session can finalize it terminal.
+      inFlightAttempt = { sessionIdx, chatSessionId };
 
       // Execute the session via the shared core. It owns manager lifecycle +
       // dispose, per-turn persona→drain→persist, browser/widget capture, and
@@ -272,6 +319,12 @@ async function runJourneySingleHost(
         // browser-artifact rows are keyed by chatboxId, which swarm has none).
       });
 
+      // If an abort finalized this attempt while the session ran, the abort
+      // listener already reported its terminal (and cleared inFlightAttempt) —
+      // don't double-report. Break out of the batch (we're shutting down).
+      if (inFlightAttempt === undefined) break;
+      inFlightAttempt = undefined;
+
       // Report the terminal with the SAME chatSessionId ONLY after the
       // transcript is persisted. Best-effort: a terminal write failure is
       // logged and the batch continues with the remaining sessions.
@@ -309,5 +362,6 @@ async function runJourneySingleHost(
     });
   } finally {
     clearInterval(heartbeat);
+    abortSignal?.removeEventListener("abort", onAbort);
   }
 }
