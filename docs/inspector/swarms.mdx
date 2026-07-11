@@ -1,0 +1,108 @@
+---
+title: "Swarms"
+description: "Run synthetic persona-driven journeys across multiple hosts and review session results."
+icon: "bot"
+---
+
+Swarms lets you define a **persona** (a simulated user with a goal), attach it to one or more **journeys** (sequences of tasks across pinned hosts), and launch **runs** that execute those journeys automatically. Each run fans out across every pinned host, records per-session transcripts, and surfaces readiness verdicts so you can see how your MCP surface holds up under realistic usage.
+
+<Note>
+Swarms is available to authenticated organization members. Guests see a sign-in prompt instead of the Swarms surface.
+</Note>
+
+## How it's organized
+
+<Steps>
+  <Step title="Persona">
+    A simulated user — a name, role, and optional notes describing their goals and behavior. All journeys and runs belong to a persona.
+  </Step>
+  <Step title="Journey">
+    A task sequence attached to one or more pinned hosts. Each journey has a goal description, a set of host IDs, and a config (`sessionsPerHost`, `maxTurns`).
+  </Step>
+  <Step title="Run">
+    One execution of a journey. The runner fans out across every pinned host, executing `sessionsPerHost` sessions per host. Each session produces a transcript and a readiness verdict.
+  </Step>
+  <Step title="Session">
+    One synthetic conversation between the persona and a single host. Sessions are viewable inline and link to the full session viewer.
+  </Step>
+</Steps>
+
+## Creating a persona
+
+1. Open the **Swarms** tab.
+2. Click **New persona** and fill in the name, role, and any notes that describe the persona's goals.
+3. The persona appears in the left panel. Click it to select it and see its journeys.
+
+A **track record strip** below the persona header shows the total number of sessions and runs recorded for that persona once at least one run has completed.
+
+## Creating a journey
+
+With a persona selected:
+
+1. Click **New journey**.
+2. Enter a goal description — a plain-language statement of what the persona is trying to accomplish.
+3. The journey card shows the pinned hosts, sessions-per-host, and max-turns config set by the backend when the journey was created.
+
+## Running a journey
+
+Click **Run journey** on a journey card to launch a run. The button is disabled only while a launch is already in flight.
+
+The runner fans out across **all pinned hosts** for the journey. Sessions run sequentially within each host; up to three hosts run concurrently. A toast confirms the run started.
+
+### Idempotent launches
+
+Each click generates a unique launch key. If the network call fails or returns an error, the same key is reused on retry so a duplicate run is never created. The key is cleared only after a confirmed successful response.
+
+### Inline errors
+
+If the launch is rejected (for example, the journey has no pinned hosts), the error message appears inline below the journey card. Fix the underlying issue and click **Run journey** again.
+
+## Reading run results
+
+Each journey card lists its runs below the header. Runs are paginated — click **Load more runs** to fetch older ones.
+
+### Run status
+
+| Status | Meaning |
+|--------|---------|
+| `running` | The run is in progress. |
+| `completed` | All sessions finished successfully. |
+| `partial` | Some sessions succeeded; others failed or were rate-limited. |
+| `failed` | All or most sessions failed. |
+| `rate_limited` | The run was stopped by a provider rate limit or org spend cap. |
+| `stale` | The run did not finish within the expected window. |
+
+Each run row shows a summary (`succeeded / total`) and per-host breakdowns.
+
+### Viewing sessions
+
+Click **View sessions** on a run row to open the sessions panel for that run. Sessions are grouped by host using filter chips at the top — click a host chip to show only that host's sessions.
+
+Each session row shows:
+- The host name
+- Session status and model ID
+- A readiness badge (ready / needs attention / not ready)
+
+Click a session row to open the full session viewer inline.
+
+### Session viewer
+
+The session viewer reuses the same transcript viewer used elsewhere in MCPJam. It shows the full conversation between the persona and the host, including tool calls and responses.
+
+## Sharing a session
+
+The session viewer includes a **copy link** button that generates a deep link encoding the persona, run, host, and session. Anyone with the link and access to the project can open it and land directly on that session.
+
+Deep links have the form:
+
+```
+/swarms?persona=<personaRefId>&run=<runId>&host=<hostId>&session=<threadId>
+```
+
+When you open a deep link, the Swarms tab restores the persona selection, opens the correct run, and selects the session automatically.
+
+## What's next
+
+- [Evals](/inspector/evals) — author deterministic test cases for your MCP server
+- [Projects](/inspector/projects) — manage the project your hosts and personas belong to
+- [Hosts](/inspector/host-templates) — configure the hosts used in journeys
