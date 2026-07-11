@@ -57,7 +57,7 @@ export type TurnRunAttribution =
  * The narrowed source-of-traffic marker forwarded into chat-ingestion /
  * usage writeback. Mirrors `RunAssistantTurnOptions["sourceType"]`.
  */
-export type TurnSourceType = "direct" | "chatbox" | "eval";
+export type TurnSourceType = "direct" | "chatbox" | "eval" | "swarm";
 
 export interface ResolveTurnRuntimeArgs {
   modelDefinition: ModelDefinition;
@@ -210,6 +210,7 @@ export async function resolveTurnRuntime(
         selectedServers: args.serverIds,
         serverIds: args.serverIds,
         synthesisRunId: args.attribution?.synthesisRunId,
+        journeyRunId: args.attribution?.journeyRunId,
       }).catch((err) => {
         logger.warn("[org/local] Failed to post local usage", {
           error: err instanceof Error ? err.message : String(err),

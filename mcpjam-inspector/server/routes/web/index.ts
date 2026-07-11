@@ -11,6 +11,7 @@ import mcpjamAgent from "./mcpjam-agent.js";
 import audioTranscriptions from "../mcp/audio-transcriptions.js";
 import chatboxes from "./chatboxes.js";
 import chatboxSessions from "./chatbox-sessions.js";
+import swarmRuns from "./swarm-runs.js";
 import { harnessMcp } from "./harness-mcp.js";
 import apps from "./apps.js";
 import evals from "./evals.js";
@@ -37,6 +38,9 @@ web.use("/tools/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/resources/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/prompts/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chatboxes/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Swarm (journey-execution) launch route — member-gated. The runner-control
+// API it fronts is LAUNCHER-gated + project-member-gated server-side.
+web.use("/swarm/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/evals/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-v2", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/mcpjam-agent", bearerAuthMiddleware, guestRateLimitMiddleware);
@@ -68,6 +72,7 @@ web.route("/resources", resources);
 web.route("/prompts", prompts);
 web.route("/chatboxes", chatboxes);
 web.route("/chatboxes", chatboxSessions);
+web.route("/swarm", swarmRuns);
 web.route("/evals", evals);
 web.route("/export", exporter);
 // Voice transcription handles user-bearer forwarding and guest fallback inside

@@ -112,10 +112,10 @@ export type RequestEventMap = {
   "chat.session.persist.failed": {
     failureKind: "timeout" | "http_error" | "exception" | "version_conflict";
     statusCode?: number;
-    sourceType?: "chatbox" | "direct" | "eval";
+    sourceType?: "chatbox" | "direct" | "eval" | "swarm";
     // Product-surface discriminator carried alongside sourceType so PostHog
     // can pivot persist failures by surface without rejoining to chatSessions.
-    origin?: "playground" | "mcpjam_agent" | "chatbox" | "eval";
+    origin?: "playground" | "mcpjam_agent" | "chatbox" | "eval" | "swarm";
   };
   "widget.resource.served": {
     widgetType: "mcp_apps" | "chatgpt_apps";

@@ -792,6 +792,16 @@ export async function createAuthorizedManager(
      */
     mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
     /**
+     * Per-server request-timeout overrides keyed by serverId, in milliseconds.
+     * Used by the swarm runner to honor each pinned server's
+     * `requestTimeoutOverride` from the run snapshot instead of applying the
+     * single host-level `timeoutMs` uniformly. Resolution per server:
+     * `requestTimeoutByServerId[serverId]` (if a positive finite number) →
+     * `timeoutMs` (the batch-uniform host default). The manager's
+     * `defaultTimeout` stays `timeoutMs`.
+     */
+    requestTimeoutByServerId?: Record<string, number>;
+    /**
      * Pre-resolved MCPJam test-IdP issuer (`resolveXaaIssuer(c, HOSTED_MODE)`)
      * for Cross-App Access servers. Supplied by callers that have the request
      * `Context`. Required whenever the batch contains a `useXaa` server — the
@@ -949,6 +959,16 @@ export async function createAuthorizedManager(
         options?.initializePins,
         options?.mcpProtocolVersionsByServerId
       );
+      // Per-server timeout: a pinned `requestTimeoutOverride` (threaded by the
+      // swarm runner) wins over the batch-uniform host default. Guard against a
+      // malformed snapshot value falling through to a non-positive timeout.
+      const perServerTimeout = options?.requestTimeoutByServerId?.[serverId];
+      const effectiveTimeoutMs =
+        typeof perServerTimeout === "number" &&
+        Number.isFinite(perServerTimeout) &&
+        perServerTimeout > 0
+          ? perServerTimeout
+          : timeoutMs;
       const authForConfig =
         auth.serverConfig.hasHeaders === true &&
         !hasNonEmptyStringRecord(auth.serverConfig.headers)
@@ -991,7 +1011,7 @@ export async function createAuthorizedManager(
         serverId,
         toHttpConfig(
           authForConfig,
-          timeoutMs,
+          effectiveTimeoutMs,
           connectToken,
           clientCapabilities,
           connectOnUnauthorized,
