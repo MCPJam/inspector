@@ -67,9 +67,13 @@ function useProjectHosts(projectId: string | null) {
   ) as HostItem[] | undefined;
 }
 
-export function SwarmsTab({ projectId }: SwarmsTabProps) {
-  const personas = usePersonas(projectId);
-  const hosts = useProjectHosts(projectId);
+export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
+  // Don't subscribe to project-scoped Convex reads until auth is ready — a
+  // signed-out/loading mount with a persisted project would otherwise surface
+  // authorization errors instead of holding the screen.
+  const effectiveProjectId = isAuthenticated ? projectId : null;
+  const personas = usePersonas(effectiveProjectId);
+  const hosts = useProjectHosts(effectiveProjectId);
   const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(null);
   const journeys = useJourneys(selectedPersonaId);
 
@@ -424,7 +428,16 @@ function NewJourneyButton({
         <Button
           type="button"
           size="sm"
-          disabled={!goal.trim() || hostIds.length === 0}
+          disabled={
+            !goal.trim() ||
+            hostIds.length === 0 ||
+            !Number.isInteger(sessionsPerHost) ||
+            sessionsPerHost < 1 ||
+            sessionsPerHost > 5 ||
+            !Number.isInteger(maxTurns) ||
+            maxTurns < 1 ||
+            maxTurns > 20
+          }
           onClick={async () => {
             await onCreate({
               goal,
