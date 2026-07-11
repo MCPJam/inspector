@@ -716,6 +716,12 @@ export async function postLocalUsage(params: {
    * "all spend for synthesisRunId X" in one hop. Omitted for real chat.
    */
   synthesisRunId?: string;
+  /**
+   * Journey run id for swarm (journey-execution) synthetic sessions. Mutually
+   * exclusive with `synthesisRunId`; the backend stamps it onto the same
+   * `llmUsageRecord` so per-journey-run spend rolls up in one query.
+   */
+  journeyRunId?: string;
 }): Promise<void> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) return;
@@ -753,6 +759,9 @@ export async function postLocalUsage(params: {
           : {}),
         ...(params.synthesisRunId
           ? { synthesisRunId: params.synthesisRunId }
+          : {}),
+        ...(params.journeyRunId
+          ? { journeyRunId: params.journeyRunId }
           : {}),
       }),
       signal: controller.signal,

@@ -124,6 +124,7 @@ import workosAuthkitRoutes from "./routes/workos-authkit";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningSimulations } from "./services/sessionSimulation/runner";
+import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
 import {
   isScheduledEvalsWorkerEnabled,
   startScheduledEvalsWorker,
@@ -756,6 +757,9 @@ async function shutdown() {
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded
     // by an internal timeout; the outer `forceExitTimer` still wins.
     await shutdownRunningSimulations();
+    // Abort active swarm (journey-execution) runs — stops each run's heartbeat
+    // and lets in-flight sessions report a terminal attempt. Bounded internally.
+    await shutdownRunningJourneyRuns();
     await tunnelManager.closeAll();
     server.close();
     // Flush queued server-side analytics (bounded internally; forceExitTimer

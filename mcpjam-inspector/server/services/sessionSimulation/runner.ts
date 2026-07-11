@@ -21,6 +21,7 @@ import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import {
   resolveTurnRuntime,
   classifyTurnFailure,
+  type TurnRunAttribution,
 } from "../../utils/resolve-turn-runtime.js";
 import {
   buildSyntheticModelDefinition,
@@ -36,6 +37,7 @@ import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-t
 import {
   persistChatSessionToConvex,
   type PersistedTurnTrace,
+  type ChatOrigin,
 } from "../../utils/chat-ingestion.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "../../utils/export-helpers.js";
 import { captureMcpAppWidgetSnapshots } from "../../utils/mcp-app-widget-capture.js";
@@ -496,13 +498,21 @@ interface SessionResult {
   errorMessage?: string;
 }
 
-async function runOneSession(args: {
-  persona: PersonaSlate;
-  sessionIdx: number;
-  runId: string;
-  chatboxId: string;
-  projectId: string;
-  maxTurns: number;
+// --- Shared synthetic host-session core ----------------------------------
+//
+// `runSyntheticHostSession` is the per-session host-turn machinery that is
+// IDENTICAL for the legacy chatbox session-simulation and the swarm
+// (journey-execution) runners: manager lifecycle + dispose, `resolveHostTools`
+// + cloud skills, `prepareChatV2`, the per-turn persona→`drainAssistantTurn`
+// loop, per-turn transcript persistence, browser/widget capture, empty-session
+// persistence, and failure classification. A surface adapter injects the three
+// pieces that differ between chatbox sim and swarm: (1) the persona-next-turn
+// source, (2) the persistence attribution tags, and (3) the pinned host
+// runtime config (chatbox sim: chatbox runtime config; swarm: pinned snapshot
+// host — NEVER a refetch of the live host config).
+
+/** Pinned host runtime a synthetic session executes against. */
+export interface SyntheticHostRuntime {
   modelDefinition: ModelDefinition;
   systemPrompt: string;
   temperature?: number;
@@ -514,20 +524,85 @@ async function runOneSession(args: {
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   computer?: HostComputerResource;
   harness?: Harness;
+  /**
+   * Chatbox-access version for the drain's `/stream/org/resolve` authorization
+   * and the chatbox-scoped widget capture. Set on the chatbox surface; the
+   * swarm surface uses project-member access and leaves it undefined.
+   */
   accessVersion?: number;
-  convexHttpUrl: string;
-  convexAuthToken: string;
+  /**
+   * Chatbox id for chatbox-scoped access authorization on the drain. The swarm
+   * surface authorizes via project membership and leaves it undefined.
+   */
+  chatboxId?: string;
+}
+
+/** Attribution tags stamped onto every transcript persist for this session. */
+export interface SyntheticPersistAttribution {
+  sourceType: "chatbox" | "swarm";
+  origin: ChatOrigin;
+  surface?: "preview" | "share_link";
+  chatboxId?: string;
+  synthesisRunId?: string;
+  journeyRunId?: string;
+  hostId?: string;
+  personaId?: string;
+  personaLabel?: string;
+  personaRefId?: string;
+}
+
+export interface SyntheticHostSessionAdapter {
+  runId: string;
+  projectId: string;
+  /** Deterministic chat session id — the claim key for swarm attempts. */
+  chatSessionId: string;
+  maxTurns: number;
+  runtime: SyntheticHostRuntime;
+  /**
+   * Bearer used for the hosted drain + transcript persist. The persona driver
+   * and any surface-specific side-persistence (chatbox widget capture) hold
+   * their own auth tokens in their closures.
+   */
   authHeader: string;
   managerFactory: SimulationManagerFactory;
   abortSignal?: AbortSignal;
-}): Promise<SessionResult> {
+  /** Surface persona driver: produce the next simulated user message. */
+  nextPersonaTurn(
+    transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>
+  ): Promise<{ message: string; endSession: boolean }>;
+  /** Persistence attribution tags (chatbox vs swarm). */
+  persist: SyntheticPersistAttribution;
+  /**
+   * Optional per-turn side-persistence (chatbox-scoped MCP App widget snapshots
+   * + browser artifacts). The chatbox surface injects it; the swarm single-host
+   * slice omits it — those rows are keyed by `chatboxId`, which swarm has none.
+   */
+  onTurnPersisted?(args: {
+    messages: ModelMessage[];
+    browser: BrowserSessionContext;
+    manager: MCPClientManager;
+    connectedServerIds: string[];
+    promptIndex: number;
+  }): Promise<void>;
+}
+
+export async function runSyntheticHostSession(
+  adapter: SyntheticHostSessionAdapter
+): Promise<SessionResult> {
   const {
-    persona,
-    sessionIdx,
     runId,
-    chatboxId,
     projectId,
+    chatSessionId,
     maxTurns,
+    runtime,
+    authHeader,
+    managerFactory,
+    abortSignal,
+    nextPersonaTurn,
+    persist,
+    onTurnPersisted,
+  } = adapter;
+  const {
     modelDefinition,
     systemPrompt,
     temperature,
@@ -540,15 +615,10 @@ async function runOneSession(args: {
     computer,
     harness,
     accessVersion,
-    convexHttpUrl,
-    convexAuthToken,
-    authHeader,
-    managerFactory,
-    abortSignal,
-  } = args;
+    chatboxId,
+  } = runtime;
 
   const sessionStartedAt = Date.now();
-  const chatSessionId = `synth_${runId}_${persona.id}_${sessionIdx}`;
   let manager: MCPClientManager | undefined;
   let dispose: (() => Promise<void>) | undefined;
   // Browser-rendered MCP App pipeline (same machinery as eval iterations):
@@ -680,14 +750,7 @@ async function runOneSession(args: {
     for (let turn = 0; turn < maxTurns; turn++) {
       if (abortSignal?.aborted) return { outcome: "failed" };
 
-      const next = await personaNextTurn(
-        convexHttpUrl,
-        convexAuthToken,
-        projectId,
-        runId,
-        persona.id,
-        lastTranscript
-      );
+      const next = await nextPersonaTurn(lastTranscript);
 
       if (next.endSession) break;
 
@@ -734,20 +797,27 @@ async function runOneSession(args: {
         selectedServers: selectedServerIds,
         requireToolApproval,
         ...(harness ? { harness } : {}),
-        chatboxId,
-        // The chatbox runtime-config redeem returns an accessVersion that
-        // /stream/org/resolve uses to authorize the actor against the
-        // versioned chatbox; threading the value (instead of undefined)
-        // matches what real-visitor synthetic-equivalent chats send.
+        // Chatbox surface only. The chatbox runtime-config redeem returns an
+        // accessVersion that /stream/org/resolve uses to authorize the actor
+        // against the versioned chatbox; threading it (instead of undefined)
+        // matches what real-visitor synthetic-equivalent chats send. The swarm
+        // surface authorizes via project membership and leaves both undefined.
+        ...(chatboxId ? { chatboxId } : {}),
         accessVersion,
         projectId,
         authHeader,
         abortSignal,
         // Threaded into the per-step /stream (or /stream/org) body and the
-        // /stream/org/local-usage writeback so the backend BYOK and
-        // JAM-paid writers can stamp synthesisRunId onto llmUsageRecord
-        // for per-run spend attribution.
-        synthesisRunId: runId,
+        // /stream/org/local-usage writeback so the backend BYOK and JAM-paid
+        // writers can stamp the run id onto llmUsageRecord for per-run spend
+        // attribution. Exactly one of synthesisRunId (chatbox) / journeyRunId
+        // (swarm) is set — the attribution XOR the adapter chose.
+        ...(persist.synthesisRunId
+          ? { synthesisRunId: persist.synthesisRunId }
+          : {}),
+        ...(persist.journeyRunId
+          ? { journeyRunId: persist.journeyRunId }
+          : {}),
       });
       // Track the first turn's modelSource for the per-session persist
       // calls. modelSource is stable across turns within a session because
@@ -800,56 +870,45 @@ async function runOneSession(args: {
         modelSource: sessionModelSource ?? "mcpjam",
         authHeader,
         projectId,
-        sourceType: "chatbox",
-        // Synthetic chatbox simulation — distinguished from real chatbox
-        // traffic by the `synthetic: true` flag already on the row, not by
-        // origin. Training filters should combine `origin === 'chatbox'`
-        // with `synthetic !== true` to keep these out.
-        origin: "chatbox",
-        surface: "share_link",
-        chatboxId,
+        sourceType: persist.sourceType,
+        // Synthetic session — distinguished from real traffic by the
+        // `synthetic: true` flag already on the row, not by origin. Training
+        // filters should combine `origin` with `synthetic !== true`.
+        origin: persist.origin,
+        ...(persist.surface ? { surface: persist.surface } : {}),
+        ...(persist.chatboxId ? { chatboxId: persist.chatboxId } : {}),
         sessionMessages: messageHistory,
         startedAt: sessionStartedAt,
         lastActivityAt: Date.now(),
         synthetic: true,
-        personaId: persona.id,
-        personaLabel: persona.name,
-        synthesisRunId: runId,
+        ...(persist.personaId ? { personaId: persist.personaId } : {}),
+        ...(persist.personaLabel ? { personaLabel: persist.personaLabel } : {}),
+        ...(persist.personaRefId ? { personaRefId: persist.personaRefId } : {}),
+        ...(persist.synthesisRunId
+          ? { synthesisRunId: persist.synthesisRunId }
+          : {}),
+        ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
+        ...(persist.hostId ? { hostId: persist.hostId } : {}),
         turnTrace,
         resumeConfig,
         ...(toolSnapshot ? { toolSnapshot } : {}),
       });
       anyTurnPersisted = true;
 
-      // Capture + persist MCP App widget snapshots for any tool calls in this
-      // session so the Sessions viewer renders the actual widget (e.g.
-      // Excalidraw `create_view`) instead of a collapsed tool pill. Mirrors
-      // what the live browser capture hook
-      // (`useSharedChatWidgetCapture`) does for real visitor sessions, just
-      // server-side using the runner's MCP manager. Best-effort: a failure
-      // here never aborts the run.
-      await captureAndPersistWidgetSnapshotsForSession({
-        messages: messageHistory,
-        mcpClientManager: manager,
-        convexAuthToken,
-        chatSessionId,
-        chatboxId,
-        accessVersion,
-      });
-
-      // Persist this turn's browser-rendered artifacts (render observations
-      // + Computer Use steps) — additive to the inert HTML snapshots above,
-      // which keep powering the viewer's interactive Data/Sandbox iframe.
-      // Best-effort like the snapshot capture; the session row exists (the
-      // turn persist above just ran), so there's no /ingest-chat race here.
-      await persistBrowserArtifactsForTurn({
-        browser,
-        convexAuthToken,
-        chatSessionId,
-        chatboxId,
-        accessVersion,
-        promptIndex: turn,
-      });
+      // Chatbox-scoped side-persistence (MCP App widget snapshots + browser
+      // artifacts) so the Sessions viewer renders the actual widget instead of
+      // a collapsed tool pill. Injected by the chatbox surface; omitted by the
+      // swarm surface (those rows are keyed by chatboxId). Best-effort — a
+      // failure here never aborts the run.
+      if (onTurnPersisted) {
+        await onTurnPersisted({
+          messages: messageHistory,
+          browser,
+          manager,
+          connectedServerIds: selectedServerIds,
+          promptIndex: turn,
+        });
+      }
     }
 
     if (!anyTurnPersisted) {
@@ -883,17 +942,22 @@ async function runOneSession(args: {
         modelSource: emptySessionModelSource,
         authHeader,
         projectId,
-        sourceType: "chatbox",
-        origin: "chatbox",
-        surface: "share_link",
-        chatboxId,
+        sourceType: persist.sourceType,
+        origin: persist.origin,
+        ...(persist.surface ? { surface: persist.surface } : {}),
+        ...(persist.chatboxId ? { chatboxId: persist.chatboxId } : {}),
         sessionMessages: messageHistory,
         startedAt: sessionStartedAt,
         lastActivityAt: Date.now(),
         synthetic: true,
-        personaId: persona.id,
-        personaLabel: persona.name,
-        synthesisRunId: runId,
+        ...(persist.personaId ? { personaId: persist.personaId } : {}),
+        ...(persist.personaLabel ? { personaLabel: persist.personaLabel } : {}),
+        ...(persist.personaRefId ? { personaRefId: persist.personaRefId } : {}),
+        ...(persist.synthesisRunId
+          ? { synthesisRunId: persist.synthesisRunId }
+          : {}),
+        ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
+        ...(persist.hostId ? { hostId: persist.hostId } : {}),
         resumeConfig,
       });
     }
@@ -908,8 +972,8 @@ async function runOneSession(args: {
     }
     logger.warn("[sessionSimulation.runner] session failed", {
       runId,
-      personaId: persona.id,
-      sessionIdx,
+      chatSessionId,
+      personaId: persist.personaId,
       error: message,
     });
     return { outcome: "failed", errorMessage: message };
@@ -938,6 +1002,104 @@ async function runOneSession(args: {
       }
     }
   }
+}
+
+/**
+ * Legacy chatbox session-simulation adapter over {@link runSyntheticHostSession}.
+ * Builds the chatbox surface (persona driver via the `/session-simulation/*`
+ * `personaNextTurn`, `sourceType/origin: "chatbox"` attribution, and the
+ * chatbox-scoped widget + browser-artifact side-persistence) and delegates the
+ * host-turn machinery to the shared core. Behavior-preserving: this reproduces
+ * the pre-extraction `runOneSession` byte-for-byte.
+ */
+async function runOneSession(args: {
+  persona: PersonaSlate;
+  sessionIdx: number;
+  runId: string;
+  chatboxId: string;
+  projectId: string;
+  maxTurns: number;
+  modelDefinition: ModelDefinition;
+  systemPrompt: string;
+  temperature?: number;
+  requireToolApproval: boolean;
+  respectToolVisibility?: boolean;
+  progressiveToolDiscovery?: boolean;
+  builtInToolIds?: string[];
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
+  computer?: HostComputerResource;
+  harness?: Harness;
+  accessVersion?: number;
+  convexHttpUrl: string;
+  convexAuthToken: string;
+  authHeader: string;
+  managerFactory: SimulationManagerFactory;
+  abortSignal?: AbortSignal;
+}): Promise<SessionResult> {
+  const { persona, sessionIdx, runId, chatboxId, convexHttpUrl } = args;
+  const chatSessionId = `synth_${runId}_${persona.id}_${sessionIdx}`;
+
+  return runSyntheticHostSession({
+    runId,
+    projectId: args.projectId,
+    chatSessionId,
+    maxTurns: args.maxTurns,
+    runtime: {
+      modelDefinition: args.modelDefinition,
+      systemPrompt: args.systemPrompt,
+      temperature: args.temperature,
+      requireToolApproval: args.requireToolApproval,
+      respectToolVisibility: args.respectToolVisibility,
+      progressiveToolDiscovery: args.progressiveToolDiscovery,
+      builtInToolIds: args.builtInToolIds,
+      modelVisibleMcpToolResults: args.modelVisibleMcpToolResults,
+      mcpToolResultImageRendering: args.mcpToolResultImageRendering,
+      computer: args.computer,
+      harness: args.harness,
+      accessVersion: args.accessVersion,
+      chatboxId,
+    },
+    authHeader: args.authHeader,
+    managerFactory: args.managerFactory,
+    abortSignal: args.abortSignal,
+    nextPersonaTurn: (transcriptSoFar) =>
+      personaNextTurn(
+        convexHttpUrl,
+        args.convexAuthToken,
+        args.projectId,
+        runId,
+        persona.id,
+        transcriptSoFar
+      ),
+    persist: {
+      sourceType: "chatbox",
+      origin: "chatbox",
+      surface: "share_link",
+      chatboxId,
+      synthesisRunId: runId,
+      personaId: persona.id,
+      personaLabel: persona.name,
+    },
+    onTurnPersisted: async ({ messages, browser, manager, promptIndex }) => {
+      await captureAndPersistWidgetSnapshotsForSession({
+        messages,
+        mcpClientManager: manager,
+        convexAuthToken: args.convexAuthToken,
+        chatSessionId,
+        chatboxId,
+        accessVersion: args.accessVersion,
+      });
+      await persistBrowserArtifactsForTurn({
+        browser,
+        convexAuthToken: args.convexAuthToken,
+        chatSessionId,
+        chatboxId,
+        accessVersion: args.accessVersion,
+        promptIndex,
+      });
+    },
+  });
 }
 
 /**
@@ -1179,8 +1341,17 @@ export async function drainAssistantTurn(
     chatSessionId: string;
     /** Resolved provider info for org-BYOK dispatch. Falls back to lookup. */
     modelDefinition: ModelDefinition;
-    /** Synthesis run id — stamped onto BYOK usage records for attribution. */
-    synthesisRunId: string;
+    /**
+     * Chatbox session-simulation run id — stamped onto BYOK usage records for
+     * per-run spend attribution. Mutually exclusive with `journeyRunId`.
+     */
+    synthesisRunId?: string;
+    /**
+     * Swarm (journey-execution) run id — the swarm sibling of
+     * `synthesisRunId`. Forwarded into the hosted `/stream` body and the
+     * local-BYOK usage writeback so per-journey-run spend rolls up the same way.
+     */
+    journeyRunId?: string;
     /** Optional turn hooks (browser session context attachment points). */
     hooks?: DrainAssistantTurnHooks;
   }
@@ -1189,7 +1360,25 @@ export async function drainAssistantTurn(
   turnTrace: PersistedTurnTrace | undefined;
   modelSource: SyntheticModelSource;
 }> {
-  const { modelDefinition, synthesisRunId, extraBodyFields, hooks } = args;
+  const { modelDefinition, synthesisRunId, journeyRunId, extraBodyFields, hooks } =
+    args;
+
+  // Exactly one run-attribution key is set (chatbox sim vs swarm) — the XOR
+  // that `resolveTurnRuntime` stamps onto the local-BYOK usage writeback.
+  const attribution: TurnRunAttribution = synthesisRunId
+    ? { synthesisRunId }
+    : journeyRunId
+      ? { journeyRunId }
+      : undefined;
+
+  // Forward the swarm `journeyRunId` into the hosted `/stream` (or `/stream/org`)
+  // body as an extra field. The backend spend writer ignores unknown fields
+  // until the swarm wiring lands (`feedback_bridge_preserves_unknown_fields`),
+  // so this is forward-compatible and inert for the chatbox path.
+  const mergedExtraBodyFields =
+    journeyRunId !== undefined
+      ? { ...(extraBodyFields ?? {}), journeyRunId }
+      : extraBodyFields;
 
   // Narrow MCPJamHandlerOptions' open `sourceType` string to the engine union;
   // the simulation runner always passes "chatbox".
@@ -1213,8 +1402,10 @@ export async function drainAssistantTurn(
     requireToolApproval: args.requireToolApproval,
     tools: args.tools as ToolSet,
     ...(args.harness ? { harness: args.harness } : {}),
-    ...(extraBodyFields ? { extraBodyFields } : {}),
-    attribution: { synthesisRunId },
+    ...(mergedExtraBodyFields
+      ? { extraBodyFields: mergedExtraBodyFields }
+      : {}),
+    ...(attribution ? { attribution } : {}),
   });
 
   // Engine-error signal. Structural type covers both the hosted
@@ -1347,8 +1538,9 @@ export async function drainAssistantTurn(
     ...(args.discoveryState ? { discoveryState: args.discoveryState } : {}),
     ...(args.abortSignal ? { abortSignal: args.abortSignal } : {}),
     // `runAssistantTurn` appends synthesisRunId to extraBodyFields last, so the
-    // merged `/stream` body matches the old handler-built shape.
-    synthesisRunId,
+    // merged `/stream` body matches the old handler-built shape. The swarm
+    // `journeyRunId` rides `mergedExtraBodyFields` (on `rt.runtime`) instead.
+    ...(synthesisRunId ? { synthesisRunId } : {}),
     ...(hooks?.onToolCall ? { onToolCall: hooks.onToolCall } : {}),
     ...(hooks?.onToolResult ? { onToolResult: hooks.onToolResult } : {}),
     ...(hooks?.prepareAdvertisedTools

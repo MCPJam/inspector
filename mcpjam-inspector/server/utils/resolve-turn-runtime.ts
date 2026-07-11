@@ -210,6 +210,7 @@ export async function resolveTurnRuntime(
         selectedServers: args.serverIds,
         serverIds: args.serverIds,
         synthesisRunId: args.attribution?.synthesisRunId,
+        journeyRunId: args.attribution?.journeyRunId,
       }).catch((err) => {
         logger.warn("[org/local] Failed to post local usage", {
           error: err instanceof Error ? err.message : String(err),
