@@ -490,7 +490,7 @@ export function handleLocalOrgChatModel(
  * caller-supplied ceiling AND preserve the legacy default. Route 4 and eval
  * headless still get the engine default (20) because they omit the option.
  */
-function resolveLocalOrgMaxSteps(maxSteps: number | undefined): number {
+export function resolveLocalOrgMaxSteps(maxSteps: number | undefined): number {
   return typeof maxSteps === "number" &&
     Number.isFinite(maxSteps) &&
     maxSteps > 0
@@ -688,7 +688,14 @@ export async function runLocalOrgChatTurnHeadless(
   };
 }
 
-async function postLocalUsage(params: {
+/**
+ * Post a local-runtime BYOK usage record to Convex's
+ * `/stream/org/local-usage` writeback endpoint. Exported so the shared
+ * {@link resolveTurnRuntime} adapter can emit the byte-identical request the
+ * SSE/headless local handlers do — the body shape is the source of truth for
+ * per-run BYOK spend attribution, so it must never drift between call sites.
+ */
+export async function postLocalUsage(params: {
   projectId: string;
   providerKey: string;
   model: string;

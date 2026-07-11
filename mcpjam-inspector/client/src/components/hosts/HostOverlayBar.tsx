@@ -25,7 +25,7 @@ const QUICK_ADD_TEMPLATES = ["claude", "chatgpt", "copilot"] as const;
 
 const MCPJAM_HOST_NAME = "MCPJam";
 const LAST_HOST_DELETE_REASON =
-  "A project needs at least one host. Create another host first.";
+  "A project needs at least one client. Create another client first.";
 
 interface HostOverlayBarProps {
   projectId: string;
@@ -251,7 +251,7 @@ export function HostOverlayBar({
         <div className="flex items-center rounded-md border border-border/40 bg-muted/30">
           <button
             type="button"
-            aria-label="Previous host"
+            aria-label="Previous client"
             data-testid="host-overlay-prev"
             disabled={arrowDisabled}
             onClick={() => cycle(-1)}
@@ -269,7 +269,7 @@ export function HostOverlayBar({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                aria-label="Host used for preview"
+                aria-label="Client used for preview"
                 data-testid="host-overlay-current"
                 className={cn(
                   "flex h-8 min-w-[7rem] max-w-[14rem] items-center justify-center border-x border-border/40 bg-transparent px-3 text-sm font-medium text-foreground transition-colors outline-none",
@@ -338,7 +338,7 @@ export function HostOverlayBar({
                 className="group pr-1.5"
               >
                 <Plus className="size-3.5" />
-                <span className="flex-1">Add host</span>
+                <span className="flex-1">Add client</span>
                 <span
                   className="ml-2 flex shrink-0 items-center gap-0.5"
                   onPointerDown={(e) => e.stopPropagation()}
@@ -381,7 +381,7 @@ export function HostOverlayBar({
 
           <button
             type="button"
-            aria-label="Next host"
+            aria-label="Next client"
             data-testid="host-overlay-next"
             disabled={arrowDisabled}
             onClick={() => cycle(1)}

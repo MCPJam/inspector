@@ -630,7 +630,7 @@ function GroupRunRows({
             </span>
           ) : null}
           <span className="shrink-0 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-            {group.runs.length} hosts
+            {group.runs.length} clients
           </span>
         </div>
         <div className={RUNS_LIST_METRIC_CELL_CLASS}>

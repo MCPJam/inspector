@@ -199,11 +199,11 @@ export function ChatboxHostPickerPill({
             type="button"
             disabled={isLoading || sortedHosts.length === 0}
             className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-l-full px-2.5 transition hover:bg-muted/70 disabled:cursor-not-allowed disabled:opacity-50"
-            title="Switch host"
-            aria-label="Switch host"
+            title="Switch client"
+            aria-label="Switch client"
             data-testid="chatbox-host-picker"
           >
-            <span className="shrink-0 text-muted-foreground">Host</span>
+            <span className="shrink-0 text-muted-foreground">Client</span>
             {logoSrc ? (
               <img
                 src={logoSrc}
@@ -224,8 +224,8 @@ export function ChatboxHostPickerPill({
           type="button"
           onClick={() => navigate(buildHostsPath(hostId))}
           className="inline-flex h-full shrink-0 items-center justify-center rounded-r-full border-l border-border/60 px-2 text-muted-foreground transition hover:bg-muted/70 hover:text-foreground"
-          title="Edit this host's identity in Connect"
-          aria-label="Edit host in Connect"
+          title="Edit this client's identity in Connect"
+          aria-label="Edit client in Connect"
           data-testid="chatbox-host-edit"
         >
           <Settings2 className="size-3.5" />

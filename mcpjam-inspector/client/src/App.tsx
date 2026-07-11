@@ -11,7 +11,7 @@ import {
   type ComponentProps,
 } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { HomeTab } from "./components/HomeTab";
@@ -27,6 +27,9 @@ import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ChatboxesTab } from "./components/ChatboxesTab";
+import { SwarmsTab } from "./components/swarms/SwarmsTab";
+import { EmptyState } from "./components/ui/empty-state";
+import { canViewSwarms, useViewerProjectRole } from "./hooks/useProjects";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
@@ -1087,7 +1090,68 @@ export function ChatboxesRoute() {
 }
 
 export function SwarmsRoute() {
-  return <ChatboxProductRoute product="swarm" />;
+  // Project-scoped Swarms surface (Persona → Journey → Run redesign) — no
+  // longer a per-host chatbox tab. Keeps the same billing gate as the chatbox
+  // product surface, and re-mounts per project so selection state can't leak
+  // across a project switch.
+  const {
+    billingUiEnabled,
+    activeTabBillingLocked,
+    activeTabBillingFeature,
+    convexProjectId,
+    isAuthenticated,
+  } = useAppRouteContext();
+  const { user } = useAuth();
+
+  // The backend made the entire Swarm surface member-only: personas, journeys,
+  // journeyRuns, session lists and transcript reads all reject a project
+  // **guest**. Mirror that here — resolve the authenticated viewer's project
+  // role and, when they're a guest/non-member, show an access notice INSTEAD of
+  // mounting `SwarmsTab` so none of the member-only queries ever fire.
+  //
+  // Only engage for an authenticated viewer on a real (Convex) project. An
+  // unauthenticated / guest-mode local user (no `convexProjectId`) has no
+  // project membership to check and keeps its existing behavior.
+  const roleGateActive = isAuthenticated && !!convexProjectId;
+  const { role, isLoading: roleLoading } = useViewerProjectRole({
+    isAuthenticated,
+    projectId: convexProjectId,
+    viewerEmail: user?.email,
+  });
+
+  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+    return <ActiveBillingUpsellGate />;
+  }
+
+  if (roleGateActive) {
+    // Wait for the members list to resolve before deciding, so a guest never
+    // briefly mounts `SwarmsTab` (which would fire the member-only queries).
+    if (roleLoading) {
+      return (
+        <div className="flex h-full items-center justify-center">
+          <Loader2 className="size-5 animate-spin text-muted-foreground" />
+        </div>
+      );
+    }
+
+    if (!canViewSwarms(role)) {
+      return (
+        <EmptyState
+          icon={Users}
+          title="Swarms is available to project members"
+          description="You have guest access to this project. Swarms — personas, journeys and their runs — can only be viewed and run by project members. Ask a project admin to add you as a member to get access."
+        />
+      );
+    }
+  }
+
+  return (
+    <SwarmsTab
+      key={convexProjectId ?? "no-project"}
+      projectId={convexProjectId}
+      isAuthenticated={isAuthenticated}
+    />
+  );
 }
 
 export function ResourcesRoute() {

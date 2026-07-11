@@ -57,7 +57,7 @@ export function HostPicker({
   value,
   onChange,
   location,
-  placeholder = "Select a host",
+  placeholder = "Select a client",
   includeNone = true,
   noneLabel = "Project default",
   disabled = false,

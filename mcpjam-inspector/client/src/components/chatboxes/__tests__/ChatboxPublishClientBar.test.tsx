@@ -147,7 +147,7 @@ describe("ChatboxPublishClientBar", () => {
   it("renders a host picker pill for the current host", () => {
     renderBar([]);
     expect(screen.getByTestId("chatbox-host-picker")).toBeInTheDocument();
-    expect(screen.getByText("Host")).toBeInTheDocument();
+    expect(screen.getByText("Client")).toBeInTheDocument();
     expect(screen.getByText("MCPJam")).toBeInTheDocument();
   });
 

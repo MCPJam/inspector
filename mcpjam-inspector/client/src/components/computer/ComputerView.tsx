@@ -2,7 +2,18 @@ import { Component, useCallback, useState } from "react";
 import { toast } from "@/lib/toast";
 import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
-import { Boxes, Loader2, RotateCcw, TerminalSquare, Trash2 } from "lucide-react";
+import {
+  Boxes,
+  Info,
+  Loader2,
+  RotateCcw,
+  TerminalSquare,
+  Trash2,
+} from "lucide-react";
+import {
+  ComputerBillingWarningBanner,
+  ComputerPausedForBillingNotice,
+} from "./ComputerBillingNotices";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   useComputersDataPlaneConfig,
@@ -83,6 +94,11 @@ export function ComputerView({
     dataPlane !== undefined && !dataPlane.localConfigured && !remoteWsBase;
 
   const liveStatus = status === undefined ? undefined : status?.status ?? null;
+  const hibernatedReason = status?.hibernatedReason;
+  // Paused because compute hours ran out and the wallet couldn't cover the
+  // overage (COMP-7) — distinct from an idle sleep the user can just wake.
+  const isBillingPaused =
+    liveStatus === "hibernating" && hibernatedReason === "billing";
   const isReady = liveStatus === "ready";
   // "Gone" = no computer row, or one that's been (or is being) torn down.
   // Nothing to delete and nothing for an open terminal to attach to.
@@ -184,6 +200,12 @@ export function ComputerView({
     if (dataPlaneUnavailable) {
       return <ComputersUnavailableMessage />;
     }
+    // Billing pause is a distinct state: the terminal can't open until credits
+    // land or the allowance resets, so state the reason + remedy instead of an
+    // idle prompt or a spinner that would bounce straight back to sleep.
+    if (isBillingPaused) {
+      return <ComputerPausedForBillingNotice />;
+    }
     if (!terminalOpen) {
       return (
         <PaneMessage dashed>
@@ -279,7 +301,10 @@ export function ComputerView({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-semibold text-foreground">Computer</h1>
-          <ComputerStatusChip status={liveStatus} />
+          <ComputerStatusChip
+            status={liveStatus}
+            hibernatedReason={hibernatedReason}
+          />
         </div>
         <div className="flex items-center gap-2">
           {!terminalOpen && !dataPlaneUnavailable ? (
@@ -299,7 +324,7 @@ export function ComputerView({
           {hasComputer ? (
             confirmingDelete ? (
               <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-                Delete this computer?
+                Delete this computer? All files on it will be deleted.
                 <Button
                   size="sm"
                   variant="destructive"
@@ -334,10 +359,25 @@ export function ComputerView({
         </div>
       </div>
 
-      <p className="text-sm text-muted-foreground">
-        A personal Linux workstation for this project — files and installed
-        tools persist between sessions; it sleeps when idle and wakes on use.
-      </p>
+      <div className="flex flex-col gap-1.5">
+        <p className="text-sm text-muted-foreground">
+          A personal Linux workstation for this project — it sleeps when idle
+          and wakes on use.
+        </p>
+        <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            Files persist when your computer sleeps, but they aren't backed up —
+            keep anything important in git or elsewhere.
+          </span>
+        </p>
+      </div>
+
+      {/* Degrade like the meter: the shared query throws against a backend that
+          predates it, so hide the banner rather than blank the whole tab. */}
+      <UsageMeterBoundary>
+        <ComputerBillingWarningBanner projectId={projectId} />
+      </UsageMeterBoundary>
 
       {status !== undefined ? (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/10 px-3 py-2 text-sm">
@@ -362,7 +402,8 @@ export function ComputerView({
             {hasComputer ? (
               confirmingReset ? (
                 <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-                  Reset to the image? Installed files are wiped.
+                  Reset to the image? All files on this computer will be
+                  deleted.
                   <Button
                     size="sm"
                     variant="destructive"

@@ -120,7 +120,7 @@ describe("HostOverlayBar", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Host used for preview" })
+      screen.getByRole("button", { name: "Client used for preview" })
     );
 
     await waitFor(() => {
@@ -198,14 +198,14 @@ describe("HostOverlayBar", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Host used for preview" })
+      screen.getByRole("button", { name: "Client used for preview" })
     );
 
     const deleteBtn = await screen.findByTestId("host-overlay-delete-host-a");
     expect(deleteBtn).toBeDisabled();
     expect(deleteBtn).toHaveAttribute(
       "title",
-      expect.stringContaining("at least one host")
+      expect.stringContaining("at least one client")
     );
   });
 
@@ -223,7 +223,7 @@ describe("HostOverlayBar", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Host used for preview" })
+      screen.getByRole("button", { name: "Client used for preview" })
     );
 
     const deleteBtn = await screen.findByTestId("host-overlay-delete-host-a");

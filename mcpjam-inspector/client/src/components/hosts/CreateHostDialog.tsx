@@ -89,11 +89,11 @@ export function CreateHostDialog({
       : undefined) ?? "";
   const templatesUnavailableMessage =
     catalogState.status === "loading"
-      ? "Loading host templates..."
+      ? "Loading client templates..."
       : catalogState.status === "fallback" || catalogState.status === "error"
-      ? "Could not load live host templates."
+      ? "Could not load live client templates."
       : !selectedTemplateInput
-      ? "Selected host template is unavailable."
+      ? "Selected client template is unavailable."
       : null;
   const canCreate =
     Boolean(name.trim()) &&
@@ -131,7 +131,7 @@ export function CreateHostDialog({
     const trimmed = name.trim();
     if (!trimmed || !selectedTemplateInput || catalogState.status !== "live") {
       if (trimmed && catalogState.status !== "loading") {
-        toast.error("Could not load live host templates");
+        toast.error("Could not load live client templates");
       }
       return;
     }
@@ -154,7 +154,7 @@ export function CreateHostDialog({
         name: trimmed,
         input: { ...seed, serverIds: [] },
       });
-      toast.success(`Host "${trimmed}" created`);
+      toast.success(`Client "${trimmed}" created`);
       handleClose();
       onCreated(hostId);
       // Telemetry is best-effort: a posthog throw must not bubble into the
@@ -172,7 +172,7 @@ export function CreateHostDialog({
         // swallow — analytics must not block the success path
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create host");
+      toast.error(err instanceof Error ? err.message : "Failed to create client");
     } finally {
       setIsSaving(false);
     }
@@ -182,7 +182,7 @@ export function CreateHostDialog({
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>New Host</DialogTitle>
+          <DialogTitle>New Client</DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-4 py-2">
           <div className="flex flex-col gap-2">
@@ -231,7 +231,7 @@ export function CreateHostDialog({
             <Label htmlFor="host-name">Name</Label>
             <Input
               id="host-name"
-              placeholder="My Host"
+              placeholder="My Client"
               value={name}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) =>
