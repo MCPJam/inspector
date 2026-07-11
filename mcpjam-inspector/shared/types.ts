@@ -671,7 +671,7 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   },
   {
     id: "x-ai/grok-4.5",
-    name: "Grok 4.5 (Free)",
+    name: "Grok 4.5",
     provider: "xai",
     contextLength: 500000,
   },
