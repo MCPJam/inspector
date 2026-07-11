@@ -219,6 +219,47 @@ export function useProjectMembers({
   };
 }
 
+// The Swarms surface (personas / journeys / journeyRuns) is *member-only* on
+// the backend: every persona/journey/run query rejects a project **guest**.
+// Mirror that gate in the UI so a guest never fires the (now-erroring)
+// member-only queries. A viewer may access Swarms only when they hold a
+// resolved member-or-above role; a guest — or any unresolved role — is denied.
+export function canViewSwarms(
+  role: ProjectMembershipRole | undefined
+): boolean {
+  return role === "owner" || role === "admin" || role === "member";
+}
+
+// Resolve the *current viewer's* project-membership role for a project, reusing
+// the same members-list signal `ProjectSettingsTab` keys off. Returns
+// `role: undefined` while the members list is still loading (or when the viewer
+// isn't found among the active members). Callers should treat `isLoading` as
+// "not yet decided" rather than firing member-only queries.
+export function useViewerProjectRole({
+  isAuthenticated,
+  projectId,
+  viewerEmail,
+}: {
+  isAuthenticated: boolean;
+  projectId: string | null;
+  viewerEmail: string | null | undefined;
+}): { role: ProjectMembershipRole | undefined; isLoading: boolean } {
+  const { activeMembers, isLoading } = useProjectMembers({
+    isAuthenticated,
+    projectId,
+  });
+
+  const role = useMemo(() => {
+    const email = viewerEmail?.trim().toLowerCase();
+    if (!email) return undefined;
+    return activeMembers.find(
+      (member) => member.email.toLowerCase() === email
+    )?.role;
+  }, [activeMembers, viewerEmail]);
+
+  return { role, isLoading };
+}
+
 export function useProjectMutations() {
   const createProject = useMutation("projects:createProject" as any);
   const ensureDefaultProject = useMutation(
