@@ -89,7 +89,7 @@ type PublishPanelView = "preview" | "graph";
 const PUBLISH_PANEL_OPTIONS: Array<{ value: PublishPanelView; label: string }> =
   [
     { value: "preview", label: "Preview" },
-    { value: "graph", label: "Host graph" },
+    { value: "graph", label: "Client graph" },
   ];
 
 export function ChatboxesTab({
@@ -199,7 +199,7 @@ export function ChatboxesTab({
         toast.error(
           err instanceof Error
             ? err.message
-            : "Failed to provision swarm for host"
+            : "Failed to provision swarm for client"
         );
       });
     return () => {
@@ -251,9 +251,9 @@ export function ChatboxesTab({
       <div className="flex h-full items-center justify-center px-6 text-center">
         <div className="max-w-sm">
           <Inbox className="mx-auto size-8 text-muted-foreground/70" />
-          <p className="mt-3 text-sm font-medium">Pick a host</p>
+          <p className="mt-3 text-sm font-medium">Pick a client</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Use the host bar at the top to choose which host's swarm you want to
+            Use the client bar at the top to choose which client's swarm you want to
             manage.
           </p>
         </div>
@@ -278,8 +278,8 @@ export function ChatboxesTab({
     if (previewedHostId && ensureCompletedNullHosts.has(previewedHostId)) {
       return (
         <ChatboxLoadFailure
-          title="Couldn't load this host's swarm"
-          body="The backfill mutation succeeded but the chatbox query still returned nothing. Check the Convex logs for getChatboxByHostId on this host."
+          title="Couldn't load this client's swarm"
+          body="The backfill mutation succeeded but the chatbox query still returned nothing. Check the Convex logs for getChatboxByHostId on this client."
         />
       );
     }
@@ -288,7 +288,7 @@ export function ChatboxesTab({
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         <Loader2 className="mr-2 size-4 animate-spin" />
-        <span className="text-sm">Provisioning swarm for this host…</span>
+        <span className="text-sm">Provisioning swarm for this client…</span>
       </div>
     );
   }
@@ -355,7 +355,7 @@ export function ChatboxesTab({
                     chatboxId={chatbox.chatboxId}
                     projectId={chatbox.projectId}
                     hostId={chatbox.namedHostId}
-                    hostName={host?.name ?? chatbox.namedHostName ?? "Host"}
+                    hostName={host?.name ?? chatbox.namedHostName ?? "Client"}
                     isAuthenticated={effectiveAuth}
                     currentServerIds={chatbox.servers.map((s) => s.serverId)}
                   />

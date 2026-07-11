@@ -48,7 +48,7 @@ describe("HostConfigComparisonMatrix", () => {
 
   it("renders the empty-state hint when no subjects are passed", () => {
     render(<HostConfigComparisonMatrix subjects={[]} />);
-    expect(screen.getByText(/No hosts to compare/i)).toBeInTheDocument();
+    expect(screen.getByText(/No clients to compare/i)).toBeInTheDocument();
   });
 
   it("renders the three section bands in the canonical order", () => {

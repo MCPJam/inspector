@@ -108,7 +108,7 @@ describe("HostConfigCompareView public mode", () => {
 
     expect(screen.queryByText(/Sign in to compare/i)).not.toBeInTheDocument();
     expect(
-      screen.getByLabelText("Search host config fields")
+      screen.getByLabelText("Search client config fields")
     ).toBeInTheDocument();
     expect(screen.getByText("Can I use…")).toBeInTheDocument();
     expect(
@@ -167,7 +167,7 @@ describe("HostConfigCompareView public mode", () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByLabelText("Search host config fields")).toHaveValue(
+    expect(screen.getByLabelText("Search client config fields")).toHaveValue(
       "Elicitation"
     );
     await waitFor(() => {
@@ -196,7 +196,7 @@ describe("HostConfigCompareView public mode", () => {
     );
 
     await user.type(
-      screen.getByLabelText("Search host config fields"),
+      screen.getByLabelText("Search client config fields"),
       "Elicitation"
     );
 
@@ -224,7 +224,7 @@ describe("HostConfigCompareView public mode", () => {
     expect(filterButton).toBeDisabled();
 
     await user.type(
-      screen.getByLabelText("Search host config fields"),
+      screen.getByLabelText("Search client config fields"),
       "Elicitation"
     );
 
@@ -248,7 +248,7 @@ describe("HostConfigCompareView public mode", () => {
       </MemoryRouter>
     );
 
-    const search = screen.getByLabelText("Search host config fields");
+    const search = screen.getByLabelText("Search client config fields");
     const canIUseButton = screen.getByRole("button", {
       name: "Show all clients and capabilities",
     });
@@ -349,7 +349,7 @@ describe("HostConfigCompareView public mode", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Notify me of host changes" })
+      screen.getByRole("button", { name: "Notify me of client changes" })
     );
 
     const dialog = screen.getByRole("dialog");
@@ -378,7 +378,7 @@ describe("HostConfigCompareView public mode", () => {
     );
 
     expect(
-      screen.getByText(/Sign in to compare your hosts/i)
+      screen.getByText(/Sign in to compare your clients/i)
     ).toBeInTheDocument();
   });
 
