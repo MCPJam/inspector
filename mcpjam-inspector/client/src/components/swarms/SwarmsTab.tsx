@@ -277,25 +277,13 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
 // ── persona track record ─────────────────────────────────────────────────────
 function PersonaTrackRecordStrip({ personaRefId }: { personaRefId: string }) {
   const record = usePersonaTrackRecord(personaRefId);
-  if (!record || record.totalSessions === 0) return null;
+  if (!record || record.sessionCount === 0) return null;
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-xs">
       <span className="font-medium text-muted-foreground">Track record</span>
-      <span className="text-emerald-600 dark:text-emerald-400">
-        {record.succeeded} ok
-      </span>
-      {record.failed > 0 && (
-        <span className="text-red-600 dark:text-red-400">
-          {record.failed} failed
-        </span>
-      )}
-      {record.rateLimited > 0 && (
-        <span className="text-amber-600 dark:text-amber-400">
-          {record.rateLimited} rate-limited
-        </span>
-      )}
       <span className="text-muted-foreground">
-        across {record.totalSessions} sessions · {record.totalRuns} runs
+        {record.sessionCount} session{record.sessionCount === 1 ? "" : "s"} ·{" "}
+        {record.runCount} run{record.runCount === 1 ? "" : "s"}
       </span>
     </div>
   );
@@ -413,9 +401,9 @@ function JourneyCard({
             {journey.hostIds.map(hostName).join(", ")} ·{" "}
             {journey.config.sessionsPerHost}/host · {journey.config.maxTurns} turns
           </p>
-          {rollup && rollup.totalRuns > 0 && (
+          {rollup && rollup.runCount > 0 && (
             <p className="mt-1 text-[11px] text-muted-foreground">
-              {rollup.totalRuns} run{rollup.totalRuns === 1 ? "" : "s"} total
+              {rollup.runCount} run{rollup.runCount === 1 ? "" : "s"} total
             </p>
           )}
         </div>
@@ -505,7 +493,7 @@ function RunSessionsView({
   personaRefId: string;
   hosts: HostItem[];
   hostSummaries: JourneyRun["hostSummaries"];
-  /** Deep-link session (`_id`) to auto-select once it's on a loaded page. */
+  /** Deep-link session (`id`) to auto-select once it's on a loaded page. */
   initialThreadId?: string;
 }) {
   // Paginated sessions for this run; grouped/filterable by host client-side.
@@ -515,7 +503,8 @@ function RunSessionsView({
     loadMore,
   } = usePaginatedQuery(
     SWARM_QUERIES.listSessionsByJourneyRun as any,
-    { runId } as any,
+    // Backend arg name is `journeyRunId` (NOT `runId`).
+    { journeyRunId: runId } as any,
     { initialNumItems: DEFAULT_PAGE_SIZE }
   );
   const [filter, setFilter] = useState<SessionFilterState>(EMPTY_SESSION_FILTER);
@@ -537,7 +526,7 @@ function RunSessionsView({
   const appliedInitialThreadRef = useRef(false);
   useEffect(() => {
     if (appliedInitialThreadRef.current || !initialThreadId) return;
-    const match = rows.find((s) => s._id === initialThreadId);
+    const match = rows.find((s) => s.id === initialThreadId);
     if (match) {
       appliedInitialThreadRef.current = true;
       setSelected(match);
@@ -574,20 +563,20 @@ function RunSessionsView({
         <div className="flex flex-col divide-y">
           {visible.map((s) => (
             <button
-              key={s._id}
+              key={s.id}
               type="button"
               onClick={() => setSelected(s)}
               className={`flex items-center justify-between gap-2 px-1 py-1.5 text-left hover:bg-muted/50 ${
-                selected?._id === s._id ? "bg-muted" : ""
+                selected?.id === s.id ? "bg-muted" : ""
               }`}
             >
               <span className="flex min-w-0 flex-col">
                 <span className="truncate text-[11px] font-medium">
                   {hostName(s.hostId)}
-                  {s.personaLabel ? ` · ${s.personaLabel}` : ""}
                 </span>
                 <span className="truncate text-[10px] text-muted-foreground">
-                  {s.status ?? "—"} · {s.messageCount ?? 0} msgs
+                  {s.status ?? "—"}
+                  {s.modelId ? ` · ${s.modelId}` : ""}
                 </span>
               </span>
               <SessionReadinessBadge readiness={toSessionReadiness(s.readiness)} />
@@ -607,16 +596,16 @@ function RunSessionsView({
       )}
 
       {/* Reuse the existing project-scoped session viewer — do NOT build a new
-          one. `ShareUsageThreadDetail` takes the session row's `_id`. */}
+          one. `ShareUsageThreadDetail` takes the session row's `id`. */}
       {selected && (
         <div className="mt-2 h-[420px] overflow-hidden rounded-lg border">
           <ShareUsageThreadDetail
-            threadId={selected._id}
+            threadId={selected.id}
             sessionLink={`${getShareableAppOrigin()}${buildSwarmSessionPath({
               personaRefId,
               runId,
               hostId: selected.hostId,
-              threadId: selected._id,
+              threadId: selected.id,
             })}`}
           />
         </div>

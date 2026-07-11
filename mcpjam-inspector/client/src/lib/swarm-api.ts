@@ -61,23 +61,23 @@ export interface JourneyRun {
 }
 
 /**
- * A single synthetic session row for the sessions-by-host view. Shape mirrors
- * the backend `listSessionsBy*` page items; fields the readiness/diagnostics
- * strip needs are optional so the UI degrades gracefully when the backend
- * hasn't denormalized them yet.
+ * A single synthetic session row — the backend `JourneySessionDto` returned by
+ * `journeyRuns:listSessionsBy*` page items. The row identifier is `id`
+ * (`s._id` under the hood); there is NO `personaLabel` / `messageCount`.
+ * `readiness` is the server-denormalized WIDE subset the readiness badge reads
+ * (`session-readiness.tsx`).
  */
 export interface JourneySessionRow {
-  /** sharedChatThreads doc id — the id `ShareUsageThreadDetail` opens. */
-  _id: string;
+  /** `s._id` — the id `ShareUsageThreadDetail` opens + the deep-link threadId. */
+  id: string;
   chatSessionId: string;
+  projectId: string;
   hostId: string;
-  personaId?: string;
-  personaLabel?: string;
+  personaRefId?: string;
   status?: string;
   modelId?: string;
   startedAt: number;
   lastActivityAt?: number;
-  messageCount?: number;
   /** Server-denormalized readiness subset (see `session-readiness.tsx`). */
   readiness?: {
     status?: string;
@@ -86,22 +86,40 @@ export interface JourneySessionRow {
   };
 }
 
+/**
+ * `personas:getPersonaTrackRecord` result. The backend rolls the persona's
+ * history into aggregate COUNTS + a readiness summary + a few session examples;
+ * it does NOT return a succeeded/failed/rateLimited outcome breakdown at the
+ * persona level (that lives on the per-journey rollup's `hosts[]`).
+ * `readiness` / `sessionExamples` sub-shapes are left permissive on purpose —
+ * the contract fixes only the top-level keys.
+ */
 export interface PersonaTrackRecord {
-  personaId?: string;
-  totalRuns: number;
-  totalSessions: number;
+  personaRefId?: string;
+  runCount: number;
+  sessionCount: number;
+  readiness?: Record<string, unknown>;
+  sessionExamples?: unknown[];
+}
+
+/** One host's outcome rollup within {@link JourneyRollup}. */
+export interface JourneyHostRollup {
+  hostId: string;
+  total: number;
   succeeded: number;
   failed: number;
   rateLimited: number;
-  /** Optional per-host breakdown the backend may include. */
-  hostBreakdown?: JourneyHostSummary[];
+  readiness?: Record<string, unknown>;
 }
 
+/**
+ * `journeys:getJourneyRollup` result — `{ journeyRefId, runCount, hosts }`.
+ * `hosts[]` is the per-host outcome rollup (NOT the old flat `hostSummaries`).
+ */
 export interface JourneyRollup {
   journeyRefId?: string;
-  totalRuns: number;
-  hostSummaries: JourneyHostSummary[];
-  lastRunAt?: number;
+  runCount: number;
+  hosts: JourneyHostRollup[];
 }
 
 /** Convex pagination envelope. */

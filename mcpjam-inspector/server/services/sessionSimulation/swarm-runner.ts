@@ -414,7 +414,33 @@ async function runJourneyFanOut(
       // Report the terminal with the SAME chatSessionId ONLY after the
       // transcript is persisted. Best-effort: a terminal write failure is
       // logged and the host loop continues.
-      const terminal = terminalForOutcome(outcome, errorMessage);
+      //
+      // Spend-cap abort reclassification: when the org spend cap tripped on
+      // ANOTHER host, `runStop.abort()` cancels THIS host's in-flight turns and
+      // the shared core returns `outcome: "failed"` — an abort artifact, not a
+      // genuine session failure. Report those as the run-level terminal
+      // (`rate_limited` / `spend_cap_exceeded`) so a cap breach isn't miscounted
+      // as a generic `session_failed`. A session that genuinely SUCCEEDED, or
+      // failed for its OWN reason before the cap (i.e. it returned while the
+      // run-stop signal was NOT yet aborted), keeps its real outcome — we only
+      // reclassify a `failed` outcome whose turns were actually cancelled by the
+      // run-stop (`sessionSignal.aborted`).
+      const abortedBySpendCap =
+        spendCapTripped && outcome === "failed" && sessionSignal.aborted;
+      const terminal = abortedBySpendCap
+        ? {
+            status: "rate_limited" as SwarmAttemptStatus,
+            errorCode: "spend_cap_exceeded",
+            ...(spendCapMessage
+              ? {
+                  errorMessage: spendCapMessage.slice(
+                    0,
+                    MAX_ATTEMPT_ERROR_CHARS
+                  ),
+                }
+              : {}),
+          }
+        : terminalForOutcome(outcome, errorMessage);
       try {
         await reportAttempt(convexHttpUrl, bearer, {
           projectId,

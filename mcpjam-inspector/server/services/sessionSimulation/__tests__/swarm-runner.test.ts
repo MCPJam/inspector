@@ -571,6 +571,77 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
   });
 });
 
+describe("swarm fan-out runner — spend-cap abort reclassification (finding 5)", () => {
+  const HOST_3 = {
+    hostId: "host-3",
+    hostName: "Host Three",
+    hostConfigId: "hc-3",
+    modelId: "anthropic/claude-haiku-4.5",
+    systemPrompt: "sys",
+    requireToolApproval: false,
+    serverIds: ["server-3"],
+  };
+
+  it("reports an in-flight session that the spend-cap abort cancelled as rate_limited/spend_cap_exceeded (NOT session_failed), while a genuinely-succeeded session keeps its outcome", async () => {
+    // Concurrent barrier: host-1 trips the org spend cap while host-2 has a
+    // session PARKED in-flight. The cap's `runStop.abort()` cancels host-2's
+    // turns and the shared core returns `outcome: "failed"` — an abort artifact,
+    // NOT a genuine failure. host-3 genuinely succeeds and must be untouched.
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      const hostId = adapter.persist.hostId;
+      if (hostId === "host-1") {
+        // Trip the org spend cap.
+        return {
+          outcome: "rate_limited",
+          errorMessage: "Org daily spend cap exceeded",
+        };
+      }
+      if (hostId === "host-3") {
+        // Genuinely succeeds (before/independent of the cap).
+        return { outcome: "succeeded" };
+      }
+      // host-2: park until the run-stop aborts this session, then return the
+      // abort artifact the real core returns (`{ outcome: "failed" }`).
+      return await new Promise((resolve) => {
+        const finish = () => resolve({ outcome: "failed" });
+        if (adapter.abortSignal?.aborted) {
+          finish();
+          return;
+        }
+        adapter.abortSignal?.addEventListener("abort", finish, { once: true });
+      });
+    });
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2, HOST_3], sessionsPerHost: 1 })
+    );
+
+    const terminals = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.status !== "running");
+
+    // host-2's aborted attempt: reported terminal rate_limited /
+    // spend_cap_exceeded — NOT the generic session_failed.
+    const host2 = terminals.find((t) => t.hostId === "host-2")!;
+    expect(host2.status).toBe("rate_limited");
+    expect(host2.errorCode).toBe("spend_cap_exceeded");
+    expect(host2.errorCode).not.toBe("session_failed");
+    // Persist-before-terminal invariant preserved: same deterministic id.
+    expect(host2.chatSessionId).toBe("synth_run-1_host-2_0");
+
+    // host-3's genuinely-succeeded session is untouched.
+    const host3 = terminals.find((t) => t.hostId === "host-3")!;
+    expect(host3.status).toBe("succeeded");
+
+    // The whole-run finalize still runs for the spend-cap breach.
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+      terminalStatus: "rate_limited",
+      errorCode: "spend_cap_exceeded",
+    });
+  });
+});
+
 describe("swarm single-host runner — heartbeat", () => {
   it("fires the heartbeat on an independent 30s schedule (not gated on turn completion) and stops it on finally", async () => {
     vi.useFakeTimers();
