@@ -109,4 +109,38 @@ describe("SwarmsTab — Run journey launch", () => {
       ).toBeInTheDocument()
     );
   });
+
+  it("reuses the SAME launchKey on retry after a 5xx/network failure, and only clears it after a confirmed 2xx", async () => {
+    // A 5xx or dropped connection can land AFTER the backend created the run, so
+    // the key MUST survive to keep the retry idempotent (no duplicate run/spend).
+    launchJourneyRunMock.mockRejectedValueOnce(
+      new LaunchJourneyRunError(500, "upstream unavailable")
+    );
+
+    const runBtn = selectPersonaAndRun();
+    fireEvent.click(runBtn);
+    await waitFor(() =>
+      expect(launchJourneyRunMock).toHaveBeenCalledTimes(1)
+    );
+    const firstKey = (launchJourneyRunMock.mock.calls[0]![0] as any).launchKey;
+
+    // Retry succeeds — the SAME launch key is reused (backend dedupes to the
+    // already-created run rather than minting a second).
+    launchJourneyRunMock.mockResolvedValueOnce({ runId: "run-1" });
+    fireEvent.click(runBtn);
+    await waitFor(() =>
+      expect(launchJourneyRunMock).toHaveBeenCalledTimes(2)
+    );
+    const retryKey = (launchJourneyRunMock.mock.calls[1]![0] as any).launchKey;
+    expect(retryKey).toBe(firstKey);
+
+    // After the confirmed 2xx, a subsequent launch mints a FRESH key.
+    launchJourneyRunMock.mockResolvedValueOnce({ runId: "run-2" });
+    fireEvent.click(runBtn);
+    await waitFor(() =>
+      expect(launchJourneyRunMock).toHaveBeenCalledTimes(3)
+    );
+    const nextKey = (launchJourneyRunMock.mock.calls[2]![0] as any).launchKey;
+    expect(nextKey).not.toBe(firstKey);
+  });
 });

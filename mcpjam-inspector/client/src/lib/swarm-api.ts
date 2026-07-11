@@ -22,8 +22,6 @@ export const SWARM_QUERIES = {
   listHosts: "hosts:listHosts",
   listJourneyRuns: "journeyRuns:listJourneyRuns",
   listSessionsByJourneyRun: "journeyRuns:listSessionsByJourneyRun",
-  listSessionsByHost: "journeyRuns:listSessionsByHost",
-  listSessionsByJourney: "journeyRuns:listSessionsByJourney",
 } as const;
 
 // ── DTOs ────────────────────────────────────────────────────────────────────

@@ -288,10 +288,10 @@ describe("web routes — swarm single-host launch", () => {
     expect((await expectJson(response)).status).toBe(202);
     await flushMacrotasks();
 
-    // Invoke the captured managerFactory (startJourneyRun is mocked, so the
-    // route's closure never ran on its own).
+    // Invoke the captured host-aware managerFactory for the pinned host
+    // (startJourneyRun is mocked, so the route's closure never ran on its own).
     const startArgs = startJourneyRunMock.mock.calls[0]![0] as any;
-    await startArgs.managerFactory();
+    await startArgs.managerFactory(startArgs.hosts[0]);
 
     expect(createAuthorizedManagerMock).toHaveBeenCalledTimes(1);
     const call = createAuthorizedManagerMock.mock.calls[0]!;
@@ -326,7 +326,7 @@ describe("web routes — swarm single-host launch", () => {
     await flushMacrotasks();
 
     const startArgs = startJourneyRunMock.mock.calls[0]![0] as any;
-    await startArgs.managerFactory();
+    await startArgs.managerFactory(startArgs.hosts[0]);
 
     const options = createAuthorizedManagerMock.mock.calls[0]![7] as any;
     expect(options.xaaIssuer).toBe("https://issuer.test/api/web/xaa");

@@ -269,9 +269,10 @@ describe("swarm runner — real core integration", () => {
       harnessSessionCommit: swarmCommit,
     }));
 
+    const opts = baseOpts();
     await startJourneyRun({
-      ...baseOpts(),
-      host: { ...baseOpts().host, harness: "claude-code" as const },
+      ...opts,
+      hosts: [{ ...opts.hosts[0]!, harness: "claude-code" as const }],
     } as any);
 
     // (a) The harness turn was SUPPLIED a MCP-proxy plane strategy (without it

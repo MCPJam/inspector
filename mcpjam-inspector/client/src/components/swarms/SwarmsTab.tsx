@@ -13,7 +13,6 @@ import { Button } from "@mcpjam/design-system/button";
 import { toast } from "@/lib/toast";
 import {
   launchJourneyRun,
-  LaunchJourneyRunError,
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
   type JourneyRun,
@@ -373,20 +372,18 @@ function JourneyCard({
         projectId,
         launchKey: launchKeyRef.current,
       });
-      // Accepted — a fresh key for the next launch.
+      // Accepted (confirmed 2xx {runId}) — the ONLY place we mint a fresh key.
       launchKeyRef.current = null;
       toast.success("Journey run started");
     } catch (e) {
-      if (e instanceof LaunchJourneyRunError && e.status >= 400 && e.status < 500) {
-        // 4xx: user-actionable (no hosts, cap edge). Surface inline; KEEP the
-        // launch key so a corrected retry stays idempotent.
-        setLaunchError(e.message);
-      } else {
-        launchKeyRef.current = null;
-        setLaunchError(
-          e instanceof Error ? e.message : "Failed to start run"
-        );
-      }
+      // RETAIN the launch key after ANY unsuccessful response — 4xx, 5xx, OR a
+      // network/transport failure — and reuse it on retry. A 5xx or a dropped
+      // connection can land AFTER the backend already created the run, so
+      // minting a new key would spawn a SECOND run (duplicate spend). The
+      // backend dedupes a reused key to the existing run (or, if the create
+      // never inserted, creates exactly one). The key is cleared only on a
+      // confirmed 2xx above.
+      setLaunchError(e instanceof Error ? e.message : "Failed to start run");
     } finally {
       setLaunching(false);
     }
