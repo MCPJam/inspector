@@ -1407,6 +1407,19 @@ export async function drainAssistantTurn(
     hooks,
   } = args;
 
+  // FAIL CLOSED on partial swarm identity: `journeyRunId` and `hostId` are one
+  // continuity/attribution identity — the harness `swarm-chat` lane keys on
+  // BOTH (+ chatSessionId), and the ingest attributes on both. Forwarding them
+  // as independently-optional fields let a wiring bug silently emit incomplete
+  // attribution (cubic P2); a swarm turn with only one of them is a runner bug,
+  // not a degraded mode.
+  if (args.sourceType === "swarm" && !!journeyRunId !== !!hostId) {
+    throw new Error(
+      "Swarm turn has partial continuity identity: journeyRunId and hostId " +
+        "must be provided together"
+    );
+  }
+
   // Exactly one run-attribution key is set (chatbox sim vs swarm) — the XOR
   // that `resolveTurnRuntime` stamps onto the local-BYOK usage writeback.
   const attribution: TurnRunAttribution = synthesisRunId

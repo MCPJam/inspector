@@ -669,6 +669,22 @@ export async function runHarnessTurn(
           : sourceType === "eval" || sourceType === "sandbox"
           ? undefined
           : "direct-chat";
+      // FAIL CLOSED on incomplete swarm continuity identity. The `swarm-chat`
+      // lane is keyed on (journeyRunId, hostId, chatSessionId); if the swarm
+      // runner reached a harness turn without ALL of them, silently skipping
+      // continuity would run a fresh un-keyed session — losing multi-turn
+      // resume AND emitting a transcript whose harness sidecar can't be
+      // attributed to its run. That's a runner wiring bug; surface it.
+      if (
+        ownerType === "swarm-chat" &&
+        !(journeyRunId && hostId && chatSessionId)
+      ) {
+        throw new Error(
+          "Swarm harness turn is missing continuity identity " +
+            "(journeyRunId, hostId, and chatSessionId are all required for " +
+            "the swarm-chat owner lane)"
+        );
+      }
       let continuity:
         | {
             owner: HarnessOwnerRef;
@@ -688,9 +704,8 @@ export async function runHarnessTurn(
         authHeader &&
         ownerType &&
         (ownerType !== "chatbox-chat" || chatboxId) &&
-        // The swarm (`swarm-chat`) lane is keyed on the run + host; the backend
-        // `resolveHarnessOwnerScope` throws without them. Skip continuity (run
-        // fresh) rather than fail if the swarm runner didn't thread both.
+        // swarm-chat completeness is enforced (throw) above, so reaching here
+        // with ownerType === "swarm-chat" implies all three key dimensions.
         (ownerType !== "swarm-chat" || (journeyRunId && hostId))
       ) {
         const owner: HarnessOwnerRef = {

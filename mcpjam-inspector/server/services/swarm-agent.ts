@@ -86,6 +86,14 @@ export interface CreateJourneyRunResult {
   projectId: string;
   journeyRefId: string;
   snapshot: JourneySnapshot;
+  /**
+   * True when the backend deduped this launch onto an EXISTING run (launchKey
+   * replay: same project + creator + journey). The original launch's runner
+   * owns that run — the caller MUST NOT start a second runner for it, or the
+   * duplicate's shutdown/cleanup (finalize-pending, abort finalizers) races
+   * the owner and can kill attempts the owner is still executing.
+   */
+  deduped: boolean;
 }
 
 export type SwarmAttemptStatus =
@@ -175,6 +183,7 @@ export async function createJourneyRun(
     projectId?: string;
     journeyRefId?: string;
     snapshot?: JourneySnapshot;
+    deduped?: boolean;
     error?: string;
   }>(
     `${convexHttpUrl}/journey-execution/runs/create`,
@@ -207,6 +216,9 @@ export async function createJourneyRun(
     projectId: data.projectId,
     journeyRefId: data.journeyRefId,
     snapshot: data.snapshot,
+    // Strict `=== true`: an absent field means a fresh run (never wrongly skip
+    // starting the runner for a genuinely new launch).
+    deduped: data.deduped === true,
   };
 }
 

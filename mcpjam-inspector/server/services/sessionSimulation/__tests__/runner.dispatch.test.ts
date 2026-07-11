@@ -304,9 +304,11 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     await drainAssistantTurn(
       baseArgs({
         sourceType: "swarm",
-        // Swarm attribution rides journeyRunId (not synthesisRunId).
+        // Swarm attribution rides journeyRunId (not synthesisRunId). hostId
+        // travels WITH it — the drain fails closed on partial swarm identity.
         synthesisRunId: undefined,
         journeyRunId: "journey-run-1",
+        hostId: "host-1",
       }) as Parameters<typeof drainAssistantTurn>[0],
     );
 
@@ -336,6 +338,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
         sourceType: "swarm",
         synthesisRunId: undefined,
         journeyRunId: "journey-run-1",
+        hostId: "host-1",
         modelId: "llama3",
         modelDefinition: {
           id: "llama3",
@@ -354,6 +357,35 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     const body = JSON.parse(init.body);
     expect(body.sourceType).toBe("swarm");
     expect(body.journeyRunId).toBe("journey-run-1");
+  });
+
+  it("FAILS CLOSED on partial swarm identity (journeyRunId without hostId, and vice versa)", async () => {
+    // journeyRunId + hostId are ONE identity — the swarm-chat continuity lane
+    // and ingest attribution key on both. A turn carrying only one is a runner
+    // wiring bug; silently proceeding would emit incomplete attribution.
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await expect(
+      drainAssistantTurn(
+        baseArgs({
+          sourceType: "swarm",
+          synthesisRunId: undefined,
+          journeyRunId: "journey-run-1",
+          // hostId missing
+        }) as Parameters<typeof drainAssistantTurn>[0],
+      ),
+    ).rejects.toThrow(/partial continuity identity/i);
+
+    await expect(
+      drainAssistantTurn(
+        baseArgs({
+          sourceType: "swarm",
+          synthesisRunId: undefined,
+          hostId: "host-1",
+          // journeyRunId missing
+        }) as Parameters<typeof drainAssistantTurn>[0],
+      ),
+    ).rejects.toThrow(/partial continuity identity/i);
   });
 
   it("refuses local-runtime BYOK + requireToolApproval=true with non-empty tools before building the model", async () => {

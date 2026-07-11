@@ -145,6 +145,38 @@ describe("web routes — swarm single-host launch", () => {
     expect(startArgs.host.hostId).toBe("host-0");
   });
 
+  it("acknowledges a DEDUPED launch (launchKey replay) without starting a second runner", async () => {
+    // Backend deduped the launchKey onto an EXISTING run — the original
+    // launch's runner owns it. Starting another runner would race the owner's
+    // claims and, worse, its shutdown/cleanup could finalize attempts the
+    // owner is still executing.
+    createJourneyRunMock.mockResolvedValue({
+      runId: "run-existing",
+      projectId: "proj-1",
+      journeyRefId: "journey-1",
+      snapshot: snapshot(1),
+      deduped: true,
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/swarm/journeys/journey-1/runs",
+      { projectId: "proj-1", launchKey: "lk-replayed" },
+      token
+    );
+    const { status, data } = await expectJson<{
+      runId?: string;
+      deduped?: boolean;
+    }>(response);
+
+    // Idempotent ACK: same runId, 202, deduped marker — and NO second runner.
+    expect(status).toBe(202);
+    expect(data.runId).toBe("run-existing");
+    expect(data.deduped).toBe(true);
+    await flushMacrotasks();
+    expect(startJourneyRunMock).not.toHaveBeenCalled();
+  });
+
   it("surfaces a multi-host journey rejection as a 4xx and never starts a runner", async () => {
     createJourneyRunMock.mockRejectedValue(
       new SwarmAgentError(

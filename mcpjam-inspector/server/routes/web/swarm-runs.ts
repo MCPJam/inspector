@@ -241,6 +241,23 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
       // the backend's gating and always proceed to start the runner on a
       // successful create.
       const { runId, projectId, snapshot } = created;
+
+      // Deduped launch (launchKey replay onto an EXISTING run): the ORIGINAL
+      // launch's runner owns that run. Starting a second runner here would
+      // race it — duplicate claims (suppressed per-attempt by `applied:false`)
+      // and, worse, the duplicate's shutdown/cleanup (finalize-pending, abort
+      // finalizers, heartbeat stop) can kill attempts the owner is still
+      // executing. Acknowledge idempotently with the SAME runId and start
+      // nothing. If the original runner is dead, the backend stale-run cron
+      // finalizes the run; a retry then needs a FRESH launchKey.
+      if (created.deduped) {
+        logger.info("[swarm-runs] deduped launch — runner already owns run", {
+          runId,
+          projectId,
+        });
+        return { runId, deduped: true };
+      }
+
       if (!Array.isArray(snapshot.hosts) || snapshot.hosts.length !== 1) {
         throw new WebRouteError(
           400,
