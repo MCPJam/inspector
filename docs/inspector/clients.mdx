@@ -107,7 +107,7 @@ The canvas on the left shows a live diagram of the Client — the model, attache
 Once saved, a Client shows up in the picker at the top of every consumer:
 
 - **Chat** — Drives the model, system prompt, attached servers, and connection settings for the conversation.
-- **Chatboxes** — Same as Chat, but persisted as a saved chatbox configuration.
+- **Chatboxes / Swarms** — Each chatbox is bound 1:1 to a Client. On the Chatbox and Swarms pages, a **Client picker pill** in the publish bar (and in the header on other sub-tabs) lets you switch the active Client directly on the page — the global host bar is hidden on these routes. The gear icon on the pill opens Connect so you can edit that Client's identity (model, system prompt, sandbox settings). Sessions and Clusters follow whichever Client is currently selected.
 - **Evals** — Every test run inside an Eval uses the selected Client, so results are reproducible across teammates.
 
 Switching the active Client in any of these views swaps the entire configuration in place. There's no separate "apply" step.
