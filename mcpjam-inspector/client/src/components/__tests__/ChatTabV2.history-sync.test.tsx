@@ -89,6 +89,10 @@ vi.mock("posthog-js/react", () => ({
     mockUseFeatureFlagEnabled(...args),
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
+}));
+
 vi.mock("sonner", () => ({
   toast: {
     error: (...args: unknown[]) => mockToastError(...args),

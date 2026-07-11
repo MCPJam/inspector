@@ -469,6 +469,31 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
     expect(updateRunMock).toHaveBeenCalled();
   });
 
+  it("routes a rate-limit turn error to the rate_limited outcome (shared classifyTurnFailure)", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: true });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+    // A spend-cap / rate-limit error from the turn must fold into the amber
+    // `rate_limited` outcome via the shared `classifyTurnFailure`, not `failed`.
+    runAssistantTurnMock.mockRejectedValue(
+      new Error("Daily spend cap reached for free models"),
+    );
+
+    await startSimulation(baseOptions());
+
+    // runOneSession → catch → classifyTurnFailure("...cap...") === "rate_limited"
+    // → tryUpdateRunWithRetry with a { rateLimited: 1 } delta.
+    const rateLimitedProgress = updateRunMock.mock.calls.some(
+      (call) => (call[4] as { rateLimited?: number })?.rateLimited === 1,
+    );
+    expect(rateLimitedProgress).toBe(true);
+    // Whole batch tripped the cap (no successes, no hard failures) → terminal
+    // status is rate_limited.
+    const terminalRateLimited = updateRunMock.mock.calls.some(
+      (call) => call[5] === "rate_limited",
+    );
+    expect(terminalRateLimited).toBe(true);
+  });
+
   it("skips the artifact mutation when a turn drained nothing", async () => {
     const fake = buildFakeBrowserContext({ computerUse: true });
     createBrowserSessionContextMock.mockReturnValue(fake);

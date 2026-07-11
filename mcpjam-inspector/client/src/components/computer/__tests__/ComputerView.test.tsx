@@ -98,6 +98,18 @@ describe("ComputerView", () => {
     expect(getByText(/need a synced project/i)).toBeTruthy();
   });
 
+  it("always shows the honest no-backup durability note", () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(
+      getByText(
+        /Files persist when your computer sleeps, but they aren't backed up/i
+      )
+    ).toBeTruthy();
+  });
+
   it("opening the terminal reserves the computer", async () => {
     mockStatus = null; // no computer yet
     const { getByText } = render(
@@ -132,7 +144,7 @@ describe("ComputerView", () => {
       <ComputerView projectId="p1" isAuthenticated />
     );
     fireEvent.click(getByText("Delete"));
-    expect(getByText("Delete this computer?")).toBeTruthy();
+    expect(getByText(/Delete this computer\? All files on it will be deleted/i)).toBeTruthy();
     // The confirm button is the second "Delete" — click via the confirm row.
     fireEvent.click(getByText("Delete", { selector: "button" }));
     await waitFor(() =>
@@ -304,7 +316,9 @@ describe("ComputerView image strip", () => {
       <ComputerView projectId="p1" isAuthenticated />
     );
     fireEvent.click(getByText("Reset"));
-    expect(getByText(/Installed files are wiped/i)).toBeTruthy();
+    expect(
+      getByText(/All files on this computer will be deleted/i)
+    ).toBeTruthy();
     fireEvent.click(getByText("Reset", { selector: "button" }));
     await waitFor(() =>
       expect(resetComputer).toHaveBeenCalledWith({ projectId: "p1" })

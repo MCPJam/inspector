@@ -55,6 +55,8 @@ describe("pathnameToActiveTab", () => {
 
   it("normalizes aliases", () => {
     expect(pathnameToActiveTab("/chat/thread-1")).toBe("playground");
+    expect(pathnameToActiveTab("/hosts")).toBe("clients");
+    expect(pathnameToActiveTab("/hosts/host-slack")).toBe("clients");
   });
 
   it("renders special entry paths through the servers fallback", () => {

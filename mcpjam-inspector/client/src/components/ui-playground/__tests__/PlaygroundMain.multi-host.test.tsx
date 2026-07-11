@@ -118,6 +118,7 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
   useFeatureFlagEnabled: () => false,
 }));
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 vi.mock("@/lib/PosthogUtils", () => ({
   detectEnvironment: () => "test",

@@ -11,10 +11,9 @@ vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
 }));
 
-vi.mock("posthog-js", () => ({
-  default: {
-    capture: vi.fn(),
-  },
+const { trackMock } = vi.hoisted(() => ({ trackMock: vi.fn() }));
+vi.mock("@/lib/analytics", () => ({
+  track: trackMock,
 }));
 
 vi.mock("@/lib/guest-session", () => ({
@@ -41,7 +40,6 @@ import {
   resetTokenCache,
   shouldRetryApiAuth401,
 } from "@/lib/apis/web/context";
-import posthog from "posthog-js";
 
 describe("authFetch hosted 401 retry", () => {
   beforeEach(() => {
@@ -50,7 +48,7 @@ describe("authFetch hosted 401 retry", () => {
     vi.mocked(forceRefreshGuestSession).mockReset();
     vi.mocked(shouldRetryApiAuth401).mockReturnValue(true);
     vi.mocked(global.fetch).mockReset();
-    vi.mocked(posthog.capture).mockReset();
+    trackMock.mockReset();
   });
 
   afterEach(() => {
@@ -90,7 +88,8 @@ describe("authFetch hosted 401 retry", () => {
         }),
       })
     );
-    expect(posthog.capture).toHaveBeenCalledWith("guest_refresh_success", {
+    expect(trackMock).toHaveBeenCalledWith("guest_refresh_success", {
+      location: "auth_fetch",
       surface: "chatbox",
       auth_mode: "guest",
       status: "success",
@@ -111,7 +110,7 @@ describe("authFetch hosted 401 retry", () => {
 
     expect(response.status).toBe(401);
     expect(global.fetch).toHaveBeenCalledTimes(2);
-    expect(posthog.capture).not.toHaveBeenCalled();
+    expect(trackMock).not.toHaveBeenCalled();
   });
 
   it("does not retry when 401 is flagged X-MCP-Auth-Required: oauth", async () => {
@@ -210,7 +209,8 @@ describe("authFetch hosted 401 retry", () => {
     expect(resetTokenCache).toHaveBeenCalledTimes(1);
     expect(forceRefreshGuestSession).toHaveBeenCalledTimes(1);
     expect(global.fetch).toHaveBeenCalledTimes(1); // no retry
-    expect(posthog.capture).toHaveBeenCalledWith("guest_refresh_failure", {
+    expect(trackMock).toHaveBeenCalledWith("guest_refresh_failure", {
+      location: "auth_fetch",
       surface: "chatbox",
       auth_mode: "guest",
       status: "failure",

@@ -207,17 +207,33 @@ describe("EnvironmentsDrawer", () => {
     expect(promote).not.toHaveBeenCalled();
   });
 
-  it("attaches a ready environment to the computer", async () => {
+  it("confirms the data loss before changing the image, then attaches", async () => {
     mockEnvironments = [env()];
     const { getByText } = renderDrawer();
     fireEvent.click(getByText("ml-toolkit"));
+    // First click only asks for confirmation — no mutation yet.
     fireEvent.click(getByText("Use on computer"));
+    expect(
+      getByText(/All files on this computer will be deleted/i)
+    ).toBeTruthy();
+    expect(setComputerEnvironment).not.toHaveBeenCalled();
+    // Confirm.
+    fireEvent.click(getByText("Change"));
     await waitFor(() =>
       expect(setComputerEnvironment).toHaveBeenCalledWith({
         projectId: "p1",
         environmentId: "env1",
       })
     );
+  });
+
+  it("cancelling the image-change confirm does not attach", () => {
+    mockEnvironments = [env()];
+    const { getByText } = renderDrawer();
+    fireEvent.click(getByText("ml-toolkit"));
+    fireEvent.click(getByText("Use on computer"));
+    fireEvent.click(getByText("Cancel"));
+    expect(setComputerEnvironment).not.toHaveBeenCalled();
   });
 
   it("surfaces an attach rejection as an error toast", async () => {
@@ -228,10 +244,31 @@ describe("EnvironmentsDrawer", () => {
     const { getByText } = renderDrawer();
     fireEvent.click(getByText("ml-toolkit"));
     fireEvent.click(getByText("Use on computer"));
+    fireEvent.click(getByText("Change"));
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith(
         expect.stringContaining("incompatible builder")
       )
+    );
+  });
+
+  it("confirms the data loss before switching to the base image", async () => {
+    mockEnvironments = [env()];
+    // A custom env is attached, so the base row is actionable ("Use").
+    const { getByText } = renderDrawer("env1");
+    fireEvent.click(getByText("Base image"));
+    expect(
+      getByText(
+        /Switch to the base image\? All files on this computer will be deleted/i
+      )
+    ).toBeTruthy();
+    expect(setComputerEnvironment).not.toHaveBeenCalled();
+    fireEvent.click(getByText("Switch"));
+    await waitFor(() =>
+      expect(setComputerEnvironment).toHaveBeenCalledWith({
+        projectId: "p1",
+        environmentId: null,
+      })
     );
   });
 });

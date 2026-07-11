@@ -19,8 +19,7 @@ import {
   mcpCallToolResultToModelOutputWithLinkedResources,
   type McpModelVisibleToolResultPolicy,
 } from "@mcpjam/sdk/browser";
-import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import {
   recordAppToolInvocation,
   useAppToolsRegistry,
@@ -210,8 +209,6 @@ export function useToolExecution({
   setToolResponseMetadata,
   modelVisibleMcpToolResults,
 }: UseToolExecutionOptions): UseToolExecutionReturn {
-  const posthog = usePostHog();
-
   // Pending execution to inject into chat thread
   const [pendingExecution, setPendingExecution] =
     useState<PendingExecution | null>(null);
@@ -288,7 +285,6 @@ export function useToolExecution({
         return executeAppTool({
           alias: selectedRef.alias,
           params,
-          posthog,
           setExecutionError,
           setIsExecuting,
           storeCompletedToolResult,
@@ -315,10 +311,8 @@ export function useToolExecution({
 
         if ("error" in response) {
           // Log tool execution failure
-          posthog.capture("app_builder_tool_executed", {
+          track("app_builder_tool_executed", {
             location: "app_builder_tab",
-            platform: detectPlatform(),
-            environment: detectEnvironment(),
             toolName: effectiveToolName,
             source: "server",
             success: false,
@@ -377,10 +371,8 @@ export function useToolExecution({
         );
 
         // Log successful tool execution
-        posthog.capture("app_builder_tool_executed", {
+        track("app_builder_tool_executed", {
           location: "app_builder_tab",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
           toolName: effectiveToolName,
           source: "server",
           success: true,
@@ -398,10 +390,8 @@ export function useToolExecution({
         const errorMessage =
           err instanceof Error ? err.message : "Tool execution failed";
 
-        posthog.capture("app_builder_tool_executed", {
+        track("app_builder_tool_executed", {
           location: "app_builder_tab",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
           toolName: effectiveToolName,
           source: "server",
           success: false,
@@ -421,7 +411,6 @@ export function useToolExecution({
     },
     [
       formFields,
-      posthog,
       selectedTool,
       serverName,
       setExecutionError,
@@ -492,7 +481,6 @@ export function useToolExecution({
 interface ExecuteAppToolArgs {
   alias: string;
   params: Record<string, unknown>;
-  posthog: ReturnType<typeof usePostHog>;
   setExecutionError: (error: string | null) => void;
   setIsExecuting: (executing: boolean) => void;
   storeCompletedToolResult: (
@@ -520,7 +508,6 @@ interface ExecuteAppToolArgs {
 async function executeAppTool({
   alias,
   params,
-  posthog,
   setExecutionError,
   setIsExecuting,
   storeCompletedToolResult,
@@ -536,10 +523,8 @@ async function executeAppTool({
     const message =
       "App tool is no longer available — the widget was closed or replaced.";
     setExecutionError(message);
-    posthog.capture("app_builder_tool_executed", {
+    track("app_builder_tool_executed", {
       location: "app_builder_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       toolName: reportedName,
       source: "app",
       success: false,
@@ -609,10 +594,8 @@ async function executeAppTool({
       useTrafficLogStore.getState().addLog
     );
 
-    posthog.capture("app_builder_tool_executed", {
+    track("app_builder_tool_executed", {
       location: "app_builder_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       toolName: reportedName,
       source: "app",
       success: true,
@@ -631,10 +614,8 @@ async function executeAppTool({
       err instanceof Error ? err.message : "App tool execution failed";
     setExecutionError(message);
 
-    posthog.capture("app_builder_tool_executed", {
+    track("app_builder_tool_executed", {
       location: "app_builder_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       toolName: reportedName,
       source: "app",
       success: false,

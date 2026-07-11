@@ -96,7 +96,7 @@ describe("SuiteRunsList run-group rendering", () => {
 
     // Parent row visible.
     expect(screen.getByText(/Run group g/i)).toBeInTheDocument();
-    expect(screen.getByText(/2 hosts/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 clients/i)).toBeInTheDocument();
 
     // Children NOT visible until expanded — assert by run id label.
     expect(
@@ -192,7 +192,7 @@ describe("SuiteRunsList run-group rendering", () => {
 
     // No parent row markers at all.
     expect(screen.queryByText(/Run group g/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/hosts/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/clients/i)).not.toBeInTheDocument();
   });
 
   it("shows cancelled directly on standalone run rows", () => {

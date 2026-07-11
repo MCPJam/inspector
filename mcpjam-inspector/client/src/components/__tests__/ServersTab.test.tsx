@@ -144,6 +144,7 @@ vi.mock("posthog-js/react", () => ({
   }),
   useFeatureFlagEnabled: () => false,
 }));
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 vi.mock("@/hooks/use-app-ready", () => ({
   useAppReady: () => ({ status: "ready", projectId: "ws_local" }),

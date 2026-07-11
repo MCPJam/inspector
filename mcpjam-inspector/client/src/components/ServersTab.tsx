@@ -33,7 +33,6 @@ import { JsonImportModal } from "./connection/JsonImportModal";
 import { ServerFormData } from "@/shared/types.js";
 import { useAppReady, useAppReadyMessage } from "@/hooks/use-app-ready";
 import { MCPIcon } from "./ui/mcp-icon";
-import { usePostHog } from "posthog-js/react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -47,7 +46,7 @@ import {
   type EnrichedRegistryServer,
 } from "@/hooks/useRegistryServers";
 import { formatRegistryStarCount } from "@/lib/format-registry-star-count";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import {
   HoverCard,
   HoverCardContent,
@@ -569,7 +568,6 @@ export function ServersTab({
   isRegistryEnabled = false,
   onNavigateToRegistry,
 }: ServersTabProps) {
-  const posthog = usePostHog();
   const hostsConnectAddServerSlot = useContext(HostsConnectAddServerSlotContext);
   const viewPhase = useHostsConnectViewPhase();
   const { isAuthenticated } = useConvexAuth();
@@ -783,7 +781,7 @@ export function ServersTab({
         )}
         title={
           canManageProjectServers
-            ? "Auto-connect every project server when a host opens"
+            ? "Auto-connect every project server when a client opens"
             : "Only project admins can change auto-connect"
         }
       >
@@ -1010,10 +1008,8 @@ export function ServersTab({
   }, [detailModalState.isOpen, projectServers]);
 
   useEffect(() => {
-    posthog.capture("servers_tab_viewed", {
+    track("servers_tab_viewed", {
       location: "servers_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       num_servers: Object.keys(projectServers).length,
     });
   }, []);
@@ -1405,10 +1401,8 @@ export function ServersTab({
       );
       return;
     }
-    posthog.capture("add_server_button_clicked", {
+    track("add_server_button_clicked", {
       location: "servers_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
     setIsAddingServer(true);
     setIsActionMenuOpen(false);
@@ -1422,10 +1416,8 @@ export function ServersTab({
       );
       return;
     }
-    posthog.capture("import_json_button_clicked", {
+    track("import_json_button_clicked", {
       location: "servers_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
     setIsImportingJson(true);
     setIsActionMenuOpen(false);
@@ -1858,10 +1850,8 @@ export function ServersTab({
           setIsAddingServer(false);
         }}
         onSubmit={(formData) => {
-          posthog.capture("connecting_server", {
+          track("connecting_server", {
             location: "servers_tab",
-            platform: detectPlatform(),
-            environment: detectEnvironment(),
           });
           handleConnectServer(formData);
         }}

@@ -5,15 +5,8 @@ import { OAuthFlowTab } from "../OAuthFlowTab";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { createInspectorOAuthStateMachine } from "@/lib/oauth/debug-state-machine-adapter";
 
-vi.mock("posthog-js", () => ({
-  default: {
-    capture: vi.fn(),
-  },
-}));
-
-vi.mock("@/lib/PosthogUtils", () => ({
-  detectEnvironment: vi.fn().mockReturnValue("test"),
-  detectPlatform: vi.fn().mockReturnValue("web"),
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
 }));
 
 vi.mock("@mcpjam/sdk/browser", () => ({

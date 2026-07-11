@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import { Loader2, Link2Off, ShieldX } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
@@ -242,13 +242,7 @@ export function ChatboxChatPage({
     isLoading: isWorkOsLoading,
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
-  const posthog = usePostHog();
-  const posthogRef = useRef(posthog);
   const themeMode = usePreferencesStore((s) => s.themeMode);
-
-  useEffect(() => {
-    posthogRef.current = posthog;
-  }, [posthog]);
 
   const playgroundParams = useMemo(() => {
     try {
@@ -497,7 +491,8 @@ export function ChatboxChatPage({
         const authMode = getChatboxBootstrapAuthMode(isAuthenticated);
         setIsBootstrapping(true);
         setRouteError(null);
-        posthogRef.current.capture("chatbox_bootstrap_started", {
+        track("chatbox_bootstrap_started", {
+          location: "chatbox",
           surface: "chatbox",
           auth_mode: authMode,
           status: "started",
@@ -556,7 +551,8 @@ export function ChatboxChatPage({
           setRouteError(null);
 
           syncChatboxBootstrapHash(slugify(nextSession.payload.name));
-          posthogRef.current.capture("chatbox_bootstrap_silent_success", {
+          track("chatbox_bootstrap_silent_success", {
+            location: "chatbox",
             surface: "chatbox",
             auth_mode: authMode,
             status: "success",
@@ -586,7 +582,8 @@ export function ChatboxChatPage({
           }
 
           setRouteError(nextError);
-          posthogRef.current.capture("chatbox_bootstrap_silent_failure", {
+          track("chatbox_bootstrap_silent_failure", {
+            location: "chatbox",
             surface: "chatbox",
             auth_mode: authMode,
             status: "failure",
@@ -735,7 +732,8 @@ export function ChatboxChatPage({
     }
 
     interactiveSignInEventKeyRef.current = eventKey;
-    posthogRef.current.capture("interactive_signin_required", {
+    track("interactive_signin_required", {
+      location: "chatbox",
       surface: "chatbox",
       auth_mode: authMode,
       status: "required",

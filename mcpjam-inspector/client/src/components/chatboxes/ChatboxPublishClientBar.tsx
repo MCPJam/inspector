@@ -113,9 +113,9 @@ export function ChatboxPublishClientBar({
         type="button"
         onClick={() => navigate(buildHostsPath(hostId))}
         className="flex h-8 max-w-[280px] items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 text-xs font-medium text-foreground transition hover:bg-muted/70"
-        title="Edit this host's identity in Connect"
+        title="Edit this client's identity in Connect"
       >
-        <span className="shrink-0 text-muted-foreground">Host</span>
+        <span className="shrink-0 text-muted-foreground">Client</span>
         {logoSrc ? (
           <img
             src={logoSrc}

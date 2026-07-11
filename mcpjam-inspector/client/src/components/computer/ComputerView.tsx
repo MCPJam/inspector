@@ -1,8 +1,15 @@
 import { Component, useCallback, useState } from "react";
 import { toast } from "@/lib/toast";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
-import { Boxes, Loader2, RotateCcw, TerminalSquare, Trash2 } from "lucide-react";
+import {
+  Boxes,
+  Info,
+  Loader2,
+  RotateCcw,
+  TerminalSquare,
+  Trash2,
+} from "lucide-react";
 import {
   ComputerBillingWarningBanner,
   ComputerPausedForBillingNotice,
@@ -49,7 +56,6 @@ export function ComputerView({
   const reserve = useReserveComputer();
   const deleteComputer = useDeleteComputer();
   const mintTerminalToken = useMintTerminalToken();
-  const posthog = usePostHog();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const terminalTheme = themeMode === "dark" ? "dark" : "light";
 
@@ -110,7 +116,8 @@ export function ComputerView({
 
   const openTerminal = useCallback(async () => {
     if (!effectiveProjectId) return;
-    posthog?.capture("computer_terminal_opened", {
+    track("computer_terminal_opened", {
+      location: "computer_view",
       computer_status: liveStatus ?? "none",
     });
     setTerminalOpen(true);
@@ -125,7 +132,7 @@ export function ComputerView({
         if (isComputerStartLimitError(err)) {
           // Daily start cap — the limit dialog carries the conversion CTA
           // (sign-in for guests, top-up for signed-in users).
-          posthog?.capture("computer_start_limit_hit");
+          track("computer_start_limit_hit", { location: "computer_view" });
           useMCPJamLimitDialogStore.getState().notifyLimitHit();
         } else {
           toast.error(
@@ -136,7 +143,7 @@ export function ComputerView({
         setStarting(false);
       }
     }
-  }, [effectiveProjectId, liveStatus, posthog, reserve]);
+  }, [effectiveProjectId, liveStatus, reserve]);
 
   const onDelete = useCallback(async () => {
     if (!effectiveProjectId) return;
@@ -317,7 +324,7 @@ export function ComputerView({
           {hasComputer ? (
             confirmingDelete ? (
               <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-                Delete this computer?
+                Delete this computer? All files on it will be deleted.
                 <Button
                   size="sm"
                   variant="destructive"
@@ -352,10 +359,19 @@ export function ComputerView({
         </div>
       </div>
 
-      <p className="text-sm text-muted-foreground">
-        A personal Linux workstation for this project — files and installed
-        tools persist between sessions; it sleeps when idle and wakes on use.
-      </p>
+      <div className="flex flex-col gap-1.5">
+        <p className="text-sm text-muted-foreground">
+          A personal Linux workstation for this project — it sleeps when idle
+          and wakes on use.
+        </p>
+        <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            Files persist when your computer sleeps, but they aren't backed up —
+            keep anything important in git or elsewhere.
+          </span>
+        </p>
+      </div>
 
       {/* Degrade like the meter: the shared query throws against a backend that
           predates it, so hide the banner rather than blank the whole tab. */}
@@ -386,7 +402,8 @@ export function ComputerView({
             {hasComputer ? (
               confirmingReset ? (
                 <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-                  Reset to the image? Installed files are wiped.
+                  Reset to the image? All files on this computer will be
+                  deleted.
                   <Button
                     size="sm"
                     variant="destructive"

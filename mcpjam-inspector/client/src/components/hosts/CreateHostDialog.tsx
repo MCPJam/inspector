@@ -2,8 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { useConvexAuth } from "convex/react";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import {
   Dialog,
   DialogContent,
@@ -48,7 +47,6 @@ export function CreateHostDialog({
   onCreated,
   initialTemplateId,
 }: CreateHostDialogProps) {
-  const posthog = usePostHog();
   const { createHost } = useHostMutations();
   const { isAuthenticated } = useConvexAuth();
   const { servers } = useProjectServers({ isAuthenticated, projectId });
@@ -91,11 +89,11 @@ export function CreateHostDialog({
       : undefined) ?? "";
   const templatesUnavailableMessage =
     catalogState.status === "loading"
-      ? "Loading host templates..."
+      ? "Loading client templates..."
       : catalogState.status === "fallback" || catalogState.status === "error"
-      ? "Could not load live host templates."
+      ? "Could not load live client templates."
       : !selectedTemplateInput
-      ? "Selected host template is unavailable."
+      ? "Selected client template is unavailable."
       : null;
   const canCreate =
     Boolean(name.trim()) &&
@@ -133,7 +131,7 @@ export function CreateHostDialog({
     const trimmed = name.trim();
     if (!trimmed || !selectedTemplateInput || catalogState.status !== "live") {
       if (trimmed && catalogState.status !== "loading") {
-        toast.error("Could not load live host templates");
+        toast.error("Could not load live client templates");
       }
       return;
     }
@@ -156,15 +154,15 @@ export function CreateHostDialog({
         name: trimmed,
         input: { ...seed, serverIds: [] },
       });
-      toast.success(`Host "${trimmed}" created`);
+      toast.success(`Client "${trimmed}" created`);
       handleClose();
       onCreated(hostId);
       // Telemetry is best-effort: a posthog throw must not bubble into the
       // shared catch and surface a "creation failed" toast after we've
       // already shown success and notified the caller.
       try {
-        posthog.capture("client_created", {
-          ...standardEventProps("create_client_dialog"),
+        track("client_created", {
+          location: "create_client_dialog",
           client_id: hostId,
           client_config_id: hostConfigId,
           template_id: selectedTemplateId,
@@ -174,7 +172,7 @@ export function CreateHostDialog({
         // swallow — analytics must not block the success path
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create host");
+      toast.error(err instanceof Error ? err.message : "Failed to create client");
     } finally {
       setIsSaving(false);
     }
@@ -184,7 +182,7 @@ export function CreateHostDialog({
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>New Host</DialogTitle>
+          <DialogTitle>New Client</DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-4 py-2">
           <div className="flex flex-col gap-2">
@@ -233,7 +231,7 @@ export function CreateHostDialog({
             <Label htmlFor="host-name">Name</Label>
             <Input
               id="host-name"
-              placeholder="My Host"
+              placeholder="My Client"
               value={name}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) =>
