@@ -198,39 +198,83 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
   });
 });
 
-describe("swarm single-host runner — shutdown finalizes in-flight attempt", () => {
-  it("on shutdown/abort while a claimed session is in-flight, best-effort reports it terminal failed(runner_shutdown) instead of leaving it running", async () => {
-    // Model the runner being parked inside the (uncancellable) persona call:
-    // the shared core only resolves once the run is aborted.
-    runSyntheticHostSessionMock.mockImplementation(
-      (adapter: any) =>
-        new Promise((resolve) => {
-          adapter.abortSignal?.addEventListener("abort", () =>
-            resolve({ outcome: "failed" })
+describe("swarm single-host runner — shutdown unwinds via cancellable persona", () => {
+  it("forwards the run signal into the persona call so a PARKED session unwinds and self-reports its terminal ONCE via the normal path (no eager runner_shutdown race)", async () => {
+    // The persona driver models the previously-uncancellable park: it resolves
+    // ONLY when its forwarded signal aborts (as `AbortSignal.any` → fetch abort
+    // does in prod). We capture the signal to prove it was threaded through.
+    let personaSignal: AbortSignal | undefined;
+    swarmPersonaNextTurnMock.mockImplementation(
+      (_url: unknown, _bearer: unknown, args: any) =>
+        new Promise((_resolve, reject) => {
+          personaSignal = args.signal;
+          args.signal?.addEventListener("abort", () =>
+            reject(new Error("aborted"))
           );
         })
     );
 
+    const reportTimeline: string[] = [];
+    reportAttemptMock.mockImplementation(async (_u, _b, args: any) => {
+      reportTimeline.push(args.status);
+    });
+
+    // The shared core drives the persona, then — because the persona fetch is
+    // now cancellable — unwinds to `failed` and returns. The runner reports the
+    // terminal only AFTER this resolves (persist-before-terminal).
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      try {
+        await adapter.nextPersonaTurn([]);
+        return { outcome: "succeeded" };
+      } catch {
+        return { outcome: "failed" };
+      }
+    });
+
     const runPromise = startJourneyRun(baseOpts({ sessionsPerHost: 1 }));
-    // Let the claim resolve and the core be entered (attempt now in-flight).
+    // Let the claim resolve and the core enter the (parked) persona call.
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
 
-    // Graceful shutdown aborts the run.
+    // Graceful shutdown aborts the run — this must cancel the parked persona
+    // fetch so the session unwinds promptly.
+    await shutdownRunningJourneyRuns(1_000);
+    await runPromise;
+
+    // The run's abort signal was forwarded into the persona call.
+    expect(personaSignal).toBeInstanceOf(AbortSignal);
+
+    const calls = reportAttemptMock.mock.calls.map((c) => c[2] as any);
+    // No eager per-attempt runner_shutdown report races the normal terminal.
+    expect(calls.some((a) => a.errorCode === "runner_shutdown")).toBe(false);
+    // Exactly one terminal, reported via the normal path AFTER the claim, with
+    // the same chatSessionId (persist-before-terminal preserved).
+    const terminals = calls.filter((a) => a.status !== "running");
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0].status).toBe("failed");
+    expect(terminals[0].chatSessionId).toBe("synth_run-1_host-1_0");
+    expect(reportTimeline).toEqual(["running", "failed"]);
+  });
+
+  it("does NOT misclassify a session that SUCCEEDS just as abort fires — its succeeded terminal wins, exactly once, no runner_shutdown", async () => {
+    // The core finished all turns (persisted) and returns `succeeded` even
+    // though the run is being aborted concurrently.
+    runSyntheticHostSessionMock.mockImplementation(async () => {
+      return { outcome: "succeeded" };
+    });
+
+    const runPromise = startJourneyRun(baseOpts({ sessionsPerHost: 1 }));
+    await Promise.resolve();
     await shutdownRunningJourneyRuns(1_000);
     await runPromise;
 
     const calls = reportAttemptMock.mock.calls.map((c) => c[2] as any);
-    const shutdownReport = calls.find((a) => a.errorCode === "runner_shutdown");
-    expect(shutdownReport).toBeDefined();
-    expect(shutdownReport.status).toBe("failed");
-    expect(shutdownReport.chatSessionId).toBe("synth_run-1_host-1_0");
-
-    // The in-flight attempt is reported exactly once — the abort finalize and
-    // the normal terminal path must not double-report it.
+    expect(calls.some((a) => a.errorCode === "runner_shutdown")).toBe(false);
     const terminals = calls.filter((a) => a.status !== "running");
     expect(terminals).toHaveLength(1);
+    expect(terminals[0].status).toBe("succeeded");
+    expect(terminals[0].chatSessionId).toBe("synth_run-1_host-1_0");
   });
 });
 

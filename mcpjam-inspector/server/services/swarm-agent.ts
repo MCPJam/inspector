@@ -105,7 +105,10 @@ async function postJson<T>(
   url: string,
   bearer: string,
   body: unknown,
-  timeoutMs: number
+  timeoutMs: number,
+  // Optional caller signal (e.g. the run's abort) composed with the per-call
+  // timeout so EITHER a timeout OR a shutdown/cancel aborts the in-flight fetch.
+  signal?: AbortSignal
 ): Promise<T> {
   const response = await fetch(url, {
     method: "POST",
@@ -114,7 +117,9 @@ async function postJson<T>(
       Authorization: `Bearer ${bearer}`,
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
+    signal: signal
+      ? AbortSignal.any([AbortSignal.timeout(timeoutMs), signal])
+      : AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
@@ -257,6 +262,10 @@ export async function swarmPersonaNextTurn(
     runId: string;
     hostId: string;
     transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>;
+    // Run abort signal. This call can PARK for up to LLM_TIMEOUT_MS (120s) in
+    // an uncancellable place; forwarding the run's signal lets a shutdown/cancel
+    // abort the parked fetch immediately so the session can unwind.
+    signal?: AbortSignal;
   }
 ): Promise<SwarmPersonaNextTurnResponse> {
   const data = await postJson<{
@@ -273,7 +282,8 @@ export async function swarmPersonaNextTurn(
       hostId: args.hostId,
       transcriptSoFar: args.transcriptSoFar,
     },
-    LLM_TIMEOUT_MS
+    LLM_TIMEOUT_MS,
+    args.signal
   );
   if (!data.ok || typeof data.message !== "string") {
     throw new Error(

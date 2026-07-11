@@ -199,43 +199,16 @@ async function runJourneySingleHost(
       });
   }, HEARTBEAT_INTERVAL_MS);
 
-  // The attempt that has been CLAIMED (`running`) but not yet reported terminal.
-  // On shutdown/abort the runner can be parked for up to 120s inside the
-  // persona-next-turn call (which isn't cancelled by the abort), so the claimed
-  // attempt would linger `running` until the 90s stale-run cron. The abort
-  // listener below reports it terminal `failed` (errorCode `runner_shutdown`)
-  // immediately so it doesn't depend solely on the cron. Cleared the moment the
-  // normal terminal report claims it, so the two paths can't double-report.
-  let inFlightAttempt:
-    | { sessionIdx: number; chatSessionId: string }
-    | undefined;
-  const onAbort = () => {
-    const claimed = inFlightAttempt;
-    if (!claimed) return;
-    inFlightAttempt = undefined;
-    // Best-effort — a terminal-write failure here is swallowed; the backend
-    // stale-run cron remains the hard backstop.
-    reportAttempt(convexHttpUrl, bearer, {
-      projectId,
-      runId,
-      hostId,
-      sessionIdx: claimed.sessionIdx,
-      status: "failed",
-      chatSessionId: claimed.chatSessionId,
-      errorCode: "runner_shutdown",
-    }).catch((err) => {
-      logger.warn(
-        "[swarm.runner] shutdown finalize of in-flight attempt failed",
-        {
-          runId,
-          hostId,
-          sessionIdx: claimed.sessionIdx,
-          error: err instanceof Error ? err.message : String(err),
-        }
-      );
-    });
-  };
-  abortSignal?.addEventListener("abort", onAbort, { once: true });
+  // On shutdown/abort the run's `abortSignal` is forwarded into BOTH the shared
+  // core's turn drain AND the persona driver (`swarmPersonaNextTurn`, below), so
+  // the one place a session could previously park uncancellably for up to 120s
+  // is now cancellable. A shutdown/cancel therefore unwinds every in-flight
+  // session promptly, and each reports its OWN accurate terminal via the normal
+  // path below (`failed` for an interrupted session, or its real outcome if it
+  // finished first) — with the transcript already persisted. There is no eager
+  // per-attempt abort report to race that normal terminal, so no session is
+  // misclassified on shutdown. The backend stale-run cron remains the hard
+  // backstop for anything that still can't unwind.
 
   try {
     for (let sessionIdx = 0; sessionIdx < sessionsPerHost; sessionIdx++) {
@@ -267,9 +240,6 @@ async function runJourneySingleHost(
         });
         continue;
       }
-      // Mark this attempt in-flight so an abort during the (uncancellable)
-      // session can finalize it terminal.
-      inFlightAttempt = { sessionIdx, chatSessionId };
 
       // Execute the session via the shared core. It owns manager lifecycle +
       // dispose, per-turn persona→drain→persist, browser/widget capture, and
@@ -306,6 +276,10 @@ async function runJourneySingleHost(
             runId,
             hostId,
             transcriptSoFar,
+            // Forward the run abort so a shutdown/cancel aborts a parked persona
+            // fetch immediately and the session unwinds (instead of lingering up
+            // to 120s in the persona call).
+            ...(abortSignal ? { signal: abortSignal } : {}),
           }),
         persist: {
           sourceType: "swarm",
@@ -318,12 +292,6 @@ async function runJourneySingleHost(
         // No chatbox-scoped side-persistence on the swarm surface (widget /
         // browser-artifact rows are keyed by chatboxId, which swarm has none).
       });
-
-      // If an abort finalized this attempt while the session ran, the abort
-      // listener already reported its terminal (and cleared inFlightAttempt) —
-      // don't double-report. Break out of the batch (we're shutting down).
-      if (inFlightAttempt === undefined) break;
-      inFlightAttempt = undefined;
 
       // Report the terminal with the SAME chatSessionId ONLY after the
       // transcript is persisted. Best-effort: a terminal write failure is
@@ -362,6 +330,5 @@ async function runJourneySingleHost(
     });
   } finally {
     clearInterval(heartbeat);
-    abortSignal?.removeEventListener("abort", onAbort);
   }
 }
