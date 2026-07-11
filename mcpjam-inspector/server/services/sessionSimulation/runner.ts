@@ -18,7 +18,10 @@ import {
   type RunLocalOrgChatTurnHeadlessOptions,
 } from "../../utils/org-model-stream-handler.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
-import { resolveTurnRuntime } from "../../utils/resolve-turn-runtime.js";
+import {
+  resolveTurnRuntime,
+  classifyTurnFailure,
+} from "../../utils/resolve-turn-runtime.js";
 import {
   buildSyntheticModelDefinition,
   resolveSyntheticModelSource,
@@ -46,7 +49,10 @@ import {
   toBrowserStepPayload,
   toObservationPayload,
 } from "../browser-artifact-serialization.js";
-import type { EvalTraceWidgetSnapshot } from "@/shared/eval-trace";
+import {
+  appendDedupedModelMessages,
+  type EvalTraceWidgetSnapshot,
+} from "@/shared/eval-trace";
 import {
   evalTraceSnapshotToPayload,
   sanitizeWidgetForBackend,
@@ -895,7 +901,9 @@ async function runOneSession(args: {
     return { outcome: "succeeded" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (/rate.?limit|spend|cap/i.test(message)) {
+    // Single source of truth for the spend-cap / rate-limit fold — shared with
+    // the per-runtime `classifyFailure` so the regex can't drift.
+    if (classifyTurnFailure(message) === "rate_limited") {
       return { outcome: "rate_limited" };
     }
     logger.warn("[sessionSimulation.runner] session failed", {
@@ -1281,8 +1289,20 @@ export async function drainAssistantTurn(
       );
     }
 
+    // Rebuild history with the SAME deduped append the old local path used
+    // (`buildLocalOrgOnPersist` / `runLocalOrgChatTurnHeadless`:
+    // `capturedHistory = [...messages]; appendDedupedModelMessages(...)`).
+    // `result.messages` is a plain `[...opts.messages, ...newMessages]` spread,
+    // so an engine response message that overlaps the input-history prefix (by
+    // id or JSON identity) would double-write into the transcript. Dedup the
+    // turn's new messages against the input prefix to match legacy semantics.
+    // `result.newMessages` are already mcp-tool-origin stamped, so the origin
+    // metadata is preserved.
+    const history: ModelMessage[] = [...args.messages];
+    appendDedupedModelMessages(history, result.newMessages);
+
     return {
-      history: result.messages,
+      history,
       turnTrace: result.turnTrace,
       modelSource: rt.modelSource,
     };

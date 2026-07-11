@@ -515,6 +515,88 @@ describe("drainAssistantTurn — engine error surfacing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("SUCCEEDS a local-BYOK turn even when the usage writeback fetch REJECTS (best-effort billing)", async () => {
+    const calls: unknown[] = [];
+    stubDirectEngine(calls);
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "local_byok",
+      orgRuntime: {
+        runtimeLocation: "local",
+        provider: { providerKey: "openai" } as any,
+      },
+    });
+    // Parity with the OLD fire-and-forget `postLocalUsage(...).catch(...)`: a
+    // `/stream/org/local-usage` outage must NOT fail an otherwise-successful
+    // synthetic turn (the caller would then discard the session).
+    fetchMock.mockRejectedValueOnce(new Error("network down"));
+
+    const result = await drainAssistantTurn(
+      baseArgs({
+        modelId: "llama3",
+        modelDefinition: {
+          id: "llama3",
+          name: "Llama3 local",
+          provider: "ollama",
+        } as ModelDefinition,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    // Turn resolves successfully; the rejection was swallowed/logged.
+    expect(result.turnTrace).toEqual(TURN_TRACE);
+    expect(result.modelSource).toBe("local_byok");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rebuilds local-BYOK history with dedup so response messages overlapping the input prefix don't double-write", async () => {
+    const calls: unknown[] = [];
+    runDirectChatTurnMock.mockImplementation((opts: any) => {
+      calls.push(opts);
+      return { handleSentinel: true };
+    });
+    const input = [{ role: "user", content: "hi" }];
+    // The engine's response slice re-includes the input-history prefix (the AI
+    // SDK can echo prior messages by id / JSON identity). The old local path
+    // did `capturedHistory = [...messages]; appendDedupedModelMessages(...)`,
+    // so overlapping entries were deduped out of the persisted transcript.
+    consumeDirectChatTurnHeadlessMock.mockImplementation(async () => ({
+      messages: [
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "local reply" },
+      ],
+      steps: [],
+      totalUsage: { totalTokens: 7 },
+      finishReason: "stop",
+      spans: [],
+      turnTrace: TURN_TRACE,
+      aborted: false,
+    }));
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "local_byok",
+      orgRuntime: {
+        runtimeLocation: "local",
+        provider: { providerKey: "openai" } as any,
+      },
+    });
+
+    const result = await drainAssistantTurn(
+      baseArgs({
+        messages: input,
+        modelId: "llama3",
+        modelDefinition: {
+          id: "llama3",
+          name: "Llama3 local",
+          provider: "ollama",
+        } as ModelDefinition,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    // No duplicate of the input `user: hi` message.
+    expect(result.history).toEqual([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "local reply" },
+    ]);
+  });
+
   it("threads hosted turn hooks into the engine call (browser session context attachment)", async () => {
     const calls: unknown[] = [];
     runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));

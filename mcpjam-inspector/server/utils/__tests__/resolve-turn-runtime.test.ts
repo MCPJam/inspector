@@ -36,7 +36,10 @@ vi.mock("@mcpjam/sdk/model-factory", async () => {
   };
 });
 
-import { resolveTurnRuntime } from "../resolve-turn-runtime.js";
+import {
+  resolveTurnRuntime,
+  classifyTurnFailure,
+} from "../resolve-turn-runtime.js";
 import type { UnifiedTurnResult } from "../turn-execution.js";
 
 const MCPJAM_MODEL: ModelDefinition = {
@@ -285,6 +288,33 @@ describe("resolveTurnRuntime — local usage writeback (finalizeUsage)", () => {
     await rt.finalizeUsage(aborted);
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("swallows a writeback rejection (best-effort parity with the old fire-and-forget catch)", async () => {
+    // Parity with the OLD `buildLocalOrgOnPersist`, where the writeback was
+    // `postLocalUsage({...}).catch((err) => logger.warn(...))`: a
+    // `/stream/org/local-usage` outage NEVER failed the turn. The new
+    // `finalizeUsage` awaits the post, so a rejection must be caught here or
+    // it would fail an otherwise-successful synthetic turn.
+    fetchMock.mockRejectedValueOnce(new Error("network down"));
+    const rt = await resolveTurnRuntime(localArgs());
+
+    await expect(rt.finalizeUsage(successResult())).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("classifyTurnFailure (exported single source of truth)", () => {
+  it("folds rate-limit / spend / cap messages into rate_limited", () => {
+    expect(classifyTurnFailure("Rate limit exceeded")).toBe("rate_limited");
+    expect(classifyTurnFailure("ratelimit hit")).toBe("rate_limited");
+    expect(classifyTurnFailure("daily spend cap reached")).toBe("rate_limited");
+    expect(classifyTurnFailure("hard cap hit")).toBe("rate_limited");
+  });
+
+  it("maps everything else to failed", () => {
+    expect(classifyTurnFailure("provider exploded")).toBe("failed");
+    expect(classifyTurnFailure("")).toBe("failed");
   });
 });
 

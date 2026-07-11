@@ -35,6 +35,7 @@ import {
   type SyntheticModelSource,
 } from "./org-model-config.js";
 import { postLocalUsage } from "./org-model-stream-handler.js";
+import { logger } from "./logger.js";
 import type {
   DirectRuntime,
   TurnRuntime,
@@ -104,10 +105,14 @@ export interface ResolvedTurnRuntime {
 }
 
 /**
- * The exact regex `runOneSession`'s catch uses to fold spend-cap /
- * rate-limit errors into the amber `rate_limited` outcome.
+ * The single source of truth for folding spend-cap / rate-limit errors into
+ * the amber `rate_limited` outcome vs a hard `failed`. Both `runOneSession`'s
+ * catch AND the per-runtime `classifyFailure` delegate here so the regex can't
+ * drift between the two call sites.
  */
-function classifyFailure(message: string): "rate_limited" | "failed" {
+export function classifyTurnFailure(
+  message: string,
+): "rate_limited" | "failed" {
   return /rate.?limit|spend|cap/i.test(message) ? "rate_limited" : "failed";
 }
 
@@ -178,32 +183,44 @@ export async function resolveTurnRuntime(
       // invokes this BEFORE throwing on an engine error, so a failed turn's
       // real spend is still recorded. Only abort suppresses the writeback.
       if (result.aborted) return;
-      await postLocalUsage({
-        projectId: args.projectId,
-        providerKey,
-        model: modelId,
-        usage: result.usage,
-        finishReason: result.finishReason,
-        chatSessionId: args.chatSessionId,
-        sourceType: args.sourceType,
-        // Byte-parity: the old writeback stamped turnId + promptIndex from the
-        // turn trace. The direct engine always produces a trace on completion.
-        turnId: result.turnTrace?.turnId,
-        promptIndex: result.turnTrace?.promptIndex,
-        authHeader: args.authHeader,
-        chatboxId: args.chatboxId,
-        accessVersion: args.accessVersion,
-        selectedServers: args.serverIds,
-        serverIds: args.serverIds,
-        synthesisRunId: args.attribution?.synthesisRunId,
-      });
+      // Best-effort writeback — parity with the OLD `buildLocalOrgOnPersist`,
+      // where `postLocalUsage({...}).catch((err) => logger.warn(...))` was
+      // fire-and-forget: a `/stream/org/local-usage` outage NEVER failed the
+      // turn. Awaiting the reject here would fail an otherwise-successful
+      // synthetic turn (and the caller then discards the session). Swallow +
+      // log any rejection; billing telemetry must not gate the turn.
+      try {
+        await postLocalUsage({
+          projectId: args.projectId,
+          providerKey,
+          model: modelId,
+          usage: result.usage,
+          finishReason: result.finishReason,
+          chatSessionId: args.chatSessionId,
+          sourceType: args.sourceType,
+          // Byte-parity: the old writeback stamped turnId + promptIndex from the
+          // turn trace. The direct engine always produces a trace on completion.
+          turnId: result.turnTrace?.turnId,
+          promptIndex: result.turnTrace?.promptIndex,
+          authHeader: args.authHeader,
+          chatboxId: args.chatboxId,
+          accessVersion: args.accessVersion,
+          selectedServers: args.serverIds,
+          serverIds: args.serverIds,
+          synthesisRunId: args.attribution?.synthesisRunId,
+        });
+      } catch (err) {
+        logger.warn("[org/local] Failed to post local usage", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     };
 
     return {
       runtime,
       modelSource: "local_byok",
       finalizeUsage,
-      classifyFailure,
+      classifyFailure: classifyTurnFailure,
     };
   }
 
@@ -221,7 +238,7 @@ export async function resolveTurnRuntime(
       },
       modelSource: "mcpjam",
       finalizeUsage: HOSTED_NOOP_FINALIZE,
-      classifyFailure,
+      classifyFailure: classifyTurnFailure,
     };
   }
 
@@ -256,6 +273,6 @@ export async function resolveTurnRuntime(
     },
     modelSource: "byok",
     finalizeUsage: HOSTED_NOOP_FINALIZE,
-    classifyFailure,
+    classifyFailure: classifyTurnFailure,
   };
 }
