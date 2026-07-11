@@ -141,7 +141,12 @@ async function postJson<T>(
 export async function createJourneyRun(
   convexHttpUrl: string,
   bearer: string,
-  args: { journeyRefId: string; launchKey: string; maxHosts: number }
+  args: {
+    projectId: string;
+    journeyRefId: string;
+    launchKey: string;
+    maxHosts: number;
+  }
 ): Promise<CreateJourneyRunResult> {
   const data = await postJson<{
     ok?: boolean;
@@ -154,6 +159,9 @@ export async function createJourneyRun(
     `${convexHttpUrl}/journey-execution/runs/create`,
     bearer,
     {
+      // `projectId` is REQUIRED by the backend route (it reads `body.projectId`
+      // and 400s without it); it scopes the LAUNCHER + project-member gate.
+      projectId: args.projectId,
       journeyRefId: args.journeyRefId,
       launchKey: args.launchKey,
       maxHosts: args.maxHosts,

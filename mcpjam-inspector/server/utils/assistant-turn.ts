@@ -90,7 +90,7 @@ export interface RunAssistantTurnOptions {
    * the existing `MCPJamHandlerOptions.sourceType` union but kept
    * narrowed to the public values to avoid silent string churn.
    */
-  sourceType: "direct" | "chatbox" | "eval";
+  sourceType: "direct" | "chatbox" | "eval" | "swarm";
   /**
    * Product-surface discriminator forwarded into chat-ingestion. Required
    * so each caller (eval runner, session simulation, MCP route) explicitly

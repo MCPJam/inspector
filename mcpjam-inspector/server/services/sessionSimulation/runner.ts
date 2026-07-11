@@ -776,7 +776,12 @@ export async function runSyntheticHostSession(
         modelId: String(modelDefinition.id),
         modelDefinition,
         chatSessionId,
-        sourceType: "chatbox",
+        // Tag the engine-facing turn (usage rows) with THIS surface's source:
+        // "chatbox" for the session-simulation surface, "swarm" for the
+        // journey-execution runner. The persist attribution already carries
+        // this; forwarding it keeps hosted + local-BYOK usage rows correctly
+        // sourced instead of hardcoding every journey turn as "chatbox".
+        sourceType: persist.sourceType,
         systemPrompt: prepared.enhancedSystemPrompt,
         temperature: prepared.resolvedTemperature,
         // `computer` / `finish_widget` merge into the advertised set; the
@@ -1380,10 +1385,13 @@ export async function drainAssistantTurn(
       ? { ...(extraBodyFields ?? {}), journeyRunId }
       : extraBodyFields;
 
-  // Narrow MCPJamHandlerOptions' open `sourceType` string to the engine union;
-  // the simulation runner always passes "chatbox".
+  // Narrow MCPJamHandlerOptions' open `sourceType` string to the engine union.
+  // The session-simulation surface passes "chatbox"; the swarm runner passes
+  // "swarm" (both flow through here). Anything else falls back to "chatbox".
   const sourceType =
-    args.sourceType === "direct" || args.sourceType === "eval"
+    args.sourceType === "direct" ||
+    args.sourceType === "eval" ||
+    args.sourceType === "swarm"
       ? args.sourceType
       : ("chatbox" as const);
 

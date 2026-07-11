@@ -292,6 +292,70 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     });
   });
 
+  it("tags the HOSTED engine turn with sourceType:\"swarm\" when the swarm surface drives the turn", async () => {
+    // CONTRACT (finding 3): the swarm runner passes `persist.sourceType` =
+    // "swarm" into drainAssistantTurn. That must reach the hosted engine's
+    // sourceType so hosted usage rows are attributed to the journey surface —
+    // NOT hardcoded to "chatbox" like the session-simulation surface.
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs({
+        sourceType: "swarm",
+        // Swarm attribution rides journeyRunId (not synthesisRunId).
+        synthesisRunId: undefined,
+        journeyRunId: "journey-run-1",
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    const opts = calls[0] as any;
+    expect(opts.sourceType).toBe("swarm");
+    // The default-endpoint hosted path is still used; the journey attribution
+    // rides `rt.runtime.extraBodyFields` (asserted at the wire level in the
+    // local-usage test below).
+    expect(opts.origin).toBe("chatbox");
+  });
+
+  it("posts the local-BYOK usage writeback with sourceType:\"swarm\" for the swarm surface", async () => {
+    // CONTRACT (finding 3): the local-BYOK usage writeback row must also carry
+    // "swarm" so per-journey local spend is attributed correctly.
+    const calls: unknown[] = [];
+    stubDirectEngine(calls);
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "local_byok",
+      orgRuntime: {
+        runtimeLocation: "local",
+        provider: { providerKey: "openai" } as any,
+      },
+    });
+
+    await drainAssistantTurn(
+      baseArgs({
+        sourceType: "swarm",
+        synthesisRunId: undefined,
+        journeyRunId: "journey-run-1",
+        modelId: "llama3",
+        modelDefinition: {
+          id: "llama3",
+          name: "Llama3 local",
+          provider: "ollama",
+        } as ModelDefinition,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0]! as unknown as [
+      string,
+      { body: string },
+    ];
+    expect(url).toBe("https://convex.test/stream/org/local-usage");
+    const body = JSON.parse(init.body);
+    expect(body.sourceType).toBe("swarm");
+    expect(body.journeyRunId).toBe("journey-run-1");
+  });
+
   it("refuses local-runtime BYOK + requireToolApproval=true with non-empty tools before building the model", async () => {
     resolveSyntheticModelSourceMock.mockResolvedValue({
       source: "local_byok",

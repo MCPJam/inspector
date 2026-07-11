@@ -58,6 +58,18 @@ interface PinnedConnectionSettings {
     mcpProtocolVersion?: McpProtocolVersion;
   };
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  /**
+   * Per-server request-timeout pins (ms) from the snapshot's
+   * `serverConnectionOverrides[serverId].requestTimeoutOverride`. A server
+   * absent from this map uses the host-level `timeoutMs`.
+   */
+  requestTimeoutByServerId?: Record<string, number>;
+}
+
+function coerceTimeoutMs(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -81,11 +93,9 @@ function buildPinnedConnectionSettings(
   // Timeout: accept either wire spelling (`timeoutMs` on the resolver shape,
   // `requestTimeout` on the project-config shape); require a positive finite
   // number, else fall back to the live default.
-  const rawTimeout = defaults?.timeoutMs ?? defaults?.requestTimeout;
   const timeoutMs =
-    typeof rawTimeout === "number" && Number.isFinite(rawTimeout) && rawTimeout > 0
-      ? rawTimeout
-      : fallbackTimeoutMs;
+    coerceTimeoutMs(defaults?.timeoutMs ?? defaults?.requestTimeout) ??
+    fallbackTimeoutMs;
 
   const initializePins: NonNullable<
     PinnedConnectionSettings["initializePins"]
@@ -115,6 +125,7 @@ function buildPinnedConnectionSettings(
   // (`mcpProtocolVersionOverride`); createAuthorizedManager re-validates.
   const overrides = asRecord(host.serverConnectionOverrides);
   let mcpProtocolVersionsByServerId: Record<string, McpProtocolVersion> | undefined;
+  let requestTimeoutByServerId: Record<string, number> | undefined;
   if (overrides) {
     for (const [serverId, rawOverride] of Object.entries(overrides)) {
       const override = asRecord(rawOverride);
@@ -126,6 +137,17 @@ function buildPinnedConnectionSettings(
         mcpProtocolVersionsByServerId ??= {};
         mcpProtocolVersionsByServerId[serverId] = pin;
       }
+      // Per-server request-timeout pin. Accept both the resolver spelling
+      // (`requestTimeout`) and the project-config override spelling
+      // (`requestTimeoutOverride`); a malformed value is simply skipped so the
+      // server falls back to the host-level timeout.
+      const perServerTimeout = coerceTimeoutMs(
+        override.requestTimeoutOverride ?? override.requestTimeout
+      );
+      if (perServerTimeout !== undefined) {
+        requestTimeoutByServerId ??= {};
+        requestTimeoutByServerId[serverId] = perServerTimeout;
+      }
     }
   }
 
@@ -135,6 +157,7 @@ function buildPinnedConnectionSettings(
     ...(mcpProtocolVersionsByServerId
       ? { mcpProtocolVersionsByServerId }
       : {}),
+    ...(requestTimeoutByServerId ? { requestTimeoutByServerId } : {}),
   };
 }
 
@@ -182,6 +205,7 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
       let created;
       try {
         created = await createJourneyRun(convexHttpUrl, bearerToken, {
+          projectId: body.projectId,
           journeyRefId: journeyId,
           launchKey: body.launchKey,
           maxHosts: 1,
@@ -257,6 +281,12 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
                   ? {
                       mcpProtocolVersionsByServerId:
                         connection.mcpProtocolVersionsByServerId,
+                    }
+                  : {}),
+                ...(connection.requestTimeoutByServerId
+                  ? {
+                      requestTimeoutByServerId:
+                        connection.requestTimeoutByServerId,
                     }
                   : {}),
               }

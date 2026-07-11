@@ -94,6 +94,10 @@ describe("web routes — swarm single-host launch", () => {
     expect(createJourneyRunMock).toHaveBeenCalledTimes(1);
     const createArgs = createJourneyRunMock.mock.calls[0]![2] as any;
     expect(createArgs).toMatchObject({
+      // projectId is REQUIRED by the backend create route — the route must
+      // forward the client-supplied projectId (see the fetch-level contract
+      // test in swarm-agent.test.ts that asserts it lands in the request body).
+      projectId: "proj-1",
       journeyRefId: "journey-1",
       launchKey: "lk-1",
       maxHosts: 1,

@@ -57,7 +57,7 @@ export type TurnRunAttribution =
  * The narrowed source-of-traffic marker forwarded into chat-ingestion /
  * usage writeback. Mirrors `RunAssistantTurnOptions["sourceType"]`.
  */
-export type TurnSourceType = "direct" | "chatbox" | "eval";
+export type TurnSourceType = "direct" | "chatbox" | "eval" | "swarm";
 
 export interface ResolveTurnRuntimeArgs {
   modelDefinition: ModelDefinition;
