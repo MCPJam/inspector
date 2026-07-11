@@ -152,7 +152,16 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                 size="sm"
                 variant="ghost"
                 onClick={async () => {
-                  await deletePersona({ personaRefId: selectedPersona._id } as any);
+                  if (
+                    !window.confirm(
+                      `Delete persona "${selectedPersona.name}"? Its journeys are hidden but historical runs are kept.`
+                    )
+                  ) {
+                    return;
+                  }
+                  await deletePersona({
+                    personaRefId: selectedPersona._id,
+                  } as any);
                   setSelectedPersonaId(null);
                 }}
               >

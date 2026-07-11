@@ -1088,10 +1088,27 @@ export function ChatboxesRoute() {
 
 export function SwarmsRoute() {
   // Project-scoped Swarms surface (Persona → Journey → Run redesign) — no
-  // longer a per-host chatbox tab.
-  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  // longer a per-host chatbox tab. Keeps the same billing gate as the chatbox
+  // product surface, and re-mounts per project so selection state can't leak
+  // across a project switch.
+  const {
+    billingUiEnabled,
+    activeTabBillingLocked,
+    activeTabBillingFeature,
+    convexProjectId,
+    isAuthenticated,
+  } = useAppRouteContext();
+
+  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+    return <ActiveBillingUpsellGate />;
+  }
+
   return (
-    <SwarmsTab projectId={convexProjectId} isAuthenticated={isAuthenticated} />
+    <SwarmsTab
+      key={convexProjectId ?? "no-project"}
+      projectId={convexProjectId}
+      isAuthenticated={isAuthenticated}
+    />
   );
 }
 
