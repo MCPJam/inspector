@@ -15,6 +15,7 @@ import {
   MessageCircleQuestionIcon,
   GraduationCap,
   Box,
+  PackageOpen,
   LayoutGrid,
   GitBranch,
   UserPlus,
@@ -208,7 +209,7 @@ const navigationSections: NavSection[] = [
       {
         title: "Chatbox",
         url: "/chatboxes",
-        icon: Box,
+        icon: PackageOpen,
         featureFlag: "sandboxes-enabled",
         billingFeature: "chatboxes",
       },

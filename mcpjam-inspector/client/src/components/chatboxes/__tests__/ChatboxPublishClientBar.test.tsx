@@ -4,11 +4,18 @@ import { describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
 import { ChatboxPublishClientBar } from "../ChatboxPublishClientBar";
 
-const { setChatboxServersMock, toastMock } = vi.hoisted(() => ({
+const {
+  setChatboxServersMock,
+  toastMock,
+  navigateMock,
+  setPreviewedHostIdMock,
+} = vi.hoisted(() => ({
   setChatboxServersMock: vi
     .fn()
     .mockResolvedValue({ attachmentId: "att-row-1" }),
   toastMock: { success: vi.fn(), error: vi.fn() },
+  navigateMock: vi.fn(),
+  setPreviewedHostIdMock: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
@@ -20,12 +27,30 @@ vi.mock("convex/react", () => ({
 vi.mock("sonner", () => ({ toast: toastMock }));
 
 vi.mock("@/lib/app-navigation", () => ({
-  useAppNavigate: () => vi.fn(),
+  useAppNavigate: () => navigateMock,
   buildHostsPath: (hostId: string) => `/hosts/${hostId}`,
 }));
 
 vi.mock("@/lib/chatbox-client-style", () => ({
   resolveHostLogoByDisplayName: () => null,
+}));
+
+vi.mock("@/hooks/use-previewed-client-id", () => ({
+  usePreviewedHostId: () => ["host-1", setPreviewedHostIdMock],
+}));
+
+vi.mock("@/hooks/useClients", () => ({
+  useHostList: () => ({
+    hosts: [
+      { hostId: "host-1", name: "MCPJam" },
+      { hostId: "host-2", name: "Claude" },
+    ],
+    isLoading: false,
+  }),
+}));
+
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
 }));
 
 vi.mock("@/hooks/useViews", () => ({
@@ -119,9 +144,29 @@ describe("ChatboxPublishClientBar", () => {
     );
   });
 
-  it("still renders the labeled host pill that links to Connect", () => {
+  it("renders a host picker pill for the current host", () => {
     renderBar([]);
+    expect(screen.getByTestId("chatbox-host-picker")).toBeInTheDocument();
     expect(screen.getByText("Client")).toBeInTheDocument();
     expect(screen.getByText("MCPJam")).toBeInTheDocument();
+  });
+
+  it("switches the previewed host from the picker dropdown", async () => {
+    const user = userEvent.setup();
+    renderBar([]);
+
+    await user.click(screen.getByTestId("chatbox-host-picker"));
+    await user.click(await screen.findByTestId("chatbox-host-option-host-2"));
+
+    expect(setPreviewedHostIdMock).toHaveBeenCalledWith("host-2");
+  });
+
+  it("navigates to Connect from the settings control", async () => {
+    const user = userEvent.setup();
+    renderBar([]);
+
+    await user.click(screen.getByTestId("chatbox-host-edit"));
+
+    expect(navigateMock).toHaveBeenCalledWith("/hosts/host-1");
   });
 });
