@@ -257,7 +257,27 @@ export function useViewerProjectRole({
     )?.role;
   }, [activeMembers, viewerEmail]);
 
-  return { role, isLoading };
+  return {
+    role,
+    isLoading: isViewerRolePending(isLoading, isAuthenticated, viewerEmail),
+  };
+}
+
+/**
+ * Is the viewer's project role still "not yet decided"? True while the members
+ * list is loading OR while the viewer's identity is still hydrating — WorkOS
+ * `user.email` arrives asynchronously AFTER `isAuthenticated` flips true, so if
+ * the members list resolves first we'd otherwise report a real member as
+ * `{ role: undefined, isLoading: false }` and callers would wrongly deny them.
+ * Treat "authenticated but no viewer email yet" as still-loading so the gate
+ * shows a spinner, not access-denied, until the identity is available.
+ */
+export function isViewerRolePending(
+  membersLoading: boolean,
+  isAuthenticated: boolean,
+  viewerEmail: string | null | undefined
+): boolean {
+  return membersLoading || (isAuthenticated && !viewerEmail?.trim());
 }
 
 export function useProjectMutations() {
