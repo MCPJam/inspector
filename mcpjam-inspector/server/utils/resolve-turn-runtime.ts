@@ -94,10 +94,11 @@ export interface ResolvedTurnRuntime {
   modelSource: SyntheticModelSource;
   /**
    * Local-BYOK usage writeback. No-op for the hosted engines (the backend
-   * records usage server-side). Callers MUST only invoke this on a
-   * non-aborted, non-errored turn — the local writeback mirrors today's
-   * `buildLocalOrgOnPersist` success semantics (it self-guards on
-   * `result.aborted`).
+   * records usage server-side). Invoke on any NON-ABORTED completion —
+   * engine-error included, so consumed tokens are still billed — mirroring the
+   * old `buildLocalOrgOnPersist`, which billed unconditionally on non-abort.
+   * Self-guards on `result.aborted`, and the writeback itself is best-effort
+   * (a telemetry outage is swallowed + logged, never thrown).
    */
   finalizeUsage(result: UnifiedTurnResult): Promise<void>;
   /** Map a turn-failure message to the runner's rate-limit vs failed outcome. */
