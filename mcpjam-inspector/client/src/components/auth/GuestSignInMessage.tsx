@@ -1,7 +1,6 @@
 import { useAuth } from "@workos-inc/authkit-react";
-import { usePostHog } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 
 /**
  * The one honest empty state for a guest who reaches a surface that only a
@@ -34,13 +33,12 @@ export function GuestSignInMessage({
   compact?: boolean;
 }) {
   const { signIn } = useAuth();
-  const posthog = usePostHog();
 
   const handleSignIn = () => {
-    posthog?.capture("login_button_clicked", {
+    // track() injects platform/environment/location (standardEventProps); the
+    // analytics ratchet forbids raw posthog.capture outside lib/analytics.ts.
+    track("login_button_clicked", {
       location: location ?? "guest_signin_message",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
     signIn();
   };

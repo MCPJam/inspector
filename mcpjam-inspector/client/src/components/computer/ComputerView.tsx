@@ -51,12 +51,19 @@ import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
  */
 export function ComputerView({
   projectId,
-  isAuthenticated,
+  isSignedInMember,
 }: {
   projectId: string | null;
-  isAuthenticated: boolean;
+  /**
+   * True only for a signed-in member — NOT merely "has a Convex identity".
+   * Anonymous guests are `useConvexAuth().isAuthenticated === true` (they're
+   * provisioned as anonymous actors), so gating the personal computer on raw
+   * auth would let guests through; the caller must pass member-ness
+   * (`!currentUser.isAnonymous`) so the guest sign-in affordance below fires.
+   */
+  isSignedInMember: boolean;
 }) {
-  const effectiveProjectId = isAuthenticated ? projectId : null;
+  const effectiveProjectId = isSignedInMember ? projectId : null;
   const status = useComputerStatus(effectiveProjectId);
   const reserve = useReserveComputer();
   const deleteComputer = useDeleteComputer();
@@ -369,11 +376,11 @@ export function ComputerView({
     },
   });
 
-  if (!isAuthenticated) {
-    // Guest actor: the personal computer (and the Claude Code harness that
-    // runs inside it) is account-scoped, so the backend omits it from a
-    // guest's runtime config. Offer the honest next step with a working
-    // sign-in button instead of a dead-end line of copy.
+  if (!isSignedInMember) {
+    // Guest actor (anonymous or not signed in): the personal computer (and the
+    // Claude Code harness that runs inside it) is account-scoped, so the
+    // backend omits it from a guest's runtime config. Offer the honest next
+    // step with a working sign-in button instead of a dead-end line of copy.
     return (
       <div className="flex h-full items-center justify-center p-6">
         <GuestSignInMessage

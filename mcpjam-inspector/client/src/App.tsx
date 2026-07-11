@@ -888,10 +888,16 @@ export function CaniuseCapabilityRoute() {
 }
 
 export function ComputerRoute() {
-  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated, isGuestProjectActor } =
+    useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
   const computersEnabled = useComputersEnabledState();
+
+  // A personal computer is account-scoped. Anonymous guests are provisioned
+  // Convex actors (`isAuthenticated === true`), so member-ness — not raw auth —
+  // is what gates the feature vs. the guest sign-in affordance.
+  const isSignedInMember = isAuthenticated && !isGuestProjectActor;
 
   // Only redirect on an explicit `false`. While PostHog hydrates the flag is
   // `undefined`; bouncing then would strand a flagged-in user who cold-loads
@@ -907,11 +913,11 @@ export function ComputerRoute() {
   const computerView = (
     <ComputerView
       projectId={convexProjectId}
-      isAuthenticated={isAuthenticated}
+      isSignedInMember={isSignedInMember}
     />
   );
 
-  if (!isAuthenticated) {
+  if (!isSignedInMember) {
     return computerView;
   }
 
@@ -3768,6 +3774,7 @@ export default function App() {
     hostsTabSelectedHostId,
     isAuthLoading,
     isAuthenticated,
+    isGuestProjectActor,
     isBillingContextPending,
     isLoadingRemoteProjects,
     areServersHydrated,
