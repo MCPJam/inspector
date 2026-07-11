@@ -6,6 +6,7 @@ import type { HostThemeMode } from "@/lib/client-styles";
 import {
   HOST_CONFIG_FIELDS,
   type HostComparisonSubject,
+  type HostConfigFieldDef,
 } from "@/lib/host-config-field-schema";
 import { SupportChip } from "./support-chip";
 import {
@@ -18,6 +19,7 @@ import {
 
 interface HostCapabilityListViewProps {
   subjects: ReadonlyArray<HostComparisonSubject>;
+  fields?: ReadonlyArray<HostConfigFieldDef>;
   divergingOnly?: boolean;
   supportFilter?: SupportFilterMode;
   searchQuery?: string;
@@ -39,6 +41,7 @@ const GROUPS: ReadonlyArray<{ level: SupportLevel; title: string }> = [
 
 export function HostCapabilityListView({
   subjects,
+  fields: allFields = HOST_CONFIG_FIELDS,
   divergingOnly = false,
   supportFilter = "all",
   searchQuery = "",
@@ -49,12 +52,13 @@ export function HostCapabilityListView({
   const visibleFieldIds = useMemo(
     () =>
       computeVisibleFieldIds({
+        fields: allFields,
         configs,
         divergingOnly,
         supportFilter,
         searchQuery,
       }),
-    [configs, divergingOnly, supportFilter, searchQuery]
+    [allFields, configs, divergingOnly, supportFilter, searchQuery]
   );
 
   // Support-shaped, currently-visible fields in registry order. Support-shape
@@ -63,10 +67,8 @@ export function HostCapabilityListView({
   // empty here even when hosts are selected).
   const fields = useMemo(
     () =>
-      HOST_CONFIG_FIELDS.filter(
-        (f) => visibleFieldIds.has(f.id) && isSupportField(f)
-      ),
-    [visibleFieldIds]
+      allFields.filter((f) => visibleFieldIds.has(f.id) && isSupportField(f)),
+    [allFields, visibleFieldIds]
   );
 
   if (subjects.length === 0) {
@@ -126,7 +128,7 @@ function HostListColumn({
 
   // Bucket every visible support-shaped field by its level for this host.
   const byLevel = useMemo(() => {
-    const map: Record<SupportLevel, string[]> = {
+    const map: Record<SupportLevel, HostConfigFieldDef[]> = {
       supported: [],
       partial: [],
       neutral: [],
@@ -134,7 +136,7 @@ function HostListColumn({
     };
     for (const f of fields) {
       const level = getSupportLevel(f, subject.config);
-      if (level) map[level].push(f.label);
+      if (level) map[level].push(f);
     }
     return map;
   }, [fields, subject.config]);
@@ -160,8 +162,8 @@ function HostListColumn({
       </div>
 
       {GROUPS.map(({ level, title }) => {
-        const labels = byLevel[level];
-        if (labels.length === 0) return null;
+        const levelFields = byLevel[level];
+        if (levelFields.length === 0) return null;
         return (
           <div key={level} className="flex flex-col gap-2">
             <div className="flex items-baseline gap-2">
@@ -169,15 +171,15 @@ function HostListColumn({
                 {title}
               </span>
               <span className="text-[10.5px] tabular-nums text-muted-foreground">
-                {labels.length}
+                {levelFields.length}
               </span>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {labels.map((label) => (
+              {levelFields.map((field) => (
                 <SupportChip
-                  key={label}
+                  key={field.id}
                   level={level}
-                  label={label}
+                  label={field.label}
                   className={cn(level === "neutral" && "opacity-90")}
                   truncateLabel={mobileOptimized}
                 />

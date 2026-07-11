@@ -6,10 +6,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { usePostHog } from "posthog-js/react";
 import { useHostList, type HostListItem } from "@/hooks/useClients";
 import { useConvexAuth } from "convex/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 
 /**
  * Pure: place `priorityHostId` first if it exists in the list. The rest
@@ -64,7 +63,6 @@ export function HostPicker({
   disabled = false,
   priorityHostId,
 }: HostPickerProps) {
-  const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
 
@@ -86,8 +84,8 @@ export function HostPicker({
         // user's selection from taking effect.
         if (next !== null) {
           try {
-            posthog.capture("client_selected", {
-              ...standardEventProps(location),
+            track("client_selected", {
+              location,
               client_id: next,
             });
           } catch {

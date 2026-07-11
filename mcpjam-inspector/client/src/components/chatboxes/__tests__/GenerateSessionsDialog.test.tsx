@@ -26,6 +26,10 @@ vi.mock("@/lib/PosthogUtils", () => ({
   standardEventProps: () => ({}),
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
+}));
+
 // The dialog reads the persona roster via Convex (usePersonaRoster -> useQuery).
 // These configure-stage tests render it without a ConvexProvider, so stub the
 // roster hooks: an undefined roster simply hides the stage-1 roster section.

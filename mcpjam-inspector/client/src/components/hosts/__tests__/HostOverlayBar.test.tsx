@@ -42,8 +42,8 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
   ) => selector({ themeMode: "light" }),
 }));
 
-vi.mock("posthog-js/react", () => ({
-  usePostHog: () => ({ capture: vi.fn() }),
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
 }));
 
 const oneHost = [

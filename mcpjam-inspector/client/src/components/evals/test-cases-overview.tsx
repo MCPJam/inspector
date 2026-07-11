@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConvex, useQuery } from "convex/react";
-import posthog from "posthog-js";
+import { track } from "@/lib/analytics";
 import { Loader2, Play, Plus, Puzzle, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
@@ -27,7 +27,6 @@ import {
   EVAL_LOW_PASS_RATE_TEXT_CLASS,
 } from "./constants";
 import { ITERATION_RESULT_BADGE_BASE } from "./iteration-result-presentation";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime, getEffectiveSuiteServers } from "./helpers";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
@@ -881,10 +880,8 @@ export function TestCasesOverview({
                           e.preventDefault();
                           e.stopPropagation();
                           if (runDisabled) return;
-                          posthog.capture("run_selected_case_button_clicked", {
+                          track("run_selected_case_button_clicked", {
                             location: "test_cases_overview",
-                            platform: detectPlatform(),
-                            environment: detectEnvironment(),
                             test_case_id: testCase._id,
                           });
                           onRunTestCase(testCase);

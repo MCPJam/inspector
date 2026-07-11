@@ -15,8 +15,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
+import type { ClientAnalyticsEventName } from "@/shared/analytics-events";
 import {
   Clock,
   Cpu,
@@ -147,15 +147,11 @@ export function ClientContextHeader({
   const widthInputId = useId();
   const heightInputId = useId();
 
-  const posthog = usePostHog();
   const captureToolbar = useCallback(
-    (event: string, props?: Record<string, unknown>) => {
-      posthog?.capture(event, {
-        ...standardEventProps("host_context_header"),
-        ...props,
-      });
+    (event: ClientAnalyticsEventName, props?: Record<string, unknown>) => {
+      track(event, { location: "host_context_header", ...props });
     },
-    [posthog]
+    []
   );
 
   const deviceType = useUIPlaygroundStore((state) => state.deviceType);

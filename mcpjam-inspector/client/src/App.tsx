@@ -27,6 +27,7 @@ import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ChatboxesTab } from "./components/ChatboxesTab";
+import { SwarmsTab } from "./components/swarms/SwarmsTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
@@ -49,6 +50,7 @@ import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
 import { HostsTab } from "./components/HostsTab";
 import { HostConfigCompareView } from "./components/hosts/comparison/HostConfigCompareView";
+import { CaniuseCapabilityPage } from "./components/hosts/comparison/CaniuseCapabilityPage";
 import { HostSectionTabs } from "./components/hosts/HostSectionTabs";
 import { ConnectViewHeader } from "./components/hosts/ConnectViewHeader";
 import { ComputerView } from "./components/computer/ComputerView";
@@ -100,7 +102,7 @@ import type { BillingFeatureName } from "./hooks/useOrganizationBilling";
 
 // Import global styles
 import "./index.css";
-import { detectEnvironment, detectPlatform } from "./lib/PosthogUtils";
+import { track } from "./lib/analytics";
 import {
   getInitialThemeMode,
   updateThemeMode,
@@ -203,10 +205,24 @@ import {
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import {
+  cloneHostTemplateInput,
   gateMcpToolResultImageRenderingByModelVisibility,
   resolveEffectiveMcpProtocolVersion,
 } from "./lib/client-config-v2";
 import type { ProjectServerConfigDto } from "./lib/project-server-config";
+import { useHostList, useHostMutations } from "@/hooks/useClients";
+import {
+  HOST_TEMPLATES,
+  seedFromHostTemplate,
+  type HostTemplateId,
+} from "@mcpjam/sdk/host-config/templates";
+import {
+  HOST_VERIFY_TAB_PARAM,
+  HOST_VERIFY_TEMPLATE_PARAM,
+  hostFocusTabToVerifyParam,
+  parseHostVerifyTabParam,
+} from "./components/hosts/host-verify-deep-link";
+import type { HostFocusTabId } from "./components/hosts/redesigned/types";
 import {
   buildHostsPath,
   buildOrganizationPath,
@@ -473,6 +489,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <ComputerRoute />;
     case "chatboxes":
       return <ChatboxesRoute />;
+    case "swarms":
+      return <SwarmsRoute />;
     case "playground":
       return <PlaygroundRoute />;
     case "support":
@@ -608,25 +626,44 @@ export function HostsRoute() {
     isAuthenticated,
     setHostsTabSelectedHostId,
   } = useAppRouteContext();
-  const [previewedHostId] = usePreviewedHostId(convexProjectId);
+  const [previewedHostId, setPreviewedHostId] =
+    usePreviewedHostId(convexProjectId);
   const params = useParams<{ hostId?: string }>();
   const navigate = useAppNavigate();
+  const routeHostId =
+    params.hostId ??
+    (typeof window !== "undefined" &&
+    window.location.pathname.startsWith(`${routePaths.hosts}/`)
+      ? window.location.pathname
+          .slice(`${routePaths.hosts}/`.length)
+          .split("/")[0]
+      : null);
   const urlHostId = useMemo(() => {
-    if (!params.hostId) return null;
+    if (!routeHostId) return null;
     try {
-      return decodeURIComponent(params.hostId);
+      return decodeURIComponent(routeHostId);
     } catch {
-      return params.hostId;
+      return routeHostId;
     }
-  }, [params.hostId]);
+  }, [routeHostId]);
 
   // URL is the source of truth for the open host canvas. Sync into shared
   // state so `GlobalHostBar`, `onCanvasReplaceHost`, and other surfaces that
   // still read `hostsTabSelectedHostId` stay aligned.
   useEffect(() => {
-    if (hostsTabSelectedHostId === urlHostId) return;
-    setHostsTabSelectedHostId(urlHostId);
-  }, [urlHostId, hostsTabSelectedHostId, setHostsTabSelectedHostId]);
+    if (hostsTabSelectedHostId !== urlHostId) {
+      setHostsTabSelectedHostId(urlHostId);
+    }
+    if (urlHostId && previewedHostId !== urlHostId) {
+      setPreviewedHostId(urlHostId);
+    }
+  }, [
+    urlHostId,
+    hostsTabSelectedHostId,
+    previewedHostId,
+    setHostsTabSelectedHostId,
+    setPreviewedHostId,
+  ]);
 
   const handleSelectHost = useCallback(
     (next: string | null) => {
@@ -634,6 +671,12 @@ export function HostsRoute() {
     },
     [navigate]
   );
+
+  useTemplateVerifyDeepLink({
+    isAuthenticated,
+    projectId: convexProjectId,
+    navigate,
+  });
 
   if (!isAuthenticated) {
     return <ServersTabBody />;
@@ -648,6 +691,109 @@ export function HostsRoute() {
       serversTabElement={<ServersTabBody />}
     />
   );
+}
+
+/**
+ * "Verify against your server" deep-link from the public caniuse surface.
+ * `/hosts?template=claude` opens that client's host, creating it from the
+ * template (matched by name) when the account doesn't already have one — then
+ * navigates to `/hosts/:hostId`, which drops the query param. Runs once per
+ * mount; guests are covered because host creation doesn't require a full login.
+ */
+function useTemplateVerifyDeepLink({
+  isAuthenticated,
+  projectId,
+  navigate,
+}: {
+  isAuthenticated: boolean;
+  projectId: string;
+  navigate: (to: string, options?: { replace?: boolean }) => void;
+}) {
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const { hosts, isLoading: hostsLoading } = useHostList({
+    isAuthenticated,
+    projectId,
+  });
+  const { createHost } = useHostMutations();
+  const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
+    if (typeof window === "undefined") return null;
+    const raw = new URLSearchParams(window.location.search).get(
+      HOST_VERIFY_TEMPLATE_PARAM
+    );
+    if (!raw) return null;
+    return HOST_TEMPLATES.some((t) => t.id === raw)
+      ? (raw as HostTemplateId)
+      : null;
+  }, []);
+  const requestedFocusTab = useMemo<HostFocusTabId | null>(() => {
+    if (typeof window === "undefined") return null;
+    return parseHostVerifyTabParam(window.location.search);
+  }, []);
+  const handledRef = useRef(false);
+
+  useEffect(() => {
+    if (!requestedTemplateId || !isAuthenticated || handledRef.current) return;
+    // Wait for the host list before deciding create-vs-open. `useHostList`
+    // stays loading while `projectId` is still a placeholder, so this also
+    // guards `createHost` from firing with a not-yet-real project id.
+    if (hostsLoading) return;
+    const template = HOST_TEMPLATES.find((t) => t.id === requestedTemplateId);
+    if (!template) return;
+    handledRef.current = true;
+
+    const existing = hosts.find((h) => h.name === template.label);
+    if (existing) {
+      navigate(buildHostVerifyLandingPath(existing.hostId, requestedFocusTab), {
+        replace: true,
+      });
+      return;
+    }
+
+    void (async () => {
+      try {
+        const seed = cloneHostTemplateInput(
+          seedFromHostTemplate(template.id, { theme: themeMode }),
+          { themeMode }
+        );
+        const { hostId } = await createHost({
+          projectId,
+          name: template.label,
+          input: { ...seed, serverIds: [] },
+        });
+        navigate(buildHostVerifyLandingPath(hostId, requestedFocusTab), {
+          replace: true,
+        });
+      } catch (err) {
+        // Let the user retry (e.g. via the same link) after a transient failure.
+        handledRef.current = false;
+        toast.error(
+          err instanceof Error ? err.message : "Couldn't open that client"
+        );
+      }
+    })();
+  }, [
+    requestedTemplateId,
+    isAuthenticated,
+    hostsLoading,
+    hosts,
+    projectId,
+    requestedFocusTab,
+    themeMode,
+    createHost,
+    navigate,
+  ]);
+}
+
+function buildHostVerifyLandingPath(
+  hostId: string,
+  tab: HostFocusTabId | null
+): string {
+  const path = buildHostsPath(hostId);
+  if (!tab) return path;
+  const tabParam = hostFocusTabToVerifyParam(tab);
+  if (!tabParam) return path;
+  const params = new URLSearchParams({ [HOST_VERIFY_TAB_PARAM]: tabParam });
+  return `${path}?${params.toString()}`;
 }
 
 export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
@@ -709,6 +855,11 @@ export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
       <div className="min-h-0 flex-1">{compareView}</div>
     </motion.div>
   );
+}
+
+export function CaniuseCapabilityRoute() {
+  const params = useParams<{ capabilitySlug?: string }>();
+  return <CaniuseCapabilityPage capabilitySlug={params.capabilitySlug} />;
 }
 
 export function ComputerRoute() {
@@ -905,7 +1056,11 @@ export function CompatibilityRoute() {
 // Navigation between chatboxes flows through the global host bar — pick
 // a host, manage its chatbox here. There is no chatbox list; the host
 // list lives in Connect.
-export function ChatboxesRoute() {
+// Both the human Chatbox surface (`/chatboxes`) and the agent Swarm surface
+// (`/swarms`) render `ChatboxesTab` over the same underlying chatbox; only the
+// `product` (tab set + affordances) differs. Both share the `chatboxes`
+// billing feature + `sandboxes-enabled` flag.
+function ChatboxProductRoute({ product }: { product: "chatbox" | "swarm" }) {
   const {
     billingUiEnabled,
     activeTabBillingLocked,
@@ -920,6 +1075,37 @@ export function ChatboxesRoute() {
 
   return (
     <ChatboxesTab
+      projectId={convexProjectId}
+      isAuthenticated={isAuthenticated}
+      product={product}
+    />
+  );
+}
+
+export function ChatboxesRoute() {
+  return <ChatboxProductRoute product="chatbox" />;
+}
+
+export function SwarmsRoute() {
+  // Project-scoped Swarms surface (Persona → Journey → Run redesign) — no
+  // longer a per-host chatbox tab. Keeps the same billing gate as the chatbox
+  // product surface, and re-mounts per project so selection state can't leak
+  // across a project switch.
+  const {
+    billingUiEnabled,
+    activeTabBillingLocked,
+    activeTabBillingFeature,
+    convexProjectId,
+    isAuthenticated,
+  } = useAppRouteContext();
+
+  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+    return <ActiveBillingUpsellGate />;
+  }
+
+  return (
+    <SwarmsTab
+      key={convexProjectId ?? "no-project"}
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
     />
@@ -1032,7 +1218,6 @@ export function OAuthFlowRoute() {
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
     oauthServerModalNonce,
-    posthog,
   } = useAppRouteContext();
 
   return (
@@ -1072,7 +1257,8 @@ export function OAuthFlowRoute() {
       }}
       onError={(error, errorInfo) => {
         const sanitizedError = sanitizeOAuthDebuggerError(error);
-        posthog.capture("oauth_debugger_error_boundary", {
+        track("oauth_debugger_error_boundary", {
+          location: "oauth_flow",
           name: sanitizedError.name,
           message: sanitizedError.message,
           stack: sanitizedError.stack,
@@ -1369,11 +1555,11 @@ export default function App() {
   const isChatboxChatRoute =
     !exitedChatboxChat && hostedRouteKind === "chatbox";
 
-  // Chrome-less host-compare for vanity domains (caniuse.dev): rendered
-  // full-bleed without the sidebar/header, and the first-run onboarding
-  // redirect is suppressed so guests land directly on the comparison.
-  const isBareCompareRoute =
-    window.location.pathname === routePaths.embedHostCompare;
+  // Chrome-less caniuse.dev surfaces: render full-bleed without the
+  // sidebar/header, and suppress first-run onboarding so guests land directly.
+  const isBareCaniuseRoute =
+    window.location.pathname === routePaths.embedHostCompare ||
+    window.location.pathname.startsWith(`${routePaths.capabilities}/`);
 
   useEffect(() => {
     setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
@@ -1577,9 +1763,8 @@ export default function App() {
     if (!actorKey) return;
     if (lastLaunchedActorRef.current === actorKey) return;
     lastLaunchedActorRef.current = actorKey;
-    posthog.capture("app_launched", {
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
+    track("app_launched", {
+      location: "app",
       user_agent: navigator.userAgent,
       version: __APP_VERSION__,
       is_authenticated: Boolean(workOsUser),
@@ -1876,9 +2061,24 @@ export default function App() {
       !areServersHydrated ||
       !activeProjectId ||
       activeProjectId === "none");
+  // A "Verify against your server" deep-link (`/hosts?template=claude`) must
+  // reach HostsRoute so it can open/create that client's host. Without this
+  // guard the first-run onboarding redirect below fires on the fresh load and
+  // navigates to Playground, dropping the `?template` param before it's handled.
+  // Only a *known* template id suppresses onboarding — an unknown/stale value
+  // (e.g. `?template=bogus` from an old link) is never consumed by the deep-link
+  // handler, so treating it as a real deep-link would strand new users on an
+  // empty surface with onboarding silently disabled.
+  const hasHostTemplateVerifyParam =
+    typeof window !== "undefined" &&
+    (() => {
+      const raw = new URLSearchParams(window.location.search).get("template");
+      return raw != null && HOST_TEMPLATES.some((t) => t.id === raw);
+    })();
   const shouldRouteToFirstRunOnboarding =
     !isHostedChatRoute &&
-    !isBareCompareRoute &&
+    !isBareCaniuseRoute &&
+    !hasHostTemplateVerifyParam &&
     !isWorkOsLoading &&
     effectiveHostedShellGateState === "ready" &&
     !(isAuthenticated && currentUser === undefined) &&
@@ -2649,7 +2849,7 @@ export default function App() {
         )} plan. Upgrade the organization to continue.`
       );
       navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (activeTab === "clients" && !isAuthenticated) {
+    } else if (activeTab === "clients" && !isAuthenticated && !isAuthLoading) {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "registry" && registryEnabled !== true) {
       navigateToTarget(defaultHubRoute, { replace: true });
@@ -2688,6 +2888,7 @@ export default function App() {
     evaluateRunsEnabled,
     xaaEnabled,
     isAuthenticated,
+    isAuthLoading,
     activeTab,
     navigateToTarget,
   ]);
@@ -3322,8 +3523,8 @@ export default function App() {
     </SidebarProvider>
   );
 
-  // Vanity-domain embed (caniuse.dev): render the matched route
-  // (`HostCompareRoute bare`) full-bleed without the sidebar/header chrome.
+  // Vanity-domain caniuse.dev pages: render the matched route full-bleed
+  // without the sidebar/header chrome.
   // Still nested inside every provider in the return below, so auth, project,
   // and the guest session resolve exactly as on the normal route.
   const bareCompareContent = (
@@ -3412,7 +3613,7 @@ export default function App() {
                     pathToken={chatboxPathToken}
                     onExitChatboxChat={() => setExitedChatboxChat(true)}
                   />
-                ) : isBareCompareRoute ? (
+                ) : isBareCaniuseRoute ? (
                   bareCompareContent
                 ) : (
                   appContent

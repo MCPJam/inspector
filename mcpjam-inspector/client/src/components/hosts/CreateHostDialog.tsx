@@ -2,8 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { useConvexAuth } from "convex/react";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import {
   Dialog,
   DialogContent,
@@ -48,7 +47,6 @@ export function CreateHostDialog({
   onCreated,
   initialTemplateId,
 }: CreateHostDialogProps) {
-  const posthog = usePostHog();
   const { createHost } = useHostMutations();
   const { isAuthenticated } = useConvexAuth();
   const { servers } = useProjectServers({ isAuthenticated, projectId });
@@ -163,8 +161,8 @@ export function CreateHostDialog({
       // shared catch and surface a "creation failed" toast after we've
       // already shown success and notified the caller.
       try {
-        posthog.capture("client_created", {
-          ...standardEventProps("create_client_dialog"),
+        track("client_created", {
+          location: "create_client_dialog",
           client_id: hostId,
           client_config_id: hostConfigId,
           template_id: selectedTemplateId,

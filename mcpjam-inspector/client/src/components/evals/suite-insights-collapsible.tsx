@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
-import posthog from "posthog-js";
+import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import type { EvalSuiteRun } from "./types";
 import { pickLatestCompletedRun } from "./helpers";
 import { useRunInsights } from "./use-run-insights";
@@ -124,10 +123,8 @@ function RunInsightsBanner({
     if (!targetRun || unavailable) {
       return;
     }
-    posthog.capture("eval_run_insights_opened", {
+    track("eval_run_insights_opened", {
       location: "suite_insights_collapsible",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       title,
       run_id: targetRun._id,
     });

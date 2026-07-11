@@ -1,11 +1,13 @@
 import {
   createSign,
+  createVerify,
   generateKeyPairSync,
   randomUUID,
   type KeyObject,
 } from "crypto";
 import {
   getXAAIdpPrivateKey,
+  getXAAIdpPublicKeyObject,
   initXAAIdpKeyPair,
 } from "./xaa-idp-keypair.js";
 import {
@@ -16,6 +18,14 @@ import {
 
 const ID_JAG_TTL_S = 5 * 60;
 const ID_TOKEN_TTL_S = 5 * 60;
+const AUTHORIZATION_CODE_TTL_S = 60;
+const ACCESS_TOKEN_TTL_S = 5 * 60;
+
+// Distinct `typ` per token kind so nothing can be cross-redeemed: a code
+// can't be replayed as an access token, an ID-JAG can't be a code, etc.
+// verifyXaaJwt asserts the expected typ.
+export const XAA_CODE_JWT_TYP = "xaa-code+jwt";
+export const XAA_ACCESS_TOKEN_TYP = "at+jwt";
 
 type JwtHeader = Record<string, unknown>;
 type JwtPayload = Record<string, unknown>;
@@ -40,6 +50,9 @@ export interface IssueMockIdTokenParams {
   subject: string;
   email: string;
   audience?: string;
+  /** OIDC code flow: echo the RP's nonce into the id_token. When absent a
+   * random one is invented (the debugger's mock SSO has no RP nonce). */
+  nonce?: string;
 }
 
 function base64url(input: string | Buffer): string {
@@ -206,7 +219,9 @@ export function issueMockIdToken(params: IssueMockIdTokenParams): {
     iat: now,
     exp: now + ID_TOKEN_TTL_S,
     auth_time: now,
-    nonce: randomUUID(),
+    // Echo the RP's nonce; omit it when none was requested. Inventing a nonce
+    // the RP never sent trips strict OIDC clients that validate its absence.
+    ...(params.nonce ? { nonce: params.nonce } : {}),
   };
   const token = signJwt(header, payload, getXAAIdpPrivateKey());
 
@@ -216,4 +231,137 @@ export function issueMockIdToken(params: IssueMockIdTokenParams): {
     payload,
     expiresAt: (payload.exp as number) * 1000,
   };
+}
+
+export interface IssueAuthorizationCodeParams {
+  issuer: string;
+  subject: string;
+  email: string;
+  clientId: string;
+  redirectUri: string;
+  nonce?: string;
+  /** S256 PKCE challenge. When present, redeeming the code requires the
+   * matching code_verifier. */
+  codeChallenge?: string;
+}
+
+/**
+ * Stateless OIDC authorization code: a short-TTL signed JWT, so it validates
+ * on any replica without shared storage. One-time use is NOT enforced — a
+ * 60-second code on a mock test IdP doesn't warrant a replay store; the
+ * limitation is documented in the mock-OIDC doc.
+ */
+export function issueAuthorizationCode(params: IssueAuthorizationCodeParams): {
+  token: string;
+  payload: JwtPayload;
+  expiresAt: number;
+} {
+  initXAAIdpKeyPair();
+
+  const now = Math.floor(Date.now() / 1000);
+  const header: JwtHeader = {
+    alg: "RS256",
+    typ: XAA_CODE_JWT_TYP,
+    kid: XAA_IDP_KID,
+  };
+  const payload: JwtPayload = {
+    iss: params.issuer,
+    sub: params.subject,
+    email: params.email,
+    client_id: params.clientId,
+    redirect_uri: params.redirectUri,
+    jti: randomUUID(),
+    iat: now,
+    exp: now + AUTHORIZATION_CODE_TTL_S,
+    ...(params.nonce ? { nonce: params.nonce } : {}),
+    ...(params.codeChallenge ? { code_challenge: params.codeChallenge } : {}),
+  };
+  const token = signJwt(header, payload, getXAAIdpPrivateKey());
+
+  return { token, payload, expiresAt: (payload.exp as number) * 1000 };
+}
+
+export interface IssueAccessTokenParams {
+  issuer: string;
+  subject: string;
+  email: string;
+  clientId: string;
+}
+
+/** Access token redeemable only at the mock IdP's own /userinfo. */
+export function issueAccessToken(params: IssueAccessTokenParams): {
+  token: string;
+  payload: JwtPayload;
+  expiresAt: number;
+} {
+  initXAAIdpKeyPair();
+
+  const now = Math.floor(Date.now() / 1000);
+  const header: JwtHeader = {
+    alg: "RS256",
+    typ: XAA_ACCESS_TOKEN_TYP,
+    kid: XAA_IDP_KID,
+  };
+  const payload: JwtPayload = {
+    iss: params.issuer,
+    sub: params.subject,
+    email: params.email,
+    aud: params.clientId,
+    scope: "openid profile email",
+    jti: randomUUID(),
+    iat: now,
+    exp: now + ACCESS_TOKEN_TTL_S,
+  };
+  const token = signJwt(header, payload, getXAAIdpPrivateKey());
+
+  return { token, payload, expiresAt: (payload.exp as number) * 1000 };
+}
+
+/**
+ * Verify a JWT this IdP minted: RS256 signature against the IdP key, exact
+ * `typ`, exact `iss`, unexpired. Throws on any failure; returns the payload.
+ */
+export function verifyXaaJwt(
+  token: string,
+  expected: { issuer: string; typ: string },
+): JwtPayload {
+  initXAAIdpKeyPair();
+
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    throw new Error("Malformed token");
+  }
+  const [encodedHeader, encodedPayload, signature] = parts;
+
+  let header: JwtHeader;
+  let payload: JwtPayload;
+  try {
+    header = JSON.parse(Buffer.from(encodedHeader, "base64url").toString());
+    payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString());
+  } catch {
+    throw new Error("Malformed token");
+  }
+
+  if (header.alg !== "RS256") {
+    throw new Error("Unexpected token algorithm");
+  }
+  if (header.typ !== expected.typ) {
+    throw new Error("Unexpected token type");
+  }
+
+  const verifier = createVerify("RSA-SHA256");
+  verifier.update(`${encodedHeader}.${encodedPayload}`);
+  if (!verifier.verify(getXAAIdpPublicKeyObject(), signature, "base64url")) {
+    throw new Error("Invalid token signature");
+  }
+
+  if (payload.iss !== expected.issuer) {
+    throw new Error("Unexpected token issuer");
+  }
+  const now = Math.floor(Date.now() / 1000);
+  if (typeof payload.exp !== "number" || payload.exp <= now) {
+    throw new Error("Token expired");
+  }
+
+  return payload;
 }

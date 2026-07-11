@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import { authFetch } from "@/lib/session-token";
 import { toast } from "@/lib/toast";
 import { AlertTriangle, Loader2, Sparkles } from "lucide-react";
@@ -17,7 +17,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
-import { standardEventProps } from "@/lib/PosthogUtils";
 import {
   PersonaCard,
   usePersonaRoster,
@@ -74,8 +73,6 @@ export function GenerateSessionsDialog({
   chatbox,
   initialPersonas,
 }: GenerateSessionsDialogProps) {
-  const posthog = usePostHog();
-
   const [stage, setStage] = useState<DialogStage>("configure");
   const [personaCount, setPersonaCount] = useState(3);
   const [sessionsPerPersona, setSessionsPerPersona] = useState(2);
@@ -204,8 +201,8 @@ export function GenerateSessionsDialog({
 
   async function handleGenerate() {
     setGenerating(true);
-    posthog.capture("chatbox_generate_personas_started", {
-      ...standardEventProps("chatbox_usage_panel"),
+    track("chatbox_generate_personas_started", {
+      location: "chatbox_usage_panel",
       chatbox_id: chatbox.chatboxId,
       persona_count: personaCount,
     });
@@ -235,8 +232,8 @@ export function GenerateSessionsDialog({
       const data = (await response.json()) as { personas: PersonaSlate[] };
       setPersonas(data.personas.map((p) => ({ ...p, selected: true })));
       setStage("review");
-      posthog.capture("chatbox_generate_personas_completed", {
-        ...standardEventProps("chatbox_usage_panel"),
+      track("chatbox_generate_personas_completed", {
+        location: "chatbox_usage_panel",
         chatbox_id: chatbox.chatboxId,
         persona_count: data.personas.length,
         success: true,
@@ -245,8 +242,8 @@ export function GenerateSessionsDialog({
       const message =
         error instanceof Error ? error.message : "Failed to generate personas";
       toast.error(message);
-      posthog.capture("chatbox_generate_personas_completed", {
-        ...standardEventProps("chatbox_usage_panel"),
+      track("chatbox_generate_personas_completed", {
+        location: "chatbox_usage_panel",
         chatbox_id: chatbox.chatboxId,
         persona_count: personaCount,
         success: false,
@@ -289,8 +286,8 @@ export function GenerateSessionsDialog({
       }
       const data = (await response.json()) as { runId: string };
       setRunId(data.runId);
-      posthog.capture("chatbox_simulate_sessions_started", {
-        ...standardEventProps("chatbox_usage_panel"),
+      track("chatbox_simulate_sessions_started", {
+        location: "chatbox_usage_panel",
         chatbox_id: chatbox.chatboxId,
         run_id: data.runId,
         selected_persona_count: selected.length,
@@ -346,8 +343,8 @@ export function GenerateSessionsDialog({
           }
           if (!completionAnalyticsFired.current) {
             completionAnalyticsFired.current = true;
-            posthog.capture("chatbox_simulate_sessions_completed", {
-              ...standardEventProps("chatbox_usage_panel"),
+            track("chatbox_simulate_sessions_completed", {
+              location: "chatbox_usage_panel",
               chatbox_id: chatbox.chatboxId,
               run_id: runId,
               sessions_created: data.run.summary.succeeded,
@@ -371,7 +368,7 @@ export function GenerateSessionsDialog({
     };
     // `chatbox.projectId` is read inside the poll URL; include it so a
     // (rare) projectId swap on the same chatboxId doesn't stale-close.
-  }, [runId, isOpen, chatbox.chatboxId, chatbox.projectId, posthog]);
+  }, [runId, isOpen, chatbox.chatboxId, chatbox.projectId]);
 
   function updatePersona(
     index: number,

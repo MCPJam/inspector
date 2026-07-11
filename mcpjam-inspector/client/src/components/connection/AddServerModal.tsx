@@ -14,9 +14,8 @@ import {
   ServerFormData,
   type ServerFormOAuthProtocolMode,
 } from "@/shared/types.js";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { HOSTED_MODE } from "@/lib/config";
-import { usePostHog } from "posthog-js/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useAppReady, useAppReadyMessage } from "@/hooks/use-app-ready";
 import { useServerForm } from "./hooks/use-server-form";
@@ -95,7 +94,6 @@ export function AddServerModal({
   requireHttps,
   projectClientConfig,
 }: AddServerModalProps) {
-  const posthog = usePostHog();
   const { user } = useAuth();
   const formState = useServerForm(undefined, {
     requireHttps,
@@ -504,10 +502,8 @@ export function AddServerModal({
               type="button"
               variant="outline"
               onClick={() => {
-                posthog.capture("cancel_button_clicked", {
+                track("cancel_button_clicked", {
                   location: "add_server_modal",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
                 });
                 handleClose();
               }}
@@ -522,10 +518,8 @@ export function AddServerModal({
               }
               title={isAppBootstrapping ? appReadyMessage ?? undefined : undefined}
               onClick={() => {
-                posthog.capture("add_server_button_clicked", {
+                track("add_server_button_clicked", {
                   location: "add_server_modal",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
                 });
               }}
               className="px-4"

@@ -13,8 +13,8 @@ vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
 }));
 
-vi.mock("posthog-js", () => ({
-  default: { capture: vi.fn() },
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
 }));
 
 vi.mock("@/lib/guest-session", () => ({

@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { Loader2, Save } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { useConvexAuth } from "convex/react";
-import { usePostHog } from "posthog-js/react";
 import { ReactFlowProvider } from "@xyflow/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
@@ -37,6 +36,7 @@ import {
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { RedesignedHostCanvas } from "./canvas/RedesignedHostCanvas";
+import { parseHostVerifyTabParam } from "../host-verify-deep-link";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
 import { HostFocusPanel } from "./focus/HostFocusPanel";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
@@ -70,7 +70,7 @@ export function HostBuilderViewRedesigned({
   projectId,
 }: HostBuilderViewRedesignedProps) {
   const navigate = useNavigate();
-  const posthog = usePostHog();
+  const location = useLocation();
   const { isAuthenticated } = useConvexAuth();
   const { host } = useHost({
     isAuthenticated,
@@ -98,6 +98,11 @@ export function HostBuilderViewRedesigned({
     tab: "behavior",
     selectedServerId: null,
   });
+  const requestedFocusTab = useMemo(
+    () => parseHostVerifyTabParam(location.search),
+    [location.search]
+  );
+  const appliedFocusTabRef = useRef<string | null>(null);
   // Diff snapshot — populated for ONE render after a host switch so the
   // canvas can mark changed leaves/fields. Cleared after the flash
   // duration so subsequent in-place edits don't keep re-firing the
@@ -158,8 +163,8 @@ export function HostBuilderViewRedesigned({
     if (capturedBuilderHostIdRef.current === hostId) return;
     capturedBuilderHostIdRef.current = hostId;
     try {
-      posthog.capture("client_builder_viewed", {
-        ...standardEventProps("client_builder"),
+      track("client_builder_viewed", {
+        location: "client_builder",
         client_id: hostId,
       });
     } catch {
@@ -184,6 +189,18 @@ export function HostBuilderViewRedesigned({
         : null,
     [host]
   );
+
+  useEffect(() => {
+    if (!requestedFocusTab) return;
+    const applyKey = `${hostId}:${requestedFocusTab}`;
+    if (appliedFocusTabRef.current === applyKey) return;
+    appliedFocusTabRef.current = applyKey;
+    setFocusState({
+      open: true,
+      tab: requestedFocusTab,
+      selectedServerId: null,
+    });
+  }, [hostId, requestedFocusTab]);
 
   const isDirty = useMemo(() => {
     if (!host || !draftConfig || !savedConfig) return false;
@@ -349,8 +366,8 @@ export function HostBuilderViewRedesigned({
       // shared catch and surface "Failed to save host" after the config
       // has already been persisted.
       try {
-        posthog.capture("client_config_saved", {
-          ...standardEventProps("client_builder"),
+        track("client_config_saved", {
+          location: "client_builder",
           client_id: hostId,
           client_config_id: hostConfigId,
           server_count: draftConfig.serverIds?.length ?? 0,
@@ -364,7 +381,7 @@ export function HostBuilderViewRedesigned({
     } finally {
       setIsSaving(false);
     }
-  }, [hostId, draftName, draftConfig, savedConfig, updateHost, posthog]);
+  }, [hostId, draftName, draftConfig, savedConfig, updateHost]);
 
   const handleAddServer = useCallback(
     async (formData: ServerFormData) => {

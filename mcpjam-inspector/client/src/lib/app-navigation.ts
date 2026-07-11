@@ -28,6 +28,7 @@ export const routePaths = {
   hostCompare: "/host-compare",
   /** Chrome-less host-compare for vanity domains (caniuse.dev) — no sidebar/nav, bypasses NUX. */
   embedHostCompare: "/embed/host-compare",
+  capabilities: "/capabilities",
   computer: "/computer",
   registry: "/registry",
   tools: "/tools",
@@ -43,6 +44,7 @@ export const routePaths = {
   xaaFlow: "/xaa-flow",
   tracing: "/tracing",
   chatboxes: "/chatboxes",
+  swarms: "/swarms",
   playground: "/playground",
   support: "/support",
   settings: "/settings",
@@ -82,9 +84,14 @@ export function buildHostComparePath(
 export function buildChatboxSessionPath(
   hostId: string,
   threadId: string,
+  // Which product surface the session link should open on. Both surfaces host
+  // a Sessions tab over the same chatbox; the agent Swarm keeps links on
+  // `/swarms` so a shared link doesn't bounce the recipient to the human
+  // Chatbox surface.
+  basePath: string = routePaths.chatboxes,
 ): string {
   const search = new URLSearchParams({ host: hostId, session: threadId });
-  return `${routePaths.chatboxes}?${search.toString()}`;
+  return `${basePath}?${search.toString()}`;
 }
 
 /** Build a path for a specific organization route. */
@@ -301,6 +308,9 @@ export function isDebugOAuthCallbackPath(pathname: string): boolean {
 
 export function pathnameToActiveTab(pathname: string): string {
   if (isSpecialEntryPathname(pathname)) return "servers";
+  if (pathname.startsWith(`${routePaths.capabilities}/`)) {
+    return "host-compare";
+  }
   const firstSegment = pathname.replace(/^\/+/, "").split("/")[0] || "home";
   const normalized = normalizeHostedHashTab(firstSegment);
   // Unknown first segments include chatbox slugs; App handles those surfaces

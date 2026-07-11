@@ -9,8 +9,7 @@ import {
   SlidersHorizontal,
   Trash2,
 } from "lucide-react";
-import posthog from "posthog-js";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
@@ -532,10 +531,8 @@ function SuiteOverviewRow({
               e.preventDefault();
               e.stopPropagation();
               if (onRunAll) {
-                posthog.capture("run_all_cases_button_clicked", {
+                track("run_all_cases_button_clicked", {
                   location: "suite_list_sidebar",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
                   suite_id: suite._id,
                 });
                 void onRunAll(suite);

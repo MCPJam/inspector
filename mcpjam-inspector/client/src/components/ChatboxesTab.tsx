@@ -49,19 +49,40 @@ import { cn } from "@/lib/utils";
  * every visit to this (landing) tab starts a guest session — preview
  * traffic shows up in Sessions and guest analytics.
  */
+/**
+ * Product variant. Both surfaces render this same component over the same
+ * underlying chatbox (1:1 with the selected host); they differ only in which
+ * tabs/affordances are exposed:
+ *   - `chatbox` (human): Publish + Sessions + Clusters. No Personas / no
+ *     AI-generate / no synthetic-session controls.
+ *   - `swarm` (agent): Publish + Personas + Sessions. No Clusters.
+ */
+export type ChatboxProduct = "chatbox" | "swarm";
+
 interface ChatboxesTabProps {
   projectId: string | null;
   isAuthenticated: boolean;
+  /** Defaults to `chatbox` (the human publish surface). */
+  product?: ChatboxProduct;
 }
 
 type ChatboxTab = "publish" | "personas" | "sessions" | "clusters";
 
-const TAB_OPTIONS: ReadonlyArray<{ value: ChatboxTab; label: string }> = [
-  { value: "publish", label: "Publish" },
-  { value: "personas", label: "Personas" },
-  { value: "sessions", label: "Sessions" },
-  { value: "clusters", label: "Clusters" },
-];
+const TAB_OPTIONS_BY_PRODUCT: Record<
+  ChatboxProduct,
+  ReadonlyArray<{ value: ChatboxTab; label: string }>
+> = {
+  chatbox: [
+    { value: "publish", label: "Publish" },
+    { value: "sessions", label: "Sessions" },
+    { value: "clusters", label: "Clusters" },
+  ],
+  swarm: [
+    { value: "publish", label: "Publish" },
+    { value: "personas", label: "Personas" },
+    { value: "sessions", label: "Sessions" },
+  ],
+};
 
 type PublishPanelView = "preview" | "graph";
 
@@ -74,7 +95,9 @@ const PUBLISH_PANEL_OPTIONS: Array<{ value: PublishPanelView; label: string }> =
 export function ChatboxesTab({
   projectId,
   isAuthenticated,
+  product = "chatbox",
 }: ChatboxesTabProps) {
+  const tabOptions = TAB_OPTIONS_BY_PRODUCT[product];
   const [searchParams, setSearchParams] = useSearchParams();
   // Deep link: `/chatboxes?host=<id>&session=<threadId>` (the Sessions tab's
   // "Copy session link"). The params stay in the URL until the user navigates
@@ -86,6 +109,12 @@ export function ChatboxesTab({
   const [tab, setTab] = useState<ChatboxTab>(() =>
     sessionDeepLinkThreadId ? "sessions" : "publish"
   );
+  // Clamp to a tab valid for this product — a deep link (or a product switch)
+  // could otherwise land on a tab this surface doesn't expose (e.g. `personas`
+  // on the human Chatbox, `clusters` on the agent Swarm).
+  const activeTab: ChatboxTab = tabOptions.some((t) => t.value === tab)
+    ? tab
+    : "publish";
   const [panelView, setPanelView] = useState<PublishPanelView>("preview");
   const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
   // Apply the host half of the deep link once the project is known —
@@ -272,8 +301,8 @@ export function ChatboxesTab({
       >
         <div className="flex min-w-0 items-center justify-center">
           <ViewModeSelector
-            value={tab}
-            ariaLabel="Swarm view"
+            value={activeTab}
+            ariaLabel={product === "swarm" ? "Swarm view" : "Chatbox view"}
             onChange={(next) => {
               setTab(next as ChatboxTab);
               // Manual navigation supersedes the deep link — drop the params
@@ -282,12 +311,12 @@ export function ChatboxesTab({
                 setSearchParams({}, { replace: true });
               }
             }}
-            options={TAB_OPTIONS}
+            options={tabOptions}
           />
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
-        {tab === "publish" ? (
+        {activeTab === "publish" ? (
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={50} minSize={32}>
               <div className="h-full overflow-y-auto px-6 py-6">
@@ -374,13 +403,17 @@ export function ChatboxesTab({
               </div>
             </ResizablePanel>
           </ResizablePanelGroup>
-        ) : tab === "personas" ? (
+        ) : activeTab === "personas" ? (
           <PersonasTab chatbox={chatbox} />
-        ) : tab === "sessions" ? (
+        ) : activeTab === "sessions" ? (
           <ChatboxUsagePanel
             chatbox={chatbox}
             section="sessions"
             initialThreadId={sessionDeepLinkThreadId}
+            // Synthetic-session affordances (AI-generate + "Hide synthetic")
+            // belong to the agent Swarm product only; the human Chatbox has
+            // no synthetic traffic.
+            allowSynthetic={product === "swarm"}
           />
         ) : (
           <ChatboxUsagePanel

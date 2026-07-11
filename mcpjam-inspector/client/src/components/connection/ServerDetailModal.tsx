@@ -25,8 +25,7 @@ import {
   type ListToolsResultWithMetadata,
 } from "@/lib/apis/mcp-tools-api";
 import { ServerFormData } from "@/shared/types.js";
-import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import {
   isMCPApp,
   isOpenAIApp,
@@ -175,7 +174,6 @@ export function ServerDetailModal({
   hostedServerId = null,
   hostDefaultMcpProtocolVersion,
 }: ServerDetailModalProps) {
-  const posthog = usePostHog();
   const [activeTab, setActiveTab] = useState<ServerDetailTab>(defaultTab);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -501,10 +499,8 @@ export function ServerDetailModal({
       }
     }
 
-    posthog.capture("update_server_button_clicked", {
+    track("update_server_button_clicked", {
       location: "server_detail_modal",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
 
     setIsSaving(true);
@@ -553,9 +549,8 @@ export function ServerDetailModal({
     allowInteractiveOAuthFlow?: boolean;
   }) => {
     setIsReconnecting(true);
-    posthog.capture("server_detail_modal_connect_clicked", {
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
+    track("server_detail_modal_connect_clicked", {
+      location: "server_detail_modal",
       server_id: server.name,
     });
     try {
@@ -578,18 +573,16 @@ export function ServerDetailModal({
   };
 
   const handleDisconnect = () => {
-    posthog.capture("server_detail_modal_disconnect_clicked", {
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
+    track("server_detail_modal_disconnect_clicked", {
+      location: "server_detail_modal",
       server_id: server.name,
     });
     onDisconnect(server.name);
   };
 
   const handleClose = () => {
-    posthog.capture("server_detail_modal_closed", {
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
+    track("server_detail_modal_closed", {
+      location: "server_detail_modal",
       server_id: server.name,
     });
     onClose();

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
 import { useConvexAuth } from "convex/react";
 import { toast } from "@/lib/toast";
 import {
@@ -16,7 +15,7 @@ import { cn } from "@/lib/utils";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
 import { cloneHostTemplateInput } from "@/lib/client-config-v2";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { CreateHostDialog } from "./CreateHostDialog";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -43,7 +42,6 @@ export function HostOverlayBar({
   onEditHost,
   onCanvasReplaceHost,
 }: HostOverlayBarProps) {
-  const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
   const catalogState = useHostCatalog();
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -165,15 +163,17 @@ export function HostOverlayBar({
   useEffect(() => {
     if (hasFiredOpened.current) return;
     hasFiredOpened.current = true;
-    posthog.capture("connect_host_overlay_opened", {
+    track("connect_host_overlay_opened", {
+      location: "chatbox_overlay",
       host_count: hosts.length,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [posthog]);
+  }, []);
 
   const handleChange = (next: string) => {
     if (next === effectiveHostId) return;
-    posthog.capture("connect_host_overlay_swapped", {
+    track("connect_host_overlay_swapped", {
+      location: "chatbox_overlay",
       from: effectiveHostId ?? "__unknown__",
       to: next,
       host_count: hosts.length,
@@ -202,8 +202,8 @@ export function HostOverlayBar({
       // shared catch and surface a delete-failure toast after the client
       // has already been removed.
       try {
-        posthog.capture("client_deleted", {
-          ...standardEventProps("chatbox_overlay"),
+        track("client_deleted", {
+          location: "chatbox_overlay",
           client_id: hostId,
           force: false,
         });
@@ -229,7 +229,8 @@ export function HostOverlayBar({
     setShowCreate(true);
     setMenuOpen(false);
     if (templateId) {
-      posthog.capture("connect_host_overlay_quick_added", {
+      track("connect_host_overlay_quick_added", {
+        location: "chatbox_overlay",
         template_id: templateId,
       });
     }
@@ -405,7 +406,8 @@ export function HostOverlayBar({
         projectId={projectId}
         initialTemplateId={createTemplateId}
         onCreated={(hostId) => {
-          posthog.capture("connect_host_overlay_saved_as_new", {
+          track("connect_host_overlay_saved_as_new", {
+            location: "chatbox_overlay",
             host_id: hostId,
           });
           onChangePreviewedHostId(hostId);

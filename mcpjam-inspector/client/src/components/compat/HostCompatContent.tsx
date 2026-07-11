@@ -10,7 +10,6 @@ import {
   Wrench,
 } from "lucide-react";
 import { useNavigate } from "react-router";
-import { usePostHog } from "posthog-js/react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -35,7 +34,7 @@ import type {
   CompatProvenance,
   HostCompatReport,
 } from "@/lib/host-compat/types";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { routePaths } from "@/lib/app-navigation";
 import { useHostMutations } from "@/hooks/useClients";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
@@ -149,7 +148,6 @@ export function HostCompatContent({
   // Tier-2: render the server's widget live in each host's emulation.
   const live = useLiveRenders(server.name, requirements);
 
-  const posthog = usePostHog();
   const navigate = useNavigate();
   const { createHost } = useHostMutations();
   const [, setPreviewedHostId] = usePreviewedHostId(projectId ?? null);
@@ -170,14 +168,14 @@ export function HostCompatContent({
   useEffect(() => {
     if (viewedServerRef.current === server.name) return;
     viewedServerRef.current = server.name;
-    posthog.capture("host_compat_tab_viewed", {
-      ...standardEventProps(source),
+    track("host_compat_tab_viewed", {
+      location: source,
       server_name: server.name,
       host_count: visibleReports.length,
     });
     // Intentionally keyed on server.name only — reports churn as tools load,
     // but this is a once-per-server view signal, not a verdict snapshot.
-  }, [server.name, posthog, source, visibleReports.length]);
+  }, [server.name, source, visibleReports.length]);
 
   // The CTA that turns a verdict into a host: create a host from the
   // matching template with THIS server attached, select it, and jump to the
@@ -200,8 +198,8 @@ export function HostCompatContent({
       (catalog ? getCatalogHost(catalog, templateId)?.label : undefined) ??
       report.hostLabel;
 
-    posthog.capture("compat_cta_clicked", {
-      ...standardEventProps(source),
+    track("compat_cta_clicked", {
+      location: source,
       template_id: templateId,
       host_label: report.hostLabel,
       verdict: report.verdict,
@@ -221,8 +219,8 @@ export function HostCompatContent({
       // creates. Best-effort: a posthog throw must not surface a failure
       // toast after the host already exists.
       try {
-        posthog.capture("client_created", {
-          ...standardEventProps("compat_cta"),
+        track("client_created", {
+          location: "compat_cta",
           via: "compat_report",
           template_id: templateId,
           client_id: hostId,

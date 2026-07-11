@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Network, Trash2 } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -11,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../types";
 import { evalSurfaceCardClass } from "../eval-surface-chrome";
@@ -103,7 +102,6 @@ export function CrossHostDashboard({
   const visibleHostCount = hideHistorical
     ? data.hostColumns.filter((col) => !col.isHistorical).length
     : data.hostColumns.length;
-  const posthog = usePostHog();
   // Fire the viewed event once per suite mount, not per render. The
   // ref-keyed-by-suite-id guard means navigating between suites re-fires;
   // re-renders within the same suite (e.g. when iterations stream in) do
@@ -115,8 +113,8 @@ export function CrossHostDashboard({
     if (lastFiredSuiteId.current === suite._id) return;
     lastFiredSuiteId.current = suite._id;
     try {
-      posthog.capture("evals_cross_host_viewed", {
-        ...standardEventProps("cross_host_dashboard"),
+      track("evals_cross_host_viewed", {
+        location: "cross_host_dashboard",
         suite_id: suite._id,
         host_count: data.hostColumns.length,
         case_count: data.caseRows.length,
@@ -127,7 +125,7 @@ export function CrossHostDashboard({
     } catch {
       // swallow — analytics must not block the dashboard render path
     }
-  }, [suite._id, posthog, data]);
+  }, [suite._id, data]);
 
   // On the suite landing (hideHistorical), the matrix only adds value with ≥2
   // clients to compare. With a single client it collapses to a list of cases +

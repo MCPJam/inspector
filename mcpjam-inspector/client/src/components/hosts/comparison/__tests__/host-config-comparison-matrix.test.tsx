@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
@@ -28,18 +28,24 @@ function makeSubject(
   hostId: string,
   hostName: string,
   overrides: Partial<HostConfigDtoV2> = {},
-  configHashShort?: string
+  configHashShort?: string,
+  verifiedAt?: number
 ): HostComparisonSubject {
   return {
     hostId,
     hostName,
     hostStyle: overrides.hostStyle ?? "mcpjam",
     configHashShort: configHashShort ?? hostId.slice(-6),
+    verifiedAt,
     config: makeConfig(overrides),
   };
 }
 
 describe("HostConfigComparisonMatrix", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("renders the empty-state hint when no subjects are passed", () => {
     render(<HostConfigComparisonMatrix subjects={[]} />);
     expect(screen.getByText(/No clients to compare/i)).toBeInTheDocument();
@@ -78,6 +84,86 @@ describe("HostConfigComparisonMatrix", () => {
     );
     expect(screen.getByText("Claude Code")).toBeInTheDocument();
     expect(screen.getByText("Cursor")).toBeInTheDocument();
+  });
+
+  it("links preset columns to the host verifier with the Agent tab selected", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[makeSubject("preset:mcpjam", "MCPJam")]}
+        verifyBaseUrl="https://app.mcpjam.com"
+      />
+    );
+
+    expect(
+      screen.getByRole("link", {
+        name: "Verify MCPJam against your server",
+      })
+    ).toHaveAttribute(
+      "href",
+      "https://app.mcpjam.com/hosts?template=mcpjam&hostTab=agent"
+    );
+  });
+
+  it("shows per-host verified dates only in public caniuse mode", () => {
+    const subject = makeSubject(
+      "preset:claude",
+      "Claude",
+      { hostStyle: "claude" },
+      "claude",
+      Date.UTC(2026, 6, 8)
+    );
+
+    const { rerender } = render(
+      <HostConfigComparisonMatrix subjects={[subject]} />
+    );
+    expect(screen.queryByText("Verified at")).not.toBeInTheDocument();
+
+    rerender(
+      <HostConfigComparisonMatrix
+        subjects={[subject]}
+        verifyBaseUrl="https://app.mcpjam.com"
+      />
+    );
+
+    expect(screen.getByText("Verified at")).toBeInTheDocument();
+    expect(screen.getByText("2026-07-08")).toBeInTheDocument();
+  });
+
+  it("flags caniuse hosts checked over 30 days ago", () => {
+    const subject = makeSubject(
+      "preset:claude",
+      "Claude",
+      { hostStyle: "claude" },
+      "claude",
+      Date.UTC(2026, 6, 8)
+    );
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-10T00:00:00.000Z"));
+
+    const { rerender } = render(
+      <HostConfigComparisonMatrix
+        subjects={[subject]}
+        verifyBaseUrl="https://app.mcpjam.com"
+      />
+    );
+
+    expect(
+      screen.queryByText("Last checked over 30 days ago")
+    ).not.toBeInTheDocument();
+
+    vi.setSystemTime(new Date("2026-08-08T00:00:00.001Z"));
+    rerender(
+      <HostConfigComparisonMatrix
+        subjects={[subject]}
+        verifyBaseUrl="https://app.mcpjam.com"
+      />
+    );
+
+    expect(
+      screen.getByText("Last checked over 30 days ago")
+    ).toBeInTheDocument();
+    expect(screen.queryByText("2026-07-08")).not.toBeInTheDocument();
   });
 
   it("uses the dark Goose logo in dark theme column headers", () => {
@@ -244,6 +330,51 @@ describe("HostConfigComparisonMatrix", () => {
     expect(screen.getByText("Roots")).toBeInTheDocument();
     // scalar rows are hidden under a capability filter
     expect(screen.queryByText("Model")).not.toBeInTheDocument();
+  });
+
+  it("filters columns instead of rows for searched support filters", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[
+          makeSubject("h_supported", "Supported Host", {
+            clientCapabilities: { sampling: {} },
+          }),
+          makeSubject("h_missing_a", "Missing A", { clientCapabilities: {} }),
+          makeSubject("h_missing_b", "Missing B", { clientCapabilities: {} }),
+        ]}
+        searchQuery="sampling"
+        supportFilter="missing"
+      />
+    );
+
+    expect(screen.getByText("Sampling")).toBeInTheDocument();
+    expect(screen.queryByText("Supported Host")).not.toBeInTheDocument();
+    expect(screen.getByText("Missing A")).toBeInTheDocument();
+    expect(screen.getByText("Missing B")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("coverage-capabilities.sampling")
+    ).toHaveTextContent("1/3");
+  });
+
+  it("shows supported columns for searched support filters", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[
+          makeSubject("h_supported", "Supported Host", {
+            clientCapabilities: { sampling: {} },
+          }),
+          makeSubject("h_missing", "Missing Host", { clientCapabilities: {} }),
+        ]}
+        searchQuery="sampling"
+        supportFilter="supported"
+      />
+    );
+
+    expect(screen.getByText("Supported Host")).toBeInTheDocument();
+    expect(screen.queryByText("Missing Host")).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("coverage-capabilities.sampling")
+    ).toHaveTextContent("1/2");
   });
 
   it("renders column remove buttons when onRemoveHost is provided", async () => {

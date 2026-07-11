@@ -9,16 +9,9 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => flagValue,
 }));
 
-const captureMock = vi.fn();
-vi.mock("posthog-js", () => ({
-  default: {
-    capture: (...args: unknown[]) => captureMock(...args),
-  },
-}));
-
-vi.mock("@/lib/PosthogUtils", () => ({
-  detectEnvironment: vi.fn().mockReturnValue("test"),
-  detectPlatform: vi.fn().mockReturnValue("web"),
+const trackMock = vi.fn();
+vi.mock("@/lib/analytics", () => ({
+  track: (...args: unknown[]) => trackMock(...args),
 }));
 
 const upsert = vi.fn(async () => ({ id: "app_new" }));
@@ -72,7 +65,7 @@ describe("XAARegistrationWizard", () => {
     upsert.mockClear();
     discoverMock.mockReset();
     healthCheckMock.mockReset();
-    captureMock.mockClear();
+    trackMock.mockClear();
   });
 
   describe("flag gating", () => {
@@ -303,9 +296,10 @@ describe("XAARegistrationWizard", () => {
       scopes: ["read", "write"],
       healthCheckUrl: "https://resource.example.com/health",
     });
-    expect(captureMock).toHaveBeenCalledWith(
+    expect(trackMock).toHaveBeenCalledWith(
       "xaa_resource_app_saved",
       expect.objectContaining({
+        location: "xaa_registration_wizard",
         resource_type: "mcp",
         auth_server_mode: "own",
       }),
