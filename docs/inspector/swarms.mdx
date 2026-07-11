@@ -1,0 +1,73 @@
+---
+title: "Swarms"
+description: "Run a persona-driven goal across multiple MCP hosts in parallel using the Persona → Journey → Run workflow."
+icon: "network"
+---
+
+Swarms let you define a **persona** (who is acting), attach **journeys** (what goal to pursue and on which hosts), and track **runs** (the execution history with per-host results). The `/swarms` tab is project-scoped — personas and journeys belong to the project, not to a single host.
+
+<Note>
+Swarms require a signed-in MCPJam account with an active project. If no project is selected, the tab shows a prompt to select one.
+</Note>
+
+## How it's organized
+
+<Steps>
+  <Step title="Persona">
+    A named agent identity with a role and optional notes. Personas are project-scoped and reusable across many journeys.
+  </Step>
+  <Step title="Journey">
+    A goal a persona pursues, targeting one or more project hosts. Each journey also sets `sessionsPerHost` (1–5) and `maxTurns` (1–20).
+  </Step>
+  <Step title="Run">
+    One execution of a journey. Shows overall status and a per-host breakdown of succeeded and total attempts.
+  </Step>
+</Steps>
+
+## Personas
+
+The left panel lists every persona in the project.
+
+### Create a persona
+
+1. Click **+ New** in the Personas header.
+2. Fill in **Name** and **Role** (both required). Add optional **Notes / personality** to shape how the persona behaves.
+3. Click **Create**. The new persona is selected automatically.
+
+### Delete a persona
+
+Select a persona, then click **Delete persona** in the detail header. A confirmation dialog warns you that the persona's journeys are hidden but historical runs are kept. Confirm to proceed.
+
+## Journeys
+
+With a persona selected, the right panel shows its journeys.
+
+### Create a journey
+
+1. Click **+ New journey**.
+2. Enter a **Goal** — what this persona is trying to accomplish.
+3. Select one or more **Hosts** from the project's host list. At least one host is required.
+4. Set **Sessions/host** (1–5) and **Max turns** (1–20).
+5. Click **Create journey**.
+
+Each journey card shows the goal, the targeted hosts, and the `sessionsPerHost` / `maxTurns` settings.
+
+### Journey runs
+
+Each journey card lists its most recent runs (up to three). Each run entry shows:
+
+- **Status** — the overall run status.
+- **Succeeded / Total** — aggregate counts across all hosts.
+- **Per-host breakdown** — a chip for each host showing `succeeded/total` for that host.
+
+## Running a journey
+
+<Note>
+The **Run** button is currently disabled (`Run (soon)`). The fan-out execution runner that drives actual sessions ships in a follow-up release. Creating a run today would leave a permanently-stuck record with no executor. The button will be enabled once the runner lands.
+</Note>
+
+## What's next
+
+- [Projects](/inspector/projects) — manage the project hosts that journeys target
+- [Clients](/inspector/clients) — configure and connect MCP hosts
+- [Playground](/inspector/playground) — chat with individual hosts interactively
