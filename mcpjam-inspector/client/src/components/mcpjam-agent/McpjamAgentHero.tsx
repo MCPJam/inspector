@@ -30,7 +30,7 @@ import {
 const DEFAULT_SUGGESTED_PROMPTS: ReadonlyArray<string> = [
   "How do I run an eval?",
   "What is progressive tool discovery?",
-  "What is cross host testing?",
+  "What is cross client testing?",
 ];
 
 export interface McpjamAgentHeroProps {

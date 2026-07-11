@@ -521,7 +521,7 @@ describe("TestTemplateEditor run view from route", () => {
       />,
     );
 
-    const hostSelect = await screen.findByLabelText("Host for the next run");
+    const hostSelect = await screen.findByLabelText("Client for the next run");
     expect(hostSelect).toHaveValue("host-1");
 
     await user.selectOptions(hostSelect, "host-2");
@@ -585,7 +585,7 @@ describe("TestTemplateEditor run view from route", () => {
 
     // The host is shown read-only as "MCPJam" — never an empty/hostless state,
     // and there is no "Suite default" pseudo-option.
-    const hostLabel = await screen.findByLabelText("Host for the next run");
+    const hostLabel = await screen.findByLabelText("Client for the next run");
     expect(hostLabel).toHaveTextContent(/MCPJam/i);
     expect(hostLabel.querySelector("select")).toBeNull();
     expect(screen.queryByText(/Suite default/i)).not.toBeInTheDocument();

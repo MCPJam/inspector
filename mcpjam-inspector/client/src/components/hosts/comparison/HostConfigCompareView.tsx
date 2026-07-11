@@ -497,7 +497,7 @@ export function HostConfigCompareView({
   if (!presetOnly && !projectId) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        Sign in to compare your hosts.
+        Sign in to compare your clients.
       </div>
     );
   }
@@ -688,8 +688,8 @@ function NotifyButton() {
         type="button"
         variant="outline"
         size="sm"
-        aria-label="Notify me of host changes"
-        title="Notify me of host changes"
+        aria-label="Notify me of client changes"
+        title="Notify me of client changes"
         className={cn("gap-1.5", CANIUSE_ACTION_BUTTON_CLASS)}
         onClick={() => setOpen(true)}
       >
@@ -1110,7 +1110,7 @@ function CompareSearchBar({
                 }}
                 onFocus={() => setPickerOpen(true)}
                 placeholder="Search capabilities, fields, descriptions…"
-                aria-label="Search host config fields"
+                aria-label="Search client config fields"
                 type="search"
                 autoComplete="off"
                 spellCheck={false}
@@ -1125,7 +1125,7 @@ function CompareSearchBar({
                 }}
                 onFocus={() => setPickerOpen(true)}
                 placeholder="Search capabilities, fields, descriptions…"
-                aria-label="Search host config fields"
+                aria-label="Search client config fields"
                 className="w-full"
               />
             )}

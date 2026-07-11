@@ -320,7 +320,7 @@ describe("ServerDetailModal", () => {
       screen.getByRole("button", { name: /connection overrides/i })
     );
     const protocolSelect = getProtocolVersionCombobox();
-    expect(protocolSelect).toHaveTextContent("Host default");
+    expect(protocolSelect).toHaveTextContent("Client default");
     expect(protocolSelect).toBeEnabled();
 
     await user.click(protocolSelect);
@@ -368,7 +368,7 @@ describe("ServerDetailModal", () => {
       screen.getByRole("button", { name: /connection overrides/i })
     );
     const hostDefaultSelect = getProtocolVersionCombobox();
-    expect(hostDefaultSelect).toHaveTextContent("Host default");
+    expect(hostDefaultSelect).toHaveTextContent("Client default");
 
     await user.click(hostDefaultSelect);
     await user.click(
@@ -416,7 +416,7 @@ describe("ServerDetailModal", () => {
 
     await user.click(latestSelect);
     await user.click(
-      await screen.findByRole("option", { name: "Host default" })
+      await screen.findByRole("option", { name: "Client default" })
     );
 
     await waitFor(() => {
@@ -461,7 +461,7 @@ describe("ServerDetailModal", () => {
 
     await user.click(protocolSelect);
     await user.click(
-      await screen.findByRole("option", { name: "Host default" })
+      await screen.findByRole("option", { name: "Client default" })
     );
 
     await waitFor(() => {

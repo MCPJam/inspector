@@ -361,7 +361,7 @@ describe("RunDetailView", () => {
       />
     );
 
-    expect(screen.queryByText("Host")).not.toBeInTheDocument();
+    expect(screen.queryByText("Client")).not.toBeInTheDocument();
     expect(screen.queryByText("Copilot")).not.toBeInTheDocument();
   });
 
@@ -381,7 +381,7 @@ describe("RunDetailView", () => {
       />
     );
 
-    expect(screen.getByText("Host")).toBeInTheDocument();
+    expect(screen.getByText("Client")).toBeInTheDocument();
     expect(screen.getByText("Copilot")).toBeInTheDocument();
   });
 

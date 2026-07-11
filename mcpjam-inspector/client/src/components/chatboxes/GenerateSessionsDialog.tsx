@@ -399,8 +399,8 @@ export function GenerateSessionsDialog({
               <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive">
                 <AlertTriangle className="mt-0.5 size-4 shrink-0" />
                 <span>
-                  This chatbox&apos;s host has no model selected. Pick a model
-                  on the host&apos;s Behavior tab, then come back to run
+                  This chatbox&apos;s client has no model selected. Pick a model
+                  on the client&apos;s Behavior tab, then come back to run
                   sessions.
                 </span>
               </div>
@@ -584,8 +584,8 @@ export function GenerateSessionsDialog({
               <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive">
                 <AlertTriangle className="mt-0.5 size-4 shrink-0" />
                 <span>
-                  This chatbox&apos;s host has no model selected. Pick a model
-                  on the host&apos;s Behavior tab, then come back to run
+                  This chatbox&apos;s client has no model selected. Pick a model
+                  on the client&apos;s Behavior tab, then come back to run
                   sessions.
                 </span>
               </div>

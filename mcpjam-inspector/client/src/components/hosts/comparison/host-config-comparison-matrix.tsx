@@ -141,7 +141,7 @@ export function HostConfigComparisonMatrix({
   if (subjects.length === 0) {
     return (
       <div className="flex h-full min-h-[200px] items-center justify-center text-sm text-muted-foreground">
-        No hosts to compare. Create at least one host in this project.
+        No clients to compare. Create at least one client in this project.
       </div>
     );
   }
