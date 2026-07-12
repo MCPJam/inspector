@@ -486,8 +486,15 @@ export function XAAFlowTab({
   // Mirror the machine's duplicate-registration risk into the target-scoped
   // ref so it outlives flow-state rebuilds. (One-way: the machine only ever
   // sets it true; the ref is cleared solely by "Register another client".)
+  // Guard on lastAppliedTargetKey: on a target switch this effect re-runs
+  // with the NEW targetKey while flowState still holds the OLD target's flow
+  // (the reset-owner effect rebuilds afterwards) — without the guard the old
+  // run's risk would wrongly block registration on the new target.
   useEffect(() => {
-    if (flowState.dcrRetryMayCreateDuplicate) {
+    if (
+      flowState.dcrRetryMayCreateDuplicate &&
+      lastAppliedTargetKey.current === targetKey
+    ) {
       dcrDuplicateRiskRef.current.add(targetKey);
     }
   }, [flowState.dcrRetryMayCreateDuplicate, targetKey]);
