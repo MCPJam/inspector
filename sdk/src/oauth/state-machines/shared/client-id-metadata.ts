@@ -20,24 +20,33 @@ export function validateClientIdMetadataUrl(
     throw new Error("Client ID metadata URL must be an absolute HTTPS URL");
   }
 
-  if (parsedUrl.username || parsedUrl.password) {
-    throw new Error(
-      "Client ID metadata URL must not contain a userinfo component"
-    );
-  }
-
   if (parsedUrl.hash || clientIdMetadataUrl.includes("#")) {
     throw new Error(
       "Client ID metadata URL must not contain a fragment component"
     );
   }
 
-  // Detect dot segments on the RAW string: new URL() collapses them, which
-  // would silently change the client identity before we could reject it.
+  // Parse the authority and path off the RAW string. new URL() both collapses
+  // dot segments and normalizes an empty userinfo away — either would silently
+  // change the client identity (Client Identifier URLs compare by simple
+  // string equality) before we could reject it.
   const rawWithoutQuery = clientIdMetadataUrl.split(/[?#]/, 1)[0];
   const authorityStart = rawWithoutQuery.indexOf("//") + 2;
   const pathStart = rawWithoutQuery.indexOf("/", authorityStart);
+  const rawAuthority =
+    pathStart === -1
+      ? rawWithoutQuery.slice(authorityStart)
+      : rawWithoutQuery.slice(authorityStart, pathStart);
   const rawPath = pathStart === -1 ? "" : rawWithoutQuery.slice(pathStart);
+
+  // WHATWG URL sets username/password to "" for `https://@host` (both falsy),
+  // so parsedUrl.username/password miss an empty-userinfo spelling. Inspect the
+  // raw authority for the `@` delimiter to reject any userinfo, empty or not.
+  if (rawAuthority.includes("@")) {
+    throw new Error(
+      "Client ID metadata URL must not contain a userinfo component"
+    );
+  }
 
   if (!rawPath || rawPath === "/") {
     throw new Error("Client ID metadata URL must contain a path component");

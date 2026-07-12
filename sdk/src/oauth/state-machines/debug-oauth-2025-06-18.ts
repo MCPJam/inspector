@@ -1266,6 +1266,12 @@ export const createDebugOAuthStateMachine = (
               });
 
               if (strictConformance) {
+                // A 2xx-but-unusable registration body previously reached the
+                // strict missing-client_id path, which cleared isInitiatingAuth.
+                // Preserve that so a failed strict run isn't left "initiating".
+                if (dcr.status === "invalid_response") {
+                  updateState({ isInitiatingAuth: false });
+                }
                 return;
               }
 

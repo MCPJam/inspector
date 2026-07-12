@@ -374,6 +374,9 @@ describe("validateClientIdMetadataUrl (CIMD draft-02)", () => {
     ["not-a-url", "valid absolute URL"],
     ["http://example.com/client.json", "absolute HTTPS URL"],
     ["https://user:pw@example.com/client.json", "userinfo"],
+    // Empty userinfo: WHATWG URL normalizes username/password to "" (falsy),
+    // so this must be caught on the raw authority, not the parsed fields.
+    ["https://@example.com/client.json", "userinfo"],
     ["https://example.com/client.json#frag", "fragment"],
     ["https://example.com", "path component"],
     ["https://example.com/", "path component"],
