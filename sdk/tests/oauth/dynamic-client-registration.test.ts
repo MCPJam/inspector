@@ -389,6 +389,10 @@ describe("validateClientIdMetadataUrl (CIMD draft-02)", () => {
     ["\thttps://example.com/client.json", "literal https"], // leading tab
     ["https://example.com/cli ent.json", "whitespace"], // literal space
     ["https://example.com\\client.json", "backslashes"], // backslash path sep
+    // Extra slashes after the scheme: new URL() promotes the next token to the
+    // host, so the raw identity string wouldn't name the host fetch hits.
+    ["https:///169.254.169.254/latest", "host"],
+    ["https:////example.com/client.json", "host"],
     ["https://example.com/client.json#frag", "fragment"],
     // No path component at all (a bare authority) is rejected; a root "/" is
     // accepted above.

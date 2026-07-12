@@ -62,6 +62,16 @@ export function validateClientIdMetadataUrl(
     slashIndex === -1 ? afterScheme : afterScheme.slice(0, slashIndex);
   const rawPath = slashIndex === -1 ? "" : afterScheme.slice(slashIndex);
 
+  // Extra slashes after `https://` (e.g. `https:///host`, `https:////host`)
+  // leave the authority empty in the raw string while new URL() promotes the
+  // next token to the hostname — so fetch would hit a host the identity string
+  // doesn't name. Reject an empty authority.
+  if (!rawAuthority) {
+    throw new Error(
+      "Client ID metadata URL must contain a host immediately after https://"
+    );
+  }
+
   // Userinfo: the parsed check catches any NON-empty spelling (WHATWG populates
   // username even for non-canonical forms), while the raw `@` scan catches the
   // EMPTY spelling `https://@host` that leaves username/password as "" (falsy).
