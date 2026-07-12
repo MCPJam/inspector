@@ -1427,6 +1427,9 @@ describe("open dcr registration strategy", () => {
     expect(state.currentStep).toBe("jwt_bearer_request");
     expect(state.error).toContain("expired");
     expect(cache.has(key)).toBe(false);
+    // The recovery action ("Register another client") is gated on this flag —
+    // it must be set so the error's instruction is actually actionable.
+    expect(state.dcrRetryMayCreateDuplicate).toBe(true);
     expect(
       harness.internalCalls.some((c) => c.path === "/proxy/token")
     ).toBe(false);
@@ -1574,6 +1577,50 @@ describe("cimd registration strategy", () => {
     });
     await harness.machine.runAll();
     expect(harness.getState().error).toContain("malformed");
+  });
+
+  const cimdDoc = {
+    client_id: XAA_DEBUG_CLIENT_ID_METADATA_URL,
+    grant_types: [
+      "urn:ietf:params:oauth:grant-type:token-exchange",
+      "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    ],
+    authorization_grant_profiles_supported: [
+      "urn:ietf:params:oauth:grant-profile:id-jag",
+    ],
+    token_endpoint_auth_method: "none",
+  };
+
+  it.each([
+    "application/json",
+    "application/json; charset=utf-8",
+    "APPLICATION/JSON",
+    "application/ld+json",
+  ])("accepts the JSON media type %s", async (contentType) => {
+    const harness = createDynamicHarness({
+      strategy: "cimd",
+      authzMetadataExtras: CIMD_SUPPORTED,
+      cimdResponse: { status: 200, headers: { "content-type": contentType }, body: cimdDoc },
+    });
+    await harness.machine.runAll();
+    expect(harness.getState().currentStep).toBe("complete");
+  });
+
+  it.each([
+    "application/jsonp",
+    "text/application/json",
+    "application/+json",
+    "text/html",
+  ])("parks on the non-JSON media type %s", async (contentType) => {
+    const harness = createDynamicHarness({
+      strategy: "cimd",
+      authzMetadataExtras: CIMD_SUPPORTED,
+      cimdResponse: { status: 200, headers: { "content-type": contentType }, body: cimdDoc },
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+    expect(state.currentStep).toBe("fetch_client_metadata_document");
+    expect(state.error).toContain("not a JSON media type");
   });
 
   it("parks when the document omits the required grants (no echo tolerance)", async () => {

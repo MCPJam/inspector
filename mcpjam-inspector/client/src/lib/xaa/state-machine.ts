@@ -1164,8 +1164,17 @@ export function createXAAStateMachine(
       );
       return;
     }
+    // Compare the media-type ESSENCE (type/subtype before any ";" parameters,
+    // trimmed + lowercased), anchored — an unanchored substring test wrongly
+    // accepts "application/jsonp", "text/application/json", "application/+json".
+    // Allow exactly application/json, or a structured suffix with a NON-empty
+    // subtype tree (application/<x>+json), which the SDK proxy parses correctly.
     const contentType = result.headers["content-type"] || "";
-    if (!/application\/([a-z0-9.+-]*\+)?json/i.test(contentType)) {
+    const mediaTypeEssence = contentType.split(";", 1)[0].trim().toLowerCase();
+    const isJsonMediaType =
+      mediaTypeEssence === "application/json" ||
+      /^application\/[a-z0-9.+-]+\+json$/.test(mediaTypeEssence);
+    if (!isJsonMediaType) {
       park(
         `The client metadata document was served as "${contentType || "(none)"}", not a JSON media type.`
       );
@@ -1462,13 +1471,18 @@ export function createXAAStateMachine(
         }
         // The secret can expire between registration and redemption. Redeeming
         // with an expired secret surfaces as a confusing token-endpoint
-        // failure, so discard it and ask to register again instead.
+        // failure, so discard it and ask to register again instead. Set the
+        // duplicate-risk flag too: a remote client already exists (with a dead
+        // secret), so registering another is what recovery requires — and the
+        // flag is what keeps the "Register another client" action visible, which
+        // this error tells the user to use.
         if (dcrSecretExpired(cached)) {
           if (cacheKey) dcrCredentialCache?.delete(cacheKey);
           machine.updateState({
             currentStep: "jwt_bearer_request",
             error:
               "This session's dynamic client secret has expired. Register another client to continue.",
+            dcrRetryMayCreateDuplicate: true,
           });
           return;
         }
