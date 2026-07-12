@@ -140,4 +140,39 @@ describe("normalizeModelMessagesForConvex", () => {
     expect(tool.content[0].toolCallId).toBe("c1");
     expect((out[0] as { content: unknown }).content).toBe("hi");
   });
+
+  it("converts base64 data URL file parts to the backend's raw base64 format", () => {
+    const messages = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Summarize this file." },
+          {
+            type: "file",
+            mediaType: "text/plain",
+            filename: "note.txt",
+            data: "data:text/plain;base64,aGVsbG8=",
+          },
+          {
+            type: "file",
+            mediaType: "application/pdf",
+            filename: "remote.pdf",
+            data: "https://example.test/remote.pdf",
+          },
+        ],
+      },
+    ] as unknown as ModelMessage[];
+
+    const out = normalizeModelMessagesForConvex(messages);
+    const content = (out[0] as { content: Array<Record<string, unknown>> })
+      .content;
+
+    expect(content[1]).toMatchObject({
+      type: "file",
+      mediaType: "text/plain",
+      filename: "note.txt",
+      data: "aGVsbG8=",
+    });
+    expect(content[2].data).toBe("https://example.test/remote.pdf");
+  });
 });

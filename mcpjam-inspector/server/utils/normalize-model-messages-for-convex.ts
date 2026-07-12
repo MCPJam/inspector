@@ -15,6 +15,22 @@ export function normalizeModelMessagesForConvex(
 
   const pendingToolCallIds: string[] = [];
 
+  const normalizeFilePart = (part: unknown): unknown => {
+    if (!part || typeof part !== "object" || Array.isArray(part)) {
+      return part;
+    }
+
+    const filePart = part as Record<string, unknown>;
+    if (filePart.type !== "file" || typeof filePart.data !== "string") {
+      return part;
+    }
+
+    // Browser attachments arrive as data URLs, but Convex expects the raw
+    // base64 payload and otherwise attempts to fetch the data: URI.
+    const match = /^data:[^,]*;base64,([\s\S]*)$/i.exec(filePart.data);
+    return match ? { ...filePart, data: match[1] } : part;
+  };
+
   const normalizePart = (
     part: unknown,
     role: "assistant" | "tool",
@@ -70,7 +86,9 @@ export function normalizeModelMessagesForConvex(
       if (!Array.isArray(m.content)) return msg;
       return {
         ...msg,
-        content: m.content.map((part) => normalizePart(part, "assistant")),
+        content: m.content.map((part) =>
+          normalizeFilePart(normalizePart(part, "assistant")),
+        ),
       } as ModelMessage;
     }
     if (msg.role === "tool") {
@@ -78,24 +96,30 @@ export function normalizeModelMessagesForConvex(
       if (!Array.isArray(m.content)) return msg;
       return {
         ...msg,
-        content: m.content.map((part) => normalizePart(part, "tool")),
+        content: m.content.map((part) =>
+          normalizeFilePart(normalizePart(part, "tool")),
+        ),
       } as ModelMessage;
     }
     if (msg.role === "user") {
       const m = msg as { content?: unknown };
       const c = m.content;
+      const content = Array.isArray(c) ? c.map(normalizeFilePart) : c;
       if (
-        Array.isArray(c) &&
-        c.length === 1 &&
-        c[0] &&
-        typeof c[0] === "object" &&
-        (c[0] as { type?: string }).type === "text" &&
-        typeof (c[0] as { text?: string }).text === "string"
+        Array.isArray(content) &&
+        content.length === 1 &&
+        content[0] &&
+        typeof content[0] === "object" &&
+        (content[0] as { type?: string }).type === "text" &&
+        typeof (content[0] as { text?: string }).text === "string"
       ) {
         return {
           ...msg,
-          content: (c[0] as { text: string }).text,
+          content: (content[0] as { text: string }).text,
         } as ModelMessage;
+      }
+      if (content !== c) {
+        return { ...msg, content } as ModelMessage;
       }
     }
     return msg;
