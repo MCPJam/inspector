@@ -20,10 +20,12 @@ export function validateClientIdMetadataUrl(
     throw new Error("Client ID metadata URL must be an absolute HTTPS URL");
   }
 
-  // The Client Identifier URL is compared by simple string equality, and we
-  // return the raw string unchanged — so it must already be EXACTLY what fetch
-  // would request. Reject any spelling WHATWG would transport-normalize into a
-  // different URL than the raw bytes:
+  // The Client Identifier URL is compared by simple string equality and we
+  // return it unchanged, so a spelling WHATWG would transport-normalize makes
+  // fetch request a different URL than the identity string. Reject the
+  // structural cases below. This is NOT exhaustive over every WHATWG
+  // normalization — host lowercasing, percent-encoding, and IDNA/Unicode host
+  // normalization are out of scope for these draft-02 structural checks:
   //  - not the canonical literal `https://` prefix (rejects single-slash
   //    `https:/…`, backslash scheme `https:\…`, and non-lowercase schemes).
   if (!clientIdMetadataUrl.startsWith("https://")) {
