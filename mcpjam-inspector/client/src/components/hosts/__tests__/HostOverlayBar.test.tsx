@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { render, screen, waitFor } from "@testing-library/react";
 import { HostOverlayBar } from "@/components/hosts/HostOverlayBar";
+import { track } from "@/lib/analytics";
 
 vi.mock("@/components/hosts/CreateHostDialog", () => ({
-  CreateHostDialog: () => null,
+  CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="create-host-dialog" /> : null,
 }));
 
 const mockUseHostList = vi.fn();
@@ -106,6 +108,43 @@ describe("HostOverlayBar", () => {
       "MCPJam"
     );
     expect(screen.getByTestId("host-overlay-next")).toBeInTheDocument();
+  });
+
+  it("shows an always-visible add button without opening the dropdown", () => {
+    render(
+      <HostOverlayBar
+        projectId="proj-1"
+        previewedHostId="host-a"
+        onChangePreviewedHostId={vi.fn()}
+        onEditHost={vi.fn()}
+      />
+    );
+
+    const addBtn = screen.getByTestId("host-overlay-add");
+    expect(addBtn).toBeVisible();
+    expect(addBtn).not.toBeDisabled();
+    expect(addBtn).toHaveAccessibleName("Add client");
+  });
+
+  it("opens the create dialog and tracks when the add button is clicked", async () => {
+    const user = userEvent.setup();
+    render(
+      <HostOverlayBar
+        projectId="proj-1"
+        previewedHostId="host-a"
+        onChangePreviewedHostId={vi.fn()}
+        onEditHost={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByTestId("create-host-dialog")).not.toBeInTheDocument();
+    await user.click(screen.getByTestId("host-overlay-add"));
+
+    expect(screen.getByTestId("create-host-dialog")).toBeInTheDocument();
+    expect(track).toHaveBeenCalledWith("connect_host_overlay_add_clicked", {
+      location: "chatbox_overlay",
+      host_count: 1,
+    });
   });
 
   it("renders per-row edit/delete actions and a save-as-new entry inside the dropdown", async () => {

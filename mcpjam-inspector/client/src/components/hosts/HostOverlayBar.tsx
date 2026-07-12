@@ -386,13 +386,34 @@ export function HostOverlayBar({
             disabled={arrowDisabled}
             onClick={() => cycle(1)}
             className={cn(
-              "inline-flex h-8 w-7 items-center justify-center rounded-r-md text-muted-foreground transition-colors",
+              "inline-flex h-8 w-7 items-center justify-center text-muted-foreground transition-colors",
               "hover:bg-muted/60 hover:text-foreground",
               "focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none",
               "disabled:cursor-not-allowed disabled:opacity-40"
             )}
           >
             <ChevronRight className="size-4" />
+          </button>
+
+          <button
+            type="button"
+            aria-label="Add client"
+            title="Add client"
+            data-testid="host-overlay-add"
+            onClick={() => {
+              track("connect_host_overlay_add_clicked", {
+                location: "chatbox_overlay",
+                host_count: hosts.length,
+              });
+              openCreateWithTemplate(undefined);
+            }}
+            className={cn(
+              "inline-flex h-8 w-7 items-center justify-center rounded-r-md border-l border-border/40 text-primary transition-colors",
+              "hover:bg-primary/10",
+              "focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none"
+            )}
+          >
+            <Plus className="size-4" />
           </button>
         </div>
       )}

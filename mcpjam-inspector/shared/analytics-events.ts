@@ -92,6 +92,7 @@ export const ANALYTICS_EVENTS = {
   compat_cta_clicked: { source: "client" },
   computer_start_limit_hit: { source: "client" },
   computer_terminal_opened: { source: "client" },
+  connect_host_overlay_add_clicked: { source: "client" },
   connect_host_overlay_opened: { source: "client" },
   connect_host_overlay_quick_added: { source: "client" },
   connect_host_overlay_saved_as_new: { source: "client" },
