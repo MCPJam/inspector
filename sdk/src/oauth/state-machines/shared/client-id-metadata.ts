@@ -59,8 +59,14 @@ export function validateClientIdMetadataUrl(
     throw new Error("Client ID metadata URL must contain a path component");
   }
 
-  const segments = rawPath.split("/");
-  if (segments.some((segment) => segment === "." || segment === "..")) {
+  // WHATWG dot-segment detection decodes %2e (any case) first: "%2e%2e",
+  // "%2e.", ".%2e" all collapse like "..". Match that so an encoded spelling
+  // can't slip past what the parser would normalize away.
+  const isDotSegment = (segment: string) => {
+    const normalized = segment.replace(/%2e/gi, ".");
+    return normalized === "." || normalized === "..";
+  };
+  if (rawPath.split("/").some(isDotSegment)) {
     throw new Error(
       "Client ID metadata URL must not contain single-dot or double-dot path segments"
     );

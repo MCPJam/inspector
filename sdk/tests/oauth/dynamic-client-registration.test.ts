@@ -393,6 +393,12 @@ describe("validateClientIdMetadataUrl (CIMD draft-02)", () => {
     ["https://example.com/a/../client.json", "dot path segments"],
     ["https://example.com/./client.json", "dot path segments"],
     ["https://example.com/a/..", "dot path segments"],
+    // Percent-encoded dot segments: WHATWG decodes %2e (any case) during
+    // dot-segment detection, so these collapse exactly like literal dots.
+    ["https://example.com/a/%2e%2e/client.json", "dot path segments"],
+    ["https://example.com/a/%2E./client.json", "dot path segments"],
+    ["https://example.com/.%2e/client.json", "dot path segments"],
+    ["https://example.com/%2e/client.json", "dot path segments"],
   ])("rejects %s", (url, messageFragment) => {
     expect(() => validateClientIdMetadataUrl(url)).toThrow(
       new RegExp(messageFragment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")
