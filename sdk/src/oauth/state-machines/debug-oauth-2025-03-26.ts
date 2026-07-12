@@ -44,6 +44,10 @@ import {
   normalizeRegisteredClientAuthMethod,
   resolvePreregisteredClientAuthMethod,
 } from "./shared/client-auth.js";
+import {
+  buildDynamicClientRegistrationRequest,
+  executeDynamicClientRegistration,
+} from "./shared/dynamic-client-registration.js";
 
 // Re-export types for backward compatibility
 export type { OAuthFlowStep, OAuthFlowState };
@@ -837,33 +841,14 @@ export const createDebugOAuthStateMachine = (
                 supportedScopes: scopesSupported,
               });
 
-              const clientMetadata: Record<string, any> = {
-                ...dynamicRegistrationDefaults,
-                redirect_uris:
-                  dynamicRegistrationDefaults.redirect_uris ?? [redirectUri],
-                grant_types: dynamicRegistrationDefaults.grant_types ?? [
-                  "authorization_code",
-                  "refresh_token",
-                ],
-                response_types:
-                  dynamicRegistrationDefaults.response_types ?? ["code"],
-                token_endpoint_auth_method:
-                  dynamicRegistrationDefaults.token_endpoint_auth_method ??
-                  "none",
-              };
-
-              if (requestedScopeValue) {
-                clientMetadata.scope = requestedScopeValue;
-              }
-
-              const registrationRequest = {
-                method: "POST",
-                url: state.authorizationServerMetadata.registration_endpoint,
-                headers: mergeHeadersForAuthServer(customHeaders, {
-                  "Content-Type": "application/json",
-                }),
-                body: clientMetadata,
-              };
+              const registrationRequest = buildDynamicClientRegistrationRequest({
+                registrationEndpoint:
+                  state.authorizationServerMetadata.registration_endpoint,
+                redirectUri,
+                dynamicRegistrationDefaults,
+                scope: requestedScopeValue,
+                customHeaders,
+              });
 
               updateState({
                 currentStep: "request_client_registration",
@@ -929,56 +914,33 @@ export const createDebugOAuthStateMachine = (
               throw new Error("No client metadata in request");
             }
 
-            try {
-              const response = await executeRequest(
-                state.authorizationServerMetadata.registration_endpoint,
-                {
-                  method: "POST",
-                  headers: mergeHeadersForAuthServer(customHeaders, {
-                    "Content-Type": "application/json",
-                  }),
-                  body: JSON.stringify(state.lastRequest.body),
-                },
-              );
+            {
+              // Execute the exact request recorded in lastRequest so the
+              // displayed request and the executed request cannot drift.
+              const dcr = await executeDynamicClientRegistration({
+                request: state.lastRequest,
+                requestExecutor,
+                httpHistory: state.httpHistory,
+              });
 
-              const registrationResponseData = {
-                status: response.status,
-                statusText: response.statusText,
-                headers: response.headers,
-                body: response.body,
-              };
-
-              const updatedHistoryReg = [...(state.httpHistory || [])];
-              if (updatedHistoryReg.length > 0) {
-                const lastEntry =
-                  updatedHistoryReg[updatedHistoryReg.length - 1];
-                lastEntry.response = registrationResponseData;
-                lastEntry.duration =
-                  Date.now() - (lastEntry.timestamp || Date.now());
-              }
-
-              if (!response.ok) {
-                const registrationError = `Dynamic Client Registration failed (${response.status}).`;
-
+              if (dcr.status !== "registered") {
                 updateState({
-                  lastResponse: registrationResponseData,
-                  httpHistory: updatedHistoryReg,
-                  error: registrationError,
+                  lastResponse: dcr.response,
+                  httpHistory: dcr.httpHistory,
+                  error: dcr.error,
                 });
 
                 if (strictConformance) {
                   return;
                 }
 
-                const fallbackClient =
-                  await loadFallbackPreregisteredClient(
-                    `Dynamic Client Registration failed (${response.status}); using pre-registered client credentials.`,
-                  );
+                const fallbackClient = await loadFallbackPreregisteredClient(
+                  dcr.fallbackNote,
+                );
 
                 if (!fallbackClient) {
                   updateState({
-                    error:
-                      `${registrationError} Configure a pre-registered client or enable DCR on the authorization server.`,
+                    error: dcr.errorWithFallbackHint,
                     isInitiatingAuth: false,
                   });
                   return;
@@ -994,112 +956,38 @@ export const createDebugOAuthStateMachine = (
                   error: undefined,
                   isInitiatingAuth: false,
                 });
-              } else {
-                const clientInfo = response.body;
-                if (
-                  strictConformance &&
-                  typeof clientInfo?.client_id !== "string"
-                ) {
-                  updateState({
-                    lastResponse: registrationResponseData,
-                    httpHistory: updatedHistoryReg,
-                    error:
-                      "Dynamic Client Registration response is missing a client_id.",
-                    isInitiatingAuth: false,
-                  });
-                  return;
-                }
+                break;
+              }
 
-                const dcrInfo: Record<string, any> = {
-                  "Client ID": clientInfo.client_id,
-                  "Client Name": clientInfo.client_name,
-                  "Token Auth Method":
-                    clientInfo.token_endpoint_auth_method || "none",
-                  "Redirect URIs": clientInfo.redirect_uris,
-                  "Grant Types": clientInfo.grant_types,
-                  "Response Types": clientInfo.response_types,
-                };
-
-                if (clientInfo.client_secret) {
-                  dcrInfo["Client Secret"] =
-                    clientInfo.client_secret.substring(0, 20) + "...";
-                  dcrInfo["Note"] =
-                    "Server issued client_secret - this will be used in token requests";
-                }
-
-                const infoLogs = addInfoLog(
-                  getCurrentState(),
-                  "received_client_credentials",
-                  "dcr",
-                  "Dynamic Client Registration",
-                  dcrInfo,
-                );
-
+              if (strictConformance && dcr.missingClientId) {
                 updateState({
-                  currentStep: "received_client_credentials",
-                  clientId: clientInfo.client_id,
-                  clientSecret: clientInfo.client_secret,
-                  tokenEndpointAuthMethod:
-                    normalizeRegisteredClientAuthMethod(clientInfo),
-                  lastResponse: registrationResponseData,
-                  httpHistory: updatedHistoryReg,
-                  infoLogs,
-                  error: undefined,
-                  isInitiatingAuth: false,
-                });
-              }
-            } catch (error) {
-              const errorResponse = {
-                status: 0,
-                statusText: "Network Error",
-                headers: {},
-                body: {
-                  error: error instanceof Error ? error.message : String(error),
-                },
-              };
-
-              const updatedHistoryError = [...(state.httpHistory || [])];
-              if (updatedHistoryError.length > 0) {
-                const lastEntry =
-                  updatedHistoryError[updatedHistoryError.length - 1];
-                lastEntry.response = errorResponse;
-                lastEntry.duration =
-                  Date.now() - (lastEntry.timestamp || Date.now());
-              }
-
-              const registrationError = `Client registration failed: ${error instanceof Error ? error.message : String(error)}`;
-
-              updateState({
-                lastResponse: errorResponse,
-                httpHistory: updatedHistoryError,
-                error: registrationError,
-              });
-
-              if (strictConformance) {
-                return;
-              }
-
-              const fallbackClient =
-                await loadFallbackPreregisteredClient(
-                  "Client registration failed; using pre-registered client credentials.",
-                );
-
-              if (!fallbackClient) {
-                updateState({
+                  lastResponse: dcr.response,
+                  httpHistory: dcr.httpHistory,
                   error:
-                    `${registrationError}. Configure a pre-registered client or enable DCR on the authorization server.`,
+                    "Dynamic Client Registration response is missing a client_id.",
                   isInitiatingAuth: false,
                 });
                 return;
               }
+
+              const infoLogs = addInfoLog(
+                getCurrentState(),
+                "received_client_credentials",
+                "dcr",
+                "Dynamic Client Registration",
+                dcr.infoLogData,
+              );
 
               updateState({
                 currentStep: "received_client_credentials",
-                clientId: fallbackClient.clientId,
-                clientSecret: fallbackClient.clientSecret,
-                tokenEndpointAuthMethod:
-                  fallbackClient.tokenEndpointAuthMethod,
-                infoLogs: fallbackClient.infoLogs,
+                clientId: dcr.credentials.clientId,
+                clientSecret: dcr.credentials.clientSecret,
+                tokenEndpointAuthMethod: normalizeRegisteredClientAuthMethod(
+                  dcr.clientInfo,
+                ),
+                lastResponse: dcr.response,
+                httpHistory: dcr.httpHistory,
+                infoLogs,
                 error: undefined,
                 isInitiatingAuth: false,
               });
