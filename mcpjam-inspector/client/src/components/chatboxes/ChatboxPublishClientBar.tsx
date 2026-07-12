@@ -159,6 +159,17 @@ export function ChatboxHostPickerPill({
     [hosts],
   );
 
+  // Only publishable clients can be SWITCHED TO from this bar — a standalone
+  // Journeys-owned host has no publish surface. Filtered for the dropdown
+  // options only; `sortedHosts` (unfiltered) still drives the
+  // pointer-validity effect below, so a currently-selected journeys host
+  // (the ChatboxesTab "managed by Swarms" notice) is NOT force-redirected
+  // away before the user can read the notice.
+  const publishableHosts = useMemo(
+    () => sortedHosts.filter((h) => h.ownerScope?.type !== "journeys"),
+    [sortedHosts],
+  );
+
   // Keep the shared preview pointer honest when the bound host disappears
   // (deleted elsewhere) or was never set — same role HostOverlayBar plays
   // on other tabs.
@@ -232,7 +243,7 @@ export function ChatboxHostPickerPill({
         </button>
       </div>
       <DropdownMenuContent align="start" className="min-w-[12rem]">
-        {sortedHosts.map((host) => {
+        {publishableHosts.map((host) => {
           const selected = host.hostId === hostId;
           return (
             <DropdownMenuItem

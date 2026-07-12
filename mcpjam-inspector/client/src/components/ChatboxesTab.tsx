@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import {
   AlertTriangle,
+  Boxes,
   ExternalLink,
   Inbox,
   Link2,
@@ -102,6 +103,7 @@ export function ChatboxesTab({
 }: ChatboxesTabProps) {
   const tabOptions = TAB_OPTIONS_BY_PRODUCT[product];
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   // Deep link: `/chatboxes?host=<id>&session=<threadId>` (the Sessions tab's
   // "Copy session link"). The params stay in the URL until the user navigates
   // — App's auth/loading gates unmount and remount the route several times
@@ -143,10 +145,16 @@ export function ChatboxesTab({
   ]);
   const convexAuth = useConvexAuth();
   const effectiveAuth = isAuthenticated && convexAuth.isAuthenticated;
-  const { host } = useHost({
+  const { host, isLoading: hostLoading } = useHost({
     isAuthenticated: effectiveAuth,
     hostId: previewedHostId,
   });
+  // A Journeys (swarm)-owned host is standalone — it has NO chatbox / publish
+  // surface and must never be back-minted one. We only trust this once the
+  // host query has resolved (hostLoading === false); deciding while the host
+  // is still loading would race the auto-ensure below into minting a chatbox
+  // for a host that should never have one.
+  const isJourneysHost = host?.ownerScope?.type === "journeys";
   const { chatbox, isLoading } = useChatboxByHostId({
     isAuthenticated: effectiveAuth,
     hostId: previewedHostId,
@@ -173,7 +181,14 @@ export function ChatboxesTab({
   useEffect(() => {
     if (!effectiveAuth) return;
     if (!previewedHostId) return;
-    if (isLoading) return;
+    // Wait for BOTH queries: the chatbox query (isLoading) and the host query
+    // (hostLoading). We must know the host's ownerScope before deciding to
+    // mint — firing while the host is still loading would race a chatbox onto
+    // a standalone (journeys) host.
+    if (isLoading || hostLoading) return;
+    // Standalone Journeys-owned host: no publish surface, ever. Skip the
+    // back-mint entirely (the notice below handles the empty render).
+    if (isJourneysHost) return;
     if (chatbox !== null) return;
     if (ensureLatchRef.current.has(previewedHostId)) return;
     ensureLatchRef.current.add(previewedHostId);
@@ -214,6 +229,8 @@ export function ChatboxesTab({
     effectiveAuth,
     ensureChatboxForHost,
     isLoading,
+    hostLoading,
+    isJourneysHost,
     previewedHostId,
   ]);
   // Once the chatbox shows up, clear the stuck flag AND the per-host
@@ -264,11 +281,57 @@ export function ChatboxesTab({
     );
   }
 
-  if (isLoading) {
+  // Wait for BOTH the chatbox and host queries before rendering a terminal
+  // state — the journeys notice below depends on the host's resolved
+  // ownerScope, and rendering "no chatbox" before the host loads would flash
+  // the wrong state for a standalone host.
+  if (isLoading || hostLoading) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         <Loader2 className="mr-2 size-4 animate-spin" />
         <span className="text-sm">Loading swarm…</span>
+      </div>
+    );
+  }
+
+  // Standalone Journeys-owned host: no publish surface. Render an explanatory
+  // notice INSTEAD of provisioning a chatbox — but keep the client picker
+  // visible so the user can switch to a publishable client (a dead-end notice
+  // would strand them here).
+  if (isJourneysHost) {
+    return (
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <div className="relative shrink-0 border-b border-border/40 px-8 py-2.5">
+          <div className="absolute left-8 top-1/2 z-10 -translate-y-1/2">
+            <ChatboxHostPickerPill
+              projectId={projectId ?? ""}
+              isAuthenticated={effectiveAuth}
+              hostId={previewedHostId}
+              hostName={host?.name ?? "Client"}
+            />
+          </div>
+        </div>
+        <div className="flex flex-1 items-center justify-center px-6 text-center">
+          <div className="max-w-sm">
+            <Boxes className="mx-auto size-8 text-muted-foreground/70" />
+            <p className="mt-3 text-sm font-medium">
+              Managed by Swarms
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              This client belongs to the Swarms surface and has no publish
+              surface. Manage its journeys and runs there, or pick a different
+              client above to publish.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-4 rounded-xl"
+              onClick={() => navigate("/swarms")}
+            >
+              Go to Swarms
+            </Button>
+          </div>
+        </div>
       </div>
     );
   }
