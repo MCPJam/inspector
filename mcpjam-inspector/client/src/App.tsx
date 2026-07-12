@@ -1150,6 +1150,10 @@ export function SwarmsRoute() {
       key={convexProjectId ?? "no-project"}
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
+      // Host create/edit/apply/delete on the Clients sub-tab are admin-gated
+      // server-side; pass the resolved role so the UI hides those affordances
+      // for non-admins (members can still view Swarms + run journeys).
+      viewerRole={role}
     />
   );
 }
