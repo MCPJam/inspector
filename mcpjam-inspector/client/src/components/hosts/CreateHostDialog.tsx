@@ -74,7 +74,12 @@ export function CreateHostDialog({
     [visibleCatalogHosts]
   );
   const [name, setName] = useState("");
-  const defaultedNameRef = useRef<string | null>(null);
+  // True once the user hand-types a (non-empty) name; the template-label
+  // defaulting effect below must not clobber it. Tracked outside the
+  // setName updater: mutating a ref inside an updater is impure, and
+  // StrictMode's double-invoke made the old ref-inside-updater guard
+  // misread the defaulted name as user-typed, pinning it forever.
+  const userEditedNameRef = useRef(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(
     initialTemplateId ?? DEFAULT_CATALOG_HOST_ID
   );
@@ -111,18 +116,13 @@ export function CreateHostDialog({
 
   useEffect(() => {
     if (!isOpen) return;
-    setName((current) => {
-      if (current.trim() !== "" && current !== defaultedNameRef.current) {
-        return current;
-      }
-      defaultedNameRef.current = selectedTemplateLabel;
-      return selectedTemplateLabel;
-    });
+    if (userEditedNameRef.current) return;
+    setName(selectedTemplateLabel);
   }, [isOpen, selectedTemplateId, selectedTemplateLabel]);
 
   const handleClose = () => {
     setName("");
-    defaultedNameRef.current = null;
+    userEditedNameRef.current = false;
     setSelectedTemplateId(initialTemplateId ?? DEFAULT_CATALOG_HOST_ID);
     onClose();
   };
@@ -233,7 +233,11 @@ export function CreateHostDialog({
               id="host-name"
               placeholder="My Client"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                // Clearing the field re-arms template defaulting.
+                userEditedNameRef.current = e.target.value.trim() !== "";
+              }}
               onKeyDown={(e) =>
                 e.key === "Enter" && canCreate && handleCreate()
               }
