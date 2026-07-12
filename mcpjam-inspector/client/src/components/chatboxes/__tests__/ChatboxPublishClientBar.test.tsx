@@ -111,6 +111,8 @@ function renderBar(currentServerIds: string[] = []) {
 describe("ChatboxPublishClientBar", () => {
   afterEach(() => {
     hostListState.hosts = [...DEFAULT_HOSTS];
+    setPreviewedHostIdMock.mockClear();
+    navigateMock.mockClear();
   });
 
   it("shows the empty pick state when no servers are picked", () => {
@@ -183,6 +185,52 @@ describe("ChatboxPublishClientBar", () => {
     await user.click(screen.getByTestId("chatbox-host-edit"));
 
     expect(navigateMock).toHaveBeenCalledWith("/hosts/host-1");
+  });
+
+  it("recovers a missing pointer to a PUBLISHABLE host, skipping journeys-owned ones", () => {
+    // "Aardvark" sorts first but is journeys-owned; recovery must land on the
+    // publishable "Claude", not bounce the user onto the Swarms notice.
+    hostListState.hosts = [
+      {
+        hostId: "host-swarm",
+        name: "Aardvark Swarm",
+        ownerScope: { type: "journeys" },
+      },
+      { hostId: "host-2", name: "Claude" },
+    ];
+    render(
+      <ChatboxPublishClientBar
+        chatboxId="cb-1"
+        projectId="proj-1"
+        hostId="host-gone" // bound host no longer exists
+        hostName="Ghost"
+        isAuthenticated
+        currentServerIds={[]}
+      />,
+    );
+    expect(setPreviewedHostIdMock).toHaveBeenCalledWith("host-2");
+  });
+
+  it("leaves the pointer alone and disables the switcher when NO publishable host exists", () => {
+    hostListState.hosts = [
+      {
+        hostId: "host-swarm",
+        name: "Swarm Only",
+        ownerScope: { type: "journeys" },
+      },
+    ];
+    render(
+      <ChatboxPublishClientBar
+        chatboxId="cb-1"
+        projectId="proj-1"
+        hostId="host-gone"
+        hostName="Ghost"
+        isAuthenticated
+        currentServerIds={[]}
+      />,
+    );
+    expect(setPreviewedHostIdMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId("chatbox-host-picker")).toBeDisabled();
   });
 
   it("excludes standalone (Journeys-owned) hosts from the switcher options", async () => {

@@ -119,4 +119,22 @@ describe("ChatboxesTab — Journeys-owned (standalone) host", () => {
     });
     expect(screen.queryByText(/Managed by Swarms/i)).not.toBeInTheDocument();
   });
+
+  it("a RESOLVED-missing host renders the not-found state and never provisions", async () => {
+    // Host query finished and returned null (deleted / not visible) —
+    // provisioning would just fail the mutation and strand the spinner.
+    hostState.host = null;
+    hostState.isLoading = false;
+    chatboxState.chatbox = null;
+    chatboxState.isLoading = false;
+
+    renderTab();
+
+    expect(await screen.findByText(/Client not found/i)).toBeInTheDocument();
+    // Recoverable: the picker stays visible to select another client.
+    expect(screen.getByTestId("chatbox-host-picker")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(ensureMock).not.toHaveBeenCalled();
+    });
+  });
 });

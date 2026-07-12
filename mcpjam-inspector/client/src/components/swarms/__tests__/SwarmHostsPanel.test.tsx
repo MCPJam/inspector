@@ -5,11 +5,10 @@ import { SwarmHostsPanel } from "../SwarmHostsPanel";
 
 const {
   hostListState,
-  updateHostMock,
+  updateHostServersMock,
   deleteHostMock,
   navigateMock,
   createDialogState,
-  hostDetail,
 } = vi.hoisted(() => ({
   hostListState: {
     hosts: [] as Array<{
@@ -21,29 +20,20 @@ const {
       ownerScope?: { type: string } | null;
     }>,
   },
-  updateHostMock: vi.fn().mockResolvedValue({ hostId: "h", hostConfigId: "c" }),
+  updateHostServersMock: vi
+    .fn()
+    .mockResolvedValue({ hostId: "h", hostConfigId: "c" }),
   deleteHostMock: vi.fn().mockResolvedValue(undefined),
   navigateMock: vi.fn(),
   createDialogState: { owner: undefined as string | undefined, isOpen: false },
-  hostDetail: {
-    host: {
-      hostId: "host-journeys",
-      name: "Swarm Client",
-      config: {
-        modelId: "anthropic/claude-haiku-4.5",
-        serverIds: ["old-server"],
-        optionalServerIds: ["old-optional"],
-      },
-    },
-  },
 }));
 
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({ hosts: hostListState.hosts, isLoading: false }),
-  useHost: () => hostDetail,
   useHostMutations: () => ({
     createHost: vi.fn(),
-    updateHost: updateHostMock,
+    updateHost: vi.fn(),
+    updateHostServers: updateHostServersMock,
     deleteHost: deleteHostMock,
     duplicateHost: vi.fn(),
   }),
@@ -55,21 +45,6 @@ vi.mock("@/lib/app-navigation", () => ({
 }));
 
 vi.mock("@/lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
-
-// hostConfigDtoToInput just carries the config forward; return a known base so
-// the apply test can prove serverIds/optionalServerIds are REPLACED.
-vi.mock("@/lib/client-config-v2", () => ({
-  hostConfigDtoToInput: (dto: {
-    modelId: string;
-    serverIds: string[];
-    optionalServerIds: string[];
-  }) => ({
-    modelId: dto.modelId,
-    systemPrompt: "sys",
-    serverIds: dto.serverIds,
-    optionalServerIds: dto.optionalServerIds,
-  }),
-}));
 
 // Stub the picker so a click fires onChange with a known server group.
 const GROUP = {
@@ -135,7 +110,7 @@ function renderPanel(canManage: boolean) {
 describe("SwarmHostsPanel", () => {
   afterEach(() => {
     hostListState.hosts = [];
-    updateHostMock.mockClear();
+    updateHostServersMock.mockClear();
     deleteHostMock.mockClear();
     navigateMock.mockClear();
     createDialogState.owner = undefined;
@@ -211,7 +186,7 @@ describe("SwarmHostsPanel", () => {
     expect(createDialogState.owner).toBe("journeys");
   });
 
-  it("applying a server group calls updateHost with servers REPLACED (never setChatboxServers)", async () => {
+  it("applying a server group calls the SERVER-ONLY mutation (no client-cached config round-trip)", async () => {
     hostListState.hosts = [
       {
         hostId: "host-journeys",
@@ -225,17 +200,32 @@ describe("SwarmHostsPanel", () => {
     await user.click(screen.getByTestId("apply-group"));
 
     await waitFor(() => {
-      expect(updateHostMock).toHaveBeenCalledTimes(1);
+      expect(updateHostServersMock).toHaveBeenCalledTimes(1);
     });
-    expect(updateHostMock).toHaveBeenCalledWith({
+    // Only ids cross the wire — the backend composes the rest of the config
+    // from the host's CURRENT stored config, so a concurrent model/prompt
+    // edit can't be reverted by a stale client snapshot.
+    expect(updateHostServersMock).toHaveBeenCalledWith({
       hostId: "host-journeys",
-      input: {
-        modelId: "anthropic/claude-haiku-4.5",
-        systemPrompt: "sys",
-        // group's servers replace the old set; optional cleared.
-        serverIds: ["s1", "s2"],
-        optionalServerIds: [],
-      },
+      serverIds: ["s1", "s2"],
+      optionalServerIds: [],
     });
+  });
+
+  it("Delete is only offered for journeys-OWNED clients, never for shared (untagged) ones", () => {
+    // Deleting a shared client would cascade its Chatbox (sessions, blobs,
+    // access rows) — that destructive path must not be reachable from Swarms.
+    hostListState.hosts = [
+      { hostId: "h1", name: "Swarm One", ownerScope: { type: "journeys" } },
+      { hostId: "h2", name: "Untagged Two", ownerScope: null },
+    ];
+    renderPanel(true);
+
+    const deleteButtons = screen.getAllByTitle("Delete this client");
+    expect(deleteButtons).toHaveLength(1);
+    // The single delete affordance belongs to the journeys-owned row.
+    expect(
+      deleteButtons[0].closest("div[class*='rounded-lg']")?.textContent,
+    ).toContain("Swarm One");
   });
 });

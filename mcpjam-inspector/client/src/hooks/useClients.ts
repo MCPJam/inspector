@@ -103,6 +103,18 @@ export function useHostMutations() {
     input?: HostConfigInputV2;
   }) => Promise<{ hostId: string; hostConfigId: string }>;
 
+  // Transactional server-only edit: the backend composes the rest of the
+  // config from the host's CURRENT stored config inside the mutation, so a
+  // concurrent model/prompt edit can't be reverted by a stale client cache
+  // (which a full-config `updateHost` round-trip is vulnerable to).
+  const updateHostServers = useMutation(
+    "hosts:updateHostServers" as any,
+  ) as unknown as (args: {
+    hostId: string;
+    serverIds: string[];
+    optionalServerIds?: string[];
+  }) => Promise<{ hostId: string; hostConfigId: string }>;
+
   const deleteHost = useMutation("hosts:deleteHost" as any) as unknown as (args: {
     hostId: string;
     force?: boolean;
@@ -113,5 +125,11 @@ export function useHostMutations() {
     name?: string;
   }) => Promise<{ hostId: string; hostConfigId: string }>;
 
-  return { createHost, updateHost, deleteHost, duplicateHost };
+  return {
+    createHost,
+    updateHost,
+    updateHostServers,
+    deleteHost,
+    duplicateHost,
+  };
 }

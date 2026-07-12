@@ -16,7 +16,6 @@ import { Cpu, Loader2, Pencil, Plus, Server, Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import {
-  useHost,
   useHostList,
   useHostMutations,
   type HostListItem,
@@ -26,7 +25,6 @@ import {
   type ServerGroup,
 } from "@/components/hosts/ServerGroupPicker";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
-import { hostConfigDtoToInput } from "@/lib/client-config-v2";
 import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
 
 interface SwarmHostsPanelProps {
@@ -96,7 +94,6 @@ export function SwarmHostsPanel({
               key={item.hostId}
               item={item}
               projectId={projectId}
-              isAuthenticated={isAuthenticated}
               canManage={canManage}
             />
           ))}
@@ -125,41 +122,35 @@ export function SwarmHostsPanel({
 function SwarmHostRow({
   item,
   projectId,
-  isAuthenticated,
   canManage,
 }: {
   item: HostListItem;
   projectId: string;
-  isAuthenticated: boolean;
   canManage: boolean;
 }) {
   const navigate = useAppNavigate();
-  const { updateHost, deleteHost } = useHostMutations();
-  // The full config is needed to compose an updateHost input when applying a
-  // server group (preserve model/prompt/etc., replace only the server set).
-  // Only fetched for admins — non-admins get no Apply affordance.
-  const { host } = useHost({
-    isAuthenticated: isAuthenticated && canManage,
-    hostId: item.hostId,
-  });
+  const { updateHostServers, deleteHost } = useHostMutations();
   const [busy, setBusy] = useState(false);
+  // Only Swarms-OWNED clients can be deleted from this surface. An untagged
+  // ("shared") client is backed by a Chatbox — deleting it here would cascade
+  // that chatbox's sessions/blobs/access rows without ever surfacing the
+  // impact. Shared clients are deleted from their owning surface instead.
+  const deletable = item.ownerScope?.type === "journeys";
 
   const applyGroup = async (_id: string, group: ServerGroup) => {
-    if (!host) {
-      toast.error("Client config is still loading — try again in a moment.");
-      return;
-    }
     setBusy(true);
     try {
       // Snapshot semantics: copy the group's servers INTO the host config as
       // the required set (full replace, optional cleared). We store no pointer
-      // to the group — later edits to the group do NOT propagate here.
-      const input = {
-        ...hostConfigDtoToInput(host.config),
+      // to the group — later edits to the group do NOT propagate here. The
+      // backend composes every OTHER config field from the host's CURRENT
+      // stored config inside the mutation, so a concurrent model/prompt edit
+      // can't be reverted by a stale client cache.
+      await updateHostServers({
+        hostId: item.hostId,
         serverIds: group.serverIds,
         optionalServerIds: [],
-      };
-      await updateHost({ hostId: item.hostId, input });
+      });
       toast.success(
         `"${item.name}" now uses "${group.name}" (${group.serverIds.length} server${group.serverIds.length === 1 ? "" : "s"}).`,
       );
@@ -240,20 +231,22 @@ function SwarmHostRow({
           >
             <Pencil className="size-3.5" />
           </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            disabled={busy}
-            onClick={() => void onDelete()}
-            title="Delete this client"
-          >
-            {busy ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <Trash2 className="size-3.5" />
-            )}
-          </Button>
+          {deletable ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => void onDelete()}
+              title="Delete this client"
+            >
+              {busy ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="size-3.5" />
+              )}
+            </Button>
+          ) : null}
         </div>
       ) : null}
     </div>

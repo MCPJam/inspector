@@ -186,6 +186,11 @@ export function ChatboxesTab({
     // mint — firing while the host is still loading would race a chatbox onto
     // a standalone (journeys) host.
     if (isLoading || hostLoading) return;
+    // Host RESOLVED to missing (deleted, or not visible to this viewer):
+    // provisioning a chatbox for it would just fail the mutation and strand
+    // the UI on the provisioning spinner. The missing-client state below
+    // handles the render.
+    if (!host) return;
     // Standalone Journeys-owned host: no publish surface, ever. Skip the
     // back-mint entirely (the notice below handles the empty render).
     if (isJourneysHost) return;
@@ -229,6 +234,7 @@ export function ChatboxesTab({
     effectiveAuth,
     ensureChatboxForHost,
     isLoading,
+    host,
     hostLoading,
     isJourneysHost,
     previewedHostId,
@@ -290,6 +296,37 @@ export function ChatboxesTab({
       <div className="flex h-full items-center justify-center text-muted-foreground">
         <Loader2 className="mr-2 size-4 animate-spin" />
         <span className="text-sm">Loading swarm…</span>
+      </div>
+    );
+  }
+
+  // Host resolved to MISSING (deleted, or not visible to this viewer). The
+  // auto-ensure effect deliberately skips this case (provisioning would just
+  // fail); render a recoverable state that keeps the picker visible so the
+  // user can select an existing client.
+  if (!host) {
+    return (
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <div className="relative shrink-0 border-b border-border/40 px-8 py-2.5">
+          <div className="absolute left-8 top-1/2 z-10 -translate-y-1/2">
+            <ChatboxHostPickerPill
+              projectId={projectId ?? ""}
+              isAuthenticated={effectiveAuth}
+              hostId={previewedHostId}
+              hostName="Client"
+            />
+          </div>
+        </div>
+        <div className="flex flex-1 items-center justify-center px-6 text-center">
+          <div className="max-w-sm">
+            <Inbox className="mx-auto size-8 text-muted-foreground/70" />
+            <p className="mt-3 text-sm font-medium">Client not found</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              The selected client no longer exists or isn't visible to you.
+              Pick another client above.
+            </p>
+          </div>
+        </div>
       </div>
     );
   }

@@ -172,13 +172,19 @@ export function ChatboxHostPickerPill({
 
   // Keep the shared preview pointer honest when the bound host disappears
   // (deleted elsewhere) or was never set — same role HostOverlayBar plays
-  // on other tabs.
+  // on other tabs. Recovery must land on a PUBLISHABLE host: picking
+  // `sortedHosts[0]` could select a Journeys-owned (standalone) host and
+  // bounce the user onto the "managed by Swarms" notice. When no publishable
+  // host exists, leave the pointer alone (the trigger below is disabled).
   useEffect(() => {
-    if (isLoading || sortedHosts.length === 0) return;
+    if (isLoading || publishableHosts.length === 0) return;
+    // Validity is judged against ALL hosts — a currently-selected journeys
+    // host is a legitimate pointer (ChatboxesTab renders its notice); only a
+    // genuinely missing host triggers recovery.
     const stillValid = sortedHosts.some((h) => h.hostId === hostId);
     if (stillValid) return;
-    setPreviewedHostId(sortedHosts[0].hostId);
-  }, [isLoading, sortedHosts, hostId, setPreviewedHostId]);
+    setPreviewedHostId(publishableHosts[0].hostId);
+  }, [isLoading, sortedHosts, publishableHosts, hostId, setPreviewedHostId]);
 
   const logoSrc = resolveHostLogoByDisplayName(hostName);
 
@@ -208,7 +214,7 @@ export function ChatboxHostPickerPill({
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            disabled={isLoading || sortedHosts.length === 0}
+            disabled={isLoading || publishableHosts.length === 0}
             className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-l-full px-2.5 transition hover:bg-muted/70 disabled:cursor-not-allowed disabled:opacity-50"
             title="Switch client"
             aria-label="Switch client"
