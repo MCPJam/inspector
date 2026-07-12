@@ -56,7 +56,11 @@ const INITIAL_RESOURCE_PARAM =
 
 function buildFlowStateFromInput(
   input: XAAFlowInput,
-  registrationStrategy: XaaRegistrationStrategy = "pre_registered"
+  registrationStrategy: XaaRegistrationStrategy = "pre_registered",
+  // A prior ambiguous DCR POST may have created a remote client. This risk is
+  // tracked per-target OUTSIDE flow state so an ordinary reset re-seeds it —
+  // clearing it only through the confirmed "Register another client" path.
+  dcrRetryMayCreateDuplicate = false
 ): XAAFlowState {
   return createInitialXAAFlowState({
     serverUrl: input.serverUrl || undefined,
@@ -71,6 +75,9 @@ function buildFlowStateFromInput(
     // every rebuild path must seed the currently-effective strategy — a
     // clean rebuild must not silently reset a selected DCR run.
     registrationStrategy,
+    ...(dcrRetryMayCreateDuplicate
+      ? { dcrRetryMayCreateDuplicate: true }
+      : {}),
   });
 }
 
@@ -216,6 +223,10 @@ export function XAAFlowTab({
   const dcrCredentialCacheRef = useRef(
     new Map<string, XaaEphemeralDcrCredentials>()
   );
+  // Per-target "a prior POST may have created a remote client" risk. Lives
+  // outside flow state so it survives ordinary resets/Run all; cleared only by
+  // the confirmed "Register another client" action. Page refresh clears it.
+  const dcrDuplicateRiskRef = useRef(new Set<string>());
   const dcrCredentialCache = useMemo(
     () => ({
       get: (key: string) => dcrCredentialCacheRef.current.get(key),
@@ -230,7 +241,11 @@ export function XAAFlowTab({
   );
 
   const [flowState, setFlowState] = useState<XAAFlowState>(() =>
-    buildFlowStateFromInput(target.runInput, effectiveStrategy)
+    buildFlowStateFromInput(
+      target.runInput,
+      effectiveStrategy,
+      dcrDuplicateRiskRef.current.has(targetKey)
+    )
   );
 
   // The machine reads state through this ref (lazy getState). Keep it in
@@ -299,13 +314,19 @@ export function XAAFlowTab({
         registration_strategy: flowStateRef.current.registrationStrategy,
       });
       // A green run proves the user holds valid client credentials the AS
-      // issued — that authorizes broken-token testing against it.
-      setPositiveRunTargets((current) => {
-        if (current.has(runGateKey)) return current;
-        const next = new Set(current);
-        next.add(runGateKey);
-        return next;
-      });
+      // issued — that authorizes broken-token testing against it. Only unlock
+      // for pre-registered runs though: a dcr/cimd run's negative tests would
+      // fire with the configured (often absent) client, not the identity the
+      // run established, so the scorecard stays disabled for those (see the
+      // scorecard memo) and must not be unlocked here either.
+      if (flowStateRef.current.registrationStrategy === "pre_registered") {
+        setPositiveRunTargets((current) => {
+          if (current.has(runGateKey)) return current;
+          const next = new Set(current);
+          next.add(runGateKey);
+          return next;
+        });
+      }
     }
   }, [flowState.currentStep, authServerModeForTelemetry, runGateKey]);
 
@@ -450,11 +471,26 @@ export function XAAFlowTab({
         email: runInput.email,
       };
       applyFlowState(
-        buildFlowStateFromInput(runInput, strategyOverride ?? effectiveStrategy)
+        buildFlowStateFromInput(
+          runInput,
+          strategyOverride ?? effectiveStrategy,
+          // Re-seed the per-target duplicate-registration risk so an ordinary
+          // reset can't drop the confirmation gate.
+          dcrDuplicateRiskRef.current.has(targetKey)
+        )
       );
     },
-    [applyFlowState, runInput, effectiveStrategy]
+    [applyFlowState, runInput, effectiveStrategy, targetKey]
   );
+
+  // Mirror the machine's duplicate-registration risk into the target-scoped
+  // ref so it outlives flow-state rebuilds. (One-way: the machine only ever
+  // sets it true; the ref is cleared solely by "Register another client".)
+  useEffect(() => {
+    if (flowState.dcrRetryMayCreateDuplicate) {
+      dcrDuplicateRiskRef.current.add(targetKey);
+    }
+  }, [flowState.dcrRetryMayCreateDuplicate, targetKey]);
 
   const applyTargetReset = useCallback(
     (
@@ -556,6 +592,9 @@ export function XAAFlowTab({
         dcrCredentialCacheRef.current.delete(key);
       }
     }
+    // The confirmed action is the ONLY thing that clears the duplicate-risk
+    // gate — the user has acknowledged a second remote client may be created.
+    dcrDuplicateRiskRef.current.delete(targetKey);
     rebuildFlow();
   }, [targetKey, rebuildFlow]);
 

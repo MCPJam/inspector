@@ -214,16 +214,16 @@ oauthWeb.post("/import-tokens", async (c) => {
 oauthWeb.post("/debug/proxy", async (c) => {
   let proxyUrl: string | undefined;
   try {
-    const { url, method, body, headers, redirect } = await c.req.json();
+    const { url, method, body, headers } = await c.req.json();
     proxyUrl = url;
+    // Note: no `redirect` option here — this route is always httpsOnly, and the
+    // SDK proxy forces `redirect: "manual"` under httpsOnly, so passing one
+    // would be dead code. The mcp route (not httpsOnly) is where it applies.
     const result = await executeDebugOAuthProxy({
       url,
       method,
       body,
       headers,
-      // httpsOnly already forces manual redirects in the SDK proxy; accepting
-      // the explicit value here cannot weaken that.
-      ...(redirect === "manual" || redirect === "follow" ? { redirect } : {}),
       httpsOnly: true,
     });
     return c.json(result);

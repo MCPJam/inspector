@@ -783,22 +783,6 @@ export function createXAAStateMachine(
   const registerClientDynamically = async () => {
     const state = currentState();
 
-    if (
-      state.dcrRetryMayCreateDuplicate &&
-      state.currentStep === "request_client_registration"
-    ) {
-      // A previous POST may already have created a remote client (timeout,
-      // 5xx, refusal, or an unusable 2xx). Ordinary Continue/Run all must not
-      // silently POST again; the UI clears this flag through the explicit
-      // "Register another client" confirmation.
-      machine.updateState({
-        error:
-          state.error ||
-          'The previous registration attempt may have created a client at the authorization server. Confirm "Register another client" to retry.',
-      });
-      return;
-    }
-
     const registrationEndpoint = state.authzMetadata?.registration_endpoint;
     if (!registrationEndpoint) {
       machine.updateState({
@@ -833,6 +817,23 @@ export function createXAAStateMachine(
           "Token Auth Method": cached.tokenEndpointAuthMethod,
         }
       );
+      return;
+    }
+
+    // No reusable session registration, but a prior POST may already have
+    // created a remote client (timeout, 5xx, refusal, or an unusable 2xx set
+    // dcrRetryMayCreateDuplicate). Gate on that here — regardless of how we
+    // arrived (parked retry OR a from-idle run after an ordinary reset that
+    // re-seeded the flag) — so we never silently mint a second remote client.
+    // The UI clears the flag only through the confirmed "Register another
+    // client" action.
+    if (state.dcrRetryMayCreateDuplicate) {
+      machine.updateState({
+        currentStep: "request_client_registration",
+        isBusy: false,
+        error:
+          'The previous registration attempt may have created a client at the authorization server. Confirm "Register another client" to register again.',
+      });
       return;
     }
 

@@ -910,6 +910,7 @@ interface DynamicHarnessOptions {
   };
   cache?: Map<string, XaaEphemeralDcrCredentials>;
   registrationId?: string;
+  seedDuplicateRisk?: boolean;
 }
 
 function createDynamicHarness(options: DynamicHarnessOptions) {
@@ -924,6 +925,11 @@ function createDynamicHarness(options: DynamicHarnessOptions) {
     email: "demo.user@example.com",
     scope: "read:tools",
     registrationStrategy: options.strategy,
+    // Simulates the per-target duplicate-risk flag re-seeded into a fresh
+    // (from-idle) run after an ordinary reset.
+    ...(options.seedDuplicateRisk
+      ? { dcrRetryMayCreateDuplicate: true }
+      : {}),
   });
 
   const externalCalls: Array<{ url: string; init?: any }> = [];
@@ -1290,6 +1296,37 @@ describe("open dcr registration strategy", () => {
     });
     await harness.machine.proceedToNextStep();
     expect(harness.registerCalls()).toHaveLength(2);
+  });
+
+  it("gates a from-idle run behind confirmation when a prior POST may have created a client", async () => {
+    // The duplicate-risk flag is re-seeded into a fresh run (as the component
+    // does after an ordinary reset). With no reusable cache entry, the machine
+    // must park for confirmation rather than silently POSTing a second client.
+    const harness = createDynamicHarness({
+      strategy: "dcr",
+      seedDuplicateRisk: true,
+    });
+    await harness.machine.runAll();
+    let state = harness.getState();
+
+    expect(state.currentStep).toBe("request_client_registration");
+    expect(state.error).toContain("Register another client");
+    expect(harness.registerCalls()).toHaveLength(0);
+    expect(
+      harness.internalCalls.some((c) => c.path === "/authenticate")
+    ).toBe(false);
+
+    // Clearing the flag (the confirmed "Register another client" path — which
+    // also rebuilds the flow, clearing the parked error) lets exactly one
+    // registration POST through.
+    harness.machine.updateState({
+      dcrRetryMayCreateDuplicate: false,
+      error: undefined,
+    });
+    await harness.machine.runAll();
+    state = harness.getState();
+    expect(harness.registerCalls()).toHaveLength(1);
+    expect(state.currentStep).toBe("complete");
   });
 
   it("parks cleanly when no registration_endpoint is advertised", async () => {
