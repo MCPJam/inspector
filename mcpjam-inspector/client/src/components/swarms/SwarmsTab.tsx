@@ -36,6 +36,12 @@ import {
   parseSwarmSessionParams,
 } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
+import { SegmentedControl } from "@/components/ui/json-editor/segmented-control";
+import { SwarmHostsPanel } from "@/components/swarms/SwarmHostsPanel";
+import {
+  canManageHosts,
+  type ProjectMembershipRole,
+} from "@/hooks/useProjects";
 
 // Valid readiness enums (mirror `session-readiness.tsx`). The backend
 // denormalizes a WIDE `{ status?: string; verdict?: string }` subset onto the
@@ -86,11 +92,26 @@ type Journey = {
   hostIds: string[];
   config: { sessionsPerHost: number; maxTurns: number };
 };
-type HostItem = { hostId: string; name: string };
+type HostItem = {
+  hostId: string;
+  name: string;
+  // Enriched by `hosts:listHosts` (additive) — powers the journey host chips.
+  modelId?: string;
+  serverCount?: number;
+  hasComputer?: boolean;
+  ownerScope?: { type: string } | null;
+};
 
 interface SwarmsTabProps {
   projectId: string | null;
   isAuthenticated: boolean;
+  /**
+   * The viewer's resolved project role (from `SwarmsRoute`). Host management
+   * on the Clients sub-tab is admin-only server-side; when the viewer can't
+   * manage hosts those affordances are hidden. Undefined → treated as no
+   * management (fail-closed).
+   */
+  viewerRole?: ProjectMembershipRole;
 }
 
 // ── hooks ─────────────────────────────────────────────────────────────────
@@ -119,13 +140,21 @@ function usePersonaTrackRecord(personaRefId: string | null) {
   ) as PersonaTrackRecord | undefined;
 }
 
-export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
+export function SwarmsTab({
+  projectId,
+  isAuthenticated,
+  viewerRole,
+}: SwarmsTabProps) {
   // Don't subscribe to project-scoped Convex reads until auth is ready — a
   // signed-out/loading mount with a persisted project would otherwise surface
   // authorization errors instead of holding the screen.
   const effectiveProjectId = isAuthenticated ? projectId : null;
   const personas = usePersonas(effectiveProjectId);
   const hosts = useProjectHosts(effectiveProjectId);
+  const [swarmView, setSwarmView] = useState<"journeys" | "clients">(
+    "journeys",
+  );
+  const canManage = canManageHosts(viewerRole);
   // Restore a copied session deep-link (`/swarms?persona=&run=&host=&session=`).
   // Parse ONCE on mount so later user navigation isn't clobbered by the URL.
   const deepLink = useMemo(
@@ -155,9 +184,31 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   }
 
   return (
-    <div className="flex h-full min-h-0">
-      {/* Personas */}
-      <aside className="flex w-72 shrink-0 flex-col border-r">
+    <div className="flex h-full min-h-0 flex-col">
+      {/* Product sub-nav: Journeys (personas/journeys/runs) vs Clients
+          (product-scoped host management). */}
+      <div className="flex shrink-0 items-center justify-center border-b px-4 py-2">
+        <SegmentedControl
+          value={swarmView}
+          onChange={(v) => setSwarmView(v as "journeys" | "clients")}
+          options={[
+            { value: "journeys", label: "Journeys" },
+            { value: "clients", label: "Clients" },
+          ]}
+        />
+      </div>
+      {swarmView === "clients" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <SwarmHostsPanel
+            projectId={projectId}
+            isAuthenticated={isAuthenticated}
+            canManage={canManage}
+          />
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1">
+          {/* Personas */}
+          <aside className="flex w-72 shrink-0 flex-col border-r">
         <div className="flex items-center justify-between border-b px-4 py-3">
           <h2 className="text-sm font-semibold">Personas</h2>
           <NewPersonaButton
@@ -269,6 +320,8 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
           </div>
         )}
       </main>
+        </div>
+      )}
     </div>
   );
 }
@@ -691,6 +744,21 @@ function NewJourneyButton({
   const [hostIds, setHostIds] = useState<string[]>([]);
   const [sessionsPerHost, setSessionsPerHost] = useState(2);
   const [maxTurns, setMaxTurns] = useState(6);
+  // A journey may target ANY project host, including chatbox/suite-owned ones
+  // (the backend validates only project ownership). But surface the Swarms'
+  // own clients first and badge the "shared" ones so it's clear which hosts
+  // are managed elsewhere. (Deliberately NOT filtered — that would break
+  // cross-product journey targeting.)
+  const isSwarmClient = (h: HostItem) =>
+    !h.ownerScope || h.ownerScope.type === "journeys";
+  const sortedHosts = useMemo(
+    () =>
+      [...hosts].sort((a, b) => {
+        const rank = (h: HostItem) => (isSwarmClient(h) ? 0 : 1);
+        return rank(a) - rank(b) || a.name.localeCompare(b.name);
+      }),
+    [hosts],
+  );
   if (!open) {
     return (
       <Button type="button" size="sm" variant="outline" onClick={() => setOpen(true)}>
@@ -717,20 +785,47 @@ function NewJourneyButton({
             No hosts in this project.
           </span>
         ) : (
-          hosts.map((h) => (
-            <button
-              key={h.hostId}
-              type="button"
-              onClick={() => toggleHost(h.hostId)}
-              className={`rounded-full border px-2.5 py-1 text-xs ${
-                hostIds.includes(h.hostId)
-                  ? "border-primary bg-primary/10"
-                  : "hover:bg-muted"
-              }`}
-            >
-              {h.name}
-            </button>
-          ))
+          sortedHosts.map((h) => {
+            // Compact config chips so the picker shows what each client brings
+            // (model · N servers · computer) without opening the editor.
+            const meta = [
+              h.modelId || null,
+              typeof h.serverCount === "number"
+                ? `${h.serverCount} srv`
+                : null,
+              h.hasComputer ? "computer" : null,
+            ].filter(Boolean);
+            const shared = !isSwarmClient(h);
+            return (
+              <button
+                key={h.hostId}
+                type="button"
+                onClick={() => toggleHost(h.hostId)}
+                className={`flex flex-col items-start gap-0.5 rounded-lg border px-2.5 py-1.5 text-left text-xs ${
+                  hostIds.includes(h.hostId)
+                    ? "border-primary bg-primary/10"
+                    : "hover:bg-muted"
+                }`}
+              >
+                <span className="flex items-center gap-1.5 font-medium">
+                  {h.name}
+                  {shared ? (
+                    <span
+                      className="rounded-full border border-border/60 px-1 py-0 text-[9px] font-normal text-muted-foreground"
+                      title="Managed in another product surface — still runnable by this journey"
+                    >
+                      shared
+                    </span>
+                  ) : null}
+                </span>
+                {meta.length > 0 ? (
+                  <span className="text-[10px] text-muted-foreground">
+                    {meta.join(" · ")}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })
         )}
       </div>
       <div className="mb-3 flex gap-4 text-xs">

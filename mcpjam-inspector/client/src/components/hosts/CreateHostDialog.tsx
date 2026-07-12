@@ -38,6 +38,12 @@ interface CreateHostDialogProps {
   projectId: string;
   onCreated: (hostId: string) => void;
   initialTemplateId?: string;
+  /**
+   * Product ownership for the new host. `'journeys'` mints a STANDALONE
+   * (chatbox-less) host owned by the Swarms surface. Absent → legacy behavior
+   * (a chatbox / publish surface is minted). Every existing mount omits it.
+   */
+  owner?: "journeys";
 }
 
 export function CreateHostDialog({
@@ -46,6 +52,7 @@ export function CreateHostDialog({
   projectId,
   onCreated,
   initialTemplateId,
+  owner,
 }: CreateHostDialogProps) {
   const { createHost } = useHostMutations();
   const { isAuthenticated } = useConvexAuth();
@@ -153,6 +160,9 @@ export function CreateHostDialog({
         projectId,
         name: trimmed,
         input: { ...seed, serverIds: [] },
+        // Standalone (Swarms-owned) host when requested; omitted → legacy
+        // chatbox-minting path.
+        ...(owner ? { owner } : {}),
       });
       toast.success(`Client "${trimmed}" created`);
       handleClose();

@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
 import { ChatboxPublishClientBar } from "../ChatboxPublishClientBar";
 
@@ -9,6 +9,7 @@ const {
   toastMock,
   navigateMock,
   setPreviewedHostIdMock,
+  hostListState,
 } = vi.hoisted(() => ({
   setChatboxServersMock: vi
     .fn()
@@ -16,7 +17,20 @@ const {
   toastMock: { success: vi.fn(), error: vi.fn() },
   navigateMock: vi.fn(),
   setPreviewedHostIdMock: vi.fn(),
+  // Mutable so a test can inject a journeys-owned (standalone) host and assert
+  // it's filtered out of the switcher options.
+  hostListState: {
+    hosts: [
+      { hostId: "host-1", name: "MCPJam" },
+      { hostId: "host-2", name: "Claude" },
+    ] as Array<{ hostId: string; name: string; ownerScope?: unknown }>,
+  },
 }));
+
+const DEFAULT_HOSTS = [
+  { hostId: "host-1", name: "MCPJam" },
+  { hostId: "host-2", name: "Claude" },
+];
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
@@ -41,10 +55,7 @@ vi.mock("@/hooks/use-previewed-client-id", () => ({
 
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({
-    hosts: [
-      { hostId: "host-1", name: "MCPJam" },
-      { hostId: "host-2", name: "Claude" },
-    ],
+    hosts: hostListState.hosts,
     isLoading: false,
   }),
 }));
@@ -98,6 +109,12 @@ function renderBar(currentServerIds: string[] = []) {
 }
 
 describe("ChatboxPublishClientBar", () => {
+  afterEach(() => {
+    hostListState.hosts = [...DEFAULT_HOSTS];
+    setPreviewedHostIdMock.mockClear();
+    navigateMock.mockClear();
+  });
+
   it("shows the empty pick state when no servers are picked", () => {
     renderBar([]);
     expect(screen.getByText("No servers picked")).toBeInTheDocument();
@@ -168,5 +185,73 @@ describe("ChatboxPublishClientBar", () => {
     await user.click(screen.getByTestId("chatbox-host-edit"));
 
     expect(navigateMock).toHaveBeenCalledWith("/hosts/host-1");
+  });
+
+  it("recovers a missing pointer to a PUBLISHABLE host, skipping journeys-owned ones", () => {
+    // "Aardvark" sorts first but is journeys-owned; recovery must land on the
+    // publishable "Claude", not bounce the user onto the Swarms notice.
+    hostListState.hosts = [
+      {
+        hostId: "host-swarm",
+        name: "Aardvark Swarm",
+        ownerScope: { type: "journeys" },
+      },
+      { hostId: "host-2", name: "Claude" },
+    ];
+    render(
+      <ChatboxPublishClientBar
+        chatboxId="cb-1"
+        projectId="proj-1"
+        hostId="host-gone" // bound host no longer exists
+        hostName="Ghost"
+        isAuthenticated
+        currentServerIds={[]}
+      />,
+    );
+    expect(setPreviewedHostIdMock).toHaveBeenCalledWith("host-2");
+  });
+
+  it("leaves the pointer alone and disables the switcher when NO publishable host exists", () => {
+    hostListState.hosts = [
+      {
+        hostId: "host-swarm",
+        name: "Swarm Only",
+        ownerScope: { type: "journeys" },
+      },
+    ];
+    render(
+      <ChatboxPublishClientBar
+        chatboxId="cb-1"
+        projectId="proj-1"
+        hostId="host-gone"
+        hostName="Ghost"
+        isAuthenticated
+        currentServerIds={[]}
+      />,
+    );
+    expect(setPreviewedHostIdMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId("chatbox-host-picker")).toBeDisabled();
+  });
+
+  it("excludes standalone (Journeys-owned) hosts from the switcher options", async () => {
+    // A journeys-owned host has no publish surface — it must not appear as a
+    // switch target in the chatbox client picker.
+    hostListState.hosts = [
+      { hostId: "host-1", name: "MCPJam" },
+      { hostId: "host-2", name: "Claude" },
+      { hostId: "host-3", name: "Swarm Client", ownerScope: { type: "journeys" } },
+    ];
+    const user = userEvent.setup();
+    renderBar([]);
+
+    await user.click(screen.getByTestId("chatbox-host-picker"));
+    // Publishable hosts are offered…
+    expect(
+      await screen.findByTestId("chatbox-host-option-host-2"),
+    ).toBeInTheDocument();
+    // …the journeys host is not.
+    expect(
+      screen.queryByTestId("chatbox-host-option-host-3"),
+    ).not.toBeInTheDocument();
   });
 });

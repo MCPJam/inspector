@@ -230,6 +230,17 @@ export function canViewSwarms(
   return role === "owner" || role === "admin" || role === "member";
 }
 
+// Host create / update / delete are ADMIN-gated server-side (`hosts.ts`
+// `requireAdminAccess` → project role 'admin', which owner+admin resolve to).
+// Mirror that in the UI so a member — who CAN view Swarms — never sees a
+// New/Edit/Apply/Delete affordance that would 403 on click. An unresolved
+// role denies (fail-closed).
+export function canManageHosts(
+  role: ProjectMembershipRole | undefined
+): boolean {
+  return role === "owner" || role === "admin";
+}
+
 // Resolve the *current viewer's* project-membership role for a project, reusing
 // the same members-list signal `ProjectSettingsTab` keys off. Returns
 // `role: undefined` while the members list is still loading (or when the viewer
