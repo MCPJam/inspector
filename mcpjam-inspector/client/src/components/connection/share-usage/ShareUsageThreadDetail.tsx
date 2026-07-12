@@ -30,8 +30,105 @@ import {
   type SharedChatTurnTrace,
 } from "@/hooks/useSharedChatThreads";
 import { SessionInsightBar } from "@/components/chatboxes/session-readiness";
+import { useAction } from "convex/react";
+import { Gavel, RotateCcw } from "lucide-react";
+import { JudgeVerdictCard } from "@/components/shared/session-quality/judge-presentation";
+import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 
 const EMPTY_SPANS: EvalTraceSpan[] = [];
+
+/**
+ * Goal-completion judge section for SWARM sessions — rendered under the
+ * readiness insight bar so the verdict is visible on every tab. States:
+ * completed → shared JudgeVerdictCard + a Re-judge affordance; failed →
+ * "Judge unavailable" + Retry (a failed judgment must be recoverable, not
+ * hidden); running → judging placeholder. Retry/Re-judge call the backend
+ * `requestSwarmSessionJudge` (sessionId only — goal/run/project are
+ * server-derived) and rely on the reactive thread subscription to refresh.
+ */
+export function SwarmJudgeSection({
+  threadId,
+  goalScore,
+}: {
+  threadId: string;
+  goalScore: NonNullable<SharedChatThread["goalScore"]>;
+}) {
+  const requestJudge = useAction(
+    "swarmJudge:requestSwarmSessionJudge" as never,
+  ) as unknown as (args: { sessionId: string }) => Promise<unknown>;
+  const [requesting, setRequesting] = useState(false);
+
+  const rerun = async () => {
+    setRequesting(true);
+    try {
+      await requestJudge({ sessionId: threadId });
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to re-run the judge",
+      );
+    } finally {
+      setRequesting(false);
+    }
+  };
+
+  const judging = requesting || goalScore.status === "running";
+
+  return (
+    <div className="shrink-0 space-y-1.5 px-4 pt-2">
+      {judging ? (
+        <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-xs text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          Judging against the journey goal…
+        </div>
+      ) : goalScore.status === "completed" &&
+        typeof goalScore.score === "number" ? (
+        <div className="flex items-start gap-1.5">
+          <div className="min-w-0 flex-1">
+            <JudgeVerdictCard
+              verdict={{
+                score: goalScore.score,
+                passed: goalScore.passed === true,
+                reason: goalScore.reason,
+              }}
+            />
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="shrink-0 rounded-xl"
+            onClick={() => void rerun()}
+            title="Re-run the judge on this session"
+          >
+            <RotateCcw className="size-3.5" />
+          </Button>
+        </div>
+      ) : goalScore.status === "failed" ? (
+        <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-xs">
+          <Gavel className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          <span className="font-medium uppercase tracking-wide text-muted-foreground">
+            Judge unavailable
+          </span>
+          {goalScore.error ? (
+            <span className="min-w-0 flex-1 truncate text-muted-foreground">
+              {goalScore.error}
+            </span>
+          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="ml-auto shrink-0 rounded-xl"
+            onClick={() => void rerun()}
+          >
+            <RotateCcw className="mr-1.5 size-3.5" />
+            Retry
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /**
  * Bridge inspector ToolRenderOverrides — whose widget/CSP fields use the MCP
@@ -356,6 +453,12 @@ export function ShareUsageThreadDetail({
 
       {thread.synthetic === true && thread.readiness ? (
         <SessionInsightBar readiness={thread.readiness} />
+      ) : null}
+
+      {/* Swarm-only: goalScore exists ONLY on judge-graded swarm sessions
+          (provenance-gated backend-side), so its presence is the render gate. */}
+      {thread.goalScore ? (
+        <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
       ) : null}
 
       {/* Trace / Chat / [Browser] / Raw tabs. The Browser tab appears when the
