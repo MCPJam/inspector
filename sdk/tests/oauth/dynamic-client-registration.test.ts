@@ -370,6 +370,11 @@ describe("validateClientIdMetadataUrl (CIMD draft-02)", () => {
     expect(validateClientIdMetadataUrl(url)).toBe(url);
   });
 
+  it("accepts a root path (NOT RECOMMENDED per draft-02 §3, but valid)", () => {
+    const url = "https://example.com/";
+    expect(validateClientIdMetadataUrl(url)).toBe(url);
+  });
+
   it.each([
     ["not-a-url", "valid absolute URL"],
     ["http://example.com/client.json", "absolute HTTPS URL"],
@@ -377,9 +382,14 @@ describe("validateClientIdMetadataUrl (CIMD draft-02)", () => {
     // Empty userinfo: WHATWG URL normalizes username/password to "" (falsy),
     // so this must be caught on the raw authority, not the parsed fields.
     ["https://@example.com/client.json", "userinfo"],
+    // Non-canonical userinfo spellings WHATWG still parses: single-slash and
+    // backslash forms populate username, so the parsed check must run too.
+    ["https:/user@example.com/client.json", "userinfo"],
+    ["https://@example.com/client.json".replace("//", "/"), "userinfo"],
     ["https://example.com/client.json#frag", "fragment"],
+    // No path component at all (a bare authority) is rejected; a root "/" is
+    // accepted above.
     ["https://example.com", "path component"],
-    ["https://example.com/", "path component"],
     ["https://example.com/a/../client.json", "dot path segments"],
     ["https://example.com/./client.json", "dot path segments"],
     ["https://example.com/a/..", "dot path segments"],

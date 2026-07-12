@@ -29,26 +29,33 @@ export function validateClientIdMetadataUrl(
   // Parse the authority and path off the RAW string. new URL() both collapses
   // dot segments and normalizes an empty userinfo away — either would silently
   // change the client identity (Client Identifier URLs compare by simple
-  // string equality) before we could reject it.
+  // string equality) before we could reject it. Normalize the scheme prefix
+  // the way WHATWG does for special schemes (backslashes act as slashes; any
+  // number of slashes may follow the scheme) so a non-canonical spelling can't
+  // hide the authority from this scan.
   const rawWithoutQuery = clientIdMetadataUrl.split(/[?#]/, 1)[0];
-  const authorityStart = rawWithoutQuery.indexOf("//") + 2;
-  const pathStart = rawWithoutQuery.indexOf("/", authorityStart);
+  const afterScheme = rawWithoutQuery
+    .replace(/\\/g, "/")
+    .replace(/^https:\/*/i, "");
+  const slashIndex = afterScheme.indexOf("/");
   const rawAuthority =
-    pathStart === -1
-      ? rawWithoutQuery.slice(authorityStart)
-      : rawWithoutQuery.slice(authorityStart, pathStart);
-  const rawPath = pathStart === -1 ? "" : rawWithoutQuery.slice(pathStart);
+    slashIndex === -1 ? afterScheme : afterScheme.slice(0, slashIndex);
+  const rawPath = slashIndex === -1 ? "" : afterScheme.slice(slashIndex);
 
-  // WHATWG URL sets username/password to "" for `https://@host` (both falsy),
-  // so parsedUrl.username/password miss an empty-userinfo spelling. Inspect the
-  // raw authority for the `@` delimiter to reject any userinfo, empty or not.
-  if (rawAuthority.includes("@")) {
+  // Userinfo: the parsed check catches any NON-empty spelling (WHATWG populates
+  // username even for non-canonical forms like `https:/user@host`), while the
+  // raw `@` scan catches the EMPTY spelling `https://@host` that leaves
+  // username/password as "" (falsy). Both are needed.
+  if (parsedUrl.username || parsedUrl.password || rawAuthority.includes("@")) {
     throw new Error(
       "Client ID metadata URL must not contain a userinfo component"
     );
   }
 
-  if (!rawPath || rawPath === "/") {
+  // Require a path component. A root path ("/") is permitted — draft-02 §3
+  // marks it NOT RECOMMENDED, not invalid — so only reject a genuinely absent
+  // path.
+  if (!rawPath) {
     throw new Error("Client ID metadata URL must contain a path component");
   }
 
