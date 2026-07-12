@@ -12,7 +12,7 @@
  * can still view clients and run journeys.
  */
 import { useMemo, useState } from "react";
-import { Boxes, Cpu, Loader2, Pencil, Plus, Server, Trash2 } from "lucide-react";
+import { Cpu, Loader2, Pencil, Plus, Server, Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -40,6 +40,7 @@ export function SwarmHostsPanel({
   isAuthenticated,
   canManage,
 }: SwarmHostsPanelProps) {
+  const navigate = useAppNavigate();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -109,10 +110,11 @@ export function SwarmHostsPanel({
           projectId={projectId}
           owner="journeys"
           onCreated={(hostId) => {
+            // CreateHostDialog already toasts success; just close + open the
+            // editor via client-side nav (no full page reload) so the user can
+            // pick a model / attach servers.
             setCreateOpen(false);
-            toast.success("Client created");
-            // Open the editor immediately so the user can pick a model/servers.
-            window.location.assign(buildHostsPath(hostId));
+            navigate(buildHostsPath(hostId));
           }}
         />
       ) : null}
@@ -257,6 +259,3 @@ function SwarmHostRow({
     </div>
   );
 }
-
-// Re-exported icon so the empty-Swarms toggle can share the same glyph.
-export { Boxes as SwarmClientsIcon };

@@ -744,6 +744,21 @@ function NewJourneyButton({
   const [hostIds, setHostIds] = useState<string[]>([]);
   const [sessionsPerHost, setSessionsPerHost] = useState(2);
   const [maxTurns, setMaxTurns] = useState(6);
+  // A journey may target ANY project host, including chatbox/suite-owned ones
+  // (the backend validates only project ownership). But surface the Swarms'
+  // own clients first and badge the "shared" ones so it's clear which hosts
+  // are managed elsewhere. (Deliberately NOT filtered — that would break
+  // cross-product journey targeting.)
+  const isSwarmClient = (h: HostItem) =>
+    !h.ownerScope || h.ownerScope.type === "journeys";
+  const sortedHosts = useMemo(
+    () =>
+      [...hosts].sort((a, b) => {
+        const rank = (h: HostItem) => (isSwarmClient(h) ? 0 : 1);
+        return rank(a) - rank(b) || a.name.localeCompare(b.name);
+      }),
+    [hosts],
+  );
   if (!open) {
     return (
       <Button type="button" size="sm" variant="outline" onClick={() => setOpen(true)}>
@@ -770,7 +785,7 @@ function NewJourneyButton({
             No hosts in this project.
           </span>
         ) : (
-          hosts.map((h) => {
+          sortedHosts.map((h) => {
             // Compact config chips so the picker shows what each client brings
             // (model · N servers · computer) without opening the editor.
             const meta = [
@@ -780,6 +795,7 @@ function NewJourneyButton({
                 : null,
               h.hasComputer ? "computer" : null,
             ].filter(Boolean);
+            const shared = !isSwarmClient(h);
             return (
               <button
                 key={h.hostId}
@@ -791,7 +807,17 @@ function NewJourneyButton({
                     : "hover:bg-muted"
                 }`}
               >
-                <span className="font-medium">{h.name}</span>
+                <span className="flex items-center gap-1.5 font-medium">
+                  {h.name}
+                  {shared ? (
+                    <span
+                      className="rounded-full border border-border/60 px-1 py-0 text-[9px] font-normal text-muted-foreground"
+                      title="Managed in another product surface — still runnable by this journey"
+                    >
+                      shared
+                    </span>
+                  ) : null}
+                </span>
                 {meta.length > 0 ? (
                   <span className="text-[10px] text-muted-foreground">
                     {meta.join(" · ")}
