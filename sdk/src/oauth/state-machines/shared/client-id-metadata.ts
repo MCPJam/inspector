@@ -20,32 +20,49 @@ export function validateClientIdMetadataUrl(
     throw new Error("Client ID metadata URL must be an absolute HTTPS URL");
   }
 
+  // The Client Identifier URL is compared by simple string equality, and we
+  // return the raw string unchanged — so it must already be EXACTLY what fetch
+  // would request. Reject any spelling WHATWG would transport-normalize into a
+  // different URL than the raw bytes:
+  //  - not the canonical literal `https://` prefix (rejects single-slash
+  //    `https:/…`, backslash scheme `https:\…`, and non-lowercase schemes).
+  if (!clientIdMetadataUrl.startsWith("https://")) {
+    throw new Error(
+      "Client ID metadata URL must begin with a literal https:// scheme"
+    );
+  }
+  //  - ASCII controls (0x00–0x1F), space (0x20), DEL (0x7F), and backslashes:
+  //    WHATWG strips tabs/newlines/leading-trailing controls and percent-encodes
+  //    spaces, and treats backslashes as slashes — each changes the URL fetch
+  //    actually uses.
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u0020\u007f\\]/.test(clientIdMetadataUrl)) {
+    throw new Error(
+      "Client ID metadata URL must not contain control characters, whitespace, or backslashes"
+    );
+  }
+
   if (parsedUrl.hash || clientIdMetadataUrl.includes("#")) {
     throw new Error(
       "Client ID metadata URL must not contain a fragment component"
     );
   }
 
-  // Parse the authority and path off the RAW string. new URL() both collapses
-  // dot segments and normalizes an empty userinfo away — either would silently
-  // change the client identity (Client Identifier URLs compare by simple
-  // string equality) before we could reject it. Normalize the scheme prefix
-  // the way WHATWG does for special schemes (backslashes act as slashes; any
-  // number of slashes may follow the scheme) so a non-canonical spelling can't
-  // hide the authority from this scan.
+  // Parse the authority and path off the RAW string. new URL() collapses dot
+  // segments and normalizes an empty userinfo away — either would silently
+  // change the client identity before we could reject it. The guards above
+  // guarantee a literal `https://` prefix with no backslashes, so a plain
+  // split is sufficient here.
   const rawWithoutQuery = clientIdMetadataUrl.split(/[?#]/, 1)[0];
-  const afterScheme = rawWithoutQuery
-    .replace(/\\/g, "/")
-    .replace(/^https:\/*/i, "");
+  const afterScheme = rawWithoutQuery.replace(/^https:\/\//, "");
   const slashIndex = afterScheme.indexOf("/");
   const rawAuthority =
     slashIndex === -1 ? afterScheme : afterScheme.slice(0, slashIndex);
   const rawPath = slashIndex === -1 ? "" : afterScheme.slice(slashIndex);
 
   // Userinfo: the parsed check catches any NON-empty spelling (WHATWG populates
-  // username even for non-canonical forms like `https:/user@host`), while the
-  // raw `@` scan catches the EMPTY spelling `https://@host` that leaves
-  // username/password as "" (falsy). Both are needed.
+  // username even for non-canonical forms), while the raw `@` scan catches the
+  // EMPTY spelling `https://@host` that leaves username/password as "" (falsy).
   if (parsedUrl.username || parsedUrl.password || rawAuthority.includes("@")) {
     throw new Error(
       "Client ID metadata URL must not contain a userinfo component"

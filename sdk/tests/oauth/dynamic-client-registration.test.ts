@@ -382,10 +382,13 @@ describe("validateClientIdMetadataUrl (CIMD draft-02)", () => {
     // Empty userinfo: WHATWG URL normalizes username/password to "" (falsy),
     // so this must be caught on the raw authority, not the parsed fields.
     ["https://@example.com/client.json", "userinfo"],
-    // Non-canonical userinfo spellings WHATWG still parses: single-slash and
-    // backslash forms populate username, so the parsed check must run too.
-    ["https:/user@example.com/client.json", "userinfo"],
-    ["https://@example.com/client.json".replace("//", "/"), "userinfo"],
+    // Transport-normalized spellings new URL() accepts but fetch would request
+    // differently — rejected up front so the returned string is what fetch uses.
+    ["https:/example.com/client.json", "literal https"], // single-slash scheme
+    ["https:/user@example.com/client.json", "literal https"],
+    ["\thttps://example.com/client.json", "literal https"], // leading tab
+    ["https://example.com/cli ent.json", "whitespace"], // literal space
+    ["https://example.com\\client.json", "backslashes"], // backslash path sep
     ["https://example.com/client.json#frag", "fragment"],
     // No path component at all (a bare authority) is rejected; a root "/" is
     // accepted above.
