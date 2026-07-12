@@ -8,6 +8,7 @@ import { describe, it, expect } from "vitest";
 import type { Context } from "hono";
 import {
   buildJwtBearerBody,
+  buildJwtBearerRequest,
   buildXaaMintArgs,
   resolveXaaIssuer,
 } from "../xaa-mint.js";
@@ -129,5 +130,70 @@ describe("buildXaaMintArgs", () => {
     });
     expect(args.subject).toBe("alice@corp.com");
     expect(args.email).toBe("alice@corp.com");
+  });
+});
+
+describe("buildJwtBearerRequest", () => {
+  const args = {
+    assertion: "the-id-jag",
+    clientId: "client:with/reserved chars",
+    clientSecret: "secret+with/reserved=chars",
+    scope: "read",
+    resource: "https://mcp.example.com",
+  };
+
+  it("keeps credentials in the form body for client_secret_post and the legacy default", () => {
+    for (const method of ["client_secret_post", undefined] as const) {
+      const request = buildJwtBearerRequest({
+        ...args,
+        tokenEndpointAuthMethod: method,
+      });
+      expect(request.headers).toEqual({});
+      expect(request.body).toEqual(
+        buildJwtBearerBody(args)
+      );
+      expect(request.body.client_secret).toBe(args.clientSecret);
+    }
+  });
+
+  it("builds an RFC 6749 Basic header (form-encode before Base64) and strips the secret from the body", () => {
+    const request = buildJwtBearerRequest({
+      ...args,
+      tokenEndpointAuthMethod: "client_secret_basic",
+    });
+    const expected = Buffer.from(
+      `${encodeURIComponent(args.clientId)}:${encodeURIComponent(args.clientSecret)}`
+    ).toString("base64");
+    expect(request.headers).toEqual({ Authorization: `Basic ${expected}` });
+    expect(request.body.client_secret).toBeUndefined();
+    expect(request.body.client_id).toBe(args.clientId);
+    expect(request.body.assertion).toBe(args.assertion);
+  });
+
+  it("throws when client_secret_basic lacks a credential", () => {
+    expect(() =>
+      buildJwtBearerRequest({
+        assertion: "a",
+        clientId: "c",
+        tokenEndpointAuthMethod: "client_secret_basic",
+      })
+    ).toThrow(/client_secret_basic/);
+    expect(() =>
+      buildJwtBearerRequest({
+        assertion: "a",
+        clientSecret: "s",
+        tokenEndpointAuthMethod: "client_secret_basic",
+      })
+    ).toThrow(/client_secret_basic/);
+  });
+
+  it("sends no secret anywhere for a public (none) client", () => {
+    const request = buildJwtBearerRequest({
+      ...args,
+      tokenEndpointAuthMethod: "none",
+    });
+    expect(request.headers).toEqual({});
+    expect(request.body.client_id).toBe(args.clientId);
+    expect(JSON.stringify(request.body)).not.toContain(args.clientSecret);
   });
 });

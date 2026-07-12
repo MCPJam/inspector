@@ -291,6 +291,61 @@ export function buildJwtBearerBody(args: {
   };
 }
 
+export type XaaTokenEndpointAuthMethod =
+  | "client_secret_post"
+  | "client_secret_basic"
+  | "none";
+
+// RFC 6749 section 2.3.1: client_id and client_secret are each
+// form-urlencoded BEFORE the id:secret pair is Base64-encoded.
+function encodeBasicClientAuth(clientId: string, clientSecret: string): string {
+  return Buffer.from(
+    `${encodeURIComponent(clientId)}:${encodeURIComponent(clientSecret)}`
+  ).toString("base64");
+}
+
+// Method-aware variant of buildJwtBearerBody: same single-source body, plus
+// the client-auth headers the chosen token_endpoint_auth_method requires.
+// The generated Authorization value carries the secret — callers must never
+// copy `headers` into history, logs, telemetry, or error objects.
+export function buildJwtBearerRequest(args: {
+  assertion: string;
+  clientId?: string | null;
+  clientSecret?: string | null;
+  scope?: string | null;
+  resource?: string | null;
+  tokenEndpointAuthMethod?: XaaTokenEndpointAuthMethod | null;
+}): { headers: Record<string, string>; body: Record<string, string> } {
+  const method = args.tokenEndpointAuthMethod;
+
+  if (method === "client_secret_basic") {
+    if (!args.clientId || !args.clientSecret) {
+      throw new Error(
+        "client_secret_basic requires both a client_id and a client_secret"
+      );
+    }
+    return {
+      headers: {
+        Authorization: `Basic ${encodeBasicClientAuth(
+          args.clientId,
+          args.clientSecret
+        )}`,
+      },
+      // Secret travels only in the Authorization header, never the body.
+      body: buildJwtBearerBody({ ...args, clientSecret: null }),
+    };
+  }
+
+  if (method === "none") {
+    // Public client: client_id only, no secret anywhere.
+    return { headers: {}, body: buildJwtBearerBody({ ...args, clientSecret: null }) };
+  }
+
+  // client_secret_post and the legacy no-method default: credentials in the
+  // form body, exactly as buildJwtBearerBody always produced.
+  return { headers: {}, body: buildJwtBearerBody(args) };
+}
+
 // Derive the MCPJam test-IdP issuer from the inbound request. Shared by the XAA
 // router endpoints and the connect-page mint so the signed ID-JAG `iss` matches
 // the published JWKS regardless of which surface mints it.

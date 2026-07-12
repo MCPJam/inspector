@@ -662,6 +662,26 @@ export function XAAFlowLogger({
           />
         )}
 
+        {/* Non-blocking readiness/conformance findings from DCR or CIMD
+            setup. Warnings, not errors — the flow continued past them. */}
+        {(flowState.registrationWarnings?.length ?? 0) > 0 && (
+          <Alert>
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              <div className="space-y-1">
+                <p className="text-xs font-medium">
+                  Client registration warnings
+                </p>
+                <ul className="list-disc space-y-1 pl-4 text-xs">
+                  {flowState.registrationWarnings!.map((warning) => (
+                    <li key={warning.code}>{warning.message}</li>
+                  ))}
+                </ul>
+              </div>
+            </AlertDescription>
+          </Alert>
+        )}
+
         {(() => {
           const currentStepHttpEntries = (flowState.httpHistory || []).filter(
             (entry) => entry.step === flowState.currentStep

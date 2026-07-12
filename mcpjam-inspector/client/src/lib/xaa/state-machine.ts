@@ -1,3 +1,10 @@
+import {
+  evaluateIdJagClientMetadata,
+  executeDynamicClientRegistration,
+  getXaaDebugClientMetadata,
+  validateClientIdMetadataUrl,
+  XAA_DEBUG_CLIENT_ID_METADATA_URL,
+} from "@mcpjam/sdk/browser";
 import type { InfoLogLevel, LogErrorDetails } from "@mcpjam/sdk/browser";
 import { decodeJWTParts, formatJWTTimestamp } from "@/lib/oauth/jwt-decoder";
 import {
@@ -7,6 +14,8 @@ import {
 } from "@/shared/xaa.js";
 import type {
   BaseXAAStateMachineConfig,
+  XaaRegistrationStrategy,
+  XaaRegistrationWarning,
   XAADecodedJwt,
   XAAFlowState,
   XAAFlowStep,
@@ -388,7 +397,18 @@ export function createXAAStateMachine(
     registrationId,
     serverId,
     projectId,
+    registrationStrategy: requestedRegistrationStrategy = "pre_registered",
+    dcrCredentialCache,
+    dcrCacheTargetKey,
   } = config;
+
+  // registrationId / serverId runs skip AS discovery entirely, so the dynamic
+  // strategies (which need the discovered registration_endpoint / CIMD
+  // advertisement) are forced back to pre-registered.
+  const registrationStrategy: XaaRegistrationStrategy =
+    registrationId || serverId
+      ? "pre_registered"
+      : requestedRegistrationStrategy;
 
   // Body fields the LOCAL server uses to forward the mint to the hosted
   // issuer (server-to-server); stripped before the upstream call. Hosted
@@ -412,6 +432,9 @@ export function createXAAStateMachine(
       clientSecret: state.clientSecret || clientSecret,
       scope: state.scope || scope,
       authzServerIssuer: state.authzServerIssuer || authzServerIssuer,
+      // Config-resolved, not snapshot-carried: after initialization the
+      // state value is authoritative and only a rebuild can change it.
+      registrationStrategy,
     }),
     updateState: (updates) => {
       machine.state = { ...machine.state, ...updates };
@@ -716,6 +739,11 @@ export function createXAAStateMachine(
             issuer: resolvedIssuer,
             token_endpoint: metadata.token_endpoint,
             grant_types_supported: metadata.grant_types_supported,
+            registration_endpoint: metadata.registration_endpoint,
+            client_id_metadata_document_supported:
+              metadata.client_id_metadata_document_supported,
+            authorization_grant_profiles_supported:
+              metadata.authorization_grant_profiles_supported,
             compatibility: compatibilityReport
               ? {
                   overall: compatibilityReport.overall,
@@ -736,6 +764,470 @@ export function createXAAStateMachine(
       currentStep: "discover_authz_metadata",
       error: lastError,
     });
+  };
+
+  // --- Dynamic client-identity strategies (dcr / cimd) ----------------------
+
+  const dcrCacheKeyFor = (registrationEndpoint: string) =>
+    `${dcrCacheTargetKey ?? serverUrl}::${registrationEndpoint}`;
+
+  const dcrSecretExpired = (creds: {
+    clientSecret?: string;
+    clientSecretExpiresAt?: number;
+  }) =>
+    Boolean(creds.clientSecret) &&
+    typeof creds.clientSecretExpiresAt === "number" &&
+    creds.clientSecretExpiresAt !== 0 &&
+    creds.clientSecretExpiresAt <= Math.floor(Date.now() / 1000);
+
+  const registerClientDynamically = async () => {
+    const state = currentState();
+
+    if (
+      state.dcrRetryMayCreateDuplicate &&
+      state.currentStep === "request_client_registration"
+    ) {
+      // A previous POST may already have created a remote client (timeout,
+      // 5xx, refusal, or an unusable 2xx). Ordinary Continue/Run all must not
+      // silently POST again; the UI clears this flag through the explicit
+      // "Register another client" confirmation.
+      machine.updateState({
+        error:
+          state.error ||
+          'The previous registration attempt may have created a client at the authorization server. Confirm "Register another client" to retry.',
+      });
+      return;
+    }
+
+    const registrationEndpoint = state.authzMetadata?.registration_endpoint;
+    if (!registrationEndpoint) {
+      machine.updateState({
+        currentStep: "request_client_registration",
+        isBusy: false,
+        error:
+          "The authorization server metadata does not advertise a registration_endpoint, so open Dynamic Client Registration is not available. That is a readiness finding in itself — switch to pre-registered credentials to continue.",
+      });
+      return;
+    }
+
+    const cacheKey = dcrCacheKeyFor(registrationEndpoint);
+    const cached = dcrCredentialCache?.get(cacheKey);
+    if (cached && dcrSecretExpired(cached)) {
+      dcrCredentialCache?.delete(cacheKey);
+    } else if (cached) {
+      // Reuse this browser session's registration instead of minting another
+      // remote client on every Run all / Reset.
+      machine.updateState({
+        currentStep: "received_client_credentials",
+        clientId: cached.clientId,
+        tokenEndpointAuthMethod: cached.tokenEndpointAuthMethod,
+        dcrRegistrationReused: true,
+        error: undefined,
+      });
+      pushInfo(
+        "received_client_credentials",
+        "xaa-dcr-reused",
+        "Reusing this session's dynamic registration",
+        {
+          "Client ID": cached.clientId,
+          "Token Auth Method": cached.tokenEndpointAuthMethod,
+        }
+      );
+      return;
+    }
+
+    const clientMetadata = {
+      ...getXaaDebugClientMetadata({
+        tokenEndpointAuthMethod: "client_secret_post",
+      }),
+      ...(state.scope ? { scope: state.scope } : {}),
+    };
+
+    // One immutable request object: the displayed request (lastRequest /
+    // history) and the executed request are the same value, so they cannot
+    // drift. The executor owns wire serialization.
+    const request = {
+      method: "POST",
+      url: registrationEndpoint,
+      headers: mergeHeadersForAuthServer(undefined, {
+        "Content-Type": "application/json",
+      }),
+      body: clientMetadata,
+    };
+
+    machine.updateState({
+      currentStep: "request_client_registration",
+      isBusy: true,
+      error: undefined,
+      negativeProbe: undefined,
+      dcrRegistrationReused: false,
+      lastRequest: request,
+      lastResponse: undefined,
+      httpHistory: [
+        ...(currentState().httpHistory || []),
+        {
+          step: "request_client_registration",
+          timestamp: Date.now(),
+          request,
+        },
+      ],
+    });
+
+    // The SDK helper owns execution, history back-fill, and credential
+    // redaction; it never throws (transport failures become outcomes).
+    const outcome = await executeDynamicClientRegistration({
+      request,
+      requestExecutor: (req) =>
+        requestExecutor.externalRequest(req.url, {
+          method: req.method,
+          headers: req.headers,
+          body: req.body as BodyInit,
+        }),
+      httpHistory: currentState().httpHistory,
+    });
+
+    const parkRegistration = (error: string) => {
+      machine.updateState({
+        currentStep: "request_client_registration",
+        isBusy: false,
+        lastResponse: outcome.response,
+        httpHistory: outcome.httpHistory,
+        error,
+        // Any POST that did not yield a reusable registration may still have
+        // created a remote client. Retry needs explicit confirmation.
+        dcrRetryMayCreateDuplicate: true,
+      });
+    };
+
+    if (outcome.status !== "registered") {
+      const framing =
+        outcome.status === "http_error"
+          ? "The authorization server did not accept open Dynamic Client Registration (no initial access token was sent). A protected registration endpoint is a valid deployment choice — this does not prove the server lacks DCR."
+          : outcome.status === "invalid_response"
+            ? "The registration response could not be parsed as a client registration."
+            : "The registration request did not reach the authorization server.";
+      parkRegistration(
+        `${outcome.error} ${framing} Switch to pre-registered credentials to continue.`
+      );
+      return;
+    }
+
+    // A 2xx with a client id is not automatically usable for the pinned
+    // ID-JAG profile: validate before caching or advancing. Evidence comes
+    // from the SDK evaluator; only the park/warn policy lives here.
+    const clientId = outcome.credentials.clientId;
+    if (outcome.missingClientId || !clientId) {
+      parkRegistration(
+        "The registration response is missing a client_id, so the registration is unusable. Switch to pre-registered credentials to continue."
+      );
+      return;
+    }
+
+    const warnings: XaaRegistrationWarning[] = [];
+    const evaluation = evaluateIdJagClientMetadata(outcome.clientInfo);
+
+    if (evaluation.profile === "contradicted") {
+      parkRegistration(
+        "The authorization server returned authorization_grant_profiles_supported without the ID-JAG profile — it explicitly substituted the requested draft-04 client profile. Switch to pre-registered credentials to continue."
+      );
+      return;
+    }
+    if (evaluation.profile === "omitted") {
+      warnings.push({
+        code: "profile_metadata_not_echoed",
+        message:
+          "The registration response did not echo authorization_grant_profiles_supported. RFC 7591 lets a server ignore unknown metadata, so this is a conformance warning, not a rejection — JWT Bearer redemption is the operational verdict.",
+      });
+    }
+
+    if (evaluation.jwtBearerGrant === "contradicted") {
+      parkRegistration(
+        "The authorization server returned grant_types without the JWT Bearer grant — the registered client cannot redeem an ID-JAG at this server. Switch to pre-registered credentials to continue."
+      );
+      return;
+    }
+    if (
+      evaluation.jwtBearerGrant === "omitted" &&
+      evaluation.tokenExchangeGrant === "omitted"
+    ) {
+      warnings.push({
+        code: "grant_types_not_echoed",
+        message:
+          "The registration response did not echo grant_types. Continuing — JWT Bearer redemption will show whether the grant is actually enabled.",
+      });
+    } else if (
+      evaluation.jwtBearerGrant === "present" &&
+      evaluation.tokenExchangeGrant !== "present"
+    ) {
+      warnings.push({
+        code: "token_exchange_grant_not_echoed",
+        message:
+          "The registration echoed the JWT Bearer grant but not the Token Exchange grant. Token Exchange is the Client-to-IdP leg, so redemption at this server can still proceed; draft-04 expects both to be registered together.",
+      });
+    }
+
+    const method = outcome.credentials.tokenEndpointAuthMethod;
+    if (method === undefined) {
+      parkRegistration(
+        "The registration response did not include token_endpoint_auth_method, so the debugger cannot tell how to authenticate at the token endpoint. Switch to pre-registered credentials to continue."
+      );
+      return;
+    }
+    if (
+      method !== "client_secret_post" &&
+      method !== "client_secret_basic" &&
+      method !== "none"
+    ) {
+      parkRegistration(
+        `Registration succeeded, but this debugger cannot use the returned client-auth method ("${method}"). This is a debugger limitation, not authorization-server unreadiness.`
+      );
+      return;
+    }
+
+    const secret = outcome.credentials.clientSecret;
+    if (
+      (method === "client_secret_post" || method === "client_secret_basic") &&
+      !secret
+    ) {
+      parkRegistration(
+        `The registration returned token_endpoint_auth_method "${method}" without a client_secret — an inconsistent registration response. Switch to pre-registered credentials to continue.`
+      );
+      return;
+    }
+    if (method === "none" && secret) {
+      parkRegistration(
+        'The registration returned a client_secret together with token_endpoint_auth_method "none" — an inconsistent registration response. Switch to pre-registered credentials to continue.'
+      );
+      return;
+    }
+    if (method === "none") {
+      warnings.push({
+        code: "public_client",
+        message:
+          "The registered client is public (no client authentication). Draft-04 recommends Cross-App Access for confidential clients; the flow can continue, but this does not match the recommended deployment posture.",
+      });
+    }
+
+    if (secret) {
+      const expiresAt = outcome.credentials.clientSecretExpiresAt;
+      if (
+        typeof expiresAt === "number" &&
+        expiresAt !== 0 &&
+        expiresAt <= Math.floor(Date.now() / 1000)
+      ) {
+        parkRegistration(
+          "The issued client_secret is already expired. Switch to pre-registered credentials to continue."
+        );
+        return;
+      }
+      if (typeof expiresAt !== "number") {
+        warnings.push({
+          code: "missing_secret_expiry",
+          message:
+            "The registration response omitted client_secret_expires_at, which RFC 7591 requires whenever a secret is issued.",
+        });
+      }
+    }
+
+    if (outcome.nonCanonicalSuccessStatus) {
+      warnings.push({
+        code: "non_201_success",
+        message: `The registration returned ${outcome.response.status} instead of the RFC 7591 201 Created.`,
+      });
+    }
+    const responseContentType = outcome.response.headers["content-type"] || "";
+    if (!responseContentType.includes("json")) {
+      warnings.push({
+        code: "non_json_content_type",
+        message: `The registration response parsed as JSON but was served as "${responseContentType || "(none)"}".`,
+      });
+    }
+    const cacheControl = outcome.response.headers["cache-control"] || "";
+    if (!cacheControl.includes("no-store")) {
+      warnings.push({
+        code: "missing_no_store",
+        message:
+          "The registration response is missing Cache-Control: no-store, which RFC 7591 requires for responses carrying credentials.",
+      });
+    }
+
+    // The raw credential goes ONLY to the target-scoped session cache — never
+    // into XAAFlowState, history, or logs.
+    dcrCredentialCache?.set(cacheKey, {
+      clientId,
+      clientSecret: secret,
+      tokenEndpointAuthMethod: method,
+      clientSecretExpiresAt: outcome.credentials.clientSecretExpiresAt,
+      registrationEndpoint,
+    });
+
+    machine.updateState({
+      currentStep: "received_client_credentials",
+      clientId,
+      tokenEndpointAuthMethod: method,
+      registrationWarnings: warnings,
+      dcrRegistrationReused: false,
+      dcrRetryMayCreateDuplicate: false,
+      lastResponse: outcome.response,
+      httpHistory: outcome.httpHistory,
+      isBusy: false,
+      error: undefined,
+    });
+
+    pushInfo(
+      "received_client_credentials",
+      "xaa-dcr",
+      "Dynamic Client Registration",
+      outcome.infoLogData
+    );
+  };
+
+  const adoptClientMetadataDocument = async () => {
+    const state = currentState();
+    const supported =
+      state.authzMetadata?.client_id_metadata_document_supported;
+
+    // Gate before any fetch, like the 2025-11-25 OAuth machine: the CIMD
+    // draft defines this advertisement specifically so clients don't enter
+    // an unsupported flow. Parking here IS the readiness finding.
+    if (supported !== true) {
+      machine.updateState({
+        currentStep: "fetch_client_metadata_document",
+        isBusy: false,
+        error:
+          supported === false
+            ? "The authorization server explicitly advertises client_id_metadata_document_supported: false — it does not accept Client ID Metadata Document client_ids. That is the readiness finding; switch to pre-registered credentials to continue."
+            : "The authorization server metadata does not advertise client_id_metadata_document_supported, so the CIMD draft directs clients not to attempt the flow. That is the readiness finding; switch to pre-registered credentials to continue.",
+      });
+      return;
+    }
+
+    let documentUrl: string;
+    try {
+      documentUrl = validateClientIdMetadataUrl(
+        XAA_DEBUG_CLIENT_ID_METADATA_URL
+      );
+    } catch (error) {
+      machine.updateState({
+        currentStep: "fetch_client_metadata_document",
+        isBusy: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Invalid client metadata URL",
+      });
+      return;
+    }
+
+    // Debugger preflight only — the RAS performs its own fetch or metadata
+    // association. redirect:"manual" keeps a 3xx observable, since draft-02
+    // forbids the authorization server from following redirects.
+    const request = {
+      method: "GET",
+      url: documentUrl,
+      headers: mergeHeadersForAuthServer(undefined, {
+        Accept: "application/json",
+      }),
+    };
+
+    let result: XAARequestResult;
+    try {
+      result = await runRequest(
+        "fetch_client_metadata_document",
+        request,
+        () =>
+          requestExecutor.externalRequest(documentUrl, {
+            method: "GET",
+            headers: request.headers,
+            redirect: "manual",
+          })
+      );
+    } catch {
+      // runRequest already recorded the failure and set the error; the step
+      // stays at fetch_client_metadata_document and retries freely.
+      return;
+    }
+
+    const park = (error: string) => {
+      machine.updateState({
+        currentStep: "fetch_client_metadata_document",
+        error: `${error} This is a document preflight/validation failure; retry freely or switch strategy.`,
+      });
+    };
+
+    if (result.status !== 200) {
+      park(
+        result.status >= 300 && result.status < 400
+          ? `The client metadata URL answered with a ${result.status} redirect; draft-02 requires a direct 200 and forbids the authorization server from following redirects.`
+          : `The client metadata URL answered ${result.status}; draft-02 requires a direct 200 OK.`
+      );
+      return;
+    }
+    const contentType = result.headers["content-type"] || "";
+    if (!/application\/([a-z0-9.+-]*\+)?json/i.test(contentType)) {
+      park(
+        `The client metadata document was served as "${contentType || "(none)"}", not a JSON media type.`
+      );
+      return;
+    }
+    const doc = result.body;
+    if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
+      park("The client metadata document body is not a JSON object.");
+      return;
+    }
+    if (doc.client_id !== documentUrl) {
+      park(
+        "The document's client_id does not exactly equal the fetched URL — draft-02 compares Client Identifier URLs with simple string comparison, no normalization."
+      );
+      return;
+    }
+
+    // The document IS the registration: no RFC 7591 echo-tolerance applies.
+    const evaluation = evaluateIdJagClientMetadata(doc);
+    if (
+      evaluation.profile !== "present" ||
+      evaluation.jwtBearerGrant !== "present" ||
+      evaluation.tokenExchangeGrant !== "present"
+    ) {
+      park(
+        "The hosted client metadata document does not declare the ID-JAG grant profile plus both required grants — the document is insufficient for XAA. This points at the hosted document, not the authorization server."
+      );
+      return;
+    }
+    if (evaluation.tokenEndpointAuthMethod !== "none") {
+      const authMethod = evaluation.tokenEndpointAuthMethod ?? "";
+      park(
+        authMethod.startsWith("client_secret")
+          ? "The client metadata document declares a shared-secret auth method, which CIMD draft-02 forbids — the document is malformed."
+          : "The client metadata document declares a key-based auth method this debugger cannot exercise yet (confidential CIMD is a follow-up)."
+      );
+      return;
+    }
+
+    machine.updateState({
+      currentStep: "received_client_metadata",
+      clientId: documentUrl,
+      tokenEndpointAuthMethod: "none",
+      registrationWarnings: [
+        {
+          code: "public_client",
+          message:
+            "CIMD without a key-based auth method is inherently a public client: anyone can present this URL as their client_id. Findings show the RAS accepted the URL identity, not that client authentication was exercised.",
+        },
+      ],
+      error: undefined,
+    });
+
+    pushInfo(
+      "received_client_metadata",
+      "xaa-cimd",
+      "Client ID Metadata Document ready",
+      {
+        "Client ID": documentUrl,
+        "Client Name": (doc as Record<string, any>).client_name,
+        Note: "Debugger preflight only — the RAS performs its own fetch or metadata association; JWT Bearer redemption is the operational verdict.",
+      }
+    );
   };
 
   const authenticateUser = async () => {
@@ -944,6 +1436,34 @@ export function createXAAStateMachine(
       return;
     }
 
+    // Dynamic strategies resolve their credentials outside the flow snapshot:
+    // DCR reads the target-scoped session cache (the secret never enters
+    // XAAFlowState), CIMD is public by construction.
+    let manualClientSecret = state.clientSecret;
+    let manualAuthMethod = state.tokenEndpointAuthMethod;
+    if (!registrationId && !serverId) {
+      if (registrationStrategy === "dcr") {
+        const registrationEndpoint =
+          state.authzMetadata?.registration_endpoint;
+        const cached = registrationEndpoint
+          ? dcrCredentialCache?.get(dcrCacheKeyFor(registrationEndpoint))
+          : undefined;
+        if (!cached || cached.clientId !== state.clientId) {
+          machine.updateState({
+            currentStep: "jwt_bearer_request",
+            error:
+              "This session's dynamic registration credentials are no longer available (the page may have reloaded). Register another client to continue.",
+          });
+          return;
+        }
+        manualClientSecret = cached.clientSecret;
+        manualAuthMethod = cached.tokenEndpointAuthMethod;
+      } else if (registrationStrategy === "cimd") {
+        manualClientSecret = undefined;
+        manualAuthMethod = "none";
+      }
+    }
+
     // Registration- and server-target runs send only an opaque id: the server
     // resolves the stored secret and forces the outbound URL server-side, so
     // neither the secret nor the destination ever rides in from the browser.
@@ -968,7 +1488,10 @@ export function createXAAStateMachine(
           tokenEndpoint: state.tokenEndpoint,
           assertion: state.idJag,
           clientId: state.clientId,
-          ...(state.clientSecret ? { clientSecret: state.clientSecret } : {}),
+          ...(manualClientSecret ? { clientSecret: manualClientSecret } : {}),
+          ...(manualAuthMethod
+            ? { tokenEndpointAuthMethod: manualAuthMethod }
+            : {}),
           scope: state.scope,
           resource: state.resourceUrl || state.serverUrl,
         };
@@ -1225,6 +1748,30 @@ export function createXAAStateMachine(
         await discoverAuthzMetadata();
         return;
       case "received_authz_metadata":
+        // The config-resolved strategy (which already forces pre_registered
+        // for registrationId/serverId runs) is authoritative; the state copy
+        // exists for display surfaces.
+        if (registrationStrategy === "dcr") {
+          await registerClientDynamically();
+          return;
+        }
+        if (registrationStrategy === "cimd") {
+          await adoptClientMetadataDocument();
+          return;
+        }
+        await authenticateUser();
+        return;
+      case "request_client_registration":
+        // First attempt or retry (retry is gated on the duplicate-client
+        // confirmation inside registerClientDynamically).
+        await registerClientDynamically();
+        return;
+      case "fetch_client_metadata_document":
+        // First attempt or freely-retryable CIMD preflight.
+        await adoptClientMetadataDocument();
+        return;
+      case "received_client_credentials":
+      case "received_client_metadata":
       case "user_authentication":
         await authenticateUser();
         return;
@@ -1302,6 +1849,10 @@ export function createXAAStateMachine(
         scope: currentState().scope || scope,
         authzServerIssuer:
           currentState().authzServerIssuer || authzServerIssuer,
+        // Config-resolved strategy survives reset; the target-scoped DCR
+        // credential cache lives outside flow state, so Run all after a reset
+        // reuses this session's registration instead of minting another.
+        registrationStrategy,
       })
     );
   };

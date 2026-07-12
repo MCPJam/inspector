@@ -36,8 +36,11 @@ import type { NegativeTestsInput } from "@/lib/xaa/discovery-client";
 import type { NegativeTestMode } from "@/shared/xaa.js";
 import {
   createInitialXAAFlowState,
+  type XaaEphemeralDcrCredentials,
+  type XaaRegistrationStrategy,
   type XAAFlowState,
 } from "@/lib/xaa/types";
+import { XAARegistrationStrategyControl } from "./XAARegistrationStrategyControl";
 import { createInspectorXAAStateMachine } from "@/lib/xaa/debug-state-machine-adapter";
 import { fetchXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
 import { HOSTED_MODE } from "@/lib/config";
@@ -51,7 +54,10 @@ const INITIAL_RESOURCE_PARAM =
     ? null
     : new URLSearchParams(window.location.search).get("resource");
 
-function buildFlowStateFromInput(input: XAAFlowInput): XAAFlowState {
+function buildFlowStateFromInput(
+  input: XAAFlowInput,
+  registrationStrategy: XaaRegistrationStrategy = "pre_registered"
+): XAAFlowState {
   return createInitialXAAFlowState({
     serverUrl: input.serverUrl || undefined,
     authzServerIssuer: input.authzServerIssuer || undefined,
@@ -61,6 +67,10 @@ function buildFlowStateFromInput(input: XAAFlowInput): XAAFlowState {
     clientId: input.clientId || undefined,
     clientSecret: input.clientSecret || undefined,
     scope: input.scope || undefined,
+    // The machine treats its state value as authoritative after init, so
+    // every rebuild path must seed the currently-effective strategy — a
+    // clean rebuild must not silently reset a selected DCR run.
+    registrationStrategy,
   });
 }
 
@@ -178,8 +188,49 @@ export function XAAFlowTab({
     hostedIssuerOptIn ? "hosted" : "local"
   }|${organizationId ?? ""}`;
 
+  // ── Registration strategy (target-scoped, session-only) ─────────────
+  // Deliberately NOT persisted to run settings / localStorage: DCR creates
+  // remote state at the target AS, so a globally saved preference must not
+  // silently apply to a different AS after navigation or reload.
+  const [strategyByTarget, setStrategyByTarget] = useState<
+    Record<string, XaaRegistrationStrategy>
+  >({});
+  // Dynamic strategies need AS discovery (registration_endpoint / the CIMD
+  // advertisement): manual public bar-server targets only. The CIMD
+  // support gate is deliberately NOT part of eligibility — it's discovered
+  // mid-run and parking on it IS the finding.
+  const dynamicStrategyEligible =
+    target.targetSource === "bar_server" &&
+    isTestable &&
+    !target.usesServerSideSecret &&
+    !runInput.registrationId;
+  const selectedStrategy = strategyByTarget[targetKey] ?? "pre_registered";
+  const effectiveStrategy: XaaRegistrationStrategy = dynamicStrategyEligible
+    ? selectedStrategy
+    : "pre_registered";
+
+  // DCR-minted credentials, keyed by target + registration endpoint. A
+  // useRef-backed Map so machine recreation neither loses nor re-exposes the
+  // secret mid-run; never copied into React state, storage, telemetry, or a
+  // debug export. Page refresh clears it — the remote registration persists.
+  const dcrCredentialCacheRef = useRef(
+    new Map<string, XaaEphemeralDcrCredentials>()
+  );
+  const dcrCredentialCache = useMemo(
+    () => ({
+      get: (key: string) => dcrCredentialCacheRef.current.get(key),
+      set: (key: string, value: XaaEphemeralDcrCredentials) => {
+        dcrCredentialCacheRef.current.set(key, value);
+      },
+      delete: (key: string) => {
+        dcrCredentialCacheRef.current.delete(key);
+      },
+    }),
+    []
+  );
+
   const [flowState, setFlowState] = useState<XAAFlowState>(() =>
-    buildFlowStateFromInput(target.runInput)
+    buildFlowStateFromInput(target.runInput, effectiveStrategy)
   );
 
   // The machine reads state through this ref (lazy getState). Keep it in
@@ -225,8 +276,16 @@ export function XAAFlowTab({
       // Salted one-way bucket id — never a server name/URL/hostname.
       target_id: hashXaaTargetId(targetKey),
       auth_server_mode: authServerModeForTelemetry,
+      // Enum only — never an endpoint, client id, or credential.
+      registration_strategy: effectiveStrategy,
     });
-  }, [runInput.mode, target.targetSource, targetKey, authServerModeForTelemetry]);
+  }, [
+    runInput.mode,
+    target.targetSource,
+    targetKey,
+    authServerModeForTelemetry,
+    effectiveStrategy,
+  ]);
 
   useEffect(() => {
     if (flowState.currentStep === "complete" && !completedFired.current) {
@@ -236,6 +295,8 @@ export function XAAFlowTab({
         success: true,
         target_source: targetSourceRef.current,
         auth_server_mode: authServerModeForTelemetry,
+        // The strategy the completed run actually used (state-authoritative).
+        registration_strategy: flowStateRef.current.registrationStrategy,
       });
       // A green run proves the user holds valid client credentials the AS
       // issued — that authorizes broken-token testing against it.
@@ -343,6 +404,9 @@ export function XAAFlowTab({
   // refs; confirms via AlertDialog before discarding a busy or completed run.
   const lastAppliedTargetKey = useRef<string | null>(null);
   const lastNegativeTestMode = useRef(runSettings.negativeTestMode);
+  const lastRegistrationStrategy = useRef<XaaRegistrationStrategy>(
+    effectiveStrategy
+  );
   // The simulated identity the flow was last (re)built with. Tracked so an
   // identity edit rebuilds the flow (clearing the already-minted ID token /
   // ID-JAG that carry the old sub) — without that, advancing step-by-step
@@ -355,6 +419,7 @@ export function XAAFlowTab({
   const [pendingReset, setPendingReset] = useState<{
     targetKey: string;
     negativeTestMode: NegativeTestMode;
+    registrationStrategy: XaaRegistrationStrategy;
   } | null>(null);
 
   // Rebuild the flow from the current input and record the identity it was
@@ -362,28 +427,40 @@ export function XAAFlowTab({
   // reset can tell whether another path (Run all, Reset, target switch) already
   // applied the current identity — and skip a stale timer that would otherwise
   // wipe a freshly-started run.
-  const rebuildFlow = useCallback(() => {
-    lastAppliedIdentity.current = {
-      userId: runInput.userId,
-      email: runInput.email,
-    };
-    applyFlowState(buildFlowStateFromInput(runInput));
-  }, [applyFlowState, runInput]);
+  const rebuildFlow = useCallback(
+    (strategyOverride?: XaaRegistrationStrategy) => {
+      lastAppliedIdentity.current = {
+        userId: runInput.userId,
+        email: runInput.email,
+      };
+      applyFlowState(
+        buildFlowStateFromInput(runInput, strategyOverride ?? effectiveStrategy)
+      );
+    },
+    [applyFlowState, runInput, effectiveStrategy]
+  );
 
   const applyTargetReset = useCallback(
-    (nextTargetKey: string, nextMode: NegativeTestMode) => {
+    (
+      nextTargetKey: string,
+      nextMode: NegativeTestMode,
+      nextStrategy: XaaRegistrationStrategy
+    ) => {
       lastAppliedTargetKey.current = nextTargetKey;
       lastNegativeTestMode.current = nextMode;
-      rebuildFlow();
+      lastRegistrationStrategy.current = nextStrategy;
+      rebuildFlow(nextStrategy);
     },
     [rebuildFlow]
   );
 
   useEffect(() => {
     const nextMode = runSettings.negativeTestMode;
+    const nextStrategy = effectiveStrategy;
     if (
       lastAppliedTargetKey.current === targetKey &&
-      lastNegativeTestMode.current === nextMode
+      lastNegativeTestMode.current === nextMode &&
+      lastRegistrationStrategy.current === nextStrategy
     ) {
       return;
     }
@@ -393,11 +470,20 @@ export function XAAFlowTab({
       lastAppliedTargetKey.current !== null &&
       (current.isBusy || current.currentStep === "complete");
     if (needsConfirm) {
-      setPendingReset({ targetKey, negativeTestMode: nextMode });
+      setPendingReset({
+        targetKey,
+        negativeTestMode: nextMode,
+        registrationStrategy: nextStrategy,
+      });
       return;
     }
-    applyTargetReset(targetKey, nextMode);
-  }, [targetKey, runSettings.negativeTestMode, applyTargetReset]);
+    applyTargetReset(targetKey, nextMode, nextStrategy);
+  }, [
+    targetKey,
+    runSettings.negativeTestMode,
+    effectiveStrategy,
+    applyTargetReset,
+  ]);
 
   // Identity edits rebuild the flow so the next run mints tokens for the new
   // sub/email. Unlike target/mode (which change discretely), the identity
@@ -440,8 +526,28 @@ export function XAAFlowTab({
   }, []);
 
   const resetFlow = useCallback(() => {
+    // Ordinary reset retains the session credential cache, so a DCR run
+    // reuses its registration instead of minting another remote client.
     rebuildFlow();
   }, [rebuildFlow]);
+
+  // Explicit, confirmed action: drop this target's cached registration(s)
+  // and reset, so the next run performs a fresh registration POST. This is
+  // also the only path that clears dcrRetryMayCreateDuplicate.
+  const registerAnotherClient = useCallback(() => {
+    for (const key of Array.from(dcrCredentialCacheRef.current.keys())) {
+      if (key.startsWith(`${targetKey}::`)) {
+        dcrCredentialCacheRef.current.delete(key);
+      }
+    }
+    rebuildFlow();
+  }, [targetKey, rebuildFlow]);
+
+  const dcrHasSessionRegistration =
+    effectiveStrategy === "dcr" &&
+    Array.from(dcrCredentialCacheRef.current.keys()).some((key) =>
+      key.startsWith(`${targetKey}::`)
+    );
 
   // Resolve the real IdP issuer from the server's OpenID config so the ID-JAG
   // inspection step lints against the issuer actually stamped into `iss`, not
@@ -478,6 +584,12 @@ export function XAAFlowTab({
       scope: runInput.scope,
       authzServerIssuer: runInput.authzServerIssuer,
       registrationId: runInput.registrationId,
+      // Client-identity strategy (forced to pre_registered inside the machine
+      // for registrationId/serverId runs) plus the session credential cache
+      // DCR runs mint into and redeem from.
+      registrationStrategy: effectiveStrategy,
+      dcrCredentialCache,
+      dcrCacheTargetKey: targetKey,
       // Confidential bar-server runs send only serverId/projectId; the server
       // resolves the secret and discovers the token endpoint.
       ...(target.usesServerSideSecret && target.serverId
@@ -496,6 +608,9 @@ export function XAAFlowTab({
     resolvedIssuerBaseUrl,
     organizationId,
     hostedIssuerOptIn,
+    effectiveStrategy,
+    dcrCredentialCache,
+    targetKey,
   ]);
 
   const handleAdvance = useCallback(async () => {
@@ -604,6 +719,23 @@ export function XAAFlowTab({
           )
         }
       />
+      {dynamicStrategyEligible ? (
+        <XAARegistrationStrategyControl
+          value={selectedStrategy}
+          onChange={(next) =>
+            setStrategyByTarget((current) => ({
+              ...current,
+              [targetKey]: next,
+            }))
+          }
+          disabled={flowState.isBusy || isRunningAll}
+          showRegisterAnotherClient={
+            dcrHasSessionRegistration ||
+            Boolean(flowState.dcrRetryMayCreateDuplicate)
+          }
+          onRegisterAnotherClient={registerAnotherClient}
+        />
+      ) : null}
       {selectedRegistration ? (
         <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/30 px-4 py-1.5 text-xs text-muted-foreground">
           <span>Using registered app — overrides the bar selection</span>
@@ -699,7 +831,11 @@ export function XAAFlowTab({
                 summary={{
                   serverUrl: runInput.serverUrl,
                   authzServerIssuer: runInput.authzServerIssuer || undefined,
-                  clientId: runInput.clientId || undefined,
+                  // Prefer the flow's clientId so a DCR-minted or CIMD URL
+                  // identity is shown accurately; pre-registered runs fall
+                  // back to the configured value unchanged.
+                  clientId:
+                    flowState.clientId || runInput.clientId || undefined,
                   scope: runInput.scope || undefined,
                 }}
               />
@@ -757,9 +893,23 @@ export function XAAFlowTab({
           if (!open) {
             // Cancel: acknowledge the switch without resetting, so the effect
             // doesn't immediately re-prompt; the current run stays visible.
+            // A strategy change is the exception: revert the selector to the
+            // strategy the still-running flow actually uses, so UI config and
+            // the state-authoritative strategy can't diverge.
             if (pendingReset) {
               lastAppliedTargetKey.current = pendingReset.targetKey;
               lastNegativeTestMode.current = pendingReset.negativeTestMode;
+              if (
+                pendingReset.registrationStrategy !==
+                lastRegistrationStrategy.current
+              ) {
+                const prior = lastRegistrationStrategy.current;
+                const revertKey = pendingReset.targetKey;
+                setStrategyByTarget((current) => ({
+                  ...current,
+                  [revertKey]: prior,
+                }));
+              }
             }
             setPendingReset(null);
           }
@@ -780,7 +930,8 @@ export function XAAFlowTab({
                 if (pendingReset) {
                   applyTargetReset(
                     pendingReset.targetKey,
-                    pendingReset.negativeTestMode
+                    pendingReset.negativeTestMode,
+                    pendingReset.registrationStrategy
                   );
                 }
                 setPendingReset(null);
