@@ -296,11 +296,22 @@ export type XaaTokenEndpointAuthMethod =
   | "client_secret_basic"
   | "none";
 
+// application/x-www-form-urlencoded encoding (WHATWG URLSearchParams rules:
+// space→"+", and "*-._"/alphanumerics kept literal, everything else percent-
+// encoded). encodeURIComponent alone leaves "!'()~" literal and encodes space
+// as %20, so it is NOT form-urlencoding and would corrupt credentials that
+// contain those characters.
+function formUrlEncode(value: string): string {
+  return encodeURIComponent(value)
+    .replace(/[!'()~]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase())
+    .replace(/%20/g, "+");
+}
+
 // RFC 6749 section 2.3.1: client_id and client_secret are each
-// form-urlencoded BEFORE the id:secret pair is Base64-encoded.
+// application/x-www-form-urlencoded BEFORE the id:secret pair is Base64-encoded.
 function encodeBasicClientAuth(clientId: string, clientSecret: string): string {
   return Buffer.from(
-    `${encodeURIComponent(clientId)}:${encodeURIComponent(clientSecret)}`
+    `${formUrlEncode(clientId)}:${formUrlEncode(clientSecret)}`
   ).toString("base64");
 }
 
@@ -337,8 +348,23 @@ export function buildJwtBearerRequest(args: {
   }
 
   if (method === "none") {
-    // Public client: client_id only, no secret anywhere.
+    // Public client: client_id identifies the client and is required; no
+    // secret travels anywhere. Reject a missing client_id locally rather than
+    // forwarding an invalid request the AS will just bounce.
+    if (!args.clientId) {
+      throw new Error("A public (none) client request requires a client_id");
+    }
     return { headers: {}, body: buildJwtBearerBody({ ...args, clientSecret: null }) };
+  }
+
+  if (method === "client_secret_post") {
+    // RFC 6749 section 2.3.1: client_id is REQUIRED alongside the secret.
+    if (!args.clientId || !args.clientSecret) {
+      throw new Error(
+        "client_secret_post requires both a client_id and a client_secret"
+      );
+    }
+    return { headers: {}, body: buildJwtBearerBody(args) };
   }
 
   // client_secret_post and the legacy no-method default: credentials in the

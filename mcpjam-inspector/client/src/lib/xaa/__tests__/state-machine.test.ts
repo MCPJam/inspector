@@ -1353,6 +1353,48 @@ describe("open dcr registration strategy", () => {
     ).toBe(true);
   });
 
+  it("parks the token request when the cached secret has expired mid-run", async () => {
+    // Register with a secret that is valid at registration but expires before
+    // redemption. runAll registers/authenticates/exchanges, then we expire the
+    // cached secret in place before the jwt-bearer step redeems it.
+    const cache = new Map<string, XaaEphemeralDcrCredentials>();
+    const harness = createDynamicHarness({
+      strategy: "dcr",
+      registerResponse: {
+        status: 201,
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "no-store",
+        },
+        body: {
+          client_id: "minted-client",
+          client_secret: DCR_SECRET,
+          client_secret_expires_at: Math.floor(Date.now() / 1000) + 300,
+          token_endpoint_auth_method: "client_secret_post",
+        },
+      },
+      cache,
+    });
+    for (let index = 0; index < 5; index += 1) {
+      await harness.machine.proceedToNextStep();
+    }
+    // Expire the cached secret in place, then let redemption run.
+    const key = `target-1::${REGISTRATION_ENDPOINT}`;
+    cache.set(key, {
+      ...cache.get(key)!,
+      clientSecretExpiresAt: Math.floor(Date.now() / 1000) - 1,
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("jwt_bearer_request");
+    expect(state.error).toContain("expired");
+    expect(cache.has(key)).toBe(false);
+    expect(
+      harness.internalCalls.some((c) => c.path === "/proxy/token")
+    ).toBe(false);
+  });
+
   it("parks the token request when the session credentials are gone", async () => {
     const cache = new Map<string, XaaEphemeralDcrCredentials>();
     const harness = createDynamicHarness({ strategy: "dcr", cache });

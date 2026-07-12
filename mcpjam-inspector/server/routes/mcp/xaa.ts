@@ -1076,8 +1076,16 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           code: "VALIDATION_ERROR",
         });
       }
-      if (authMethod === "client_secret_basic" && !clientId) {
-        return toJsonError("client_secret_basic requires a client id", {
+      // RFC 6749 §2.3.1: client_id is REQUIRED for post/basic; a public (none)
+      // client still needs a client_id to identify itself. Reject locally with
+      // a 400 rather than letting buildJwtBearerRequest throw into a 500.
+      if (
+        (authMethod === "client_secret_basic" ||
+          authMethod === "client_secret_post" ||
+          authMethod === "none") &&
+        !clientId
+      ) {
+        return toJsonError(`${authMethod} requires a client id`, {
           status: 400,
           code: "VALIDATION_ERROR",
         });

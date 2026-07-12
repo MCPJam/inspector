@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type KeyboardEvent } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   AlertDialog,
@@ -53,14 +53,39 @@ export function XAARegistrationStrategyControl({
 }: XAARegistrationStrategyControlProps) {
   const [confirmReregister, setConfirmReregister] = useState(false);
 
+  // Native radio-group keyboard semantics: arrows move and select, wrapping.
+  // Focus follows via DOM sibling navigation so we don't depend on Button ref
+  // forwarding.
+  const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    let nextIndex = index;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      nextIndex = (index + 1) % STRATEGY_OPTIONS.length;
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      nextIndex = (index - 1 + STRATEGY_OPTIONS.length) % STRATEGY_OPTIONS.length;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    const nextValue = STRATEGY_OPTIONS[nextIndex].value;
+    if (nextValue !== value) onChange(nextValue);
+    const sibling = event.currentTarget.parentElement?.children[
+      nextIndex
+    ] as HTMLElement | undefined;
+    sibling?.focus();
+  };
+
   return (
     <div className="border-b border-border bg-muted/30 px-4 py-1.5">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium text-muted-foreground">
           Client registration
         </span>
-        <div className="flex items-center gap-1" role="radiogroup">
-          {STRATEGY_OPTIONS.map((option) => (
+        <div
+          className="flex items-center gap-1"
+          role="radiogroup"
+          aria-label="Client registration strategy"
+        >
+          {STRATEGY_OPTIONS.map((option, index) => (
             <Button
               key={option.value}
               type="button"
@@ -70,6 +95,10 @@ export function XAARegistrationStrategyControl({
               disabled={disabled}
               role="radio"
               aria-checked={value === option.value}
+              // Roving tabindex: only the selected radio is in the tab order;
+              // arrows move within the group.
+              tabIndex={value === option.value ? 0 : -1}
+              onKeyDown={(event) => handleKeyDown(event, index)}
               onClick={() => {
                 if (option.value !== value) onChange(option.value);
               }}

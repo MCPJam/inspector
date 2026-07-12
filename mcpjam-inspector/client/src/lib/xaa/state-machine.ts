@@ -1445,14 +1445,29 @@ export function createXAAStateMachine(
       if (registrationStrategy === "dcr") {
         const registrationEndpoint =
           state.authzMetadata?.registration_endpoint;
-        const cached = registrationEndpoint
-          ? dcrCredentialCache?.get(dcrCacheKeyFor(registrationEndpoint))
+        const cacheKey = registrationEndpoint
+          ? dcrCacheKeyFor(registrationEndpoint)
+          : undefined;
+        const cached = cacheKey
+          ? dcrCredentialCache?.get(cacheKey)
           : undefined;
         if (!cached || cached.clientId !== state.clientId) {
           machine.updateState({
             currentStep: "jwt_bearer_request",
             error:
               "This session's dynamic registration credentials are no longer available (the page may have reloaded). Register another client to continue.",
+          });
+          return;
+        }
+        // The secret can expire between registration and redemption. Redeeming
+        // with an expired secret surfaces as a confusing token-endpoint
+        // failure, so discard it and ask to register again instead.
+        if (dcrSecretExpired(cached)) {
+          if (cacheKey) dcrCredentialCache?.delete(cacheKey);
+          machine.updateState({
+            currentStep: "jwt_bearer_request",
+            error:
+              "This session's dynamic client secret has expired. Register another client to continue.",
           });
           return;
         }

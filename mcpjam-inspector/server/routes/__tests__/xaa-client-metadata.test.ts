@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { Hono } from "hono";
 import {
@@ -66,13 +68,10 @@ describe("XAA client metadata document route", () => {
     // The route must exist on BOTH server/index.ts and server/app.ts — a
     // missing mount in either deployment shape silently breaks cimd runs.
     // Reading the sources keeps this honest without booting the full servers.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { readFileSync } = require("node:fs");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { join } = require("node:path");
+    // ESM has no __dirname — resolve relative to this module's URL instead.
     for (const entry of ["index.ts", "app.ts"]) {
       const source = readFileSync(
-        join(__dirname, "..", "..", entry),
+        fileURLToPath(new URL(`../../${entry}`, import.meta.url)),
         "utf-8",
       );
       expect(

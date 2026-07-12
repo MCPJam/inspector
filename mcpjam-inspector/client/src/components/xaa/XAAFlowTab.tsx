@@ -322,6 +322,22 @@ export function XAAFlowTab({
     const resource =
       flowState.resourceMetadata?.resource || runInput.serverUrl || "";
 
+    // The scorecard fires broken tokens using the run's CONFIGURED client
+    // (runInput.clientId), not the identity a dcr/cimd run established. For a
+    // dynamic run those don't match — often the config client_id is empty —
+    // so results would be about the wrong (or no) client and could read as an
+    // all-green pass that proves nothing. Disable it rather than mislead.
+    if (
+      flowState.registrationStrategy === "dcr" ||
+      flowState.registrationStrategy === "cimd"
+    ) {
+      return {
+        input: null,
+        unavailableReason:
+          "Negative tests run against the pre-registered client credentials, not the client this DCR/CIMD run established — so they can't be trusted here. Switch to the pre-registered strategy to exercise the scorecard.",
+      };
+    }
+
     if (selectedRegistration) {
       if (selectedRegistration.authServerMode === "mcpjam") {
         return {
@@ -893,22 +909,34 @@ export function XAAFlowTab({
           if (!open) {
             // Cancel: acknowledge the switch without resetting, so the effect
             // doesn't immediately re-prompt; the current run stays visible.
-            // A strategy change is the exception: revert the selector to the
-            // strategy the still-running flow actually uses, so UI config and
-            // the state-authoritative strategy can't diverge.
             if (pendingReset) {
+              // Capture BEFORE overwriting: was this dialog a pure strategy
+              // toggle on the still-selected target, or a target switch?
+              const wasSameTarget =
+                pendingReset.targetKey === lastAppliedTargetKey.current;
               lastAppliedTargetKey.current = pendingReset.targetKey;
               lastNegativeTestMode.current = pendingReset.negativeTestMode;
               if (
+                wasSameTarget &&
                 pendingReset.registrationStrategy !==
-                lastRegistrationStrategy.current
+                  lastRegistrationStrategy.current
               ) {
+                // Same-target strategy toggle, cancelled: revert the selector
+                // to the strategy the still-running flow uses so UI config and
+                // the state-authoritative strategy can't diverge. Keep
+                // lastRegistrationStrategy.current (= prior) so no re-prompt.
                 const prior = lastRegistrationStrategy.current;
                 const revertKey = pendingReset.targetKey;
                 setStrategyByTarget((current) => ({
                   ...current,
                   [revertKey]: prior,
                 }));
+              } else {
+                // Target switch (or no strategy change) cancelled: acknowledge
+                // the new target's strategy so the effect doesn't re-prompt.
+                // Never write one target's strategy onto another's key.
+                lastRegistrationStrategy.current =
+                  pendingReset.registrationStrategy;
               }
             }
             setPendingReset(null);

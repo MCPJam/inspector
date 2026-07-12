@@ -156,17 +156,29 @@ describe("buildJwtBearerRequest", () => {
     }
   });
 
-  it("builds an RFC 6749 Basic header (form-encode before Base64) and strips the secret from the body", () => {
-    const request = buildJwtBearerRequest({
+  it("builds an RFC 6749 Basic header (application/x-www-form-urlencoded before Base64) and strips the secret from the body", () => {
+    // Mirror the production form-urlencoder: space→"+", "!'()~" percent-encoded.
+    const formUrlEncode = (v: string) =>
+      encodeURIComponent(v)
+        .replace(/[!'()~]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase())
+        .replace(/%20/g, "+");
+    const withSpaces = {
       ...args,
+      clientId: "client id!",
+      clientSecret: "secret (with)~chars",
+    };
+    const request = buildJwtBearerRequest({
+      ...withSpaces,
       tokenEndpointAuthMethod: "client_secret_basic",
     });
     const expected = Buffer.from(
-      `${encodeURIComponent(args.clientId)}:${encodeURIComponent(args.clientSecret)}`
+      `${formUrlEncode(withSpaces.clientId)}:${formUrlEncode(withSpaces.clientSecret)}`
     ).toString("base64");
     expect(request.headers).toEqual({ Authorization: `Basic ${expected}` });
+    // Space must NOT be %20 (that would be encodeURIComponent, not form-encoding).
+    expect(Buffer.from(expected, "base64").toString()).toContain("client+id");
     expect(request.body.client_secret).toBeUndefined();
-    expect(request.body.client_id).toBe(args.clientId);
+    expect(request.body.client_id).toBe(withSpaces.clientId);
     expect(request.body.assertion).toBe(args.assertion);
   });
 
@@ -185,6 +197,22 @@ describe("buildJwtBearerRequest", () => {
         tokenEndpointAuthMethod: "client_secret_basic",
       })
     ).toThrow(/client_secret_basic/);
+  });
+
+  it("requires a client_id for public (none) and client_secret_post clients", () => {
+    expect(() =>
+      buildJwtBearerRequest({
+        assertion: "a",
+        tokenEndpointAuthMethod: "none",
+      })
+    ).toThrow(/client_id/);
+    expect(() =>
+      buildJwtBearerRequest({
+        assertion: "a",
+        clientSecret: "s",
+        tokenEndpointAuthMethod: "client_secret_post",
+      })
+    ).toThrow(/client_id/);
   });
 
   it("sends no secret anywhere for a public (none) client", () => {
