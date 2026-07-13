@@ -6,7 +6,6 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
-  Copy,
   Loader2,
   Pencil,
   Play,
@@ -403,6 +402,7 @@ export function XAAFlowLogger({
     new Set()
   );
   const [copySuccess, setCopySuccess] = useState(false);
+  const copyResetTimerRef = useRef<number | null>(null);
 
   const stepRefs = useRef(new Map<XAAFlowStep, HTMLDivElement | null>());
 
@@ -486,8 +486,22 @@ export function XAAFlowLogger({
     );
     if (!success) return;
     setCopySuccess(true);
-    setTimeout(() => setCopySuccess(false), 2000);
+    if (copyResetTimerRef.current !== null) {
+      window.clearTimeout(copyResetTimerRef.current);
+    }
+    copyResetTimerRef.current = window.setTimeout(() => {
+      setCopySuccess(false);
+      copyResetTimerRef.current = null;
+    }, 2000);
   };
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimerRef.current !== null) {
+        window.clearTimeout(copyResetTimerRef.current);
+      }
+    };
+  }, []);
 
   const toggleStep = (step: XAAFlowStep) => {
     setExpandedSteps((previous) => {
@@ -576,15 +590,6 @@ export function XAAFlowLogger({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => void handleCopyFlow()}
-                className="h-7"
-              >
-                <Copy className="h-3 w-3 mr-1" />
-                {copySuccess ? "Copied!" : "Copy"}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
                 onClick={actions.onReset}
                 disabled={actions.resetDisabled || !actions.onReset}
                 className="h-7"
@@ -644,8 +649,8 @@ export function XAAFlowLogger({
           <>
             <PhaseRail currentStep={flowState.currentStep} />
 
-            {(summary.clientId || summary.scope) && (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
                 {summary.clientId && (
                   <div className="flex min-w-0 items-center gap-1.5">
                     <span className="shrink-0 text-muted-foreground">
@@ -667,7 +672,15 @@ export function XAAFlowLogger({
                   </div>
                 )}
               </div>
-            )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleCopyFlow()}
+                className="h-8 shrink-0"
+              >
+                {copySuccess ? "Copied!" : "Copy"}
+              </Button>
+            </div>
           </>
         )}
       </div>

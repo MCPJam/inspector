@@ -19,7 +19,7 @@ function renderLogger(
 ) {
   const onContinue = vi.fn();
   const onRunAll = vi.fn();
-  render(
+  const view = render(
     <XAAFlowLogger
       flowState={createInitialXAAFlowState({
         serverUrl: "https://mcp.example.com",
@@ -37,7 +37,7 @@ function renderLogger(
       summary={{ serverUrl: "https://mcp.example.com" }}
     />,
   );
-  return { onContinue, onRunAll };
+  return { onContinue, onRunAll, ...view };
 }
 
 describe("XAAFlowLogger run controls", () => {
@@ -163,5 +163,18 @@ describe("XAAFlowLogger run controls", () => {
     );
     expect(copied).toContain("Resource metadata received");
     expect(screen.getByRole("button", { name: "Copied!" })).toBeInTheDocument();
+  });
+
+  it("restarts the copied label timer and clears it on unmount", async () => {
+    const user = userEvent.setup();
+    const clearTimeoutSpy = vi.spyOn(window, "clearTimeout");
+    const { unmount } = renderLogger();
+
+    await user.click(screen.getByRole("button", { name: "Copy" }));
+    await user.click(screen.getByRole("button", { name: "Copied!" }));
+
+    expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
+    unmount();
+    expect(clearTimeoutSpy).toHaveBeenCalledTimes(2);
   });
 });

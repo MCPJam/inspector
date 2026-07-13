@@ -740,8 +740,8 @@ export function XAAFlowTab({
         server={selectedServer}
         existingServerNames={Object.keys(serverConfigs)}
         signedInEmail={signedInUser?.email}
-        projectId={target.projectId}
-        hostedServerId={target.serverId}
+        projectId={target.barServerProjectId}
+        hostedServerId={target.barServerId}
         onSave={async ({ formData }) => {
           // Await so the modal can keep itself open (and preserve the entered
           // values) if the save rejects. Selection only follows a save that

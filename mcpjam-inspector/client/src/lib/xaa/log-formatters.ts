@@ -19,6 +19,91 @@ const formatTimestamp = (timestamp: number) =>
 const stringify = (value: unknown) =>
   typeof value === "string" ? value : JSON.stringify(value, null, 2);
 
+const REDACTED = "[REDACTED]";
+const SENSITIVE_FIELDS = new Set([
+  "accesstoken",
+  "assertion",
+  "actortoken",
+  "authorization",
+  "clientsecret",
+  "code",
+  "codeverifier",
+  "cookie",
+  "idjag",
+  "identityassertion",
+  "idtoken",
+  "refreshtoken",
+  "subjecttoken",
+]);
+
+const normalizeFieldName = (name: string) =>
+  name.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+const isSensitiveField = (name: string) =>
+  SENSITIVE_FIELDS.has(normalizeFieldName(name));
+
+function sanitizeHeaders(
+  headers: Record<string, string>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).map(([name, value]) => [
+      name,
+      /^(authorization|proxy-authorization|cookie|set-cookie)$/i.test(name)
+        ? REDACTED
+        : value.replace(/\bBearer\s+[^\s,;]+/gi, `Bearer ${REDACTED}`),
+    ]),
+  );
+}
+
+function sanitizeString(value: string): unknown {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    try {
+      return sanitizeBody(JSON.parse(trimmed));
+    } catch {
+      // Fall through to form/text redaction.
+    }
+  }
+
+  let sanitized = value.replace(
+    /\bBearer\s+[^\s,;]+/gi,
+    `Bearer ${REDACTED}`,
+  );
+  sanitized = sanitized.replace(
+    /\b((?:access_token|refresh_token|id_token|id_jag|client_secret|assertion|subject_token|actor_token|identity_assertion|code_verifier|code)\s*["']?\s*[:=]\s*["']?)([^"'&\s,}]+)/gi,
+    `$1${REDACTED}`,
+  );
+  return sanitized;
+}
+
+function sanitizeBody(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeBody);
+  if (typeof value === "string") return sanitizeString(value);
+  if (!value || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value).map(([name, entryValue]) => [
+      name,
+      isSensitiveField(name) ? REDACTED : sanitizeBody(entryValue),
+    ]),
+  );
+}
+
+function sanitizeUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    for (const name of [...url.searchParams.keys()]) {
+      if (isSensitiveField(name)) url.searchParams.set(name, REDACTED);
+    }
+    return url.toString();
+  } catch {
+    return String(sanitizeString(rawUrl));
+  }
+}
+
 const appendError = (
   text: string,
   error: XAAInfoLogEntry["error"] | XAAHttpHistoryEntry["error"],
@@ -101,23 +186,31 @@ export function generateXAAFlowText(
 
       const http = entry.value;
       text += `[${formatTimestamp(http.timestamp)}] ${http.request.method} ${
-        http.request.url
+        sanitizeUrl(http.request.url)
       }\n`;
       if (http.duration !== undefined) text += `Duration: ${http.duration}ms\n`;
       if (http.response) {
         text += `Status: ${http.response.status} ${http.response.statusText}\n`;
       }
       if (Object.keys(http.request.headers).length > 0) {
-        text += `\nRequest Headers:\n${stringify(http.request.headers)}\n`;
+        text += `\nRequest Headers:\n${stringify(
+          sanitizeHeaders(http.request.headers),
+        )}\n`;
       }
       if (http.request.body !== undefined) {
-        text += `\nRequest Body:\n${stringify(http.request.body)}\n`;
+        text += `\nRequest Body:\n${stringify(
+          sanitizeBody(http.request.body),
+        )}\n`;
       }
       if (http.response && Object.keys(http.response.headers).length > 0) {
-        text += `\nResponse Headers:\n${stringify(http.response.headers)}\n`;
+        text += `\nResponse Headers:\n${stringify(
+          sanitizeHeaders(http.response.headers),
+        )}\n`;
       }
       if (http.response?.body !== undefined) {
-        text += `\nResponse Body:\n${stringify(http.response.body)}\n`;
+        text += `\nResponse Body:\n${stringify(
+          sanitizeBody(http.response.body),
+        )}\n`;
       }
       text = appendError(text, http.error);
       text += "\n";

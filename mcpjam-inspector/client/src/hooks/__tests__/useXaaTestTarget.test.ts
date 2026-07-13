@@ -148,6 +148,9 @@ describe("useXaaTestTarget", () => {
     expect(result.current.targetKey).toBe("registration:app_1");
     expect(result.current.runInput.registrationId).toBe("app_1");
     expect(result.current.usesServerSideSecret).toBe(false);
+    expect(result.current.serverId).toBeUndefined();
+    expect(result.current.barServerId).toBe("srv_1");
+    expect(result.current.barServerProjectId).toBe("proj_1");
   });
 
   it("marks a STDIO server not testable", () => {
