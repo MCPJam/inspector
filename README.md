@@ -45,6 +45,7 @@ npx @mcpjam/inspector@latest
 # Table of contents
 
 - [Installation Guides](#installation-guides)
+- [Coming from MCP Inspector?](#coming-from-mcp-inspector)
 - [Key Features](#key-features)
   - [App Builder](#app-builder)
   - [Chat](#chat)
@@ -108,6 +109,45 @@ docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector
 ```
 
 The app is available at `http://127.0.0.1:6274`. Always use `-p 127.0.0.1:6274:6274` (not `-p 6274:6274`) to keep the inspector local-only. On macOS/Windows, connect to host MCP servers via `http://host.docker.internal:PORT` instead of `127.0.0.1`.
+
+# Coming from MCP Inspector?
+
+### 1. Two-sentence introduction
+
+MCPJam Inspector covers the same protocol validation workflow as the official MCP Inspector and extends into behavior debugging. Everything you do in MCP Inspector has a direct equivalent in MCPJam, while MCPJam adds additional workflows such as Trace, OAuth Debugger, Playground, and Evals; MCP Inspector remains the reference implementation and an excellent protocol validation tool.
+
+### 2. Condensed comparison matrix
+
+| Workflow | MCP Inspector | MCPJam Inspector |
+|----------|---------------|------------------|
+| Protocol validation | ✅ | ✅ |
+| Manual tool execution | ✅ | ✅ |
+| Protocol logs | ✅ | ✅ (Trace) |
+| OAuth debugging | Basic auth configuration | Guided OAuth Debugger |
+| Natural-language testing | — | Playground |
+| Evals | — | MCP Evals |
+
+*Last verified: July 2026*
+
+### 3. When to use each
+
+#### Use MCP Inspector if...
+
+- You only need lightweight protocol validation.
+- You want the official reference inspector.
+- You're validating MCP protocol correctness.
+
+#### Use MCPJam Inspector if...
+
+- You want to inspect model behavior.
+- You need execution traces.
+- You're debugging OAuth.
+- You want Playground and MCP Evals.
+
+### 4. Learn more
+
+- [MCPJam vs MCP Inspector blog post](TODO)
+- ["Coming from MCP Inspector?" migration guide](TODO)
 
 # Key features
 
