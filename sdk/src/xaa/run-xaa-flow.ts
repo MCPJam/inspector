@@ -105,29 +105,31 @@ function canonicalResource(serverUrl: string): string {
 }
 
 function wellKnownCandidates(issuer: string, name: string): string[] {
-  const trimmed = issuer.replace(/\/+$/, "");
-  let origin = trimmed;
-  let path = "";
+  let origin: string;
+  let path: string; // exact pathname incl. any trailing slash; "" for the root
   try {
-    const u = new URL(trimmed);
+    const u = new URL(issuer);
     origin = u.origin;
-    path = u.pathname.replace(/\/+$/, "");
+    path = u.pathname === "/" ? "" : u.pathname;
   } catch {
-    /* keep trimmed as origin */
+    return [`${issuer.replace(/\/+$/, "")}/.well-known/${name}`];
   }
   if (!path) {
     return [`${origin}/.well-known/${name}`];
   }
-  // Path issuer/resource: RFC 8414 path-insertion, the OIDC path-appended form
-  // (`issuer + /.well-known/...`, which OIDC-only servers require), and the
-  // origin-root form (where RFC 9728 PRM is commonly served). Ordering probes
-  // the most specific first; for AS metadata a wrong-tenant root document is
-  // rejected downstream by the `metadata.issuer` match check.
-  return [
+  const pathNoTrailing = path.replace(/\/+$/, "");
+  // Path issuer/resource: RFC 8414/9728 path-insertion preserving the exact path
+  // (including a trailing slash — some servers publish PRM under it); the OIDC
+  // path-appended form (`issuer + /.well-known/...`, which OIDC-only servers
+  // require); and the origin-root form (where RFC 9728 PRM is commonly served).
+  // Most specific first; for AS metadata a wrong-tenant root document is rejected
+  // downstream by the `metadata.issuer` match check.
+  const candidates = new Set<string>([
     `${origin}/.well-known/${name}${path}`,
-    `${trimmed}/.well-known/${name}`,
+    `${origin}${pathNoTrailing}/.well-known/${name}`,
     `${origin}/.well-known/${name}`,
-  ];
+  ]);
+  return [...candidates];
 }
 
 export async function runXaaFlow(

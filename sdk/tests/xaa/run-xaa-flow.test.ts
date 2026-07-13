@@ -239,6 +239,48 @@ describe("runXaaFlow", () => {
     expect(result.completed).toBe(false);
   });
 
+  it("preserves the trailing slash when building PRM discovery URLs", async () => {
+    const serverWithSlash = "https://mcp.example.com/mcp/";
+    const insertionPrm =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp/";
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const method = (init?.method || "GET").toUpperCase();
+      // PRM is published ONLY at the slash-preserving path-insertion URL.
+      if (url.includes(".well-known/oauth-protected-resource")) {
+        return url === insertionPrm
+          ? json({
+              resource: "https://mcp.example.com/mcp/",
+              authorization_servers: [AS_ISSUER],
+            })
+          : json({}, 404);
+      }
+      if (
+        url.includes(".well-known/oauth-authorization-server") ||
+        url.includes(".well-known/openid-configuration")
+      ) {
+        return json({ issuer: AS_ISSUER, token_endpoint: TOKEN_ENDPOINT });
+      }
+      if (url === TOKEN_ENDPOINT && method === "POST") {
+        return json({ access_token: "at-1", token_type: "Bearer" });
+      }
+      if (url === serverWithSlash && method === "POST") {
+        return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: {} });
+      }
+      return json({}, 404);
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: serverWithSlash,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    expect(result.authzServerIssuer).toBe(AS_ISSUER);
+    expect(result.completed).toBe(true);
+  });
+
   it("discovers PRM served at the origin root for a path resource", async () => {
     const rootPrm =
       "https://mcp.example.com/.well-known/oauth-protected-resource";
