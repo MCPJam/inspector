@@ -54,6 +54,7 @@ import {
   loadInspectorEnv,
   warnOnConvexDevMisconfiguration,
 } from "./env.js";
+import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog.js";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
@@ -82,6 +83,10 @@ export async function createHonoApp() {
   generateSessionToken();
   setXaaIdpLogger(appLogger);
   initXAAIdpKeyPair();
+
+  // Warm the hosted-model catalog (seed ∪ backend /v1/models) so billing
+  // dispatch classifies newly-added hosted models correctly. Memoized.
+  startHostedModelCatalogRefresh();
 
   startGuestAuthProvisioningInBackground();
   startLocalBrowserRenderingSetupInBackground();

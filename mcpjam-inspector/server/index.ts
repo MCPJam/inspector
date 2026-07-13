@@ -42,6 +42,7 @@ import {
 } from "./middleware/session-auth";
 import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
+import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
@@ -240,6 +241,10 @@ warnOnConvexDevMisconfiguration(loadedEnv);
 generateSessionToken();
 setXaaIdpLogger(appLogger);
 initXAAIdpKeyPair();
+
+// Warm the hosted-model catalog (seed ∪ backend /v1/models) so billing
+// dispatch classifies newly-added hosted models correctly. Memoized.
+startHostedModelCatalogRefresh();
 
 startGuestAuthProvisioningInBackground();
 startLocalBrowserRenderingSetupInBackground();

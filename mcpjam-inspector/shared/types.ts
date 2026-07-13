@@ -1,6 +1,7 @@
 // Shared types between client and server
+import { HOSTED_MODEL_IDS } from "./hosted-model-ids.generated";
 
-import type { XaaRegistrationStrategy } from "./xaa";
+import type { RegistrationStrategy } from "./xaa";
 
 // Legacy server config (keeping for compatibility)
 export interface ServerConfig {
@@ -112,65 +113,13 @@ export type ModelProvider =
   | "qwen"
   | "custom";
 
-const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
-  "mistralai/mistral-small-2603",
-  "mistralai/mistral-medium-3-5",
-  "mistralai/mistral-large-2512",
-  "mistralai/devstral-2512",
-  "openai/gpt-oss-120b",
-  "openai/gpt-4o-mini",
-  "openai/gpt-5-nano",
-  "anthropic/claude-haiku-4.5",
-  "anthropic/claude-opus-4.5",
-  "anthropic/claude-sonnet-4.5",
-  "anthropic/claude-opus-4.6-fast",
-  "anthropic/claude-sonnet-4.6",
-  "anthropic/claude-sonnet-5",
-  "anthropic/claude-opus-4.6",
-  "anthropic/claude-opus-4.7",
-  "anthropic/claude-fable-5",
-  "openai/gpt-5.1-codex-mini",
-  "openai/gpt-5-mini",
-  "openai/gpt-5.4",
-  "openai/gpt-5.4-mini",
-  "openai/gpt-5.4-pro",
-  "openai/gpt-5.4-nano",
-  "openai/gpt-5.5",
-  "openai/gpt-5.5-pro",
-  "openai/gpt-5.3-codex",
-  "openai/gpt-5.3-chat",
-  "moonshotai/kimi-k2-thinking",
-  "moonshotai/kimi-k2-0905",
-  "google/gemini-2.5-flash",
-  "z-ai/glm-4.6",
-  "google/gemini-3.1-flash-lite-preview",
-  "google/gemini-3.1-pro-preview",
-  "google/gemma-4-31b-it",
-  "x-ai/grok-code-fast-1",
-  "deepseek/deepseek-v3.2",
-  "deepseek/deepseek-v4-pro",
-  "deepseek/deepseek-v4-flash",
-  "google/gemini-3-flash-preview",
-  "meta-llama/llama-4-scout",
-  "moonshotai/kimi-k2.5",
-  "x-ai/grok-4.1-fast",
-  "x-ai/grok-4-fast",
-  "x-ai/grok-4.20",
-  "x-ai/grok-4.5",
-  "z-ai/glm-4.7",
-  "z-ai/glm-4.7-flash",
-  "z-ai/glm-5.1",
-  "z-ai/glm-5.2",
-  "minimax/minimax-m2.1",
-  "minimax/minimax-m2.7",
-  "qwen/qwen3.6-plus",
-  "qwen/qwen3.5-9b",
-  "qwen/qwen3.5-35b-a3b",
-  "qwen/qwen3.5-27b",
-  "qwen/qwen3.5-122b-a10b",
-  "qwen/qwen3.5-flash-02-23",
-  "qwen/qwen3-max-thinking",
-];
+// The MCPJam-hosted ("free") model ids — the billing seed. Sourced from the
+// checked-in generated snapshot (emitted by the backend model-catalog
+// generator), no longer hand-maintained. The server-side hosted-model catalog
+// PRE-SEEDS its dynamic cache from this list, so the union of (seed ∪ backend
+// catalog) keeps billing classification correct even when the catalog is
+// empty/unreachable (a cold start still bills hosted models to MCPJam credits).
+export const MCPJAM_PROVIDED_MODEL_IDS: string[] = [...HOSTED_MODEL_IDS];
 
 const MCPJAM_GUEST_GATED_MODEL_IDS = [
   "mistralai/mistral-medium-3-5",
@@ -199,14 +148,57 @@ const MCPJAM_GUEST_ALLOWED_MODEL_IDS: string[] =
     (modelId) => !gatedGuestModelIds.has(modelId)
   );
 
+/** Minimal shape `getCanonicalModelId` matches against — `SUPPORTED_MODELS`
+ * satisfies it, and so does a `ModelDefinition[]` derived from the backend
+ * catalog. */
+export type CanonicalModelCandidate = { id: string | Model; provider: string };
+
+// Canonical (OpenRouter-style) id prefixes whose ModelProvider key differs from
+// the prefix. Everything else uses the prefix verbatim.
+const HOSTED_PROVIDER_ALIASES: Record<string, string> = {
+  "x-ai": "xai",
+  "meta-llama": "meta",
+  mistralai: "mistral",
+};
+
+/** Derive the provider key from a canonical hosted id's prefix. */
+export function hostedProviderFromCanonicalId(id: string): string {
+  const slash = id.indexOf("/");
+  const prefix = (slash > 0 ? id.slice(0, slash) : id).toLowerCase();
+  return HOSTED_PROVIDER_ALIASES[prefix] ?? prefix;
+}
+
+// The hosted snapshot projected to `{ id, provider }` so `getCanonicalModelId`
+// can still map a BARE hosted id (e.g. "gpt-5-nano" + provider "openai") to its
+// prefixed form now that the hosted display rows are gone from SUPPORTED_MODELS.
+const HOSTED_CANONICAL_CANDIDATES: CanonicalModelCandidate[] =
+  HOSTED_MODEL_IDS.map((id) => ({
+    id,
+    provider: hostedProviderFromCanonicalId(id),
+  }));
+
 export const getCanonicalModelId = (
   modelId: string,
-  provider?: string
+  provider?: string,
+  /**
+   * Extra known models to canonicalize against (unioned with the static
+   * `SUPPORTED_MODELS`). The client injects the dynamic backend catalog ∪ BYOK
+   * list here so catalog-only ids canonicalize correctly; defaults to `[]`, so
+   * every server/shared caller keeps the exact prior static behavior.
+   */
+  extraModels: readonly CanonicalModelCandidate[] = []
 ): string => {
   const normalizedModelId = modelId.trim();
   if (!normalizedModelId) {
     return normalizedModelId;
   }
+
+  // BYOK statics (SUPPORTED_MODELS) + the hosted snapshot candidates (hosted
+  // display rows were removed from SUPPORTED_MODELS) + any injected catalog.
+  const knownModels: readonly CanonicalModelCandidate[] =
+    extraModels.length > 0
+      ? [...SUPPORTED_MODELS, ...HOSTED_CANONICAL_CANDIDATES, ...extraModels]
+      : [...SUPPORTED_MODELS, ...HOSTED_CANONICAL_CANDIDATES];
 
   const normalizedProvider = provider?.trim().toLowerCase();
 
@@ -214,7 +206,7 @@ export const getCanonicalModelId = (
   // bare ids (e.g. "gpt-4o-mini" — BYOK) don't shadow their hosted
   // counterparts (e.g. "openai/gpt-4o-mini" — MCPJam-provided).
   if (normalizedProvider) {
-    const providerModels = SUPPORTED_MODELS.filter(
+    const providerModels = knownModels.filter(
       (model) => model.provider.toLowerCase() === normalizedProvider
     );
 
@@ -235,7 +227,7 @@ export const getCanonicalModelId = (
     }
   }
 
-  const exactMatch = SUPPORTED_MODELS.find(
+  const exactMatch = knownModels.find(
     (model) => String(model.id) === normalizedModelId
   );
   if (exactMatch) {
@@ -276,12 +268,28 @@ export const isGPT5Model = (modelId: string | Model): boolean => {
 export interface ModelDefinition {
   id: Model | string;
   name: string;
-  provider: ModelProvider;
+  /**
+   * Known provider keys keep autocomplete; `string` is accepted so a brand-new
+   * backend-catalog provider (e.g. "alibaba", "nvidia") renders on its own with
+   * no code change — the whole point of sourcing the picker from the catalog.
+   */
+  provider: ModelProvider | (string & {});
   /** Set when provider === "custom" to identify which custom provider to use */
   customProviderName?: string;
   contextLength?: number;
   disabled?: boolean;
   disabledReason?: string;
+  /**
+   * True when the model comes from the MCPJam backend hosted catalog (billed to
+   * MCPJam credits). Drives `isMCPJamProvidedModelMenuItem` and the free/paid
+   * locks. Absent on BYOK/org/custom models.
+   */
+  hosted?: boolean;
+  /**
+   * Whether MCPJam serves this hosted model to signed-out guests. Sourced from
+   * the catalog DTO; absent → treated as guest-gated (locked for guests).
+   */
+  guestAllowed?: boolean;
 }
 
 export enum Model {
@@ -346,18 +354,10 @@ export enum Model {
   GROK_4_FAST_REASONING = "grok-4-fast-reasoning",
 }
 
-const freeModel = (
-  id: string,
-  name: string,
-  provider: ModelProvider,
-  contextLength?: number
-): ModelDefinition => ({
-  id,
-  name: `${name} (Free)`,
-  provider,
-  ...(contextLength !== undefined ? { contextLength } : {}),
-});
-
+// SUPPORTED_MODELS now holds only BYOK entries (the user brings their own key):
+// `Model.*`-enum ids and "azure/…" ids. Hosted ("free") models are no longer
+// listed here — they come from the backend catalog (live) or the generated
+// snapshot (fallback). See hostedModelDefinitionsFromSnapshot / HOSTED_MODEL_IDS.
 export const SUPPORTED_MODELS: ModelDefinition[] = [
   {
     id: Model.CLAUDE_FABLE_5,
@@ -424,18 +424,6 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     name: "GPT-5.1 Codex Mini",
     provider: "openai",
     contextLength: 200000,
-  },
-  {
-    id: "openai/gpt-5.1",
-    name: "GPT-5.1 (Free)",
-    provider: "openai",
-    contextLength: 400000,
-  },
-  {
-    id: "openai/gpt-5.1-codex",
-    name: "GPT-5.1 Codex (Free)",
-    provider: "openai",
-    contextLength: 400000,
   },
   { id: Model.GPT_5, name: "GPT-5", provider: "openai", contextLength: 400000 },
   {
@@ -523,200 +511,6 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "google",
     contextLength: 1048576,
   },
-  {
-    id: "openai/gpt-oss-120b",
-    name: "GPT-OSS 120B (Free)",
-    provider: "openai",
-    contextLength: 131072,
-  },
-  freeModel(
-    "mistralai/mistral-small-2603",
-    "Mistral Small 4",
-    "mistral",
-    262144
-  ),
-  freeModel(
-    "mistralai/mistral-medium-3-5",
-    "Mistral Medium 3.5",
-    "mistral",
-    262144
-  ),
-  freeModel(
-    "mistralai/mistral-large-2512",
-    "Mistral Large 3 2512",
-    "mistral",
-    262144
-  ),
-  freeModel(
-    "mistralai/devstral-2512",
-    "Devstral 2 2512",
-    "mistral",
-    262144
-  ),
-  freeModel("openai/gpt-4o-mini", "GPT-4o Mini", "openai", 128000),
-  {
-    id: "openai/gpt-5-nano",
-    name: "GPT-5 Nano (Free)",
-    provider: "openai",
-    contextLength: 16000,
-  },
-  {
-    id: "anthropic/claude-haiku-4.5",
-    name: "Claude Haiku 4.5 (Free)",
-    provider: "anthropic",
-    contextLength: 200000,
-  },
-  freeModel("anthropic/claude-opus-4.5", "Claude Opus 4.5", "anthropic"),
-  freeModel("anthropic/claude-sonnet-4.5", "Claude Sonnet 4.5", "anthropic"),
-  freeModel(
-    "anthropic/claude-opus-4.6-fast",
-    "Claude Opus 4.6 Fast",
-    "anthropic"
-  ),
-  freeModel("anthropic/claude-sonnet-4.6", "Claude Sonnet 4.6", "anthropic"),
-  freeModel(
-    "anthropic/claude-sonnet-5",
-    "Claude Sonnet 5",
-    "anthropic",
-    1000000
-  ),
-  freeModel("anthropic/claude-opus-4.6", "Claude Opus 4.6", "anthropic"),
-  freeModel("anthropic/claude-opus-4.7", "Claude Opus 4.7", "anthropic"),
-  freeModel("anthropic/claude-fable-5", "Claude Fable 5", "anthropic", 1000000),
-  {
-    id: "openai/gpt-5.1-codex-mini",
-    name: "GPT-5.1 Codex Mini (Free)",
-    provider: "openai",
-    contextLength: 400000,
-  },
-  {
-    id: "openai/gpt-5-mini",
-    name: "GPT-5 Mini (Free)",
-    provider: "openai",
-    contextLength: 128000,
-  },
-  freeModel("openai/gpt-5.4", "GPT-5.4", "openai"),
-  freeModel("openai/gpt-5.4-mini", "GPT-5.4 Mini", "openai"),
-  freeModel("openai/gpt-5.4-pro", "GPT-5.4 Pro", "openai"),
-  freeModel("openai/gpt-5.4-nano", "GPT-5.4 Nano", "openai"),
-  freeModel("openai/gpt-5.5", "GPT-5.5", "openai"),
-  freeModel("openai/gpt-5.5-pro", "GPT-5.5 Pro", "openai"),
-  freeModel("openai/gpt-5.3-codex", "GPT-5.3 Codex", "openai"),
-  freeModel("openai/gpt-5.3-chat", "GPT-5.3 Chat", "openai"),
-  {
-    id: "moonshotai/kimi-k2-thinking",
-    name: "Kimi K2 Thinking (Free)",
-    provider: "moonshotai",
-    contextLength: 262144,
-  },
-  {
-    id: "moonshotai/kimi-k2-0905",
-    name: "Kimi K2 (Free)",
-    provider: "moonshotai",
-    contextLength: 262144,
-  },
-  {
-    id: "google/gemini-2.5-flash",
-    name: "Gemini 2.5 Flash (Free)",
-    provider: "google",
-    contextLength: 1048576,
-  },
-  freeModel("z-ai/glm-4.6", "GLM 4.6", "z-ai", 200000),
-  freeModel(
-    "google/gemini-3.1-flash-lite-preview",
-    "Gemini 3.1 Flash Lite Preview",
-    "google"
-  ),
-  freeModel(
-    "google/gemini-3.1-pro-preview",
-    "Gemini 3.1 Pro Preview",
-    "google"
-  ),
-  freeModel("google/gemma-4-31b-it", "Gemma 4 31B Instruct", "google"),
-  {
-    id: "x-ai/grok-code-fast-1",
-    name: "Grok Code Fast 1 (Free)",
-    provider: "xai",
-    contextLength: 256000,
-  },
-  {
-    id: "deepseek/deepseek-v3.2",
-    name: "DeepSeek V3.2 (Free)",
-    provider: "deepseek",
-    contextLength: 128000,
-  },
-  freeModel("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro", "deepseek"),
-  freeModel("deepseek/deepseek-v4-flash", "DeepSeek V4 Flash", "deepseek"),
-  {
-    id: "google/gemini-3-flash-preview",
-    name: "Gemini 3 Flash Preview (Free)",
-    provider: "google",
-    contextLength: 1048576,
-  },
-  {
-    id: "meta-llama/llama-4-scout",
-    name: "Llama 4 Scout (Free)",
-    provider: "meta",
-    contextLength: 512000,
-  },
-  {
-    id: "moonshotai/kimi-k2.5",
-    name: "Kimi K2.5 (Free)",
-    provider: "moonshotai",
-    contextLength: 262144,
-  },
-  {
-    id: "x-ai/grok-4.1-fast",
-    name: "Grok 4.1 Fast (Free)",
-    provider: "xai",
-    contextLength: 2000000,
-  },
-  {
-    id: "x-ai/grok-4.5",
-    name: "Grok 4.5",
-    provider: "xai",
-    contextLength: 500000,
-  },
-  freeModel("x-ai/grok-4-fast", "Grok 4 Fast", "xai"),
-  freeModel("x-ai/grok-4.20", "Grok 4.20", "xai"),
-  {
-    id: "z-ai/glm-4.7",
-    name: "GLM 4.7 (Free)",
-    provider: "z-ai",
-    contextLength: 200000,
-  },
-  {
-    id: "z-ai/glm-4.7-flash",
-    name: "GLM 4.7 Flash (Free)",
-    provider: "z-ai",
-    contextLength: 200000,
-  },
-  {
-    id: "z-ai/glm-5.1",
-    name: "GLM 5.1 (Free)",
-    provider: "z-ai",
-    contextLength: 200000,
-  },
-  {
-    id: "z-ai/glm-5.2",
-    name: "GLM 5.2 (Free)",
-    provider: "z-ai",
-    contextLength: 1000000,
-  },
-  {
-    id: "minimax/minimax-m2.1",
-    name: "MiniMax M2.1 (Free)",
-    provider: "minimax",
-    contextLength: 128000,
-  },
-  freeModel("minimax/minimax-m2.7", "MiniMax M2.7", "minimax"),
-  freeModel("qwen/qwen3.6-plus", "Qwen 3.6 Plus", "qwen"),
-  freeModel("qwen/qwen3.5-9b", "Qwen 3.5 9B", "qwen"),
-  freeModel("qwen/qwen3.5-35b-a3b", "Qwen 3.5 35B A3B", "qwen"),
-  freeModel("qwen/qwen3.5-27b", "Qwen 3.5 27B", "qwen"),
-  freeModel("qwen/qwen3.5-122b-a10b", "Qwen 3.5 122B A10B", "qwen"),
-  freeModel("qwen/qwen3.5-flash-02-23", "Qwen 3.5 Flash 02-23", "qwen"),
-  freeModel("qwen/qwen3-max-thinking", "Qwen 3 Max Thinking", "qwen"),
   // Mistral models
   {
     id: Model.MISTRAL_SMALL_2603,
@@ -809,7 +603,6 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "xai",
     contextLength: 2000000,
   },
-
   // Azure Models
   {
     id: "azure/gpt-5.1",
@@ -836,9 +629,55 @@ export const getModelById = (id: string): ModelDefinition | undefined => {
   return SUPPORTED_MODELS.find((model) => model.id === id);
 };
 
+const HOSTED_MODEL_IDS_SET: ReadonlySet<string> = new Set(HOSTED_MODEL_IDS);
+
 export const isModelSupported = (id: string): boolean => {
-  return SUPPORTED_MODELS.some((model) => model.id === id);
+  const canonical = getCanonicalModelId(id);
+  // BYOK statics (bare `Model.*`/azure ids) — the exhaustive local list.
+  if (SUPPORTED_MODELS.some((model) => model.id === id)) return true;
+  // Known hosted model from the snapshot seed.
+  if (HOSTED_MODEL_IDS_SET.has(canonical)) return true;
+  // A provider-prefixed id we don't statically know may still be a valid
+  // backend-catalog model added AFTER this snapshot (or an org OpenRouter /
+  // custom selection). Treat it as supported and let the live catalog / runtime
+  // be the real gate — gating on the static snapshot here would re-introduce
+  // the hand-maintained ceiling the dynamic catalog exists to remove.
+  return canonical.includes("/");
 };
+
+/**
+ * Derive a readable display name from a canonical hosted id for the fallback
+ * path (guests/offline see this instead of the live catalog's curated name):
+ * drop the redundant provider prefix (the picker groups by provider) and
+ * title-case the model segment. e.g. "openai/gpt-4o-mini" → "Gpt 4o Mini".
+ */
+export function hostedDisplayNameFromCanonicalId(id: string): string {
+  const slash = id.indexOf("/");
+  const modelPart = slash >= 0 ? id.slice(slash + 1) : id;
+  const titled = modelPart
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+  return titled || id;
+}
+
+/**
+ * Build ModelDefinitions for the full hosted ("free") catalog from the snapshot
+ * seed — the client picker's last-resort fallback when the live backend catalog
+ * is unreachable (guest / offline / Electron / empty cache). Display names are
+ * derived from the id (rich metadata comes from the live catalog); provider is
+ * derived from the id prefix. Never empty.
+ */
+export function hostedModelDefinitionsFromSnapshot(): ModelDefinition[] {
+  return HOSTED_MODEL_IDS.map((id) => ({
+    id,
+    name: hostedDisplayNameFromCanonicalId(id),
+    provider: hostedProviderFromCanonicalId(id),
+    hosted: true,
+    guestAllowed: isMCPJamGuestAllowedModel(id),
+  }));
+}
 
 /**
  * Amazon Bedrock model ids are bare strings like
@@ -937,7 +776,7 @@ export interface ServerFormData {
    * in the "Configure Server to Test" modal. Debugger-only — the Connect page
    * never sets it, so merges must preserve an existing value.
    */
-  xaaRegistrationStrategy?: XaaRegistrationStrategy;
+  xaaRegistrationStrategy?: RegistrationStrategy;
   /** Registry credential key for resolving OAuth client ID from env (e.g. "github") */
   oauthCredentialKey?: string;
   /** True for registry servers that use backend-managed preregistered OAuth credentials */

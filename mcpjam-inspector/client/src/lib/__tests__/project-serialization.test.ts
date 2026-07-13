@@ -100,6 +100,19 @@ describe("xaaRegistrationStrategy round-trip", () => {
     expect(servers.s1.xaaRegistrationStrategy).toBe("dcr");
   });
 
+  it("normalizes the legacy pre_registered spelling to preregistered", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "s1",
+        enabled: true,
+        useXaa: true,
+        url: "https://example.test/mcp",
+        xaaRegistrationStrategy: "pre_registered",
+      },
+    ]);
+    expect(servers.s1.xaaRegistrationStrategy).toBe("preregistered");
+  });
+
   it("drops an unknown persisted strategy so the flow falls back to the default", () => {
     const servers = deserializeServersFromConvex([
       {

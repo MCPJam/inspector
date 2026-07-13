@@ -10,7 +10,7 @@
  */
 import { tool } from "ai";
 import { z } from "zod";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import type { PinnableSkill } from "../../../shared/skill-types.js";
 import {
   CloudSkillsError,
@@ -53,7 +53,7 @@ export function shouldEnableCloudSkillTools(args: {
 }): boolean {
   const willRunHarness =
     args.harness !== undefined &&
-    isMCPJamProvidedModel(args.modelId, args.provider);
+    isHostedCatalogModel(args.modelId, args.provider);
   return !args.isGuest && !willRunHarness && args.hasProjectId;
 }
 

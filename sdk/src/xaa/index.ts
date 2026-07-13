@@ -8,11 +8,20 @@ export {
   DEFAULT_NEGATIVE_TEST_MODE,
   isNegativeTestMode,
   type NegativeTestMode,
-  XAA_REGISTRATION_STRATEGIES,
-  DEFAULT_XAA_REGISTRATION_STRATEGY,
-  normalizeXaaRegistrationStrategy,
-  type XaaRegistrationStrategy,
 } from "./constants.js";
+export {
+  REGISTRATION_STRATEGIES,
+  DEFAULT_REGISTRATION_STRATEGY,
+  DEFAULT_REGISTRATION_MODE,
+  normalizeRegistrationStrategy,
+  normalizeRegistrationMode,
+  normalizeAuthMethod,
+  AUTH_METHODS,
+  type RegistrationStrategy,
+  type RegistrationMode,
+  type AuthMethod,
+} from "../registration.js";
+export { NEGATIVE_TEST_MODE_DETAILS } from "./negative-test-modes.js";
 export {
   initXAAIdpKeyPair,
   getXAAIssuerUrl,
@@ -43,6 +52,24 @@ export {
   buildJwtBearerRequest,
   type XaaTokenEndpointAuthMethod,
 } from "./mint/jwt-bearer.js";
+export {
+  canonicalizeMcpResource,
+  buildProtectedResourceMetadataCandidates,
+  buildAuthorizationServerMetadataCandidates,
+  buildIssuerPublicationCandidates,
+  XAA_AS_METADATA_NAMES,
+} from "./discovery.js";
+export {
+  buildMcpInitializeRequest,
+  evaluateMcpInitializeResponse,
+  mcpInitializeExtensionEvidence,
+  MCP_INIT_ID,
+  MCP_PROTOCOL_VERSION,
+  XAA_MCP_EXTENSION,
+  type McpInitializeRequest,
+} from "./mcp-init.js";
+export { createInProcessXaaExecutor } from "./in-process-executor.js";
+export type { InProcessXaaExecutorOptions } from "./in-process-executor.js";
 export { runXaaFlow } from "./run-xaa-flow.js";
 export type {
   XaaCapabilityEvidence,

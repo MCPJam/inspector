@@ -195,14 +195,47 @@ export {
   NEGATIVE_TEST_MODES,
   DEFAULT_NEGATIVE_TEST_MODE,
   isNegativeTestMode,
-  XAA_REGISTRATION_STRATEGIES,
-  DEFAULT_XAA_REGISTRATION_STRATEGY,
-  normalizeXaaRegistrationStrategy,
 } from "./xaa/constants.js";
+export type { NegativeTestMode } from "./xaa/constants.js";
+// Shared client-registration vocabulary (single source of truth for OAuth
+// flows AND the XAA debugger's Client↔Resource-AS leg).
+export {
+  REGISTRATION_STRATEGIES,
+  DEFAULT_REGISTRATION_STRATEGY,
+  DEFAULT_REGISTRATION_MODE,
+  AUTH_METHODS,
+  normalizeRegistrationStrategy,
+  normalizeRegistrationMode,
+  normalizeAuthMethod,
+} from "./registration.js";
 export type {
-  NegativeTestMode,
-  XaaRegistrationStrategy,
-} from "./xaa/constants.js";
+  RegistrationStrategy,
+  RegistrationMode,
+  AuthMethod,
+} from "./registration.js";
+export { NEGATIVE_TEST_MODE_DETAILS } from "./xaa/negative-test-modes.js";
+// Pure XAA discovery + MCP-initialize helpers (browser+node safe, no I/O).
+export {
+  canonicalizeMcpResource,
+  buildProtectedResourceMetadataCandidates,
+  buildAuthorizationServerMetadataCandidates,
+  buildIssuerPublicationCandidates,
+  XAA_AS_METADATA_NAMES,
+} from "./xaa/discovery.js";
+export {
+  buildMcpInitializeRequest,
+  evaluateMcpInitializeResponse,
+  mcpInitializeExtensionEvidence,
+  MCP_INIT_ID,
+  MCP_PROTOCOL_VERSION,
+  XAA_MCP_EXTENSION,
+} from "./xaa/mcp-init.js";
+export type {
+  McpInitializeRequest,
+  XaaCapabilityEvidence,
+} from "./xaa/mcp-init.js";
+// XAA flow-core types + capability preflight (browser-safe engine primitives).
+export * from "./xaa/state-machines/index.js";
 export { EMPTY_OAUTH_FLOW_STATE } from "./oauth/state-machines/types.js";
 export type {
   HttpHistoryEntry,
