@@ -3,6 +3,7 @@ import {
   SUPPORTED_MODELS,
   type ModelDefinition,
   type ModelProvider,
+  hostedModelDefinitionsFromSnapshot,
   isMCPJamProvidedModel,
   Model,
 } from "@/shared/types";
@@ -60,9 +61,7 @@ export function buildAvailableModels(params: {
     meta: false,
   } as const;
 
-  const hosted =
-    hostedCatalog ??
-    SUPPORTED_MODELS.filter((m) => isMCPJamProvidedModel(String(m.id)));
+  const hosted = hostedCatalog ?? hostedModelDefinitionsFromSnapshot();
   // BYOK models the user has a key for — hosted ids handled by `hosted` above,
   // so exclude them here to avoid duplicates when a static model is both.
   const byok = SUPPORTED_MODELS.filter((m) => {
@@ -136,9 +135,7 @@ export function buildAvailableModelsFromOrgConfig(
   /** Hosted ("free") source; see `buildAvailableModels`. */
   hostedCatalog?: ModelDefinition[]
 ): ModelDefinition[] {
-  const hosted =
-    hostedCatalog ??
-    SUPPORTED_MODELS.filter((m) => isMCPJamProvidedModel(String(m.id)));
+  const hosted = hostedCatalog ?? hostedModelDefinitionsFromSnapshot();
 
   if (!orgConfig?.providers) {
     // No org config loaded yet — return only MCPJam-provided (hosted) models
