@@ -18,6 +18,8 @@ describe("OAuth copy log formatters", () => {
         body: "client_secret=info-client-secret&code=info-code-secret",
         request:
           "clientSecret=camel-client-secret&accessToken=camel-access-secret&authorization=text-auth-secret&cookie=text-cookie-secret&credential=text-credential-secret&setCookie=text-set-cookie-secret",
+        basicAuthorization:
+          "Authorization: Basic dXNlcjpwYXNzd29yZA==",
       },
       error: {
         message: "Bearer info-error-secret",
@@ -87,6 +89,7 @@ describe("OAuth copy log formatters", () => {
         "text-cookie-secret",
         "text-credential-secret",
         "text-set-cookie-secret",
+        "dXNlcjpwYXNzd29yZA==",
         "info-error-secret",
         "camel-id-secret",
         "url-user-secret",

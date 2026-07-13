@@ -77,7 +77,7 @@ const sensitiveStringFieldPattern = [...SENSITIVE_FIELDS]
   .join("|");
 
 const sensitiveStringAssignmentPattern = new RegExp(
-  `\\b((?:${sensitiveStringFieldPattern})\\s*["']?\\s*[:=]\\s*["']?)([^"'&\\s,}]+)`,
+  `\\b((?:${sensitiveStringFieldPattern})\\s*["']?\\s*[:=]\\s*["']?)([^"'&\\r\\n,}]+)`,
   "gi",
 );
 
