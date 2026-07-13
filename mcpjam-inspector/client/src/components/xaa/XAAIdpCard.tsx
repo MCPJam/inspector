@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, Copy, Info, KeyRound } from "lucide-react";
 import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@mcpjam/design-system/hover-card";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@mcpjam/design-system/dialog";
 import { Switch } from "@mcpjam/design-system/switch";
 import { HOSTED_MODE } from "@/lib/config";
 import { copyToClipboard } from "@/lib/clipboard";
@@ -64,83 +67,105 @@ function CopyField({ label, value }: { label: string; value: string }) {
   );
 }
 
-// Long-form explanation, behind an info icon so the bar stays compact. Hover
-// (or focus) to read how MCPJam plays the IdP and what it stamps into each
-// ID-JAG.
-function IdpInfo() {
+function SetupGuidance() {
   return (
-    <HoverCard openDelay={150} closeDelay={150}>
-      <HoverCardTrigger asChild>
+    <Dialog>
+      <DialogTrigger asChild>
         <button
           type="button"
-          className="inline-flex shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label="How MCPJam acts as your identity provider"
+          className="inline-flex shrink-0 items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <Info className="h-3.5 w-3.5" />
+          <Info className="h-3.5 w-3.5 text-muted-foreground" />
+          Before you run this test
         </button>
-      </HoverCardTrigger>
-      <HoverCardContent
-        align="start"
-        className="w-[26rem] space-y-3 text-xs text-muted-foreground"
-      >
-        <p>
-          Use this to test whether your authorization server correctly validates
-          ID-JAGs from an external issuer. MCPJam acts as the test IdP and the
-          requesting client; your authorization server plays the resource
-          app&apos;s authorization server.
-        </p>
-
-        <div className="space-y-1.5">
-          <div className="text-xs font-medium text-foreground">
-            In your authorization server
-          </div>
-          <ul className="list-disc space-y-1.5 pl-5 marker:text-muted-foreground">
-            <li>
-              Trust MCPJam as an ID-JAG issuer so it can verify assertion
-              signatures. Give it <em>either</em> the Issuer URL (if your server
-              auto-discovers keys from OAuth/OIDC metadata) <em>or</em> the JWKS
-              URL directly — both resolve to the same signing keys, so you
-              don&apos;t need both.
-            </li>
-            <li>
-              Register the client ID MCPJam will present, so the token exchange
-              is recognized.
-            </li>
-          </ul>
-        </div>
-
-        <div className="space-y-1.5">
-          <div className="text-xs font-medium text-foreground">
-            MCPJam stamps these into each ID-JAG
-          </div>
+      </DialogTrigger>
+      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Before you run this test</DialogTitle>
+          <DialogDescription>
+            Configure your authorization server to accept MCPJam&apos;s ID-JAG
+            and exchange it for an access token.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
           <p>
-            You set these in the debugger run config, not in your authorization
-            server — make sure your server expects them.
+            MCPJam acts as both the identity provider and the client/agent in
+            this test. Your authorization server must turn MCPJam&apos;s ID-JAG
+            into an access token.
           </p>
-          <ul className="list-disc space-y-1.5 pl-5 marker:text-muted-foreground">
+          <ol className="list-decimal space-y-2 pl-5 marker:font-medium marker:text-foreground">
             <li>
-              <code className="font-mono">aud</code> → your authorization
-              server&apos;s issuer
+              <strong className="font-medium text-foreground">
+                Trust MCPJam&apos;s identity provider.
+              </strong>{" "}
+              Add either the Issuer URL or JWKS URL to your authorization
+              server so it can verify MCPJam&apos;s ID-JAGs.
             </li>
             <li>
-              <code className="font-mono">resource</code> → the MCP server&apos;s
-              resource identifier
+              <strong className="font-medium text-foreground">
+                Choose how MCPJam identifies the client.
+              </strong>{" "}
+              Use the option your authorization server supports:
+              <ul className="mt-1 list-[circle] space-y-1 pl-5 marker:text-muted-foreground">
+                <li>
+                  <strong>Pre-registration:</strong> Create a client for MCPJam
+                  in your authorization server, then enter the returned client
+                  ID in MCPJam.
+                </li>
+                <li>
+                  <strong>DCR:</strong> Let MCPJam create a client during the
+                  test through your registration endpoint.
+                </li>
+                <li>
+                  <strong>CIMD:</strong> Let MCPJam identify itself with its
+                  client metadata URL. Your authorization server must support
+                  CIMD.
+                </li>
+              </ul>
             </li>
             <li>
-              <code className="font-mono">client_id</code> → the Client ID you
-              set in Configure Server to Test
+              <strong className="font-medium text-foreground">
+                Check the exchange support.
+              </strong>{" "}
+              Your authorization server must accept an ID-JAG from an external
+              issuer and exchange it with the{" "}
+              <code className="font-mono">jwt-bearer</code> grant.
             </li>
-          </ul>
+          </ol>
+          <div className="flex items-start gap-2 border-l-2 border-amber-500 pl-3 pt-1">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+            <span>
+              Some authorization servers do not support this cross-app flow
+              yet.
+            </span>
+          </div>
+          <div className="space-y-1.5 pt-1">
+            <div className="font-medium text-foreground">
+              What your authorization server receives
+            </div>
+            <p>
+              MCPJam puts these values in the ID-JAG. Your authorization server
+              should verify that they match the expected authorization server,
+              MCP server, and client.
+            </p>
+            <ul className="list-disc space-y-1 pl-5 marker:text-muted-foreground">
+              <li>
+                <code className="font-mono">aud</code> → your authorization
+                server&apos;s issuer
+              </li>
+              <li>
+                <code className="font-mono">resource</code> → the MCP server&apos;s
+                resource identifier
+              </li>
+              <li>
+                <code className="font-mono">client_id</code> → MCPJam&apos;s
+                client identity
+              </li>
+            </ul>
+          </div>
         </div>
-
-        <p>
-          Cross-app access is new — some authorization servers don&apos;t yet
-          expose a way to trust an external ID-JAG issuer and redeem it via the{" "}
-          <code className="font-mono">jwt-bearer</code> grant. Check that yours
-          supports it before wiring up the steps above.
-        </p>
-      </HoverCardContent>
-    </HoverCard>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -148,7 +173,7 @@ function IdpInfo() {
  * Persistent "MCPJam is your identity provider" bar. The XAA debugger always
  * mints assertions with MCPJam as the IdP, so this surfaces the issuer + JWKS
  * URLs a developer registers with their own authorization server, inline with
- * copy buttons. The how-and-why detail lives behind the info icon.
+ * copy buttons and visible setup guidance.
  *
  * Hosted signed-in users get the org-scoped issuer (/o/<orgId>): minting under
  * it requires org membership, so it is the issuer to register with a real
@@ -224,19 +249,23 @@ export function XAAIdpCard({
 
   return (
     <div className="border-b border-border bg-background px-4 py-3">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="flex shrink-0 items-center gap-1.5">
-          <KeyRound className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="text-sm font-semibold">
-            MCPJam is your identity provider
-          </span>
-          <IdpInfo />
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <div className="flex shrink-0 items-center gap-1.5">
+              <KeyRound className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="text-sm font-semibold">
+                MCPJam is your identity provider
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <CopyField label="Issuer URL" value={issuerBaseUrl} />
+              <CopyField label="OpenID Config" value={openidConfigUrl} />
+              <CopyField label="JWKS URL" value={jwksUrl} />
+            </div>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <CopyField label="Issuer URL" value={issuerBaseUrl} />
-          <CopyField label="OpenID Config" value={openidConfigUrl} />
-          <CopyField label="JWKS URL" value={jwksUrl} />
-        </div>
+        <SetupGuidance />
       </div>
 
       {!HOSTED_MODE && (
@@ -255,7 +284,7 @@ export function XAAIdpCard({
                 Use hosted issuer (app.mcpjam.com)
               </span>
               {!canUseHostedIssuer && hostedIssuerDisabledReason && (
-                <span>— {hostedIssuerDisabledReason}</span>
+                <span>({hostedIssuerDisabledReason})</span>
               )}
             </label>
           )}
@@ -266,7 +295,7 @@ export function XAAIdpCard({
                 ID tokens and ID-JAGs are minted by{" "}
                 <code className="font-mono">app.mcpjam.com</code>, so a cloud
                 authorization server can discover this issuer and fetch its
-                JWKS — no tunnel needed. Token requests and MCP calls still run
+                JWKS. No tunnel is needed. Token requests and MCP calls still run
                 from this machine; your authorization server must be reachable
                 over https.
               </span>
@@ -276,7 +305,7 @@ export function XAAIdpCard({
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
               <span>
                 These are local URLs. Your authorization server can only fetch
-                them if it can reach this machine — a cloud-hosted Okta or
+                them if it can reach this machine. A cloud-hosted Okta or
                 Auth0 tenant cannot reach{" "}
                 <code className="font-mono">localhost</code>.
                 {onIssuerModeChange
@@ -290,7 +319,7 @@ export function XAAIdpCard({
 
       {isOrgScoped && (
         <div className="mt-3 text-xs text-muted-foreground">
-          This issuer is scoped to your organization — only its members can
+          This issuer is scoped to your organization. Only its members can
           mint assertions under it.
         </div>
       )}

@@ -55,25 +55,14 @@ describe("XAAIdpCard", () => {
     expect(await screen.findByText("Copied")).toBeInTheDocument();
   });
 
-  it("keeps the long-form detail behind the info icon until hovered", async () => {
+  it("opens the setup guidance in a modal", async () => {
     const user = userEvent.setup();
     render(<XAAIdpCard />);
 
-    expect(
-      screen.queryByText(/the Client ID you set in Configure Server to Test/i)
-    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /before you run this test/i }));
 
-    await user.hover(
-      screen.getByRole("button", {
-        name: /how mcpjam acts as your identity provider/i,
-      })
-    );
-
-    expect(
-      await screen.findByText(
-        /the Client ID you set in Configure Server to Test/i
-      )
-    ).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText(/MCPJam's client identity/i)).toBeInTheDocument();
   });
 
   // On mount the card reads the server's OpenID config to resolve the real
