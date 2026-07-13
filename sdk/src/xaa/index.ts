@@ -35,3 +35,9 @@ export {
   type IssueAccessTokenParams,
 } from "./mint/signer.js";
 export { buildJwtBearerBody } from "./mint/jwt-bearer.js";
+export { runXaaFlow } from "./run-xaa-flow.js";
+export type {
+  XaaFlowConfig,
+  XaaFlowResult,
+  XaaFlowStep,
+} from "./run-xaa-flow.js";
