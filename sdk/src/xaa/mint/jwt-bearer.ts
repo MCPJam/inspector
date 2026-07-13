@@ -19,3 +19,80 @@ export function buildJwtBearerBody(args: {
     ...(args.resource ? { resource: args.resource } : {}),
   };
 }
+
+export type XaaTokenEndpointAuthMethod =
+  | "client_secret_post"
+  | "client_secret_basic"
+  | "none";
+
+// RFC 6749 section 2.3.1 requires each credential to be form-urlencoded before
+// the `client_id:client_secret` pair is Base64-encoded.
+function formUrlEncode(value: string): string {
+  return encodeURIComponent(value)
+    .replace(
+      /[!'()~]/g,
+      (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+    )
+    .replace(/%20/g, "+");
+}
+
+function encodeBasicClientAuth(clientId: string, clientSecret: string): string {
+  return Buffer.from(
+    `${formUrlEncode(clientId)}:${formUrlEncode(clientSecret)}`
+  ).toString("base64");
+}
+
+/** Build the jwt-bearer body and the selected OAuth client-auth headers. */
+export function buildJwtBearerRequest(args: {
+  assertion: string;
+  clientId?: string | null;
+  clientSecret?: string | null;
+  scope?: string | null;
+  resource?: string | null;
+  tokenEndpointAuthMethod?: XaaTokenEndpointAuthMethod | null;
+}): { headers: Record<string, string>; body: Record<string, string> } {
+  const method = args.tokenEndpointAuthMethod;
+
+  if (method === "client_secret_basic") {
+    if (!args.clientId || !args.clientSecret) {
+      throw new Error(
+        "client_secret_basic requires both a client_id and a client_secret"
+      );
+    }
+    return {
+      headers: {
+        Authorization: `Basic ${encodeBasicClientAuth(
+          args.clientId,
+          args.clientSecret
+        )}`,
+      },
+      body: buildJwtBearerBody({
+        ...args,
+        clientId: null,
+        clientSecret: null,
+      }),
+    };
+  }
+
+  if (method === "none") {
+    if (!args.clientId) {
+      throw new Error("A public (none) client request requires a client_id");
+    }
+    return {
+      headers: {},
+      body: buildJwtBearerBody({ ...args, clientSecret: null }),
+    };
+  }
+
+  if (method === "client_secret_post") {
+    if (!args.clientId || !args.clientSecret) {
+      throw new Error(
+        "client_secret_post requires both a client_id and a client_secret"
+      );
+    }
+  }
+
+  // Preserve the legacy no-method behavior: credentials, when present, stay
+  // in the form body.
+  return { headers: {}, body: buildJwtBearerBody(args) };
+}

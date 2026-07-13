@@ -4,6 +4,15 @@ import { getGlobalOptions } from "../lib/server-config.js";
 import { cliError, setProcessExitCode, usageError, writeResult } from "../lib/output.js";
 import { redactSensitiveValue } from "../lib/redaction.js";
 
+type XaaTokenEndpointAuthMethod =
+  | "client_secret_post"
+  | "client_secret_basic"
+  | "none";
+type XaaCliFlowConfig = XaaFlowConfig & {
+  tokenEndpointAuthMethod?: XaaTokenEndpointAuthMethod;
+  timeoutMs?: number;
+};
+
 export interface XaaCommandOptions {
   url: string;
   issuerBaseUrl: string;
@@ -13,6 +22,7 @@ export interface XaaCommandOptions {
   tokenEndpoint?: string;
   email?: string;
   clientSecret?: string;
+  tokenEndpointAuthMethod?: XaaTokenEndpointAuthMethod;
   scopes?: string;
   httpsOnly?: boolean;
 }
@@ -49,6 +59,11 @@ export function registerXaaCommands(program: Command): void {
     )
     .option("--email <email>", "Simulated end-user email claim")
     .option("--client-secret <secret>", "OAuth client secret presented at redemption")
+    .option(
+      "--token-endpoint-auth-method <method>",
+      "Token endpoint client authentication: client_secret_basic, client_secret_post, or none (default: infer from metadata)",
+      parseTokenEndpointAuthMethod,
+    )
     .option("--scopes <scopes>", "Space-separated scope string")
     .option(
       "--https-only",
@@ -57,7 +72,10 @@ export function registerXaaCommands(program: Command): void {
     .action(async (options, command) => {
       const globalOptions = getGlobalOptions(command);
       const format = globalOptions.format;
-      const config = buildXaaConfig(options as XaaCommandOptions);
+      const config = buildXaaConfig(
+        options as XaaCommandOptions,
+        globalOptions.timeout,
+      );
 
       const isTTY = process.stderr.isTTY && !globalOptions.quiet;
       if (isTTY) {
@@ -127,7 +145,10 @@ function replaceRawValue(value: unknown, secret: string): unknown {
   return value;
 }
 
-export function buildXaaConfig(options: XaaCommandOptions): XaaFlowConfig {
+export function buildXaaConfig(
+  options: XaaCommandOptions,
+  timeoutMs?: number,
+): XaaCliFlowConfig {
   const serverUrl = options.url.trim();
   assertValidUrl(serverUrl, "server URL");
 
@@ -154,6 +175,19 @@ export function buildXaaConfig(options: XaaCommandOptions): XaaFlowConfig {
     assertValidUrl(tokenEndpoint, "token endpoint");
   }
 
+  if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
+    throw usageError("--timeout must be a positive number.");
+  }
+  if (
+    options.tokenEndpointAuthMethod !== "none" &&
+    options.tokenEndpointAuthMethod !== undefined &&
+    !options.clientSecret
+  ) {
+    throw usageError(
+      `--token-endpoint-auth-method ${options.tokenEndpointAuthMethod} requires --client-secret.`,
+    );
+  }
+
   return {
     serverUrl,
     issuerBaseUrl,
@@ -163,9 +197,28 @@ export function buildXaaConfig(options: XaaCommandOptions): XaaFlowConfig {
     ...(tokenEndpoint ? { tokenEndpoint } : {}),
     ...(options.email?.trim() ? { email: options.email.trim() } : {}),
     ...(options.clientSecret ? { clientSecret: options.clientSecret } : {}),
+    ...(options.tokenEndpointAuthMethod
+      ? { tokenEndpointAuthMethod: options.tokenEndpointAuthMethod }
+      : {}),
     ...(options.scopes?.trim() ? { scope: options.scopes.trim() } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     httpsOnly: options.httpsOnly ?? false,
   };
+}
+
+function parseTokenEndpointAuthMethod(
+  value: string,
+): XaaTokenEndpointAuthMethod {
+  if (
+    value === "client_secret_basic" ||
+    value === "client_secret_post" ||
+    value === "none"
+  ) {
+    return value;
+  }
+  throw usageError(
+    "--token-endpoint-auth-method must be client_secret_basic, client_secret_post, or none.",
+  );
 }
 
 function assertValidUrl(value: string, label: string): void {

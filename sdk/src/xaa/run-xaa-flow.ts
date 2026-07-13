@@ -1,62 +1,57 @@
-// Headless Cross-App Access (ID-JAG) flow driver. Mirrors the inspector's XAA
-// debugger, minus the UI: it self-issues an ID-JAG with the in-process mint,
-// then redeems it at the target authorization server (RFC 7523 jwt-bearer) and
-// calls the MCP server with the resulting access token — reporting whatever
-// happens at each step.
-//
-// Reachability note: the ID-JAG's `iss`/JWKS is served by THIS host, so a cloud
-// authorization server can only validate it when the issuer origin is reachable
-// (an enterprise/self-hosted AS on the network, or a tunnelled origin). Against
-// an unreachable issuer, redemption fails at the AS — which is itself the
-// finding this tool reports.
+// Headless Cross-App Access (ID-JAG) flow driver. It self-issues an ID-JAG,
+// verifies that the configured issuer actually publishes the signing key,
+// redeems the assertion, and probes the protected MCP resource.
 import {
-  executeOAuthProxy,
   executeDebugOAuthProxy,
+  executeOAuthProxy,
   fetchOAuthMetadata,
 } from "../oauth-proxy.js";
-import { initXAAIdpKeyPair, getXAAIssuerUrl } from "./mint/keypair.js";
+import {
+  ID_JAG_GRANT_PROFILE,
+  JWT_BEARER_GRANT,
+} from "../oauth/client-identity.js";
+import {
+  getXAAIdpJwks,
+  getXAAIssuerUrl,
+  initXAAIdpKeyPair,
+} from "./mint/keypair.js";
 import { issueNegativeIdJag, verifyXaaJwt } from "./mint/signer.js";
-import { buildJwtBearerBody } from "./mint/jwt-bearer.js";
+import {
+  buildJwtBearerRequest,
+  type XaaTokenEndpointAuthMethod,
+} from "./mint/jwt-bearer.js";
 import {
   DEFAULT_NEGATIVE_TEST_MODE,
   type NegativeTestMode,
 } from "./constants.js";
 
 const ID_JAG_TYP = "oauth-id-jag+jwt";
-// JSON-RPC id we send on `initialize`; the response must echo it back.
 const MCP_INIT_ID = "mcpjam-xaa-cli";
-// Protocol version advertised on the initialize probe — sent both in the params
-// and as the MCP-Protocol-Version HTTP header (some 2025-11-25 servers enforce
-// the header on streamable-HTTP requests).
 const MCP_PROTOCOL_VERSION = "2025-11-25";
+const XAA_MCP_EXTENSION =
+  "io.modelcontextprotocol/enterprise-managed-authorization";
+
+export type XaaCapabilityEvidence = "advertised" | "not_advertised" | "unknown";
 
 export interface XaaFlowConfig {
   /** Target MCP server URL (the protected resource). */
   serverUrl: string;
-  /**
-   * Target authorization-server issuer. When set, protected-resource metadata
-   * (RFC 9728) discovery is skipped and this is used directly as the ID-JAG
-   * `aud` and the base for token-endpoint discovery.
-   */
+  /** Explicit authorization-server issuer; skips resource discovery. */
   authzServerIssuer?: string;
-  /** Skip AS-metadata discovery and redeem here directly. */
+  /** Explicit token endpoint; skips authorization-server discovery. */
   tokenEndpoint?: string;
-  /**
-   * Origin the local mock IdP issues from (and that the AS must fetch JWKS
-   * from). The signed `iss` is `getXAAIssuerUrl(issuerBaseUrl)` (appends
-   * `/xaa`), reported verbatim.
-   */
+  /** Base URL whose `/xaa` issuer metadata and JWKS are publicly reachable. */
   issuerBaseUrl: string;
-  /** Simulated end-user identity. */
   subject: string;
   email?: string;
-  /** OAuth client the ID-JAG is issued for; also presented at redemption. */
   clientId: string;
   clientSecret?: string;
   scope?: string;
-  /** Deliberately break the ID-JAG to probe the AS's validation. */
+  tokenEndpointAuthMethod?: XaaTokenEndpointAuthMethod;
   negativeTestMode?: NegativeTestMode;
-  /** Reject non-HTTPS / private targets. Default false (local dev targets). */
+  /** Per outbound request timeout in milliseconds. */
+  timeoutMs?: number;
+  /** Reject non-HTTPS / private targets. Default false for local development. */
   httpsOnly?: boolean;
   onProgress?: (message: string) => void;
 }
@@ -67,38 +62,65 @@ export interface XaaFlowStep {
   detail?: string;
 }
 
+export interface XaaRedemptionResult {
+  status: number;
+  tokenIssued: boolean;
+  error?: string;
+  body?: unknown;
+}
+
 export interface XaaFlowResult {
   completed: boolean;
   issuer: string;
   authzServerIssuer?: string;
   tokenEndpoint?: string;
+  authorizationServerCapabilities?: {
+    idJagProfile: XaaCapabilityEvidence;
+    jwtBearerGrant: XaaCapabilityEvidence;
+    tokenEndpointAuthMethods?: string[];
+    selectedTokenEndpointAuthMethod: XaaTokenEndpointAuthMethod;
+  };
   idJag?: {
     token: string;
     claims: Record<string, unknown>;
-    /** Local verification against the just-signed key (false for negative modes
-     * that break the signature/issuer/type). */
     verified: boolean;
     verifyError?: string;
   };
-  redemption?: {
-    status: number;
-    tokenIssued: boolean;
-    error?: string;
-    body?: unknown;
+  redemption?: XaaRedemptionResult;
+  negativeProbe?: {
+    mode: Exclude<NegativeTestMode, "valid">;
+    baselineAccepted: boolean;
+    baselineStatus: number;
+    baselineError?: string;
+    outcome: "rejected" | "accepted" | "inconclusive";
   };
-  mcp?: { status: number; ok: boolean; error?: string };
+  mcp?: {
+    status: number;
+    ok: boolean;
+    error?: string;
+    xaaExtension: XaaCapabilityEvidence;
+  };
   steps: XaaFlowStep[];
   error?: string;
 }
 
+interface DiscoveredAuthorizationServer {
+  issuer: string;
+  tokenEndpoint: string;
+  metadata: Record<string, unknown>;
+}
+
+interface RedeemedAssertion {
+  result: XaaRedemptionResult;
+  accessToken?: string;
+}
+
+type PublishedJwk = JsonWebKey & { kid?: string };
+
 function canonicalResource(serverUrl: string): string {
   try {
-    const u = new URL(serverUrl);
-    // Preserve the path exactly (including a trailing slash) and the query —
-    // both can distinguish resources, and the `resource` we mint/redeem for
-    // must match the URL the access token is ultimately used against. URL()
-    // still normalizes the origin (lowercase host, default port removal).
-    return `${u.origin}${u.pathname}${u.search}`;
+    const url = new URL(serverUrl);
+    return `${url.origin}${url.pathname}${url.search}`;
   } catch {
     return serverUrl;
   }
@@ -106,75 +128,218 @@ function canonicalResource(serverUrl: string): string {
 
 function wellKnownCandidates(issuer: string, name: string): string[] {
   let origin: string;
-  let path: string; // exact pathname incl. any trailing slash; "" for the root
+  let path: string;
   try {
-    const u = new URL(issuer);
-    origin = u.origin;
-    path = u.pathname === "/" ? "" : u.pathname;
+    const url = new URL(issuer);
+    origin = url.origin;
+    path = url.pathname === "/" ? "" : url.pathname;
   } catch {
     return [`${issuer.replace(/\/+$/, "")}/.well-known/${name}`];
   }
-  if (!path) {
-    return [`${origin}/.well-known/${name}`];
-  }
+  if (!path) return [`${origin}/.well-known/${name}`];
+
   const pathNoTrailing = path.replace(/\/+$/, "");
-  // Path issuer/resource: RFC 8414/9728 path-insertion preserving the exact path
-  // (including a trailing slash — some servers publish PRM under it); the OIDC
-  // path-appended form (`issuer + /.well-known/...`, which OIDC-only servers
-  // require); and the origin-root form (where RFC 9728 PRM is commonly served).
-  // Most specific first; for AS metadata a wrong-tenant root document is rejected
-  // downstream by the `metadata.issuer` match check.
-  const candidates = new Set<string>([
-    `${origin}/.well-known/${name}${path}`,
-    `${origin}${pathNoTrailing}/.well-known/${name}`,
-    `${origin}/.well-known/${name}`,
-  ]);
-  return [...candidates];
+  return [
+    ...new Set([
+      `${origin}/.well-known/${name}${path}`,
+      `${origin}${pathNoTrailing}/.well-known/${name}`,
+      `${origin}/.well-known/${name}`,
+    ]),
+  ];
 }
 
-// Discover a candidate authorization server's token endpoint (RFC 8414 / OIDC).
-// Returns the AS's own canonical `issuer` alongside the endpoint, or undefined
-// when no candidate URL yields metadata whose `issuer` matches (RFC 8414 §3.3 —
-// a mismatched document must not redirect the assertion to another issuer).
 async function discoverAsTokenEndpoint(
   candidateIssuer: string,
   httpsOnly: boolean,
-): Promise<{ issuer: string; tokenEndpoint: string } | undefined> {
+  timeoutMs: number | undefined
+): Promise<DiscoveredAuthorizationServer | undefined> {
   for (const name of ["oauth-authorization-server", "openid-configuration"]) {
     for (const url of wellKnownCandidates(candidateIssuer, name)) {
-      const meta = await fetchOAuthMetadata(url, httpsOnly);
-      if (!("status" in meta)) {
-        const metaIssuer = meta.metadata.issuer;
-        const te = meta.metadata.token_endpoint;
-        if (
-          typeof metaIssuer === "string" &&
-          metaIssuer.replace(/\/+$/, "") ===
-            candidateIssuer.replace(/\/+$/, "") &&
-          typeof te === "string"
-        ) {
-          return { issuer: metaIssuer, tokenEndpoint: te };
-        }
+      const response = await fetchOAuthMetadata(url, httpsOnly, timeoutMs);
+      if ("status" in response) continue;
+
+      const issuer = response.metadata.issuer;
+      const tokenEndpoint = response.metadata.token_endpoint;
+      if (
+        typeof issuer === "string" &&
+        issuer.replace(/\/+$/, "") === candidateIssuer.replace(/\/+$/, "") &&
+        typeof tokenEndpoint === "string"
+      ) {
+        return { issuer, tokenEndpoint, metadata: response.metadata };
       }
     }
   }
   return undefined;
 }
 
+function listEvidence(value: unknown, expected: string): XaaCapabilityEvidence {
+  if (value === undefined || value === null) return "unknown";
+  return Array.isArray(value) && value.includes(expected)
+    ? "advertised"
+    : "not_advertised";
+}
+
+function stringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+function selectTokenEndpointAuthMethod(
+  explicit: XaaTokenEndpointAuthMethod | undefined,
+  clientSecret: string | undefined,
+  advertised: string[] | undefined
+): XaaTokenEndpointAuthMethod {
+  if (explicit) return explicit;
+  if (!clientSecret) return "none";
+  if (advertised?.includes("client_secret_basic")) {
+    return "client_secret_basic";
+  }
+  if (advertised?.includes("client_secret_post")) {
+    return "client_secret_post";
+  }
+  if (advertised?.includes("none")) return "none";
+  // Metadata is optional; preserve the previous behavior when it is absent.
+  return "client_secret_post";
+}
+
+function publicJwkMatches(local: JsonWebKey, published: JsonWebKey): boolean {
+  if (local.kty !== published.kty) return false;
+  if (local.kty === "RSA") {
+    return local.n === published.n && local.e === published.e;
+  }
+  return (
+    local.crv === published.crv &&
+    local.x === published.x &&
+    local.y === published.y
+  );
+}
+
+async function verifyIssuerPublication(
+  issuer: string,
+  httpsOnly: boolean,
+  timeoutMs: number | undefined
+): Promise<{ ok: boolean; detail: string }> {
+  let metadata: Record<string, unknown> | undefined;
+  for (const url of wellKnownCandidates(issuer, "openid-configuration")) {
+    const response = await fetchOAuthMetadata(url, httpsOnly, timeoutMs);
+    if (!("status" in response) && response.metadata.issuer === issuer) {
+      metadata = response.metadata;
+      break;
+    }
+  }
+
+  if (!metadata) {
+    return {
+      ok: false,
+      detail: `No OpenID configuration with issuer ${issuer} was reachable`,
+    };
+  }
+
+  const jwksUri = metadata.jwks_uri;
+  if (typeof jwksUri !== "string") {
+    return { ok: false, detail: "Issuer metadata does not contain jwks_uri" };
+  }
+
+  const response = await executeOAuthProxy({
+    url: jwksUri,
+    headers: { Accept: "application/json" },
+    httpsOnly,
+    timeoutMs,
+  });
+  const rawKeys =
+    response.status >= 200 &&
+    response.status < 300 &&
+    response.body &&
+    typeof response.body === "object" &&
+    Array.isArray((response.body as { keys?: unknown }).keys)
+      ? (response.body as { keys: PublishedJwk[] }).keys ?? []
+      : [];
+  const keys = rawKeys.filter(
+    (key): key is PublishedJwk => Boolean(key) && typeof key === "object"
+  );
+  const localKey = getXAAIdpJwks().keys[0];
+  const matchingKey = keys.find(
+    (key) => key.kid === localKey.kid && publicJwkMatches(localKey, key)
+  );
+  if (!matchingKey) {
+    return {
+      ok: false,
+      detail: `Published JWKS ${jwksUri} does not contain the local signing key ${localKey.kid}`,
+    };
+  }
+  return { ok: true, detail: `${jwksUri} (${localKey.kid})` };
+}
+
+async function redeemAssertion(args: {
+  assertion: string;
+  tokenEndpoint: string;
+  tokenEndpointAuthMethod: XaaTokenEndpointAuthMethod;
+  clientId: string;
+  clientSecret?: string;
+  scope?: string;
+  resource: string;
+  httpsOnly: boolean;
+  timeoutMs?: number;
+}): Promise<RedeemedAssertion> {
+  const request = buildJwtBearerRequest({
+    assertion: args.assertion,
+    clientId: args.clientId,
+    clientSecret: args.clientSecret,
+    scope: args.scope,
+    resource: args.resource,
+    tokenEndpointAuthMethod: args.tokenEndpointAuthMethod,
+  });
+  const response = await executeOAuthProxy({
+    url: args.tokenEndpoint,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      ...request.headers,
+    },
+    body: request.body,
+    httpsOnly: args.httpsOnly,
+    timeoutMs: args.timeoutMs,
+  });
+  const body =
+    response.body && typeof response.body === "object"
+      ? (response.body as Record<string, unknown>)
+      : undefined;
+  const accessToken = body?.access_token;
+  const tokenIssued =
+    response.status >= 200 &&
+    response.status < 300 &&
+    typeof accessToken === "string";
+  const errorDescription = body?.error_description;
+  const oauthError = body?.error;
+  const error = !tokenIssued
+    ? (typeof errorDescription === "string" ? errorDescription : undefined) ||
+      (typeof oauthError === "string" ? oauthError : undefined) ||
+      `Authorization server returned ${response.status}`
+    : undefined;
+  return {
+    result: {
+      status: response.status,
+      tokenIssued,
+      ...(error ? { error } : {}),
+      body: response.body,
+    },
+    ...(typeof accessToken === "string" ? { accessToken } : {}),
+  };
+}
+
 export async function runXaaFlow(
-  config: XaaFlowConfig,
+  config: XaaFlowConfig
 ): Promise<XaaFlowResult> {
   const httpsOnly = config.httpsOnly ?? false;
-  const progress = (m: string) => config.onProgress?.(m);
+  const progress = (message: string) => config.onProgress?.(message);
   const steps: XaaFlowStep[] = [];
   const record = (step: string, ok: boolean, detail?: string) => {
     steps.push({ step, ok, detail });
     return ok;
   };
-
   const resource = canonicalResource(config.serverUrl);
 
   try {
-    // 1. Resolve the candidate authorization server(s).
     let candidateIssuers: string[];
     if (config.authzServerIssuer) {
       candidateIssuers = [config.authzServerIssuer];
@@ -183,26 +348,24 @@ export async function runXaaFlow(
       let servers: string[] = [];
       for (const url of wellKnownCandidates(
         config.serverUrl,
-        "oauth-protected-resource",
+        "oauth-protected-resource"
       )) {
-        const meta = await fetchOAuthMetadata(url, httpsOnly);
-        if (!("status" in meta)) {
-          // RFC 9728: the metadata's `resource` MUST identify the protected
-          // resource we fetched it for. Reject a mismatched document so a
-          // compromised/misconfigured well-known can't redirect us to another
-          // AS. Skip-and-continue: a later candidate may still be valid, and an
-          // explicit --authz-server-issuer bypasses discovery entirely.
-          const metaResource = meta.metadata.resource;
-          const resourceMatches =
-            typeof metaResource === "string" &&
-            canonicalResource(metaResource) === resource;
-          const advertised = meta.metadata.authorization_servers;
-          if (resourceMatches && Array.isArray(advertised)) {
-            servers = advertised.filter(
-              (entry): entry is string => typeof entry === "string",
-            );
-            if (servers.length > 0) break;
-          }
+        const response = await fetchOAuthMetadata(
+          url,
+          httpsOnly,
+          config.timeoutMs
+        );
+        if ("status" in response) continue;
+
+        const resourceMatches =
+          typeof response.metadata.resource === "string" &&
+          canonicalResource(response.metadata.resource) === resource;
+        const advertised = response.metadata.authorization_servers;
+        if (resourceMatches && Array.isArray(advertised)) {
+          servers = advertised.filter(
+            (entry): entry is string => typeof entry === "string"
+          );
+          if (servers.length > 0) break;
         }
       }
       if (servers.length === 0) {
@@ -216,20 +379,23 @@ export async function runXaaFlow(
         };
       }
       candidateIssuers = servers;
-      record("discover_resource_metadata", true, candidateIssuers.join(", "));
+      record("discover_resource_metadata", true, servers.join(", "));
     }
 
-    // 2. Resolve the AS issuer + token endpoint. When PRM advertises several
-    // authorization servers, try each until one yields a token endpoint.
     let authzServerIssuer: string;
     let tokenEndpoint = config.tokenEndpoint;
+    let authzMetadata: Record<string, unknown> | undefined;
     if (tokenEndpoint) {
       authzServerIssuer = candidateIssuers[0];
     } else {
       progress("Discovering authorization-server metadata (RFC 8414)…");
-      let resolved: { issuer: string; tokenEndpoint: string } | undefined;
+      let resolved: DiscoveredAuthorizationServer | undefined;
       for (const candidate of candidateIssuers) {
-        resolved = await discoverAsTokenEndpoint(candidate, httpsOnly);
+        resolved = await discoverAsTokenEndpoint(
+          candidate,
+          httpsOnly,
+          config.timeoutMs
+        );
         if (resolved) break;
       }
       if (!resolved) {
@@ -243,34 +409,94 @@ export async function runXaaFlow(
             "Could not discover the authorization server's token endpoint. Pass --token-endpoint explicitly.",
         };
       }
-      // Adopt the AS's own canonical issuer as the ID-JAG `aud`.
       authzServerIssuer = resolved.issuer;
       tokenEndpoint = resolved.tokenEndpoint;
+      authzMetadata = resolved.metadata;
       record("discover_authz_metadata", true, tokenEndpoint);
     }
 
-    // 3. Mint the ID-JAG in-process (self-issued). The driver IS the IdP and
-    // already holds the identity, so it mints the grant directly rather than
-    // round-tripping an id-token through a token-exchange.
-    progress("Minting the ID-JAG…");
+    const advertisedAuthMethods = stringList(
+      authzMetadata?.token_endpoint_auth_methods_supported
+    );
+    const selectedTokenEndpointAuthMethod = selectTokenEndpointAuthMethod(
+      config.tokenEndpointAuthMethod,
+      config.clientSecret,
+      advertisedAuthMethods
+    );
+    const authorizationServerCapabilities = {
+      idJagProfile: listEvidence(
+        authzMetadata?.authorization_grant_profiles_supported,
+        ID_JAG_GRANT_PROFILE
+      ),
+      jwtBearerGrant: listEvidence(
+        authzMetadata?.grant_types_supported,
+        JWT_BEARER_GRANT
+      ),
+      ...(advertisedAuthMethods
+        ? { tokenEndpointAuthMethods: advertisedAuthMethods }
+        : {}),
+      selectedTokenEndpointAuthMethod,
+    };
+    record(
+      "authorization_server_id_jag_profile",
+      authorizationServerCapabilities.idJagProfile !== "not_advertised",
+      authorizationServerCapabilities.idJagProfile
+    );
+    record(
+      "authorization_server_jwt_bearer_grant",
+      authorizationServerCapabilities.jwtBearerGrant !== "not_advertised",
+      authorizationServerCapabilities.jwtBearerGrant
+    );
+    record(
+      "select_token_endpoint_auth_method",
+      true,
+      selectedTokenEndpointAuthMethod
+    );
+
+    progress("Verifying the configured issuer metadata and JWKS…");
     initXAAIdpKeyPair();
     const issuer = getXAAIssuerUrl(config.issuerBaseUrl);
-    const mode = config.negativeTestMode ?? DEFAULT_NEGATIVE_TEST_MODE;
-    const minted = issueNegativeIdJag(
-      {
-        issuer,
-        subject: config.subject,
-        audience: authzServerIssuer,
-        resource,
-        clientId: config.clientId,
-        scope: config.scope,
-        email: config.email,
-      },
-      mode,
+    const issuerPublication = await verifyIssuerPublication(
+      issuer,
+      httpsOnly,
+      config.timeoutMs
     );
-    record("mint_id_jag", true, mode === "valid" ? "valid" : `negative:${mode}`);
+    record(
+      "verify_issuer_publication",
+      issuerPublication.ok,
+      issuerPublication.detail
+    );
+    if (!issuerPublication.ok) {
+      return {
+        completed: false,
+        issuer,
+        authzServerIssuer,
+        tokenEndpoint,
+        authorizationServerCapabilities,
+        steps,
+        error:
+          "The configured issuer does not publish the local signing key; the authorization server cannot validate this ID-JAG.",
+      };
+    }
 
-    // 4. Verify/inspect locally. Negative modes are EXPECTED to fail here.
+    const mode = config.negativeTestMode ?? DEFAULT_NEGATIVE_TEST_MODE;
+    const issueParams = {
+      issuer,
+      subject: config.subject,
+      audience: authzServerIssuer,
+      resource,
+      clientId: config.clientId,
+      scope: config.scope,
+      email: config.email,
+    };
+    progress("Minting the ID-JAG…");
+    const minted = issueNegativeIdJag(issueParams, mode);
+    record(
+      "mint_id_jag",
+      true,
+      mode === "valid" ? "valid" : `negative:${mode}`
+    );
+
     let verified = false;
     let verifyError: string | undefined;
     try {
@@ -282,85 +508,152 @@ export async function runXaaFlow(
     record(
       "inspect_id_jag",
       mode === "valid" ? verified : true,
-      verified ? "verified" : verifyError,
+      verified ? "verified" : verifyError
     );
-
     const idJag = {
       token: minted.token,
       claims: minted.payload,
       verified,
-      verifyError,
+      ...(verifyError ? { verifyError } : {}),
     };
-
-    // 5. Redeem at the target AS (RFC 7523 jwt-bearer).
-    progress("Redeeming the ID-JAG at the authorization server…");
-    const body = buildJwtBearerBody({
-      assertion: minted.token,
+    const redemptionArgs = {
+      tokenEndpoint,
+      tokenEndpointAuthMethod: selectedTokenEndpointAuthMethod,
       clientId: config.clientId,
       clientSecret: config.clientSecret,
       scope: config.scope,
       resource,
-    });
-    const redeemResponse = await executeOAuthProxy({
-      url: tokenEndpoint,
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
       httpsOnly,
-    });
-    const redeemBody = redeemResponse.body as Record<string, unknown> | null;
-    const accessToken =
-      redeemBody && typeof redeemBody === "object"
-        ? (redeemBody as { access_token?: unknown }).access_token
-        : undefined;
-    const tokenIssued =
-      redeemResponse.status >= 200 &&
-      redeemResponse.status < 300 &&
-      typeof accessToken === "string";
-    const redemptionError = !tokenIssued
-      ? (redeemBody as { error_description?: string; error?: string })
-          ?.error_description ||
-        (redeemBody as { error?: string })?.error ||
-        `Authorization server returned ${redeemResponse.status}`
-      : undefined;
-    record(
-      "redeem_id_jag",
-      tokenIssued,
-      tokenIssued ? "access token issued" : redemptionError,
-    );
-    const redemption = {
-      status: redeemResponse.status,
-      tokenIssued,
-      error: redemptionError,
-      body: redeemResponse.body,
+      timeoutMs: config.timeoutMs,
     };
 
-    if (!tokenIssued) {
+    if (mode !== "valid") {
+      progress("Establishing a valid ID-JAG redemption baseline…");
+      const baseline = await redeemAssertion({
+        ...redemptionArgs,
+        assertion: issueNegativeIdJag(issueParams, "valid").token,
+      });
+      record(
+        "redeem_valid_baseline",
+        baseline.result.tokenIssued,
+        baseline.result.tokenIssued
+          ? "access token issued"
+          : baseline.result.error
+      );
+      if (!baseline.result.tokenIssued) {
+        return {
+          completed: false,
+          issuer,
+          authzServerIssuer,
+          tokenEndpoint,
+          authorizationServerCapabilities,
+          idJag,
+          negativeProbe: {
+            mode,
+            baselineAccepted: false,
+            baselineStatus: baseline.result.status,
+            ...(baseline.result.error
+              ? { baselineError: baseline.result.error }
+              : {}),
+            outcome: "inconclusive",
+          },
+          steps,
+          error:
+            "The valid baseline was not accepted, so the negative probe cannot be scored.",
+        };
+      }
+
+      progress("Redeeming the deliberately invalid ID-JAG…");
+      const probe = await redeemAssertion({
+        ...redemptionArgs,
+        assertion: minted.token,
+      });
+      const outcome = probe.result.tokenIssued
+        ? "accepted"
+        : probe.result.status >= 400 && probe.result.status < 500
+        ? "rejected"
+        : "inconclusive";
+      record(
+        "redeem_negative_id_jag",
+        outcome === "rejected",
+        outcome === "rejected"
+          ? `rejected with status ${probe.result.status}`
+          : outcome === "accepted"
+          ? "authorization server issued an access token"
+          : probe.result.error
+      );
+      return {
+        completed: outcome === "rejected",
+        issuer,
+        authzServerIssuer,
+        tokenEndpoint,
+        authorizationServerCapabilities,
+        idJag,
+        redemption: probe.result,
+        negativeProbe: {
+          mode,
+          baselineAccepted: true,
+          baselineStatus: baseline.result.status,
+          outcome,
+        },
+        steps,
+        ...(outcome === "accepted"
+          ? {
+              error:
+                "The authorization server accepted the deliberately invalid ID-JAG.",
+            }
+          : outcome === "inconclusive"
+          ? {
+              error:
+                "The negative probe did not produce a conclusive 4xx rejection.",
+            }
+          : {}),
+      };
+    }
+
+    progress("Redeeming the ID-JAG at the authorization server…");
+    const redeemed = await redeemAssertion({
+      ...redemptionArgs,
+      assertion: minted.token,
+    });
+    record(
+      "redeem_id_jag",
+      redeemed.result.tokenIssued,
+      redeemed.result.tokenIssued
+        ? "access token issued"
+        : redeemed.result.error
+    );
+    if (!redeemed.result.tokenIssued || !redeemed.accessToken) {
       return {
         completed: false,
         issuer,
         authzServerIssuer,
         tokenEndpoint,
+        authorizationServerCapabilities,
         idJag,
-        redemption,
+        redemption: redeemed.result,
         steps,
       };
     }
 
-    // 6. Call the MCP server with the access token (SSE-aware via the debug
-    // proxy, since streamable-HTTP `initialize` may reply as text/event-stream).
     progress("Calling the MCP server with the access token…");
     const mcpResult = await callAuthenticatedMcp(
       config.serverUrl,
-      accessToken as string,
+      redeemed.accessToken,
       httpsOnly,
+      config.timeoutMs
     );
     record(
       "authenticated_mcp_request",
       mcpResult.ok,
       mcpResult.error
         ? `status ${mcpResult.status}: ${mcpResult.error}`
-        : `status ${mcpResult.status}`,
+        : `status ${mcpResult.status}`
+    );
+    record(
+      "mcp_xaa_extension",
+      mcpResult.xaaExtension !== "not_advertised",
+      mcpResult.xaaExtension
     );
 
     return {
@@ -368,8 +661,9 @@ export async function runXaaFlow(
       issuer,
       authzServerIssuer,
       tokenEndpoint,
+      authorizationServerCapabilities,
       idJag,
-      redemption,
+      redemption: redeemed.result,
       mcp: mcpResult,
       steps,
     };
@@ -387,7 +681,13 @@ async function callAuthenticatedMcp(
   serverUrl: string,
   accessToken: string,
   httpsOnly: boolean,
-): Promise<{ status: number; ok: boolean; error?: string }> {
+  timeoutMs: number | undefined
+): Promise<{
+  status: number;
+  ok: boolean;
+  error?: string;
+  xaaExtension: XaaCapabilityEvidence;
+}> {
   const response = await executeDebugOAuthProxy({
     url: serverUrl,
     method: "POST",
@@ -403,46 +703,33 @@ async function callAuthenticatedMcp(
       method: "initialize",
       params: {
         protocolVersion: MCP_PROTOCOL_VERSION,
-        capabilities: {},
+        capabilities: {
+          extensions: { [XAA_MCP_EXTENSION]: {} },
+        },
         clientInfo: { name: "MCPJam XAA CLI", version: "1.0.0" },
       },
     },
     httpsOnly,
+    timeoutMs,
   });
-  // Transport status alone lies: a 2xx can carry a JSON-RPC error, no JSON-RPC
-  // payload at all, or a non-MCP body. The call succeeds only when the server
-  // returns a proper JSON-RPC `initialize` result.
-  const transportOk = response.status >= 200 && response.status < 300;
   const error = evaluateMcpInitResponse(response.body);
   return {
     status: response.status,
-    ok: transportOk && !error,
+    ok: response.status >= 200 && response.status < 300 && !error,
     ...(error ? { error } : {}),
+    xaaExtension: serverExtensionEvidence(response.body),
   };
 }
 
-// Returns a failure reason, or undefined when `body` is a valid JSON-RPC
-// `initialize` result.
 function evaluateMcpInitResponse(body: unknown): string | undefined {
-  // A top-level string `error` is a proxy-level failure — most notably the SSE
-  // parse-failure envelope executeDebugOAuthProxy returns ({ error: "Failed to
-  // parse SSE stream" }, no `transport` field) when the stream times out before
-  // the first event.
   if (body && typeof body === "object") {
     const topError = (body as { error?: unknown }).error;
-    if (typeof topError === "string" && topError.length > 0) {
-      return topError;
-    }
+    if (typeof topError === "string" && topError.length > 0) return topError;
   }
   const payload = jsonRpcPayload(body);
   const rpcError = jsonRpcErrorFrom(payload);
-  if (rpcError) {
-    return rpcError;
-  }
-  // Require a genuine JSON-RPC initialize result: right protocol version, the
-  // `id` we sent echoed back, and an object `result`. This rejects an empty SSE
-  // envelope (no `message` event) and a coincidental non-MCP 2xx body that
-  // merely happens to carry a `result` field.
+  if (rpcError) return rpcError;
+
   const response = payload as {
     jsonrpc?: unknown;
     id?: unknown;
@@ -461,31 +748,33 @@ function evaluateMcpInitResponse(body: unknown): string | undefined {
   return undefined;
 }
 
-// executeDebugOAuthProxy wraps a text/event-stream reply in an SSE envelope with
-// the JSON-RPC payload under `mcpResponse`; a plain JSON body IS the payload.
+function serverExtensionEvidence(body: unknown): XaaCapabilityEvidence {
+  const payload = jsonRpcPayload(body);
+  if (!payload || typeof payload !== "object") return "unknown";
+  const result = (payload as { result?: unknown }).result;
+  if (!result || typeof result !== "object") return "unknown";
+  const capabilities = (result as { capabilities?: unknown }).capabilities;
+  if (!capabilities || typeof capabilities !== "object") return "unknown";
+  const extensions = (capabilities as { extensions?: unknown }).extensions;
+  if (!extensions || typeof extensions !== "object") return "unknown";
+  return Object.prototype.hasOwnProperty.call(extensions, XAA_MCP_EXTENSION)
+    ? "advertised"
+    : "not_advertised";
+}
+
 function jsonRpcPayload(body: unknown): unknown {
-  if (!body || typeof body !== "object") {
-    return body;
-  }
+  if (!body || typeof body !== "object") return body;
   const record = body as Record<string, unknown>;
   return record.transport === "sse" ? record.mcpResponse : body;
 }
 
 function jsonRpcErrorFrom(payload: unknown): string | undefined {
-  if (!payload || typeof payload !== "object") {
-    return undefined;
-  }
+  if (!payload || typeof payload !== "object") return undefined;
   const error = (payload as { error?: unknown }).error;
-  if (!error || typeof error !== "object") {
-    return undefined;
-  }
+  if (!error || typeof error !== "object") return undefined;
   const { code, message } = error as { code?: unknown; message?: unknown };
   const parts: string[] = [];
-  if (typeof code === "number") {
-    parts.push(String(code));
-  }
-  if (typeof message === "string" && message.length > 0) {
-    parts.push(message);
-  }
+  if (typeof code === "number") parts.push(String(code));
+  if (typeof message === "string" && message.length > 0) parts.push(message);
   return parts.length > 0 ? parts.join(": ") : "JSON-RPC error";
 }
