@@ -112,6 +112,7 @@
               "cli/server-inspection",
               "cli/oauth-conformance",
               "cli/oauth-login",
+              "cli/xaa-run",
               "cli/apps-conformance",
               "cli/tools-resources-prompts",
               "cli/ci",
