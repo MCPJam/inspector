@@ -8,6 +8,10 @@ export {
   DEFAULT_NEGATIVE_TEST_MODE,
   isNegativeTestMode,
   type NegativeTestMode,
+  XAA_REGISTRATION_STRATEGIES,
+  DEFAULT_XAA_REGISTRATION_STRATEGY,
+  normalizeXaaRegistrationStrategy,
+  type XaaRegistrationStrategy,
 } from "./constants.js";
 export {
   initXAAIdpKeyPair,

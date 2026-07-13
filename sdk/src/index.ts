@@ -289,6 +289,12 @@ export type {
   DynamicClientRegistrationOutcome,
 } from "./oauth/state-machines/shared/dynamic-client-registration.js";
 export { validateClientIdMetadataUrl } from "./oauth/state-machines/shared/client-id-metadata.js";
+export {
+  decodeJWT,
+  decodeJWTParts,
+  formatJWTTimestamp,
+} from "./oauth/state-machines/shared/jwt.js";
+export type { DecodedJwtParts } from "./oauth/state-machines/shared/jwt.js";
 
 // XAA (Cross-App Access / ID-JAG) mock-IdP mint — node-only (crypto/fs).
 // Consumed by the inspector server and the CLI's headless `runXaaFlow`.
