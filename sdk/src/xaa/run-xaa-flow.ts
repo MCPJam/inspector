@@ -132,6 +132,34 @@ function wellKnownCandidates(issuer: string, name: string): string[] {
   return [...candidates];
 }
 
+// Discover a candidate authorization server's token endpoint (RFC 8414 / OIDC).
+// Returns the AS's own canonical `issuer` alongside the endpoint, or undefined
+// when no candidate URL yields metadata whose `issuer` matches (RFC 8414 §3.3 —
+// a mismatched document must not redirect the assertion to another issuer).
+async function discoverAsTokenEndpoint(
+  candidateIssuer: string,
+  httpsOnly: boolean,
+): Promise<{ issuer: string; tokenEndpoint: string } | undefined> {
+  for (const name of ["oauth-authorization-server", "openid-configuration"]) {
+    for (const url of wellKnownCandidates(candidateIssuer, name)) {
+      const meta = await fetchOAuthMetadata(url, httpsOnly);
+      if (!("status" in meta)) {
+        const metaIssuer = meta.metadata.issuer;
+        const te = meta.metadata.token_endpoint;
+        if (
+          typeof metaIssuer === "string" &&
+          metaIssuer.replace(/\/+$/, "") ===
+            candidateIssuer.replace(/\/+$/, "") &&
+          typeof te === "string"
+        ) {
+          return { issuer: metaIssuer, tokenEndpoint: te };
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
 export async function runXaaFlow(
   config: XaaFlowConfig,
 ): Promise<XaaFlowResult> {
@@ -146,11 +174,13 @@ export async function runXaaFlow(
   const resource = canonicalResource(config.serverUrl);
 
   try {
-    // 1. Resolve the target authorization server.
-    let authzServerIssuer = config.authzServerIssuer;
-    if (!authzServerIssuer) {
+    // 1. Resolve the candidate authorization server(s).
+    let candidateIssuers: string[];
+    if (config.authzServerIssuer) {
+      candidateIssuers = [config.authzServerIssuer];
+    } else {
       progress("Discovering protected-resource metadata (RFC 9728)…");
-      let found: string | undefined;
+      let servers: string[] = [];
       for (const url of wellKnownCandidates(
         config.serverUrl,
         "oauth-protected-resource",
@@ -166,18 +196,16 @@ export async function runXaaFlow(
           const resourceMatches =
             typeof metaResource === "string" &&
             canonicalResource(metaResource) === resource;
-          const servers = meta.metadata.authorization_servers;
-          if (
-            resourceMatches &&
-            Array.isArray(servers) &&
-            typeof servers[0] === "string"
-          ) {
-            found = servers[0];
-            break;
+          const advertised = meta.metadata.authorization_servers;
+          if (resourceMatches && Array.isArray(advertised)) {
+            servers = advertised.filter(
+              (entry): entry is string => typeof entry === "string",
+            );
+            if (servers.length > 0) break;
           }
         }
       }
-      if (!found) {
+      if (servers.length === 0) {
         record("discover_resource_metadata", false, "no authorization_servers");
         return {
           completed: false,
@@ -187,54 +215,37 @@ export async function runXaaFlow(
             "Could not discover the authorization server from the MCP server's protected-resource metadata. Pass the issuer explicitly.",
         };
       }
-      authzServerIssuer = found;
-      record("discover_resource_metadata", true, authzServerIssuer);
+      candidateIssuers = servers;
+      record("discover_resource_metadata", true, candidateIssuers.join(", "));
     }
 
-    // 2. Resolve the token endpoint.
+    // 2. Resolve the AS issuer + token endpoint. When PRM advertises several
+    // authorization servers, try each until one yields a token endpoint.
+    let authzServerIssuer: string;
     let tokenEndpoint = config.tokenEndpoint;
-    if (!tokenEndpoint) {
+    if (tokenEndpoint) {
+      authzServerIssuer = candidateIssuers[0];
+    } else {
       progress("Discovering authorization-server metadata (RFC 8414)…");
-      for (const name of [
-        "oauth-authorization-server",
-        "openid-configuration",
-      ]) {
-        for (const url of wellKnownCandidates(authzServerIssuer, name)) {
-          const meta = await fetchOAuthMetadata(url, httpsOnly);
-          if (!("status" in meta)) {
-            // RFC 8414 §3.3: the metadata's `issuer` MUST match the one we asked
-            // for. Reject a mismatched document so it can't redirect the signed
-            // assertion (and any client_secret) to another issuer's endpoint.
-            const metaIssuer = meta.metadata.issuer;
-            const te = meta.metadata.token_endpoint;
-            if (
-              typeof metaIssuer === "string" &&
-              metaIssuer.replace(/\/+$/, "") ===
-                authzServerIssuer.replace(/\/+$/, "") &&
-              typeof te === "string"
-            ) {
-              // Adopt the AS's own canonical issuer string as the ID-JAG `aud`,
-              // so a trailing-slash difference between the PRM/arg issuer and the
-              // issuer the AS advertises doesn't mint an audience it rejects.
-              authzServerIssuer = metaIssuer;
-              tokenEndpoint = te;
-              break;
-            }
-          }
-        }
-        if (tokenEndpoint) break;
+      let resolved: { issuer: string; tokenEndpoint: string } | undefined;
+      for (const candidate of candidateIssuers) {
+        resolved = await discoverAsTokenEndpoint(candidate, httpsOnly);
+        if (resolved) break;
       }
-      if (!tokenEndpoint) {
+      if (!resolved) {
         record("discover_authz_metadata", false, "no token_endpoint");
         return {
           completed: false,
           issuer: getXAAIssuerUrl(config.issuerBaseUrl),
-          authzServerIssuer,
+          authzServerIssuer: candidateIssuers[0],
           steps,
           error:
             "Could not discover the authorization server's token endpoint. Pass --token-endpoint explicitly.",
         };
       }
+      // Adopt the AS's own canonical issuer as the ID-JAG `aud`.
+      authzServerIssuer = resolved.issuer;
+      tokenEndpoint = resolved.tokenEndpoint;
       record("discover_authz_metadata", true, tokenEndpoint);
     }
 

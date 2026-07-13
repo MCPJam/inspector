@@ -342,6 +342,47 @@ describe("runXaaFlow", () => {
     expect(result.completed).toBe(true);
   });
 
+  it("tries every advertised authorization server until one resolves", async () => {
+    const deadAs = "https://dead-as.example.com";
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const method = (init?.method || "GET").toUpperCase();
+      if (url.includes(".well-known/oauth-protected-resource")) {
+        return json({
+          resource: "https://mcp.example.com/mcp",
+          authorization_servers: [deadAs, AS_ISSUER],
+        });
+      }
+      // The first advertised AS has no discoverable metadata.
+      if (url.startsWith(deadAs)) {
+        return json({}, 404);
+      }
+      if (
+        url.includes(".well-known/oauth-authorization-server") ||
+        url.includes(".well-known/openid-configuration")
+      ) {
+        return json({ issuer: AS_ISSUER, token_endpoint: TOKEN_ENDPOINT });
+      }
+      if (url === TOKEN_ENDPOINT && method === "POST") {
+        return json({ access_token: "at-1", token_type: "Bearer" });
+      }
+      if (url === SERVER_URL && method === "POST") {
+        return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: {} });
+      }
+      return json({}, 404);
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    expect(result.authzServerIssuer).toBe(AS_ISSUER);
+    expect(result.completed).toBe(true);
+  });
+
   it("rejects PRM whose resource does not identify the requested server", async () => {
     global.fetch = stubFetch({
       prm: {
