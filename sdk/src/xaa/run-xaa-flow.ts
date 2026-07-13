@@ -88,13 +88,13 @@ export interface XaaFlowResult {
 function canonicalResource(serverUrl: string): string {
   try {
     const u = new URL(serverUrl);
-    // Preserve the query — some MCP servers use it to identify/scope the
-    // protected resource, and the `resource` we mint/redeem for must match the
-    // URL the access token is ultimately used against. Keep the root "/" too.
-    const path = u.pathname === "/" ? "/" : u.pathname.replace(/\/+$/, "");
-    return `${u.origin}${path}${u.search}`;
+    // Preserve the path exactly (including a trailing slash) and the query —
+    // both can distinguish resources, and the `resource` we mint/redeem for
+    // must match the URL the access token is ultimately used against. URL()
+    // still normalizes the origin (lowercase host, default port removal).
+    return `${u.origin}${u.pathname}${u.search}`;
   } catch {
-    return serverUrl.replace(/\/+$/, "");
+    return serverUrl;
   }
 }
 
@@ -149,8 +149,21 @@ export async function runXaaFlow(
       )) {
         const meta = await fetchOAuthMetadata(url, httpsOnly);
         if (!("status" in meta)) {
+          // RFC 9728: the metadata's `resource` MUST identify the protected
+          // resource we fetched it for. Reject a mismatched document so a
+          // compromised/misconfigured well-known can't redirect us to another
+          // AS. Skip-and-continue: a later candidate may still be valid, and an
+          // explicit --authz-server-issuer bypasses discovery entirely.
+          const metaResource = meta.metadata.resource;
+          const resourceMatches =
+            typeof metaResource === "string" &&
+            canonicalResource(metaResource) === resource;
           const servers = meta.metadata.authorization_servers;
-          if (Array.isArray(servers) && typeof servers[0] === "string") {
+          if (
+            resourceMatches &&
+            Array.isArray(servers) &&
+            typeof servers[0] === "string"
+          ) {
             found = servers[0];
             break;
           }
@@ -388,14 +401,17 @@ function extractJsonRpcError(body: unknown): string | undefined {
     return undefined;
   }
   const record = body as Record<string, unknown>;
-  // executeDebugOAuthProxy wraps a text/event-stream reply in an SSE envelope:
-  // the JSON-RPC payload sits under `mcpResponse`, and a stream-parse failure
-  // surfaces as a string `error`. A streamable-HTTP `initialize` usually
-  // answers as SSE, so this branch is the common path.
+  // A top-level string `error` is a proxy-level failure — most notably the SSE
+  // parse-failure envelope executeDebugOAuthProxy returns ({ error: "Failed to
+  // parse SSE stream" }, no `transport` field) when the stream times out before
+  // the first event. That's a failed call, not a completed flow.
+  if (typeof record.error === "string" && record.error.length > 0) {
+    return record.error;
+  }
+  // executeDebugOAuthProxy wraps a successful text/event-stream reply in an SSE
+  // envelope: the JSON-RPC payload sits under `mcpResponse`. A streamable-HTTP
+  // `initialize` usually answers as SSE, so this branch is the common path.
   if (record.transport === "sse") {
-    if (typeof record.error === "string" && record.error.length > 0) {
-      return record.error;
-    }
     return jsonRpcErrorFrom(record.mcpResponse);
   }
   // Plain JSON: the body IS the JSON-RPC response.

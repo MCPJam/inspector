@@ -109,7 +109,10 @@ describe("runXaaFlow", () => {
 
   it("discovers the AS + token endpoint when not supplied", async () => {
     global.fetch = stubFetch({
-      prm: { authorization_servers: [AS_ISSUER] },
+      prm: {
+        resource: "https://mcp.example.com/mcp",
+        authorization_servers: [AS_ISSUER],
+      },
       asMetadata: { issuer: AS_ISSUER, token_endpoint: TOKEN_ENDPOINT },
       token: {
         status: 200,
@@ -168,7 +171,10 @@ describe("runXaaFlow", () => {
       // PRM is published ONLY at the origin root, not the path-insertion form.
       if (url.includes(".well-known/oauth-protected-resource")) {
         return url === rootPrm
-          ? json({ authorization_servers: [AS_ISSUER] })
+          ? json({
+              resource: "https://mcp.example.com/mcp",
+              authorization_servers: [AS_ISSUER],
+            })
           : json({}, 404);
       }
       if (
@@ -197,9 +203,90 @@ describe("runXaaFlow", () => {
     expect(result.completed).toBe(true);
   });
 
+  it("rejects PRM whose resource does not identify the requested server", async () => {
+    global.fetch = stubFetch({
+      prm: {
+        // Wrong resource — must not be trusted to source the AS (RFC 9728).
+        resource: "https://other.example.com/mcp",
+        authorization_servers: [AS_ISSUER],
+      },
+      asMetadata: { issuer: AS_ISSUER, token_endpoint: TOKEN_ENDPOINT },
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    expect(result.completed).toBe(false);
+    expect(result.authzServerIssuer).toBeUndefined();
+    expect(result.error).toMatch(/protected-resource metadata/i);
+  });
+
+  it("preserves a meaningful trailing slash in the canonical resource", async () => {
+    const serverWithSlash = "https://mcp.example.com/mcp/";
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const method = (init?.method || "GET").toUpperCase();
+      if (url === TOKEN_ENDPOINT && method === "POST") {
+        return json({ access_token: "at-1", token_type: "Bearer" });
+      }
+      if (url === serverWithSlash && method === "POST") {
+        return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: {} });
+      }
+      return json({}, 404);
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: serverWithSlash,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    expect(result.idJag?.claims.resource).toBe("https://mcp.example.com/mcp/");
+    expect(result.completed).toBe(true);
+  });
+
+  it("treats a top-level error string (SSE parse failure) as a failed call", async () => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const method = (init?.method || "GET").toUpperCase();
+      if (url === TOKEN_ENDPOINT && method === "POST") {
+        return json({ access_token: "at-1", token_type: "Bearer" });
+      }
+      if (url === SERVER_URL && method === "POST") {
+        // The shape executeDebugOAuthProxy returns when it can't parse the SSE
+        // stream: a top-level string `error`, no `transport` field.
+        return json({ error: "Failed to parse SSE stream" });
+      }
+      return json({}, 404);
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    expect(result.mcp?.ok).toBe(false);
+    expect(result.mcp?.jsonRpcError).toBe("Failed to parse SSE stream");
+    expect(result.completed).toBe(false);
+  });
+
   it("rejects AS metadata whose issuer does not match the requested issuer", async () => {
     global.fetch = stubFetch({
-      prm: { authorization_servers: [AS_ISSUER] },
+      prm: {
+        resource: "https://mcp.example.com/mcp",
+        authorization_servers: [AS_ISSUER],
+      },
       // Mismatched issuer — must not be trusted to source the token endpoint.
       asMetadata: {
         issuer: "https://evil.example.com",
