@@ -42,6 +42,7 @@ export type XaaRegistrationWarningCode =
   | "profile_metadata_not_echoed"
   | "grant_types_not_echoed"
   | "token_exchange_grant_not_echoed"
+  | "auth_method_not_echoed"
   | "missing_secret_expiry"
   | "non_201_success"
   | "non_json_content_type"

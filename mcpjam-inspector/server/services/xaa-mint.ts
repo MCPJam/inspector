@@ -342,8 +342,12 @@ export function buildJwtBearerRequest(args: {
           args.clientSecret
         )}`,
       },
-      // Secret travels only in the Authorization header, never the body.
-      body: buildJwtBearerBody({ ...args, clientSecret: null }),
+      // With Basic auth the client_id AND secret are carried in the
+      // Authorization header only — omit both from the body. Some token
+      // endpoints reject a request that also repeats client_id in the body
+      // (one client-auth method per request), and the repo's shared OAuth
+      // helper likewise keeps client-auth params out of the body for Basic.
+      body: buildJwtBearerBody({ ...args, clientId: null, clientSecret: null }),
     };
   }
 

@@ -253,7 +253,6 @@ export function getXAAErrorGuidance(
     if (
       messageIncludes(stateError, "inconsistent registration response") ||
       messageIncludes(stateError, "missing a client_id") ||
-      messageIncludes(stateError, "did not include token_endpoint_auth_method") ||
       messageIncludes(stateError, "already expired") ||
       messageIncludes(stateError, "could not be parsed")
     ) {

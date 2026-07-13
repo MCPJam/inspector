@@ -16,6 +16,7 @@ import type {
   BaseXAAStateMachineConfig,
   XaaRegistrationStrategy,
   XaaRegistrationWarning,
+  XaaTokenEndpointAuthMethod,
   XAADecodedJwt,
   XAAFlowState,
   XAAFlowStep,
@@ -967,20 +968,30 @@ export function createXAAStateMachine(
       });
     }
 
-    const method = outcome.credentials.tokenEndpointAuthMethod;
-    if (method === undefined) {
-      parkRegistration(
-        "The registration response did not include token_endpoint_auth_method, so the debugger cannot tell how to authenticate at the token endpoint. Switch to pre-registered credentials to continue."
-      );
-      return;
-    }
-    if (
-      method !== "client_secret_post" &&
-      method !== "client_secret_basic" &&
-      method !== "none"
+    const rawMethod = outcome.credentials.tokenEndpointAuthMethod;
+    let method: XaaTokenEndpointAuthMethod;
+    if (rawMethod === undefined) {
+      // RFC 7591 SHOULD echo token_endpoint_auth_method, but some servers omit
+      // it. We requested client_secret_post and the token proxy treats an
+      // absent method as body-post, so default to that when a secret was
+      // issued (or a public client when not) rather than blocking usable
+      // credentials — and warn so the conformance gap stays visible.
+      method = outcome.credentials.clientSecret ? "client_secret_post" : "none";
+      warnings.push({
+        code: "auth_method_not_echoed",
+        message: outcome.credentials.clientSecret
+          ? "The registration response omitted token_endpoint_auth_method (RFC 7591 SHOULD echo it); assuming the requested client_secret_post."
+          : "The registration response omitted token_endpoint_auth_method and issued no secret; treating the client as public (none).",
+      });
+    } else if (
+      rawMethod === "client_secret_post" ||
+      rawMethod === "client_secret_basic" ||
+      rawMethod === "none"
     ) {
+      method = rawMethod;
+    } else {
       parkRegistration(
-        `Registration succeeded, but this debugger cannot use the returned client-auth method ("${method}"). This is a debugger limitation, not authorization-server unreadiness.`
+        `Registration succeeded, but this debugger cannot use the returned client-auth method ("${rawMethod}"). This is a debugger limitation, not authorization-server unreadiness.`
       );
       return;
     }

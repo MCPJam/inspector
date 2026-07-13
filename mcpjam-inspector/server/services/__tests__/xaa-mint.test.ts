@@ -177,8 +177,10 @@ describe("buildJwtBearerRequest", () => {
     expect(request.headers).toEqual({ Authorization: `Basic ${expected}` });
     // Space must NOT be %20 (that would be encodeURIComponent, not form-encoding).
     expect(Buffer.from(expected, "base64").toString()).toContain("client+id");
+    // With Basic, BOTH client_id and secret live in the header only — the body
+    // must not repeat client_id (some endpoints reject dual-carried client_id).
     expect(request.body.client_secret).toBeUndefined();
-    expect(request.body.client_id).toBe(withSpaces.clientId);
+    expect(request.body.client_id).toBeUndefined();
     expect(request.body.assertion).toBe(args.assertion);
   });
 

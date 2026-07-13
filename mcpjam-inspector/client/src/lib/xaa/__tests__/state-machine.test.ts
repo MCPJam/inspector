@@ -1264,6 +1264,56 @@ describe("open dcr registration strategy", () => {
     expect(state.error).toContain("debugger limitation");
   });
 
+  it("falls back to the requested method (with a warning) when DCR omits token_endpoint_auth_method", async () => {
+    // Secret issued but no method echoed → assume the requested
+    // client_secret_post and continue to redemption, don't park.
+    const harness = createDynamicHarness({
+      strategy: "dcr",
+      registerResponse: {
+        status: 201,
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "no-store",
+        },
+        body: {
+          client_id: "no-method-client",
+          client_secret: DCR_SECRET,
+          client_secret_expires_at: 0,
+          // token_endpoint_auth_method deliberately omitted.
+        },
+      },
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("complete");
+    expect(
+      state.registrationWarnings?.some((w) => w.code === "auth_method_not_echoed")
+    ).toBe(true);
+    const proxyBody = harness.proxyTokenBody();
+    expect(proxyBody.clientId).toBe("no-method-client");
+    expect(proxyBody.tokenEndpointAuthMethod).toBe("client_secret_post");
+  });
+
+  it("treats an omitted method with no secret as a public client", async () => {
+    const harness = createDynamicHarness({
+      strategy: "dcr",
+      registerResponse: {
+        status: 201,
+        headers: { "content-type": "application/json" },
+        body: { client_id: "public-no-method" }, // no secret, no method
+      },
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("complete");
+    const codes = (state.registrationWarnings || []).map((w) => w.code);
+    expect(codes).toContain("auth_method_not_echoed");
+    expect(codes).toContain("public_client");
+    expect(harness.proxyTokenBody().tokenEndpointAuthMethod).toBe("none");
+  });
+
   it("parks on refusal and gates the retry behind duplicate-client confirmation", async () => {
     const harness = createDynamicHarness({
       strategy: "dcr",
