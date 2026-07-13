@@ -24,14 +24,22 @@ import {
   DEFAULT_NEGATIVE_TEST_MODE,
   type NegativeTestMode,
 } from "./constants.js";
+import {
+  buildAuthorizationServerMetadataCandidates,
+  buildIssuerPublicationCandidates,
+  buildProtectedResourceMetadataCandidates,
+  canonicalizeMcpResource,
+} from "./discovery.js";
+import {
+  buildMcpInitializeRequest,
+  evaluateMcpInitializeResponse,
+  mcpInitializeExtensionEvidence,
+  type XaaCapabilityEvidence,
+} from "./mcp-init.js";
 
 const ID_JAG_TYP = "oauth-id-jag+jwt";
-const MCP_INIT_ID = "mcpjam-xaa-cli";
-const MCP_PROTOCOL_VERSION = "2025-11-25";
-const XAA_MCP_EXTENSION =
-  "io.modelcontextprotocol/enterprise-managed-authorization";
 
-export type XaaCapabilityEvidence = "advertised" | "not_advertised" | "unknown";
+export type { XaaCapabilityEvidence };
 
 export interface XaaFlowConfig {
   /** Target MCP server URL (the protected resource). */
@@ -117,56 +125,25 @@ interface RedeemedAssertion {
 
 type PublishedJwk = JsonWebKey & { kid?: string };
 
-function canonicalResource(serverUrl: string): string {
-  try {
-    const url = new URL(serverUrl);
-    return `${url.origin}${url.pathname}${url.search}`;
-  } catch {
-    return serverUrl;
-  }
-}
-
-function wellKnownCandidates(issuer: string, name: string): string[] {
-  let origin: string;
-  let path: string;
-  try {
-    const url = new URL(issuer);
-    origin = url.origin;
-    path = url.pathname === "/" ? "" : url.pathname;
-  } catch {
-    return [`${issuer.replace(/\/+$/, "")}/.well-known/${name}`];
-  }
-  if (!path) return [`${origin}/.well-known/${name}`];
-
-  const pathNoTrailing = path.replace(/\/+$/, "");
-  return [
-    ...new Set([
-      `${origin}/.well-known/${name}${path}`,
-      `${origin}${pathNoTrailing}/.well-known/${name}`,
-      `${origin}/.well-known/${name}`,
-    ]),
-  ];
-}
-
 async function discoverAsTokenEndpoint(
   candidateIssuer: string,
   httpsOnly: boolean,
   timeoutMs: number | undefined
 ): Promise<DiscoveredAuthorizationServer | undefined> {
-  for (const name of ["oauth-authorization-server", "openid-configuration"]) {
-    for (const url of wellKnownCandidates(candidateIssuer, name)) {
-      const response = await fetchOAuthMetadata(url, httpsOnly, timeoutMs);
-      if ("status" in response) continue;
+  for (const url of buildAuthorizationServerMetadataCandidates(
+    candidateIssuer,
+  )) {
+    const response = await fetchOAuthMetadata(url, httpsOnly, timeoutMs);
+    if ("status" in response) continue;
 
-      const issuer = response.metadata.issuer;
-      const tokenEndpoint = response.metadata.token_endpoint;
-      if (
-        typeof issuer === "string" &&
-        issuer.replace(/\/+$/, "") === candidateIssuer.replace(/\/+$/, "") &&
-        typeof tokenEndpoint === "string"
-      ) {
-        return { issuer, tokenEndpoint, metadata: response.metadata };
-      }
+    const issuer = response.metadata.issuer;
+    const tokenEndpoint = response.metadata.token_endpoint;
+    if (
+      typeof issuer === "string" &&
+      issuer.replace(/\/+$/, "") === candidateIssuer.replace(/\/+$/, "") &&
+      typeof tokenEndpoint === "string"
+    ) {
+      return { issuer, tokenEndpoint, metadata: response.metadata };
     }
   }
   return undefined;
@@ -220,7 +197,7 @@ async function verifyIssuerPublication(
   timeoutMs: number | undefined
 ): Promise<{ ok: boolean; detail: string }> {
   let metadata: Record<string, unknown> | undefined;
-  for (const url of wellKnownCandidates(issuer, "openid-configuration")) {
+  for (const url of buildIssuerPublicationCandidates(issuer)) {
     const response = await fetchOAuthMetadata(url, httpsOnly, timeoutMs);
     if (!("status" in response) && response.metadata.issuer === issuer) {
       metadata = response.metadata;
@@ -337,7 +314,7 @@ export async function runXaaFlow(
     steps.push({ step, ok, detail });
     return ok;
   };
-  const resource = canonicalResource(config.serverUrl);
+  const resource = canonicalizeMcpResource(config.serverUrl);
 
   try {
     let candidateIssuers: string[];
@@ -346,9 +323,8 @@ export async function runXaaFlow(
     } else {
       progress("Discovering protected-resource metadata (RFC 9728)…");
       let servers: string[] = [];
-      for (const url of wellKnownCandidates(
-        config.serverUrl,
-        "oauth-protected-resource"
+      for (const url of buildProtectedResourceMetadataCandidates(
+        config.serverUrl
       )) {
         const response = await fetchOAuthMetadata(
           url,
@@ -359,7 +335,7 @@ export async function runXaaFlow(
 
         const resourceMatches =
           typeof response.metadata.resource === "string" &&
-          canonicalResource(response.metadata.resource) === resource;
+          canonicalizeMcpResource(response.metadata.resource) === resource;
         const advertised = response.metadata.authorization_servers;
         if (resourceMatches && Array.isArray(advertised)) {
           servers = advertised.filter(
@@ -688,93 +664,20 @@ async function callAuthenticatedMcp(
   error?: string;
   xaaExtension: XaaCapabilityEvidence;
 }> {
+  const request = buildMcpInitializeRequest(accessToken);
   const response = await executeDebugOAuthProxy({
     url: serverUrl,
     method: "POST",
-    headers: {
-      Accept: "application/json, text/event-stream",
-      "Content-Type": "application/json",
-      "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: {
-      jsonrpc: "2.0",
-      id: MCP_INIT_ID,
-      method: "initialize",
-      params: {
-        protocolVersion: MCP_PROTOCOL_VERSION,
-        capabilities: {
-          extensions: { [XAA_MCP_EXTENSION]: {} },
-        },
-        clientInfo: { name: "MCPJam XAA CLI", version: "1.0.0" },
-      },
-    },
+    headers: request.headers,
+    body: request.body,
     httpsOnly,
     timeoutMs,
   });
-  const error = evaluateMcpInitResponse(response.body);
+  const error = evaluateMcpInitializeResponse(response.body);
   return {
     status: response.status,
     ok: response.status >= 200 && response.status < 300 && !error,
     ...(error ? { error } : {}),
-    xaaExtension: serverExtensionEvidence(response.body),
+    xaaExtension: mcpInitializeExtensionEvidence(response.body),
   };
-}
-
-function evaluateMcpInitResponse(body: unknown): string | undefined {
-  if (body && typeof body === "object") {
-    const topError = (body as { error?: unknown }).error;
-    if (typeof topError === "string" && topError.length > 0) return topError;
-  }
-  const payload = jsonRpcPayload(body);
-  const rpcError = jsonRpcErrorFrom(payload);
-  if (rpcError) return rpcError;
-
-  const response = payload as {
-    jsonrpc?: unknown;
-    id?: unknown;
-    result?: unknown;
-  };
-  if (
-    !payload ||
-    typeof payload !== "object" ||
-    response.jsonrpc !== "2.0" ||
-    response.id !== MCP_INIT_ID ||
-    response.result === null ||
-    typeof response.result !== "object"
-  ) {
-    return "MCP server did not return a JSON-RPC initialize result";
-  }
-  return undefined;
-}
-
-function serverExtensionEvidence(body: unknown): XaaCapabilityEvidence {
-  const payload = jsonRpcPayload(body);
-  if (!payload || typeof payload !== "object") return "unknown";
-  const result = (payload as { result?: unknown }).result;
-  if (!result || typeof result !== "object") return "unknown";
-  const capabilities = (result as { capabilities?: unknown }).capabilities;
-  if (!capabilities || typeof capabilities !== "object") return "unknown";
-  const extensions = (capabilities as { extensions?: unknown }).extensions;
-  if (!extensions || typeof extensions !== "object") return "unknown";
-  return Object.prototype.hasOwnProperty.call(extensions, XAA_MCP_EXTENSION)
-    ? "advertised"
-    : "not_advertised";
-}
-
-function jsonRpcPayload(body: unknown): unknown {
-  if (!body || typeof body !== "object") return body;
-  const record = body as Record<string, unknown>;
-  return record.transport === "sse" ? record.mcpResponse : body;
-}
-
-function jsonRpcErrorFrom(payload: unknown): string | undefined {
-  if (!payload || typeof payload !== "object") return undefined;
-  const error = (payload as { error?: unknown }).error;
-  if (!error || typeof error !== "object") return undefined;
-  const { code, message } = error as { code?: unknown; message?: unknown };
-  const parts: string[] = [];
-  if (typeof code === "number") parts.push(String(code));
-  if (typeof message === "string" && message.length > 0) parts.push(message);
-  return parts.length > 0 ? parts.join(": ") : "JSON-RPC error";
 }
