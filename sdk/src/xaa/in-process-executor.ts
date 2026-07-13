@@ -98,16 +98,36 @@ export function createInProcessXaaExecutor(
 
     // Token exchange → ID-JAG. Decodes the identity assertion for sub/email,
     // exactly as the server /token-exchange route does, then mints (applying
-    // the negative-test tamper when requested).
+    // the negative-test tamper when requested). Like the server route, a
+    // missing/malformed assertion or one without a subject is a 400 — never a
+    // silently minted empty-subject ID-JAG.
     if (path.endsWith("/token-exchange")) {
-      const claims = asRecord(decodeJWT(str(body.identityAssertion)));
+      const assertion = str(body.identityAssertion);
+      if (!assertion) {
+        return jsonResult(400, {
+          error: "Token exchange requires a non-empty identity assertion.",
+        });
+      }
+      const decoded = decodeJWT(assertion);
+      if (!decoded) {
+        return jsonResult(400, {
+          error: "The identity assertion is not a decodable JWT.",
+        });
+      }
+      const claims = asRecord(decoded);
+      const subject = str(claims.sub);
+      if (!subject) {
+        return jsonResult(400, {
+          error: "The identity assertion has no subject (`sub`) claim.",
+        });
+      }
       const mode = isNegativeTestMode(body.negativeTestMode)
         ? body.negativeTestMode
         : DEFAULT_NEGATIVE_TEST_MODE;
       const { token } = issueNegativeIdJag(
         {
           issuer: resolveIssuer(),
-          subject: str(claims.sub),
+          subject,
           audience: str(body.audience),
           resource: str(body.resource),
           clientId: str(body.clientId),

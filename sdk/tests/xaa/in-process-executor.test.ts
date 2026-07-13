@@ -134,6 +134,33 @@ describe("createInProcessXaaExecutor internal routes", () => {
     expect(wrapper.body.access_token).toBe("at-1");
   });
 
+  it("/token-exchange rejects a missing/malformed/subject-less assertion with 400", async () => {
+    const exec = createInProcessXaaExecutor({ issuerBaseUrl: ISSUER_BASE });
+    // Missing assertion.
+    let r = await exec.internalRequest(
+      "/token-exchange",
+      post({ audience: AS_ISSUER, resource: RESOURCE, clientId: "c" }),
+    );
+    expect(r.status).toBe(400);
+    // Non-JWT garbage.
+    r = await exec.internalRequest(
+      "/token-exchange",
+      post({ identityAssertion: "not-a-jwt", clientId: "c" }),
+    );
+    expect(r.status).toBe(400);
+    // Well-formed JWT with no `sub`.
+    const subless = issueMockIdToken({
+      issuer: getXAAIssuerUrl(ISSUER_BASE),
+      subject: "",
+      email: "u@example.com",
+    }).token;
+    r = await exec.internalRequest(
+      "/token-exchange",
+      post({ identityAssertion: subless, clientId: "c" }),
+    );
+    expect(r.status).toBe(400);
+  });
+
   it("rejects an unknown internal route with 404", async () => {
     const exec = createInProcessXaaExecutor({ issuerBaseUrl: ISSUER_BASE });
     const result = await exec.internalRequest("/nope", post({}));
