@@ -3,6 +3,7 @@ import {
   getXaaDebugClientMetadata,
   ID_JAG_TOKEN_TYPE,
   ID_TOKEN_TOKEN_TYPE,
+  SAML2_TOKEN_TYPE,
   TOKEN_EXCHANGE_GRANT,
   XAA_DEBUG_IDP_CLIENT_ID,
   XAA_DEBUG_CLIENT_ID_METADATA_URL,
@@ -449,6 +450,8 @@ export function createXAAStateMachine(
     specTokenEndpointAvailable = true,
     requestExecutor,
     negativeTestMode,
+    identityAssertionFormat,
+    subjectIdentifierFormat,
     userId,
     email,
     clientId,
@@ -488,6 +491,10 @@ export function createXAAStateMachine(
       resourceUrl: state.resourceUrl || serverUrl,
       issuerBaseUrl: state.issuerBaseUrl || issuerBaseUrl,
       negativeTestMode: state.negativeTestMode || negativeTestMode,
+      identityAssertionFormat:
+        state.identityAssertionFormat || identityAssertionFormat,
+      subjectIdentifierFormat:
+        state.subjectIdentifierFormat || subjectIdentifierFormat,
       userId: state.userId || userId,
       email: state.email || email,
       clientId: state.clientId || clientId,
@@ -1455,6 +1462,9 @@ export function createXAAStateMachine(
     // rather than silently reviving the stale snapshot value.
     const activeUserId = userId ?? state.userId;
     const activeEmail = email ?? state.email;
+    // Sticky state value (like negativeTestMode): authoritative once the
+    // machine is initialized; changing it requires a flow reset.
+    const assertionFormat = state.identityAssertionFormat;
     const request = {
       method: "POST",
       url: `${mintPathPrefix}/authenticate`,
@@ -1466,6 +1476,7 @@ export function createXAAStateMachine(
         email: activeEmail,
         audience: XAA_DEBUG_IDP_CLIENT_ID,
         resourceClientId: state.clientId,
+        assertionFormat,
         ...hostedIssuerBodyExtras,
       },
     };
@@ -1489,6 +1500,59 @@ export function createXAAStateMachine(
       }
 
       const body = asRecord(result.body, "Authentication response");
+
+      if (assertionFormat === "saml") {
+        // Hard requirements, mirroring the id_token check: an issuer that
+        // ignored the requested format (e.g. an older hosted issuer) minted
+        // an OIDC token instead — fail loudly, never adopt the wrong format.
+        if (typeof body.assertion !== "string") {
+          throw new Error(
+            "Authentication response did not include an `assertion`. The issuer may not support SAML assertions yet."
+          );
+        }
+        const subject = body.subject as Record<string, unknown> | undefined;
+        if (
+          !subject ||
+          typeof subject !== "object" ||
+          typeof subject.issuer !== "string" ||
+          typeof subject.nameid !== "string"
+        ) {
+          throw new Error(
+            "Authentication response did not include the SAML `subject` metadata."
+          );
+        }
+
+        machine.updateState({
+          currentStep: "received_identity_assertion",
+          identityAssertion: body.assertion,
+          identityAssertionSubject: {
+            issuer: subject.issuer,
+            nameid: subject.nameid,
+            ...(typeof subject.nameidFormat === "string"
+              ? { nameidFormat: subject.nameidFormat }
+              : {}),
+            ...(typeof subject.spNameQualifier === "string"
+              ? { spNameQualifier: subject.spNameQualifier }
+              : {}),
+          },
+          error: undefined,
+        });
+
+        pushInfo(
+          "received_identity_assertion",
+          "xaa-identity-assertion",
+          "SAML assertion issued",
+          {
+            userId: activeUserId,
+            email: activeEmail,
+            nameid: subject.nameid,
+            nameid_format: subject.nameidFormat,
+            sp_name_qualifier: subject.spNameQualifier,
+          }
+        );
+        return;
+      }
+
       if (typeof body.id_token !== "string") {
         throw new Error(
           "Authentication response did not include an `id_token`."
@@ -1550,6 +1614,11 @@ export function createXAAStateMachine(
 
     const useSpecEndpoint =
       state.negativeTestMode === "valid" && specTokenEndpointAvailable;
+    // Sticky state values (like negativeTestMode). Input and output axes are
+    // independent: a SAML assertion may mint a plain-`sub` ID-JAG and an OIDC
+    // ID token may mint a saml-nameid `sub_id` one.
+    const assertionFormat = state.identityAssertionFormat;
+    const subjectIdFormat = state.subjectIdentifierFormat;
 
     try {
       if (useSpecEndpoint) {
@@ -1557,13 +1626,19 @@ export function createXAAStateMachine(
           grant_type: TOKEN_EXCHANGE_GRANT,
           requested_token_type: ID_JAG_TOKEN_TYPE,
           subject_token: state.identityAssertion,
-          subject_token_type: ID_TOKEN_TOKEN_TYPE,
+          subject_token_type:
+            assertionFormat === "saml" ? SAML2_TOKEN_TYPE : ID_TOKEN_TOKEN_TYPE,
           client_id: XAA_DEBUG_IDP_CLIENT_ID,
           audience: state.authzServerIssuer,
           ...(state.resourceUrl || state.serverUrl
             ? { resource: state.resourceUrl || state.serverUrl }
             : {}),
           ...(state.scope ? { scope: state.scope } : {}),
+          // Mock-extension output-axis request; omitted for oauth-sub so a
+          // valid OIDC exchange stays byte-identical to the pre-SAML wire.
+          ...(subjectIdFormat === "saml-nameid"
+            ? { subject_id_format: subjectIdFormat }
+            : {}),
         };
         const request = {
           method: "POST",
@@ -1654,6 +1729,8 @@ export function createXAAStateMachine(
           clientId: state.clientId,
           scope: state.scope,
           negativeTestMode: state.negativeTestMode,
+          assertionFormat,
+          subjectIdFormat,
           ...hostedIssuerBodyExtras,
         },
       };
@@ -2173,6 +2250,10 @@ export function createXAAStateMachine(
         resourceUrl: currentState().serverUrl || serverUrl,
         issuerBaseUrl: currentState().issuerBaseUrl || issuerBaseUrl,
         negativeTestMode: currentState().negativeTestMode || negativeTestMode,
+        identityAssertionFormat:
+          currentState().identityAssertionFormat || identityAssertionFormat,
+        subjectIdentifierFormat:
+          currentState().subjectIdentifierFormat || subjectIdentifierFormat,
         userId: currentState().userId || userId,
         email: currentState().email || email,
         clientId: currentState().clientId || clientId,

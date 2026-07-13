@@ -9,10 +9,16 @@ import {
 } from "../../src/xaa/mint/handlers.js";
 import { resetXAAIdpKeyPairForTests } from "../../src/xaa/mint/keypair.js";
 import { issueMockIdToken, verifyXaaJwt } from "../../src/xaa/mint/signer.js";
+import {
+  issueMockSamlAssertion,
+  verifyMockSamlAssertion,
+  SAML_NAMEID_FORMAT_PERSISTENT,
+} from "../../src/xaa/mint/saml.js";
 import { decodeJWT } from "../../src/oauth/state-machines/shared/jwt.js";
 import {
   ID_JAG_TOKEN_TYPE,
   ID_TOKEN_TOKEN_TYPE,
+  SAML2_TOKEN_TYPE,
   TOKEN_EXCHANGE_GRANT,
   XAA_DEBUG_IDP_CLIENT_ID,
 } from "../../src/oauth/client-identity.js";
@@ -87,6 +93,65 @@ describe("shared XAA mint handler cores", () => {
         sub: "user-12345",
         email: "demo.user@example.com",
       });
+    });
+
+    it("keeps the OIDC response shape unchanged (no SAML keys leak in)", () => {
+      const result = handleXaaAuthenticate({
+        issuer: ISSUER,
+        assertionFormat: "oidc",
+      });
+      expect(Object.keys(result.body).sort()).toEqual([
+        "expires_in",
+        "id_token",
+        "token_type",
+        "user",
+      ]);
+    });
+
+    it("mints a verifiable SAML assertion with subject metadata", () => {
+      const result = handleXaaAuthenticate({
+        issuer: ISSUER,
+        userId: "user-1",
+        email: "u@example.com",
+        audience: XAA_DEBUG_IDP_CLIENT_ID,
+        resourceClientId: "ras-client-1",
+        assertionFormat: "saml",
+      });
+
+      expect(result.status).toBe(200);
+      expect(result.body.assertion_format).toBe("saml");
+      expect(result.body.token_type).toBe("Bearer");
+      expect(result.body.expires_in).toBeGreaterThan(0);
+      expect(result.body.user).toEqual({
+        sub: "user-1",
+        email: "u@example.com",
+      });
+      expect(result.body.subject).toEqual({
+        issuer: ISSUER,
+        nameid: "user-1",
+        nameidFormat: SAML_NAMEID_FORMAT_PERSISTENT,
+        spNameQualifier: XAA_DEBUG_IDP_CLIENT_ID,
+      });
+      expect("id_token" in result.body).toBe(false);
+
+      const verified = verifyMockSamlAssertion(
+        result.body.assertion as string,
+        { issuer: ISSUER, audience: XAA_DEBUG_IDP_CLIENT_ID }
+      );
+      expect(verified.nameid).toBe("user-1");
+      expect(verified.email).toBe("u@example.com");
+      expect(verified.resourceClientId).toBe("ras-client-1");
+    });
+
+    it("defaults the SAML SP entity ID to the debug IdP client id", () => {
+      const result = handleXaaAuthenticate({
+        issuer: ISSUER,
+        assertionFormat: "saml",
+        resourceClientId: "ras-client-1",
+      });
+      expect(
+        (result.body.subject as Record<string, unknown>).spNameQualifier
+      ).toBe(XAA_DEBUG_IDP_CLIENT_ID);
     });
   });
 
@@ -169,6 +234,104 @@ describe("shared XAA mint handler cores", () => {
         "Identity assertion payload must contain a non-empty `sub` claim"
       );
     });
+
+    const mintSamlAssertion = () =>
+      issueMockSamlAssertion({
+        issuer: ISSUER,
+        subject: "user-1",
+        email: "u@example.com",
+        spEntityId: XAA_DEBUG_IDP_CLIENT_ID,
+        resourceClientId: "client-1",
+      }).assertionB64;
+
+    it("decodes a SAML assertion (lenient) and mints from its NameID", () => {
+      const result = handleXaaJsonTokenExchange({
+        issuer: ISSUER,
+        identityAssertion: mintSamlAssertion(),
+        audience: AS_ISSUER,
+        resource: RESOURCE,
+        clientId: "client-1",
+        negativeTestMode: "valid",
+        assertionFormat: "saml",
+      });
+
+      expect(result.status).toBe(200);
+      const claims = verifyXaaJwt(result.body.id_jag as string, {
+        issuer: ISSUER,
+        typ: "oauth-id-jag+jwt",
+      });
+      expect(claims).toMatchObject({
+        sub: "user-1",
+        email: "u@example.com",
+        aud: AS_ISSUER,
+        client_id: "client-1",
+      });
+      // SAML input + oauth-sub output (the default): no sub_id.
+      expect(claims).not.toHaveProperty("sub_id");
+    });
+
+    it("mixed axes: OIDC input + saml-nameid output mints a sub_id from the IdP/target-RAS identities", () => {
+      const result = handleXaaJsonTokenExchange({
+        issuer: ISSUER,
+        identityAssertion: mintAssertion("user-1"),
+        audience: AS_ISSUER,
+        clientId: "client-1",
+        negativeTestMode: "valid",
+        subjectIdFormat: "saml-nameid",
+      });
+
+      const claims = verifyXaaJwt(result.body.id_jag as string, {
+        issuer: ISSUER,
+        typ: "oauth-id-jag+jwt",
+      });
+      expect(claims.sub_id).toEqual({
+        format: "saml-nameid",
+        issuer: ISSUER,
+        nameid: "user-1",
+        sp_name_qualifier: AS_ISSUER,
+        nameid_format: SAML_NAMEID_FORMAT_PERSISTENT,
+      });
+    });
+
+    it("never copies the subject assertion's own NameID qualifiers into sub_id", () => {
+      // The assertion's SPNameQualifier/Audience name the REQUESTING client's
+      // SP entity — sub_id must instead carry the IdP issuer and the TARGET
+      // RAS entity (the exchange's audience).
+      const result = handleXaaJsonTokenExchange({
+        issuer: ISSUER,
+        identityAssertion: mintSamlAssertion(),
+        audience: AS_ISSUER,
+        clientId: "client-1",
+        negativeTestMode: "valid",
+        assertionFormat: "saml",
+        subjectIdFormat: "saml-nameid",
+      });
+
+      const claims = verifyXaaJwt(result.body.id_jag as string, {
+        issuer: ISSUER,
+        typ: "oauth-id-jag+jwt",
+      });
+      const subId = claims.sub_id as Record<string, unknown>;
+      expect(subId.sp_name_qualifier).toBe(AS_ISSUER);
+      expect(subId.sp_name_qualifier).not.toBe(XAA_DEBUG_IDP_CLIENT_ID);
+      expect(subId.issuer).toBe(ISSUER);
+    });
+
+    it("throws on a SAML assertion without a NameID", () => {
+      const empty = Buffer.from(
+        `<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" Version="2.0" ID="_x" IssueInstant="2026-01-01T00:00:00Z"><saml:Issuer>${ISSUER}</saml:Issuer></saml:Assertion>`
+      ).toString("base64");
+      expect(() =>
+        handleXaaJsonTokenExchange({
+          issuer: ISSUER,
+          identityAssertion: empty,
+          audience: AS_ISSUER,
+          clientId: "client-1",
+          negativeTestMode: "valid",
+          assertionFormat: "saml",
+        })
+      ).toThrow("Identity assertion must contain a non-empty NameID");
+    });
   });
 
   describe("handleXaaTokenExchangeGrant", () => {
@@ -241,7 +404,7 @@ describe("shared XAA mint handler cores", () => {
       expect(result.status).toBe(400);
       expect(result.body.error).toBe("invalid_request");
       expect(result.body.error_description).toBe(
-        `subject_token_type must be ${ID_TOKEN_TOKEN_TYPE}`
+        `subject_token_type must be ${ID_TOKEN_TOKEN_TYPE} or ${SAML2_TOKEN_TYPE}`
       );
     });
 
@@ -307,6 +470,142 @@ describe("shared XAA mint handler cores", () => {
       expect(result.body.error).toBe("invalid_grant");
       expect(result.body.error_description).toBe(
         "The subject token is missing the IdP's RAS client mapping"
+      );
+    });
+
+    const mintSamlSubjectToken = (
+      overrides: Partial<Parameters<typeof issueMockSamlAssertion>[0]> = {}
+    ) =>
+      issueMockSamlAssertion({
+        issuer: ISSUER,
+        subject: "user-1",
+        email: "u@example.com",
+        // AudienceRestriction = the SP entity ID mapped to the authenticated
+        // client_id; in the mock, the debug IdP client id itself.
+        spEntityId: XAA_DEBUG_IDP_CLIENT_ID,
+        resourceClientId: "client-1",
+        ...overrides,
+      }).assertionB64;
+
+    const validSamlForm = () => ({
+      ...validForm(),
+      subject_token: mintSamlSubjectToken(),
+      subject_token_type: SAML2_TOKEN_TYPE,
+    });
+
+    it("exchanges a signed SAML 2.0 subject token (draft §4.3)", () => {
+      const result = handleXaaTokenExchangeGrant(ISSUER, validSamlForm());
+
+      expect(result.status).toBe(200);
+      expect(result.body.issued_token_type).toBe(ID_JAG_TOKEN_TYPE);
+      const claims = verifyXaaJwt(result.body.access_token as string, {
+        issuer: ISSUER,
+        typ: "oauth-id-jag+jwt",
+      });
+      expect(claims).toMatchObject({
+        sub: "user-1",
+        aud: AS_ISSUER,
+        resource: RESOURCE,
+        client_id: "client-1",
+        email: "u@example.com",
+      });
+      // SAML input + default output axis: no sub_id.
+      expect(claims).not.toHaveProperty("sub_id");
+    });
+
+    it("rejects a SAML subject token whose AudienceRestriction names another SP", () => {
+      const result = handleXaaTokenExchangeGrant(ISSUER, {
+        ...validSamlForm(),
+        subject_token: mintSamlSubjectToken({
+          spEntityId: "someone-elses-sp",
+        }),
+      });
+      expect(result.status).toBe(400);
+      expect(result.body.error).toBe("invalid_grant");
+      expect(String(result.body.error_description)).toMatch(
+        /AudienceRestriction/
+      );
+    });
+
+    it("rejects a tampered SAML subject token with 400 invalid_grant", () => {
+      const tampered = Buffer.from(
+        Buffer.from(mintSamlSubjectToken(), "base64")
+          .toString("utf-8")
+          .replace(">user-1<", ">admin<")
+      ).toString("base64");
+      const result = handleXaaTokenExchangeGrant(ISSUER, {
+        ...validSamlForm(),
+        subject_token: tampered,
+      });
+      expect(result.status).toBe(400);
+      expect(result.body.error).toBe("invalid_grant");
+    });
+
+    it("rejects a SAML subject token missing the RAS client mapping", () => {
+      const unmapped = issueMockSamlAssertion({
+        issuer: ISSUER,
+        subject: "user-1",
+        email: "u@example.com",
+        spEntityId: XAA_DEBUG_IDP_CLIENT_ID,
+      }).assertionB64;
+      const result = handleXaaTokenExchangeGrant(ISSUER, {
+        ...validSamlForm(),
+        subject_token: unmapped,
+      });
+      expect(result.status).toBe(400);
+      expect(result.body.error).toBe("invalid_grant");
+      expect(result.body.error_description).toBe(
+        "The subject assertion is missing the IdP's RAS client mapping"
+      );
+    });
+
+    it("mints a sub_id on subject_id_format=saml-nameid, for BOTH input axes", () => {
+      for (const form of [
+        { ...validForm(), subject_id_format: "saml-nameid" },
+        { ...validSamlForm(), subject_id_format: "saml-nameid" },
+      ]) {
+        const result = handleXaaTokenExchangeGrant(ISSUER, form);
+        expect(result.status).toBe(200);
+        const claims = verifyXaaJwt(result.body.access_token as string, {
+          issuer: ISSUER,
+          typ: "oauth-id-jag+jwt",
+        });
+        expect(claims.sub_id).toEqual({
+          format: "saml-nameid",
+          issuer: ISSUER,
+          nameid: "user-1",
+          // The TARGET RAS's entity ID (the exchange audience) — never the
+          // subject token's own audience/SPNameQualifier.
+          sp_name_qualifier: AS_ISSUER,
+          nameid_format: SAML_NAMEID_FORMAT_PERSISTENT,
+        });
+      }
+    });
+
+    it("omits sub_id for subject_id_format=oauth-sub and when absent", () => {
+      for (const form of [
+        validForm(),
+        { ...validForm(), subject_id_format: "oauth-sub" },
+      ]) {
+        const result = handleXaaTokenExchangeGrant(ISSUER, form);
+        expect(result.status).toBe(200);
+        const claims = verifyXaaJwt(result.body.access_token as string, {
+          issuer: ISSUER,
+          typ: "oauth-id-jag+jwt",
+        });
+        expect(claims).not.toHaveProperty("sub_id");
+      }
+    });
+
+    it("rejects an unknown subject_id_format with 400 invalid_request", () => {
+      const result = handleXaaTokenExchangeGrant(ISSUER, {
+        ...validForm(),
+        subject_id_format: "carrier-pigeon",
+      });
+      expect(result.status).toBe(400);
+      expect(result.body.error).toBe("invalid_request");
+      expect(result.body.error_description).toBe(
+        "subject_id_format must be oauth-sub or saml-nameid"
       );
     });
   });
