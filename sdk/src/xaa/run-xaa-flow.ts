@@ -2,7 +2,6 @@
 // verifies that the configured issuer actually publishes the signing key,
 // redeems the assertion, and probes the protected MCP resource.
 import {
-  executeDebugOAuthProxy,
   executeOAuthProxy,
   fetchOAuthMetadata,
 } from "../oauth-proxy.js";
@@ -15,26 +14,28 @@ import {
   getXAAIssuerUrl,
   initXAAIdpKeyPair,
 } from "./mint/keypair.js";
-import { issueNegativeIdJag, verifyXaaJwt } from "./mint/signer.js";
+import { verifyXaaJwt } from "./mint/signer.js";
 import type { XaaTokenEndpointAuthMethod } from "./mint/jwt-bearer.js";
 import {
   DEFAULT_NEGATIVE_TEST_MODE,
   type NegativeTestMode,
 } from "./constants.js";
 import {
-  buildAuthorizationServerMetadataCandidates,
   buildIssuerPublicationCandidates,
-  buildProtectedResourceMetadataCandidates,
   canonicalizeMcpResource,
 } from "./discovery.js";
 import {
-  buildMcpInitializeRequest,
   evaluateMcpInitializeResponse,
   mcpInitializeExtensionEvidence,
   type XaaCapabilityEvidence,
 } from "./mcp-init.js";
 import { createInProcessXaaExecutor } from "./in-process-executor.js";
-import type { XAARequestExecutor } from "./state-machines/types.js";
+import { createXAAStateMachine } from "./state-machines/state-machine.js";
+import { runXaaStateMachine } from "./state-machines/runner.js";
+import {
+  createInitialXAAFlowState,
+  type XAAFlowState,
+} from "./state-machines/types.js";
 
 const ID_JAG_TYP = "oauth-id-jag+jwt";
 
@@ -62,7 +63,6 @@ export interface XaaFlowConfig {
   httpsOnly?: boolean;
   onProgress?: (message: string) => void;
 }
-
 export interface XaaFlowStep {
   step: string;
   ok: boolean;
@@ -111,42 +111,7 @@ export interface XaaFlowResult {
   error?: string;
 }
 
-interface DiscoveredAuthorizationServer {
-  issuer: string;
-  tokenEndpoint: string;
-  metadata: Record<string, unknown>;
-}
-
-interface RedeemedAssertion {
-  result: XaaRedemptionResult;
-  accessToken?: string;
-}
-
 type PublishedJwk = JsonWebKey & { kid?: string };
-
-async function discoverAsTokenEndpoint(
-  candidateIssuer: string,
-  httpsOnly: boolean,
-  timeoutMs: number | undefined
-): Promise<DiscoveredAuthorizationServer | undefined> {
-  for (const url of buildAuthorizationServerMetadataCandidates(
-    candidateIssuer,
-  )) {
-    const response = await fetchOAuthMetadata(url, httpsOnly, timeoutMs);
-    if ("status" in response) continue;
-
-    const issuer = response.metadata.issuer;
-    const tokenEndpoint = response.metadata.token_endpoint;
-    if (
-      typeof issuer === "string" &&
-      issuer.replace(/\/+$/, "") === candidateIssuer.replace(/\/+$/, "") &&
-      typeof tokenEndpoint === "string"
-    ) {
-      return { issuer, tokenEndpoint, metadata: response.metadata };
-    }
-  }
-  return undefined;
-}
 
 function listEvidence(value: unknown, expected: string): XaaCapabilityEvidence {
   if (value === undefined || value === null) return "unknown";
@@ -245,67 +210,238 @@ async function verifyIssuerPublication(
   }
   return { ok: true, detail: `${jwksUri} (${localKey.kid})` };
 }
+function latestHistoryEntry(state: XAAFlowState, step: string) {
+  return [...(state.httpHistory ?? [])]
+    .reverse()
+    .find((entry) => entry.step === step);
+}
 
-// Redeem an ID-JAG through the SHARED in-process executor's `/proxy/token`
-// route — the exact seam the state machine uses — instead of inlining the
-// jwt-bearer request + proxy call. The executor already carries httpsOnly and
-// the timeout, and returns the upstream `{ status, body }` wrapper; this
-// interprets that wrapper into the CLI's XaaRedemptionResult.
-async function redeemAssertion(
-  executor: XAARequestExecutor,
-  args: {
-    assertion: string;
-    tokenEndpoint: string;
-    tokenEndpointAuthMethod: XaaTokenEndpointAuthMethod;
-    clientId: string;
-    clientSecret?: string;
-    scope?: string;
-    resource: string;
-  }
-): Promise<RedeemedAssertion> {
-  const proxied = await executor.internalRequest("/proxy/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      tokenEndpoint: args.tokenEndpoint,
-      assertion: args.assertion,
-      clientId: args.clientId,
-      ...(args.clientSecret ? { clientSecret: args.clientSecret } : {}),
-      tokenEndpointAuthMethod: args.tokenEndpointAuthMethod,
-      scope: args.scope,
-      resource: args.resource,
-    }),
-  });
+function projectRedemption(
+  state: XAAFlowState
+): XaaRedemptionResult | undefined {
+  const entry = latestHistoryEntry(state, "jwt_bearer_request");
+  if (!entry?.response) return undefined;
+
   const wrapper =
-    proxied.body && typeof proxied.body === "object"
-      ? (proxied.body as { status?: unknown; body?: unknown })
+    entry.response.body && typeof entry.response.body === "object"
+      ? (entry.response.body as Record<string, unknown>)
       : {};
   const status =
-    typeof wrapper.status === "number" ? wrapper.status : proxied.status;
-  const upstreamBody = wrapper.body;
+    typeof wrapper.status === "number" ? wrapper.status : entry.response.status;
+  const storedBody = wrapper.body;
   const body =
-    upstreamBody && typeof upstreamBody === "object"
-      ? (upstreamBody as Record<string, unknown>)
+    storedBody && typeof storedBody === "object"
+      ? {
+          ...(storedBody as Record<string, unknown>),
+          ...(state.accessToken ? { access_token: state.accessToken } : {}),
+        }
+      : storedBody;
+  const record =
+    body && typeof body === "object"
+      ? (body as Record<string, unknown>)
       : undefined;
-  const accessToken = body?.access_token;
   const tokenIssued =
-    status >= 200 && status < 300 && typeof accessToken === "string";
-  const errorDescription = body?.error_description;
-  const oauthError = body?.error;
+    status >= 200 && status < 300 && typeof state.accessToken === "string";
+  const errorDescription = record?.error_description;
+  const oauthError = record?.error;
   const error = !tokenIssued
     ? (typeof errorDescription === "string" ? errorDescription : undefined) ||
       (typeof oauthError === "string" ? oauthError : undefined) ||
-      `Authorization server returned ${status}`
+      "Authorization server returned " + status
     : undefined;
+
   return {
-    result: {
-      status,
-      tokenIssued,
-      ...(error ? { error } : {}),
-      body: upstreamBody,
-    },
-    ...(typeof accessToken === "string" ? { accessToken } : {}),
+    status,
+    tokenIssued,
+    ...(error ? { error } : {}),
+    body,
   };
+}
+
+function projectMcpResult(state: XAAFlowState): XaaFlowResult["mcp"] {
+  const entry = latestHistoryEntry(state, "authenticated_mcp_request");
+  if (!entry?.response) return undefined;
+
+  const error = evaluateMcpInitializeResponse(entry.response.body);
+  return {
+    status: entry.response.status,
+    ok:
+      entry.response.status >= 200 &&
+      entry.response.status < 300 &&
+      !error,
+    ...(error ? { error } : {}),
+    xaaExtension: mcpInitializeExtensionEvidence(entry.response.body),
+  };
+}
+
+function projectIdJag(
+  state: XAAFlowState,
+  issuer: string
+): XaaFlowResult["idJag"] {
+  if (!state.idJag) return undefined;
+
+  let verified = false;
+  let verifyError: string | undefined;
+  let claims =
+    state.idJagDecoded?.payload &&
+    typeof state.idJagDecoded.payload === "object"
+      ? state.idJagDecoded.payload
+      : {};
+  try {
+    claims = verifyXaaJwt(state.idJag, { issuer, typ: ID_JAG_TYP });
+    verified = true;
+  } catch (error) {
+    verifyError = error instanceof Error ? error.message : String(error);
+  }
+
+  return {
+    token: state.idJag,
+    claims,
+    verified,
+    ...(verifyError ? { verifyError } : {}),
+  };
+}
+
+function projectCapabilities(
+  state: XAAFlowState,
+  config: XaaFlowConfig
+): XaaFlowResult["authorizationServerCapabilities"] {
+  if (!state.authzServerIssuer || !state.tokenEndpoint) return undefined;
+
+  const advertisedAuthMethods = stringList(
+    state.authzMetadata?.token_endpoint_auth_methods_supported
+  );
+  const selectedTokenEndpointAuthMethod =
+    state.tokenEndpointAuthMethod ??
+    selectTokenEndpointAuthMethod(
+      config.tokenEndpointAuthMethod,
+      config.clientSecret,
+      advertisedAuthMethods
+    );
+
+  return {
+    idJagProfile: listEvidence(
+      state.authzMetadata?.authorization_grant_profiles_supported,
+      ID_JAG_GRANT_PROFILE
+    ),
+    jwtBearerGrant: listEvidence(
+      state.authzMetadata?.grant_types_supported,
+      JWT_BEARER_GRANT
+    ),
+    ...(advertisedAuthMethods
+      ? { tokenEndpointAuthMethods: advertisedAuthMethods }
+      : {}),
+    selectedTokenEndpointAuthMethod,
+  };
+}
+
+function projectSteps(
+  state: XAAFlowState,
+  prefix = ""
+): XaaFlowStep[] {
+  return (state.httpHistory ?? []).map((entry) => ({
+    step: prefix + entry.step,
+    ok:
+      !entry.error &&
+      !!entry.response &&
+      entry.response.status >= 200 &&
+      entry.response.status < 300,
+    detail: entry.error?.message ??
+      (entry.response ? "status " + entry.response.status : undefined),
+  }));
+}
+
+function projectFlowError(state: XAAFlowState): string | undefined {
+  if (!state.error) return undefined;
+  if (state.currentStep === "discover_resource_metadata") {
+    return (
+      "Could not discover the authorization server from the MCP server's " +
+      "protected-resource metadata. " +
+      state.error
+    );
+  }
+  if (state.currentStep === "discover_authz_metadata") {
+    return (
+      "Could not discover the authorization server's token endpoint. " +
+      state.error
+    );
+  }
+  return state.error;
+}
+
+async function runSharedAttempt(
+  config: XaaFlowConfig,
+  mode: NegativeTestMode,
+  stopAtAccessToken = false,
+  progress?: (message: string) => void
+): Promise<XAAFlowState> {
+  const resource = canonicalizeMcpResource(config.serverUrl);
+  let state = createInitialXAAFlowState({
+    serverUrl: config.serverUrl,
+    resourceUrl: resource,
+    authzServerIssuer: config.authzServerIssuer,
+    tokenEndpoint: config.tokenEndpoint,
+    clientId: config.clientId,
+    clientSecret: config.clientSecret,
+    tokenEndpointAuthMethod: config.tokenEndpointAuthMethod,
+    userId: config.subject,
+    email: config.email,
+    scope: config.scope,
+    negativeTestMode: mode,
+    registrationStrategy: "pre_registered",
+  });
+  const executor = createInProcessXaaExecutor({
+    issuerBaseUrl: config.issuerBaseUrl,
+    httpsOnly: config.httpsOnly ?? false,
+    timeoutMs: config.timeoutMs,
+  });
+  const reportedSteps = new Set<string>();
+  const reportProgress = (nextState: XAAFlowState) => {
+    const step = nextState.currentStep;
+    if (reportedSteps.has(step)) return;
+    reportedSteps.add(step);
+    const message =
+      step === "discover_resource_metadata"
+        ? "Discovering protected-resource metadata (RFC 9728)…"
+        : step === "discover_authz_metadata"
+        ? "Discovering authorization-server metadata (RFC 8414)…"
+        : step === "token_exchange_request"
+        ? "Minting the ID-JAG…"
+        : step === "jwt_bearer_request"
+        ? mode === "valid"
+          ? "Redeeming the ID-JAG at the authorization server…"
+          : "Redeeming the deliberately invalid ID-JAG…"
+        : step === "authenticated_mcp_request"
+        ? "Calling the MCP server with the access token…"
+        : undefined;
+    if (message) progress?.(message);
+  };
+  const machine = createXAAStateMachine({
+    state,
+    getState: () => state,
+    updateState: (updates) => {
+      state = { ...state, ...updates };
+      reportProgress(state);
+    },
+    serverUrl: config.serverUrl,
+    issuerBaseUrl: config.issuerBaseUrl,
+    requestExecutor: executor,
+    negativeTestMode: mode,
+    userId: config.subject,
+    email: config.email,
+    clientId: config.clientId,
+    clientSecret: config.clientSecret,
+    scope: config.scope,
+    authzServerIssuer: config.authzServerIssuer,
+    registrationStrategy: "pre_registered",
+  });
+
+  await runXaaStateMachine(
+    machine,
+    () => state,
+    stopAtAccessToken ? { stopAtStep: "received_access_token" } : {}
+  );
+  return state;
 }
 
 export async function runXaaFlow(
@@ -313,381 +449,179 @@ export async function runXaaFlow(
 ): Promise<XaaFlowResult> {
   const httpsOnly = config.httpsOnly ?? false;
   const progress = (message: string) => config.onProgress?.(message);
-  const steps: XaaFlowStep[] = [];
-  const record = (step: string, ok: boolean, detail?: string) => {
-    steps.push({ step, ok, detail });
-    return ok;
-  };
-  const resource = canonicalizeMcpResource(config.serverUrl);
-  // The shared in-process executor the state machine also drives; the CLI
-  // redeems ID-JAGs through its `/proxy/token` route rather than inlining the
-  // jwt-bearer + proxy call, so both surfaces share one redemption path.
-  const executor = createInProcessXaaExecutor({
-    issuerBaseUrl: config.issuerBaseUrl,
-    httpsOnly,
-    timeoutMs: config.timeoutMs,
-  });
+  const issuer = getXAAIssuerUrl(config.issuerBaseUrl);
+  const publicationStep: XaaFlowStep[] = [];
 
   try {
-    let candidateIssuers: string[];
-    if (config.authzServerIssuer) {
-      candidateIssuers = [config.authzServerIssuer];
-    } else {
-      progress("Discovering protected-resource metadata (RFC 9728)…");
-      let servers: string[] = [];
-      for (const url of buildProtectedResourceMetadataCandidates(
-        config.serverUrl
-      )) {
-        const response = await fetchOAuthMetadata(
-          url,
-          httpsOnly,
-          config.timeoutMs
-        );
-        if ("status" in response) continue;
-
-        const resourceMatches =
-          typeof response.metadata.resource === "string" &&
-          canonicalizeMcpResource(response.metadata.resource) === resource;
-        const advertised = response.metadata.authorization_servers;
-        if (resourceMatches && Array.isArray(advertised)) {
-          servers = advertised.filter(
-            (entry): entry is string => typeof entry === "string"
-          );
-          if (servers.length > 0) break;
-        }
-      }
-      if (servers.length === 0) {
-        record("discover_resource_metadata", false, "no authorization_servers");
-        return {
-          completed: false,
-          issuer: getXAAIssuerUrl(config.issuerBaseUrl),
-          steps,
-          error:
-            "Could not discover the authorization server from the MCP server's protected-resource metadata. Pass the issuer explicitly.",
-        };
-      }
-      candidateIssuers = servers;
-      record("discover_resource_metadata", true, servers.join(", "));
-    }
-
-    let authzServerIssuer: string;
-    let tokenEndpoint = config.tokenEndpoint;
-    let authzMetadata: Record<string, unknown> | undefined;
-    if (tokenEndpoint) {
-      authzServerIssuer = candidateIssuers[0];
-    } else {
-      progress("Discovering authorization-server metadata (RFC 8414)…");
-      let resolved: DiscoveredAuthorizationServer | undefined;
-      for (const candidate of candidateIssuers) {
-        resolved = await discoverAsTokenEndpoint(
-          candidate,
-          httpsOnly,
-          config.timeoutMs
-        );
-        if (resolved) break;
-      }
-      if (!resolved) {
-        record("discover_authz_metadata", false, "no token_endpoint");
-        return {
-          completed: false,
-          issuer: getXAAIssuerUrl(config.issuerBaseUrl),
-          authzServerIssuer: candidateIssuers[0],
-          steps,
-          error:
-            "Could not discover the authorization server's token endpoint. Pass --token-endpoint explicitly.",
-        };
-      }
-      authzServerIssuer = resolved.issuer;
-      tokenEndpoint = resolved.tokenEndpoint;
-      authzMetadata = resolved.metadata;
-      record("discover_authz_metadata", true, tokenEndpoint);
-    }
-
-    const advertisedAuthMethods = stringList(
-      authzMetadata?.token_endpoint_auth_methods_supported
-    );
-    const selectedTokenEndpointAuthMethod = selectTokenEndpointAuthMethod(
-      config.tokenEndpointAuthMethod,
-      config.clientSecret,
-      advertisedAuthMethods
-    );
-    const authorizationServerCapabilities = {
-      idJagProfile: listEvidence(
-        authzMetadata?.authorization_grant_profiles_supported,
-        ID_JAG_GRANT_PROFILE
-      ),
-      jwtBearerGrant: listEvidence(
-        authzMetadata?.grant_types_supported,
-        JWT_BEARER_GRANT
-      ),
-      ...(advertisedAuthMethods
-        ? { tokenEndpointAuthMethods: advertisedAuthMethods }
-        : {}),
-      selectedTokenEndpointAuthMethod,
-    };
-    record(
-      "authorization_server_id_jag_profile",
-      authorizationServerCapabilities.idJagProfile !== "not_advertised",
-      authorizationServerCapabilities.idJagProfile
-    );
-    record(
-      "authorization_server_jwt_bearer_grant",
-      authorizationServerCapabilities.jwtBearerGrant !== "not_advertised",
-      authorizationServerCapabilities.jwtBearerGrant
-    );
-    record(
-      "select_token_endpoint_auth_method",
-      true,
-      selectedTokenEndpointAuthMethod
-    );
-
     progress("Verifying the configured issuer metadata and JWKS…");
     initXAAIdpKeyPair();
-    const issuer = getXAAIssuerUrl(config.issuerBaseUrl);
     const issuerPublication = await verifyIssuerPublication(
       issuer,
       httpsOnly,
       config.timeoutMs
     );
-    record(
-      "verify_issuer_publication",
-      issuerPublication.ok,
-      issuerPublication.detail
-    );
+    publicationStep.push({
+      step: "verify_issuer_publication",
+      ok: issuerPublication.ok,
+      detail: issuerPublication.detail,
+    });
     if (!issuerPublication.ok) {
       return {
         completed: false,
         issuer,
-        authzServerIssuer,
-        tokenEndpoint,
-        authorizationServerCapabilities,
-        steps,
+        steps: publicationStep,
         error:
-          "The configured issuer does not publish the local signing key; the authorization server cannot validate this ID-JAG.",
+          "The configured issuer does not publish the local signing key; " +
+          "the authorization server cannot validate this ID-JAG.",
       };
     }
 
     const mode = config.negativeTestMode ?? DEFAULT_NEGATIVE_TEST_MODE;
-    const issueParams = {
-      issuer,
-      subject: config.subject,
-      audience: authzServerIssuer,
-      resource,
-      clientId: config.clientId,
-      scope: config.scope,
-      email: config.email,
-    };
-    progress("Minting the ID-JAG…");
-    const minted = issueNegativeIdJag(issueParams, mode);
-    record(
-      "mint_id_jag",
-      true,
-      mode === "valid" ? "valid" : `negative:${mode}`
-    );
+    if (mode === "valid") {
+      const state = await runSharedAttempt(config, mode, false, progress);
+      const capabilities = projectCapabilities(state, config);
+      const idJag = projectIdJag(state, issuer);
+      const redemption = projectRedemption(state);
+      const mcp = projectMcpResult(state);
+      const steps = [...publicationStep, ...projectSteps(state)];
 
-    let verified = false;
-    let verifyError: string | undefined;
-    try {
-      verifyXaaJwt(minted.token, { issuer, typ: ID_JAG_TYP });
-      verified = true;
-    } catch (error) {
-      verifyError = error instanceof Error ? error.message : String(error);
-    }
-    record(
-      "inspect_id_jag",
-      mode === "valid" ? verified : true,
-      verified ? "verified" : verifyError
-    );
-    const idJag = {
-      token: minted.token,
-      claims: minted.payload,
-      verified,
-      ...(verifyError ? { verifyError } : {}),
-    };
-    const redemptionArgs = {
-      tokenEndpoint,
-      tokenEndpointAuthMethod: selectedTokenEndpointAuthMethod,
-      clientId: config.clientId,
-      clientSecret: config.clientSecret,
-      scope: config.scope,
-      resource,
-    };
-
-    if (mode !== "valid") {
-      progress("Establishing a valid ID-JAG redemption baseline…");
-      const baseline = await redeemAssertion(executor, {
-        ...redemptionArgs,
-        assertion: issueNegativeIdJag(issueParams, "valid").token,
-      });
-      record(
-        "redeem_valid_baseline",
-        baseline.result.tokenIssued,
-        baseline.result.tokenIssued
-          ? "access token issued"
-          : baseline.result.error
-      );
-      if (!baseline.result.tokenIssued) {
-        return {
-          completed: false,
-          issuer,
-          authzServerIssuer,
-          tokenEndpoint,
-          authorizationServerCapabilities,
-          idJag,
-          negativeProbe: {
-            mode,
-            baselineAccepted: false,
-            baselineStatus: baseline.result.status,
-            ...(baseline.result.error
-              ? { baselineError: baseline.result.error }
-              : {}),
-            outcome: "inconclusive",
+      if (capabilities) {
+        steps.push(
+          {
+            step: "authorization_server_id_jag_profile",
+            ok: capabilities.idJagProfile !== "not_advertised",
+            detail: capabilities.idJagProfile,
           },
-          steps,
-          error:
-            "The valid baseline was not accepted, so the negative probe cannot be scored.",
-        };
+          {
+            step: "authorization_server_jwt_bearer_grant",
+            ok: capabilities.jwtBearerGrant !== "not_advertised",
+            detail: capabilities.jwtBearerGrant,
+          },
+          {
+            step: "select_token_endpoint_auth_method",
+            ok: true,
+            detail: capabilities.selectedTokenEndpointAuthMethod,
+          }
+        );
+      }
+      if (mcp) {
+        steps.push({
+          step: "mcp_xaa_extension",
+          ok: mcp.xaaExtension !== "not_advertised",
+          detail: mcp.xaaExtension,
+        });
       }
 
-      progress("Redeeming the deliberately invalid ID-JAG…");
-      const probe = await redeemAssertion(executor, {
-        ...redemptionArgs,
-        assertion: minted.token,
-      });
-      const outcome = probe.result.tokenIssued
-        ? "accepted"
-        : probe.result.status >= 400 && probe.result.status < 500
-        ? "rejected"
-        : "inconclusive";
-      record(
-        "redeem_negative_id_jag",
-        outcome === "rejected",
-        outcome === "rejected"
-          ? `rejected with status ${probe.result.status}`
-          : outcome === "accepted"
-          ? "authorization server issued an access token"
-          : probe.result.error
-      );
       return {
-        completed: outcome === "rejected",
+        completed: state.currentStep === "complete",
         issuer,
-        authzServerIssuer,
-        tokenEndpoint,
-        authorizationServerCapabilities,
-        idJag,
-        redemption: probe.result,
-        negativeProbe: {
-          mode,
-          baselineAccepted: true,
-          baselineStatus: baseline.result.status,
-          outcome,
-        },
-        steps,
-        ...(outcome === "accepted"
-          ? {
-              error:
-                "The authorization server accepted the deliberately invalid ID-JAG.",
-            }
-          : outcome === "inconclusive"
-          ? {
-              error:
-                "The negative probe did not produce a conclusive 4xx rejection.",
-            }
+        ...(state.authzServerIssuer
+          ? { authzServerIssuer: state.authzServerIssuer }
           : {}),
+        ...(state.tokenEndpoint ? { tokenEndpoint: state.tokenEndpoint } : {}),
+        ...(capabilities
+          ? { authorizationServerCapabilities: capabilities }
+          : {}),
+        ...(idJag ? { idJag } : {}),
+        ...(redemption ? { redemption } : {}),
+        ...(mcp ? { mcp } : {}),
+        steps,
+        ...(projectFlowError(state) ? { error: projectFlowError(state) } : {}),
       };
     }
 
-    progress("Redeeming the ID-JAG at the authorization server…");
-    const redeemed = await redeemAssertion(executor, {
-      ...redemptionArgs,
-      assertion: minted.token,
-    });
-    record(
-      "redeem_id_jag",
-      redeemed.result.tokenIssued,
-      redeemed.result.tokenIssued
-        ? "access token issued"
-        : redeemed.result.error
+    progress("Establishing a valid ID-JAG redemption baseline…");
+    const baselineState = await runSharedAttempt(
+      config,
+      "valid",
+      true,
+      progress
     );
-    if (!redeemed.result.tokenIssued || !redeemed.accessToken) {
+    const baselineRedemption = projectRedemption(baselineState);
+    const capabilities = projectCapabilities(baselineState, config);
+    const baselineStatus = baselineRedemption?.status ?? 0;
+    const baselineAccepted = baselineRedemption?.tokenIssued === true;
+    const baselineSteps = projectSteps(baselineState, "baseline:");
+
+    if (!baselineAccepted) {
       return {
         completed: false,
         issuer,
-        authzServerIssuer,
-        tokenEndpoint,
-        authorizationServerCapabilities,
-        idJag,
-        redemption: redeemed.result,
-        steps,
+        ...(baselineState.authzServerIssuer
+          ? { authzServerIssuer: baselineState.authzServerIssuer }
+          : {}),
+        ...(baselineState.tokenEndpoint
+          ? { tokenEndpoint: baselineState.tokenEndpoint }
+          : {}),
+        ...(capabilities
+          ? { authorizationServerCapabilities: capabilities }
+          : {}),
+        negativeProbe: {
+          mode,
+          baselineAccepted: false,
+          baselineStatus,
+          ...(baselineRedemption?.error
+            ? { baselineError: baselineRedemption.error }
+            : {}),
+          outcome: "inconclusive",
+        },
+        steps: [...publicationStep, ...baselineSteps],
+        error:
+          projectFlowError(baselineState) ??
+          "The valid baseline was not accepted, so the negative probe cannot be scored.",
       };
     }
 
-    progress("Calling the MCP server with the access token…");
-    const mcpResult = await callAuthenticatedMcp(
-      config.serverUrl,
-      redeemed.accessToken,
-      httpsOnly,
-      config.timeoutMs
-    );
-    record(
-      "authenticated_mcp_request",
-      mcpResult.ok,
-      mcpResult.error
-        ? `status ${mcpResult.status}: ${mcpResult.error}`
-        : `status ${mcpResult.status}`
-    );
-    record(
-      "mcp_xaa_extension",
-      mcpResult.xaaExtension !== "not_advertised",
-      mcpResult.xaaExtension
-    );
+    const probeState = await runSharedAttempt(config, mode, false, progress);
+    const redemption = projectRedemption(probeState);
+    const idJag = projectIdJag(probeState, issuer);
+    const outcome = probeState.negativeProbe?.outcome ?? "inconclusive";
+    const steps = [
+      ...publicationStep,
+      ...baselineSteps,
+      ...projectSteps(probeState, "probe:"),
+    ];
 
     return {
-      completed: mcpResult.ok,
+      completed: outcome === "rejected",
       issuer,
-      authzServerIssuer,
-      tokenEndpoint,
-      authorizationServerCapabilities,
-      idJag,
-      redemption: redeemed.result,
-      mcp: mcpResult,
+      ...(probeState.authzServerIssuer
+        ? { authzServerIssuer: probeState.authzServerIssuer }
+        : {}),
+      ...(probeState.tokenEndpoint
+        ? { tokenEndpoint: probeState.tokenEndpoint }
+        : {}),
+      ...(capabilities
+        ? { authorizationServerCapabilities: capabilities }
+        : {}),
+      ...(idJag ? { idJag } : {}),
+      ...(redemption ? { redemption } : {}),
+      negativeProbe: {
+        mode,
+        baselineAccepted: true,
+        baselineStatus,
+        outcome,
+      },
       steps,
+      ...(outcome === "accepted"
+        ? {
+            error:
+              "The authorization server accepted the deliberately invalid ID-JAG.",
+          }
+        : outcome === "inconclusive"
+        ? {
+            error:
+              projectFlowError(probeState) ??
+              "The negative probe did not produce a conclusive 4xx rejection.",
+          }
+        : {}),
     };
   } catch (error) {
     return {
       completed: false,
-      issuer: getXAAIssuerUrl(config.issuerBaseUrl),
-      steps,
+      issuer,
+      steps: publicationStep,
       error: error instanceof Error ? error.message : String(error),
     };
   }
-}
-
-async function callAuthenticatedMcp(
-  serverUrl: string,
-  accessToken: string,
-  httpsOnly: boolean,
-  timeoutMs: number | undefined
-): Promise<{
-  status: number;
-  ok: boolean;
-  error?: string;
-  xaaExtension: XaaCapabilityEvidence;
-}> {
-  const request = buildMcpInitializeRequest(accessToken);
-  const response = await executeDebugOAuthProxy({
-    url: serverUrl,
-    method: "POST",
-    headers: request.headers,
-    body: request.body,
-    httpsOnly,
-    timeoutMs,
-  });
-  const error = evaluateMcpInitializeResponse(response.body);
-  return {
-    status: response.status,
-    ok: response.status >= 200 && response.status < 300 && !error,
-    ...(error ? { error } : {}),
-    xaaExtension: mcpInitializeExtensionEvidence(response.body),
-  };
 }

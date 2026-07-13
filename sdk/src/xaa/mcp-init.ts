@@ -110,6 +110,14 @@ export function evaluateMcpInitializeResponse(body: unknown): string | undefined
   ) {
     return "MCP server did not return a JSON-RPC initialize result";
   }
+
+  const negotiatedVersion = (response.result as { protocolVersion?: unknown })
+    .protocolVersion;
+  if (negotiatedVersion !== MCP_PROTOCOL_VERSION) {
+    return `MCP server negotiated protocol version ${String(
+      negotiatedVersion
+    )}; expected ${MCP_PROTOCOL_VERSION}`;
+  }
   return undefined;
 }
 

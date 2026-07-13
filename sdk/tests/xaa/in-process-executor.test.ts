@@ -242,7 +242,7 @@ describe("createInProcessXaaExecutor internal routes", () => {
           return json({
             jsonrpc: "2.0",
             id: "mcpjam-xaa-cli",
-            result: { capabilities: {} },
+            result: { protocolVersion: "2025-11-25", capabilities: {} },
           });
         }
         return json({}, 404);
