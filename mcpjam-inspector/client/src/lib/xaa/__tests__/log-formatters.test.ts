@@ -88,4 +88,46 @@ describe("generateXAAFlowText", () => {
     expect(copied).not.toContain("form-client-secret");
     expect(copied).toContain("grant_type=token-exchange");
   });
+
+  it("redacts failed requests duplicated into info logs and error text", () => {
+    const copied = generateXAAFlowText(
+      createInitialXAAFlowState({
+        currentStep: "jwt_bearer_request",
+        error: "Request failed with access_token=state-error-secret",
+        infoLogs: [
+          {
+            id: "failed-request",
+            step: "jwt_bearer_request",
+            label: "Request failed",
+            timestamp: 1,
+            level: "error",
+            data: {
+              method: "POST",
+              headers: { Authorization: "Bearer info-log-bearer-secret" },
+              body: { assertion: "info-log-assertion-secret" },
+            },
+            error: {
+              message: "Bearer info-log-error-secret",
+              details: {
+                stack: "request failed: id_token=info-log-stack-secret",
+              },
+            },
+          },
+        ],
+      }),
+      {},
+    );
+
+    for (const secret of [
+      "state-error-secret",
+      "info-log-bearer-secret",
+      "info-log-assertion-secret",
+      "info-log-error-secret",
+      "info-log-stack-secret",
+    ]) {
+      expect(copied).not.toContain(secret);
+    }
+    expect(copied).toContain("[REDACTED]");
+    expect(copied).toContain('"method": "POST"');
+  });
 });

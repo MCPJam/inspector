@@ -402,6 +402,7 @@ export function XAAFlowLogger({
     new Set()
   );
   const [copySuccess, setCopySuccess] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
   const copyResetTimerRef = useRef<number | null>(null);
 
   const stepRefs = useRef(new Map<XAAFlowStep, HTMLDivElement | null>());
@@ -481,14 +482,27 @@ export function XAAFlowLogger({
   const currentStepIndex = getXAAStepIndex(flowState.currentStep);
 
   const handleCopyFlow = async () => {
-    const success = await copyToClipboard(
-      generateXAAFlowText(flowState, summary),
-    );
-    if (!success) return;
-    setCopySuccess(true);
+    setCopyError(null);
+    setCopySuccess(false);
     if (copyResetTimerRef.current !== null) {
       window.clearTimeout(copyResetTimerRef.current);
+      copyResetTimerRef.current = null;
     }
+
+    try {
+      const success = await copyToClipboard(
+        generateXAAFlowText(flowState, summary),
+      );
+      if (!success) {
+        setCopyError("Copy failed");
+        return;
+      }
+      setCopySuccess(true);
+    } catch {
+      setCopyError("Copy failed");
+      return;
+    }
+
     copyResetTimerRef.current = window.setTimeout(() => {
       setCopySuccess(false);
       copyResetTimerRef.current = null;
@@ -677,8 +691,9 @@ export function XAAFlowLogger({
                 size="sm"
                 onClick={() => void handleCopyFlow()}
                 className="h-8 shrink-0"
+                title={copyError ?? undefined}
               >
-                {copySuccess ? "Copied!" : "Copy"}
+                {copyError ?? (copySuccess ? "Copied!" : "Copy")}
               </Button>
             </div>
           </>

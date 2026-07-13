@@ -177,4 +177,22 @@ describe("XAAFlowLogger run controls", () => {
     unmount();
     expect(clearTimeoutSpy).toHaveBeenCalledTimes(2);
   });
+
+  it("shows a copy error and clears it on a successful retry", async () => {
+    const user = userEvent.setup();
+    copyToClipboard
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    renderLogger();
+
+    await user.click(screen.getByRole("button", { name: "Copy" }));
+    expect(
+      screen.getByRole("button", { name: "Copy failed" }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Copy failed" }));
+    expect(
+      screen.getByRole("button", { name: "Copied!" }),
+    ).toBeInTheDocument();
+  });
 });

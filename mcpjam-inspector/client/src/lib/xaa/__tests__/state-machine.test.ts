@@ -988,6 +988,9 @@ describe("createXAAStateMachine", () => {
               body: {
                 issuer: "https://auth.example.com",
                 token_endpoint: "https://auth.example.com/oauth/token",
+                authorization_grant_profiles_supported: [
+                  "urn:ietf:params:oauth:grant-profile:id-jag",
+                ],
               },
               ok: true,
             };
@@ -1031,6 +1034,10 @@ describe("createXAAStateMachine", () => {
       await machine.proceedToNextStep();
       expect(state.currentStep).toBe("received_authz_metadata");
       expect(state.tokenEndpoint).toBe("https://auth.example.com/oauth/token");
+      expect(
+        state.infoLogs?.find((log) => log.id === "xaa-authz-metadata")?.data
+          .authorization_grant_profiles_supported
+      ).toEqual(["urn:ietf:params:oauth:grant-profile:id-jag"]);
       expect(
         externalUrls.some((u) => u.includes("oauth-authorization-server"))
       ).toBe(true);

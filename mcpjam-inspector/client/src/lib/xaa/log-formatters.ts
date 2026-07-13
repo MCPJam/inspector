@@ -109,14 +109,14 @@ const appendError = (
   error: XAAInfoLogEntry["error"] | XAAHttpHistoryEntry["error"],
 ) => {
   if (!error) return text;
-  text += `ERROR: ${error.message}\n`;
+  text += `ERROR: ${stringify(sanitizeString(error.message))}\n`;
   if (
     error.details &&
     typeof error.details === "object" &&
     "stack" in error.details &&
     typeof error.details.stack === "string"
   ) {
-    text += `Stack: ${error.details.stack}\n`;
+    text += `Stack: ${stringify(sanitizeString(error.details.stack))}\n`;
   }
   return text;
 };
@@ -138,7 +138,9 @@ export function generateXAAFlowText(
   text += `Scope: ${summary.scope || flowState.scope || "Not set"}\n`;
   text += `Test mode: ${flowState.negativeTestMode}\n`;
   text += `Current step: ${flowState.currentStep}\n`;
-  if (flowState.error) text += `ERROR: ${flowState.error}\n`;
+  if (flowState.error) {
+    text += `ERROR: ${stringify(sanitizeString(flowState.error))}\n`;
+  }
   text += "\n";
 
   type TimelineEntry =
@@ -178,7 +180,9 @@ export function generateXAAFlowText(
         text += `[${formatTimestamp(
           log.timestamp,
         )}] [${log.level.toUpperCase()}] ${log.label}\n`;
-        if (log.data !== undefined) text += `${stringify(log.data)}\n`;
+        if (log.data !== undefined) {
+          text += `${stringify(sanitizeBody(log.data))}\n`;
+        }
         text = appendError(text, log.error);
         text += "\n";
         continue;

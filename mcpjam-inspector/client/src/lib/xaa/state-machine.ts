@@ -721,6 +721,8 @@ export function createXAAStateMachine(
             issuer: resolvedIssuer,
             token_endpoint: metadata.token_endpoint,
             grant_types_supported: metadata.grant_types_supported,
+            authorization_grant_profiles_supported:
+              metadata.authorization_grant_profiles_supported,
             compatibility: compatibilityReport
               ? {
                   overall: compatibilityReport.overall,
