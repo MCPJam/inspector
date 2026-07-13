@@ -40,6 +40,7 @@ const SENSITIVE_FIELDS = new Set([
   "set_cookie",
   "state",
   "subject_token",
+  "token",
 ]);
 
 const normalizeSensitiveKey = (key: string) =>
@@ -62,6 +63,24 @@ const isSensitiveContainerKey = (key: string) => {
   );
 };
 
+const escapeRegExp = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const sensitiveStringFieldPattern = [...SENSITIVE_FIELDS]
+  .flatMap((field) => [
+    field,
+    field.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase()),
+    field.replaceAll("_", "-"),
+  ])
+  .sort((a, b) => b.length - a.length)
+  .map(escapeRegExp)
+  .join("|");
+
+const sensitiveStringAssignmentPattern = new RegExp(
+  `\\b((?:${sensitiveStringFieldPattern})\\s*["']?\\s*[:=]\\s*["']?)([^"'&\\s,}]+)`,
+  "gi",
+);
+
 function sanitizeCopyString(value: string): unknown {
   const trimmed = value.trim();
   if (
@@ -75,15 +94,9 @@ function sanitizeCopyString(value: string): unknown {
     }
   }
 
-  let sanitized = value.replace(
-    /\bBearer\s+[^\s,;]+/gi,
-    `Bearer ${REDACTED}`,
-  );
-  sanitized = sanitized.replace(
-    /\b((?:access_token|refresh_token|id_token|client_secret|code_verifier|authorization_code|code|state|assertion|subject_token|actor_token|api_key|password)\s*["']?\s*[:=]\s*["']?)([^"'&\s,}]+)/gi,
-    `$1${REDACTED}`,
-  );
-  return sanitized;
+  return value
+    .replace(/\bBearer\s+[^\s,;]+/gi, `Bearer ${REDACTED}`)
+    .replace(sensitiveStringAssignmentPattern, `$1${REDACTED}`);
 }
 
 function sanitizeCopyValue(value: unknown): unknown {
@@ -115,6 +128,8 @@ function sanitizeCopyHeaders(
 function sanitizeCopyUrl(rawUrl: string): string {
   try {
     const url = new URL(rawUrl);
+    if (url.username) url.username = REDACTED;
+    if (url.password) url.password = REDACTED;
     for (const key of [...url.searchParams.keys()]) {
       if (isSensitiveContainerKey(key)) url.searchParams.set(key, REDACTED);
     }

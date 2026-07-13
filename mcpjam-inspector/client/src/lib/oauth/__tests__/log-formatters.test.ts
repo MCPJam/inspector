@@ -3,7 +3,7 @@ import type { OAuthFlowState, OAuthFlowStep } from "@mcpjam/sdk/browser";
 import { generateGuideText, generateRawText } from "../log-formatters";
 
 describe("OAuth copy log formatters", () => {
-  it("redacts credentials from Guide and Raw output without changing the live trace", () => {
+  it("redacts credential aliases, exact token fields, and URL user-info", () => {
     const step = "token_request" as OAuthFlowStep;
     const infoLog = {
       id: "failed-token-request",
@@ -12,13 +12,16 @@ describe("OAuth copy log formatters", () => {
       level: "error",
       label: "Token request failed",
       data: {
+        token: "exact-token-secret",
         token_endpoint: "https://auth.example.com/token",
         headers: { Authorization: "Bearer info-bearer-secret" },
         body: "client_secret=info-client-secret&code=info-code-secret",
+        request:
+          "clientSecret=camel-client-secret&accessToken=camel-access-secret&authorization=text-auth-secret&cookie=text-cookie-secret&credential=text-credential-secret&setCookie=text-set-cookie-secret",
       },
       error: {
         message: "Bearer info-error-secret",
-        details: { stack: "id_token=info-stack-secret" },
+        details: { stack: "idToken=camel-id-secret" },
       },
     } as any;
     const httpEntry = {
@@ -26,20 +29,21 @@ describe("OAuth copy log formatters", () => {
       timestamp: 2,
       request: {
         method: "POST",
-        url: "https://auth.example.com/token?code=query-code-secret",
+        url: "https://url-user-secret:url-password-secret@auth.example.com/token?token=query-token-secret#fragment-secret",
         headers: {
-          authorization: "Bearer request-bearer-secret",
+          Authorization: "Bearer request-bearer-secret",
           Cookie: "session=request-cookie-secret",
           "Content-Type": "application/x-www-form-urlencoded",
         },
-        body: "grant_type=authorization_code&client_secret=request-client-secret&code=request-code-secret",
+        body: "grant_type=authorization_code&client_secret=snake-client-secret&code=request-code-secret",
       },
       response: {
         status: 200,
         statusText: "OK",
         headers: { "Set-Cookie": "session=response-cookie-secret" },
         body: JSON.stringify({
-          access_token: "response-access-secret",
+          token: "response-token-secret",
+          accessToken: "response-access-secret",
           refresh_token: "response-refresh-secret",
           token_type: "Bearer",
         }),
@@ -73,17 +77,28 @@ describe("OAuth copy log formatters", () => {
 
     for (const output of [guide, raw]) {
       for (const secret of [
+        "exact-token-secret",
         "info-bearer-secret",
         "info-client-secret",
         "info-code-secret",
+        "camel-client-secret",
+        "camel-access-secret",
+        "text-auth-secret",
+        "text-cookie-secret",
+        "text-credential-secret",
+        "text-set-cookie-secret",
         "info-error-secret",
-        "info-stack-secret",
-        "query-code-secret",
+        "camel-id-secret",
+        "url-user-secret",
+        "url-password-secret",
+        "query-token-secret",
+        "fragment-secret",
         "request-bearer-secret",
         "request-cookie-secret",
-        "request-client-secret",
+        "snake-client-secret",
         "request-code-secret",
         "response-cookie-secret",
+        "response-token-secret",
         "response-access-secret",
         "response-refresh-secret",
         "http-error-secret",
@@ -97,11 +112,9 @@ describe("OAuth copy log formatters", () => {
       expect(output).toContain('"token_type": "Bearer"');
     }
 
-    // Redaction happens only while formatting the copy; local on-screen data
-    // remains untouched for debugging.
-    expect(infoLog.data.headers.Authorization).toBe(
-      "Bearer info-bearer-secret",
-    );
+    // Copy-time redaction must not mutate the local trace shown on-screen.
+    expect(infoLog.data.token).toBe("exact-token-secret");
+    expect(httpEntry.request.url).toContain("url-user-secret");
     expect(httpEntry.response.body).toContain("response-access-secret");
   });
 });
