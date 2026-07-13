@@ -1,0 +1,54 @@
+---
+title: "Coming from MCP Inspector?"
+description: "Map your MCP Inspector workflow to MCPJam Inspector in minutes. Feature-by-feature equivalents, connection steps for your existing server config, and when to keep using MCP Inspector."
+icon: "arrow-right-left"
+---
+
+MCPJam Inspector covers the same protocol validation workflow as the official MCP Inspector and extends into behavior debugging. Everything you do in MCP Inspector has a direct equivalent in MCPJam. This page maps them one to one.
+
+<video
+  controls
+  preload="metadata"
+  style={{ width: "100%", borderRadius: "12px" }}
+>
+  <source
+    src="https://res.cloudinary.com/drogwgi6f/video/upload/v1783977396/walkthrough2_sltggs.mp4"
+    type="video/mp4"
+  />
+  Your browser does not support the video tag.
+</video>
+
+## Feature mapping
+
+| Capability | In MCP Inspector | In MCPJam Inspector |
+|---|---|---|
+| Manual tool execution | Open the Tools tab, click List Tools, select one, fill its typed arguments in a form, and run it. The result appears as the raw structured content returned by the server. | Open the [**Tools**](/inspector/tools-prompts-resources) tab, search or pick a tool from the list, fill its params, and hit Execute. The return value appears below, and you can save a request to re-run it later with the same params. |
+| Resources & prompts | The Resources and Prompts tabs list what the server exposes; selecting an item fetches and displays its content. | The **Resources** and **Prompts** tabs list each server's resources (with location and mimetype) and prompts (with params); selecting an item reads or fetches its content. |
+| Protocol logs | The History panel records every protocol call (initialize, tools/list, tools/call...) in order; expanding an entry shows the raw JSON request and response. | [**Tracing & debugging**](/inspector/debugging) logs every message sent between MCPJam and your server, tagged with `ERROR` / `WARNING` / `TRACE` levels. |
+| Auth configuration | Before connecting, you set Custom Headers (e.g. an Authorization Bearer token) and OAuth 2.0 Flow fields (Client ID, Client Secret, Redirect URI) in the connection sidebar. | Auth is chosen per server when [adding a server](/inspector/connecting-servers) — No Authentication, Bearer Token, or OAuth 2.0 — and saved with the server entry for reconnects. |
+| OAuth debugging | No dedicated flow view: a bad or missing token fails at connection time with the server's error message (e.g. invalid_token, 401). | [**Guided OAuth Testing**](/inspector/guided-oauth) runs the OAuth exchange step by step — metadata discovery, client registration, auth code, access token — so you can see which step fails. |
+| Natural-language tool calls | Not available. | The [**LLM Playground**](/inspector/llm-playground) connects a model of your choice to your server; you type a request in plain language and watch which tool the model calls, with what arguments, and what it answers. You can set the system prompt and temperature to simulate an agent. |
+| Agent execution timeline | Not available. | **Tracing** captures a run's execution — the prompt, each tool call, and the final response — so you can verify the model used your tools correctly. |
+| Automated eval suites | Not available in the UI. CLI mode can script individual tool calls and return pass/fail exit codes for CI checks. | [**MCP Evals**](/inspector/mcp-evals) runs test suites through the MCPJam CLI: an agent executes realistic queries against your server, and an LLM judge checks each case's trace for correct tool usage. |
+
+## Connect your existing server
+
+A server already configured in MCP Inspector needs no changes to connect to MCPJam.
+
+**HTTP servers**
+
+1. Click "Add server" in the MCP Servers tab.
+2. Select the `SSE/HTTP` transport and paste the same URL (e.g. `http://localhost:3000/mcp`).
+3. If the server uses a Bearer token, choose `Bearer Token` under authentication and add the same token.
+
+**Stdio servers**
+
+1. Click "Add server" and select the STDIO transport.
+2. Use the same command and args from your MCP Inspector config file's `mcpServers` entry.
+3. Add any environment variables with "Add Variable" in the Environment Variables section.
+
+See [Multi-server connections](/inspector/connecting-servers) for details on each transport and authentication option.
+
+## When to keep using MCP Inspector
+
+MCP Inspector remains a good fit as a lightweight, zero-setup protocol checker — especially its CLI mode for scripting protocol-level checks in CI with pass/fail exit codes. If all you need is verifying that a server initializes and its tools respond according to the spec, it does the job.
