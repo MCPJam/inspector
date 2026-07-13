@@ -158,8 +158,14 @@ export interface PersistedTurnTrace {
 // Mirrors mcpjam-backend `chatOriginValidator`. Required at every writer
 // boundary so a new surface can't be added without explicitly choosing one.
 // Backend still accepts undefined for historical-row compatibility; the
-// inspector pins to the closed set.
-export type ChatOrigin = "playground" | "mcpjam_agent" | "chatbox" | "eval";
+// inspector pins to the closed set. `swarm` is the journey-execution surface
+// (single-host synthetic sessions launched by a project member).
+export type ChatOrigin =
+  | "playground"
+  | "mcpjam_agent"
+  | "chatbox"
+  | "eval"
+  | "swarm";
 
 interface PersistChatSessionOptions {
   chatSessionId: string;
@@ -167,7 +173,7 @@ interface PersistChatSessionOptions {
   modelSource: "mcpjam" | "byok" | "local_byok";
   authHeader?: string;
   projectId?: string;
-  sourceType?: "chatbox" | "direct" | "eval";
+  sourceType?: "chatbox" | "direct" | "eval" | "swarm";
   origin: ChatOrigin;
   directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";
@@ -197,7 +203,9 @@ interface PersistChatSessionOptions {
    * dimension (the backend keys per-harness), so it carries the full union.
    */
   harnessSessionCommit?: {
-    ownerType: "direct-chat" | "chatbox-chat";
+    // `swarm-chat` is the journey-runner continuity lane; the backend derives
+    // its journeyRunId/hostId from this ingest's top-level swarm attribution.
+    ownerType: "direct-chat" | "chatbox-chat" | "swarm-chat";
     chatSessionId: string;
     chatboxId?: string;
     leaseId: string;
@@ -234,6 +242,15 @@ interface PersistChatSessionOptions {
   /** Durable roster row id; stamped onto `chatSessions.personaRefId`. */
   personaRefId?: string;
   synthesisRunId?: string;
+  /**
+   * Swarm (journey-execution) attribution. `journeyRunId` is the parent
+   * journey run; `hostId` is the pinned host this synthetic session ran
+   * against. The backend derives journeyRefId / personaRefId /
+   * hostConfigIdAtStart from these + the launcher bearer, LAUNCHER-gates the
+   * write, and requires `chatSessionId` to match the claimed attempt.
+   */
+  journeyRunId?: string;
+  hostId?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -430,6 +447,10 @@ export async function persistChatSessionToConvex(
         ...(options.synthesisRunId
           ? { synthesisRunId: options.synthesisRunId }
           : {}),
+        ...(options.journeyRunId
+          ? { journeyRunId: options.journeyRunId }
+          : {}),
+        ...(options.hostId ? { hostId: options.hostId } : {}),
       }),
     });
 

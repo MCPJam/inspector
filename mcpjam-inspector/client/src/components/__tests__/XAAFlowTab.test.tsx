@@ -6,15 +6,8 @@ import { XAAFlowTab } from "../xaa/XAAFlowTab";
 import type { XaaTestTarget } from "@/hooks/useXaaTestTarget";
 
 const captureMock = vi.fn();
-vi.mock("posthog-js", () => ({
-  default: {
-    capture: (...args: unknown[]) => captureMock(...args),
-  },
-}));
-
-vi.mock("@/lib/PosthogUtils", () => ({
-  detectEnvironment: vi.fn().mockReturnValue("test"),
-  detectPlatform: vi.fn().mockReturnValue("web"),
+vi.mock("@/lib/analytics", () => ({
+  track: (...args: unknown[]) => captureMock(...args),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -487,4 +480,89 @@ describe("XAAFlowTab", () => {
       ),
     );
   });
+
+  describe("registration strategy control", () => {
+    it("shows the selector for an eligible manual public target and threads the choice to the machine", async () => {
+      const user = userEvent.setup();
+      render(
+        <XAAFlowTab
+          serverConfigs={{}}
+          selectedServerName="staging"
+        />,
+      );
+
+      // All three options render; default is pre-registered.
+      expect(screen.getByText(/client registration/i)).toBeInTheDocument();
+      const dcrOption = screen.getByRole("radio", {
+        name: /open dynamic registration/i,
+      });
+      expect(dcrOption).toHaveAttribute("aria-checked", "false");
+      expect(capturedMachineConfig.registrationStrategy).toBe(
+        "pre_registered",
+      );
+
+      await user.click(dcrOption);
+      await waitFor(() =>
+        expect(capturedMachineConfig.registrationStrategy).toBe("dcr"),
+      );
+      expect(dcrOption).toHaveAttribute("aria-checked", "true");
+      // A session credential cache rides along, keyed by the target.
+      expect(capturedMachineConfig.dcrCredentialCache).toBeDefined();
+      expect(capturedMachineConfig.dcrCacheTargetKey).toBe(
+        currentTarget.targetKey,
+      );
+
+      await user.click(
+        screen.getByRole("radio", { name: /client metadata url/i }),
+      );
+      await waitFor(() =>
+        expect(capturedMachineConfig.registrationStrategy).toBe("cimd"),
+      );
+    });
+
+    it("hides the selector for confidential server-side-secret targets", () => {
+      currentTarget = makeTarget({
+        usesServerSideSecret: true,
+        serverId: "srv_1",
+        projectId: "proj_1",
+      } as Partial<XaaTestTarget>);
+      render(
+        <XAAFlowTab
+          serverConfigs={{}}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+      expect(screen.queryByText(/client registration/i)).not.toBeInTheDocument();
+      expect(capturedMachineConfig.registrationStrategy).toBe(
+        "pre_registered",
+      );
+    });
+
+    it("hides the selector for registration-backed targets", () => {
+      currentTarget = makeTarget({
+        targetSource: "registration",
+        runInput: {
+          ...makeTarget().runInput,
+          registrationId: "app_1",
+        },
+      } as Partial<XaaTestTarget>);
+      render(
+        <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
+      );
+      expect(screen.queryByText(/client registration/i)).not.toBeInTheDocument();
+      expect(capturedMachineConfig.registrationStrategy).toBe(
+        "pre_registered",
+      );
+    });
+
+    it("hides the selector for unconfigured (not testable) targets", () => {
+      currentTarget = makeTarget({ isTestable: false });
+      render(
+        <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
+      );
+      expect(screen.queryByText(/client registration/i)).not.toBeInTheDocument();
+    });
+  });
 });
+

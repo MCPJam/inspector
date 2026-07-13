@@ -23,7 +23,7 @@ let invoiceHookState: UseInvoiceHistoryResult = {
   isLoading: false,
   error: null,
 };
-const captureMock = vi.fn();
+const { trackMock } = vi.hoisted(() => ({ trackMock: vi.fn() }));
 
 vi.mock("@/hooks/usePaymentsHistory", () => ({
   usePaymentsHistory: () => hookState,
@@ -35,8 +35,8 @@ vi.mock("@/hooks/useInvoiceHistory", () => ({
   useInvoiceHistory: () => invoiceHookState,
 }));
 
-vi.mock("posthog-js/react", () => ({
-  usePostHog: () => ({ capture: captureMock }),
+vi.mock("@/lib/analytics", () => ({
+  track: trackMock,
 }));
 
 function makeEntry(
@@ -72,7 +72,7 @@ describe("PaymentsHistorySection", () => {
       isLoading: false,
       error: null,
     };
-    captureMock.mockReset();
+    trackMock.mockReset();
   });
 
   describe("loading + empty states", () => {
@@ -203,11 +203,12 @@ describe("PaymentsHistorySection", () => {
       render(<PaymentsHistorySection organizationId="org-1" canViewHistory />);
       const link = screen.getAllByRole("link", { name: /View receipt/ })[0];
       await userEvent.click(link);
-      const call = captureMock.mock.calls.find(
+      const call = trackMock.mock.calls.find(
         (c) => c[0] === "credit_topup_receipt_opened"
       );
       expect(call).toBeDefined();
       const props = call?.[1] as Record<string, unknown>;
+      expect(props.location).toBe("billing_payments_history");
       expect(props).not.toHaveProperty("status");
       expect(props).not.toHaveProperty("receipt_url");
       expect(props).not.toHaveProperty("url");
@@ -216,11 +217,12 @@ describe("PaymentsHistorySection", () => {
 
     it("fires credit_topup_history_viewed once with bucketed entry_count", () => {
       render(<PaymentsHistorySection organizationId="org-1" canViewHistory />);
-      const calls = captureMock.mock.calls.filter(
+      const calls = trackMock.mock.calls.filter(
         (c) => c[0] === "credit_topup_history_viewed"
       );
       expect(calls).toHaveLength(1);
       const props = calls[0][1] as Record<string, unknown>;
+      expect(props.location).toBe("billing_payments_history");
       expect(props.entry_count_bucket).toBe("2-5");
       expect(props.has_failed).toBe(true);
       expect(props.has_pending).toBe(true);
@@ -233,7 +235,7 @@ describe("PaymentsHistorySection", () => {
         isAuthenticated: true,
       };
       render(<PaymentsHistorySection organizationId="org-1" canViewHistory />);
-      const calls = captureMock.mock.calls.filter(
+      const calls = trackMock.mock.calls.filter(
         (c) => c[0] === "credit_topup_history_viewed"
       );
       expect(calls).toHaveLength(0);

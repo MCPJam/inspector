@@ -7,17 +7,22 @@ import {
   getXAAIdpJwks,
   initXAAIdpKeyPair,
   resetXAAIdpKeyPairForTests,
-} from "../xaa-idp-keypair.js";
+} from "../../src/xaa/mint/keypair.js";
 import {
+  issueAccessToken,
+  issueAuthorizationCode,
   issueIdJag,
   issueMockIdToken,
   issueNegativeIdJag,
-} from "../xaa-idjag-signer.js";
+  verifyXaaJwt,
+  XAA_ACCESS_TOKEN_TYP,
+  XAA_CODE_JWT_TYP,
+} from "../../src/xaa/mint/signer.js";
 import {
   NEGATIVE_TEST_MODES,
   XAA_IDP_KID,
   type NegativeTestMode,
-} from "../../../shared/xaa.js";
+} from "../../src/xaa/constants.js";
 
 function decodeJwt(token: string): {
   header: Record<string, any>;
@@ -180,4 +185,132 @@ describe("xaa-idjag-signer", () => {
       }
     });
   }
+});
+
+describe("mock OIDC token minting + verification", () => {
+  const ISSUER = "https://app.mcpjam.com/api/web/xaa";
+  const originalKeyDir = process.env.XAA_IDP_KEY_DIR;
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-oidc-signer-"));
+    process.env.XAA_IDP_KEY_DIR = tempDir;
+    resetXAAIdpKeyPairForTests();
+    initXAAIdpKeyPair();
+  });
+
+  afterEach(() => {
+    resetXAAIdpKeyPairForTests();
+    rmSync(tempDir, { recursive: true, force: true });
+    if (originalKeyDir === undefined) {
+      delete process.env.XAA_IDP_KEY_DIR;
+    } else {
+      process.env.XAA_IDP_KEY_DIR = originalKeyDir;
+    }
+  });
+
+  it("issues an authorization code with the expected claims, typ and TTL", () => {
+    const issued = issueAuthorizationCode({
+      issuer: ISSUER,
+      subject: "user-1",
+      email: "u@example.com",
+      clientId: "client-1",
+      redirectUri: "https://rp.example.com/callback",
+      nonce: "nonce-1",
+      codeChallenge: "challenge-1",
+    });
+
+    const { header, payload } = decodeJwt(issued.token);
+    expect(header.typ).toBe(XAA_CODE_JWT_TYP);
+    expect(payload).toMatchObject({
+      iss: ISSUER,
+      sub: "user-1",
+      email: "u@example.com",
+      client_id: "client-1",
+      redirect_uri: "https://rp.example.com/callback",
+      nonce: "nonce-1",
+      code_challenge: "challenge-1",
+    });
+    expect(payload.exp - payload.iat).toBe(60);
+  });
+
+  it("issues an access token redeemable at userinfo", () => {
+    const issued = issueAccessToken({
+      issuer: ISSUER,
+      subject: "user-1",
+      email: "u@example.com",
+      clientId: "client-1",
+    });
+    const { header, payload } = decodeJwt(issued.token);
+    expect(header.typ).toBe(XAA_ACCESS_TOKEN_TYP);
+    expect(payload.aud).toBe("client-1");
+    expect(payload.scope).toBe("openid profile email");
+
+    const verified = verifyXaaJwt(issued.token, {
+      issuer: ISSUER,
+      typ: XAA_ACCESS_TOKEN_TYP,
+    });
+    expect(verified.sub).toBe("user-1");
+  });
+
+  it("echoes a caller-provided nonce into the mock id token", () => {
+    const issued = issueMockIdToken({
+      issuer: ISSUER,
+      subject: "user-1",
+      email: "u@example.com",
+      audience: "client-1",
+      nonce: "rp-nonce",
+    });
+    expect(decodeJwt(issued.token).payload.nonce).toBe("rp-nonce");
+  });
+
+  it("verifyXaaJwt enforces typ segregation", () => {
+    const code = issueAuthorizationCode({
+      issuer: ISSUER,
+      subject: "user-1",
+      email: "u@example.com",
+      clientId: "client-1",
+      redirectUri: "https://rp.example.com/callback",
+    });
+    // A code can never be redeemed as an access token.
+    expect(() =>
+      verifyXaaJwt(code.token, { issuer: ISSUER, typ: XAA_ACCESS_TOKEN_TYP }),
+    ).toThrow(/type/i);
+    // An ID-JAG can never be a code.
+    const idJag = issueIdJag({
+      issuer: ISSUER,
+      subject: "user-1",
+      audience: "https://as.example.com",
+      resource: "https://rs.example.com",
+      clientId: "client-1",
+    });
+    expect(() =>
+      verifyXaaJwt(idJag.token, { issuer: ISSUER, typ: XAA_CODE_JWT_TYP }),
+    ).toThrow(/type/i);
+  });
+
+  it("verifyXaaJwt rejects a wrong issuer and a foreign signature", () => {
+    const issued = issueAccessToken({
+      issuer: ISSUER,
+      subject: "user-1",
+      email: "u@example.com",
+      clientId: "client-1",
+    });
+    expect(() =>
+      verifyXaaJwt(issued.token, {
+        issuer: "https://other.example.com",
+        typ: XAA_ACCESS_TOKEN_TYP,
+      }),
+    ).toThrow(/issuer/i);
+
+    // Re-keying the IdP invalidates previously-signed tokens (foreign key).
+    resetXAAIdpKeyPairForTests();
+    rmSync(tempDir, { recursive: true, force: true });
+    tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-oidc-rekey-"));
+    process.env.XAA_IDP_KEY_DIR = tempDir;
+    initXAAIdpKeyPair();
+    expect(() =>
+      verifyXaaJwt(issued.token, { issuer: ISSUER, typ: XAA_ACCESS_TOKEN_TYP }),
+    ).toThrow(/signature/i);
+  });
 });

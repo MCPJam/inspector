@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "crypto";
 import { Hono } from "hono";
 import { mkdtempSync, rmSync } from "fs";
 import os from "os";
@@ -10,10 +11,7 @@ import {
   generateSessionToken,
   getSessionToken,
 } from "../../../services/session-token.js";
-import {
-  initXAAIdpKeyPair,
-  resetXAAIdpKeyPairForTests,
-} from "../../../services/xaa-idp-keypair.js";
+import { initXAAIdpKeyPair, resetXAAIdpKeyPairForTests } from "@mcpjam/sdk";
 import xaa, { createXaaRouter } from "../xaa.js";
 
 function jsonResponse(
@@ -1004,5 +1002,482 @@ describe("hosted-issuer forwarding on the local router", () => {
         process.env.XAA_IDP_KEY_DIR = originalDir;
       }
     }
+  });
+});
+
+describe("mock OIDC IdP endpoints", () => {
+  const BASE = "http://127.0.0.1:6274/api/mcp/xaa";
+  const ISSUER = BASE;
+  const REDIRECT_URI = "https://rp.example.com/callback";
+  const originalKeyDir = process.env.XAA_IDP_KEY_DIR;
+  let tempDir: string;
+  let app: Hono;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-oidc-route-"));
+    process.env.XAA_IDP_KEY_DIR = tempDir;
+    resetXAAIdpKeyPairForTests();
+    initXAAIdpKeyPair();
+
+    app = new Hono();
+    app.route(
+      "/api/mcp/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/mcp",
+        httpsOnlyProxy: false,
+      })
+    );
+  });
+
+  afterEach(() => {
+    resetXAAIdpKeyPairForTests();
+    rmSync(tempDir, { recursive: true, force: true });
+    if (originalKeyDir === undefined) {
+      delete process.env.XAA_IDP_KEY_DIR;
+    } else {
+      process.env.XAA_IDP_KEY_DIR = originalKeyDir;
+    }
+  });
+
+  function authorizeUrl(params: Record<string, string>): string {
+    const url = new URL(`${BASE}/authorize`);
+    for (const [key, value] of Object.entries(params)) {
+      url.searchParams.set(key, value);
+    }
+    return url.toString();
+  }
+
+  async function getCode(extra: Record<string, string> = {}): Promise<{
+    code: string;
+    location: URL;
+  }> {
+    const form = new URLSearchParams({
+      client_id: "client-1",
+      redirect_uri: REDIRECT_URI,
+      response_type: "code",
+      state: "state-1",
+      nonce: "nonce-1",
+      subject: "alice-123",
+      email: "alice@example.com",
+      ...extra,
+    });
+    const response = await app.request(`${BASE}/authorize/confirm`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "x-forwarded-for": `10.0.0.${Math.floor(Math.random() * 250)}`,
+      },
+      body: form.toString(),
+    });
+    expect(response.status).toBe(302);
+    const location = new URL(response.headers.get("location")!);
+    return { code: location.searchParams.get("code")!, location };
+  }
+
+  async function postToken(
+    fields: Record<string, string>,
+    ip = `10.1.0.${Math.floor(Math.random() * 250)}`
+  ) {
+    return app.request(`${BASE}/token`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "x-forwarded-for": ip,
+      },
+      body: new URLSearchParams(fields).toString(),
+    });
+  }
+
+  it("renders the authorize interstitial without redirecting", async () => {
+    const response = await app.request(
+      authorizeUrl({
+        client_id: "client-1",
+        redirect_uri: REDIRECT_URI,
+        response_type: "code",
+        state: "s",
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBeNull();
+    const html = await response.text();
+    expect(html).toContain("client-1");
+    expect(html).toContain("rp.example.com");
+    expect(html).toContain('action="' + ISSUER + '/authorize/confirm"');
+  });
+
+  it("escapes echoed values on the authorize page", async () => {
+    const response = await app.request(
+      authorizeUrl({
+        client_id: '<script>alert(1)</script>',
+        redirect_uri: REDIRECT_URI,
+        response_type: "code",
+      })
+    );
+    const html = await response.text();
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("rejects non-code response types and bad redirect URIs with an error page, not a redirect", async () => {
+    const implicit = await app.request(
+      authorizeUrl({
+        client_id: "client-1",
+        redirect_uri: REDIRECT_URI,
+        response_type: "token",
+      })
+    );
+    expect(implicit.status).toBe(400);
+    expect(implicit.headers.get("location")).toBeNull();
+
+    const jsUri = await app.request(
+      authorizeUrl({
+        client_id: "client-1",
+        redirect_uri: "javascript:alert(1)",
+        response_type: "code",
+      })
+    );
+    expect(jsUri.status).toBe(400);
+
+    const plainPkce = await app.request(
+      authorizeUrl({
+        client_id: "client-1",
+        redirect_uri: REDIRECT_URI,
+        response_type: "code",
+        code_challenge: "abc",
+        code_challenge_method: "plain",
+      })
+    );
+    expect(plainPkce.status).toBe(400);
+  });
+
+  it("completes the code flow: confirm → code → tokens → userinfo", async () => {
+    const { code, location } = await getCode();
+    expect(location.origin + location.pathname).toBe(REDIRECT_URI);
+    expect(location.searchParams.get("state")).toBe("state-1");
+
+    const tokenResponse = await postToken({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: REDIRECT_URI,
+      client_id: "client-1",
+    });
+    expect(tokenResponse.status).toBe(200);
+    const body = await tokenResponse.json();
+    expect(body.token_type).toBe("Bearer");
+
+    const idTokenPayload = decodeJwtPayload(body.id_token);
+    expect(idTokenPayload).toMatchObject({
+      iss: ISSUER,
+      sub: "alice-123",
+      email: "alice@example.com",
+      aud: "client-1",
+      nonce: "nonce-1",
+    });
+
+    const userinfoResponse = await app.request(`${BASE}/userinfo`, {
+      headers: { Authorization: `Bearer ${body.access_token}` },
+    });
+    expect(userinfoResponse.status).toBe(200);
+    expect(await userinfoResponse.json()).toEqual({
+      sub: "alice-123",
+      email: "alice@example.com",
+      email_verified: true,
+    });
+  });
+
+  it("enforces S256 PKCE when the code carries a challenge", async () => {
+    const verifier = "test-verifier-0123456789-0123456789-0123456789";
+    const challenge = createHash("sha256").update(verifier).digest("base64url");
+    const { code } = await getCode({
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+    });
+
+    const missingVerifier = await postToken({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: REDIRECT_URI,
+      client_id: "client-1",
+    });
+    expect(missingVerifier.status).toBe(400);
+    expect((await missingVerifier.json()).error).toBe("invalid_grant");
+
+    const wrongVerifier = await postToken({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: REDIRECT_URI,
+      client_id: "client-1",
+      code_verifier: "wrong-verifier",
+    });
+    expect((await wrongVerifier.json()).error).toBe("invalid_grant");
+
+    const success = await postToken({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: REDIRECT_URI,
+      client_id: "client-1",
+      code_verifier: verifier,
+    });
+    expect(success.status).toBe(200);
+  });
+
+  it("rejects mismatched redemption parameters", async () => {
+    const { code } = await getCode();
+
+    const wrongRedirect = await postToken({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: "https://evil.example.com/callback",
+      client_id: "client-1",
+    });
+    expect(wrongRedirect.status).toBe(400);
+    expect((await wrongRedirect.json()).error).toBe("invalid_grant");
+
+    const wrongClient = await postToken({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: REDIRECT_URI,
+      client_id: "client-2",
+    });
+    expect((await wrongClient.json()).error).toBe("invalid_grant");
+
+    const unsupported = await postToken({ grant_type: "password" });
+    expect(unsupported.status).toBe(400);
+    expect((await unsupported.json()).error).toBe("unsupported_grant_type");
+  });
+
+  it("serves standard form token exchange locally and mints an ID-JAG", async () => {
+    // Mint a mock ID token via the debugger endpoint, aud = the client.
+    const authenticateResponse = await app.request(`${BASE}/authenticate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId: "alice-123",
+        email: "alice@example.com",
+        audience: "client-1",
+      }),
+    });
+    const { id_token: subjectToken } = await authenticateResponse.json();
+
+    const response = await postToken({
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+      subject_token: subjectToken,
+      subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+      client_id: "client-1",
+      audience: "https://as.example.com",
+      resource: "https://rs.example.com",
+      scope: "chat.read",
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.issued_token_type).toBe(
+      "urn:ietf:params:oauth:token-type:id-jag"
+    );
+    expect(body.token_type).toBe("N_A");
+    const payload = decodeJwtPayload(body.access_token);
+    expect(payload).toMatchObject({
+      iss: ISSUER,
+      sub: "alice-123",
+      aud: "https://as.example.com",
+      resource: "https://rs.example.com",
+      client_id: "client-1",
+      scope: "chat.read",
+    });
+
+    // aud mismatch between the subject token and the presenting client.
+    const mismatch = await postToken({
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+      subject_token: subjectToken,
+      subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+      client_id: "other-client",
+      audience: "https://as.example.com",
+      resource: "https://rs.example.com",
+    });
+    expect(mismatch.status).toBe(400);
+    expect((await mismatch.json()).error).toBe("invalid_grant");
+
+    // client_id is required.
+    const missingClient = await postToken({
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+      subject_token: subjectToken,
+      subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+      audience: "https://as.example.com",
+      resource: "https://rs.example.com",
+    });
+    expect(missingClient.status).toBe(400);
+    expect((await missingClient.json()).error).toBe("invalid_request");
+  });
+
+  it("rejects an ID-JAG presented at /userinfo", async () => {
+    const authenticateResponse = await app.request(`${BASE}/authenticate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "alice-123" }),
+    });
+    const { id_token } = await authenticateResponse.json();
+    const exchangeResponse = await app.request(`${BASE}/token-exchange`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        identityAssertion: id_token,
+        audience: "https://as.example.com",
+        resource: "https://rs.example.com",
+        clientId: "client-1",
+      }),
+    });
+    const { id_jag } = await exchangeResponse.json();
+
+    const response = await app.request(`${BASE}/userinfo`, {
+      headers: { Authorization: `Bearer ${id_jag}` },
+    });
+    expect(response.status).toBe(401);
+    expect(response.headers.get("www-authenticate")).toContain("invalid_token");
+  });
+
+  it("advertises the OIDC metadata, and only what this surface serves", async () => {
+    const response = await app.request(
+      `${BASE}/.well-known/openid-configuration`
+    );
+    const doc = await response.json();
+    expect(doc.authorization_endpoint).toBe(`${ISSUER}/authorize`);
+    expect(doc.token_endpoint).toBe(`${ISSUER}/token`);
+    expect(doc.userinfo_endpoint).toBe(`${ISSUER}/userinfo`);
+    expect(doc.response_types_supported).toEqual(["code"]);
+    expect(doc.code_challenge_methods_supported).toEqual(["S256"]);
+    // Local serves token exchange at /token → advertised + identity chaining.
+    expect(doc.grant_types_supported).toEqual([
+      "authorization_code",
+      "urn:ietf:params:oauth:grant-type:token-exchange",
+    ]);
+    expect(doc.identity_chaining_requested_token_types_supported).toEqual([
+      "urn:ietf:params:oauth:token-type:id-jag",
+    ]);
+  });
+
+  it("rate limits the token endpoint per IP", async () => {
+    const ip = "9.9.9.9";
+    let lastStatus = 0;
+    for (let i = 0; i < 61; i++) {
+      const response = await postToken({ grant_type: "password" }, ip);
+      lastStatus = response.status;
+    }
+    expect(lastStatus).toBe(429);
+  });
+
+  it("does not rate limit local (no X-Forwarded-For) requests", async () => {
+    let lastStatus = 0;
+    for (let i = 0; i < 61; i++) {
+      const response = await app.request(`${BASE}/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "password" }).toString(),
+      });
+      lastStatus = response.status;
+    }
+    // No proxy in front → no shared "local" bucket self-DoS; unsupported grant
+    // returns 400, never 429.
+    expect(lastStatus).toBe(400);
+  });
+
+  it("rejects a cross-origin POST to /authorize/confirm (no open redirect)", async () => {
+    const response = await app.request(`${BASE}/authorize/confirm`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Origin: "https://evil.example.com",
+      },
+      body: new URLSearchParams({
+        client_id: "client-1",
+        redirect_uri: REDIRECT_URI,
+        response_type: "code",
+      }).toString(),
+    });
+    expect(response.status).toBe(403);
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("rejects a cross-origin POST to /token (no unauthenticated mint via CSRF)", async () => {
+    const response = await app.request(`${BASE}/token`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Origin: "https://evil.example.com",
+      },
+      body: new URLSearchParams({ grant_type: "authorization_code" }).toString(),
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it("allows a same-origin confirm POST", async () => {
+    const response = await app.request(`${BASE}/authorize/confirm`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Origin: "http://127.0.0.1:6274",
+      },
+      body: new URLSearchParams({
+        client_id: "client-1",
+        redirect_uri: REDIRECT_URI,
+        response_type: "code",
+        subject: "alice-123",
+        email: "alice@example.com",
+      }).toString(),
+    });
+    expect(response.status).toBe(302);
+    expect(new URL(response.headers.get("location")!).searchParams.get("code")).toBeTruthy();
+  });
+
+  it("rejects code_challenge_method without a code_challenge", async () => {
+    const response = await app.request(
+      authorizeUrl({
+        client_id: "client-1",
+        redirect_uri: REDIRECT_URI,
+        response_type: "code",
+        code_challenge_method: "S256",
+      })
+    );
+    expect(response.status).toBe(400);
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("omits nonce from the id_token when the RP did not request one", async () => {
+    const { code } = await getCode({ nonce: "" });
+    const tokenResponse = await postToken({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: REDIRECT_URI,
+      client_id: "client-1",
+    });
+    const idToken = decodeJwtPayload((await tokenResponse.json()).id_token);
+    expect(idToken.nonce).toBeUndefined();
+  });
+
+  it("registers the OIDC routes unconditionally (no enable flag)", async () => {
+    // The mock OIDC IdP is always on — a router built with no OIDC option
+    // still serves /authorize, and the discovery doc advertises the OIDC
+    // shape rather than the retired token-exchange-only one.
+    const plain = new Hono();
+    plain.route(
+      "/api/mcp/xaa",
+      createXaaRouter({ issuerBasePath: "/api/mcp", httpsOnlyProxy: false })
+    );
+    const authorize = await plain.request(
+      `${BASE}/authorize?client_id=c&redirect_uri=${encodeURIComponent(
+        REDIRECT_URI
+      )}&response_type=code`
+    );
+    expect(authorize.status).toBe(200);
+
+    const doc = await (
+      await plain.request(`${BASE}/.well-known/openid-configuration`)
+    ).json();
+    expect(doc.authorization_endpoint).toBe(`${ISSUER}/authorize`);
+    expect(doc.userinfo_endpoint).toBe(`${ISSUER}/userinfo`);
+    expect(doc.response_types_supported).toEqual(["code"]);
   });
 });

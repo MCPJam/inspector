@@ -3,10 +3,7 @@ import { Hono } from "hono";
 import { mkdtempSync, rmSync } from "fs";
 import os from "os";
 import path from "path";
-import {
-  initXAAIdpKeyPair,
-  resetXAAIdpKeyPairForTests,
-} from "../../../services/xaa-idp-keypair.js";
+import { initXAAIdpKeyPair, resetXAAIdpKeyPairForTests } from "@mcpjam/sdk";
 import { createXaaRouter } from "../xaa.js";
 
 const DISCOVERED_TOKEN_ENDPOINT = "https://discovered-as.example.com/oauth/token";

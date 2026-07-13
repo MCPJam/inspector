@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, X } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Popover,
@@ -145,7 +144,6 @@ export function ModelSelector({
   const [hoveredLockedModelId, setHoveredLockedModelId] = useState<
     string | null
   >(null);
-  const posthog = usePostHog();
   const onOpenChangeRef = useRef(onOpenChange);
   const forceConfiguredTabRef = useRef(false);
   const handledProvidersTabNonceRef = useRef(0);
@@ -225,10 +223,7 @@ export function ModelSelector({
     keepPopoverOpenRef.current = false;
 
     if (nextOpen && !isOpen) {
-      posthog.capture(
-        "chat_model_selector_clicked",
-        standardEventProps(analyticsLocation)
-      );
+      track("chat_model_selector_clicked", { location: analyticsLocation });
     }
     setIsOpen(nextOpen);
     if (!nextOpen) {

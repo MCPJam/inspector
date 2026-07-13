@@ -51,11 +51,11 @@ vi.mock("@/lib/webmcp/native-mirror", () => ({
   mirrorUiToolToNative: vi.fn(() => null),
 }));
 
-vi.mock("posthog-js", () => ({
-  default: { capture: vi.fn() },
+const { trackMock } = vi.hoisted(() => ({ trackMock: vi.fn() }));
+vi.mock("@/lib/analytics", () => ({
+  track: trackMock,
 }));
 
-import posthog from "posthog-js";
 import {
   __resetAgentChatInstancesForTests,
   getOrCreateAgentChat,
@@ -291,7 +291,7 @@ describe("agent-chat-instances", () => {
       });
       expect(useAgentPanelStore.getState().activeSessionProjectId).toBe("p1");
       expect((entry.chat as any).addToolOutput).toHaveBeenCalled();
-      expect(posthog.capture).toHaveBeenCalledWith(
+      expect(trackMock).toHaveBeenCalledWith(
         "mcpjam_agent_panel_handoff",
         expect.objectContaining({ session_id: "s-home" })
       );
@@ -335,7 +335,7 @@ describe("agent-chat-instances", () => {
       await fireNavigate(entry);
 
       expect(useAgentPanelStore.getState().isOpen).toBe(false);
-      expect(posthog.capture).toHaveBeenCalledWith(
+      expect(trackMock).toHaveBeenCalledWith(
         "mcpjam_agent_panel_handoff_skipped",
         expect.objectContaining({ reason: "no_project_id" })
       );

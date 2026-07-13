@@ -495,4 +495,73 @@ describe("web auth manager batching", () => {
       "2025-06-18",
     ]);
   });
+
+  // CONTRACT: the swarm runner threads each pinned server's
+  // `requestTimeoutOverride` through `options.requestTimeoutByServerId`. Each
+  // server's connection `timeout` must reflect ITS pin (falling back to the
+  // host-level timeout when absent) — before the fix every server got the
+  // single host-level timeout uniformly.
+  it("applies per-server requestTimeoutByServerId overrides to each connection", async () => {
+    global.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          results: {
+            "server-fast": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: "https://fast.example.com/mcp",
+                headers: {},
+                useOAuth: false,
+              },
+            },
+            "server-default": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: "https://default.example.com/mcp",
+                headers: {},
+                useOAuth: false,
+              },
+            },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }) as typeof fetch;
+
+    await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-fast", "server-default"],
+      10_000,
+      undefined,
+      undefined,
+      {
+        accessScope: "project_member",
+        // Only server-fast is pinned; server-default falls back to 10_000.
+        requestTimeoutByServerId: { "server-fast": 3_000 },
+      }
+    );
+
+    const configs = mcpClientManagerMock.mock.calls[0]?.[0] as Record<
+      string,
+      { timeout: number }
+    >;
+    expect(configs["server-fast"]!.timeout).toBe(3_000);
+    expect(configs["server-default"]!.timeout).toBe(10_000);
+
+    // Manager-level defaultTimeout stays the host-level timeout.
+    const managerOpts = mcpClientManagerMock.mock.calls[0]?.[1] as {
+      defaultTimeout: number;
+    };
+    expect(managerOpts.defaultTimeout).toBe(10_000);
+  });
 });

@@ -18,6 +18,9 @@ export type ComputerStatus =
   | "deleted"
   | "error";
 
+/** Why a computer is currently asleep, when the backend knows (COMP-7). */
+export type ComputerHibernatedReason = "idle" | "billing";
+
 export interface ComputerView {
   computerId: string;
   status: ComputerStatus;
@@ -28,6 +31,14 @@ export interface ComputerView {
   /** The custom environment this computer boots from, if any (absent ⇒ base
    * image). See `computerEnvironments` / the Image picker. */
   environmentId?: string;
+  /**
+   * Why the machine is currently asleep, when known (COMP-7). Only meaningful
+   * while `status === "hibernating"`. `"billing"` ⇒ paused because the compute
+   * allowance ran out and the wallet couldn't cover the overage — waking it
+   * would just bounce, so the UI shows the remedy instead. Absent (older
+   * backends, or a clean idle sleep) ⇒ treat as inactivity.
+   */
+  hibernatedReason?: ComputerHibernatedReason;
 }
 
 export interface TerminalTokenResult {
@@ -53,6 +64,14 @@ export interface ComputerUsageView {
   allowanceMs: number | null;
   billedCredits: number;
   forgivenCredits: number;
+  /**
+   * COMP-7: true when the org has burned >= 80% of a finite allowance AND the
+   * wallet can't absorb the overage that begins once it's exhausted — i.e. the
+   * computer will pause for billing when the hours run out. Always false for
+   * unlimited (enterprise) orgs. Optional so a backend predating this field
+   * (or an older client) degrades to "no warning".
+   */
+  billingPauseWarning?: boolean;
 }
 
 /**

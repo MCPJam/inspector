@@ -12,6 +12,10 @@ vi.mock("posthog-js/react", () => ({
   }),
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
+}));
+
 vi.mock("../chat-input/model/provider-logo", () => ({
   ProviderLogo: ({ provider }: { provider: string }) => (
     <span aria-hidden="true">{provider}</span>

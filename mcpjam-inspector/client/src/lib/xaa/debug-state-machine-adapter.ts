@@ -84,6 +84,12 @@ export function createXAADebugRequestExecutor(): XAARequestExecutor {
         method: init?.method || "GET",
         headers: normalizeHeaders(init?.headers),
         body: init?.body,
+        // CIMD document preflights use "manual" so a 3xx is observable (the
+        // draft forbids the AS from following redirects) instead of silently
+        // followed. Hosted httpsOnly forces manual regardless.
+        ...(init?.redirect === "manual" || init?.redirect === "follow"
+          ? { redirect: init.redirect }
+          : {}),
       });
     },
   };

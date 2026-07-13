@@ -67,17 +67,9 @@ vi.mock("@/hooks/use-ai-provider-keys", () => ({
   }),
 }));
 
-// Mock posthog
-vi.mock("posthog-js", () => ({
-  default: {
-    capture: vi.fn(),
-  },
-}));
-
-// Mock PosthogUtils
-vi.mock("@/lib/PosthogUtils", () => ({
-  detectEnvironment: vi.fn().mockReturnValue("test"),
-  detectPlatform: vi.fn().mockReturnValue("web"),
+// Mock the typed analytics wrapper
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
 }));
 
 // Mock toast

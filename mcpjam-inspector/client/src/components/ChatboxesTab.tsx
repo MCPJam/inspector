@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import {
   AlertTriangle,
+  Boxes,
   ExternalLink,
   Inbox,
   Link2,
@@ -15,7 +16,10 @@ import { SegmentedControl } from "@/components/ui/json-editor/segmented-control"
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
 import { PersonasTab } from "@/components/chatboxes/PersonasTab";
-import { ChatboxPublishClientBar } from "@/components/chatboxes/ChatboxPublishClientBar";
+import {
+  ChatboxHostPickerPill,
+  ChatboxPublishClientBar,
+} from "@/components/chatboxes/ChatboxPublishClientBar";
 import { ChatboxHostCanvasPanel } from "@/components/chatboxes/ChatboxHostCanvasPanel";
 import {
   ResizableHandle,
@@ -33,9 +37,9 @@ import { cn } from "@/lib/utils";
 
 /**
  * `/chatboxes` — the publish surface for the currently-selected host's
- * chatbox. Hosts and chatboxes are 1:1, so the global host bar at the top
- * of the app chrome is the navigation control: switching hosts switches
- * the chatbox shown here. Tabs:
+ * chatbox. Hosts and chatboxes are 1:1; host switching lives in the
+ * publish-tab `ChatboxPublishClientBar` (and a matching pill on other
+ * sub-tabs). The app-chrome `HostOverlayBar` is hidden on this route. Tabs:
  *
  *   - Publish   — link, mode, members, chatUi (`ChatboxShareSection`) on the
  *                 left; the right pane toggles between a live preview of the
@@ -49,33 +53,57 @@ import { cn } from "@/lib/utils";
  * every visit to this (landing) tab starts a guest session — preview
  * traffic shows up in Sessions and guest analytics.
  */
+/**
+ * Product variant. Both surfaces render this same component over the same
+ * underlying chatbox (1:1 with the selected host); they differ only in which
+ * tabs/affordances are exposed:
+ *   - `chatbox` (human): Publish + Sessions + Clusters. No Personas / no
+ *     AI-generate / no synthetic-session controls.
+ *   - `swarm` (agent): Publish + Personas + Sessions. No Clusters.
+ */
+export type ChatboxProduct = "chatbox" | "swarm";
+
 interface ChatboxesTabProps {
   projectId: string | null;
   isAuthenticated: boolean;
+  /** Defaults to `chatbox` (the human publish surface). */
+  product?: ChatboxProduct;
 }
 
 type ChatboxTab = "publish" | "personas" | "sessions" | "clusters";
 
-const TAB_OPTIONS: ReadonlyArray<{ value: ChatboxTab; label: string }> = [
-  { value: "publish", label: "Publish" },
-  { value: "personas", label: "Personas" },
-  { value: "sessions", label: "Sessions" },
-  { value: "clusters", label: "Clusters" },
-];
+const TAB_OPTIONS_BY_PRODUCT: Record<
+  ChatboxProduct,
+  ReadonlyArray<{ value: ChatboxTab; label: string }>
+> = {
+  chatbox: [
+    { value: "publish", label: "Publish" },
+    { value: "sessions", label: "Sessions" },
+    { value: "clusters", label: "Clusters" },
+  ],
+  swarm: [
+    { value: "publish", label: "Publish" },
+    { value: "personas", label: "Personas" },
+    { value: "sessions", label: "Sessions" },
+  ],
+};
 
 type PublishPanelView = "preview" | "graph";
 
 const PUBLISH_PANEL_OPTIONS: Array<{ value: PublishPanelView; label: string }> =
   [
     { value: "preview", label: "Preview" },
-    { value: "graph", label: "Host graph" },
+    { value: "graph", label: "Client graph" },
   ];
 
 export function ChatboxesTab({
   projectId,
   isAuthenticated,
+  product = "chatbox",
 }: ChatboxesTabProps) {
+  const tabOptions = TAB_OPTIONS_BY_PRODUCT[product];
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   // Deep link: `/chatboxes?host=<id>&session=<threadId>` (the Sessions tab's
   // "Copy session link"). The params stay in the URL until the user navigates
   // — App's auth/loading gates unmount and remount the route several times
@@ -86,6 +114,12 @@ export function ChatboxesTab({
   const [tab, setTab] = useState<ChatboxTab>(() =>
     sessionDeepLinkThreadId ? "sessions" : "publish"
   );
+  // Clamp to a tab valid for this product — a deep link (or a product switch)
+  // could otherwise land on a tab this surface doesn't expose (e.g. `personas`
+  // on the human Chatbox, `clusters` on the agent Swarm).
+  const activeTab: ChatboxTab = tabOptions.some((t) => t.value === tab)
+    ? tab
+    : "publish";
   const [panelView, setPanelView] = useState<PublishPanelView>("preview");
   const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
   // Apply the host half of the deep link once the project is known —
@@ -111,10 +145,16 @@ export function ChatboxesTab({
   ]);
   const convexAuth = useConvexAuth();
   const effectiveAuth = isAuthenticated && convexAuth.isAuthenticated;
-  const { host } = useHost({
+  const { host, isLoading: hostLoading } = useHost({
     isAuthenticated: effectiveAuth,
     hostId: previewedHostId,
   });
+  // A Journeys (swarm)-owned host is standalone — it has NO chatbox / publish
+  // surface and must never be back-minted one. We only trust this once the
+  // host query has resolved (hostLoading === false); deciding while the host
+  // is still loading would race the auto-ensure below into minting a chatbox
+  // for a host that should never have one.
+  const isJourneysHost = host?.ownerScope?.type === "journeys";
   const { chatbox, isLoading } = useChatboxByHostId({
     isAuthenticated: effectiveAuth,
     hostId: previewedHostId,
@@ -141,7 +181,19 @@ export function ChatboxesTab({
   useEffect(() => {
     if (!effectiveAuth) return;
     if (!previewedHostId) return;
-    if (isLoading) return;
+    // Wait for BOTH queries: the chatbox query (isLoading) and the host query
+    // (hostLoading). We must know the host's ownerScope before deciding to
+    // mint — firing while the host is still loading would race a chatbox onto
+    // a standalone (journeys) host.
+    if (isLoading || hostLoading) return;
+    // Host RESOLVED to missing (deleted, or not visible to this viewer):
+    // provisioning a chatbox for it would just fail the mutation and strand
+    // the UI on the provisioning spinner. The missing-client state below
+    // handles the render.
+    if (!host) return;
+    // Standalone Journeys-owned host: no publish surface, ever. Skip the
+    // back-mint entirely (the notice below handles the empty render).
+    if (isJourneysHost) return;
     if (chatbox !== null) return;
     if (ensureLatchRef.current.has(previewedHostId)) return;
     ensureLatchRef.current.add(previewedHostId);
@@ -170,7 +222,7 @@ export function ChatboxesTab({
         toast.error(
           err instanceof Error
             ? err.message
-            : "Failed to provision swarm for host"
+            : "Failed to provision swarm for client"
         );
       });
     return () => {
@@ -182,6 +234,9 @@ export function ChatboxesTab({
     effectiveAuth,
     ensureChatboxForHost,
     isLoading,
+    host,
+    hostLoading,
+    isJourneysHost,
     previewedHostId,
   ]);
   // Once the chatbox shows up, clear the stuck flag AND the per-host
@@ -222,9 +277,9 @@ export function ChatboxesTab({
       <div className="flex h-full items-center justify-center px-6 text-center">
         <div className="max-w-sm">
           <Inbox className="mx-auto size-8 text-muted-foreground/70" />
-          <p className="mt-3 text-sm font-medium">Pick a host</p>
+          <p className="mt-3 text-sm font-medium">Pick a client</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Use the host bar at the top to choose which host's swarm you want to
+            Use the client bar at the top to choose which client's swarm you want to
             manage.
           </p>
         </div>
@@ -232,11 +287,88 @@ export function ChatboxesTab({
     );
   }
 
-  if (isLoading) {
+  // Wait for BOTH the chatbox and host queries before rendering a terminal
+  // state — the journeys notice below depends on the host's resolved
+  // ownerScope, and rendering "no chatbox" before the host loads would flash
+  // the wrong state for a standalone host.
+  if (isLoading || hostLoading) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         <Loader2 className="mr-2 size-4 animate-spin" />
         <span className="text-sm">Loading swarm…</span>
+      </div>
+    );
+  }
+
+  // Host resolved to MISSING (deleted, or not visible to this viewer). The
+  // auto-ensure effect deliberately skips this case (provisioning would just
+  // fail); render a recoverable state that keeps the picker visible so the
+  // user can select an existing client.
+  if (!host) {
+    return (
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <div className="relative shrink-0 border-b border-border/40 px-8 py-2.5">
+          <div className="absolute left-8 top-1/2 z-10 -translate-y-1/2">
+            <ChatboxHostPickerPill
+              projectId={projectId ?? ""}
+              isAuthenticated={effectiveAuth}
+              hostId={previewedHostId}
+              hostName="Client"
+            />
+          </div>
+        </div>
+        <div className="flex flex-1 items-center justify-center px-6 text-center">
+          <div className="max-w-sm">
+            <Inbox className="mx-auto size-8 text-muted-foreground/70" />
+            <p className="mt-3 text-sm font-medium">Client not found</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              The selected client no longer exists or isn't visible to you.
+              Pick another client above.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Standalone Journeys-owned host: no publish surface. Render an explanatory
+  // notice INSTEAD of provisioning a chatbox — but keep the client picker
+  // visible so the user can switch to a publishable client (a dead-end notice
+  // would strand them here).
+  if (isJourneysHost) {
+    return (
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <div className="relative shrink-0 border-b border-border/40 px-8 py-2.5">
+          <div className="absolute left-8 top-1/2 z-10 -translate-y-1/2">
+            <ChatboxHostPickerPill
+              projectId={projectId ?? ""}
+              isAuthenticated={effectiveAuth}
+              hostId={previewedHostId}
+              hostName={host?.name ?? "Client"}
+            />
+          </div>
+        </div>
+        <div className="flex flex-1 items-center justify-center px-6 text-center">
+          <div className="max-w-sm">
+            <Boxes className="mx-auto size-8 text-muted-foreground/70" />
+            <p className="mt-3 text-sm font-medium">
+              Managed by Swarms
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              This client belongs to the Swarms surface and has no publish
+              surface. Manage its journeys and runs there, or pick a different
+              client above to publish.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-4 rounded-xl"
+              onClick={() => navigate("/swarms")}
+            >
+              Go to Swarms
+            </Button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -249,8 +381,8 @@ export function ChatboxesTab({
     if (previewedHostId && ensureCompletedNullHosts.has(previewedHostId)) {
       return (
         <ChatboxLoadFailure
-          title="Couldn't load this host's swarm"
-          body="The backfill mutation succeeded but the chatbox query still returned nothing. Check the Convex logs for getChatboxByHostId on this host."
+          title="Couldn't load this client's swarm"
+          body="The backfill mutation succeeded but the chatbox query still returned nothing. Check the Convex logs for getChatboxByHostId on this client."
         />
       );
     }
@@ -259,7 +391,7 @@ export function ChatboxesTab({
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         <Loader2 className="mr-2 size-4 animate-spin" />
-        <span className="text-sm">Provisioning swarm for this host…</span>
+        <span className="text-sm">Provisioning swarm for this client…</span>
       </div>
     );
   }
@@ -270,10 +402,23 @@ export function ChatboxesTab({
         className="relative shrink-0 border-b border-border/40 px-8 py-2.5"
         data-testid="chatboxes-tab-header-chrome"
       >
+        {/* Publish already has the host pill in ChatboxPublishClientBar;
+            other sub-tabs need the same switcher here so host changes
+            aren't stuck behind returning to Publish. */}
+        {activeTab !== "publish" ? (
+          <div className="absolute left-8 top-1/2 z-10 -translate-y-1/2">
+            <ChatboxHostPickerPill
+              projectId={chatbox.projectId}
+              isAuthenticated={effectiveAuth}
+              hostId={chatbox.namedHostId}
+              hostName={host?.name ?? chatbox.namedHostName ?? "Host"}
+            />
+          </div>
+        ) : null}
         <div className="flex min-w-0 items-center justify-center">
           <ViewModeSelector
-            value={tab}
-            ariaLabel="Swarm view"
+            value={activeTab}
+            ariaLabel={product === "swarm" ? "Swarm view" : "Chatbox view"}
             onChange={(next) => {
               setTab(next as ChatboxTab);
               // Manual navigation supersedes the deep link — drop the params
@@ -282,12 +427,12 @@ export function ChatboxesTab({
                 setSearchParams({}, { replace: true });
               }
             }}
-            options={TAB_OPTIONS}
+            options={tabOptions}
           />
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
-        {tab === "publish" ? (
+        {activeTab === "publish" ? (
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={50} minSize={32}>
               <div className="h-full overflow-y-auto px-6 py-6">
@@ -326,7 +471,7 @@ export function ChatboxesTab({
                     chatboxId={chatbox.chatboxId}
                     projectId={chatbox.projectId}
                     hostId={chatbox.namedHostId}
-                    hostName={host?.name ?? chatbox.namedHostName ?? "Host"}
+                    hostName={host?.name ?? chatbox.namedHostName ?? "Client"}
                     isAuthenticated={effectiveAuth}
                     currentServerIds={chatbox.servers.map((s) => s.serverId)}
                   />
@@ -374,13 +519,17 @@ export function ChatboxesTab({
               </div>
             </ResizablePanel>
           </ResizablePanelGroup>
-        ) : tab === "personas" ? (
+        ) : activeTab === "personas" ? (
           <PersonasTab chatbox={chatbox} />
-        ) : tab === "sessions" ? (
+        ) : activeTab === "sessions" ? (
           <ChatboxUsagePanel
             chatbox={chatbox}
             section="sessions"
             initialThreadId={sessionDeepLinkThreadId}
+            // Synthetic-session affordances (AI-generate + "Hide synthetic")
+            // belong to the agent Swarm product only; the human Chatbox has
+            // no synthetic traffic.
+            allowSynthetic={product === "swarm"}
           />
         ) : (
           <ChatboxUsagePanel

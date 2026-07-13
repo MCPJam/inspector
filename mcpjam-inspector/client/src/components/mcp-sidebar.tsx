@@ -15,14 +15,15 @@ import {
   MessageCircleQuestionIcon,
   GraduationCap,
   Box,
+  PackageOpen,
   LayoutGrid,
   GitBranch,
   UserPlus,
   ShieldCheck,
   Loader2,
 } from "lucide-react";
-import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { useFeatureFlagEnabled } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import {
@@ -206,8 +207,15 @@ const navigationSections: NavSection[] = [
     id: "mcp-apps",
     items: [
       {
-        title: "Swarms",
+        title: "Chatbox",
         url: "/chatboxes",
+        icon: PackageOpen,
+        featureFlag: "sandboxes-enabled",
+        billingFeature: "chatboxes",
+      },
+      {
+        title: "Swarms",
+        url: "/swarms",
         icon: Box,
         featureFlag: "sandboxes-enabled",
         billingFeature: "chatboxes",
@@ -587,7 +595,6 @@ export function MCPSidebar({
   onBeforeSignOut,
   ...props
 }: MCPSidebarProps) {
-  const posthog = usePostHog();
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
@@ -652,8 +659,8 @@ export function MCPSidebar({
   const handleNavClick = (url: string) => {
     if (onNavigate && /^[#/]/.test(url)) {
       const section = url.replace(/^[#/]+/, "");
-      posthog.capture("sidebar_nav_clicked", {
-        ...standardEventProps("mcp_sidebar"),
+      track("sidebar_nav_clicked", {
+        location: "mcp_sidebar",
         section,
       });
       onNavigate(section);

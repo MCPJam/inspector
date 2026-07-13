@@ -32,7 +32,7 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
 
   async function handleCreate(hostId: string) {
     if (!projectId) {
-      toast.error("Select a project before creating a host.");
+      toast.error("Select a project before creating a client.");
       return;
     }
     const catalog =
@@ -41,7 +41,7 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
       ? getCatalogTemplate(catalog, hostId)
       : undefined;
     if (!template) {
-      toast.error("Could not load live host templates.");
+      toast.error("Could not load live client templates.");
       return;
     }
     const label =
@@ -54,7 +54,7 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
         name: label,
         input: { ...seed, serverIds: [] },
       });
-      toast.success(`Created ${label} host.`);
+      toast.success(`Created ${label} client.`);
       navigate(buildHostsPath(hostId));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -93,7 +93,7 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
                 title={
                   canCreateFromLiveTemplate
                     ? `Create ${host.label}`
-                    : "Live host template unavailable"
+                    : "Live client template unavailable"
                 }
                 className="group flex w-full items-center gap-2.5 px-4 py-2 text-left transition-colors hover:bg-accent/40 disabled:cursor-not-allowed disabled:opacity-60"
               >

@@ -30,15 +30,31 @@ import {
 } from "@/hooks/useComputerEnvironments";
 import { EnvironmentBuildBadge } from "./EnvironmentBuildBadge";
 
-const NEW_ENVIRONMENT_TEMPLATE = `# Base must be an allowlisted official image (debian, ubuntu, node, python)
-# pinned by @sha256 digest. Only FROM + RUN are supported today.
-FROM debian:bookworm-slim@sha256:REPLACE_WITH_DIGEST
+// Ships a real, buildable default so "Create → Build" works out of the box.
+// The base must be an allowlisted official image (debian, ubuntu, node,
+// python) pinned by @sha256 digest — swap in your own base/digest as needed.
+// Only FROM + RUN are supported today.
+const NEW_ENVIRONMENT_TEMPLATE = `# Allowlisted official base (debian, ubuntu, node, python) pinned by digest.
+# Only FROM + RUN are supported today. Change the base or digest as needed.
+FROM debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df
 RUN echo "customize me"
 `;
 
 function errMessage(err: unknown, fallback: string): string {
+  // Convex `ConvexError` payloads land on `err.data` (a string, or a record
+  // with `message`) — e.g. the backend's DockerfileValidationError. Prefer that
+  // over `err.message`, which for an application error is the redacted
+  // "Server Error"/Request-ID string.
+  if (err && typeof err === "object" && "data" in err) {
+    const data = (err as { data: unknown }).data;
+    if (typeof data === "string" && data.trim()) return data.slice(0, 400);
+    if (data && typeof data === "object" && "message" in data) {
+      const msg = (data as { message: unknown }).message;
+      if (typeof msg === "string" && msg.trim()) return msg.slice(0, 400);
+    }
+  }
   if (err instanceof Error && err.message) {
-    // Convex surfaces the thrown message; strip the noisy server prefix.
+    // Fallback: strip the noisy server prefix from a plain thrown message.
     return err.message.replace(/^\[.*?\]\s*/, "").slice(0, 400) || fallback;
   }
   return fallback;
@@ -92,7 +108,7 @@ export function EnvironmentsDrawer({
           <SheetTitle>Environments</SheetTitle>
           <SheetDescription>
             A custom Docker image your computer boots from. Changing the image
-            rebuilds the computer.
+            rebuilds the computer — all files on it will be deleted.
           </SheetDescription>
         </SheetHeader>
 
@@ -163,6 +179,10 @@ function EnvironmentList({
   onUseBase: () => void;
   attachToBaseDisabled: boolean;
 }) {
+  // Switching to the base image rebuilds the sandbox and wipes its disk, so
+  // confirm the data loss before doing it (mirrors Reset / "Use on computer").
+  const [confirmingBase, setConfirmingBase] = useState(false);
+
   if (environments === undefined) {
     return (
       <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
@@ -177,7 +197,7 @@ function EnvironmentList({
         {/* Base image row */}
         <button
           type="button"
-          onClick={onUseBase}
+          onClick={() => setConfirmingBase(true)}
           disabled={attachToBaseDisabled}
           className="flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm hover:bg-muted/50 disabled:cursor-default disabled:opacity-100"
         >
@@ -196,6 +216,33 @@ function EnvironmentList({
             <span className="text-xs text-muted-foreground">Use</span>
           ) : null}
         </button>
+        {confirmingBase ? (
+          <div className="mx-1 mt-1 flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+            <span>
+              Switch to the base image? All files on this computer will be
+              deleted.
+            </span>
+            <span className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => {
+                  setConfirmingBase(false);
+                  onUseBase();
+                }}
+              >
+                Switch
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setConfirmingBase(false)}
+              >
+                Cancel
+              </Button>
+            </span>
+          </div>
+        ) : null}
 
         {environments.length === 0 ? (
           <div className="px-3 py-8 text-center text-sm text-muted-foreground">
@@ -256,6 +303,12 @@ function NewEnvironmentForm({
   const create = async () => {
     if (!name.trim()) {
       toast.error("Give the environment a name.");
+      return;
+    }
+    if (/REPLACE_WITH_DIGEST/.test(dockerfile)) {
+      toast.error(
+        "Pin the base image to a real @sha256 digest before creating."
+      );
       return;
     }
     setSaving(true);
@@ -332,6 +385,7 @@ function EnvironmentDetail({
   const [saving, setSaving] = useState(false);
   const [building, setBuilding] = useState(false);
   const [attaching, setAttaching] = useState(false);
+  const [confirmingUse, setConfirmingUse] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   // Re-seed local buffers if the underlying env changes identity (the parent
@@ -397,6 +451,7 @@ function EnvironmentDetail({
       toast.error(errMessage(err, "Could not use this environment."));
     } finally {
       setAttaching(false);
+      setConfirmingUse(false);
     }
   };
 
@@ -476,24 +531,46 @@ function EnvironmentDetail({
           )}
           Build
         </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => void useOnComputer()}
-          disabled={!readyToAttach || attaching || isAttached || !canAttach}
-          title={
-            !canAttach
-              ? "Wait for the computer to be ready or asleep before changing its image"
-              : readyToAttach
-              ? undefined
-              : "Build the environment (and save changes) before using it"
-          }
-        >
-          {attaching ? (
-            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-          ) : null}
-          {isAttached ? "In use" : "Use on computer"}
-        </Button>
+        {confirmingUse ? (
+          <span className="inline-flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            Change the image? All files on this computer will be deleted.
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => void useOnComputer()}
+              disabled={attaching}
+            >
+              {attaching ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : null}
+              Change
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setConfirmingUse(false)}
+              disabled={attaching}
+            >
+              Cancel
+            </Button>
+          </span>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setConfirmingUse(true)}
+            disabled={!readyToAttach || attaching || isAttached || !canAttach}
+            title={
+              !canAttach
+                ? "Wait for the computer to be ready or asleep before changing its image"
+                : readyToAttach
+                ? undefined
+                : "Build the environment (and save changes) before using it"
+            }
+          >
+            {isAttached ? "In use" : "Use on computer"}
+          </Button>
+        )}
       </div>
 
       <div className="mt-auto flex items-center justify-between border-t pt-3">

@@ -10,8 +10,8 @@ import { selectAxisTickPercents, TraceTimeline } from "../trace-timeline";
 
 const mockCapture = vi.fn();
 
-vi.mock("posthog-js/react", () => ({
-  usePostHog: () => ({ capture: mockCapture }),
+vi.mock("@/lib/analytics", () => ({
+  track: (event: string, props: unknown) => mockCapture(event, props),
 }));
 
 /** Label button for a trace row (avoids colliding with expand chevron buttons on LLM rows). */

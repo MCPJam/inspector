@@ -15,8 +15,7 @@ import {
   MoreHorizontal,
   Check,
 } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
 import {
   DropdownMenu,
@@ -74,11 +73,9 @@ export function TabHeader({
   const wideActionsClass =
     "hidden items-center gap-0.5 @min-[320px]/tab-header:flex";
 
-  const posthog = usePostHog();
-
   const handleRefreshTools = () => {
-    posthog?.capture("playground_tools_refresh_clicked", {
-      ...standardEventProps("playground_tab_header"),
+    track("playground_tools_refresh_clicked", {
+      location: "playground_tab_header",
       tool_count: toolCount,
     });
     onTabChange("tools");
@@ -86,8 +83,8 @@ export function TabHeader({
   };
 
   const handleRunClick = () => {
-    posthog?.capture("playground_tool_run_clicked", {
-      ...standardEventProps("playground_tab_header"),
+    track("playground_tool_run_clicked", {
+      location: "playground_tab_header",
       tool_count: toolCount,
     });
     onExecute();
@@ -95,8 +92,8 @@ export function TabHeader({
 
   const handleTabClick = (tab: "tools" | "saved") => {
     if (tab !== activeTab) {
-      posthog?.capture("playground_tools_pane_tab_changed", {
-        ...standardEventProps("playground_tab_header"),
+      track("playground_tools_pane_tab_changed", {
+        location: "playground_tab_header",
         from: activeTab,
         to: tab,
       });

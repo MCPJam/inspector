@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
 import { useConvexAuth } from "convex/react";
 import { toast } from "@/lib/toast";
 import {
@@ -16,7 +15,7 @@ import { cn } from "@/lib/utils";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
 import { cloneHostTemplateInput } from "@/lib/client-config-v2";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { CreateHostDialog } from "./CreateHostDialog";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -26,7 +25,7 @@ const QUICK_ADD_TEMPLATES = ["claude", "chatgpt", "copilot"] as const;
 
 const MCPJAM_HOST_NAME = "MCPJam";
 const LAST_HOST_DELETE_REASON =
-  "A project needs at least one host. Create another host first.";
+  "A project needs at least one client. Create another client first.";
 
 interface HostOverlayBarProps {
   projectId: string;
@@ -43,7 +42,6 @@ export function HostOverlayBar({
   onEditHost,
   onCanvasReplaceHost,
 }: HostOverlayBarProps) {
-  const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
   const catalogState = useHostCatalog();
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -165,15 +163,17 @@ export function HostOverlayBar({
   useEffect(() => {
     if (hasFiredOpened.current) return;
     hasFiredOpened.current = true;
-    posthog.capture("connect_host_overlay_opened", {
+    track("connect_host_overlay_opened", {
+      location: "chatbox_overlay",
       host_count: hosts.length,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [posthog]);
+  }, []);
 
   const handleChange = (next: string) => {
     if (next === effectiveHostId) return;
-    posthog.capture("connect_host_overlay_swapped", {
+    track("connect_host_overlay_swapped", {
+      location: "chatbox_overlay",
       from: effectiveHostId ?? "__unknown__",
       to: next,
       host_count: hosts.length,
@@ -202,8 +202,8 @@ export function HostOverlayBar({
       // shared catch and surface a delete-failure toast after the client
       // has already been removed.
       try {
-        posthog.capture("client_deleted", {
-          ...standardEventProps("chatbox_overlay"),
+        track("client_deleted", {
+          location: "chatbox_overlay",
           client_id: hostId,
           force: false,
         });
@@ -229,7 +229,8 @@ export function HostOverlayBar({
     setShowCreate(true);
     setMenuOpen(false);
     if (templateId) {
-      posthog.capture("connect_host_overlay_quick_added", {
+      track("connect_host_overlay_quick_added", {
+        location: "chatbox_overlay",
         template_id: templateId,
       });
     }
@@ -250,7 +251,7 @@ export function HostOverlayBar({
         <div className="flex items-center rounded-md border border-border/40 bg-muted/30">
           <button
             type="button"
-            aria-label="Previous host"
+            aria-label="Previous client"
             data-testid="host-overlay-prev"
             disabled={arrowDisabled}
             onClick={() => cycle(-1)}
@@ -268,7 +269,7 @@ export function HostOverlayBar({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                aria-label="Host used for preview"
+                aria-label="Client used for preview"
                 data-testid="host-overlay-current"
                 className={cn(
                   "flex h-8 min-w-[7rem] max-w-[14rem] items-center justify-center border-x border-border/40 bg-transparent px-3 text-sm font-medium text-foreground transition-colors outline-none",
@@ -337,7 +338,7 @@ export function HostOverlayBar({
                 className="group pr-1.5"
               >
                 <Plus className="size-3.5" />
-                <span className="flex-1">Add host</span>
+                <span className="flex-1">Add client</span>
                 <span
                   className="ml-2 flex shrink-0 items-center gap-0.5"
                   onPointerDown={(e) => e.stopPropagation()}
@@ -380,7 +381,7 @@ export function HostOverlayBar({
 
           <button
             type="button"
-            aria-label="Next host"
+            aria-label="Next client"
             data-testid="host-overlay-next"
             disabled={arrowDisabled}
             onClick={() => cycle(1)}
@@ -405,7 +406,8 @@ export function HostOverlayBar({
         projectId={projectId}
         initialTemplateId={createTemplateId}
         onCreated={(hostId) => {
-          posthog.capture("connect_host_overlay_saved_as_new", {
+          track("connect_host_overlay_saved_as_new", {
+            location: "chatbox_overlay",
             host_id: hostId,
           });
           onChangePreviewedHostId(hostId);

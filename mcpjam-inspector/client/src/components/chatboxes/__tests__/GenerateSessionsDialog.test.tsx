@@ -26,6 +26,10 @@ vi.mock("@/lib/PosthogUtils", () => ({
   standardEventProps: () => ({}),
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
+}));
+
 // The dialog reads the persona roster via Convex (usePersonaRoster -> useQuery).
 // These configure-stage tests render it without a ConvexProvider, so stub the
 // roster hooks: an undefined roster simply hides the stage-1 roster section.
@@ -170,7 +174,7 @@ describe("GenerateSessionsDialog — plan v4 §J affordances", () => {
       />,
     );
     expect(
-      screen.getByText(/host has no model selected/i),
+      screen.getByText(/client has no model selected/i),
     ).toBeInTheDocument();
     expect(
       (screen.getByRole("button", { name: "Generate personas" }) as HTMLButtonElement)

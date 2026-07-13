@@ -120,10 +120,12 @@ import webRoutes from "./routes/web/index";
 import v1Routes from "./routes/v1/index";
 import cliAuthRoutes from "./routes/cli-auth/index";
 import relayRoutes, { relayBodyLimit } from "./routes/relay";
+import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata";
 import workosAuthkitRoutes from "./routes/workos-authkit";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningSimulations } from "./services/sessionSimulation/runner";
+import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
 import {
   isScheduledEvalsWorkerEnabled,
   startScheduledEvalsWorker,
@@ -137,7 +139,7 @@ import {
   CANIUSE_LANDING_HOSTS,
 } from "./config";
 import "./types/hono"; // Type extensions
-import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair";
+import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 
 // Utility function to extract MCP server config from environment variables
 function getMCPConfigFromEnv() {
@@ -236,6 +238,7 @@ warnOnConvexDevMisconfiguration(loadedEnv);
 
 // Generate session token for API authentication
 generateSessionToken();
+setXaaIdpLogger(appLogger);
 initXAAIdpKeyPair();
 
 startGuestAuthProvisioningInBackground();
@@ -445,6 +448,12 @@ app.route("/api/cli/auth", cliAuthRoutes);
 // both production entries must wire this up.
 app.use("/relay/*", relayBodyLimit());
 app.route("/relay", relayRoutes);
+
+// XAA Client ID Metadata Document. Also deliberately OUTSIDE /api (the
+// target authorization server fetches it anonymously) and mounted before
+// the production static/SPA fallback. Mirror of the mount in
+// server/app.ts::createHonoApp — both production entries must wire this up.
+registerXaaClientMetadataRoute(app);
 
 // Fallback for clients that post to "/sse/message" instead of the rewritten proxy messages URL.
 // We resolve the upstream messages endpoint via sessionId and forward with any injected auth.
@@ -756,6 +765,9 @@ async function shutdown() {
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded
     // by an internal timeout; the outer `forceExitTimer` still wins.
     await shutdownRunningSimulations();
+    // Abort active swarm (journey-execution) runs — stops each run's heartbeat
+    // and lets in-flight sessions report a terminal attempt. Bounded internally.
+    await shutdownRunningJourneyRuns();
     await tunnelManager.closeAll();
     server.close();
     // Flush queued server-side analytics (bounded internally; forceExitTimer

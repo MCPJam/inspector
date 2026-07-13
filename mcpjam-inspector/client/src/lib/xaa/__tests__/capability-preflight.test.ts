@@ -133,3 +133,62 @@ describe("analyzeAsCompatibility", () => {
     expect(report?.overall).toBe("fail");
   });
 });
+
+describe("draft-04 profile + CIMD advertisement checks", () => {
+  const base = {
+    issuer: "https://auth.example.com",
+    token_endpoint: "https://auth.example.com/oauth/token",
+    grant_types_supported: ["urn:ietf:params:oauth:grant-type:jwt-bearer"],
+  };
+  const check = (metadata: any, id: string) =>
+    analyzeAsCompatibility(metadata)?.checks.find((c) => c.id === id);
+
+  it("passes when the ID-JAG profile is advertised", () => {
+    const result = check(
+      {
+        ...base,
+        authorization_grant_profiles_supported: [
+          "urn:ietf:params:oauth:grant-profile:id-jag",
+        ],
+      },
+      "id_jag_profile"
+    );
+    expect(result?.status).toBe("pass");
+  });
+
+  it("fails only on an explicit profile list without ID-JAG", () => {
+    const contradicted = analyzeAsCompatibility({
+      ...base,
+      authorization_grant_profiles_supported: ["urn:other:profile"],
+    });
+    expect(
+      contradicted?.checks.find((c) => c.id === "id_jag_profile")?.status
+    ).toBe("fail");
+    // An explicit contradiction degrades the overall verdict...
+    expect(contradicted?.overall).toBe("fail");
+
+    // ...but an absent advertisement is a SHOULD-level warning that does NOT
+    // degrade an otherwise-passing server.
+    const absent = analyzeAsCompatibility(base);
+    expect(absent?.checks.find((c) => c.id === "id_jag_profile")?.status).toBe(
+      "warn"
+    );
+    expect(absent?.overall).toBe("pass");
+  });
+
+  it("classifies cimd_supported without affecting the overall verdict", () => {
+    expect(
+      check({ ...base, client_id_metadata_document_supported: true }, "cimd_supported")
+        ?.status
+    ).toBe("pass");
+    const explicitFalse = analyzeAsCompatibility({
+      ...base,
+      client_id_metadata_document_supported: false,
+    });
+    expect(
+      explicitFalse?.checks.find((c) => c.id === "cimd_supported")?.status
+    ).toBe("fail");
+    expect(explicitFalse?.overall).toBe("pass");
+    expect(check(base, "cimd_supported")?.status).toBe("unknown");
+  });
+});
