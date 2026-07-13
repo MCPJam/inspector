@@ -85,7 +85,7 @@ describe("createXAAStateMachine", () => {
           status: 200,
           statusText: "OK",
           headers: {},
-          body: { result: { serverInfo: { name: "demo" } } },
+          body: { jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { serverInfo: { name: "demo" } } },
           ok: true,
         };
       }),
@@ -468,7 +468,7 @@ describe("createXAAStateMachine", () => {
             status: 200,
             statusText: "OK",
             headers: {},
-            body: { result: { serverInfo: { name: "demo" } } },
+            body: { jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { serverInfo: { name: "demo" } } },
             ok: true,
           };
         }),
@@ -686,7 +686,7 @@ describe("createXAAStateMachine", () => {
             status: 200,
             statusText: "OK",
             headers: {},
-            body: { result: { serverInfo: { name: "demo" } } },
+            body: { jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { serverInfo: { name: "demo" } } },
             ok: true,
           };
         }),
@@ -1033,7 +1033,7 @@ function createDynamicHarness(options: DynamicHarnessOptions) {
         status: 200,
         statusText: "OK",
         headers: {},
-        body: { result: { serverInfo: { name: "demo" } } },
+        body: { jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { serverInfo: { name: "demo" } } },
         ok: true,
       };
     }),
@@ -1763,5 +1763,74 @@ describe("cimd registration strategy", () => {
     });
     await harness.machine.runAll();
     expect(harness.getState().error).toContain("insufficient");
+  });
+});
+
+describe("createXAAStateMachine discovery guards", () => {
+  const ok = (body: unknown) => ({
+    status: 200,
+    statusText: "OK",
+    headers: {},
+    body,
+    ok: true,
+  });
+
+  function driveDiscovery(externalRequest: (url: string) => Promise<any>) {
+    let state = createInitialXAAFlowState({
+      serverUrl: "https://mcp.example.com",
+      registrationStrategy: "pre_registered",
+    });
+    const machine = createXAAStateMachine({
+      getState: () => state,
+      updateState: (u) => {
+        state = { ...state, ...u };
+      },
+      serverUrl: "https://mcp.example.com",
+      issuerBaseUrl: "https://issuer.example/api/web/xaa",
+      requestExecutor: {
+        externalRequest: vi.fn(externalRequest),
+        internalRequest: vi.fn(async () => ok({})),
+      },
+      clientId: "mcpjam-debugger",
+      userId: "user-1",
+      email: "u@example.com",
+    });
+    return { machine, getState: () => state };
+  }
+
+  it("rejects protected-resource metadata whose resource does not match (RFC 9728)", async () => {
+    const { machine, getState } = driveDiscovery(async (url) => {
+      if (url.includes(".well-known/oauth-protected-resource")) {
+        return ok({
+          resource: "https://other.example.com",
+          authorization_servers: ["https://auth.example.com"],
+        });
+      }
+      return ok({});
+    });
+    await machine.runAll();
+    expect(getState().currentStep).toBe("discover_resource_metadata");
+    expect(getState().error).toMatch(/does not identify/i);
+  });
+
+  it("rejects authorization-server metadata whose issuer does not match (RFC 8414)", async () => {
+    const { machine, getState } = driveDiscovery(async (url) => {
+      if (url.includes(".well-known/oauth-protected-resource")) {
+        return ok({
+          resource: "https://mcp.example.com",
+          authorization_servers: ["https://auth.example.com"],
+        });
+      }
+      if (url.includes(".well-known/")) {
+        return ok({
+          issuer: "https://evil.example.com",
+          token_endpoint: "https://evil.example.com/token",
+        });
+      }
+      return ok({});
+    });
+    await machine.runAll();
+    expect(getState().currentStep).toBe("discover_authz_metadata");
+    expect(getState().error).toMatch(/does not match/i);
   });
 });

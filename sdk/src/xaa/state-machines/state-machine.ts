@@ -30,6 +30,11 @@ import type {
 } from "./types.js";
 import { createInitialXAAFlowState } from "./types.js";
 import { analyzeAsCompatibility } from "./capability-preflight.js";
+import {
+  buildMcpInitializeRequest,
+  evaluateMcpInitializeResponse,
+  mcpInitializeExtensionEvidence,
+} from "../mcp-init.js";
 
 /** What the HTTP history shows in place of a client secret — the real value
  * is sent on the wire but never enters the logged request. */
@@ -593,16 +598,30 @@ export function createXAAStateMachine(
         }
 
         const resourceMetadata = asRecord(result.body, "Resource metadata");
+
+        // RFC 9728: the metadata's `resource` MUST identify the protected
+        // resource we fetched it for. Reject a mismatched (or absent) resource
+        // so a compromised/misconfigured well-known can't redirect us to a
+        // different authorization server; try the next candidate instead.
+        const requestedResource = canonicalizeResourceUrl(activeServerUrl);
+        const metadataResource =
+          typeof resourceMetadata.resource === "string"
+            ? resourceMetadata.resource
+            : undefined;
+        if (
+          !metadataResource ||
+          canonicalizeResourceUrl(metadataResource) !== requestedResource
+        ) {
+          lastError = `Protected-resource metadata at ${resourceMetadataUrl} does not identify ${requestedResource}.`;
+          continue;
+        }
+        const resolvedResource = metadataResource;
+
         const resolvedAuthzIssuer = Array.isArray(
           resourceMetadata.authorization_servers
         )
           ? resourceMetadata.authorization_servers[0]
           : undefined;
-        const resolvedResource =
-          typeof resourceMetadata.resource === "string"
-            ? resourceMetadata.resource
-            : canonicalizeResourceUrl(activeServerUrl);
-
         if (!resolvedAuthzIssuer) {
           throw new Error(
             "Resource metadata did not include `authorization_servers`, and no Authorization Server issuer was configured manually."
@@ -651,7 +670,7 @@ export function createXAAStateMachine(
     // the token endpoint. A registration-backed run resolves the stored
     // endpoint server-side, and a manually-set token endpoint is already
     // known — in either case skip the probe and advance.
-    if (registrationId || state.tokenEndpoint) {
+    if (registrationId || serverId || state.tokenEndpoint) {
       machine.updateState({
         currentStep: "received_authz_metadata",
         error: undefined,
@@ -715,12 +734,21 @@ export function createXAAStateMachine(
           );
         }
 
-        const resolvedIssuer =
-          typeof metadata.issuer === "string" ? metadata.issuer : issuer;
+        // RFC 8414 §3.3: the metadata's `issuer` MUST match the one we asked
+        // for. A mismatched (or absent) issuer means its token endpoint can't
+        // be trusted with the signed assertion + any client secret — continue
+        // to the next candidate rather than adopting a foreign issuer.
+        if (
+          typeof metadata.issuer !== "string" ||
+          metadata.issuer.replace(/\/+$/, "") !== issuer.replace(/\/+$/, "")
+        ) {
+          lastError = `Authorization metadata at ${url} advertises issuer "${String(
+            metadata.issuer
+          )}", which does not match the requested issuer "${issuer}".`;
+          continue;
+        }
+        const resolvedIssuer = metadata.issuer;
 
-        // Use the resolved issuer — not raw metadata.issuer which may be
-        // absent from the AS response — so vendor detection always has a
-        // hostname to match against.
         const compatibilityReport = analyzeAsCompatibility({
           ...(metadata as XAAFlowState["authzMetadata"]),
           issuer: resolvedIssuer,
@@ -1485,7 +1513,10 @@ export function createXAAStateMachine(
   const requestAccessToken = async () => {
     const state = currentState();
 
-    if (!state.idJag || (!state.tokenEndpoint && !registrationId)) {
+    if (
+      !state.idJag ||
+      (!state.tokenEndpoint && !registrationId && !serverId)
+    ) {
       machine.updateState({
         currentStep: "jwt_bearer_request",
         error:
@@ -1744,29 +1775,15 @@ export function createXAAStateMachine(
       return;
     }
 
-    const body = {
-      jsonrpc: "2.0",
-      id: "mcpjam-xaa-debugger",
-      method: "initialize",
-      params: {
-        protocolVersion: "2025-11-25",
-        capabilities: {},
-        clientInfo: {
-          name: "MCPJam XAA Debugger",
-          version: "1.0.0",
-        },
-      },
-    };
-
+    // Shared initialize request: advertises the enterprise-managed
+    // authorization extension and sends the MCP-Protocol-Version header (some
+    // 2025-11-25 servers enforce it), matching the CLI probe.
+    const mcpRequest = buildMcpInitializeRequest(state.accessToken);
     const request = {
       method: "POST",
       url: state.serverUrl,
-      headers: {
-        Accept: "application/json, text/event-stream",
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${state.accessToken}`,
-      },
-      body,
+      headers: mcpRequest.headers,
+      body: mcpRequest.body,
     };
 
     try {
@@ -1776,8 +1793,8 @@ export function createXAAStateMachine(
         () =>
           requestExecutor.externalRequest(state.serverUrl!, {
             method: "POST",
-            headers: request.headers,
-            body: JSON.stringify(body),
+            headers: mcpRequest.headers,
+            body: JSON.stringify(mcpRequest.body),
           })
       );
 
@@ -1788,6 +1805,17 @@ export function createXAAStateMachine(
             result.body,
             `Authenticated MCP request failed with ${result.status}`
           ),
+        });
+        return;
+      }
+
+      // A 2xx alone can carry a JSON-RPC error, an SSE parse failure, or a
+      // non-MCP body — require a genuine JSON-RPC initialize result.
+      const mcpError = evaluateMcpInitializeResponse(result.body);
+      if (mcpError) {
+        machine.updateState({
+          currentStep: "authenticated_mcp_request",
+          error: mcpError,
         });
         return;
       }
@@ -1803,6 +1831,7 @@ export function createXAAStateMachine(
         "Authenticated MCP response",
         {
           status: result.status,
+          xaa_extension: mcpInitializeExtensionEvidence(result.body),
           body: result.body,
         }
       );
