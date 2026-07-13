@@ -88,6 +88,11 @@ function SetupGuidance() {
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">
+          <p>
+            MCPJam acts as both the identity provider and the client/agent in
+            this test. Your authorization server must turn MCPJam&apos;s ID-JAG
+            into an access token.
+          </p>
           <ol className="list-decimal space-y-2 pl-5 marker:font-medium marker:text-foreground">
             <li>
               <strong className="font-medium text-foreground">
