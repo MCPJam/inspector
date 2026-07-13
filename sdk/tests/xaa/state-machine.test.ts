@@ -1192,7 +1192,10 @@ describe("createXAAStateMachine", () => {
     const AS_PLAIN_A = "https://as-plain-a.example.com";
     const AS_PLAIN_B = "https://as-plain-b.example.com";
 
-    const asMetadata = (issuer: string, extra: Record<string, unknown> = {}) => ({
+    const asMetadata = (
+      issuer: string,
+      extra: Record<string, unknown> = {}
+    ) => ({
       issuer,
       token_endpoint: `${issuer}/oauth/token`,
       ...extra,
