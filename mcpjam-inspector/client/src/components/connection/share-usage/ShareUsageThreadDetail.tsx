@@ -81,13 +81,17 @@ export function SwarmJudgeSection({
           Judging against the journey goal…
         </div>
       ) : goalScore.status === "completed" &&
-        typeof goalScore.score === "number" ? (
+        typeof goalScore.score === "number" &&
+        Number.isFinite(goalScore.score) &&
+        typeof goalScore.passed === "boolean" ? (
+        // Both fields validated — a malformed `passed` must not render as
+        // "below threshold" (same guard as the list badge).
         <div className="flex items-start gap-1.5">
           <div className="min-w-0 flex-1">
             <JudgeVerdictCard
               verdict={{
                 score: goalScore.score,
-                passed: goalScore.passed === true,
+                passed: goalScore.passed,
                 reason: goalScore.reason,
               }}
             />

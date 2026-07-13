@@ -31,12 +31,24 @@ import {
 } from "../SwarmsTab";
 
 describe("toSessionGoalScore (wide-shape guard)", () => {
-  it("rejects absent, unknown-status, and completed-without-finite-score records", () => {
+  it("rejects absent, unknown-status, and malformed completed records", () => {
     expect(toSessionGoalScore(undefined)).toBeUndefined();
     expect(toSessionGoalScore({ status: "bogus" })).toBeUndefined();
     expect(toSessionGoalScore({ status: "completed" })).toBeUndefined();
     expect(
       toSessionGoalScore({ status: "completed", score: Number.NaN }),
+    ).toBeUndefined();
+    // A completed record with a non-boolean `passed` must NOT degrade to
+    // "below threshold" — it's rejected outright.
+    expect(
+      toSessionGoalScore({ status: "completed", score: 0.9 }),
+    ).toBeUndefined();
+    expect(
+      toSessionGoalScore({
+        status: "completed",
+        score: 0.9,
+        passed: "yes" as unknown as boolean,
+      }),
     ).toBeUndefined();
   });
 

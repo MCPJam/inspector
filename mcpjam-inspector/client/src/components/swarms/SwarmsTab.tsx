@@ -94,7 +94,14 @@ export function toSessionGoalScore(raw: JourneySessionRow["goalScore"]):
     return undefined;
   }
   const status = raw.status as GoalScoreStatus;
-  if (status === "completed" && !Number.isFinite(raw.score)) return undefined;
+  // A completed verdict must carry BOTH a finite score and a boolean passed —
+  // a malformed `passed` must not silently render as "below threshold".
+  if (
+    status === "completed" &&
+    (!Number.isFinite(raw.score) || typeof raw.passed !== "boolean")
+  ) {
+    return undefined;
+  }
   return { ...raw, status };
 }
 

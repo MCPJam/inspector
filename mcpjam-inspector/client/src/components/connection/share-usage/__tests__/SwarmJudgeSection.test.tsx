@@ -89,6 +89,20 @@ describe("SwarmJudgeSection", () => {
     expect(requestJudgeMock).toHaveBeenCalledWith({ sessionId: "session-1" });
   });
 
+  it("a completed record with malformed passed renders nothing (never a bogus verdict)", () => {
+    const { container } = render(
+      <SwarmJudgeSection
+        threadId="session-1"
+        goalScore={{
+          status: "completed",
+          score: 0.9,
+          passed: "yes" as unknown as boolean,
+        }}
+      />,
+    );
+    expect(container.textContent).not.toMatch(/below threshold|meets goal/);
+  });
+
   it("running → judging placeholder, no controls", () => {
     render(
       <SwarmJudgeSection threadId="session-1" goalScore={{ status: "running" }} />,
