@@ -280,6 +280,26 @@ describe("runXaaFlow", () => {
     expect(result.completed).toBe(true);
   });
 
+  it("mints the aud from the AS's canonical issuer, not a trailing-slash arg", async () => {
+    global.fetch = stubFetch({
+      asMetadata: { issuer: AS_ISSUER, token_endpoint: TOKEN_ENDPOINT },
+      token: { status: 200, body: { access_token: "at-1", token_type: "Bearer" } },
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      // Trailing slash — the AS advertises the canonical form without it.
+      authzServerIssuer: `${AS_ISSUER}/`,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    expect(result.authzServerIssuer).toBe(AS_ISSUER);
+    expect(result.idJag?.claims.aud).toBe(AS_ISSUER);
+    expect(result.completed).toBe(true);
+  });
+
   it("rejects PRM whose resource does not identify the requested server", async () => {
     global.fetch = stubFetch({
       prm: {

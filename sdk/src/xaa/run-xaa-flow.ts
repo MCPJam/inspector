@@ -204,12 +204,17 @@ export async function runXaaFlow(
             // for. Reject a mismatched document so it can't redirect the signed
             // assertion (and any client_secret) to another issuer's endpoint.
             const metaIssuer = meta.metadata.issuer;
-            const issuerMatches =
+            const te = meta.metadata.token_endpoint;
+            if (
               typeof metaIssuer === "string" &&
               metaIssuer.replace(/\/+$/, "") ===
-                authzServerIssuer.replace(/\/+$/, "");
-            const te = meta.metadata.token_endpoint;
-            if (issuerMatches && typeof te === "string") {
+                authzServerIssuer.replace(/\/+$/, "") &&
+              typeof te === "string"
+            ) {
+              // Adopt the AS's own canonical issuer string as the ID-JAG `aud`,
+              // so a trailing-slash difference between the PRM/arg issuer and the
+              // issuer the AS advertises doesn't mint an audience it rejects.
+              authzServerIssuer = metaIssuer;
               tokenEndpoint = te;
               break;
             }
