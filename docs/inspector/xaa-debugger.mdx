@@ -21,12 +21,28 @@ The XAA Debugger provides comprehensive tooling for testing Cross-App Access imp
 To begin debugging XAA flows:
 
 1. **Navigate to the XAA Debugger** - Click the XAA Flow tab in MCPJam Inspector
-2. **Configure Target** - Provide your MCP server URL and authorization server details
+2. **Configure Server** - Click **Configure Server to Test** to open the modal. Enter your MCP server URL, choose a **Registration** strategy (see below), and fill in the required credentials
 3. **Run Mock Authentication** - Complete the synthetic identity provider flow to obtain an ID token
 4. **Review Compatibility** - After authorization server discovery, check the green/amber/red banner for capability warnings
 5. **Exchange Tokens** - The debugger will attempt the ID-JAG (Identity JSON Assertion Grant) exchange and surface any configuration issues
 
 The debugger guides you through each step of the XAA flow with real-time feedback and vendor-specific recommendations.
+
+## Client Registration Strategy
+
+The **Registration** selector in the **Configure Server to Test** modal controls how the debugger establishes its client identity at the target authorization server. The choice is saved per-server and pre-filled the next time you edit that server.
+
+| Strategy | When to use | Client ID required |
+|---|---|---|
+| **Pre-registered client** (default) | You have already registered a client at the authorization server and have a Client ID and optional secret | Yes |
+| **Client metadata URL (CIMD)** | The authorization server supports the MCP Client ID Metadata Document advertisement; MCPJam's hosted metadata URL is used as the `client_id` | No |
+| **Open dynamic registration (DCR)** | The authorization server supports RFC 7591 open dynamic registration; the debugger mints a fresh client each run | No |
+
+**Notes:**
+- Client ID is required only for the pre-registered strategy. DCR and CIMD leave it optional.
+- The **Advanced** section (authorization server issuer and simulated identity) is collapsed by default. Expand it when you need to override the issuer or supply a custom subject/email for the test identity.
+- If you choose DCR or CIMD for a server that has a stored client secret, the debugger ignores the stored credentials and establishes its own dynamic client identity for that run.
+- For DCR runs, a **Register another client** button appears on the flow surface if this session has already registered a client. Use it to force a fresh registration — note that the previous remote client is not automatically deleted.
 
 ## Authorization Server Compatibility
 
