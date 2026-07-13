@@ -398,13 +398,25 @@ export function BehaviorTab({
               aria-label="Progressive MCP tool discovery"
               disabled={readOnly || !progressiveState.enforced}
             >
-              <ToggleGroupItem value="auto" aria-label="Auto (default)">
+              <ToggleGroupItem
+                value="auto"
+                aria-label="Auto (default)"
+                className="h-7 px-2 text-xs"
+              >
                 Auto
               </ToggleGroupItem>
-              <ToggleGroupItem value="on" aria-label="On">
+              <ToggleGroupItem
+                value="on"
+                aria-label="On"
+                className="h-7 px-2 text-xs"
+              >
                 On
               </ToggleGroupItem>
-              <ToggleGroupItem value="off" aria-label="Off">
+              <ToggleGroupItem
+                value="off"
+                aria-label="Off"
+                className="h-7 px-2 text-xs"
+              >
                 Off
               </ToggleGroupItem>
             </ToggleGroup>
@@ -465,21 +477,21 @@ export function BehaviorTab({
                 <ToggleGroupItem
                   value="none"
                   aria-label="Do not render images"
-                  className="min-w-[4.25rem] px-3"
+                  className="h-7 min-w-[4.25rem] px-3 text-xs"
                 >
                   None
                 </ToggleGroupItem>
                 <ToggleGroupItem
                   value="collapsed"
                   aria-label="Render images in collapsed tool cards"
-                  className="min-w-[5.75rem] px-3"
+                  className="h-7 min-w-[5.75rem] px-3 text-xs"
                 >
                   Collapsed
                 </ToggleGroupItem>
                 <ToggleGroupItem
                   value="inline"
                   aria-label="Render images inline"
-                  className="min-w-[4.25rem] px-3"
+                  className="h-7 min-w-[4.25rem] px-3 text-xs"
                 >
                   Inline
                 </ToggleGroupItem>
