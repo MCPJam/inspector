@@ -203,6 +203,26 @@ export type {
   NegativeTestMode,
   XaaRegistrationStrategy,
 } from "./xaa/constants.js";
+// Pure XAA discovery + MCP-initialize helpers (browser+node safe, no I/O).
+export {
+  canonicalizeMcpResource,
+  buildProtectedResourceMetadataCandidates,
+  buildAuthorizationServerMetadataCandidates,
+  buildIssuerPublicationCandidates,
+  XAA_AS_METADATA_NAMES,
+} from "./xaa/discovery.js";
+export {
+  buildMcpInitializeRequest,
+  evaluateMcpInitializeResponse,
+  mcpInitializeExtensionEvidence,
+  MCP_INIT_ID,
+  MCP_PROTOCOL_VERSION,
+  XAA_MCP_EXTENSION,
+} from "./xaa/mcp-init.js";
+export type {
+  McpInitializeRequest,
+  XaaCapabilityEvidence,
+} from "./xaa/mcp-init.js";
 export { EMPTY_OAUTH_FLOW_STATE } from "./oauth/state-machines/types.js";
 export type {
   HttpHistoryEntry,
