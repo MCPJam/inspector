@@ -63,6 +63,18 @@ function str(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
+// Normalize any HeadersInit (Record, Headers, or tuple array) to a plain record.
+function normalizeHeaders(
+  headers: HeadersInit | undefined,
+): Record<string, string> | undefined {
+  if (!headers) return undefined;
+  const out: Record<string, string> = {};
+  new Headers(headers).forEach((value, key) => {
+    out[key] = value;
+  });
+  return out;
+}
+
 /**
  * Build a Node in-process executor. The internal-route switch is exhaustive; an
  * unrecognized MCPJam route returns 404 rather than silently succeeding.
@@ -178,12 +190,22 @@ export function createInProcessXaaExecutor(
     url: string,
     init?: RequestInit,
   ): Promise<XAARequestResult> => {
+    // Preserve the caller's redirect intent (CIMD's document preflight sends
+    // `redirect: "manual"` and MUST NOT follow redirects) and normalize the
+    // headers regardless of whether they arrive as a Record, Headers, or tuples.
+    const redirect =
+      init?.redirect === "manual"
+        ? "manual"
+        : init?.redirect === "follow"
+          ? "follow"
+          : undefined;
     const response = await executeDebugOAuthProxy({
       url,
       method: (init?.method ?? "GET").toUpperCase(),
-      headers: init?.headers as Record<string, string> | undefined,
+      headers: normalizeHeaders(init?.headers),
       body: init?.body ?? undefined,
       httpsOnly,
+      ...(redirect ? { redirect } : {}),
       timeoutMs,
     });
     return {
