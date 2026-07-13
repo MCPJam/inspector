@@ -58,6 +58,7 @@ export interface RemoteServer {
   xaaSubject?: string;
   xaaEmail?: string;
   registrationMode?: string;
+  authMethod?: string;
   createdAt: number;
   updatedAt: number;
 }

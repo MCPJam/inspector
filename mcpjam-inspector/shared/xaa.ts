@@ -12,11 +12,13 @@ export {
   DEFAULT_REGISTRATION_STRATEGY,
   normalizeRegistrationStrategy,
   normalizeRegistrationMode,
+  normalizeAuthMethod,
 } from "@mcpjam/sdk/browser";
 export type {
   NegativeTestMode,
   RegistrationStrategy,
   RegistrationMode,
+  AuthMethod,
 } from "@mcpjam/sdk/browser";
 
 /**

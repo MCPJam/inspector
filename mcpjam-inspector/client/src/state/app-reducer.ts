@@ -72,6 +72,9 @@ const buildProjectServerProjection = (
   ...(server.registrationMode === undefined
     ? {}
     : { registrationMode: server.registrationMode }),
+  ...(server.authMethod === undefined
+    ? {}
+    : { authMethod: server.authMethod }),
   ...(server.hasClientSecret === undefined
     ? {}
     : { hasClientSecret: server.hasClientSecret }),

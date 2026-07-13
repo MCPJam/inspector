@@ -3,7 +3,7 @@ import {
   normalizeOAuthProtocolVersion,
   normalizeOAuthRegistrationStrategy,
 } from "@/lib/oauth/profile";
-import { normalizeRegistrationMode } from "@/shared/xaa.js";
+import { normalizeAuthMethod, normalizeRegistrationMode } from "@/shared/xaa.js";
 
 type SerializeOptions = {
   /**
@@ -78,6 +78,9 @@ function serializeServersInternal(
     }
     if (server.registrationMode !== undefined) {
       serializedServer.registrationMode = server.registrationMode;
+    }
+    if (server.authMethod !== undefined) {
+      serializedServer.authMethod = server.authMethod;
     }
 
     if (server.config) {
@@ -282,6 +285,10 @@ export function deserializeServersFromConvex(
     );
     if (registrationMode !== undefined) {
       server.registrationMode = registrationMode;
+    }
+    const authMethod = normalizeAuthMethod(serverData.authMethod);
+    if (authMethod !== undefined) {
+      server.authMethod = authMethod;
     }
 
     // Handle oauthFlowProfile from legacy nested structure
