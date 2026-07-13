@@ -233,7 +233,7 @@ export function XaaCredentialFields({
           </SelectContent>
         </Select>
         <p className="text-xs text-muted-foreground">
-          MCPJam signs a test identity for the cross-app access flow.
+          MCPJam signs the ID token and ID-JAG used in this test.
         </p>
       </div>
 
@@ -499,12 +499,8 @@ export function XaaCredentialFields({
                   </button>
                 </TooltipTrigger>
                 <TooltipContent variant="muted" side="top" className="max-w-xs">
-                  Leave blank to auto-discover it: MCPJam reads the MCP
-                  server&apos;s protected-resource metadata (
-                  <code className="font-mono">
-                    /.well-known/oauth-protected-resource
-                  </code>
-                  ) to find which authorization server protects it.
+                  Leave blank to use the authorization server MCPJam finds
+                  during discovery.
                 </TooltipContent>
               </Tooltip>
             </div>
@@ -524,29 +520,66 @@ export function XaaCredentialFields({
                 onCheckedChange={onXaaAllowPathScopedIssuerChange}
               />
               <div className="space-y-0.5">
-                <label
-                  htmlFor={ids.pathScoped}
-                  className="block text-xs font-medium text-foreground"
-                >
-                  Path-scoped authorization server
-                </label>
-                <p className="text-xs text-muted-foreground">
-                  Allow the metadata to advertise the origin root as issuer
-                  while the OAuth endpoints live under a path (multi-tenant
-                  setups with paths like{" "}
-                  <code className="font-mono">/resources/…</code>). Off keeps
-                  the strict RFC 8414 issuer match.
-                </p>
+                <div className="flex items-center gap-1">
+                  <label
+                    htmlFor={ids.pathScoped}
+                    className="block text-xs font-medium text-foreground"
+                  >
+                    Path-scoped authorization server
+                  </label>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label="About path-scoped authorization servers"
+                      >
+                        <Info className="h-3.5 w-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      variant="muted"
+                      side="top"
+                      className="max-w-xs"
+                    >
+                      Use only for compatibility testing when the discovered
+                      authorization server URL and the metadata{" "}
+                      <code className="font-mono">issuer</code> differ but
+                      belong to the same origin. RFC 8414 requires an exact
+                      match. Enabling this setting relaxes that check.
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
               </div>
             </div>
           </div>
 
           <div className="rounded-md border border-border bg-background/40 p-3 space-y-2">
-            <p className="text-xs text-muted-foreground">
-              {identityHelpText ??
-                "Simulated identity — the test IdP mints a mock login for this user. Leave blank to use your signed-in identity; the resource server decides which subject it accepts, so override it if your server expects a specific value."}
-            </p>
             <div className="space-y-1">
+              <div className="flex items-center gap-1">
+                <span className="block text-xs font-medium text-foreground">
+                  Simulated identity
+                </span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      aria-label="About simulated identity"
+                    >
+                      <Info className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    variant="muted"
+                    side="top"
+                    className="max-w-xs"
+                  >
+                    {identityHelpText ??
+                      "MCPJam acts as the test identity provider and puts these values in the ID token. Leave blank to use your signed-in account. Change them to test how your authorization server handles a specific user."}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
               <label
                 htmlFor={ids.subject}
                 className="block text-xs font-medium text-foreground"

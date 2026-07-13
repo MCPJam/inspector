@@ -134,8 +134,8 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
     ...registrationActions,
     {
       id: "user_authentication",
-      label: "Mock OIDC login",
-      description: "The Agent signs the user in at the IdP (mocked by MCPJam).",
+      label: "Simulate sign-in at MCPJam IdP",
+      description: "MCPJam simulates the user signing in at its identity provider.",
       from: "client",
       to: "testIdp",
       details: flowState.email
@@ -144,8 +144,8 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
     },
     {
       id: "received_identity_assertion",
-      label: "ID token issued",
-      description: "The IdP returns the ID token — proof of who the user is.",
+      label: "ID token issued by MCPJam IdP",
+      description: "MCPJam's identity provider gives the Agent an ID token.",
       from: "testIdp",
       to: "client",
       details: flowState.identityAssertion
@@ -192,7 +192,7 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
     },
     {
       id: "jwt_bearer_request",
-      label: "JWT bearer grant",
+      label: "Request access token using ID-JAG",
       description: "The Agent redeems the ID-JAG at the Authorization Server for an access token.",
       from: "client",
       to: "authServer",

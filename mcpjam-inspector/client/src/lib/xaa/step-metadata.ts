@@ -187,18 +187,18 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
     ],
   },
   user_authentication: {
-    title: "Sign In at the IdP",
+    title: "Simulate sign-in at MCPJam IdP",
     summary:
-      "The user signs in at the IdP and the Agent receives an ID token — proof of who the user is. MCPJam fakes the IdP here.",
+      "MCPJam simulates the user signing in at its identity provider.",
     phase: "sso",
     teachableMoments: [
       "This login just proves who the user is — it isn't tied to any MCP server yet.",
     ],
   },
   received_identity_assertion: {
-    title: "ID Token Ready",
+    title: "ID token issued by MCPJam IdP",
     summary:
-      "The Agent holds the ID token, ready to trade it for an ID-JAG. The ID token itself never leaves the IdP.",
+      "MCPJam's identity provider gives the Agent an ID token.",
     phase: "sso",
     teachableMoments: [
       "The ID token is only used to get the next token — it's never sent to the Authorization Server or the MCP Server.",
