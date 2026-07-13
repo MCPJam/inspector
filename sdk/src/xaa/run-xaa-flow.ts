@@ -112,13 +112,15 @@ function wellKnownCandidates(issuer: string, name: string): string[] {
   if (!path) {
     return [`${origin}/.well-known/${name}`];
   }
-  // Path issuer: try the RFC 8414 path-insertion form AND the OIDC
-  // path-appended form (`issuer + /.well-known/...`), which OIDC-only servers
-  // require. Do NOT fall back to the root well-known — on a multi-tenant host
-  // that would fetch a different tenant's metadata.
+  // Path issuer/resource: RFC 8414 path-insertion, the OIDC path-appended form
+  // (`issuer + /.well-known/...`, which OIDC-only servers require), and the
+  // origin-root form (where RFC 9728 PRM is commonly served). Ordering probes
+  // the most specific first; for AS metadata a wrong-tenant root document is
+  // rejected downstream by the `metadata.issuer` match check.
   return [
     `${origin}/.well-known/${name}${path}`,
     `${trimmed}/.well-known/${name}`,
+    `${origin}/.well-known/${name}`,
   ];
 }
 
@@ -385,7 +387,26 @@ function extractJsonRpcError(body: unknown): string | undefined {
   if (!body || typeof body !== "object") {
     return undefined;
   }
-  const error = (body as { error?: unknown }).error;
+  const record = body as Record<string, unknown>;
+  // executeDebugOAuthProxy wraps a text/event-stream reply in an SSE envelope:
+  // the JSON-RPC payload sits under `mcpResponse`, and a stream-parse failure
+  // surfaces as a string `error`. A streamable-HTTP `initialize` usually
+  // answers as SSE, so this branch is the common path.
+  if (record.transport === "sse") {
+    if (typeof record.error === "string" && record.error.length > 0) {
+      return record.error;
+    }
+    return jsonRpcErrorFrom(record.mcpResponse);
+  }
+  // Plain JSON: the body IS the JSON-RPC response.
+  return jsonRpcErrorFrom(body);
+}
+
+function jsonRpcErrorFrom(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== "object") {
+    return undefined;
+  }
+  const error = (payload as { error?: unknown }).error;
   if (!error || typeof error !== "object") {
     return undefined;
   }

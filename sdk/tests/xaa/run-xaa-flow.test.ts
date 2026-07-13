@@ -159,6 +159,44 @@ describe("runXaaFlow", () => {
     expect(result.completed).toBe(false);
   });
 
+  it("discovers PRM served at the origin root for a path resource", async () => {
+    const rootPrm =
+      "https://mcp.example.com/.well-known/oauth-protected-resource";
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const method = (init?.method || "GET").toUpperCase();
+      // PRM is published ONLY at the origin root, not the path-insertion form.
+      if (url.includes(".well-known/oauth-protected-resource")) {
+        return url === rootPrm
+          ? json({ authorization_servers: [AS_ISSUER] })
+          : json({}, 404);
+      }
+      if (
+        url.includes(".well-known/oauth-authorization-server") ||
+        url.includes(".well-known/openid-configuration")
+      ) {
+        return json({ issuer: AS_ISSUER, token_endpoint: TOKEN_ENDPOINT });
+      }
+      if (url === TOKEN_ENDPOINT && method === "POST") {
+        return json({ access_token: "at-1", token_type: "Bearer" });
+      }
+      if (url === SERVER_URL && method === "POST") {
+        return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: {} });
+      }
+      return json({}, 404);
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    expect(result.authzServerIssuer).toBe(AS_ISSUER);
+    expect(result.completed).toBe(true);
+  });
+
   it("rejects AS metadata whose issuer does not match the requested issuer", async () => {
     global.fetch = stubFetch({
       prm: { authorization_servers: [AS_ISSUER] },
@@ -208,6 +246,46 @@ describe("runXaaFlow", () => {
       "https://mcp.example.com/mcp?tenant=acme",
     );
     expect(result.completed).toBe(true);
+  });
+
+  it("detects a JSON-RPC error delivered over SSE from the MCP init", async () => {
+    const sse =
+      "event: message\n" +
+      "data: " +
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "mcpjam-xaa-cli",
+        error: { code: -32002, message: "Server error" },
+      }) +
+      "\n\n";
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const method = (init?.method || "GET").toUpperCase();
+      if (url === TOKEN_ENDPOINT && method === "POST") {
+        return json({ access_token: "at-1", token_type: "Bearer" });
+      }
+      if (url === SERVER_URL && method === "POST") {
+        return new Response(sse, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+      return json({}, 404);
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    expect(result.redemption?.tokenIssued).toBe(true);
+    expect(result.mcp?.ok).toBe(false);
+    expect(result.mcp?.jsonRpcError).toBe("-32002: Server error");
+    expect(result.completed).toBe(false);
   });
 
   it("reports a redemption failure without crashing", async () => {
