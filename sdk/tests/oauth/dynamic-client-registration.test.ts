@@ -376,6 +376,15 @@ describe("validateClientIdMetadataUrl (CIMD draft-02)", () => {
   });
 
   it.each([
+    "HTTPS://example.com/client.json",
+    "HtTpS://example.com/client.json",
+  ])("accepts a case-insensitive https scheme %s", (url) => {
+    // RFC 3986 schemes are case-insensitive and the case doesn't change the
+    // host; the string is returned unchanged for byte-exact identity.
+    expect(validateClientIdMetadataUrl(url)).toBe(url);
+  });
+
+  it.each([
     ["not-a-url", "valid absolute URL"],
     ["http://example.com/client.json", "absolute HTTPS URL"],
     ["https://user:pw@example.com/client.json", "userinfo"],
@@ -384,9 +393,9 @@ describe("validateClientIdMetadataUrl (CIMD draft-02)", () => {
     ["https://@example.com/client.json", "userinfo"],
     // Transport-normalized spellings new URL() accepts but fetch would request
     // differently — rejected up front so the returned string is what fetch uses.
-    ["https:/example.com/client.json", "literal https"], // single-slash scheme
-    ["https:/user@example.com/client.json", "literal https"],
-    ["\thttps://example.com/client.json", "literal https"], // leading tab
+    ["https:/example.com/client.json", "scheme"], // single-slash scheme
+    ["https:/user@example.com/client.json", "scheme"],
+    ["\thttps://example.com/client.json", "scheme"], // leading tab
     ["https://example.com/cli ent.json", "whitespace"], // literal space
     ["https://example.com\\client.json", "backslashes"], // backslash path sep
     // Extra slashes after the scheme: new URL() promotes the next token to the

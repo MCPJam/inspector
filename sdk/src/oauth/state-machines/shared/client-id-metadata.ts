@@ -26,11 +26,13 @@ export function validateClientIdMetadataUrl(
   // structural cases below. This is NOT exhaustive over every WHATWG
   // normalization — host lowercasing, percent-encoding, and IDNA/Unicode host
   // normalization are out of scope for these draft-02 structural checks:
-  //  - not the canonical literal `https://` prefix (rejects single-slash
-  //    `https:/…`, backslash scheme `https:\…`, and non-lowercase schemes).
-  if (!clientIdMetadataUrl.startsWith("https://")) {
+  //  - not an `https://` prefix with exactly two slashes (rejects single-slash
+  //    `https:/…` and backslash scheme `https:\…`). The scheme is matched
+  //    case-insensitively — RFC 3986 schemes are case-insensitive and the case
+  //    doesn't change which host fetch contacts, so `HTTPS://` is allowed.
+  if (!/^https:\/\//i.test(clientIdMetadataUrl)) {
     throw new Error(
-      "Client ID metadata URL must begin with a literal https:// scheme"
+      "Client ID metadata URL must use the https:// scheme (with two slashes)"
     );
   }
   //  - ASCII controls (0x00–0x1F), space (0x20), DEL (0x7F), and backslashes:
@@ -53,10 +55,10 @@ export function validateClientIdMetadataUrl(
   // Parse the authority and path off the RAW string. new URL() collapses dot
   // segments and normalizes an empty userinfo away — either would silently
   // change the client identity before we could reject it. The guards above
-  // guarantee a literal `https://` prefix with no backslashes, so a plain
+  // guarantee an `https://` prefix (any case) with no backslashes, so a plain
   // split is sufficient here.
   const rawWithoutQuery = clientIdMetadataUrl.split(/[?#]/, 1)[0];
-  const afterScheme = rawWithoutQuery.replace(/^https:\/\//, "");
+  const afterScheme = rawWithoutQuery.replace(/^https:\/\//i, "");
   const slashIndex = afterScheme.indexOf("/");
   const rawAuthority =
     slashIndex === -1 ? afterScheme : afterScheme.slice(0, slashIndex);
