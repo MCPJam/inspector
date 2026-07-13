@@ -583,6 +583,16 @@ describe("XAAFlowTab", () => {
           screen.getByRole("button", { name: /keep current run/i }),
         ).toBeInTheDocument(),
       );
+
+      // "Keep current run" must NOT pin the old strategy: the newly persisted
+      // choice still reaches the machine (regression guard for the stale-pin
+      // bug where Reset/Run all kept rebuilding with the pre-change strategy).
+      await user.click(
+        screen.getByRole("button", { name: /keep current run/i }),
+      );
+      await waitFor(() =>
+        expect(capturedMachineConfig.registrationStrategy).toBe("dcr"),
+      );
     });
 
     it("forces pre_registered for registration-backed targets regardless of persisted strategy", () => {

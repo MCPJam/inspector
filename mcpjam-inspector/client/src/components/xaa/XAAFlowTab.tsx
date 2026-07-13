@@ -206,14 +206,6 @@ export function XAAFlowTab({
   const persistedStrategy =
     normalizeXaaRegistrationStrategy(selectedServer?.xaaRegistrationStrategy) ??
     "pre_registered";
-  // Per-target pin: when a strategy change mid-run is cancelled ("Keep current
-  // run"), we can't un-persist the saved value, so we pin the running flow's
-  // strategy here to keep the machine config consistent with the live flow
-  // state until the next explicit reset (which clears the pin).
-  const [pinnedStrategyByTarget, setPinnedStrategyByTarget] = useState<
-    Record<string, XaaRegistrationStrategy>
-  >({});
-  const activeStrategy = pinnedStrategyByTarget[targetKey] ?? persistedStrategy;
   // Dynamic strategies (DCR/CIMD) need AS discovery, so they apply only to
   // manual bar-server targets (not registration/resource-app runs). An explicit
   // dynamic choice is honored even when the server has a stored secret: the run
@@ -224,7 +216,7 @@ export function XAAFlowTab({
     isTestable &&
     !runInput.registrationId;
   const effectiveStrategy: XaaRegistrationStrategy = strategyAppliesToTarget
-    ? activeStrategy
+    ? persistedStrategy
     : "pre_registered";
   // When the run establishes its own dynamic client identity, any stored
   // pre-registered credentials (serverId-resolved secret) must be ignored.
@@ -534,14 +526,6 @@ export function XAAFlowTab({
       lastAppliedTargetKey.current = nextTargetKey;
       lastNegativeTestMode.current = nextMode;
       lastRegistrationStrategy.current = nextStrategy;
-      // An explicit reset re-applies the persisted strategy: drop any pin left
-      // by a prior "Keep current run" so the saved choice takes effect.
-      setPinnedStrategyByTarget((current) => {
-        if (!(nextTargetKey in current)) return current;
-        const next = { ...current };
-        delete next[nextTargetKey];
-        return next;
-      });
       rebuildFlow(nextStrategy);
     },
     [rebuildFlow]
@@ -992,39 +976,16 @@ export function XAAFlowTab({
         open={pendingReset !== null}
         onOpenChange={(open) => {
           if (!open) {
-            // Cancel: acknowledge the switch without resetting, so the effect
-            // doesn't immediately re-prompt; the current run stays visible.
+            // Cancel ("Keep current run"): acknowledge the pending target/mode/
+            // strategy so the effect doesn't immediately re-prompt; the current
+            // run stays visible. The strategy is already persisted, so every
+            // fresh-run path (Reset, Run all, a later target/mode change)
+            // rebuilds from it — nothing is pinned to the discarded run.
             if (pendingReset) {
-              // Capture BEFORE overwriting: was this dialog a pure strategy
-              // toggle on the still-selected target, or a target switch?
-              const wasSameTarget =
-                pendingReset.targetKey === lastAppliedTargetKey.current;
               lastAppliedTargetKey.current = pendingReset.targetKey;
               lastNegativeTestMode.current = pendingReset.negativeTestMode;
-              if (
-                wasSameTarget &&
-                pendingReset.registrationStrategy !==
-                  lastRegistrationStrategy.current
-              ) {
-                // Same-target strategy change, cancelled: the new strategy is
-                // already persisted, but the running flow must keep using its
-                // current strategy. Pin the prior value for this target so the
-                // machine config stays consistent with the live flow state.
-                // Keep lastRegistrationStrategy.current (= prior) so no
-                // re-prompt; the pin is cleared on the next explicit reset.
-                const prior = lastRegistrationStrategy.current;
-                const pinKey = pendingReset.targetKey;
-                setPinnedStrategyByTarget((current) => ({
-                  ...current,
-                  [pinKey]: prior,
-                }));
-              } else {
-                // Target switch (or no strategy change) cancelled: acknowledge
-                // the new target's strategy so the effect doesn't re-prompt.
-                // Never write one target's strategy onto another's key.
-                lastRegistrationStrategy.current =
-                  pendingReset.registrationStrategy;
-              }
+              lastRegistrationStrategy.current =
+                pendingReset.registrationStrategy;
             }
             setPendingReset(null);
           }
