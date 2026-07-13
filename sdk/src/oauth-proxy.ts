@@ -15,6 +15,10 @@ export interface OAuthProxyRequest {
   body?: unknown;
   headers?: Record<string, string>;
   httpsOnly?: boolean;
+  /** Redirect handling. httpsOnly always forces "manual" (cannot be
+   * weakened); otherwise an explicit value is honored and omission preserves
+   * the historical "follow". */
+  redirect?: "follow" | "manual";
 }
 
 export interface OAuthProxyResponse {
@@ -210,7 +214,7 @@ export async function executeOAuthProxy(
   const response = await fetch(buildFetchUrl(targetUrl), {
     method,
     headers: requestHeaders,
-    redirect: req.httpsOnly ? "manual" : "follow",
+    redirect: req.httpsOnly ? "manual" : req.redirect ?? "follow",
     body: encodeRequestBody(method, req.body, contentType),
   });
 
@@ -245,7 +249,7 @@ export async function executeDebugOAuthProxy(
   const response = await fetch(buildFetchUrl(targetUrl), {
     method,
     headers: requestHeaders,
-    redirect: req.httpsOnly ? "manual" : "follow",
+    redirect: req.httpsOnly ? "manual" : req.redirect ?? "follow",
     body: encodeRequestBody(method, req.body, contentType),
   });
 

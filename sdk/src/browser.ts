@@ -111,9 +111,19 @@ export type {
 
 export {
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
+  ID_JAG_GRANT_PROFILE,
+  JWT_BEARER_GRANT,
   MCPJAM_CLIENT_URI,
   MCPJAM_LOGO_URI,
+  TOKEN_EXCHANGE_GRANT,
+  XAA_DEBUG_CLIENT_ID_METADATA_URL,
+  evaluateIdJagClientMetadata,
   getBrowserDebugDynamicRegistrationMetadata,
+  getXaaDebugClientMetadata,
+} from "./oauth/client-identity.js";
+export type {
+  IdJagClientMetadataEvaluation,
+  IdJagMetadataEvidence,
 } from "./oauth/client-identity.js";
 export {
   resolveAuthorizationPlan,
@@ -163,6 +173,15 @@ export {
   getStepInfo,
   getStepIndex,
 } from "./oauth/state-machines/shared/step-metadata.js";
+export {
+  buildDynamicClientRegistrationRequest,
+  executeDynamicClientRegistration,
+} from "./oauth/state-machines/shared/dynamic-client-registration.js";
+export type {
+  DynamicClientRegistrationCredentials,
+  DynamicClientRegistrationOutcome,
+} from "./oauth/state-machines/shared/dynamic-client-registration.js";
+export { validateClientIdMetadataUrl } from "./oauth/state-machines/shared/client-id-metadata.js";
 export { EMPTY_OAUTH_FLOW_STATE } from "./oauth/state-machines/types.js";
 export type {
   HttpHistoryEntry,
