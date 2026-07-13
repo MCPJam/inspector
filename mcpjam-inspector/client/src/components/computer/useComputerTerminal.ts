@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { toast } from "@/lib/toast";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   useComputersDataPlaneConfig,
@@ -36,7 +36,6 @@ export function useComputerTerminal({
   const reserve = useReserveComputer();
   const deleteComputer = useDeleteComputer();
   const mintTerminalToken = useMintTerminalToken();
-  const posthog = usePostHog();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const terminalTheme: "light" | "dark" =
     themeMode === "dark" ? "dark" : "light";
@@ -80,7 +79,8 @@ export function useComputerTerminal({
     // plane is configured would reserve a computer the terminal can never reach.
     if (!effectiveProjectId || dataPlane === undefined || dataPlaneUnavailable)
       return;
-    posthog?.capture("computer_terminal_opened", {
+    track("computer_terminal_opened", {
+      location: "computer_terminal",
       computer_status: liveStatus ?? "none",
     });
     setTerminalOpen(true);
@@ -95,7 +95,7 @@ export function useComputerTerminal({
         if (isComputerStartLimitError(err)) {
           // Daily start cap — the limit dialog carries the conversion CTA
           // (sign-in for guests, top-up for signed-in users).
-          posthog?.capture("computer_start_limit_hit");
+          track("computer_start_limit_hit", { location: "computer_terminal" });
           useMCPJamLimitDialogStore.getState().notifyLimitHit();
         } else {
           toast.error(
@@ -111,7 +111,6 @@ export function useComputerTerminal({
     dataPlane,
     dataPlaneUnavailable,
     liveStatus,
-    posthog,
     reserve,
   ]);
 

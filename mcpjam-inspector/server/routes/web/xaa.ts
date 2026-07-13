@@ -1,6 +1,7 @@
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import {
+  authorizeXaaOrgIssuer,
   fetchServerClientSecret,
   fetchXaaResourceAppSecret,
 } from "../../utils/server-secrets.js";
@@ -13,6 +14,9 @@ const xaaWeb = createXaaRouter({
   protectedMiddlewares: [bearerAuthMiddleware, guestRateLimitMiddleware],
   resolveRegistrationSecret: (args) => fetchXaaResourceAppSecret(args),
   resolveServerSecret: (args) => fetchServerClientSecret(args),
+  // Org-scoped issuer minting (/o/:orgId/...) is hosted-only: membership is
+  // enforced by Convex with the caller's bearer.
+  authorizeOrgIssuer: (args) => authorizeXaaOrgIssuer(args),
 });
 
 export default xaaWeb;

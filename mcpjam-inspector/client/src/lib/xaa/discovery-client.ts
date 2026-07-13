@@ -1,6 +1,7 @@
 import { HOSTED_MODE } from "@/lib/config";
 import { authFetch } from "@/lib/session-token";
 import type { NegativeTestDiff } from "@/shared/xaa.js";
+import { getOrgScopedIssuerSegment } from "./idp-endpoints";
 
 const XAA_API_BASE = HOSTED_MODE ? "/api/web/xaa" : "/api/mcp/xaa";
 
@@ -110,6 +111,14 @@ export interface NegativeTestsInput {
   // the token endpoint from the server's own config.
   serverId?: string;
   projectId?: string;
+  // Hosted runs mint the broken assertions under the org-scoped issuer so
+  // they carry the same `iss` the positive run used.
+  organizationId?: string | null;
+  // LOCAL runs only: "hosted" asks the local server to forward the whole run
+  // to the hosted issuer, so the broken assertions carry the hosted `iss` the
+  // AS actually trusts (a local `iss` would make every case "pass" on issuer
+  // mismatch alone).
+  issuerMode?: "local" | "hosted";
 }
 
 /**
@@ -121,11 +130,22 @@ export interface NegativeTestsInput {
 export async function runNegativeTests(
   input: NegativeTestsInput
 ): Promise<NegativeTestsResult> {
-  const response = await authFetch(`${XAA_API_BASE}/negative-tests`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
+  const { organizationId, issuerMode, ...requestBody } = input;
+  // Hosted builds hit the scoped PATH; local hosted-issuer runs carry the
+  // opt-in in the BODY and the local server forwards server-to-server.
+  const scopedSegment = getOrgScopedIssuerSegment(organizationId);
+  const forwardExtras =
+    !HOSTED_MODE && issuerMode === "hosted"
+      ? { issuerMode, ...(organizationId ? { organizationId } : {}) }
+      : {};
+  const response = await authFetch(
+    `${XAA_API_BASE}${scopedSegment}/negative-tests`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...requestBody, ...forwardExtras }),
+    }
+  );
 
   const body = (await response.json().catch(() => null)) as
     | (NegativeTestsResult & { message?: string })

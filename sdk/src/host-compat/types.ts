@@ -96,6 +96,8 @@ export type CompatLaneVerdict = {
 export type HostCompatReport = {
   hostId: string;
   hostLabel: string;
+  /** When this host's catalog facts were last verified/reviewed (ms epoch). */
+  verifiedAt?: number;
   /** Worst-wins aggregate across lanes. */
   verdict: CompatVerdict;
   /** Host's baseline provenance (dominant source for its facts). */
@@ -139,6 +141,35 @@ export type ServerRequirements = {
   unknownDimensions: string[];
 };
 
+/** How a host renders MCP tool-result image previews (the "MCP tool-result
+ * images" host setting). Distinct from widget rendering — even tools-only
+ * hosts can surface images. */
+export type ImagePlacement = "none" | "collapsed" | "inline";
+
+/** Per image-source support: whether the model sees it, and whether the UI
+ * renders it. */
+export type ImageSourceSupport = {
+  /** Image is passed to the model. */
+  model: boolean;
+  /** Image is rendered in the host UI (at the host's `placement`). */
+  ui: boolean;
+};
+
+/**
+ * A host's tool-result image handling, per MCP result shape. `placement` is one
+ * mode for the whole host (a host renders inline OR collapsed OR nothing).
+ */
+export type HostImageSupport = {
+  /** Direct MCP image blocks returned by tools. */
+  toolImageContent: ImageSourceSupport;
+  /** Image blobs embedded inside MCP resources. */
+  embeddedResourceImages: ImageSourceSupport;
+  /** Image links resolved through MCP resources/read. */
+  resourceLinkImages: ImageSourceSupport;
+  /** Where rendered image previews appear (`none` = the UI shows none). */
+  placement: ImagePlacement;
+};
+
 /**
  * A host's compatibility *facts* (no presentation). Surfaces join logos/theme
  * by `id`. `capabilities` is the SEP-1865 MCP Apps matrix; absent for a host
@@ -148,6 +179,8 @@ export type HostCompatProfile = {
   id: string;
   label: string;
   provenance: CompatProvenance;
+  /** When this host's catalog facts were last verified/reviewed (ms epoch). */
+  verifiedAt?: number;
   rendersMcpApps: boolean;
   rendersOpenAiApps: boolean;
   supportedProtocolVersions?: string[];
@@ -158,4 +191,6 @@ export type HostCompatProfile = {
    * that renders no widgets (e.g. a CLI host).
    */
   capabilities?: McpAppsCapabilities;
+  /** Tool-result image handling (see `HostImageSupport`). */
+  imageSupport?: HostImageSupport;
 };

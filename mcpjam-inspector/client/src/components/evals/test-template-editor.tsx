@@ -6,8 +6,8 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { useMutation, useQuery } from "convex/react";
-import posthog from "posthog-js";
+import { useConvexAuth, useMutation, useQuery } from "convex/react";
+import { track } from "@/lib/analytics";
 import {
   Circle,
   Code2,
@@ -18,7 +18,6 @@ import {
   Square,
 } from "lucide-react";
 import { toast } from "sonner";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { listEvalTools, streamEvalTestCase } from "@/lib/apis/evals-api";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -124,6 +123,9 @@ import {
   getEffectiveSuiteServers,
   getSelectedSuiteHostRunPlan,
 } from "./helpers";
+import { useHost } from "@/hooks/useClients";
+import { useHarnessBuiltinToolCatalog } from "@/hooks/useHarnessBuiltinTools";
+import { mergeSystemToolsIntoAvailableTools } from "./harness-system-tools";
 import { parseDraftTestCaseId } from "./draft-test-case";
 import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
 import { computeIterationResult } from "./pass-criteria";
@@ -1080,6 +1082,31 @@ export function TestTemplateEditor({
   }, [suite?.hostAttachments]);
   const hasHostAttachments = (suite?.hostAttachments?.length ?? 0) > 0;
 
+  // ── Harness system tools (assertable built-ins) ──────────────────────────
+  // Mirror the server's `loadSuiteHostConfig` precedence: with host
+  // attachments the run executes under the SELECTED attached host's config;
+  // only an attachment-less suite runs under the suite hostConfig. Gate the
+  // system-tool merge on whichever of those actually carries a harness, so
+  // emulated suites never see bash/read/… in the assertion dropdowns.
+  const { isAuthenticated } = useConvexAuth();
+  const { host: selectedQuickRunHost } = useHost({
+    isAuthenticated,
+    hostId: hasHostAttachments ? (selectedQuickRunHostId ?? null) : null,
+  });
+  const suiteRunHarnessId = hasHostAttachments
+    ? (selectedQuickRunHost?.config?.harness ?? null)
+    : (hostConfigBaseline?.harness ?? null);
+  const { tools: harnessBuiltinCatalog } =
+    useHarnessBuiltinToolCatalog(suiteRunHarnessId);
+  // MCP-server tools plus the harness's native built-ins — what the expected
+  // tool calls / check pickers offer. Pickers needing an MCPJam-invokable tool
+  // (pinned tool calls, widget selects) filter `source === "system"` back out.
+  const assertableTools = useMemo(
+    () =>
+      mergeSystemToolsIntoAvailableTools(availableTools, harnessBuiltinCatalog),
+    [availableTools, harnessBuiltinCatalog],
+  );
+
   const missingServers = useMemo(
     () =>
       quickRunSuiteServers.filter(
@@ -1591,10 +1618,8 @@ export function TestTemplateEditor({
         models: currentTestCase?.models ?? [],
         ...savePayload,
       });
-      posthog.capture("eval_test_case_created", {
+      track("eval_test_case_created", {
         location: "test_template_editor",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         suite_id: suiteId ?? null,
         test_case_id: newTestCaseId,
         num_models: currentTestCase?.models?.length ?? 0,
@@ -1637,10 +1662,8 @@ export function TestTemplateEditor({
         // Same null-clears-the-field convention for the predicate override.
         predicates: savePayload.predicates ?? null,
       });
-      posthog.capture("eval_test_case_edited", {
+      track("eval_test_case_edited", {
         location: "test_template_editor",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         suite_id: suiteId ?? null,
         test_case_id: currentTestCase._id,
         num_models: currentTestCase.models?.length ?? 0,
@@ -1895,10 +1918,8 @@ export function TestTemplateEditor({
           ? current
           : selectedModelValues[0] ?? null,
       );
-      posthog.capture("compare_run_view_opened", {
+      track("compare_run_view_opened", {
         location: "test_template_editor",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         suite_id: suiteId,
         test_case_id: currentTestCase?._id ?? null,
         source,
@@ -2178,10 +2199,8 @@ export function TestTemplateEditor({
       setPreviewTab("preview");
     }
 
-    posthog.capture("compare_run_started", {
+    track("compare_run_started", {
       location: "test_template_editor",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       suite_id: suiteId,
       test_case_id: currentTestCase._id,
       compare_run_id: compareRunId,
@@ -2246,10 +2265,8 @@ export function TestTemplateEditor({
                     },
                   }));
 
-                  posthog.capture("compare_model_completed", {
+                  track("compare_model_completed", {
                     location: "test_template_editor",
-                    platform: detectPlatform(),
-                    environment: detectEnvironment(),
                     suite_id: suiteId,
                     test_case_id: currentTestCase._id,
                     compare_run_id: compareRunId,
@@ -2421,10 +2438,8 @@ export function TestTemplateEditor({
               }));
             }
 
-            posthog.capture("compare_model_completed", {
+            track("compare_model_completed", {
               location: "test_template_editor",
-              platform: detectPlatform(),
-              environment: detectEnvironment(),
               suite_id: suiteId,
               test_case_id: currentTestCase._id,
               compare_run_id: compareRunId,
@@ -2494,10 +2509,8 @@ export function TestTemplateEditor({
       ...previous,
       [modelValue]: tab,
     }));
-    posthog.capture("compare_run_tab_changed", {
+    track("compare_run_tab_changed", {
       location: "test_template_editor",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       suite_id: suiteId,
       test_case_id: currentTestCase?._id ?? null,
       model: modelValue,
@@ -2684,6 +2697,13 @@ export function TestTemplateEditor({
                     </h2>
                   </button>
                 )}
+                {(currentTestCase as { lastSdkWriteAt?: number })
+                  ?.lastSdkWriteAt != null ? (
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+                    Synced from CI — the next CI report may overwrite manual
+                    edits.
+                  </p>
+                ) : null}
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                 {onExportDraft ? (
@@ -2772,7 +2792,7 @@ export function TestTemplateEditor({
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <label className="inline-flex cursor-pointer items-center">
-                          <span className="sr-only">Host</span>
+                          <span className="sr-only">Client</span>
                           <span className="inline-flex h-8 max-w-[7.5rem] items-center gap-1 rounded-md border border-input/80 bg-background px-1.5">
                             {selectedQuickRunHostLogoSrc ? (
                               <img
@@ -2787,7 +2807,7 @@ export function TestTemplateEditor({
                               onChange={(event) =>
                                 setQuickRunHostSelection(event.target.value)
                               }
-                              aria-label="Host for the next run"
+                              aria-label="Client for the next run"
                               disabled={isRunningCompare}
                             >
                               {quickRunHostOptions.map((option) => (
@@ -2800,7 +2820,7 @@ export function TestTemplateEditor({
                         </label>
                       </TooltipTrigger>
                       <TooltipContent variant="muted" side="top" sideOffset={6}>
-                        Host for the next run
+                        Client for the next run
                       </TooltipContent>
                     </Tooltip>
                   ) : (
@@ -2811,7 +2831,7 @@ export function TestTemplateEditor({
                       <TooltipTrigger asChild>
                         <span
                           className="inline-flex h-8 max-w-[7.5rem] items-center gap-1 rounded-md border border-input/80 bg-background px-1.5 text-xs text-foreground"
-                          aria-label="Host for the next run"
+                          aria-label="Client for the next run"
                         >
                           {suiteHostLogoSrc ? (
                             <img
@@ -2824,7 +2844,7 @@ export function TestTemplateEditor({
                         </span>
                       </TooltipTrigger>
                       <TooltipContent variant="muted" side="top" sideOffset={6}>
-                        Host for the next run
+                        Client for the next run
                       </TooltipContent>
                     </Tooltip>
                   )}
@@ -2995,7 +3015,7 @@ export function TestTemplateEditor({
                       <StepListEditor
                         steps={editForm.steps}
                         onStepsChange={setSteps}
-                        availableTools={availableTools}
+                        availableTools={assertableTools}
                         // Thread the effective argumentMatching mode (suite
                         // default merged with case override) so the per-leaf
                         // placeholder picker offers the right options and

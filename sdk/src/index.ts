@@ -265,6 +265,40 @@ export type {
   OAuthTraceStepSnapshot,
   OAuthTraceStepStatus,
 } from "./oauth/state-machines/trace.js";
+// XAA (ID-JAG) client identity + shared client registration. Exported from
+// the Node entry too: the inspector server hosts the XAA client-metadata
+// document and needs the builder/evaluator server-side.
+export {
+  ID_JAG_GRANT_PROFILE,
+  JWT_BEARER_GRANT,
+  TOKEN_EXCHANGE_GRANT,
+  XAA_DEBUG_CLIENT_ID_METADATA_URL,
+  evaluateIdJagClientMetadata,
+  getXaaDebugClientMetadata,
+} from "./oauth/client-identity.js";
+export type {
+  IdJagClientMetadataEvaluation,
+  IdJagMetadataEvidence,
+} from "./oauth/client-identity.js";
+export {
+  buildDynamicClientRegistrationRequest,
+  executeDynamicClientRegistration,
+} from "./oauth/state-machines/shared/dynamic-client-registration.js";
+export type {
+  DynamicClientRegistrationCredentials,
+  DynamicClientRegistrationOutcome,
+} from "./oauth/state-machines/shared/dynamic-client-registration.js";
+export { validateClientIdMetadataUrl } from "./oauth/state-machines/shared/client-id-metadata.js";
+export {
+  decodeJWT,
+  decodeJWTParts,
+  formatJWTTimestamp,
+} from "./oauth/state-machines/shared/jwt.js";
+export type { DecodedJwtParts } from "./oauth/state-machines/shared/jwt.js";
+
+// XAA (Cross-App Access / ID-JAG) mock-IdP mint — node-only (crypto/fs).
+// Consumed by the inspector server and the CLI's headless `runXaaFlow`.
+export * from "./xaa/index.js";
 
 // HostExecutor interface (for deterministic testing without concrete HostRunner)
 export type { HostExecutor, PromptOptions } from "./HostExecutor.js";

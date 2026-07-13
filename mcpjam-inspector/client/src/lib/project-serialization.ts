@@ -3,6 +3,7 @@ import {
   normalizeOAuthProtocolVersion,
   normalizeOAuthRegistrationStrategy,
 } from "@/lib/oauth/profile";
+import { normalizeXaaRegistrationStrategy } from "@/shared/xaa.js";
 
 type SerializeOptions = {
   /**
@@ -59,6 +60,10 @@ function serializeServersInternal(
     if (server.xaaAuthzIssuer !== undefined) {
       serializedServer.xaaAuthzIssuer = server.xaaAuthzIssuer;
     }
+    if (server.xaaAllowPathScopedIssuer !== undefined) {
+      serializedServer.xaaAllowPathScopedIssuer =
+        server.xaaAllowPathScopedIssuer;
+    }
     if (server.useXaa !== undefined) {
       serializedServer.useXaa = server.useXaa;
     }
@@ -70,6 +75,9 @@ function serializeServersInternal(
     }
     if (server.xaaEmail !== undefined) {
       serializedServer.xaaEmail = server.xaaEmail;
+    }
+    if (server.xaaRegistrationStrategy !== undefined) {
+      serializedServer.xaaRegistrationStrategy = server.xaaRegistrationStrategy;
     }
 
     if (server.config) {
@@ -245,6 +253,12 @@ export function deserializeServersFromConvex(
     if (xaaAuthzIssuer !== undefined) {
       server.xaaAuthzIssuer = xaaAuthzIssuer;
     }
+    const xaaAllowPathScopedIssuer =
+      serverData.xaaAllowPathScopedIssuer ??
+      serverData.config?.xaaAllowPathScopedIssuer;
+    if (xaaAllowPathScopedIssuer !== undefined) {
+      server.xaaAllowPathScopedIssuer = xaaAllowPathScopedIssuer === true;
+    }
     if (serverData.useXaa !== undefined) {
       server.useXaa = serverData.useXaa === true;
     }
@@ -256,6 +270,14 @@ export function deserializeServersFromConvex(
     }
     if (serverData.xaaEmail !== undefined) {
       server.xaaEmail = serverData.xaaEmail;
+    }
+    // Narrow the bare wire string to a known strategy; drop anything unknown so
+    // the flow falls back to the safe pre_registered default.
+    const xaaRegistrationStrategy = normalizeXaaRegistrationStrategy(
+      serverData.xaaRegistrationStrategy,
+    );
+    if (xaaRegistrationStrategy !== undefined) {
+      server.xaaRegistrationStrategy = xaaRegistrationStrategy;
     }
 
     // Handle oauthFlowProfile from legacy nested structure
@@ -334,6 +356,15 @@ export function serversHaveChanged(
     const remoteXaaAuthzIssuer =
       remoteServer.xaaAuthzIssuer ?? remoteServer.config?.xaaAuthzIssuer;
     if ((localServer.xaaAuthzIssuer ?? undefined) !== (remoteXaaAuthzIssuer ?? undefined))
+      return true;
+
+    const remoteXaaAllowPathScopedIssuer =
+      remoteServer.xaaAllowPathScopedIssuer ??
+      remoteServer.config?.xaaAllowPathScopedIssuer;
+    if (
+      (localServer.xaaAllowPathScopedIssuer ?? undefined) !==
+      (remoteXaaAllowPathScopedIssuer ?? undefined)
+    )
       return true;
 
     // Get local URL

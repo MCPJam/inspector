@@ -6,15 +6,8 @@ import { XAAFlowTab } from "../xaa/XAAFlowTab";
 import type { XaaTestTarget } from "@/hooks/useXaaTestTarget";
 
 const captureMock = vi.fn();
-vi.mock("posthog-js", () => ({
-  default: {
-    capture: (...args: unknown[]) => captureMock(...args),
-  },
-}));
-
-vi.mock("@/lib/PosthogUtils", () => ({
-  detectEnvironment: vi.fn().mockReturnValue("test"),
-  detectPlatform: vi.fn().mockReturnValue("web"),
+vi.mock("@/lib/analytics", () => ({
+  track: (...args: unknown[]) => captureMock(...args),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -487,4 +480,140 @@ describe("XAAFlowTab", () => {
       ),
     );
   });
+
+  describe("registration strategy (persisted, modal-owned)", () => {
+    // The on-flow selector band was removed: the strategy is chosen in the
+    // Configure Server modal and persisted on the server config. The flow reads
+    // it from serverConfigs[selectedServerName].xaaRegistrationStrategy.
+    const withStrategy = (strategy: string) =>
+      ({ staging: { xaaRegistrationStrategy: strategy } }) as any;
+
+    it("threads a persisted dcr strategy to the machine, with the session cache", () => {
+      render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />,
+      );
+
+      // No on-flow selector band any more.
+      expect(
+        screen.queryByText(/client registration/i),
+      ).not.toBeInTheDocument();
+      expect(capturedMachineConfig.registrationStrategy).toBe("dcr");
+      expect(capturedMachineConfig.dcrCredentialCache).toBeDefined();
+      expect(capturedMachineConfig.dcrCacheTargetKey).toBe(
+        currentTarget.targetKey,
+      );
+    });
+
+    it("defaults to pre_registered when nothing is persisted", () => {
+      render(
+        <XAAFlowTab
+          serverConfigs={{ staging: {} as any }}
+          selectedServerName="staging"
+        />,
+      );
+      expect(capturedMachineConfig.registrationStrategy).toBe("pre_registered");
+    });
+
+    it("honors an explicit dcr even with a stored secret, and does NOT send serverId", () => {
+      // A stored secret used to downgrade dynamic strategies to pre_registered.
+      // Now an explicit dcr is honored and the stored serverId/secret is ignored
+      // so the browser performs its own dynamic registration.
+      currentTarget = makeTarget({
+        usesServerSideSecret: true,
+        serverId: "srv_1",
+        projectId: "proj_1",
+      } as Partial<XaaTestTarget>);
+      render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+      expect(capturedMachineConfig.registrationStrategy).toBe("dcr");
+      expect(capturedMachineConfig.serverId).toBeUndefined();
+    });
+
+    it("still sends serverId for a stored-secret pre_registered target", () => {
+      currentTarget = makeTarget({
+        usesServerSideSecret: true,
+        serverId: "srv_1",
+        projectId: "proj_1",
+      } as Partial<XaaTestTarget>);
+      render(
+        <XAAFlowTab
+          serverConfigs={{ staging: {} as any }}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+      expect(capturedMachineConfig.registrationStrategy).toBe("pre_registered");
+      expect(capturedMachineConfig.serverId).toBe("srv_1");
+    });
+
+    it("prompts to reset when the strategy changes on a completed same-target run", async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(
+        <XAAFlowTab
+          serverConfigs={{ staging: {} as any }}
+          selectedServerName="staging"
+        />,
+      );
+      // Drive the run to completion so a later strategy change must confirm.
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+          "data-unlocked",
+          "true",
+        ),
+      );
+
+      // Persisted strategy changes for the same target → confirm before reset.
+      rerender(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />,
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: /keep current run/i }),
+        ).toBeInTheDocument(),
+      );
+
+      // Keep the current run, then start a FRESH run: the fresh-run path
+      // (Run all → rebuildFlow) must use the newly persisted strategy, not a
+      // stale pin. This is the exact path the stale-pin bug regressed.
+      await user.click(
+        screen.getByRole("button", { name: /keep current run/i }),
+      );
+      // Start a fresh run. On the old pinned code this rebuilt with the stale
+      // pre_registered strategy; the machine driving Run all must be dcr.
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(capturedMachineConfig.registrationStrategy).toBe("dcr"),
+      );
+    });
+
+    it("forces pre_registered for registration-backed targets regardless of persisted strategy", () => {
+      currentTarget = makeTarget({
+        targetSource: "registration",
+        runInput: {
+          ...makeTarget().runInput,
+          registrationId: "app_1",
+        },
+      } as Partial<XaaTestTarget>);
+      render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />,
+      );
+      expect(capturedMachineConfig.registrationStrategy).toBe("pre_registered");
+    });
+  });
 });
+

@@ -46,9 +46,9 @@ export function checkHarnessRuntimeAvailable(args: {
     return {
       ok: false,
       reason:
-        `the ${name} harness needs a computer, but the computers data plane ` +
-        "is not configured (need CONVEX_HTTP_URL, COMPUTERS_DATA_PLANE_SECRET, " +
-        "and E2B_API_KEY)",
+        `the ${name} harness needs a computer, but this server is not a ` +
+        "computers data plane (deployed servers bootstrap credentials from " +
+        "INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md)",
     };
   }
 

@@ -8,13 +8,18 @@
  *
  * Handshake / auth:
  *   - The browser first calls Convex `projectComputers.mintTerminalToken`
- *     (member-gated, ~60s TTL) and connects with `?token=<jwt>`.
- *   - We verify the token LOCALLY (shared HS256 secret) — no Convex round
- *     trip — then exchange the token's `computerId` for the vendor sandbox id
- *     via the secret-gated `/computers/sandbox-info` route. The browser never
- *     sees vendor ids or credentials.
- *   - Invalid/expired token ⇒ the socket opens and immediately closes with
- *     code 4401 (createEvents cannot return an HTTP rejection once the
+ *     (member-gated, ~60s TTL) and connects with the token as a WebSocket
+ *     subprotocol (`new WebSocket(url, [token])`) — browsers can't attach
+ *     custom headers to a WS handshake, and a `?token=` query string would
+ *     land in proxy/CDN access logs, so the subprotocol slot is the only
+ *     place left to put it. There is no query-string fallback.
+ *   - We verify the token's RS256 signature against the backend-published
+ *     JWKS (`/computers/terminal-jwks`, short-cached), then exchange the
+ *     token's `computerId` for the vendor sandbox id via the secret-gated
+ *     `/computers/sandbox-info` route. The browser never sees vendor ids or
+ *     credentials.
+ *   - Invalid/expired/missing token ⇒ the socket opens and immediately closes
+ *     with code 4401 (createEvents cannot return an HTTP rejection once the
  *     client requested an upgrade).
  *
  * Wire protocol (client ⇄ server):
@@ -82,7 +87,11 @@ export function createComputerTerminalWsHandler(
   >
 ): MiddlewareHandler {
   return upgradeWebSocket(async (c) => {
-    const token = c.req.query("token") ?? "";
+    // Token rides the Sec-WebSocket-Protocol handshake header — the browser
+    // WebSocket API has no way to set a custom Authorization header, and a
+    // `?token=` query string would land in proxy/CDN access logs. No fallback.
+    const protocolHeader = c.req.header("sec-websocket-protocol") ?? "";
+    const token = protocolHeader.split(",")[0]?.trim() ?? "";
     const cols = clampDimension(c.req.query("cols"), DEFAULT_COLS, 500);
     const rows = clampDimension(c.req.query("rows"), DEFAULT_ROWS, 300);
     // Optional starting directory (e.g. the harness session workdir). Best
@@ -115,6 +124,17 @@ export function createComputerTerminalWsHandler(
         if (!info.ok) {
           rejectCode = CLOSE_UNAVAILABLE;
           rejectMessage = `Computer unavailable: ${info.error}`;
+        } else if (
+          info.value.ownerUserId !== claims.userId ||
+          info.value.projectId !== claims.projectId
+        ) {
+          // Defense-in-depth: the token was already authorized for this
+          // computerId at mint time (~60s TTL), but re-check the row's
+          // current owner/project against the token's claims before ever
+          // touching the vendor sandbox — guards the (narrow) window where
+          // the row's ownership or project changes between mint and use.
+          rejectCode = CLOSE_UNAUTHORIZED;
+          rejectMessage = "Invalid or expired terminal token.";
         } else if (!info.value.providerComputerId) {
           rejectCode = CLOSE_UNAVAILABLE;
           rejectMessage = "Computer is still provisioning.";

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Network, Trash2 } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -11,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../types";
 import { evalSurfaceCardClass } from "../eval-surface-chrome";
@@ -103,7 +102,6 @@ export function CrossHostDashboard({
   const visibleHostCount = hideHistorical
     ? data.hostColumns.filter((col) => !col.isHistorical).length
     : data.hostColumns.length;
-  const posthog = usePostHog();
   // Fire the viewed event once per suite mount, not per render. The
   // ref-keyed-by-suite-id guard means navigating between suites re-fires;
   // re-renders within the same suite (e.g. when iterations stream in) do
@@ -115,8 +113,8 @@ export function CrossHostDashboard({
     if (lastFiredSuiteId.current === suite._id) return;
     lastFiredSuiteId.current = suite._id;
     try {
-      posthog.capture("evals_cross_host_viewed", {
-        ...standardEventProps("cross_host_dashboard"),
+      track("evals_cross_host_viewed", {
+        location: "cross_host_dashboard",
         suite_id: suite._id,
         host_count: data.hostColumns.length,
         case_count: data.caseRows.length,
@@ -127,7 +125,7 @@ export function CrossHostDashboard({
     } catch {
       // swallow — analytics must not block the dashboard render path
     }
-  }, [suite._id, posthog, data]);
+  }, [suite._id, data]);
 
   // On the suite landing (hideHistorical), the matrix only adds value with ≥2
   // clients to compare. With a single client it collapses to a list of cases +
@@ -144,9 +142,9 @@ export function CrossHostDashboard({
           <Network className="size-5 text-muted-foreground" />
         </div>
         <div className="space-y-1">
-          <p className="text-sm font-medium">No host attachments</p>
+          <p className="text-sm font-medium">No client attachments</p>
           <p className="text-xs text-muted-foreground max-w-xs">
-            Attach MCP host applications to this suite to compare results across
+            Attach MCP client applications to this suite to compare results across
             Claude Desktop, Cursor, ChatGPT, and others.
           </p>
         </div>
@@ -156,7 +154,7 @@ export function CrossHostDashboard({
             onClick={onConfigureHosts}
             className="text-xs text-primary hover:underline"
           >
-            Configure host attachments
+            Configure client attachments
           </button>
         )}
       </div>
@@ -170,9 +168,9 @@ export function CrossHostDashboard({
           <Network className="size-5 text-muted-foreground" />
         </div>
         <div className="space-y-1">
-          <p className="text-sm font-medium">No cross-host data yet</p>
+          <p className="text-sm font-medium">No cross-client data yet</p>
           <p className="text-xs text-muted-foreground max-w-xs">
-            Run the suite across its attached hosts to see per-host pass rates,
+            Run the suite across its attached clients to see per-client pass rates,
             latency, and token usage in this matrix.
           </p>
         </div>

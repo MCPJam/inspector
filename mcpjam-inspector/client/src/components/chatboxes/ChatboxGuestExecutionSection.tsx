@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   type ChatboxSettings,
   type GuestExecutionSettings,
   useChatboxMutations,
 } from "@/hooks/useChatboxes";
+import { cn } from "@/lib/utils";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@mcpjam/design-system/collapsible";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { Switch } from "@mcpjam/design-system/switch";
@@ -77,6 +84,21 @@ function fromSettings(
 }
 
 /** Mirror of backend validation; returns a human error or null. */
+function formsEqual(a: FormState, b: FormState): boolean {
+  return (
+    a.enabled === b.enabled &&
+    a.computerEnabled === b.computerEnabled &&
+    a.sharedSkillsEnabled === b.sharedSkillsEnabled &&
+    a.dailyCreditCap === b.dailyCreditCap &&
+    a.dailyComputerStartCap === b.dailyComputerStartCap &&
+    a.maxConcurrentComputers === b.maxConcurrentComputers &&
+    a.harnessEnabled === b.harnessEnabled &&
+    a.dailyHarnessSpendUsd === b.dailyHarnessSpendUsd &&
+    a.dailyHarnessCallCap === b.dailyHarnessCallCap &&
+    a.maxConcurrentHarnessRuns === b.maxConcurrentHarnessRuns
+  );
+}
+
 function validate(form: FormState): string | null {
   if (form.computerEnabled && !form.enabled) {
     return "Enable guest execution before enabling computers.";
@@ -137,7 +159,15 @@ export function ChatboxGuestExecutionSection({ chatbox, onUpdated }: Props) {
     setForm(fromSettings(chatbox.guestExecution));
   }, [chatbox.chatboxId, chatbox.guestExecution]);
 
+  const savedForm = useMemo(
+    () => fromSettings(chatbox.guestExecution),
+    [chatbox.guestExecution],
+  );
   const error = useMemo(() => validate(form), [form]);
+  const isDirty = useMemo(
+    () => !formsEqual(form, savedForm),
+    [form, savedForm],
+  );
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
 
@@ -213,119 +243,125 @@ export function ChatboxGuestExecutionSection({ chatbox, onUpdated }: Props) {
     }
   };
 
-  const guestLink = chatbox.allowGuestAccess;
-
   return (
-    <div className="space-y-4 rounded-md border border-input p-4">
-      <div className="space-y-1">
-        <h3 className="text-sm font-medium">Guest execution (host-funded)</h3>
-        <p className="text-xs text-muted-foreground">
-          Let share-link guests run host tools on your organization's credits.
-          Everything is off by default and capped per day. Only applies to
-          "anyone with the link" swarms.
-        </p>
-        {!guestLink ? (
-          <p className="text-xs text-amber-600 dark:text-amber-500">
-            This swarm isn't shared with guests yet — set access to "anyone with
-            the link" for guest execution to take effect.
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 space-y-0.5">
+          <Label htmlFor="ge-enabled" className="text-sm font-medium">
+            Guest execution
+          </Label>
+          <p className="text-xs text-muted-foreground">
+            Host-funded tools for link guests
           </p>
-        ) : null}
-      </div>
-
-      <ToggleRow
-        id="ge-enabled"
-        label="Enable guest execution"
-        description="Master switch for host-funded guest tools + skills."
-        checked={form.enabled}
-        onCheckedChange={setEnabled}
-      />
-
-      <ToggleRow
-        id="ge-computer"
-        label="Guest computer"
-        description="Provision a host-funded cloud computer for guests (bash + files)."
-        checked={form.computerEnabled}
-        disabled={!form.enabled}
-        onCheckedChange={setComputerEnabled}
-      />
-
-      <ToggleRow
-        id="ge-skills"
-        label="Shared project skills"
-        description="Expose the project's shared (not personal) skills to guests."
-        checked={form.sharedSkillsEnabled}
-        disabled={!form.enabled}
-        onCheckedChange={(v) => set("sharedSkillsEnabled", v)}
-      />
-
-      {/* Secure Guest Harness Enablement — the Claude Code harness sub-panel. */}
-      <div className="space-y-3 rounded-md border border-dashed border-input p-3">
-        <ToggleRow
-          id="ge-harness"
-          label="Claude Code harness"
-          description="Run the real Claude Code agent for guests (claude-code hosts only). Requires the guest computer."
-          checked={form.harnessEnabled}
-          disabled={!form.enabled || !form.computerEnabled}
-          onCheckedChange={(v) => set("harnessEnabled", v)}
+        </div>
+        <Switch
+          id="ge-enabled"
+          checked={form.enabled}
+          onCheckedChange={setEnabled}
         />
-
-        {form.harnessEnabled ? (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-xs text-muted-foreground">
-                Recommended starting caps: $5/day, 100 calls/day, 1 concurrent
-                run.
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={applyRecommended}
-              >
-                Use recommended
-              </Button>
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <NumberField
-                id="ge-harness-spend"
-                label="Daily spend (USD)"
-                min={1}
-                max={MAX_DAILY_HARNESS_SPEND_MICROS / MICROS_PER_USD}
-                value={form.dailyHarnessSpendUsd}
-                onChange={(n) => set("dailyHarnessSpendUsd", n)}
-              />
-              <NumberField
-                id="ge-harness-calls"
-                label="Daily calls"
-                min={1}
-                max={MAX_DAILY_HARNESS_CALLS}
-                value={form.dailyHarnessCallCap}
-                onChange={(n) => set("dailyHarnessCallCap", n)}
-              />
-              <NumberField
-                id="ge-harness-concurrency"
-                label="Concurrent runs"
-                min={1}
-                max={MAX_CONCURRENT_HARNESS_RUNS}
-                value={form.maxConcurrentHarnessRuns}
-                onChange={(n) => set("maxConcurrentHarnessRuns", n)}
-              />
-            </div>
-          </div>
-        ) : null}
       </div>
+
+      {!form.enabled ? (
+        <Collapsible>
+          <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground [&[data-state=open]>svg]:rotate-180">
+            <ChevronDown className="size-3.5 shrink-0 transition-transform" />
+            About guest execution
+          </CollapsibleTrigger>
+          <CollapsibleContent className="pt-1.5">
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Let share-link guests run host tools on your organization&apos;s
+              credits. Everything is off by default and capped per day.
+            </p>
+          </CollapsibleContent>
+        </Collapsible>
+      ) : null}
+
+      {form.enabled ? (
+        <div className="space-y-2 border-l border-border pl-3">
+          <ToggleRow
+            id="ge-computer"
+            label="Guest computer"
+            checked={form.computerEnabled}
+            onCheckedChange={setComputerEnabled}
+          />
+
+          <ToggleRow
+            id="ge-skills"
+            label="Shared project skills"
+            checked={form.sharedSkillsEnabled}
+            onCheckedChange={(v) => set("sharedSkillsEnabled", v)}
+          />
+
+          {form.computerEnabled ? (
+            <div className="space-y-2 pt-1">
+              <ToggleRow
+                id="ge-harness"
+                label="Claude Code harness"
+                checked={form.harnessEnabled}
+                onCheckedChange={(v) => set("harnessEnabled", v)}
+              />
+
+              {form.harnessEnabled ? (
+                <div className="space-y-2 pl-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs text-muted-foreground">Daily caps</p>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={applyRecommended}
+                    >
+                      Use recommended
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <NumberField
+                      id="ge-harness-spend"
+                      label="Spend (USD)"
+                      min={1}
+                      max={MAX_DAILY_HARNESS_SPEND_MICROS / MICROS_PER_USD}
+                      value={form.dailyHarnessSpendUsd}
+                      onChange={(n) => set("dailyHarnessSpendUsd", n)}
+                    />
+                    <NumberField
+                      id="ge-harness-calls"
+                      label="Calls"
+                      min={1}
+                      max={MAX_DAILY_HARNESS_CALLS}
+                      value={form.dailyHarnessCallCap}
+                      onChange={(n) => set("dailyHarnessCallCap", n)}
+                    />
+                    <NumberField
+                      id="ge-harness-concurrency"
+                      label="Concurrent"
+                      min={1}
+                      max={MAX_CONCURRENT_HARNESS_RUNS}
+                      value={form.maxConcurrentHarnessRuns}
+                      onChange={(n) => set("maxConcurrentHarnessRuns", n)}
+                    />
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
 
-      <div className="flex justify-end">
-        <Button
-          type="button"
-          onClick={() => void handleSave()}
-          disabled={!!error || isSaving}
-        >
-          {isSaving ? "Saving..." : "Save"}
-        </Button>
-      </div>
+      {isDirty ? (
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => void handleSave()}
+            disabled={!!error || isSaving}
+          >
+            {isSaving ? "Saving..." : "Save changes"}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -333,26 +369,27 @@ export function ChatboxGuestExecutionSection({ chatbox, onUpdated }: Props) {
 function ToggleRow({
   id,
   label,
-  description,
   checked,
   disabled,
   onCheckedChange,
 }: {
   id: string;
   label: string;
-  description: string;
   checked: boolean;
   disabled?: boolean;
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex items-start justify-between gap-3">
-      <div className="min-w-0">
-        <Label htmlFor={id} className="text-sm font-medium">
-          {label}
-        </Label>
-        <p className="text-xs text-muted-foreground">{description}</p>
-      </div>
+    <div className="flex items-center justify-between gap-3 py-0.5">
+      <Label
+        htmlFor={id}
+        className={cn(
+          "text-sm font-normal",
+          disabled && "text-muted-foreground",
+        )}
+      >
+        {label}
+      </Label>
       <Switch
         id={id}
         checked={checked}

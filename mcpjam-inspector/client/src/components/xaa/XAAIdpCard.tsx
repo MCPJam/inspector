@@ -5,9 +5,15 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@mcpjam/design-system/hover-card";
+import { Switch } from "@mcpjam/design-system/switch";
 import { HOSTED_MODE } from "@/lib/config";
 import { copyToClipboard } from "@/lib/clipboard";
-import { fetchXaaIdpUrls, getXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
+import {
+  fetchXaaIdpUrls,
+  getHostedXaaIdpUrls,
+  getXaaIdpUrls,
+} from "@/lib/xaa/idp-endpoints";
+import type { XaaIssuerMode } from "@/hooks/useXaaRunSettings";
 
 // A compact click-to-copy chip: shows only the label to keep the bar minimal —
 // the long URL stays hidden (revealed on hover via the native title) and the
@@ -143,25 +149,78 @@ function IdpInfo() {
  * mints assertions with MCPJam as the IdP, so this surfaces the issuer + JWKS
  * URLs a developer registers with their own authorization server, inline with
  * copy buttons. The how-and-why detail lives behind the info icon.
+ *
+ * Hosted signed-in users get the org-scoped issuer (/o/<orgId>): minting under
+ * it requires org membership, so it is the issuer to register with a real
+ * authorization server. The legacy unscoped issuer is mintable by anyone and
+ * should be treated as test-only.
  */
-export function XAAIdpCard() {
+export function XAAIdpCard({
+  organizationId,
+  issuerMode = "local",
+  onIssuerModeChange,
+  canUseHostedIssuer = false,
+  hostedIssuerDisabledReason,
+}: {
+  organizationId?: string | null;
+  /** LOCAL builds only: which issuer mints this run's assertions. */
+  issuerMode?: XaaIssuerMode;
+  onIssuerModeChange?: (mode: XaaIssuerMode) => void;
+  /** Signed-in + active-org gate: a local guest bearer is signed with a local
+   * key the hosted issuer rejects, and the mint targets the org-scoped issuer. */
+  canUseHostedIssuer?: boolean;
+  /** Why the toggle is disabled (signed out vs no active org), for the hint. */
+  hostedIssuerDisabledReason?: string;
+}) {
+  const hostedIssuerOn =
+    !HOSTED_MODE && issuerMode === "hosted" && canUseHostedIssuer;
+
   // Start from the browser-origin guess, then swap in the server-advertised
   // issuer once resolved — see fetchXaaIdpUrls for why the guess can be wrong.
-  const [urls, setUrls] = useState(() => getXaaIdpUrls());
+  // With the hosted-issuer opt-in on, the URLs are constructed instead:
+  // hosted CORS blocks a local browser from fetching the hosted discovery doc.
+  const [urls, setUrls] = useState(() =>
+    hostedIssuerOn ? getHostedXaaIdpUrls(organizationId) : getXaaIdpUrls(organizationId),
+  );
   const { issuerBaseUrl, openidConfigUrl, jwksUrl } = urls;
 
   // Resolve the real issuer from the server's discovery doc once on mount —
   // the URLs are always visible now, so there's no expand to defer it to.
+  const isFirstResolve = useRef(true);
   useEffect(() => {
-    const controller = new AbortController();
-    void fetchXaaIdpUrls(controller.signal).then((serverUrls) => {
-      if (controller.signal.aborted || !serverUrls) {
-        return;
+    // Clear the first-render flag up front, regardless of mode. Otherwise a
+    // mount in hosted mode (which takes the early return below) would leave it
+    // set, and a later hosted→local toggle would skip the synchronous reset —
+    // leaving the copy fields showing the hosted issuer/JWKS while the run
+    // mints locally. The useState initializer already produced the correct
+    // value for the first render, so only the reset on *changes* is needed.
+    const wasFirstRender = isFirstResolve.current;
+    isFirstResolve.current = false;
+
+    if (hostedIssuerOn) {
+      if (!wasFirstRender) {
+        setUrls(getHostedXaaIdpUrls(organizationId));
       }
-      setUrls(serverUrls);
-    });
+      return;
+    }
+    const controller = new AbortController();
+    // Reset synchronously on any change (org switch or a hosted→local toggle)
+    // so a stale hosted/prior-org URL never lingers before discovery resolves.
+    if (!wasFirstRender) {
+      setUrls(getXaaIdpUrls(organizationId));
+    }
+    void fetchXaaIdpUrls(controller.signal, organizationId).then(
+      (serverUrls) => {
+        if (controller.signal.aborted || !serverUrls) {
+          return;
+        }
+        setUrls(serverUrls);
+      },
+    );
     return () => controller.abort();
-  }, []);
+  }, [organizationId, hostedIssuerOn]);
+
+  const isOrgScoped = HOSTED_MODE && Boolean(organizationId);
 
   return (
     <div className="border-b border-border bg-background px-4 py-3">
@@ -181,14 +240,58 @@ export function XAAIdpCard() {
       </div>
 
       {!HOSTED_MODE && (
-        <div className="mt-3 flex items-start gap-2 text-xs text-muted-foreground">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-          <span>
-            These are local URLs. Your authorization server can only fetch them
-            if it can reach this machine — a cloud-hosted Okta or Auth0 tenant
-            cannot reach <code className="font-mono">localhost</code>. Expose
-            MCPJam with a public tunnel (e.g. ngrok) first.
-          </span>
+        <div className="mt-3 space-y-2 text-xs text-muted-foreground">
+          {onIssuerModeChange && (
+            <label className="flex items-center gap-2">
+              <Switch
+                checked={hostedIssuerOn}
+                disabled={!canUseHostedIssuer}
+                onCheckedChange={(checked) =>
+                  onIssuerModeChange(checked ? "hosted" : "local")
+                }
+                aria-label="Use hosted issuer"
+              />
+              <span className="font-medium text-foreground">
+                Use hosted issuer (app.mcpjam.com)
+              </span>
+              {!canUseHostedIssuer && hostedIssuerDisabledReason && (
+                <span>— {hostedIssuerDisabledReason}</span>
+              )}
+            </label>
+          )}
+          {hostedIssuerOn ? (
+            <div className="flex items-start gap-2">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                ID tokens and ID-JAGs are minted by{" "}
+                <code className="font-mono">app.mcpjam.com</code>, so a cloud
+                authorization server can discover this issuer and fetch its
+                JWKS — no tunnel needed. Token requests and MCP calls still run
+                from this machine; your authorization server must be reachable
+                over https.
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+              <span>
+                These are local URLs. Your authorization server can only fetch
+                them if it can reach this machine — a cloud-hosted Okta or
+                Auth0 tenant cannot reach{" "}
+                <code className="font-mono">localhost</code>.
+                {onIssuerModeChange
+                  ? " Flip on the hosted issuer above, or expose MCPJam with a public tunnel (e.g. ngrok)."
+                  : " Expose MCPJam with a public tunnel (e.g. ngrok) first."}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {isOrgScoped && (
+        <div className="mt-3 text-xs text-muted-foreground">
+          This issuer is scoped to your organization — only its members can
+          mint assertions under it.
         </div>
       )}
     </div>

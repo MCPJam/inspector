@@ -13,20 +13,32 @@ const RUN_SETTINGS_KEY = "mcpjam-xaa-run-settings/v1";
 // once, on first load (mirrors profile.ts XAA_PROFILE_STORAGE_KEY).
 const LEGACY_PROFILE_KEY = "mcpjam-xaa-debugger-profile/v1";
 
+/** Which issuer mints the mock ID token + ID-JAG on a local run. "hosted"
+ * routes the mint through app.mcpjam.com so a cloud authorization server can
+ * discover/validate the issuer — no tunnel needed. Meaningless on hosted
+ * builds (hosted IS the hosted issuer). */
+export type XaaIssuerMode = "local" | "hosted";
+
 export interface XaaRunSettings {
   userId: string;
   email: string;
   negativeTestMode: NegativeTestMode;
+  issuerMode: XaaIssuerMode;
 }
 
 export const DEFAULT_XAA_RUN_SETTINGS: XaaRunSettings = {
   userId: "user-12345",
   email: "demo.user@example.com",
   negativeTestMode: DEFAULT_NEGATIVE_TEST_MODE,
+  issuerMode: "local",
 };
 
 function sanitizeMode(value: unknown): NegativeTestMode {
   return isNegativeTestMode(value) ? value : DEFAULT_NEGATIVE_TEST_MODE;
+}
+
+function sanitizeIssuerMode(value: unknown): XaaIssuerMode {
+  return value === "hosted" ? "hosted" : "local";
 }
 
 function readString(value: unknown, fallback: string): string {
@@ -48,6 +60,7 @@ function loadInitialRunSettings(): XaaRunSettings {
         userId: readString(parsed.userId, DEFAULT_XAA_RUN_SETTINGS.userId),
         email: readString(parsed.email, DEFAULT_XAA_RUN_SETTINGS.email),
         negativeTestMode: sanitizeMode(parsed.negativeTestMode),
+        issuerMode: sanitizeIssuerMode(parsed.issuerMode),
       };
     }
 
@@ -58,6 +71,7 @@ function loadInitialRunSettings(): XaaRunSettings {
         userId: readString(legacy.userId, DEFAULT_XAA_RUN_SETTINGS.userId),
         email: readString(legacy.email, DEFAULT_XAA_RUN_SETTINGS.email),
         negativeTestMode: sanitizeMode(legacy.negativeTestMode),
+        issuerMode: "local",
       };
       try {
         localStorage.setItem(RUN_SETTINGS_KEY, JSON.stringify(migrated));
@@ -114,19 +128,29 @@ export function useXaaRunSettings() {
     [],
   );
 
+  const setIssuerMode = useCallback((mode: XaaIssuerMode) => {
+    setSettings((current) => ({
+      ...current,
+      issuerMode: sanitizeIssuerMode(mode),
+    }));
+  }, []);
+
   return useMemo(
     () => ({
       userId: settings.userId,
       email: settings.email,
       negativeTestMode: settings.negativeTestMode,
+      issuerMode: settings.issuerMode,
       isDefaultIdentity: isDefaultIdentity(settings),
       setNegativeTestMode,
       setIdentity,
+      setIssuerMode,
     }),
     [
       settings,
       setNegativeTestMode,
       setIdentity,
+      setIssuerMode,
     ],
   );
 }

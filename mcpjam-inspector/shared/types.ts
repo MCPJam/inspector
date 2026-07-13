@@ -1,5 +1,7 @@
 // Shared types between client and server
 
+import type { XaaRegistrationStrategy } from "./xaa";
+
 // Legacy server config (keeping for compatibility)
 export interface ServerConfig {
   id: string;
@@ -154,6 +156,7 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "x-ai/grok-4.1-fast",
   "x-ai/grok-4-fast",
   "x-ai/grok-4.20",
+  "x-ai/grok-4.5",
   "z-ai/glm-4.7",
   "z-ai/glm-4.7-flash",
   "z-ai/glm-5.1",
@@ -338,6 +341,7 @@ export enum Model {
   GROK_3 = "grok-3",
   GROK_3_MINI = "grok-3-mini",
   GROK_CODE_FAST_1 = "grok-code-fast-1",
+  GROK_4_5 = "grok-4.5",
   GROK_4_FAST_NON_REASONING = "grok-4-fast-non-reasoning",
   GROK_4_FAST_REASONING = "grok-4-fast-reasoning",
 }
@@ -667,6 +671,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "xai",
     contextLength: 2000000,
   },
+  {
+    id: "x-ai/grok-4.5",
+    name: "Grok 4.5",
+    provider: "xai",
+    contextLength: 500000,
+  },
   freeModel("x-ai/grok-4-fast", "Grok 4 Fast", "xai"),
   freeModel("x-ai/grok-4.20", "Grok 4.20", "xai"),
   {
@@ -782,6 +792,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     contextLength: 256000,
   },
   {
+    id: Model.GROK_4_5,
+    name: "Grok 4.5",
+    provider: "xai",
+    contextLength: 500000,
+  },
+  {
     id: Model.GROK_4_FAST_NON_REASONING,
     name: "Grok 4 Fast Non-Reasoning",
     provider: "xai",
@@ -894,6 +910,12 @@ export interface ServerFormData {
   /** Optional issuer override for the cross-app authorization test target. */
   xaaAuthzIssuer?: string;
   /**
+   * Opt-in: accept a path-scoped authorization server whose metadata
+   * advertises the same-origin root as issuer (multi-tenant AS deployments
+   * with path-scoped issuers). Off = strict RFC 8414 issuer match.
+   */
+  xaaAllowPathScopedIssuer?: boolean;
+  /**
    * Cross-App Access (XAA) connect flag. When true the server authenticates via
    * the XAA token-exchange flow rather than standard OAuth. Mutually exclusive
    * with `useOAuth` — the form only ever sets one.
@@ -909,6 +931,13 @@ export interface ServerFormData {
   xaaSubject?: string;
   /** Optional simulated-identity override (email) for the MCPJam test IdP. Blank = signed-in user. */
   xaaEmail?: string;
+  /**
+   * XAA Debugger registration strategy (Client↔Resource-AS leg): how the run
+   * establishes its client identity at the target authorization server. Chosen
+   * in the "Configure Server to Test" modal. Debugger-only — the Connect page
+   * never sets it, so merges must preserve an existing value.
+   */
+  xaaRegistrationStrategy?: XaaRegistrationStrategy;
   /** Registry credential key for resolving OAuth client ID from env (e.g. "github") */
   oauthCredentialKey?: string;
   /** True for registry servers that use backend-managed preregistered OAuth credentials */

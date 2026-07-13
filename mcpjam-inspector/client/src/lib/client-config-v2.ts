@@ -21,6 +21,7 @@
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
 import { stableStringifyJson } from "@/lib/client-config";
+import type { ThemeMode } from "@/types/preferences/theme";
 import {
   buildHostCapabilities,
   findHostStyle,
@@ -291,6 +292,15 @@ export type HostConfigDtoV2 = {
 
 export const DEFAULT_HOST_STYLE_V2: HostStyleId = "mcpjam";
 
+// Cheap MCPJam-provided model pinned onto auto-seeded "MCPJam" hosts (the
+// host bar / playground backstops for empty projects). Interactive chat
+// papers over an unset host model via getDefaultModel's picker fallback,
+// but synthetic/swarm runs consume the pinned value directly and fail on
+// "" — seeding a real model keeps the default host runnable everywhere.
+// Matches the top of getDefaultModel's priority list and the dominant
+// template choice; keep the three in sync.
+export const DEFAULT_SEEDED_HOST_MODEL_ID = "anthropic/claude-haiku-4.5";
+
 // Delegates to the Node-safe SDK builder so the empty-config defaults have a
 // single source of truth shared with the server `--template` resolver and the
 // CLI. Cast to the strict client aggregate — the runtime object is
@@ -298,6 +308,20 @@ export const DEFAULT_HOST_STYLE_V2: HostStyleId = "mcpjam";
 export const emptyHostConfigInputV2 = sdkEmptyHostConfigInputV2 as unknown as (
   partial?: Partial<HostConfigInputV2>
 ) => HostConfigInputV2;
+
+export function cloneHostTemplateInput(
+  value: unknown,
+  options: { themeMode?: ThemeMode } = {}
+): HostConfigInputV2 {
+  const input = deepCloneJsonValue(value) as HostConfigInputV2;
+  if (options.themeMode !== undefined) {
+    input.hostContext = {
+      ...input.hostContext,
+      theme: options.themeMode,
+    };
+  }
+  return input;
+}
 
 export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
   // Deep-clone the JSON record fields. clientCapabilities and
@@ -696,6 +720,54 @@ export function hostCapabilitiesOverrideToMatrix(
     updateModelContext: legacy.updateModelContext !== undefined,
     message: legacy.message !== undefined,
     downloadFile: legacy.downloadFile !== undefined,
+  };
+}
+
+/**
+ * Set/clear the sparse MCP Apps capability override matrix on a host draft.
+ * Preserves sibling `mcpProfile.apps` fields and collapses an otherwise empty
+ * profile back to `undefined`, matching the JSON editor's draft cleanup.
+ */
+export function setMcpAppsOverridesOnDraft(
+  prev: HostConfigInputV2,
+  next: McpAppsCapabilities | undefined
+): HostConfigInputV2 {
+  const hasKeys = next !== undefined && Object.keys(next).length > 0;
+  const prevProfile = prev.mcpProfile;
+  const prevApps = prevProfile?.apps ?? {};
+
+  const nextApps: NonNullable<HostConfigMcpProfileV1["apps"]> = {};
+  for (const [key, value] of Object.entries(prevApps)) {
+    if (key === "mcpAppsOverrides") continue;
+    if (value !== undefined) {
+      (nextApps as Record<string, unknown>)[key] = value;
+    }
+  }
+  if (hasKeys) nextApps.mcpAppsOverrides = next;
+  const appsEmpty = Object.keys(nextApps).length === 0;
+
+  if (prevProfile === undefined && appsEmpty) {
+    return prev;
+  }
+
+  const baseProfile: HostConfigMcpProfileV1 = prevProfile ?? {
+    profileVersion: 1,
+  };
+  const hasInitialize =
+    baseProfile.initialize !== undefined &&
+    (baseProfile.initialize.clientInfo !== undefined ||
+      (baseProfile.initialize.supportedProtocolVersions &&
+        baseProfile.initialize.supportedProtocolVersions.length > 0));
+  const hasMcpProtocolVersion = baseProfile.mcpProtocolVersion !== undefined;
+  const hasExtensions = baseProfile.extensions !== undefined;
+  const profileEmpty =
+    appsEmpty && !hasInitialize && !hasMcpProtocolVersion && !hasExtensions;
+
+  return {
+    ...prev,
+    mcpProfile: profileEmpty
+      ? undefined
+      : { ...baseProfile, apps: appsEmpty ? undefined : nextApps },
   };
 }
 

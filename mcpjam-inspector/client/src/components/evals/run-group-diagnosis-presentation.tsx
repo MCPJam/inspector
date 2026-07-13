@@ -19,8 +19,8 @@ export const SEVERITY_CLASS: Record<GroupFinding["severity"], string> = {
 };
 
 export const CATEGORY_LABEL: Record<GroupFinding["category"], string> = {
-  host_divergence: "Host divergence",
-  all_hosts_failed: "All hosts failed",
+  host_divergence: "Client divergence",
+  all_hosts_failed: "All clients failed",
   tool_path_divergence: "Tool path",
   efficiency_divergence: "Efficiency",
   environment_failure: "Environment",
@@ -66,7 +66,7 @@ export function buildGroupFixPrompt(
   lines.push(`Recommendation: ${finding.recommendation}`);
   lines.push("");
   lines.push(
-    "Using the attribution above, modify the MCP server, the test case, or the host configuration to close this cross-host gap.",
+    "Using the attribution above, modify the MCP server, the test case, or the client configuration to close this cross-client gap.",
   );
   return lines.join("\n");
 }

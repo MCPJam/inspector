@@ -31,6 +31,104 @@ export type ArgumentMismatch = EvalArgumentMismatch;
 export type OutOfOrderToolCall = EvalOutOfOrderToolCall;
 
 /**
+ * The emulated skill tool names, across BOTH delivery paths:
+ *   - cloud / pinned: `listSkills`, `loadSkill` (`cloud-skill-tools.ts`)
+ *   - local FS:       `loadSkill`, `listSkillFiles`, `readSkillFile`
+ *     (`skill-tools.ts`; the local path lists skills in the prompt, not a tool)
+ *
+ * The matcher exempts calls to these from tool-call expectations (a skill LOAD
+ * is agent housekeeping, not a task action), so a `maxExtraToolCalls: 0` case
+ * doesn't fail merely because the model discovered/loaded a skill. The exemption
+ * is overridden per-turn when a skill tool is NAMED in `expectedToolCalls` — so
+ * skill-CI cases can still assert `loadSkill`. Kept here (a shared boundary
+ * module, no SDK dependency) so both runner and any future client agree.
+ */
+export const SKILL_TOOL_NAMES = [
+  "listSkills",
+  "loadSkill",
+  "listSkillFiles",
+  "readSkillFile",
+] as const;
+
+const SKILL_TOOL_NAME_SET: ReadonlySet<string> = new Set(SKILL_TOOL_NAMES);
+
+/** Whether a tool name is one of the emulated skill tools. */
+export function isSkillToolName(name: string): boolean {
+  return SKILL_TOOL_NAME_SET.has(name);
+}
+
+/**
+ * Whether skill tools are active in a prepared tool set — true when ANY skill
+ * tool is advertised. Runners pass the result as `skillToolsActive` so the
+ * matcher only filters skill calls when skills were genuinely in play (never for
+ * a suite that happens to have no skills). Robust across both paths: cloud
+ * advertises `listSkills`, local FS advertises `loadSkill`.
+ */
+export function hasSkillTools(toolNames: Iterable<string>): boolean {
+  for (const name of toolNames) {
+    if (SKILL_TOOL_NAME_SET.has(name)) return true;
+  }
+  return false;
+}
+
+/** Per-iteration skill-adherence verdict (PR-E5). */
+export type SkillAdherence = {
+  /** The case's expected skills (names). */
+  expectedSkills: string[];
+  /** Skill names the agent loaded at any point (via loadSkill). */
+  loadedSkills: string[];
+  /** Expected skills loaded BEFORE the first non-skill action. */
+  loadedBeforeFirstAction: string[];
+  /** True ⟺ every expected skill was loaded before the first action. */
+  adherent: boolean;
+};
+
+/**
+ * Skill-adherence: did the agent load each EXPECTED skill before taking its
+ * first real (non-skill) action? Adherence is about "consult the skill before
+ * acting", so a `loadSkill` that happens AFTER the first task action doesn't
+ * count. `firstActionIdx` = the first non-skill-tool call (skill discovery/load
+ * is housekeeping, not an action). Returns `undefined` when the case has no
+ * expected skills (never fabricate a verdict).
+ *
+ * `toolCalls` must be in EXECUTION order (flattened across turns).
+ */
+export function computeSkillAdherence(
+  expectedSkills: string[] | undefined,
+  toolCalls: ReadonlyArray<{ toolName: string; arguments?: unknown }>,
+): SkillAdherence | undefined {
+  if (!expectedSkills || expectedSkills.length === 0) return undefined;
+
+  // First non-skill call bounds "before the agent acted". No action ⇒ end.
+  let firstActionIdx = toolCalls.length;
+  for (let i = 0; i < toolCalls.length; i++) {
+    if (!isSkillToolName(toolCalls[i].toolName)) {
+      firstActionIdx = i;
+      break;
+    }
+  }
+
+  // First load index per skill name (from loadSkill calls).
+  const firstLoadIdx = new Map<string, number>();
+  for (let i = 0; i < toolCalls.length; i++) {
+    const call = toolCalls[i];
+    if (call.toolName !== "loadSkill") continue;
+    const name = (call.arguments as { name?: unknown } | undefined)?.name;
+    if (typeof name === "string" && !firstLoadIdx.has(name)) {
+      firstLoadIdx.set(name, i);
+    }
+  }
+
+  const loadedSkills = [...firstLoadIdx.keys()];
+  const loadedBeforeFirstAction = expectedSkills.filter((name) => {
+    const idx = firstLoadIdx.get(name);
+    return idx !== undefined && idx < firstActionIdx;
+  });
+  const adherent = loadedBeforeFirstAction.length === expectedSkills.length;
+  return { expectedSkills, loadedSkills, loadedBeforeFirstAction, adherent };
+}
+
+/**
  * Zod schema mirroring `EvalMatchOptions` for transport boundaries
  * (HTTP request bodies, Convex args). Keep field names + value enums in
  * lockstep with `@mcpjam/sdk/matchers`.

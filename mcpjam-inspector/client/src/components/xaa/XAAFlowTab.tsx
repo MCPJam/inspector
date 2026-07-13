@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import posthog from "posthog-js";
+import { track } from "@/lib/analytics";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -20,7 +20,6 @@ import {
 } from "@/components/ui/resizable";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { ServerFormData } from "@/shared/types.js";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useXaaResourceApps } from "@/hooks/useXaaResourceApps";
 import { useXaaRunSettings } from "@/hooks/useXaaRunSettings";
 import {
@@ -34,13 +33,20 @@ import { XAAIdpCard } from "./XAAIdpCard";
 import { XAAResourceAppsSection } from "./registration/XAAResourceAppsSection";
 import { NegativeTestScorecard } from "./NegativeTestScorecard";
 import type { NegativeTestsInput } from "@/lib/xaa/discovery-client";
-import type { NegativeTestMode } from "@/shared/xaa.js";
+import {
+  normalizeXaaRegistrationStrategy,
+  type NegativeTestMode,
+} from "@/shared/xaa.js";
 import {
   createInitialXAAFlowState,
+  type XaaEphemeralDcrCredentials,
+  type XaaRegistrationStrategy,
   type XAAFlowState,
 } from "@/lib/xaa/types";
+import { XAADcrReRegisterControl } from "./XAADcrReRegisterControl";
 import { createInspectorXAAStateMachine } from "@/lib/xaa/debug-state-machine-adapter";
 import { fetchXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
+import { HOSTED_MODE } from "@/lib/config";
 import { hashXaaTargetId } from "@/lib/xaa/target-telemetry";
 
 // Captured at module load: the XAA route returns null while the feature flag
@@ -51,7 +57,14 @@ const INITIAL_RESOURCE_PARAM =
     ? null
     : new URLSearchParams(window.location.search).get("resource");
 
-function buildFlowStateFromInput(input: XAAFlowInput): XAAFlowState {
+function buildFlowStateFromInput(
+  input: XAAFlowInput,
+  registrationStrategy: XaaRegistrationStrategy = "pre_registered",
+  // A prior ambiguous DCR POST may have created a remote client. This risk is
+  // tracked per-target OUTSIDE flow state so an ordinary reset re-seeds it —
+  // clearing it only through the confirmed "Register another client" path.
+  dcrRetryMayCreateDuplicate = false
+): XAAFlowState {
   return createInitialXAAFlowState({
     serverUrl: input.serverUrl || undefined,
     authzServerIssuer: input.authzServerIssuer || undefined,
@@ -61,6 +74,13 @@ function buildFlowStateFromInput(input: XAAFlowInput): XAAFlowState {
     clientId: input.clientId || undefined,
     clientSecret: input.clientSecret || undefined,
     scope: input.scope || undefined,
+    // The machine treats its state value as authoritative after init, so
+    // every rebuild path must seed the currently-effective strategy — a
+    // clean rebuild must not silently reset a selected DCR run.
+    registrationStrategy,
+    ...(dcrRetryMayCreateDuplicate
+      ? { dcrRetryMayCreateDuplicate: true }
+      : {}),
   });
 }
 
@@ -142,6 +162,24 @@ export function XAAFlowTab({
   // ── Global run settings + resolved target ──────────────────────────
   const runSettings = useXaaRunSettings();
   const { user: signedInUser } = useAuth();
+  // Local-only hosted-issuer opt-in: mints route through app.mcpjam.com so a
+  // cloud AS can discover the issuer. Requires a signed-in session AND an
+  // active org — the hosted mint targets the membership-gated org-scoped
+  // issuer (/o/<orgId>), and the server fails closed without one rather than
+  // downgrading to the forgeable unscoped issuer. (A local guest bearer is
+  // signed with a local key the hosted issuer rejects.)
+  const canUseHostedIssuer =
+    !HOSTED_MODE && Boolean(signedInUser) && Boolean(organizationId);
+  // Why the toggle is disabled — the two gates fail for different reasons and
+  // the hint must name the one the user can act on.
+  const hostedIssuerDisabledReason =
+    HOSTED_MODE || canUseHostedIssuer
+      ? undefined
+      : !signedInUser
+      ? "sign in to mint through the hosted issuer"
+      : "select an organization to mint through the hosted issuer";
+  const hostedIssuerOptIn =
+    canUseHostedIssuer && runSettings.issuerMode === "hosted";
   const target = useXaaTestTarget({
     server: selectedServer,
     selectedServerName,
@@ -152,8 +190,68 @@ export function XAAFlowTab({
   const runInput = target.runInput;
   const { targetKey, isTestable } = target;
 
+  // The positive-run unlock must be specific to the exact issuer the run
+  // exercised: switching issuer mode (local↔hosted) or organization changes
+  // the minted `iss`, so a green run under one must NOT unlock negative tests
+  // under another. Key the gate on target + issuer mode + org.
+  const runGateKey = `${targetKey}|${
+    hostedIssuerOptIn ? "hosted" : "local"
+  }|${organizationId ?? ""}`;
+
+  // ── Registration strategy (Client↔Resource-AS leg) ──────────────────
+  // Persisted per-server and chosen in the "Configure Server to Test" modal;
+  // the modal is the source of truth (no on-flow selector). The DCR credential
+  // cache below stays session-only — a persisted `dcr` re-registers a fresh
+  // client on the next run, guarded by the duplicate-risk gate.
+  const persistedStrategy =
+    normalizeXaaRegistrationStrategy(selectedServer?.xaaRegistrationStrategy) ??
+    "pre_registered";
+  // Dynamic strategies (DCR/CIMD) need AS discovery, so they apply only to
+  // manual bar-server targets (not registration/resource-app runs). An explicit
+  // dynamic choice is honored even when the server has a stored secret: the run
+  // ignores the stored pre-registered credentials (the serverId / secret gating
+  // below is suppressed) and establishes a fresh dynamic client identity.
+  const strategyAppliesToTarget =
+    target.targetSource === "bar_server" &&
+    isTestable &&
+    !runInput.registrationId;
+  const effectiveStrategy: XaaRegistrationStrategy = strategyAppliesToTarget
+    ? persistedStrategy
+    : "pre_registered";
+  // When the run establishes its own dynamic client identity, any stored
+  // pre-registered credentials (serverId-resolved secret) must be ignored.
+  const runsDynamicRegistration = effectiveStrategy !== "pre_registered";
+
+  // DCR-minted credentials, keyed by target + registration endpoint. A
+  // useRef-backed Map so machine recreation neither loses nor re-exposes the
+  // secret mid-run; never copied into React state, storage, telemetry, or a
+  // debug export. Page refresh clears it — the remote registration persists.
+  const dcrCredentialCacheRef = useRef(
+    new Map<string, XaaEphemeralDcrCredentials>()
+  );
+  // Per-target "a prior POST may have created a remote client" risk. Lives
+  // outside flow state so it survives ordinary resets/Run all; cleared only by
+  // the confirmed "Register another client" action. Page refresh clears it.
+  const dcrDuplicateRiskRef = useRef(new Set<string>());
+  const dcrCredentialCache = useMemo(
+    () => ({
+      get: (key: string) => dcrCredentialCacheRef.current.get(key),
+      set: (key: string, value: XaaEphemeralDcrCredentials) => {
+        dcrCredentialCacheRef.current.set(key, value);
+      },
+      delete: (key: string) => {
+        dcrCredentialCacheRef.current.delete(key);
+      },
+    }),
+    []
+  );
+
   const [flowState, setFlowState] = useState<XAAFlowState>(() =>
-    buildFlowStateFromInput(target.runInput)
+    buildFlowStateFromInput(
+      target.runInput,
+      effectiveStrategy,
+      dcrDuplicateRiskRef.current.has(targetKey)
+    )
   );
 
   // The machine reads state through this ref (lazy getState). Keep it in
@@ -192,37 +290,51 @@ export function XAAFlowTab({
 
   const fireFlowStarted = useCallback(() => {
     completedFired.current = false;
-    posthog.capture("xaa_flow_started", {
+    track("xaa_flow_started", {
+      location: "xaa_flow_tab",
       mode: runInput.mode,
       target_source: target.targetSource,
       // Salted one-way bucket id — never a server name/URL/hostname.
       target_id: hashXaaTargetId(targetKey),
       auth_server_mode: authServerModeForTelemetry,
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
+      // Enum only — never an endpoint, client id, or credential.
+      registration_strategy: effectiveStrategy,
     });
-  }, [runInput.mode, target.targetSource, targetKey, authServerModeForTelemetry]);
+  }, [
+    runInput.mode,
+    target.targetSource,
+    targetKey,
+    authServerModeForTelemetry,
+    effectiveStrategy,
+  ]);
 
   useEffect(() => {
     if (flowState.currentStep === "complete" && !completedFired.current) {
       completedFired.current = true;
-      posthog.capture("xaa_flow_completed", {
+      track("xaa_flow_completed", {
+        location: "xaa_flow_tab",
         success: true,
         target_source: targetSourceRef.current,
         auth_server_mode: authServerModeForTelemetry,
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
+        // The strategy the completed run actually used (state-authoritative).
+        registration_strategy: flowStateRef.current.registrationStrategy,
       });
       // A green run proves the user holds valid client credentials the AS
-      // issued — that authorizes broken-token testing against it.
-      setPositiveRunTargets((current) => {
-        if (current.has(targetKey)) return current;
-        const next = new Set(current);
-        next.add(targetKey);
-        return next;
-      });
+      // issued — that authorizes broken-token testing against it. Only unlock
+      // for pre-registered runs though: a dcr/cimd run's negative tests would
+      // fire with the configured (often absent) client, not the identity the
+      // run established, so the scorecard stays disabled for those (see the
+      // scorecard memo) and must not be unlocked here either.
+      if (flowStateRef.current.registrationStrategy === "pre_registered") {
+        setPositiveRunTargets((current) => {
+          if (current.has(runGateKey)) return current;
+          const next = new Set(current);
+          next.add(runGateKey);
+          return next;
+        });
+      }
     }
-  }, [flowState.currentStep, authServerModeForTelemetry, targetKey]);
+  }, [flowState.currentStep, authServerModeForTelemetry, runGateKey]);
 
   // ── Negative-test scorecard input ───────────────────────────────────
   const scorecard = useMemo((): {
@@ -236,6 +348,22 @@ export function XAAFlowTab({
       "";
     const resource =
       flowState.resourceMetadata?.resource || runInput.serverUrl || "";
+
+    // The scorecard fires broken tokens using the run's CONFIGURED client
+    // (runInput.clientId), not the identity a dcr/cimd run established. For a
+    // dynamic run those don't match — often the config client_id is empty —
+    // so results would be about the wrong (or no) client and could read as an
+    // all-green pass that proves nothing. Disable it rather than mislead.
+    if (
+      flowState.registrationStrategy === "dcr" ||
+      flowState.registrationStrategy === "cimd"
+    ) {
+      return {
+        input: null,
+        unavailableReason:
+          "Negative tests run against the pre-registered client credentials, not the client this DCR/CIMD run established — so they can't be trusted here. Switch to the pre-registered strategy to exercise the scorecard.",
+      };
+    }
 
     if (selectedRegistration) {
       if (selectedRegistration.authServerMode === "mcpjam") {
@@ -269,7 +397,13 @@ export function XAAFlowTab({
 
     // Confidential bar server: the secret + token endpoint are resolved
     // server-side from the stored config — only the issuer/resource matter.
-    if (target.usesServerSideSecret && target.serverId) {
+    // Skipped for dynamic strategies, which ignore the stored secret and mint
+    // their own client identity in the browser.
+    if (
+      target.usesServerSideSecret &&
+      target.serverId &&
+      !runsDynamicRegistration
+    ) {
       if (!audience || !resource) {
         return {
           input: null,
@@ -311,7 +445,13 @@ export function XAAFlowTab({
         scope: runInput.scope || undefined,
       },
     };
-  }, [flowState, runInput, selectedRegistration, target]);
+  }, [
+    flowState,
+    runInput,
+    selectedRegistration,
+    target,
+    runsDynamicRegistration,
+  ]);
 
   // ── Single target-reset owner ──────────────────────────────────────
   // One effect keyed on (targetKey, negativeTestMode) rebuilds the flow when
@@ -319,6 +459,9 @@ export function XAAFlowTab({
   // refs; confirms via AlertDialog before discarding a busy or completed run.
   const lastAppliedTargetKey = useRef<string | null>(null);
   const lastNegativeTestMode = useRef(runSettings.negativeTestMode);
+  const lastRegistrationStrategy = useRef<XaaRegistrationStrategy>(
+    effectiveStrategy
+  );
   // The simulated identity the flow was last (re)built with. Tracked so an
   // identity edit rebuilds the flow (clearing the already-minted ID token /
   // ID-JAG that carry the old sub) — without that, advancing step-by-step
@@ -331,6 +474,7 @@ export function XAAFlowTab({
   const [pendingReset, setPendingReset] = useState<{
     targetKey: string;
     negativeTestMode: NegativeTestMode;
+    registrationStrategy: XaaRegistrationStrategy;
   } | null>(null);
 
   // Rebuild the flow from the current input and record the identity it was
@@ -338,28 +482,62 @@ export function XAAFlowTab({
   // reset can tell whether another path (Run all, Reset, target switch) already
   // applied the current identity — and skip a stale timer that would otherwise
   // wipe a freshly-started run.
-  const rebuildFlow = useCallback(() => {
-    lastAppliedIdentity.current = {
-      userId: runInput.userId,
-      email: runInput.email,
-    };
-    applyFlowState(buildFlowStateFromInput(runInput));
-  }, [applyFlowState, runInput]);
+  const rebuildFlow = useCallback(
+    (strategyOverride?: XaaRegistrationStrategy) => {
+      lastAppliedIdentity.current = {
+        userId: runInput.userId,
+        email: runInput.email,
+      };
+      applyFlowState(
+        buildFlowStateFromInput(
+          runInput,
+          strategyOverride ?? effectiveStrategy,
+          // Re-seed the per-target duplicate-registration risk so an ordinary
+          // reset can't drop the confirmation gate.
+          dcrDuplicateRiskRef.current.has(targetKey)
+        )
+      );
+    },
+    [applyFlowState, runInput, effectiveStrategy, targetKey]
+  );
+
+  // Mirror the machine's duplicate-registration risk into the target-scoped
+  // ref so it outlives flow-state rebuilds. (One-way: the machine only ever
+  // sets it true; the ref is cleared solely by "Register another client".)
+  // Guard on lastAppliedTargetKey: on a target switch this effect re-runs
+  // with the NEW targetKey while flowState still holds the OLD target's flow
+  // (the reset-owner effect rebuilds afterwards) — without the guard the old
+  // run's risk would wrongly block registration on the new target.
+  useEffect(() => {
+    if (
+      flowState.dcrRetryMayCreateDuplicate &&
+      lastAppliedTargetKey.current === targetKey
+    ) {
+      dcrDuplicateRiskRef.current.add(targetKey);
+    }
+  }, [flowState.dcrRetryMayCreateDuplicate, targetKey]);
 
   const applyTargetReset = useCallback(
-    (nextTargetKey: string, nextMode: NegativeTestMode) => {
+    (
+      nextTargetKey: string,
+      nextMode: NegativeTestMode,
+      nextStrategy: XaaRegistrationStrategy
+    ) => {
       lastAppliedTargetKey.current = nextTargetKey;
       lastNegativeTestMode.current = nextMode;
-      rebuildFlow();
+      lastRegistrationStrategy.current = nextStrategy;
+      rebuildFlow(nextStrategy);
     },
     [rebuildFlow]
   );
 
   useEffect(() => {
     const nextMode = runSettings.negativeTestMode;
+    const nextStrategy = effectiveStrategy;
     if (
       lastAppliedTargetKey.current === targetKey &&
-      lastNegativeTestMode.current === nextMode
+      lastNegativeTestMode.current === nextMode &&
+      lastRegistrationStrategy.current === nextStrategy
     ) {
       return;
     }
@@ -369,11 +547,20 @@ export function XAAFlowTab({
       lastAppliedTargetKey.current !== null &&
       (current.isBusy || current.currentStep === "complete");
     if (needsConfirm) {
-      setPendingReset({ targetKey, negativeTestMode: nextMode });
+      setPendingReset({
+        targetKey,
+        negativeTestMode: nextMode,
+        registrationStrategy: nextStrategy,
+      });
       return;
     }
-    applyTargetReset(targetKey, nextMode);
-  }, [targetKey, runSettings.negativeTestMode, applyTargetReset]);
+    applyTargetReset(targetKey, nextMode, nextStrategy);
+  }, [
+    targetKey,
+    runSettings.negativeTestMode,
+    effectiveStrategy,
+    applyTargetReset,
+  ]);
 
   // Identity edits rebuild the flow so the next run mints tokens for the new
   // sub/email. Unlike target/mode (which change discretely), the identity
@@ -407,19 +594,43 @@ export function XAAFlowTab({
   }, [runSettings.userId, runSettings.email, rebuildFlow]);
 
   useEffect(() => {
-    posthog.capture("xaa_tab_viewed", {
+    track("xaa_tab_viewed", {
       location: "xaa_flow_tab",
       target_count: resourceApps.length + Object.keys(serverConfigs).length,
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
     // Fires once per mount; the counts are a point-in-time anchor.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const resetFlow = useCallback(() => {
+    // Ordinary reset retains the session credential cache, so a DCR run
+    // reuses its registration instead of minting another remote client.
     rebuildFlow();
   }, [rebuildFlow]);
+
+  // Explicit, confirmed action: drop this target's cached registration(s)
+  // and reset, so the next run performs a fresh registration POST. This is
+  // also the only path that clears dcrRetryMayCreateDuplicate.
+  const registerAnotherClient = useCallback(() => {
+    // The cache key's first component is the encoded target key (see
+    // dcrCacheKeyFor); match on that encoded prefix.
+    const targetPrefix = `${encodeURIComponent(targetKey)}::`;
+    for (const key of Array.from(dcrCredentialCacheRef.current.keys())) {
+      if (key.startsWith(targetPrefix)) {
+        dcrCredentialCacheRef.current.delete(key);
+      }
+    }
+    // The confirmed action is the ONLY thing that clears the duplicate-risk
+    // gate — the user has acknowledged a second remote client may be created.
+    dcrDuplicateRiskRef.current.delete(targetKey);
+    rebuildFlow();
+  }, [targetKey, rebuildFlow]);
+
+  const dcrHasSessionRegistration =
+    effectiveStrategy === "dcr" &&
+    Array.from(dcrCredentialCacheRef.current.keys()).some((key) =>
+      key.startsWith(`${encodeURIComponent(targetKey)}::`)
+    );
 
   // Resolve the real IdP issuer from the server's OpenID config so the ID-JAG
   // inspection step lints against the issuer actually stamped into `iss`, not
@@ -429,13 +640,19 @@ export function XAAFlowTab({
   >(undefined);
   useEffect(() => {
     const controller = new AbortController();
-    void fetchXaaIdpUrls(controller.signal).then((urls) => {
+    // Reset synchronously on org change (mirrors XAAIdpCard). Otherwise the
+    // prior org's issuer lingers until the async fetch resolves — and stays
+    // forever if it returns null — so the ID-JAG inspection would compare the
+    // new org's `iss` against the old issuer and report a spurious mismatch.
+    // With it cleared, the machine falls back to the correct current-org guess.
+    setResolvedIssuerBaseUrl(undefined);
+    void fetchXaaIdpUrls(controller.signal, organizationId).then((urls) => {
       if (urls && !controller.signal.aborted) {
         setResolvedIssuerBaseUrl(urls.issuerBaseUrl);
       }
     });
     return () => controller.abort();
-  }, []);
+  }, [organizationId]);
 
   const xaaStateMachine = useMemo(() => {
     return createInspectorXAAStateMachine({
@@ -450,14 +667,40 @@ export function XAAFlowTab({
       scope: runInput.scope,
       authzServerIssuer: runInput.authzServerIssuer,
       registrationId: runInput.registrationId,
+      // Client-identity strategy (forced to pre_registered inside the machine
+      // for registrationId/serverId runs) plus the session credential cache
+      // DCR runs mint into and redeem from.
+      registrationStrategy: effectiveStrategy,
+      dcrCredentialCache,
+      dcrCacheTargetKey: targetKey,
       // Confidential bar-server runs send only serverId/projectId; the server
-      // resolves the secret and discovers the token endpoint.
-      ...(target.usesServerSideSecret && target.serverId
+      // resolves the secret and discovers the token endpoint. Dynamic
+      // strategies skip this: they ignore the stored secret and register their
+      // own client, so sending serverId (which the machine forces back to
+      // pre_registered) would defeat the explicit DCR/CIMD choice.
+      ...(target.usesServerSideSecret &&
+      target.serverId &&
+      !runsDynamicRegistration
         ? { serverId: target.serverId, projectId: target.projectId }
         : {}),
-      issuerBaseUrl: resolvedIssuerBaseUrl,
+      // Hosted-issuer runs let the adapter derive the app.mcpjam.com issuer;
+      // the locally-fetched discovery doc would lint against the wrong `iss`.
+      issuerBaseUrl: hostedIssuerOptIn ? undefined : resolvedIssuerBaseUrl,
+      organizationId,
+      issuerMode: hostedIssuerOptIn ? "hosted" : "local",
     });
-  }, [runInput, target, updateFlowState, resolvedIssuerBaseUrl]);
+  }, [
+    runInput,
+    target,
+    updateFlowState,
+    resolvedIssuerBaseUrl,
+    organizationId,
+    hostedIssuerOptIn,
+    effectiveStrategy,
+    runsDynamicRegistration,
+    dcrCredentialCache,
+    targetKey,
+  ]);
 
   const handleAdvance = useCallback(async () => {
     if (!isTestable) {
@@ -492,14 +735,13 @@ export function XAAFlowTab({
     const final = flowStateRef.current;
     if (final.currentStep !== "complete" && !completedFired.current) {
       completedFired.current = true;
-      posthog.capture("xaa_flow_completed", {
+      track("xaa_flow_completed", {
+        location: "xaa_flow_tab",
         success: false,
         target_source: targetSourceRef.current,
         // The step the run stopped on — an enum, never a raw error string.
         error_category: final.currentStep,
         auth_server_mode: authServerModeForTelemetry,
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
       });
     }
   }, [
@@ -526,7 +768,9 @@ export function XAAFlowTab({
 
   // A confidential server whose secret can't be resolved yet must not run —
   // sending an empty secret would make the auth server reject the client.
-  const secretBlocked = target.secretUnavailable;
+  // Dynamic strategies don't use the stored secret, so they're never blocked
+  // on resolving it.
+  const secretBlocked = target.secretUnavailable && !runsDynamicRegistration;
   const secretBlockedReason = secretBlocked
     ? target.serversLoading
       ? "Resolving this server's saved secret…"
@@ -550,7 +794,13 @@ export function XAAFlowTab({
 
   return (
     <div className="h-full flex flex-col bg-background">
-      <XAAIdpCard />
+      <XAAIdpCard
+        organizationId={organizationId ?? null}
+        issuerMode={runSettings.issuerMode}
+        onIssuerModeChange={runSettings.setIssuerMode}
+        canUseHostedIssuer={canUseHostedIssuer}
+        hostedIssuerDisabledReason={hostedIssuerDisabledReason}
+      />
       <XAAResourceAppsSection
         organizationId={organizationId ?? null}
         selectedId={selectedRegistrationId}
@@ -560,6 +810,17 @@ export function XAAFlowTab({
           )
         }
       />
+      {/* The registration strategy is chosen in the Configure Server modal;
+          only DCR's mid-run "register another client" recovery lives here (the
+          one action that clears the duplicate-risk gate). */}
+      {effectiveStrategy === "dcr" &&
+      (dcrHasSessionRegistration ||
+        Boolean(flowState.dcrRetryMayCreateDuplicate)) ? (
+        <XAADcrReRegisterControl
+          disabled={flowState.isBusy || isRunningAll}
+          onRegisterAnotherClient={registerAnotherClient}
+        />
+      ) : null}
       {selectedRegistration ? (
         <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/30 px-4 py-1.5 text-xs text-muted-foreground">
           <span>Using registered app — overrides the bar selection</span>
@@ -655,7 +916,11 @@ export function XAAFlowTab({
                 summary={{
                   serverUrl: runInput.serverUrl,
                   authzServerIssuer: runInput.authzServerIssuer || undefined,
-                  clientId: runInput.clientId || undefined,
+                  // Prefer the flow's clientId so a DCR-minted or CIMD URL
+                  // identity is shown accurately; pre-registered runs fall
+                  // back to the configured value unchanged.
+                  clientId:
+                    flowState.clientId || runInput.clientId || undefined,
                   scope: runInput.scope || undefined,
                 }}
               />
@@ -676,8 +941,16 @@ export function XAAFlowTab({
 
       {isTestable && (
         <NegativeTestScorecard
-          input={scorecard.input}
-          unlocked={positiveRunTargets.has(targetKey)}
+          input={
+            scorecard.input
+              ? {
+                  ...scorecard.input,
+                  organizationId: organizationId ?? null,
+                  ...(hostedIssuerOptIn ? { issuerMode: "hosted" as const } : {}),
+                }
+              : null
+          }
+          unlocked={positiveRunTargets.has(runGateKey)}
           unavailableReason={scorecard.unavailableReason}
         />
       )}
@@ -703,11 +976,16 @@ export function XAAFlowTab({
         open={pendingReset !== null}
         onOpenChange={(open) => {
           if (!open) {
-            // Cancel: acknowledge the switch without resetting, so the effect
-            // doesn't immediately re-prompt; the current run stays visible.
+            // Cancel ("Keep current run"): acknowledge the pending target/mode/
+            // strategy so the effect doesn't immediately re-prompt; the current
+            // run stays visible. The strategy is already persisted, so every
+            // fresh-run path (Reset, Run all, a later target/mode change)
+            // rebuilds from it — nothing is pinned to the discarded run.
             if (pendingReset) {
               lastAppliedTargetKey.current = pendingReset.targetKey;
               lastNegativeTestMode.current = pendingReset.negativeTestMode;
+              lastRegistrationStrategy.current =
+                pendingReset.registrationStrategy;
             }
             setPendingReset(null);
           }
@@ -728,7 +1006,8 @@ export function XAAFlowTab({
                 if (pendingReset) {
                   applyTargetReset(
                     pendingReset.targetKey,
-                    pendingReset.negativeTestMode
+                    pendingReset.negativeTestMode,
+                    pendingReset.registrationStrategy
                   );
                 }
                 setPendingReset(null);

@@ -403,4 +403,139 @@ describe("OAuth state machine regressions", () => {
     expect(state.tokenEndpointAuthMethod).toBe("none");
     expect(state.error).toBeUndefined();
   });
+
+  it.each<[boolean | undefined, boolean | string]>([
+    [true, true],
+    [false, false],
+    [undefined, "false (not advertised, defaults to false per spec)"],
+  ])(
+    "2025-11-25 AS metadata summary reports CIMD support when the field is %s",
+    async (advertised, expectedRow) => {
+      const asMetadata: Record<string, unknown> = {
+        issuer: "https://auth.example.com",
+        authorization_endpoint: "https://auth.example.com/authorize",
+        token_endpoint: "https://auth.example.com/token",
+        response_types_supported: ["code"],
+        code_challenge_methods_supported: ["S256"],
+      };
+      if (advertised !== undefined) {
+        asMetadata.client_id_metadata_document_supported = advertised;
+      }
+
+      let state = {
+        ...EMPTY_OAUTH_FLOW_STATE,
+        currentStep: "request_authorization_server_metadata" as const,
+        authorizationServerUrl: "https://auth.example.com",
+        httpHistory: [
+          {
+            step: "request_authorization_server_metadata" as const,
+            timestamp: Date.now(),
+            request: {
+              method: "GET",
+              url: "https://auth.example.com/.well-known/oauth-authorization-server",
+              headers: {},
+            },
+          },
+        ],
+        infoLogs: [],
+        isInitiatingAuth: true,
+      };
+
+      const machine = createOAuthStateMachine({
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "dcr",
+        state,
+        getState: () => state,
+        updateState: (updates) => {
+          state = { ...state, ...updates };
+        },
+        serverUrl: SERVER_URL,
+        serverName: "Test Server",
+        redirectUrl: REDIRECT_URI,
+        requestExecutor: jest.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: asMetadata,
+        }),
+        dynamicRegistration: {
+          client_name: "Test Client",
+        },
+      });
+
+      await machine.proceedToNextStep();
+
+      expect(state.currentStep).toBe("received_authorization_server_metadata");
+      const summary = state.infoLogs?.find((log) => log.id === "as-metadata");
+      expect(summary).toBeDefined();
+      expect(summary?.data["CIMD Supported"]).toBe(expectedRow);
+    },
+  );
+
+  // Regression (Codex review, PR #3138): a strict-conformance 2xx registration
+  // response with a non-object body is classified invalid_response by the
+  // shared helper. The old success-path strict missing-client_id branch cleared
+  // isInitiatingAuth for that exact body shape, so the reclassification must
+  // still clear it — otherwise the flow is left "initiating" after failing.
+  it.each(["2025-03-26", "2025-06-18"] as const)(
+    "clears isInitiatingAuth on a strict invalid_response DCR body in %s",
+    async (protocolVersion) => {
+      let state = {
+        ...EMPTY_OAUTH_FLOW_STATE,
+        currentStep: "request_client_registration" as const,
+        authorizationServerMetadata: {
+          registration_endpoint: REGISTRATION_ENDPOINT,
+        },
+        lastRequest: {
+          method: "POST",
+          url: REGISTRATION_ENDPOINT,
+          headers: {},
+          body: { client_name: "Test Client" },
+        },
+        httpHistory: [
+          {
+            step: "request_client_registration" as const,
+            timestamp: Date.now(),
+            request: {
+              method: "POST",
+              url: REGISTRATION_ENDPOINT,
+              headers: {},
+              body: { client_name: "Test Client" },
+            },
+          },
+        ],
+        infoLogs: [],
+        isInitiatingAuth: true,
+      };
+
+      const machine = createOAuthStateMachine({
+        protocolVersion,
+        registrationStrategy: "dcr",
+        strictConformance: true,
+        state,
+        getState: () => state,
+        updateState: (updates) => {
+          state = { ...state, ...updates };
+        },
+        serverUrl: SERVER_URL,
+        serverName: "Test Server",
+        redirectUrl: REDIRECT_URI,
+        // 2xx with a non-object body → invalid_response.
+        requestExecutor: jest.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: "not-json",
+        }),
+        dynamicRegistration: { client_name: "Test Client" },
+      });
+
+      await machine.proceedToNextStep();
+
+      expect(state.error).toBeTruthy();
+      expect(state.isInitiatingAuth).toBe(false);
+    },
+  );
 });

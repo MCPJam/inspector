@@ -14,8 +14,7 @@
 import { Copy, Loader2, ScanSearch } from "lucide-react";
 import type { ModelMessage } from "ai";
 import { toast } from "@/lib/toast";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -115,7 +114,6 @@ export function TraceRawView({
    */
   harnessBuiltinTools?: HarnessBuiltinToolInfo[];
 }) {
-  const posthog = usePostHog();
   const jsonHeight = growWithContent ? "auto" : "100%";
   const requestPayloadEntries = requestPayloadHistory?.entries ?? [];
   const hasUiMessages = requestPayloadHistory?.hasUiMessages ?? false;
@@ -249,10 +247,7 @@ export function TraceRawView({
             variant="ghost"
             size="icon"
             onClick={() => {
-              posthog.capture(
-                "trace_raw_copied",
-                standardEventProps("trace_raw_view"),
-              );
+              track("trace_raw_copied", { location: "trace_raw_view" });
               copyToClipboard(trace, "Trace");
             }}
             className="h-7 w-7"

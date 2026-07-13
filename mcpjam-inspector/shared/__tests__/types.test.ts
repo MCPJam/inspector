@@ -64,6 +64,7 @@ describe("MCPJam-provided model classification", () => {
   it("resolves provider metadata for new hosted models", () => {
     expect(getModelById("qwen/qwen3.6-plus")?.provider).toBe("qwen");
     expect(getModelById("x-ai/grok-4-fast")?.provider).toBe("xai");
+    expect(getModelById("x-ai/grok-4.5")?.provider).toBe("xai");
     expect(getModelById("mistralai/mistral-small-2603")?.provider).toBe(
       "mistral",
     );
@@ -74,6 +75,7 @@ describe("MCPJam-provided model classification", () => {
       "anthropic/claude-haiku-4.5",
     );
     expect(isMCPJamProvidedModel("claude-haiku-4.5", "anthropic")).toBe(true);
+    expect(isMCPJamProvidedModel("grok-4.5", "xai")).toBe(true);
     expect(isMCPJamProvidedModel("grok-4-fast", "xai")).toBe(true);
   });
 

@@ -25,4 +25,18 @@ describe("ComputerStatusChip", () => {
     expect(label("hibernating")).toBe("Asleep");
     expect(label("error")).toBe("Error");
   });
+
+  it("distinguishes a billing pause from an idle sleep (COMP-7)", () => {
+    expect(
+      render(
+        <ComputerStatusChip status="hibernating" hibernatedReason="billing" />
+      ).container.textContent
+    ).toBe("Paused for billing");
+    // An explicit idle reason still reads as the plain asleep chip.
+    expect(
+      render(
+        <ComputerStatusChip status="hibernating" hibernatedReason="idle" />
+      ).container.textContent
+    ).toBe("Asleep");
+  });
 });

@@ -14,24 +14,6 @@ vi.mock("@/lib/chatbox-client-style", () => ({
   resolveHostLogoByDisplayName: mockResolveHostLogoByDisplayName,
 }));
 
-vi.mock("@/lib/client-templates", () => ({
-  HOST_TEMPLATES: [
-    {
-      id: "mcpjam",
-      label: "MCPJam",
-      description: "MCPJam",
-      logoSrc: "/mcp_jam.svg",
-    },
-    {
-      id: "chatgpt",
-      label: "ChatGPT",
-      description: "ChatGPT",
-      logoSrc: "/openai_logo.png",
-    },
-  ],
-  getHostTemplateLogoSrc: (template: { logoSrc: string }) => template.logoSrc,
-}));
-
 const hosts: HostListItem[] = [
   "MCPJam",
   "VS Code",

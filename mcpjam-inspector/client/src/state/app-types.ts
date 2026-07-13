@@ -1,5 +1,6 @@
 import type { MCPServerConfig, NormalizedError } from "@mcpjam/sdk/browser";
 import { OauthTokens } from "@/shared/types.js";
+import type { XaaRegistrationStrategy } from "@/shared/xaa.js";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import type {
   ProjectClientConfig,
@@ -71,6 +72,9 @@ export interface ServerWithName {
    * XAA metadata only — intentionally NOT part of MCPServerConfig / toMCPConfig.
    */
   xaaAuthzIssuer?: string;
+  /** Opt-in: accept a path-scoped authorization server (same-origin root
+   * advertised as issuer). XAA metadata only, like xaaAuthzIssuer. */
+  xaaAllowPathScopedIssuer?: boolean;
   /**
    * Cross-App Access (XAA) connect flag. When true the server authenticates via
    * the XAA token-exchange flow (server mints the token) rather than standard
@@ -82,6 +86,8 @@ export interface ServerWithName {
   /** Optional simulated-identity overrides for the MCPJam test IdP. Blank = signed-in user. */
   xaaSubject?: string;
   xaaEmail?: string;
+  /** XAA Debugger registration strategy (Client↔Resource-AS leg). Debugger-only. */
+  xaaRegistrationStrategy?: XaaRegistrationStrategy;
 }
 
 export interface Project {

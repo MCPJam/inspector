@@ -9,9 +9,25 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { Label } from "@mcpjam/design-system/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@mcpjam/design-system/select";
 import { validateServerFormData } from "@/lib/server-form-validation";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import {
+  DEFAULT_XAA_REGISTRATION_STRATEGY,
+  normalizeXaaRegistrationStrategy,
+  type XaaRegistrationStrategy,
+} from "@/shared/xaa.js";
+import {
+  XAA_STRATEGY_HINTS,
+  XAA_STRATEGY_OPTIONS,
+} from "@/lib/xaa/registration-strategy";
 import { deriveOAuthProfileFromServer } from "../oauth/utils";
 import { XaaCredentialFields } from "../connection/shared/XaaCredentialFields";
 
@@ -48,9 +64,15 @@ export function XAAServerModal({
 
   const [serverName, setServerName] = useState("");
   const [serverUrl, setServerUrl] = useState("");
+  // Registration strategy (Client↔Resource-AS leg). Persisted per-server; the
+  // modal is the source of truth. Pre-registered requires a Client ID; DCR/CIMD
+  // mint or URL-address the client identity instead.
+  const [registrationStrategy, setRegistrationStrategy] =
+    useState<XaaRegistrationStrategy>(DEFAULT_XAA_REGISTRATION_STRATEGY);
   const [clientId, setClientId] = useState("");
   const [scopes, setScopes] = useState("");
   const [authzIssuer, setAuthzIssuer] = useState("");
+  const [allowPathScopedIssuer, setAllowPathScopedIssuer] = useState(false);
   // Client-secret state mirrors the Connect-page model (shared component):
   // a typed value replaces the saved secret, the Clear toggle removes it.
   const [clientSecret, setClientSecret] = useState("");
@@ -67,11 +89,16 @@ export function XAAServerModal({
     if (!open) return;
     setServerName(server?.name ?? "");
     setServerUrl(derived.serverUrl ?? "");
+    setRegistrationStrategy(
+      normalizeXaaRegistrationStrategy(server?.xaaRegistrationStrategy) ??
+        DEFAULT_XAA_REGISTRATION_STRATEGY,
+    );
     setClientId(derived.clientId ?? "");
     // Scopes can be stored comma- or space-separated upstream; normalize to
     // the space-separated form this modal edits.
     setScopes((derived.scopes ?? "").replace(/,/g, " ").trim());
     setAuthzIssuer(server?.xaaAuthzIssuer ?? "");
+    setAllowPathScopedIssuer(server?.xaaAllowPathScopedIssuer === true);
     setClientSecret("");
     setClearClientSecret(false);
     setXaaSubject(server?.xaaSubject ?? "");
@@ -110,8 +137,10 @@ export function XAAServerModal({
     }
 
     const trimmedClientId = clientId.trim();
-    if (!trimmedClientId) {
-      setError("Client ID is required.");
+    // Client ID is only required for pre-registered clients. DCR mints one and
+    // CIMD addresses the client via a metadata URL, so both leave it optional.
+    if (registrationStrategy === "pre_registered" && !trimmedClientId) {
+      setError("Client ID is required for pre-registered clients.");
       return;
     }
 
@@ -155,10 +184,13 @@ export function XAAServerModal({
       oauthScopes: scopesArray,
       // Always send the issuer (possibly empty) so clearing it persists.
       xaaAuthzIssuer: trimmedIssuer,
+      xaaAllowPathScopedIssuer: allowPathScopedIssuer,
       // Per-server simulated identity, defaulting to the signed-in user when
       // blank — identical to the Connect page so the two surfaces stay synced.
       xaaSubject: xaaSubject.trim() || signedInEmail || undefined,
       xaaEmail: xaaEmail.trim() || signedInEmail || undefined,
+      // Debugger-owned registration strategy (Client↔Resource-AS leg).
+      xaaRegistrationStrategy: registrationStrategy,
     };
 
     // Final gate: the exact validator the save path runs. Any rule added there
@@ -225,11 +257,38 @@ export function XAAServerModal({
               />
             </div>
 
+            {/* Registration strategy (Client↔Resource-AS leg). Debugger-only —
+                not part of the shared Connect-page fields below. */}
+            <div className="space-y-2">
+              <Label htmlFor="xaa-registration-strategy">Registration</Label>
+              <Select
+                value={registrationStrategy}
+                onValueChange={(value) =>
+                  setRegistrationStrategy(value as XaaRegistrationStrategy)
+                }
+              >
+                <SelectTrigger id="xaa-registration-strategy" className="h-10">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {XAA_STRATEGY_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {XAA_STRATEGY_HINTS[registrationStrategy]}
+              </p>
+            </div>
+
             {/* Shared with the /servers Connect page so both surfaces present
                 identical fields, ordering, and style. */}
             <XaaCredentialFields
               clientId={clientId}
               onClientIdChange={setClientId}
+              clientIdRequired={registrationStrategy === "pre_registered"}
               clientSecret={clientSecret}
               onClientSecretChange={(value) => {
                 setClientSecret(value);
@@ -243,12 +302,13 @@ export function XAAServerModal({
               onScopesChange={setScopes}
               xaaAuthzIssuer={authzIssuer}
               onXaaAuthzIssuerChange={setAuthzIssuer}
+              xaaAllowPathScopedIssuer={allowPathScopedIssuer}
+              onXaaAllowPathScopedIssuerChange={setAllowPathScopedIssuer}
               xaaSubject={xaaSubject}
               onXaaSubjectChange={setXaaSubject}
               xaaEmail={xaaEmail}
               onXaaEmailChange={setXaaEmail}
               signedInEmail={signedInEmail}
-              defaultAdvancedOpen
             />
           </div>
 

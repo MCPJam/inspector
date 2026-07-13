@@ -76,6 +76,10 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => false,
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: (...args: unknown[]) => mockPosthogCapture(...args),
+}));
+
 vi.mock("@/lib/apis/web/servers-api", () => ({
   validateHostedServer: mockValidateHostedServer,
 }));

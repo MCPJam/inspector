@@ -15,6 +15,12 @@ export interface OAuthProxyRequest {
   body?: unknown;
   headers?: Record<string, string>;
   httpsOnly?: boolean;
+  /** Redirect handling. httpsOnly always forces "manual" (cannot be
+   * weakened); otherwise an explicit value is honored and omission preserves
+   * the historical "follow". */
+  redirect?: "follow" | "manual";
+  /** Bound the fetch and response-body read. */
+  timeoutMs?: number;
 }
 
 export interface OAuthProxyResponse {
@@ -143,6 +149,16 @@ function buildFetchUrl(targetUrl: URL): string {
   return targetUrl.toString();
 }
 
+function requestTimeoutSignal(
+  timeoutMs: number | undefined,
+): AbortSignal | undefined {
+  if (timeoutMs === undefined) return undefined;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new OAuthProxyError(400, "timeoutMs must be a positive number");
+  }
+  return AbortSignal.timeout(timeoutMs);
+}
+
 async function parseResponseBody(response: Response): Promise<unknown> {
   try {
     return await response.json();
@@ -210,8 +226,9 @@ export async function executeOAuthProxy(
   const response = await fetch(buildFetchUrl(targetUrl), {
     method,
     headers: requestHeaders,
-    redirect: req.httpsOnly ? "manual" : "follow",
+    redirect: req.httpsOnly ? "manual" : req.redirect ?? "follow",
     body: encodeRequestBody(method, req.body, contentType),
+    signal: requestTimeoutSignal(req.timeoutMs),
   });
 
   const headers: Record<string, string> = {};
@@ -245,8 +262,9 @@ export async function executeDebugOAuthProxy(
   const response = await fetch(buildFetchUrl(targetUrl), {
     method,
     headers: requestHeaders,
-    redirect: req.httpsOnly ? "manual" : "follow",
+    redirect: req.httpsOnly ? "manual" : req.redirect ?? "follow",
     body: encodeRequestBody(method, req.body, contentType),
+    signal: requestTimeoutSignal(req.timeoutMs),
   });
 
   const headers: Record<string, string> = {};
@@ -346,6 +364,7 @@ export async function executeDebugOAuthProxy(
 export async function fetchOAuthMetadata(
   url: string,
   httpsOnly = false,
+  timeoutMs?: number,
 ): Promise<
   | { metadata: Record<string, unknown>; status?: undefined }
   | { status: number; statusText: string }
@@ -359,6 +378,7 @@ export async function fetchOAuthMetadata(
       "User-Agent": "MCP-Inspector/1.0",
     },
     redirect: httpsOnly ? "manual" : "follow",
+    signal: requestTimeoutSignal(timeoutMs),
   });
 
   if (!response.ok) {

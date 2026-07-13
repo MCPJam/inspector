@@ -110,6 +110,23 @@ describe("XAAIdpCard", () => {
       screen.getByRole("button", { name: /copy jwks url/i })
     ).toHaveAttribute("title", `${serverIssuer}/.well-known/jwks.json`);
   });
+
+  it("shows the org-scoped issuer for signed-in org members", () => {
+    render(<XAAIdpCard organizationId="org_a1B2" />);
+
+    expect(
+      screen.getByRole("button", { name: /copy issuer url/i })
+    ).toHaveAttribute("title", `${issuer}/o/org_a1B2`);
+    expect(
+      screen.getByRole("button", { name: /copy jwks url/i })
+    ).toHaveAttribute(
+      "title",
+      `${issuer}/o/org_a1B2/.well-known/jwks.json`
+    );
+    expect(
+      screen.getByText(/scoped to your organization/i)
+    ).toBeInTheDocument();
+  });
 });
 
 describe("XAAIdpCard (non-hosted mode)", () => {

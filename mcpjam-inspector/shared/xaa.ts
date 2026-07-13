@@ -1,22 +1,22 @@
-export const NEGATIVE_TEST_MODES = [
-  "valid",
-  "bad_signature",
-  "wrong_audience",
-  "expired",
-  "missing_claims",
-  "invalid_type_header",
-  "wrong_issuer",
-  "resource_mismatch",
-  "client_id_mismatch",
-  "unknown_kid",
-  "unknown_sub",
-  "scope_denial",
-] as const;
+// XAA/ID-JAG primitives are single-sourced in @mcpjam/sdk. This module
+// re-exports them from the browser-safe entry (importable from both the client
+// and the server) so the inspector's importers keep their `shared/xaa.js` path,
+// and it owns only the UI-only presentation tables that stay client-side.
+import type { NegativeTestMode } from "@mcpjam/sdk/browser";
 
-export type NegativeTestMode = (typeof NEGATIVE_TEST_MODES)[number];
-
-export const DEFAULT_NEGATIVE_TEST_MODE: NegativeTestMode = "valid";
-export const XAA_IDP_KID = "xaa-idp-1";
+export {
+  NEGATIVE_TEST_MODES,
+  DEFAULT_NEGATIVE_TEST_MODE,
+  XAA_IDP_KID,
+  isNegativeTestMode,
+  XAA_REGISTRATION_STRATEGIES,
+  DEFAULT_XAA_REGISTRATION_STRATEGY,
+  normalizeXaaRegistrationStrategy,
+} from "@mcpjam/sdk/browser";
+export type {
+  NegativeTestMode,
+  XaaRegistrationStrategy,
+} from "@mcpjam/sdk/browser";
 
 export const NEGATIVE_TEST_MODE_DETAILS: Record<
   NegativeTestMode,
@@ -114,11 +114,4 @@ export interface NegativeTestDiff {
   sent: string;
   /** What a valid assertion would carry. */
   expected: string;
-}
-
-export function isNegativeTestMode(value: unknown): value is NegativeTestMode {
-  return (
-    typeof value === "string" &&
-    (NEGATIVE_TEST_MODES as readonly string[]).includes(value)
-  );
 }

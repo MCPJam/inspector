@@ -87,8 +87,7 @@ import {
 import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
 import { detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 import { PRESET_DEVICE_CONFIGS } from "@/components/shared/ClientContextHeader";
-import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
@@ -104,6 +103,7 @@ import {
   type HostDetail,
 } from "@/hooks/useClients";
 import {
+  DEFAULT_SEEDED_HOST_MODEL_ID,
   emptyHostConfigInputV2,
   gateMcpToolResultImageRenderingByModelVisibility,
 } from "@/lib/client-config-v2";
@@ -474,7 +474,6 @@ export function PlaygroundMain({
   recorder,
 }: PlaygroundMainProps) {
   const { signUp } = useAuth();
-  const posthog = usePostHog();
   const clearLogs = useTrafficLogStore((s) => s.clear);
 
   // Chat-history coordination — Playground equivalent of ChatTabV2's history
@@ -768,6 +767,7 @@ export function PlaygroundMain({
     resumedVersion,
     restoredToolRenderOverrides,
     status,
+    authHeaders,
   } = useChatSession({
     selectedServers,
     directVisibility: pendingDirectVisibility,
@@ -1062,7 +1062,9 @@ export function PlaygroundMain({
     createPlaygroundHost({
       projectId: multiHostProjectId,
       name: "MCPJam",
-      input: emptyHostConfigInputV2(),
+      // Pin a cheap default model — see HostOverlayBar's seed for why a
+      // modelless default host breaks synthetic/swarm runs.
+      input: emptyHostConfigInputV2({ modelId: DEFAULT_SEEDED_HOST_MODEL_ID }),
     })
       .then(({ hostId }) => {
         setPreviewedHostId(hostId);
@@ -2802,10 +2804,8 @@ export function PlaygroundMain({
       request: Omit<BroadcastChatTurnRequest, "id">,
       captureProps?: Record<string, unknown>
     ) => {
-      posthog.capture("app_builder_send_message", {
+      track("app_builder_send_message", {
         location: "app_builder_tab",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         model_id: selectedModel?.id ?? null,
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
@@ -2821,7 +2821,6 @@ export function PlaygroundMain({
     },
     [
       isMultiModelMode,
-      posthog,
       resolvedSelectedModels.length,
       selectedModel?.id,
       selectedModel?.name,
@@ -2935,10 +2934,8 @@ export function PlaygroundMain({
   const shouldShowUpsell = disableForAuthentication && !isAuthLoading;
   const showMultiModelStarterPrompts = !shouldShowUpsell && !isAuthLoading;
   const handleSignUp = () => {
-    posthog.capture("sign_up_button_clicked", {
+    track("sign_up_button_clicked", {
       location: "app_builder_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
     signUp();
   };
@@ -3243,6 +3240,15 @@ export function PlaygroundMain({
     onReconnectServer: playgroundServerSelectorProps?.onReconnect,
     onDisconnectServer: playgroundServerSelectorProps?.onDisconnect,
     onAddServer: playgroundServerSelectorProps?.onConnect,
+    voiceInputContext: convexProjectId
+      ? {
+          projectId: convexProjectId,
+          ...(hostedSelectedServerIds.length > 0
+            ? { selectedServerIds: hostedSelectedServerIds }
+            : {}),
+        }
+      : undefined,
+    voiceInputAuthHeaders: authHeaders,
   };
 
   // Check if widget should take over the full container

@@ -1,59 +1,59 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  beforeEach,
+  afterEach,
+  vi,
+} from "vitest";
 import { Hono } from "hono";
+import { SignJWT, exportJWK, generateKeyPair } from "jose";
 import {
   createComputerUploadHandler,
   type UploadSandbox,
 } from "../computer-upload";
+import { resetComputerTerminalJwksCacheForTests } from "../../../utils/computers/terminal-token.js";
 
 // Route-level tests for POST /api/web/computers/upload. The control plane
 // (`/computers/sandbox-info`) is a fetch stub; the E2B sandbox is an injected
-// fake that records makeDir/write calls. Terminal tokens are signed locally
-// with the shared HS256 secret, mirroring computers-terminal-token.test.ts.
+// fake that records makeDir/write calls. Terminal tokens are RS256, verified
+// against a stubbed JWKS at `/computers/terminal-jwks`.
 
-const SECRET = "test-terminal-secret-0123456789";
 const ISSUER = "https://api.mcpjam.com/computer-terminal";
 const CONVEX_URL = "https://convex.example";
+const KID = "computer-terminal-1";
 
-function b64url(bytes: Uint8Array): string {
-  return Buffer.from(bytes)
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
-}
+let signingKey: CryptoKey;
+let jwksDoc: unknown;
 
-async function signToken(
-  claims: Record<string, unknown> = {},
-  secret = SECRET
-): Promise<string> {
+beforeAll(async () => {
+  const kp = await generateKeyPair("RS256");
+  signingKey = kp.privateKey as CryptoKey;
+  const jwk = await exportJWK(kp.publicKey);
+  jwksDoc = { keys: [{ ...jwk, kid: KID, alg: "RS256", use: "sig" }] };
+});
+
+async function signToken(claims: Record<string, unknown> = {}): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  const full = {
-    iss: ISSUER,
+  const {
+    iss = ISSUER,
+    iat = now,
+    exp = now + 60,
+    ...rest
+  } = {
     purpose: "computer-terminal",
     sub: "users_123",
     computerId: "computers_456",
     projectId: "projects_789",
-    iat: now,
-    exp: now + 60,
     ...claims,
-  };
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
-  const header = b64url(
-    new TextEncoder().encode(JSON.stringify({ alg: "HS256", typ: "JWT" }))
-  );
-  const payload = b64url(new TextEncoder().encode(JSON.stringify(full)));
-  const sig = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(`${header}.${payload}`)
-  );
-  return `${header}.${payload}.${b64url(new Uint8Array(sig))}`;
+  } as Record<string, unknown> & { iss?: string; iat?: number; exp?: number };
+  return new SignJWT(rest)
+    .setProtectedHeader({ alg: "RS256", kid: KID })
+    .setIssuer(iss)
+    .setIssuedAt(iat)
+    .setExpirationTime(exp)
+    .sign(signingKey);
 }
 
 function fakeSandbox() {
@@ -106,6 +106,12 @@ function installSandboxInfoStub(
           { status: 200, headers: { "content-type": "application/json" } }
         );
       }
+      if (path === "/computers/terminal-jwks") {
+        return new Response(JSON.stringify(jwksDoc), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
       throw new Error(`unexpected path ${path}`);
     })
   );
@@ -113,9 +119,9 @@ function installSandboxInfoStub(
 
 function stubConfiguredEnv() {
   vi.stubEnv("CONVEX_HTTP_URL", CONVEX_URL);
-  vi.stubEnv("COMPUTERS_DATA_PLANE_SECRET", "test-secret");
+  vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-svc-token");
   vi.stubEnv("E2B_API_KEY", "e2b_test");
-  vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", SECRET);
+  vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "test-terminal-secret-0123456789");
 }
 
 function createApp(connectSandbox: (id: string) => Promise<UploadSandbox>) {
@@ -153,6 +159,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+  resetComputerTerminalJwksCacheForTests();
 });
 
 describe("POST /api/web/computers/upload", () => {
@@ -189,7 +196,7 @@ describe("POST /api/web/computers/upload", () => {
     expect(fake.writes).toHaveLength(0);
   });
 
-  it("still accepts the legacy ?token= query (stale tabs across a deploy)", async () => {
+  it("401s on a ?token= query string alone (no header fallback)", async () => {
     stubConfiguredEnv();
     const fake = fakeSandbox();
     const app = createApp(async () => fake.sandbox);
@@ -199,8 +206,8 @@ describe("POST /api/web/computers/upload", () => {
       `/api/web/computers/upload?token=${encodeURIComponent(await signToken())}`,
       { method: "POST", body: form }
     );
-    expect(res.status).toBe(200);
-    expect(fake.writes).toHaveLength(1);
+    expect(res.status).toBe(401);
+    expect(fake.writes).toHaveLength(0);
   });
 
   it("400s when no files are attached", async () => {
@@ -328,6 +335,58 @@ describe("POST /api/web/computers/upload", () => {
       new File([new Uint8Array([1])], "a.txt"),
     ]);
     expect(res.status).toBe(503);
+  });
+
+  it("401s when the sandbox-info row's owner doesn't match the token's claims", async () => {
+    stubConfiguredEnv();
+    installSandboxInfoStub((path) =>
+      path === "/computers/sandbox-info"
+        ? {
+            status: 200,
+            json: {
+              computerId: "computers_456",
+              providerComputerId: "sbx_42",
+              provider: "e2b",
+              status: "ready",
+              projectId: "projects_789",
+              ownerUserId: "users_other",
+            },
+          }
+        : undefined
+    );
+    const fake = fakeSandbox();
+    const app = createApp(async () => fake.sandbox);
+    const res = await uploadRequest(app, await signToken(), [
+      new File([new Uint8Array([1])], "a.txt"),
+    ]);
+    expect(res.status).toBe(401);
+    expect(fake.writes).toHaveLength(0);
+  });
+
+  it("401s when the sandbox-info row's project doesn't match the token's claims", async () => {
+    stubConfiguredEnv();
+    installSandboxInfoStub((path) =>
+      path === "/computers/sandbox-info"
+        ? {
+            status: 200,
+            json: {
+              computerId: "computers_456",
+              providerComputerId: "sbx_42",
+              provider: "e2b",
+              status: "ready",
+              projectId: "projects_other",
+              ownerUserId: "users_123",
+            },
+          }
+        : undefined
+    );
+    const fake = fakeSandbox();
+    const app = createApp(async () => fake.sandbox);
+    const res = await uploadRequest(app, await signToken(), [
+      new File([new Uint8Array([1])], "a.txt"),
+    ]);
+    expect(res.status).toBe(401);
+    expect(fake.writes).toHaveLength(0);
   });
 
   it("503s when the computer is still provisioning (no providerComputerId)", async () => {

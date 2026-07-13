@@ -142,6 +142,7 @@ describe("evaluateDiscovery", () => {
       requested: "https://as.example.com",
       advertised: "http://as.example.com",
       schemeOnly: true,
+      originPrefix: false,
     });
   });
 
@@ -152,5 +153,63 @@ describe("evaluateDiscovery", () => {
     );
 
     expect(verdict.issuerMismatch?.schemeOnly).toBe(false);
+    expect(verdict.issuerMismatch?.originPrefix).toBe(false);
+  });
+
+  it("classifies a same-origin root issuer over a path-scoped AS as originPrefix", () => {
+    // A path-scoped AS shape: endpoints scoped under /resources/res_x, issuer
+    // at the origin root.
+    const verdict = evaluateDiscovery(
+      { issuer: "https://env.example.com" },
+      {
+        requestedIssuer: "https://env.example.com/resources/res_1",
+        metadataUrl,
+      },
+    );
+
+    expect(verdict.issuerMismatch?.originPrefix).toBe(true);
+    expect(verdict.issuerMismatch?.schemeOnly).toBe(false);
+  });
+
+  it("classifies a same-origin path-prefix ancestor as originPrefix (segment-aware)", () => {
+    const prefixed = evaluateDiscovery(
+      { issuer: "https://env.example.com/tenants/acme" },
+      {
+        requestedIssuer: "https://env.example.com/tenants/acme/resources/res_1",
+        metadataUrl,
+      },
+    );
+    expect(prefixed.issuerMismatch?.originPrefix).toBe(true);
+
+    // /tenants/acme is NOT an ancestor of /tenants/acme-evil.
+    const sibling = evaluateDiscovery(
+      { issuer: "https://env.example.com/tenants/acme" },
+      {
+        requestedIssuer: "https://env.example.com/tenants/acme-evil",
+        metadataUrl,
+      },
+    );
+    expect(sibling.issuerMismatch?.originPrefix).toBe(false);
+  });
+
+  it("never classifies a cross-origin or scheme-differing issuer as originPrefix", () => {
+    const crossOrigin = evaluateDiscovery(
+      { issuer: "https://evil.example.com" },
+      {
+        requestedIssuer: "https://env.example.com/resources/res_1",
+        metadataUrl,
+      },
+    );
+    expect(crossOrigin.issuerMismatch?.originPrefix).toBe(false);
+
+    // Same host but http root vs https path — origin differs, so no prefix.
+    const schemeDiffers = evaluateDiscovery(
+      { issuer: "http://env.example.com" },
+      {
+        requestedIssuer: "https://env.example.com/resources/res_1",
+        metadataUrl,
+      },
+    );
+    expect(schemeDiffers.issuerMismatch?.originPrefix).toBe(false);
   });
 });

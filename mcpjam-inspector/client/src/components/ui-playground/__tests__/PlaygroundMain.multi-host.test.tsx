@@ -118,6 +118,7 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
   useFeatureFlagEnabled: () => false,
 }));
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 vi.mock("@/lib/PosthogUtils", () => ({
   detectEnvironment: () => "test",
@@ -593,6 +594,11 @@ describe("PlaygroundMain — multi-host render path", () => {
         expect.objectContaining({
           projectId: "default",
           name: "MCPJam",
+          // The seed pins a cheap default model — a modelless host breaks
+          // synthetic/swarm runs (no picker fallback on that path).
+          input: expect.objectContaining({
+            modelId: "anthropic/claude-haiku-4.5",
+          }),
         }),
       );
     });
