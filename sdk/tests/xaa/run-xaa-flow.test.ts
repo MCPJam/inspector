@@ -158,7 +158,32 @@ describe("runXaaFlow", () => {
     expect(result.redemption?.tokenIssued).toBe(true); // token was still issued
     expect(result.mcp?.status).toBe(200);
     expect(result.mcp?.ok).toBe(false);
-    expect(result.mcp?.jsonRpcError).toBe("-32001: Unauthorized");
+    expect(result.mcp?.error).toBe("-32001: Unauthorized");
+    expect(result.completed).toBe(false);
+  });
+
+  it("does not report success on a 2xx body with no JSON-RPC result", async () => {
+    global.fetch = stubFetch({
+      token: {
+        status: 200,
+        body: { access_token: "at-123", token_type: "Bearer" },
+      },
+      // A 2xx non-MCP body: neither error nor a JSON-RPC `result`.
+      mcpBody: { status: "ok" },
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    expect(result.redemption?.tokenIssued).toBe(true);
+    expect(result.mcp?.ok).toBe(false);
+    expect(result.mcp?.error).toMatch(/initialize result/i);
     expect(result.completed).toBe(false);
   });
 
@@ -277,7 +302,7 @@ describe("runXaaFlow", () => {
     });
 
     expect(result.mcp?.ok).toBe(false);
-    expect(result.mcp?.jsonRpcError).toBe("Failed to parse SSE stream");
+    expect(result.mcp?.error).toBe("Failed to parse SSE stream");
     expect(result.completed).toBe(false);
   });
 
@@ -371,7 +396,7 @@ describe("runXaaFlow", () => {
 
     expect(result.redemption?.tokenIssued).toBe(true);
     expect(result.mcp?.ok).toBe(false);
-    expect(result.mcp?.jsonRpcError).toBe("-32002: Server error");
+    expect(result.mcp?.error).toBe("-32002: Server error");
     expect(result.completed).toBe(false);
   });
 

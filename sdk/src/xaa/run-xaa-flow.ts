@@ -80,7 +80,7 @@ export interface XaaFlowResult {
     error?: string;
     body?: unknown;
   };
-  mcp?: { status: number; ok: boolean; jsonRpcError?: string };
+  mcp?: { status: number; ok: boolean; error?: string };
   steps: XaaFlowStep[];
   error?: string;
 }
@@ -334,8 +334,8 @@ export async function runXaaFlow(
     record(
       "authenticated_mcp_request",
       mcpResult.ok,
-      mcpResult.jsonRpcError
-        ? `status ${mcpResult.status}, JSON-RPC error ${mcpResult.jsonRpcError}`
+      mcpResult.error
+        ? `status ${mcpResult.status}: ${mcpResult.error}`
         : `status ${mcpResult.status}`,
     );
 
@@ -363,7 +363,7 @@ async function callAuthenticatedMcp(
   serverUrl: string,
   accessToken: string,
   httpsOnly: boolean,
-): Promise<{ status: number; ok: boolean; jsonRpcError?: string }> {
+): Promise<{ status: number; ok: boolean; error?: string }> {
   const response = await executeDebugOAuthProxy({
     url: serverUrl,
     method: "POST",
@@ -384,38 +384,56 @@ async function callAuthenticatedMcp(
     },
     httpsOnly,
   });
-  // A streamable-HTTP `initialize` can answer 200 OK while carrying a JSON-RPC
-  // error in the body (e.g. the MCP server rejects the token or the init). Treat
-  // that as a failed call, not a completed flow — transport status alone lies.
+  // Transport status alone lies: a 2xx can carry a JSON-RPC error, no JSON-RPC
+  // payload at all, or a non-MCP body. The call succeeds only when the server
+  // returns a proper JSON-RPC `initialize` result.
   const transportOk = response.status >= 200 && response.status < 300;
-  const jsonRpcError = extractJsonRpcError(response.body);
+  const error = evaluateMcpInitResponse(response.body);
   return {
     status: response.status,
-    ok: transportOk && !jsonRpcError,
-    ...(jsonRpcError ? { jsonRpcError } : {}),
+    ok: transportOk && !error,
+    ...(error ? { error } : {}),
   };
 }
 
-function extractJsonRpcError(body: unknown): string | undefined {
-  if (!body || typeof body !== "object") {
-    return undefined;
-  }
-  const record = body as Record<string, unknown>;
+// Returns a failure reason, or undefined when `body` is a valid JSON-RPC
+// `initialize` result.
+function evaluateMcpInitResponse(body: unknown): string | undefined {
   // A top-level string `error` is a proxy-level failure — most notably the SSE
   // parse-failure envelope executeDebugOAuthProxy returns ({ error: "Failed to
   // parse SSE stream" }, no `transport` field) when the stream times out before
-  // the first event. That's a failed call, not a completed flow.
-  if (typeof record.error === "string" && record.error.length > 0) {
-    return record.error;
+  // the first event.
+  if (body && typeof body === "object") {
+    const topError = (body as { error?: unknown }).error;
+    if (typeof topError === "string" && topError.length > 0) {
+      return topError;
+    }
   }
-  // executeDebugOAuthProxy wraps a successful text/event-stream reply in an SSE
-  // envelope: the JSON-RPC payload sits under `mcpResponse`. A streamable-HTTP
-  // `initialize` usually answers as SSE, so this branch is the common path.
-  if (record.transport === "sse") {
-    return jsonRpcErrorFrom(record.mcpResponse);
+  const payload = jsonRpcPayload(body);
+  const rpcError = jsonRpcErrorFrom(payload);
+  if (rpcError) {
+    return rpcError;
   }
-  // Plain JSON: the body IS the JSON-RPC response.
-  return jsonRpcErrorFrom(body);
+  // Require a positive result — an empty SSE envelope (no `message` event) or a
+  // 2xx non-MCP body has neither error nor result and must not read as success.
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    (payload as { result?: unknown }).result === undefined
+  ) {
+    return "MCP server did not return a JSON-RPC initialize result";
+  }
+  return undefined;
+}
+
+// executeDebugOAuthProxy wraps a text/event-stream reply in an SSE envelope with
+// the JSON-RPC payload under `mcpResponse`; a plain JSON body IS the payload.
+function jsonRpcPayload(body: unknown): unknown {
+  if (!body || typeof body !== "object") {
+    return body;
+  }
+  const record = body as Record<string, unknown>;
+  return record.transport === "sse" ? record.mcpResponse : body;
 }
 
 function jsonRpcErrorFrom(payload: unknown): string | undefined {
