@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import { XAA_DEBUG_CLIENT_ID_METADATA_URL } from "@mcpjam/sdk/browser";
 import { CLIENT_SECRET_MASK, createXAAStateMachine } from "../state-machine";
-import { createInitialXAAFlowState, type XAAFlowState } from "../types";
+import {
+  createInitialXAAFlowState,
+  type XaaEphemeralDcrCredentials,
+  type XAAFlowState,
+} from "../types";
 
 function encodePart(value: Record<string, any>): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -880,5 +885,880 @@ describe("createXAAStateMachine", () => {
         "https://mcp.example.com/.well-known/oauth-protected-resource",
       ]);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dynamic client-identity strategies
+// ---------------------------------------------------------------------------
+
+const DCR_SECRET = "dcr-minted-secret-value-123";
+const REGISTRATION_ENDPOINT = "https://auth.example.com/oauth/register";
+
+// Mirrors dcrCacheKeyFor: encodeURIComponent each component, join with "::".
+// Harness target key is "target-1".
+const dcrCacheKey = (endpoint: string, scope: string) =>
+  ["target-1", endpoint, scope].map(encodeURIComponent).join("::");
+
+interface DynamicHarnessOptions {
+  strategy: "dcr" | "cimd";
+  authzMetadataExtras?: Record<string, any>;
+  registerResponse?: {
+    status: number;
+    body: any;
+    headers?: Record<string, string>;
+  };
+  cimdResponse?: {
+    status: number;
+    body: any;
+    headers?: Record<string, string>;
+  };
+  cache?: Map<string, XaaEphemeralDcrCredentials>;
+  registrationId?: string;
+  seedDuplicateRisk?: boolean;
+}
+
+function createDynamicHarness(options: DynamicHarnessOptions) {
+  const cache = options.cache ?? new Map<string, XaaEphemeralDcrCredentials>();
+  const cacheSet = vi.fn((key: string, value: XaaEphemeralDcrCredentials) => {
+    cache.set(key, value);
+  });
+
+  let state: XAAFlowState = createInitialXAAFlowState({
+    serverUrl: "https://mcp.example.com",
+    userId: "user-12345",
+    email: "demo.user@example.com",
+    scope: "read:tools",
+    registrationStrategy: options.strategy,
+    // Simulates the per-target duplicate-risk flag re-seeded into a fresh
+    // (from-idle) run after an ordinary reset.
+    ...(options.seedDuplicateRisk
+      ? { dcrRetryMayCreateDuplicate: true }
+      : {}),
+  });
+
+  const externalCalls: Array<{ url: string; init?: any }> = [];
+  const internalCalls: Array<{ path: string; init?: any }> = [];
+
+  const registerResponse = options.registerResponse ?? {
+    status: 201,
+    headers: {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+    },
+    body: {
+      client_id: "minted-client",
+      client_secret: DCR_SECRET,
+      client_secret_expires_at: 0,
+      token_endpoint_auth_method: "client_secret_post",
+      client_name: "MCPJam XAA Debugger",
+      grant_types: [
+        "urn:ietf:params:oauth:grant-type:token-exchange",
+        "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      ],
+      authorization_grant_profiles_supported: [
+        "urn:ietf:params:oauth:grant-profile:id-jag",
+      ],
+    },
+  };
+
+  const cimdResponse = options.cimdResponse ?? {
+    status: 200,
+    headers: { "content-type": "application/json" },
+    body: {
+      client_id: XAA_DEBUG_CLIENT_ID_METADATA_URL,
+      client_name: "MCPJam XAA Debugger",
+      grant_types: [
+        "urn:ietf:params:oauth:grant-type:token-exchange",
+        "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      ],
+      authorization_grant_profiles_supported: [
+        "urn:ietf:params:oauth:grant-profile:id-jag",
+      ],
+      token_endpoint_auth_method: "none",
+    },
+  };
+
+  const executor = {
+    externalRequest: vi.fn(async (url: string, init?: any) => {
+      externalCalls.push({ url, init });
+      if (url.includes(".well-known/oauth-protected-resource")) {
+        return {
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: {
+            resource: "https://mcp.example.com",
+            authorization_servers: ["https://auth.example.com"],
+          },
+          ok: true,
+        };
+      }
+      if (url.includes(".well-known/oauth-authorization-server")) {
+        return {
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: {
+            issuer: "https://auth.example.com",
+            token_endpoint: "https://auth.example.com/oauth/token",
+            registration_endpoint: REGISTRATION_ENDPOINT,
+            ...(options.authzMetadataExtras ?? {}),
+          },
+          ok: true,
+        };
+      }
+      if (url === REGISTRATION_ENDPOINT) {
+        return {
+          status: registerResponse.status,
+          statusText: "",
+          headers: registerResponse.headers ?? {},
+          body: registerResponse.body,
+          ok: registerResponse.status >= 200 && registerResponse.status < 300,
+        };
+      }
+      if (url === XAA_DEBUG_CLIENT_ID_METADATA_URL) {
+        return {
+          status: cimdResponse.status,
+          statusText: "",
+          headers: cimdResponse.headers ?? {},
+          body: cimdResponse.body,
+          ok: cimdResponse.status >= 200 && cimdResponse.status < 300,
+        };
+      }
+      return {
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: { result: { serverInfo: { name: "demo" } } },
+        ok: true,
+      };
+    }),
+    internalRequest: vi.fn(async (path: string, init?: any) => {
+      internalCalls.push({ path, init });
+      if (path === "/authenticate") {
+        return {
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: {
+            id_token: makeJwt(
+              { iss: "https://issuer.example/api/web/xaa", sub: "user-12345" },
+              { alg: "RS256", typ: "JWT", kid: "xaa-idp-1" }
+            ),
+          },
+          ok: true,
+        };
+      }
+      if (path === "/token-exchange") {
+        const body = JSON.parse(init.body);
+        return {
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: {
+            id_jag: makeJwt({
+              iss: "https://issuer.example/api/web/xaa",
+              sub: "user-12345",
+              aud: "https://auth.example.com",
+              resource: "https://mcp.example.com",
+              client_id: body.clientId,
+              exp: Math.floor(Date.now() / 1000) + 300,
+              scope: "read:tools",
+            }),
+          },
+          ok: true,
+        };
+      }
+      return {
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: {
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: {
+            access_token: "access-token",
+            token_type: "Bearer",
+            expires_in: 300,
+          },
+        },
+        ok: true,
+      };
+    }),
+  };
+
+  const machine = createXAAStateMachine({
+    state,
+    getState: () => state,
+    updateState: (updates) => {
+      state = { ...state, ...updates };
+    },
+    serverUrl: "https://mcp.example.com",
+    issuerBaseUrl: "https://issuer.example/api/web/xaa",
+    requestExecutor: executor,
+    userId: "user-12345",
+    email: "demo.user@example.com",
+    scope: "read:tools",
+    registrationStrategy: options.strategy,
+    registrationId: options.registrationId,
+    dcrCredentialCache: {
+      get: (key) => cache.get(key),
+      set: cacheSet,
+      delete: (key) => {
+        cache.delete(key);
+      },
+    },
+    dcrCacheTargetKey: "target-1",
+  });
+
+  return {
+    machine,
+    getState: () => state,
+    executor,
+    externalCalls,
+    internalCalls,
+    cache,
+    cacheSet,
+    registerCalls: () =>
+      externalCalls.filter((call) => call.url === REGISTRATION_ENDPOINT),
+    cimdFetches: () =>
+      externalCalls.filter(
+        (call) => call.url === XAA_DEBUG_CLIENT_ID_METADATA_URL
+      ),
+    proxyTokenBody: () => {
+      const call = internalCalls.find((entry) => entry.path === "/proxy/token");
+      return call ? JSON.parse(call.init.body) : undefined;
+    },
+    tokenExchangeBody: () => {
+      const call = internalCalls.find(
+        (entry) => entry.path === "/token-exchange"
+      );
+      return call ? JSON.parse(call.init.body) : undefined;
+    },
+  };
+}
+
+describe("open dcr registration strategy", () => {
+  it("registers, then completes the flow with the minted client", async () => {
+    const harness = createDynamicHarness({ strategy: "dcr" });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("complete");
+    expect(state.clientId).toBe("minted-client");
+    expect(state.tokenEndpointAuthMethod).toBe("client_secret_post");
+    expect(harness.registerCalls()).toHaveLength(1);
+
+    // The ID-JAG mint and the redemption both carry the minted identity.
+    expect(harness.tokenExchangeBody().clientId).toBe("minted-client");
+    const proxyBody = harness.proxyTokenBody();
+    expect(proxyBody.clientId).toBe("minted-client");
+    expect(proxyBody.clientSecret).toBe(DCR_SECRET);
+    expect(proxyBody.tokenEndpointAuthMethod).toBe("client_secret_post");
+
+    // The raw secret lives ONLY in the session cache and the outbound
+    // internal request — never in any serialized flow state surface.
+    const serialized = JSON.stringify(state);
+    expect(serialized).not.toContain(DCR_SECRET);
+    expect(serialized).not.toContain(DCR_SECRET.substring(0, 10));
+    const registrationEntry = (state.httpHistory || []).find(
+      (entry) => entry.step === "request_client_registration"
+    );
+    expect(registrationEntry?.response?.status).toBe(201);
+    expect(registrationEntry?.response?.body.client_secret).toBe(
+      "***REDACTED***"
+    );
+    // The logged /proxy/token request masks the secret.
+    const proxyEntry = (state.httpHistory || []).find(
+      (entry) => entry.step === "jwt_bearer_request"
+    );
+    expect(proxyEntry?.request.body.clientSecret).toBe(CLIENT_SECRET_MASK);
+  });
+
+  it("continues as a public client with a posture warning when the method is none", async () => {
+    const harness = createDynamicHarness({
+      strategy: "dcr",
+      registerResponse: {
+        status: 201,
+        headers: { "content-type": "application/json" },
+        body: {
+          client_id: "public-client",
+          token_endpoint_auth_method: "none",
+        },
+      },
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("complete");
+    expect(
+      state.registrationWarnings?.some((w) => w.code === "public_client")
+    ).toBe(true);
+    const proxyBody = harness.proxyTokenBody();
+    expect(proxyBody.clientSecret).toBeUndefined();
+    expect(proxyBody.tokenEndpointAuthMethod).toBe("none");
+  });
+
+  it("records echo warnings but continues when metadata is omitted", async () => {
+    const harness = createDynamicHarness({
+      strategy: "dcr",
+      registerResponse: {
+        status: 200,
+        headers: {},
+        body: {
+          client_id: "echoless-client",
+          client_secret: DCR_SECRET,
+          token_endpoint_auth_method: "client_secret_post",
+        },
+      },
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("complete");
+    const codes = (state.registrationWarnings || []).map((w) => w.code);
+    expect(codes).toContain("profile_metadata_not_echoed");
+    expect(codes).toContain("grant_types_not_echoed");
+    expect(codes).toContain("missing_secret_expiry");
+    expect(codes).toContain("non_201_success");
+  });
+
+  it("parks when grant_types explicitly omits the JWT Bearer grant", async () => {
+    const harness = createDynamicHarness({
+      strategy: "dcr",
+      registerResponse: {
+        status: 201,
+        headers: { "content-type": "application/json" },
+        body: {
+          client_id: "no-bearer-client",
+          client_secret: DCR_SECRET,
+          token_endpoint_auth_method: "client_secret_post",
+          grant_types: ["authorization_code"],
+        },
+      },
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("request_client_registration");
+    expect(state.error).toContain("JWT Bearer");
+    expect(state.dcrRetryMayCreateDuplicate).toBe(true);
+    expect(
+      harness.internalCalls.some((c) => c.path === "/authenticate")
+    ).toBe(false);
+  });
+
+  it("parks on an unusable client-auth method as a debugger limitation", async () => {
+    const harness = createDynamicHarness({
+      strategy: "dcr",
+      registerResponse: {
+        status: 201,
+        headers: { "content-type": "application/json" },
+        body: {
+          client_id: "pkjwt-client",
+          token_endpoint_auth_method: "private_key_jwt",
+        },
+      },
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("request_client_registration");
+    expect(state.error).toContain("debugger limitation");
+  });
+
+  it("falls back to the requested method (with a warning) when DCR omits token_endpoint_auth_method", async () => {
+    // Secret issued but no method echoed → assume the requested
+    // client_secret_post and continue to redemption, don't park.
+    const harness = createDynamicHarness({
+      strategy: "dcr",
+      registerResponse: {
+        status: 201,
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "no-store",
+        },
+        body: {
+          client_id: "no-method-client",
+          client_secret: DCR_SECRET,
+          client_secret_expires_at: 0,
+          // token_endpoint_auth_method deliberately omitted.
+        },
+      },
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("complete");
+    expect(
+      state.registrationWarnings?.some((w) => w.code === "auth_method_not_echoed")
+    ).toBe(true);
+    const proxyBody = harness.proxyTokenBody();
+    expect(proxyBody.clientId).toBe("no-method-client");
+    expect(proxyBody.tokenEndpointAuthMethod).toBe("client_secret_post");
+  });
+
+  it("parks on a non-string token_endpoint_auth_method (malformed, not omitted)", async () => {
+    const harness = createDynamicHarness({
+      strategy: "dcr",
+      registerResponse: {
+        status: 201,
+        headers: { "content-type": "application/json" },
+        body: {
+          client_id: "malformed-method-client",
+          client_secret: DCR_SECRET,
+          token_endpoint_auth_method: 123, // present but not a string
+        },
+      },
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    // Must NOT be treated as omitted-and-fall-back; a present malformed member
+    // is a malformed registration.
+    expect(state.currentStep).toBe("request_client_registration");
+    expect(state.error).toContain("malformed");
+    expect(
+      harness.internalCalls.some((c) => c.path === "/authenticate")
+    ).toBe(false);
+  });
+
+  it("treats an omitted method with no secret as a public client", async () => {
+    const harness = createDynamicHarness({
+      strategy: "dcr",
+      registerResponse: {
+        status: 201,
+        headers: { "content-type": "application/json" },
+        body: { client_id: "public-no-method" }, // no secret, no method
+      },
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("complete");
+    const codes = (state.registrationWarnings || []).map((w) => w.code);
+    expect(codes).toContain("auth_method_not_echoed");
+    expect(codes).toContain("public_client");
+    expect(harness.proxyTokenBody().tokenEndpointAuthMethod).toBe("none");
+  });
+
+  it("parks on refusal and gates the retry behind duplicate-client confirmation", async () => {
+    const harness = createDynamicHarness({
+      strategy: "dcr",
+      registerResponse: {
+        status: 403,
+        headers: {},
+        body: { error: "access_denied" },
+      },
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("request_client_registration");
+    expect(state.error).toContain("open Dynamic Client Registration");
+    expect(state.dcrRetryMayCreateDuplicate).toBe(true);
+    expect(harness.registerCalls()).toHaveLength(1);
+    expect(
+      harness.internalCalls.some((c) => c.path === "/authenticate")
+    ).toBe(false);
+
+    // Ordinary Continue must NOT POST again while the flag is set...
+    await harness.machine.proceedToNextStep();
+    expect(harness.registerCalls()).toHaveLength(1);
+
+    // ...but clearing it (the confirmed "Register another client" path)
+    // allows exactly one new POST.
+    harness.machine.updateState({
+      dcrRetryMayCreateDuplicate: false,
+      error: undefined,
+    });
+    await harness.machine.proceedToNextStep();
+    expect(harness.registerCalls()).toHaveLength(2);
+  });
+
+  it("gates a from-idle run behind confirmation when a prior POST may have created a client", async () => {
+    // The duplicate-risk flag is re-seeded into a fresh run (as the component
+    // does after an ordinary reset). With no reusable cache entry, the machine
+    // must park for confirmation rather than silently POSTing a second client.
+    const harness = createDynamicHarness({
+      strategy: "dcr",
+      seedDuplicateRisk: true,
+    });
+    await harness.machine.runAll();
+    let state = harness.getState();
+
+    expect(state.currentStep).toBe("request_client_registration");
+    expect(state.error).toContain("Register another client");
+    expect(harness.registerCalls()).toHaveLength(0);
+    expect(
+      harness.internalCalls.some((c) => c.path === "/authenticate")
+    ).toBe(false);
+
+    // Clearing the flag (the confirmed "Register another client" path — which
+    // also rebuilds the flow, clearing the parked error) lets exactly one
+    // registration POST through.
+    harness.machine.updateState({
+      dcrRetryMayCreateDuplicate: false,
+      error: undefined,
+    });
+    await harness.machine.runAll();
+    state = harness.getState();
+    expect(harness.registerCalls()).toHaveLength(1);
+    expect(state.currentStep).toBe("complete");
+  });
+
+  it("parks cleanly when no registration_endpoint is advertised", async () => {
+    const harness = createDynamicHarness({
+      strategy: "dcr",
+      authzMetadataExtras: { registration_endpoint: undefined },
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("request_client_registration");
+    expect(state.error).toContain("registration_endpoint");
+    expect(harness.registerCalls()).toHaveLength(0);
+  });
+
+  it("reuses the session registration instead of POSTing again", async () => {
+    const cache = new Map<string, XaaEphemeralDcrCredentials>();
+    const first = createDynamicHarness({ strategy: "dcr", cache });
+    await first.machine.runAll();
+    expect(first.registerCalls()).toHaveLength(1);
+
+    const second = createDynamicHarness({ strategy: "dcr", cache });
+    await second.machine.runAll();
+    const state = second.getState();
+
+    expect(state.currentStep).toBe("complete");
+    expect(state.dcrRegistrationReused).toBe(true);
+    expect(second.registerCalls()).toHaveLength(0);
+    expect(second.proxyTokenBody().clientSecret).toBe(DCR_SECRET);
+  });
+
+  it("gates re-registration behind confirmation when the cached secret has expired", async () => {
+    const cache = new Map<string, XaaEphemeralDcrCredentials>();
+    const key = dcrCacheKey(REGISTRATION_ENDPOINT, "read:tools");
+    cache.set(key, {
+      clientId: "expired-client",
+      clientSecret: "expired-secret",
+      tokenEndpointAuthMethod: "client_secret_post",
+      clientSecretExpiresAt: Math.floor(Date.now() / 1000) - 60,
+      registrationEndpoint: REGISTRATION_ENDPOINT,
+    });
+    const harness = createDynamicHarness({ strategy: "dcr", cache });
+    await harness.machine.runAll();
+    let state = harness.getState();
+
+    // Replacing an expired client mints another remote client — gate it behind
+    // confirmation rather than silently re-registering.
+    expect(state.currentStep).toBe("request_client_registration");
+    expect(state.error).toContain("expired");
+    expect(state.dcrRetryMayCreateDuplicate).toBe(true);
+    expect(harness.registerCalls()).toHaveLength(0);
+    expect(cache.has(key)).toBe(false); // the dead entry is discarded
+
+    // After the confirmed "Register another client" (flag cleared), exactly one
+    // fresh registration goes through.
+    harness.machine.updateState({
+      dcrRetryMayCreateDuplicate: false,
+      error: undefined,
+    });
+    await harness.machine.runAll();
+    expect(harness.registerCalls()).toHaveLength(1);
+    expect(harness.getState().clientId).toBe("minted-client");
+  });
+
+  it("does not reuse a registration cached under a different scope", async () => {
+    const cache = new Map<string, XaaEphemeralDcrCredentials>();
+    // Cached under a scope other than the run's "read:tools".
+    cache.set(dcrCacheKey(REGISTRATION_ENDPOINT, "other:scope"), {
+      clientId: "other-scope-client",
+      clientSecret: "s",
+      tokenEndpointAuthMethod: "client_secret_post",
+      clientSecretExpiresAt: 0,
+      registrationEndpoint: REGISTRATION_ENDPOINT,
+    });
+    const harness = createDynamicHarness({ strategy: "dcr", cache });
+    await harness.machine.runAll();
+
+    // Scope is part of the client's metadata, so the different-scope entry is
+    // not reused — the run registers a fresh client.
+    expect(harness.registerCalls()).toHaveLength(1);
+    expect(harness.getState().clientId).toBe("minted-client");
+  });
+
+  it("is forced to pre_registered when a registrationId is present", async () => {
+    const harness = createDynamicHarness({
+      strategy: "dcr",
+      registrationId: "reg-1",
+    });
+    // Behavior, not just the flag: at received_authz_metadata the machine
+    // goes straight to IdP authentication — no registration POST is issued.
+    for (let index = 0; index < 3; index += 1) {
+      await harness.machine.proceedToNextStep();
+    }
+    expect(harness.registerCalls()).toHaveLength(0);
+    expect(
+      harness.internalCalls.some((call) => call.path === "/authenticate")
+    ).toBe(true);
+  });
+
+  it("parks the token request when the cached secret has expired mid-run", async () => {
+    // Register with a secret that is valid at registration but expires before
+    // redemption. runAll registers/authenticates/exchanges, then we expire the
+    // cached secret in place before the jwt-bearer step redeems it.
+    const cache = new Map<string, XaaEphemeralDcrCredentials>();
+    const harness = createDynamicHarness({
+      strategy: "dcr",
+      registerResponse: {
+        status: 201,
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "no-store",
+        },
+        body: {
+          client_id: "minted-client",
+          client_secret: DCR_SECRET,
+          client_secret_expires_at: Math.floor(Date.now() / 1000) + 300,
+          token_endpoint_auth_method: "client_secret_post",
+        },
+      },
+      cache,
+    });
+    for (let index = 0; index < 5; index += 1) {
+      await harness.machine.proceedToNextStep();
+    }
+    // Expire the cached secret in place, then let redemption run. (Cache key
+    // includes the run's scope.)
+    const key = dcrCacheKey(REGISTRATION_ENDPOINT, "read:tools");
+    cache.set(key, {
+      ...cache.get(key)!,
+      clientSecretExpiresAt: Math.floor(Date.now() / 1000) - 1,
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("jwt_bearer_request");
+    expect(state.error).toContain("expired");
+    expect(cache.has(key)).toBe(false);
+    // The recovery action ("Register another client") is gated on this flag —
+    // it must be set so the error's instruction is actually actionable.
+    expect(state.dcrRetryMayCreateDuplicate).toBe(true);
+    expect(
+      harness.internalCalls.some((c) => c.path === "/proxy/token")
+    ).toBe(false);
+  });
+
+  it("parks the token request when the session credentials are gone", async () => {
+    const cache = new Map<string, XaaEphemeralDcrCredentials>();
+    const harness = createDynamicHarness({ strategy: "dcr", cache });
+    // Register, authenticate, exchange, inspect — then wipe the cache before
+    // redemption (simulates a lost session cache mid-run).
+    for (let index = 0; index < 5; index += 1) {
+      await harness.machine.proceedToNextStep();
+    }
+    cache.clear();
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("jwt_bearer_request");
+    expect(state.error).toContain("no longer available");
+    // The error tells the user to "Register another client" — the gate flag
+    // must be set so that action is actually visible.
+    expect(state.dcrRetryMayCreateDuplicate).toBe(true);
+    expect(
+      harness.internalCalls.some((c) => c.path === "/proxy/token")
+    ).toBe(false);
+  });
+});
+
+describe("cimd registration strategy", () => {
+  const CIMD_SUPPORTED = { client_id_metadata_document_supported: true };
+
+  it("preflights the hosted document and completes with the URL identity", async () => {
+    const harness = createDynamicHarness({
+      strategy: "cimd",
+      authzMetadataExtras: CIMD_SUPPORTED,
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("complete");
+    expect(state.clientId).toBe(XAA_DEBUG_CLIENT_ID_METADATA_URL);
+    expect(state.tokenEndpointAuthMethod).toBe("none");
+    expect(
+      state.registrationWarnings?.some((w) => w.code === "public_client")
+    ).toBe(true);
+
+    // Exactly one preflight GET, with manual redirect handling.
+    const fetches = harness.cimdFetches();
+    expect(fetches).toHaveLength(1);
+    expect(fetches[0].init.redirect).toBe("manual");
+
+    // The ID-JAG claim and redemption both carry the exact URL, no secret.
+    expect(harness.tokenExchangeBody().clientId).toBe(
+      XAA_DEBUG_CLIENT_ID_METADATA_URL
+    );
+    const proxyBody = harness.proxyTokenBody();
+    expect(proxyBody.clientId).toBe(XAA_DEBUG_CLIENT_ID_METADATA_URL);
+    expect(proxyBody.clientSecret).toBeUndefined();
+    expect(proxyBody.tokenEndpointAuthMethod).toBe("none");
+
+    // CIMD never touches the DCR credential cache.
+    expect(harness.cacheSet).not.toHaveBeenCalled();
+    expect(harness.getState().dcrRetryMayCreateDuplicate).toBeUndefined();
+  });
+
+  it("parks before any fetch when the AS does not advertise CIMD support", async () => {
+    const absent = createDynamicHarness({ strategy: "cimd" });
+    await absent.machine.runAll();
+    expect(absent.getState().currentStep).toBe(
+      "fetch_client_metadata_document"
+    );
+    expect(absent.getState().error).toContain("does not advertise");
+    expect(absent.cimdFetches()).toHaveLength(0);
+
+    const explicit = createDynamicHarness({
+      strategy: "cimd",
+      authzMetadataExtras: { client_id_metadata_document_supported: false },
+    });
+    await explicit.machine.runAll();
+    expect(explicit.getState().error).toContain("explicitly");
+    expect(explicit.cimdFetches()).toHaveLength(0);
+  });
+
+  it("parks on a redirect and retries freely without a confirmation gate", async () => {
+    const harness = createDynamicHarness({
+      strategy: "cimd",
+      authzMetadataExtras: CIMD_SUPPORTED,
+      cimdResponse: {
+        status: 302,
+        headers: { location: "https://elsewhere.example/doc.json" },
+        body: null,
+      },
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("fetch_client_metadata_document");
+    expect(state.error).toContain("redirect");
+    expect(state.dcrRetryMayCreateDuplicate).toBeUndefined();
+
+    await harness.machine.proceedToNextStep();
+    expect(harness.cimdFetches()).toHaveLength(2);
+  });
+
+  it("parks when the document's client_id is not exactly the URL", async () => {
+    const harness = createDynamicHarness({
+      strategy: "cimd",
+      authzMetadataExtras: CIMD_SUPPORTED,
+      cimdResponse: {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        body: {
+          client_id: `${XAA_DEBUG_CLIENT_ID_METADATA_URL}?v=2`,
+          grant_types: [
+            "urn:ietf:params:oauth:grant-type:token-exchange",
+            "urn:ietf:params:oauth:grant-type:jwt-bearer",
+          ],
+          authorization_grant_profiles_supported: [
+            "urn:ietf:params:oauth:grant-profile:id-jag",
+          ],
+          token_endpoint_auth_method: "none",
+        },
+      },
+    });
+    await harness.machine.runAll();
+    expect(harness.getState().error).toContain("exactly equal");
+  });
+
+  it("parks on a shared-secret auth method as a malformed document", async () => {
+    const harness = createDynamicHarness({
+      strategy: "cimd",
+      authzMetadataExtras: CIMD_SUPPORTED,
+      cimdResponse: {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        body: {
+          client_id: XAA_DEBUG_CLIENT_ID_METADATA_URL,
+          grant_types: [
+            "urn:ietf:params:oauth:grant-type:token-exchange",
+            "urn:ietf:params:oauth:grant-type:jwt-bearer",
+          ],
+          authorization_grant_profiles_supported: [
+            "urn:ietf:params:oauth:grant-profile:id-jag",
+          ],
+          token_endpoint_auth_method: "client_secret_post",
+        },
+      },
+    });
+    await harness.machine.runAll();
+    expect(harness.getState().error).toContain("malformed");
+  });
+
+  const cimdDoc = {
+    client_id: XAA_DEBUG_CLIENT_ID_METADATA_URL,
+    grant_types: [
+      "urn:ietf:params:oauth:grant-type:token-exchange",
+      "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    ],
+    authorization_grant_profiles_supported: [
+      "urn:ietf:params:oauth:grant-profile:id-jag",
+    ],
+    token_endpoint_auth_method: "none",
+  };
+
+  it.each([
+    "application/json",
+    "application/json; charset=utf-8",
+    "APPLICATION/JSON",
+    "application/ld+json",
+    "application/vnd_acme+json",
+  ])("accepts the JSON media type %s", async (contentType) => {
+    const harness = createDynamicHarness({
+      strategy: "cimd",
+      authzMetadataExtras: CIMD_SUPPORTED,
+      cimdResponse: { status: 200, headers: { "content-type": contentType }, body: cimdDoc },
+    });
+    await harness.machine.runAll();
+    expect(harness.getState().currentStep).toBe("complete");
+  });
+
+  it.each([
+    "application/jsonp",
+    "text/application/json",
+    "application/+json",
+    "application/-+json",
+    "text/html",
+  ])("parks on the non-JSON media type %s", async (contentType) => {
+    const harness = createDynamicHarness({
+      strategy: "cimd",
+      authzMetadataExtras: CIMD_SUPPORTED,
+      cimdResponse: { status: 200, headers: { "content-type": contentType }, body: cimdDoc },
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+    expect(state.currentStep).toBe("fetch_client_metadata_document");
+    expect(state.error).toContain("not a JSON media type");
+  });
+
+  it("parks when the document omits the required grants (no echo tolerance)", async () => {
+    const harness = createDynamicHarness({
+      strategy: "cimd",
+      authzMetadataExtras: CIMD_SUPPORTED,
+      cimdResponse: {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        body: {
+          client_id: XAA_DEBUG_CLIENT_ID_METADATA_URL,
+          token_endpoint_auth_method: "none",
+        },
+      },
+    });
+    await harness.machine.runAll();
+    expect(harness.getState().error).toContain("insufficient");
   });
 });

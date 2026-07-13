@@ -1,5 +1,6 @@
 import dns from "node:dns/promises";
 import {
+  executeDebugOAuthProxy,
   executeOAuthProxy,
   fetchOAuthMetadata,
   OAuthProxyError,
@@ -68,6 +69,47 @@ describe("oauth-proxy helpers", () => {
       fetchOAuthMetadata("https://auth.example.com/.well-known/oauth"),
     ).resolves.toEqual({
       metadata: { issuer: "https://auth.example.com" },
+    });
+  });
+
+  describe("redirect option plumbing", () => {
+    const jsonResponse = () =>
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+
+    const lastFetchRedirect = () =>
+      (global.fetch as jest.Mock).mock.calls.at(-1)?.[1]?.redirect;
+
+    it.each([executeOAuthProxy, executeDebugOAuthProxy])(
+      "%o honors an explicit manual redirect without httpsOnly",
+      async (proxyFn) => {
+        (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse());
+        await proxyFn({
+          url: "http://localhost:3000/client.json",
+          redirect: "manual",
+        });
+        expect(lastFetchRedirect()).toBe("manual");
+      }
+    );
+
+    it("preserves the historical follow default when redirect is omitted", async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse());
+      await executeDebugOAuthProxy({ url: "http://localhost:3000/metadata" });
+      expect(lastFetchRedirect()).toBe("follow");
+    });
+
+    it("cannot weaken httpsOnly to follow with an explicit redirect", async () => {
+      vi.mocked(dns.resolve4).mockResolvedValueOnce(["93.184.216.34"]);
+      vi.mocked(dns.resolve6).mockResolvedValueOnce([]);
+      (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse());
+      await executeDebugOAuthProxy({
+        url: "https://example.com/metadata",
+        httpsOnly: true,
+        redirect: "follow",
+      });
+      expect(lastFetchRedirect()).toBe("manual");
     });
   });
 });
