@@ -24,6 +24,12 @@ export const SWARM_QUERIES = {
   listSessionsByJourneyRun: "journeyRuns:listSessionsByJourneyRun",
 } as const;
 
+// ── Convex action names (string-keyed calls) ────────────────────────────────
+export const SWARM_ACTIONS = {
+  /** Source-agnostic promote-dialog detail read (`convex/chatSessionPromote.ts`). */
+  getChatSessionPromoteDetail: "chatSessionPromote:getChatSessionPromoteDetail",
+} as const;
+
 // ── DTOs ────────────────────────────────────────────────────────────────────
 
 /** Terminal + in-flight states a journey run can surface in the UI. */
@@ -50,11 +56,38 @@ export interface JourneyHostSummary {
   rateLimited: number;
 }
 
+/**
+ * Aggregated goal-completion judge rollup — backend `GoalScoreSummary`
+ * (`convex/lib/swarmJudge.ts`). `avgScore` averages COMPLETED verdicts only.
+ */
+export interface GoalScoreRollup {
+  gradedCount: number;
+  passedCount: number;
+  avgScore: number | null;
+  pendingCount?: number;
+  failedCount?: number;
+}
+
+/**
+ * Compact per-session judge verdict — the denormalized
+ * `chatSessions.goalScore` subset (full verdict lives on the check row).
+ */
+export interface SessionGoalScore {
+  status?: string;
+  score?: number;
+  passed?: boolean;
+  threshold?: number;
+  reason?: string;
+  error?: string;
+}
+
 export interface JourneyRun {
   _id: string;
   status: JourneyRunStatus | string;
   summary: JourneyRunSummary;
   hostSummaries: JourneyHostSummary[];
+  /** Judge rollup for this run's sessions (absent until first grading). */
+  goalScoreSummary?: GoalScoreRollup;
   createdAt: number;
 }
 
@@ -82,6 +115,31 @@ export interface JourneySessionRow {
     verdict?: string;
     issueCount?: number;
   };
+  /** Server-denormalized judge verdict subset (see `swarmJudge.ts` backend). */
+  goalScore?: SessionGoalScore;
+}
+
+/**
+ * `chatSessionPromote:getChatSessionPromoteDetail` result — the promote
+ * dialog's session-servers detail for any promotable sourceType.
+ * `usedServerIds` is derived server-side from the stored transcript;
+ * `hostId` is the session row's authoritative host attribution (used to
+ * pre-seed the new-suite client attachment). The action THROWS on
+ * unauthorized access, non-promotable sourceTypes, incomplete swarm run
+ * attempts, and unreadable transcripts — adapters surface that as the
+ * dialog's detail error.
+ */
+export interface SwarmSessionPromoteDetail {
+  sessionId: string;
+  chatSessionId: string;
+  sourceType?: string;
+  projectId: string | null;
+  title: string | null;
+  firstMessagePreview: string;
+  messageCount: number;
+  usedServerIds: string[];
+  selectedServers: string[];
+  hostId: string | null;
 }
 
 /**
@@ -97,6 +155,8 @@ export interface PersonaTrackRecord {
   runCount: number;
   sessionCount: number;
   readiness?: Record<string, unknown>;
+  /** Persona-level judge rollup (absent on older backends). */
+  goalScore?: GoalScoreRollup;
   sessionExamples?: unknown[];
 }
 
@@ -108,6 +168,8 @@ export interface JourneyHostRollup {
   failed: number;
   rateLimited: number;
   readiness?: Record<string, unknown>;
+  /** Per-host judge rollup (absent on older backends). */
+  goalScore?: GoalScoreRollup;
 }
 
 /**

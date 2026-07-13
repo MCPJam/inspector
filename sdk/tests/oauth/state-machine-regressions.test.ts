@@ -472,4 +472,70 @@ describe("OAuth state machine regressions", () => {
       expect(summary?.data["CIMD Supported"]).toBe(expectedRow);
     },
   );
+
+  // Regression (Codex review, PR #3138): a strict-conformance 2xx registration
+  // response with a non-object body is classified invalid_response by the
+  // shared helper. The old success-path strict missing-client_id branch cleared
+  // isInitiatingAuth for that exact body shape, so the reclassification must
+  // still clear it — otherwise the flow is left "initiating" after failing.
+  it.each(["2025-03-26", "2025-06-18"] as const)(
+    "clears isInitiatingAuth on a strict invalid_response DCR body in %s",
+    async (protocolVersion) => {
+      let state = {
+        ...EMPTY_OAUTH_FLOW_STATE,
+        currentStep: "request_client_registration" as const,
+        authorizationServerMetadata: {
+          registration_endpoint: REGISTRATION_ENDPOINT,
+        },
+        lastRequest: {
+          method: "POST",
+          url: REGISTRATION_ENDPOINT,
+          headers: {},
+          body: { client_name: "Test Client" },
+        },
+        httpHistory: [
+          {
+            step: "request_client_registration" as const,
+            timestamp: Date.now(),
+            request: {
+              method: "POST",
+              url: REGISTRATION_ENDPOINT,
+              headers: {},
+              body: { client_name: "Test Client" },
+            },
+          },
+        ],
+        infoLogs: [],
+        isInitiatingAuth: true,
+      };
+
+      const machine = createOAuthStateMachine({
+        protocolVersion,
+        registrationStrategy: "dcr",
+        strictConformance: true,
+        state,
+        getState: () => state,
+        updateState: (updates) => {
+          state = { ...state, ...updates };
+        },
+        serverUrl: SERVER_URL,
+        serverName: "Test Server",
+        redirectUrl: REDIRECT_URI,
+        // 2xx with a non-object body → invalid_response.
+        requestExecutor: jest.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: "not-json",
+        }),
+        dynamicRegistration: { client_name: "Test Client" },
+      });
+
+      await machine.proceedToNextStep();
+
+      expect(state.error).toBeTruthy();
+      expect(state.isInitiatingAuth).toBe(false);
+    },
+  );
 });

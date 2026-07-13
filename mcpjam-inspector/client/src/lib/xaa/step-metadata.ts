@@ -85,6 +85,10 @@ export const XAA_STEP_ORDER: XAAFlowStep[] = [
   "received_resource_metadata",
   "discover_authz_metadata",
   "received_authz_metadata",
+  "request_client_registration",
+  "received_client_credentials",
+  "fetch_client_metadata_document",
+  "received_client_metadata",
   "user_authentication",
   "received_identity_assertion",
   "token_exchange_request",
@@ -139,6 +143,47 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
     phase: "bootstrap",
     teachableMoments: [
       "If discovery fails, the Authorization Server's issuer or its metadata URL is usually misconfigured.",
+    ],
+  },
+  request_client_registration: {
+    title: "Register a Client at the Authorization Server",
+    summary:
+      "Open Dynamic Client Registration: the Agent asks the Authorization Server to create a client for the XAA grant types, without an initial access token. (RFC 7591.)",
+    phase: "bootstrap",
+    teachableMoments: [
+      "The XAA spec assumes the client is already registered — registration is setup, not part of the grant. This step automates that setup when the server allows open registration.",
+      "A 401/403 here means open registration wasn't accepted; the server may still support DCR behind an initial access token.",
+      "The registration created here is real and may persist at the Authorization Server after this session ends.",
+    ],
+  },
+  received_client_credentials: {
+    title: "Client Registered",
+    summary:
+      "The Authorization Server created the client. MCPJam keeps its credentials in memory for this browser session only.",
+    phase: "bootstrap",
+    teachableMoments: [
+      "The minted client_id now flows into the ID-JAG and the token request — the whole rest of the flow runs as this client.",
+      "Whether the server actually enabled the JWT Bearer grant for this client is proven later, at redemption.",
+    ],
+  },
+  fetch_client_metadata_document: {
+    title: "Preflight the Client Metadata Document",
+    summary:
+      "CIMD: the client_id is a URL to MCPJam's hosted metadata document. The debugger fetches and validates it — the Authorization Server does its own fetch later.",
+    phase: "bootstrap",
+    teachableMoments: [
+      "With CIMD there's nothing to register: the Authorization Server learns about the client by fetching the URL the client_id points at.",
+      "This fetch is only the debugger's preflight. Whether the Authorization Server accepts the URL identity is proven at JWT Bearer redemption.",
+      "The Authorization Server must advertise client_id_metadata_document_supported before a client may attempt this flow.",
+    ],
+  },
+  received_client_metadata: {
+    title: "Client Metadata Document Ready",
+    summary:
+      "The hosted document validated: its client_id equals its URL and it declares the XAA grants. The URL is now this run's client_id.",
+    phase: "bootstrap",
+    teachableMoments: [
+      "CIMD without a key-based auth method is a public client — anyone can present this URL. The Authorization Server accepts the identity, it doesn't authenticate it.",
     ],
   },
   user_authentication: {

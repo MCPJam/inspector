@@ -11,6 +11,10 @@ export type XAAFlowStep =
   | "received_resource_metadata"
   | "discover_authz_metadata"
   | "received_authz_metadata"
+  | "request_client_registration"
+  | "received_client_credentials"
+  | "fetch_client_metadata_document"
+  | "received_client_metadata"
   | "user_authentication"
   | "received_identity_assertion"
   | "token_exchange_request"
@@ -20,6 +24,53 @@ export type XAAFlowStep =
   | "received_access_token"
   | "authenticated_mcp_request"
   | "complete";
+
+/** How the flow's client identity at the target AS is established.
+ * `pre_registered` (default) = user-supplied credentials, today's behavior.
+ * `dcr` = open RFC 7591 registration (no initial access token).
+ * `cimd` = MCPJam's hosted Client ID Metadata Document URL as the client_id. */
+export type XaaRegistrationStrategy = "pre_registered" | "dcr" | "cimd";
+
+/** Token-endpoint client-auth methods the debugger can actually redeem. */
+export type XaaTokenEndpointAuthMethod =
+  | "client_secret_post"
+  | "client_secret_basic"
+  | "none";
+
+export type XaaRegistrationWarningCode =
+  | "public_client"
+  | "profile_metadata_not_echoed"
+  | "grant_types_not_echoed"
+  | "token_exchange_grant_not_echoed"
+  | "auth_method_not_echoed"
+  | "missing_secret_expiry"
+  | "non_201_success"
+  | "non_json_content_type"
+  | "missing_no_store";
+
+/** Non-blocking readiness/conformance finding from DCR or CIMD setup.
+ * Never carries credential material. */
+export interface XaaRegistrationWarning {
+  code: XaaRegistrationWarningCode;
+  message: string;
+}
+
+/** DCR-minted credentials. Live only in the target-scoped in-memory session
+ * cache — never in XAAFlowState, storage, history, or logs. */
+export interface XaaEphemeralDcrCredentials {
+  clientId: string;
+  clientSecret?: string;
+  tokenEndpointAuthMethod: XaaTokenEndpointAuthMethod;
+  /** RFC 7591 client_secret_expires_at (seconds since epoch; 0 = never). */
+  clientSecretExpiresAt?: number;
+  registrationEndpoint: string;
+}
+
+export interface XaaDcrCredentialCache {
+  get(key: string): XaaEphemeralDcrCredentials | undefined;
+  set(key: string, value: XaaEphemeralDcrCredentials): void;
+  delete(key: string): void;
+}
 
 export interface XAAJWTInspectionIssue {
   section: "header" | "payload" | "signature";
@@ -81,6 +132,7 @@ export interface XAAFlowState {
   authzMetadata?: {
     issuer: string;
     token_endpoint?: string;
+    registration_endpoint?: string;
     grant_types_supported?: string[];
     response_types_supported?: string[];
     scopes_supported?: string[];
@@ -88,6 +140,7 @@ export interface XAAFlowState {
     /** ID-JAG draft: the resource AS's declaration of end-to-end XAA support
      * (contains urn:ietf:params:oauth:grant-profile:id-jag when supported). */
     authorization_grant_profiles_supported?: string[];
+    client_id_metadata_document_supported?: boolean;
   };
   tokenEndpoint?: string;
   /** The MCPJam test-IdP issuer for this run — the expected ID-JAG `iss`.
@@ -129,6 +182,20 @@ export interface XAAFlowState {
    * anyway. Unset for the happy-path (valid) flow. */
   negativeProbe?: { outcome: "rejected" | "accepted"; status?: number };
   compatibilityReport?: XAACompatibilityReport;
+  /** How this run's client identity is established. Authoritative once the
+   * machine is initialized — the UI must reset the flow to change it. */
+  registrationStrategy: XaaRegistrationStrategy;
+  /** How the jwt-bearer redemption authenticates at the token endpoint.
+   * Unset = legacy body-post behavior. */
+  tokenEndpointAuthMethod?: XaaTokenEndpointAuthMethod;
+  /** True when a DCR run reused this browser session's earlier registration
+   * instead of POSTing again. */
+  dcrRegistrationReused?: boolean;
+  /** Non-blocking readiness/conformance findings from DCR/CIMD setup. */
+  registrationWarnings?: XaaRegistrationWarning[];
+  /** Set after a DCR POST whose outcome left no reusable registration: a
+   * retry may create a second remote client and needs explicit confirmation. */
+  dcrRetryMayCreateDuplicate?: boolean;
 }
 
 export interface XAARequestResult {
@@ -190,6 +257,16 @@ export interface BaseXAAStateMachineConfig {
    * neither the secret nor the destination rides in from the browser. */
   serverId?: string;
   projectId?: string;
+  /** Client-identity strategy. Forced to "pre_registered" whenever
+   * registrationId or serverId is set (those paths skip AS discovery). */
+  registrationStrategy?: XaaRegistrationStrategy;
+  /** Target-scoped in-memory session cache for DCR-minted credentials. The
+   * UI passes a useRef-backed cache so machine recreation neither loses nor
+   * re-exposes the secret; unit tests may pass a Map-backed one. */
+  dcrCredentialCache?: XaaDcrCredentialCache;
+  /** Stable key for the current target; combined with the discovered
+   * registration endpoint to key the credential cache. */
+  dcrCacheTargetKey?: string;
 }
 
 export interface XAAStateMachine {
@@ -245,6 +322,7 @@ export interface XaaResourceAppInput {
 export const EMPTY_XAA_FLOW_STATE: XAAFlowState = {
   isBusy: false,
   currentStep: "idle",
+  registrationStrategy: "pre_registered",
   serverUrl: undefined,
   resourceUrl: undefined,
   resourceMetadataUrl: undefined,

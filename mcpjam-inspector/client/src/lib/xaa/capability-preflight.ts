@@ -1,12 +1,9 @@
+import { ID_JAG_GRANT_PROFILE, JWT_BEARER_GRANT } from "@mcpjam/sdk/browser";
 import type { XAAFlowState } from "./types";
 
-export const JWT_BEARER_GRANT =
-  "urn:ietf:params:oauth:grant-type:jwt-bearer";
-
-// The ID-JAG draft's own discovery signal: a resource authorization server
-// advertises end-to-end XAA support by listing this grant profile in
-// authorization_grant_profiles_supported.
-export const ID_JAG_GRANT_PROFILE = "urn:ietf:params:oauth:grant-profile:id-jag";
+// Re-exported for existing consumers; the URN itself now has a single source
+// of truth in the SDK.
+export { JWT_BEARER_GRANT };
 
 export type XAAVendor =
   | "okta"
@@ -27,7 +24,11 @@ export interface XAAVendorHint {
 export type XAACheckStatus = "pass" | "fail" | "warn" | "unknown";
 
 export interface XAACompatibilityCheck {
-  id: "jwt_bearer_grant" | "token_endpoint" | "id_jag_grant_profile";
+  id:
+    | "jwt_bearer_grant"
+    | "token_endpoint"
+    | "id_jag_profile"
+    | "cimd_supported";
   label: string;
   status: XAACheckStatus;
   detail: string;
@@ -154,52 +155,83 @@ export function analyzeAsCompatibility(
         detail: "Missing from discovery metadata.",
       };
 
-  const grantProfilesAdvertised = Array.isArray(
-    authzMetadata.authorization_grant_profiles_supported,
-  );
-  const grantProfiles = grantProfilesAdvertised
-    ? (authzMetadata.authorization_grant_profiles_supported as string[])
-    : [];
-  const idJagProfileCheck: XAACompatibilityCheck = grantProfilesAdvertised
-    ? grantProfiles.includes(ID_JAG_GRANT_PROFILE)
+  // Draft-04 ID-JAG grant profile advertisement. SHOULD, not MUST — so an
+  // absent property is a warning; only an explicitly-present list WITHOUT the
+  // profile is an explicit statement of non-support.
+  const profilesValue = authzMetadata.authorization_grant_profiles_supported;
+  const idJagProfileCheck: XAACompatibilityCheck = Array.isArray(profilesValue)
+    ? profilesValue.includes(ID_JAG_GRANT_PROFILE)
       ? {
-          id: "id_jag_grant_profile",
-          label: "ID-JAG grant profile",
+          id: "id_jag_profile",
+          label: "ID-JAG grant profile (draft -04)",
           status: "pass",
-          detail: `Advertised in authorization_grant_profiles_supported — the authorization server can process the ID-JAG grant profile. Issuer trust and request policy still decide whether a given exchange is accepted.`,
+          detail: "Advertised in authorization_grant_profiles_supported.",
         }
       : {
-          id: "id_jag_grant_profile",
-          label: "ID-JAG grant profile",
-          status: "warn",
-          detail: `authorization_grant_profiles_supported is advertised but does not include ${ID_JAG_GRANT_PROFILE}. The jwt-bearer redemption may still work, but the server hasn't declared XAA support.`,
+          id: "id_jag_profile",
+          label: "ID-JAG grant profile (draft -04)",
+          status: "fail",
+          detail: `authorization_grant_profiles_supported is advertised but does not include ${ID_JAG_GRANT_PROFILE} — an explicit statement that the ID-JAG profile is unsupported.`,
         }
     : {
-        id: "id_jag_grant_profile",
-        label: "ID-JAG grant profile",
-        status: "unknown",
+        id: "id_jag_profile",
+        label: "ID-JAG grant profile (draft -04)",
+        status: "warn",
         detail:
-          "authorization_grant_profiles_supported is not in the discovery metadata. The parameter is new (ID-JAG draft), so its absence doesn't indicate a lack of support.",
+          "authorization_grant_profiles_supported is not advertised. Draft -04 says SHOULD, so this is a conformance warning, not a failure.",
       };
 
-  const checks = [jwtBearerCheck, tokenEndpointCheck, idJagProfileCheck];
+  // CIMD advertisement. Informational unless the cimd strategy is selected —
+  // the flow itself parks on false/absent when it is (that park IS the
+  // finding), so this check never degrades the overall verdict.
+  const cimdValue = authzMetadata.client_id_metadata_document_supported;
+  const cimdCheck: XAACompatibilityCheck =
+    cimdValue === true
+      ? {
+          id: "cimd_supported",
+          label: "Client ID Metadata Documents",
+          status: "pass",
+          detail: "client_id_metadata_document_supported: true.",
+        }
+      : cimdValue === false
+        ? {
+            id: "cimd_supported",
+            label: "Client ID Metadata Documents",
+            status: "fail",
+            detail:
+              "client_id_metadata_document_supported is explicitly false — URL-formatted client_ids are not accepted.",
+          }
+        : {
+            id: "cimd_supported",
+            label: "Client ID Metadata Documents",
+            status: "unknown",
+            detail:
+              "client_id_metadata_document_supported is not advertised; the CIMD draft directs clients not to attempt the flow.",
+          };
+
+  const checks = [
+    jwtBearerCheck,
+    tokenEndpointCheck,
+    idJagProfileCheck,
+    cimdCheck,
+  ];
 
   const vendor = detectVendor(authzMetadata.issuer);
   const vendorHint = VENDOR_NOTES[vendor];
 
-  // The grant-profile check's "unknown" (parameter absent) is excluded from
-  // the overall verdict: the draft says this metadata MUST NOT be read as an
-  // issuer allow-list, and virtually no AS publishes it yet — an absent param
-  // must never flip an otherwise-green report to amber.
-  const scoredChecks = checks.filter(
-    (c) => !(c.id === "id_jag_grant_profile" && c.status === "unknown"),
-  );
-
+  // Overall verdict: the core operational checks plus an EXPLICIT ID-JAG
+  // profile contradiction. An absent profile advertisement (warn) and the
+  // CIMD check are strategy/conformance signals and deliberately don't
+  // degrade the overall readiness verdict.
+  const coreChecks = [jwtBearerCheck, tokenEndpointCheck];
   let overall: XAACompatibilityVerdict = "pass";
-  if (scoredChecks.some((c) => c.status === "fail")) {
+  if (
+    coreChecks.some((c) => c.status === "fail") ||
+    idJagProfileCheck.status === "fail"
+  ) {
     overall = "fail";
   } else if (
-    scoredChecks.some((c) => c.status === "warn" || c.status === "unknown")
+    coreChecks.some((c) => c.status === "warn" || c.status === "unknown")
   ) {
     overall = "warn";
   }
