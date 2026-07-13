@@ -281,7 +281,13 @@ export function useServerForm(
             : undefined
         );
 
+        // The CANONICAL per-server registrationMode wins — it can be "auto",
+        // while the legacy profile/localStorage values are rollback-compat
+        // concretes that ride alongside it. Preferring a legacy concrete here
+        // would display it and then rewrite the stored "auto" on any
+        // unrelated edit (the Edit-form flavor of the auto-clobber bug).
         registrationModeValue =
+          normalizeOauthRegistrationMode(server.registrationMode) ??
           normalizeOauthRegistrationMode(oauthConfig.registrationMode) ??
           normalizeOauthRegistrationMode(
             server.oauthFlowProfile?.registrationStrategy

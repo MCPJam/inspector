@@ -10,6 +10,7 @@ import {
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
 } from "@mcpjam/sdk/browser";
+import { normalizeRegistrationMode } from "@/shared/xaa.js";
 import type {
   AppAction,
   AppState,
@@ -4027,7 +4028,13 @@ export function useServerState({
           server.oauthFlowProfile?.protocolVersion ??
           storedOAuthConfig.protocolMode ??
           "auto";
+        // Canonical per-server registrationMode wins over the legacy
+        // profile/localStorage concretes — a persisted "auto" must keep
+        // resolving from current server metadata on forced reconnects too
+        // (same precedence as buildReconnectOAuthOptions in
+        // oauth-orchestrator.ts).
         const registrationMode =
+          normalizeRegistrationMode(server.registrationMode) ??
           server.oauthFlowProfile?.registrationStrategy ??
           storedOAuthConfig.registrationMode ??
           "auto";

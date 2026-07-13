@@ -4,6 +4,7 @@ import {
   readStoredOAuthConfig,
   MCPOAuthOptions,
 } from "@/lib/oauth/mcp-oauth";
+import { normalizeRegistrationMode } from "@/shared/xaa.js";
 import { ServerWithName } from "./app-types";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 
@@ -134,8 +135,16 @@ function buildReconnectOAuthOptions(
   const profile = server.oauthFlowProfile;
   const protocolMode =
     profile?.protocolVersion ?? oauthConfig.protocolMode ?? "auto";
+  // The CANONICAL per-server registrationMode wins — it can be "auto" (resolve
+  // from current server metadata at connect time), while the legacy
+  // profile/localStorage values are rollback-compat concretes. Preferring a
+  // concrete here would pin every reconnect to it and "auto" would never
+  // dynamically resolve again.
   const registrationMode =
-    profile?.registrationStrategy ?? oauthConfig.registrationMode ?? "auto";
+    normalizeRegistrationMode(server.registrationMode) ??
+    profile?.registrationStrategy ??
+    oauthConfig.registrationMode ??
+    "auto";
   const profileScopes = parseOAuthScopes(profile?.scopes);
 
   return {
