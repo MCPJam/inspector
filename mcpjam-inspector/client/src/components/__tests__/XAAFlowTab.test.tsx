@@ -481,46 +481,46 @@ describe("XAAFlowTab", () => {
     );
   });
 
-  describe("registration strategy control", () => {
-    it("shows the selector for an eligible manual public target and threads the choice to the machine", async () => {
-      const user = userEvent.setup();
+  describe("registration strategy (persisted, modal-owned)", () => {
+    // The on-flow selector band was removed: the strategy is chosen in the
+    // Configure Server modal and persisted on the server config. The flow reads
+    // it from serverConfigs[selectedServerName].xaaRegistrationStrategy.
+    const withStrategy = (strategy: string) =>
+      ({ staging: { xaaRegistrationStrategy: strategy } }) as any;
+
+    it("threads a persisted dcr strategy to the machine, with the session cache", () => {
       render(
         <XAAFlowTab
-          serverConfigs={{}}
+          serverConfigs={withStrategy("dcr")}
           selectedServerName="staging"
         />,
       );
 
-      // All three options render; default is pre-registered.
-      expect(screen.getByText(/client registration/i)).toBeInTheDocument();
-      const dcrOption = screen.getByRole("radio", {
-        name: /open dynamic registration/i,
-      });
-      expect(dcrOption).toHaveAttribute("aria-checked", "false");
-      expect(capturedMachineConfig.registrationStrategy).toBe(
-        "pre_registered",
-      );
-
-      await user.click(dcrOption);
-      await waitFor(() =>
-        expect(capturedMachineConfig.registrationStrategy).toBe("dcr"),
-      );
-      expect(dcrOption).toHaveAttribute("aria-checked", "true");
-      // A session credential cache rides along, keyed by the target.
+      // No on-flow selector band any more.
+      expect(
+        screen.queryByText(/client registration/i),
+      ).not.toBeInTheDocument();
+      expect(capturedMachineConfig.registrationStrategy).toBe("dcr");
       expect(capturedMachineConfig.dcrCredentialCache).toBeDefined();
       expect(capturedMachineConfig.dcrCacheTargetKey).toBe(
         currentTarget.targetKey,
       );
-
-      await user.click(
-        screen.getByRole("radio", { name: /client metadata url/i }),
-      );
-      await waitFor(() =>
-        expect(capturedMachineConfig.registrationStrategy).toBe("cimd"),
-      );
     });
 
-    it("hides the selector for confidential server-side-secret targets", () => {
+    it("defaults to pre_registered when nothing is persisted", () => {
+      render(
+        <XAAFlowTab
+          serverConfigs={{ staging: {} as any }}
+          selectedServerName="staging"
+        />,
+      );
+      expect(capturedMachineConfig.registrationStrategy).toBe("pre_registered");
+    });
+
+    it("honors an explicit dcr even with a stored secret, and does NOT send serverId", () => {
+      // A stored secret used to downgrade dynamic strategies to pre_registered.
+      // Now an explicit dcr is honored and the stored serverId/secret is ignored
+      // so the browser performs its own dynamic registration.
       currentTarget = makeTarget({
         usesServerSideSecret: true,
         serverId: "srv_1",
@@ -528,18 +528,64 @@ describe("XAAFlowTab", () => {
       } as Partial<XaaTestTarget>);
       render(
         <XAAFlowTab
-          serverConfigs={{}}
+          serverConfigs={withStrategy("dcr")}
           selectedServerName="staging"
           projectId="proj_1"
         />,
       );
-      expect(screen.queryByText(/client registration/i)).not.toBeInTheDocument();
-      expect(capturedMachineConfig.registrationStrategy).toBe(
-        "pre_registered",
+      expect(capturedMachineConfig.registrationStrategy).toBe("dcr");
+      expect(capturedMachineConfig.serverId).toBeUndefined();
+    });
+
+    it("still sends serverId for a stored-secret pre_registered target", () => {
+      currentTarget = makeTarget({
+        usesServerSideSecret: true,
+        serverId: "srv_1",
+        projectId: "proj_1",
+      } as Partial<XaaTestTarget>);
+      render(
+        <XAAFlowTab
+          serverConfigs={{ staging: {} as any }}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+      expect(capturedMachineConfig.registrationStrategy).toBe("pre_registered");
+      expect(capturedMachineConfig.serverId).toBe("srv_1");
+    });
+
+    it("prompts to reset when the strategy changes on a completed same-target run", async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(
+        <XAAFlowTab
+          serverConfigs={{ staging: {} as any }}
+          selectedServerName="staging"
+        />,
+      );
+      // Drive the run to completion so a later strategy change must confirm.
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+          "data-unlocked",
+          "true",
+        ),
+      );
+
+      // Persisted strategy changes for the same target → confirm before reset.
+      rerender(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />,
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: /keep current run/i }),
+        ).toBeInTheDocument(),
       );
     });
 
-    it("hides the selector for registration-backed targets", () => {
+    it("forces pre_registered for registration-backed targets regardless of persisted strategy", () => {
       currentTarget = makeTarget({
         targetSource: "registration",
         runInput: {
@@ -548,20 +594,12 @@ describe("XAAFlowTab", () => {
         },
       } as Partial<XaaTestTarget>);
       render(
-        <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />,
       );
-      expect(screen.queryByText(/client registration/i)).not.toBeInTheDocument();
-      expect(capturedMachineConfig.registrationStrategy).toBe(
-        "pre_registered",
-      );
-    });
-
-    it("hides the selector for unconfigured (not testable) targets", () => {
-      currentTarget = makeTarget({ isTestable: false });
-      render(
-        <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
-      );
-      expect(screen.queryByText(/client registration/i)).not.toBeInTheDocument();
+      expect(capturedMachineConfig.registrationStrategy).toBe("pre_registered");
     });
   });
 });

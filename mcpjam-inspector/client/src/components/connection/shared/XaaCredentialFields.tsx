@@ -40,6 +40,12 @@ export interface XaaCredentialFieldsProps {
   clientId: string;
   onClientIdChange: (value: string) => void;
   clientIdError?: string | null;
+  /**
+   * Whether Client ID is required. Defaults to true (the Connect page and
+   * pre-registered flows). The XAA Debugger sets this false for DCR/CIMD, where
+   * the client identity is minted or supplied by a metadata URL.
+   */
+  clientIdRequired?: boolean;
   clientSecret: string;
   onClientSecretChange: (value: string) => void;
   hasStoredClientSecret?: boolean;
@@ -79,6 +85,7 @@ export function XaaCredentialFields({
   clientId,
   onClientIdChange,
   clientIdError,
+  clientIdRequired = true,
   clientSecret,
   onClientSecretChange,
   hasStoredClientSecret = false,
@@ -238,16 +245,18 @@ export function XaaCredentialFields({
             className="block text-sm font-medium text-foreground"
           >
             Client ID
-            <span className="text-destructive" aria-hidden="true">
-              {" *"}
-            </span>
+            {clientIdRequired && (
+              <span className="text-destructive" aria-hidden="true">
+                {" *"}
+              </span>
+            )}
           </label>
           <Input
             id={ids.clientId}
             value={clientId}
             onChange={(e) => onClientIdChange(e.target.value)}
             placeholder="Client ID registered with the server's authorization server"
-            aria-required
+            aria-required={clientIdRequired}
             spellCheck={false}
             autoComplete="off"
             data-1p-ignore

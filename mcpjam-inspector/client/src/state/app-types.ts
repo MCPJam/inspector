@@ -85,6 +85,8 @@ export interface ServerWithName {
   /** Optional simulated-identity overrides for the MCPJam test IdP. Blank = signed-in user. */
   xaaSubject?: string;
   xaaEmail?: string;
+  /** XAA Debugger registration strategy (Client↔Resource-AS leg). Debugger-only. */
+  xaaRegistrationStrategy?: "pre_registered" | "dcr" | "cimd";
 }
 
 export interface Project {

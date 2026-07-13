@@ -86,6 +86,51 @@ describe("project-serialization OAuth scopes coercion", () => {
   });
 });
 
+describe("xaaRegistrationStrategy round-trip", () => {
+  it("round-trips a known strategy through deserialize", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "s1",
+        enabled: true,
+        useXaa: true,
+        url: "https://example.test/mcp",
+        xaaRegistrationStrategy: "dcr",
+      },
+    ]);
+    expect(servers.s1.xaaRegistrationStrategy).toBe("dcr");
+  });
+
+  it("drops an unknown persisted strategy so the flow falls back to the default", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "s1",
+        enabled: true,
+        useXaa: true,
+        url: "https://example.test/mcp",
+        xaaRegistrationStrategy: "totally-bogus",
+      },
+    ]);
+    expect(servers.s1.xaaRegistrationStrategy).toBeUndefined();
+  });
+
+  it("serializes a known strategy for persistence", () => {
+    const server: Record<string, ServerWithName> = {
+      s1: {
+        name: "s1",
+        enabled: true,
+        useXaa: true,
+        retryCount: 0,
+        lastConnectionTime: new Date(),
+        connectionStatus: "disconnected",
+        config: { url: new URL("https://example.test/mcp") },
+        xaaRegistrationStrategy: "cimd",
+      } as unknown as ServerWithName,
+    };
+    const out = serializeServersForPersistence(server);
+    expect((out.s1 as any).xaaRegistrationStrategy).toBe("cimd");
+  });
+});
+
 describe("serversHaveChanged redacted secrets", () => {
   it("marks visible bearer authorization headers as bearer-token metadata", () => {
     const servers = deserializeServersFromConvex([
