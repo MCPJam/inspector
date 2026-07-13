@@ -16,6 +16,80 @@ function safePath(url?: string): string | undefined {
 }
 
 export function buildXAAActions(flowState: XAAFlowState): Action[] {
+  // Strategy-specific bootstrap exchanges. Included only for the selected
+  // strategy so default (pre-registered) diagrams are unchanged.
+  const registrationActions: Action[] =
+    flowState.registrationStrategy === "dcr"
+      ? flowState.dcrRegistrationReused
+        ? [
+            {
+              id: "received_client_credentials",
+              label: "Reuse session registration",
+              description:
+                "No network exchange: the Agent reuses the client it registered earlier this browser session.",
+              from: "client",
+              to: "client",
+              details: flowState.clientId
+                ? [{ label: "client_id", value: flowState.clientId }]
+                : undefined,
+            },
+          ]
+        : [
+            {
+              id: "request_client_registration",
+              label: "Register client (open DCR)",
+              description:
+                "The Agent registers a client at the Authorization Server without an initial access token. (RFC 7591.)",
+              from: "client",
+              to: "authServer",
+              details: flowState.authzMetadata?.registration_endpoint
+                ? [
+                    {
+                      label: "Endpoint",
+                      value: safePath(
+                        flowState.authzMetadata.registration_endpoint
+                      ),
+                    },
+                  ]
+                : undefined,
+            },
+            {
+              id: "received_client_credentials",
+              label: "Client credentials issued",
+              description:
+                "The Authorization Server created the client; MCPJam holds its credentials for this session only.",
+              from: "authServer",
+              to: "client",
+              details: flowState.clientId
+                ? [{ label: "client_id", value: flowState.clientId }]
+                : undefined,
+            },
+          ]
+      : flowState.registrationStrategy === "cimd"
+        ? [
+            {
+              id: "fetch_client_metadata_document",
+              label: "Preflight hosted client metadata document",
+              description:
+                "Debugger preflight of MCPJam's hosted document — the Authorization Server performs its own fetch; only the later JWT bearer grant tests its acceptance.",
+              from: "client",
+              to: "client",
+              details: flowState.clientId
+                ? [{ label: "client_id (URL)", value: flowState.clientId }]
+                : undefined,
+            },
+            {
+              id: "received_client_metadata",
+              label: "Client metadata ready",
+              description:
+                "The document's client_id equals its URL and declares the XAA grants; the URL is this run's client identity.",
+              from: "client",
+              to: "client",
+              details: [{ label: "Auth method", value: "none (public)" }],
+            },
+          ]
+        : [];
+
   return [
     {
       id: "discover_resource_metadata",
@@ -57,6 +131,7 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
         ? [{ label: "Token", value: safePath(flowState.tokenEndpoint) }]
         : undefined,
     },
+    ...registrationActions,
     {
       id: "user_authentication",
       label: "Mock OIDC login",

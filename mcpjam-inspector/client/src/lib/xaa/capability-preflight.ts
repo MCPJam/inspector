@@ -1,7 +1,9 @@
+import { ID_JAG_GRANT_PROFILE, JWT_BEARER_GRANT } from "@mcpjam/sdk/browser";
 import type { XAAFlowState } from "./types";
 
-export const JWT_BEARER_GRANT =
-  "urn:ietf:params:oauth:grant-type:jwt-bearer";
+// Re-exported for existing consumers; the URN itself now has a single source
+// of truth in the SDK.
+export { JWT_BEARER_GRANT };
 
 export type XAAVendor =
   | "okta"
@@ -22,7 +24,11 @@ export interface XAAVendorHint {
 export type XAACheckStatus = "pass" | "fail" | "warn" | "unknown";
 
 export interface XAACompatibilityCheck {
-  id: "jwt_bearer_grant" | "token_endpoint";
+  id:
+    | "jwt_bearer_grant"
+    | "token_endpoint"
+    | "id_jag_profile"
+    | "cimd_supported";
   label: string;
   status: XAACheckStatus;
   detail: string;
@@ -149,15 +155,84 @@ export function analyzeAsCompatibility(
         detail: "Missing from discovery metadata.",
       };
 
-  const checks = [jwtBearerCheck, tokenEndpointCheck];
+  // Draft-04 ID-JAG grant profile advertisement. SHOULD, not MUST — so an
+  // absent property is a warning; only an explicitly-present list WITHOUT the
+  // profile is an explicit statement of non-support.
+  const profilesValue = authzMetadata.authorization_grant_profiles_supported;
+  const idJagProfileCheck: XAACompatibilityCheck = Array.isArray(profilesValue)
+    ? profilesValue.includes(ID_JAG_GRANT_PROFILE)
+      ? {
+          id: "id_jag_profile",
+          label: "ID-JAG grant profile (draft -04)",
+          status: "pass",
+          detail: "Advertised in authorization_grant_profiles_supported.",
+        }
+      : {
+          id: "id_jag_profile",
+          label: "ID-JAG grant profile (draft -04)",
+          status: "fail",
+          detail: `authorization_grant_profiles_supported is advertised but does not include ${ID_JAG_GRANT_PROFILE} — an explicit statement that the ID-JAG profile is unsupported.`,
+        }
+    : {
+        id: "id_jag_profile",
+        label: "ID-JAG grant profile (draft -04)",
+        status: "warn",
+        detail:
+          "authorization_grant_profiles_supported is not advertised. Draft -04 says SHOULD, so this is a conformance warning, not a failure.",
+      };
+
+  // CIMD advertisement. Informational unless the cimd strategy is selected —
+  // the flow itself parks on false/absent when it is (that park IS the
+  // finding), so this check never degrades the overall verdict.
+  const cimdValue = authzMetadata.client_id_metadata_document_supported;
+  const cimdCheck: XAACompatibilityCheck =
+    cimdValue === true
+      ? {
+          id: "cimd_supported",
+          label: "Client ID Metadata Documents",
+          status: "pass",
+          detail: "client_id_metadata_document_supported: true.",
+        }
+      : cimdValue === false
+        ? {
+            id: "cimd_supported",
+            label: "Client ID Metadata Documents",
+            status: "fail",
+            detail:
+              "client_id_metadata_document_supported is explicitly false — URL-formatted client_ids are not accepted.",
+          }
+        : {
+            id: "cimd_supported",
+            label: "Client ID Metadata Documents",
+            status: "unknown",
+            detail:
+              "client_id_metadata_document_supported is not advertised; the CIMD draft directs clients not to attempt the flow.",
+          };
+
+  const checks = [
+    jwtBearerCheck,
+    tokenEndpointCheck,
+    idJagProfileCheck,
+    cimdCheck,
+  ];
 
   const vendor = detectVendor(authzMetadata.issuer);
   const vendorHint = VENDOR_NOTES[vendor];
 
+  // Overall verdict: the core operational checks plus an EXPLICIT ID-JAG
+  // profile contradiction. An absent profile advertisement (warn) and the
+  // CIMD check are strategy/conformance signals and deliberately don't
+  // degrade the overall readiness verdict.
+  const coreChecks = [jwtBearerCheck, tokenEndpointCheck];
   let overall: XAACompatibilityVerdict = "pass";
-  if (checks.some((c) => c.status === "fail")) {
+  if (
+    coreChecks.some((c) => c.status === "fail") ||
+    idJagProfileCheck.status === "fail"
+  ) {
     overall = "fail";
-  } else if (checks.some((c) => c.status === "warn" || c.status === "unknown")) {
+  } else if (
+    coreChecks.some((c) => c.status === "warn" || c.status === "unknown")
+  ) {
     overall = "warn";
   }
 
