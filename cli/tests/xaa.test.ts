@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildXaaConfig } from "../src/commands/xaa.js";
+import { buildXaaConfig, redactXaaResult } from "../src/commands/xaa.js";
 import { CliError } from "../src/lib/output.js";
+import type { XaaFlowResult } from "@mcpjam/sdk";
 
 const base = {
   url: "https://mcp.example.com/mcp",
@@ -103,6 +104,46 @@ test("buildXaaConfig rejects a blank subject", () => {
     (error: unknown) =>
       error instanceof CliError && /--sub must not be empty/.test(error.message),
   );
+});
+
+test("redactXaaResult masks the ID-JAG token and issued bearer tokens", () => {
+  const result = {
+    completed: true,
+    issuer: "https://issuer.example.com/api/mcp/xaa",
+    idJag: {
+      token: "eyJraWQ.secret.signature",
+      claims: { sub: "user-1", aud: "https://auth.example.com" },
+      verified: true,
+    },
+    redemption: {
+      status: 200,
+      tokenIssued: true,
+      body: {
+        access_token: "at-super-secret",
+        refresh_token: "rt-super-secret",
+        token_type: "Bearer",
+        expires_in: 300,
+      },
+    },
+    mcp: { status: 200, ok: true },
+    steps: [],
+  } as unknown as XaaFlowResult;
+
+  const redacted = redactXaaResult(result);
+
+  assert.equal(redacted.idJag?.token, "[REDACTED]");
+  // Decoded claims stay visible for inspection.
+  assert.deepEqual(redacted.idJag?.claims, {
+    sub: "user-1",
+    aud: "https://auth.example.com",
+  });
+  const body = redacted.redemption?.body as Record<string, unknown>;
+  assert.equal(body.access_token, "[REDACTED]");
+  assert.equal(body.refresh_token, "[REDACTED]");
+  assert.equal(body.token_type, "Bearer");
+  assert.equal(body.expires_in, 300);
+  // The original result is not mutated.
+  assert.equal(result.idJag?.token, "eyJraWQ.secret.signature");
 });
 
 test("buildXaaConfig rejects a blank client id", () => {

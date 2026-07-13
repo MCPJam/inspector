@@ -78,11 +78,44 @@ export function registerXaaCommands(program: Command): void {
         throw cliError("INTERNAL_ERROR", "XAA flow did not return a result.");
       }
 
-      writeResult(result, format);
+      writeResult(redactXaaResult(result), format);
       if (!result.completed) {
         setProcessExitCode(1);
       }
     });
+}
+
+const REDACTED = "[REDACTED]";
+const SECRET_BODY_KEYS = new Set(["access_token", "refresh_token", "id_token"]);
+
+// Never emit raw bearer credentials. The decoded `idJag.claims`, the verify
+// verdict, and the per-step report carry the debug value; the raw ID-JAG and the
+// token-endpoint's issued tokens are redacted from the printed result.
+export function redactXaaResult(result: XaaFlowResult): XaaFlowResult {
+  const redacted: XaaFlowResult = { ...result };
+  if (result.idJag) {
+    redacted.idJag = { ...result.idJag, token: REDACTED };
+  }
+  if (result.redemption) {
+    redacted.redemption = {
+      ...result.redemption,
+      body: redactSecretBodyFields(result.redemption.body),
+    };
+  }
+  return redacted;
+}
+
+function redactSecretBodyFields(body: unknown): unknown {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return body;
+  }
+  const out: Record<string, unknown> = { ...(body as Record<string, unknown>) };
+  for (const key of Object.keys(out)) {
+    if (SECRET_BODY_KEYS.has(key) && typeof out[key] === "string") {
+      out[key] = REDACTED;
+    }
+  }
+  return out;
 }
 
 export function buildXaaConfig(options: XaaCommandOptions): XaaFlowConfig {
