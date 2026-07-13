@@ -121,8 +121,11 @@ test("redactXaaResult masks the ID-JAG token and issued bearer tokens", () => {
       body: {
         access_token: "at-super-secret",
         refresh_token: "rt-super-secret",
+        id_token: "idt-super-secret",
         token_type: "Bearer",
         expires_in: 300,
+        // A nested/reflected secret the recursive redactor must also catch.
+        extra: { access_token: "nested-secret" },
       },
     },
     mcp: { status: 200, ok: true },
@@ -140,10 +143,19 @@ test("redactXaaResult masks the ID-JAG token and issued bearer tokens", () => {
   const body = redacted.redemption?.body as Record<string, unknown>;
   assert.equal(body.access_token, "[REDACTED]");
   assert.equal(body.refresh_token, "[REDACTED]");
+  assert.equal(body.id_token, "[REDACTED]");
+  assert.equal(
+    (body.extra as Record<string, unknown>).access_token,
+    "[REDACTED]",
+  );
   assert.equal(body.token_type, "Bearer");
   assert.equal(body.expires_in, 300);
   // The original result is not mutated.
   assert.equal(result.idJag?.token, "eyJraWQ.secret.signature");
+  assert.equal(
+    (result.redemption?.body as Record<string, unknown>).access_token,
+    "at-super-secret",
+  );
 });
 
 test("buildXaaConfig rejects a blank client id", () => {

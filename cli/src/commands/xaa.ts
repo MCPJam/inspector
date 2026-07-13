@@ -2,6 +2,7 @@ import { runXaaFlow, type XaaFlowConfig, type XaaFlowResult } from "@mcpjam/sdk"
 import { Command } from "commander";
 import { getGlobalOptions } from "../lib/server-config.js";
 import { cliError, setProcessExitCode, usageError, writeResult } from "../lib/output.js";
+import { redactSensitiveValue } from "../lib/redaction.js";
 
 export interface XaaCommandOptions {
   url: string;
@@ -85,37 +86,17 @@ export function registerXaaCommands(program: Command): void {
     });
 }
 
-const REDACTED = "[REDACTED]";
-const SECRET_BODY_KEYS = new Set(["access_token", "refresh_token", "id_token"]);
-
-// Never emit raw bearer credentials. The decoded `idJag.claims`, the verify
-// verdict, and the per-step report carry the debug value; the raw ID-JAG and the
-// token-endpoint's issued tokens are redacted from the printed result.
+// Never emit raw bearer credentials. First mask the ID-JAG itself — the SDK's
+// recursive redactor keys on token-ish field names and won't catch a bare
+// `token` field — then run redactSensitiveValue over the whole result to scrub
+// reflected or nested secrets (the AS's access_token/refresh_token/id_token,
+// Bearer strings, etc.) anywhere in the output. The decoded `idJag.claims`, the
+// verify verdict, and the per-step report keep the debug value.
 export function redactXaaResult(result: XaaFlowResult): XaaFlowResult {
-  const redacted: XaaFlowResult = { ...result };
-  if (result.idJag) {
-    redacted.idJag = { ...result.idJag, token: REDACTED };
-  }
-  if (result.redemption) {
-    redacted.redemption = {
-      ...result.redemption,
-      body: redactSecretBodyFields(result.redemption.body),
-    };
-  }
-  return redacted;
-}
-
-function redactSecretBodyFields(body: unknown): unknown {
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return body;
-  }
-  const out: Record<string, unknown> = { ...(body as Record<string, unknown>) };
-  for (const key of Object.keys(out)) {
-    if (SECRET_BODY_KEYS.has(key) && typeof out[key] === "string") {
-      out[key] = REDACTED;
-    }
-  }
-  return out;
+  const masked: XaaFlowResult = result.idJag
+    ? { ...result, idJag: { ...result.idJag, token: "[REDACTED]" } }
+    : result;
+  return redactSensitiveValue(masked) as XaaFlowResult;
 }
 
 export function buildXaaConfig(options: XaaCommandOptions): XaaFlowConfig {
