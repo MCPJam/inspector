@@ -35,10 +35,13 @@ import {
 } from "@/components/chatboxes/session-readiness";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import {
+  buildEvalsPath,
   buildSwarmSessionPath,
+  navigateApp,
   parseSwarmSessionParams,
 } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
+import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
 import { SegmentedControl } from "@/components/ui/json-editor/segmented-control";
 import { SwarmHostsPanel } from "@/components/swarms/SwarmHostsPanel";
 import {
@@ -643,6 +646,8 @@ function RunSessionsView({
   );
   const [filter, setFilter] = useState<SessionFilterState>(EMPTY_SESSION_FILTER);
   const [selected, setSelected] = useState<JourneySessionRow | null>(null);
+  const [sessionToPromote, setSessionToPromote] =
+    useState<JourneySessionRow | null>(null);
 
   const hostName = (id: string) =>
     hosts.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
@@ -733,18 +738,49 @@ function RunSessionsView({
       {/* Reuse the existing project-scoped session viewer — do NOT build a new
           one. `ShareUsageThreadDetail` takes the session row's `id`. */}
       {selected && (
-        <div className="mt-2 h-[420px] overflow-hidden rounded-lg border">
-          <ShareUsageThreadDetail
-            threadId={selected.id}
-            sessionLink={`${getShareableAppOrigin()}${buildSwarmSessionPath({
-              personaRefId,
-              runId,
-              hostId: selected.hostId,
-              threadId: selected.id,
-            })}`}
-          />
+        <div className="mt-2">
+          <div className="mb-1 flex justify-end">
+            <button
+              type="button"
+              className="text-[11px] font-medium text-primary hover:underline"
+              onClick={() => setSessionToPromote(selected)}
+            >
+              Promote to test case
+            </button>
+          </div>
+          <div className="h-[420px] overflow-hidden rounded-lg border">
+            <ShareUsageThreadDetail
+              threadId={selected.id}
+              sessionLink={`${getShareableAppOrigin()}${buildSwarmSessionPath({
+                personaRefId,
+                runId,
+                hostId: selected.hostId,
+                threadId: selected.id,
+              })}`}
+            />
+          </div>
         </div>
       )}
+
+      <ConvertSwarmSessionDialog
+        open={sessionToPromote !== null}
+        session={sessionToPromote}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSessionToPromote(null);
+          }
+        }}
+        onImported={({ suiteId, testCaseId }) => {
+          setSessionToPromote(null);
+          navigateApp(
+            buildEvalsPath({
+              type: "test-edit",
+              suiteId,
+              testId: testCaseId,
+            }),
+          );
+        }}
+      />
     </div>
   );
 }

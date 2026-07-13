@@ -24,6 +24,12 @@ export const SWARM_QUERIES = {
   listSessionsByJourneyRun: "journeyRuns:listSessionsByJourneyRun",
 } as const;
 
+// ── Convex action names (string-keyed calls) ────────────────────────────────
+export const SWARM_ACTIONS = {
+  /** Source-agnostic promote-dialog detail read (`convex/chatSessionPromote.ts`). */
+  getChatSessionPromoteDetail: "chatSessionPromote:getChatSessionPromoteDetail",
+} as const;
+
 // ── DTOs ────────────────────────────────────────────────────────────────────
 
 /** Terminal + in-flight states a journey run can surface in the UI. */
@@ -111,6 +117,29 @@ export interface JourneySessionRow {
   };
   /** Server-denormalized judge verdict subset (see `swarmJudge.ts` backend). */
   goalScore?: SessionGoalScore;
+}
+
+/**
+ * `chatSessionPromote:getChatSessionPromoteDetail` result — the promote
+ * dialog's session-servers detail for any promotable sourceType.
+ * `usedServerIds` is derived server-side from the stored transcript;
+ * `hostId` is the session row's authoritative host attribution (used to
+ * pre-seed the new-suite client attachment). The action THROWS on
+ * unauthorized access, non-promotable sourceTypes, incomplete swarm run
+ * attempts, and unreadable transcripts — adapters surface that as the
+ * dialog's detail error.
+ */
+export interface SwarmSessionPromoteDetail {
+  sessionId: string;
+  chatSessionId: string;
+  sourceType?: string;
+  projectId: string | null;
+  title: string | null;
+  firstMessagePreview: string;
+  messageCount: number;
+  usedServerIds: string[];
+  selectedServers: string[];
+  hostId: string | null;
 }
 
 /**

@@ -121,6 +121,25 @@ vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+// Stub the promote dialog (it owns its own Convex action wiring — covered by
+// convert-swarm-session-dialog.test.tsx) but surface open/session so we can
+// assert the promote affordance hands it the SELECTED row.
+vi.mock("@/components/swarms/convert-swarm-session-dialog", () => ({
+  ConvertSwarmSessionDialog: ({
+    open,
+    session,
+  }: {
+    open: boolean;
+    session: { id: string } | null;
+  }) => (
+    <div
+      data-testid="promote-dialog"
+      data-open={String(open)}
+      data-session-id={session?.id ?? ""}
+    />
+  ),
+}));
+
 import { SwarmsTab } from "../SwarmsTab";
 
 beforeEach(() => {
@@ -163,5 +182,27 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
     const viewer = await screen.findByTestId("viewer");
     expect(viewer.getAttribute("data-thread-id")).toBe("thread-xyz");
     expect(viewer.getAttribute("data-link")).toContain("thread-xyz");
+  });
+
+  it("opens the promote dialog with the selected session row", async () => {
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    fireEvent.click(screen.getByText("Persona One"));
+    fireEvent.click(await screen.findByText("View sessions"));
+
+    // The dialog is mounted closed until a session is selected + promoted.
+    const dialog = await screen.findByTestId("promote-dialog");
+    expect(dialog.getAttribute("data-open")).toBe("false");
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /anthropic\/claude-haiku-4\.5/i,
+      })
+    );
+    fireEvent.click(await screen.findByText("Promote to test case"));
+
+    await waitFor(() => {
+      expect(dialog.getAttribute("data-open")).toBe("true");
+      expect(dialog.getAttribute("data-session-id")).toBe("thread-xyz");
+    });
   });
 });
