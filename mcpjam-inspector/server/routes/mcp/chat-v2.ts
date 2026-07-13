@@ -9,9 +9,9 @@ import { createLlmModel } from "../../utils/chat-helpers";
 import {
   getCanonicalModelId,
   isMCPJamGuestAllowedModel,
-  isMCPJamProvidedModel,
 } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
+import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
@@ -562,7 +562,7 @@ chatV2.post("/", async (c) => {
     // org/BYOK below even after they passed the harness preflight.
     const isMcpJamProvidedModel = Boolean(
       modelDefinition.id &&
-        isMCPJamProvidedModel(modelDefinition.id, modelDefinition.provider)
+        isHostedCatalogModel(modelDefinition.id, modelDefinition.provider)
     );
     if (
       isMcpJamProvidedModel &&
@@ -661,7 +661,7 @@ chatV2.post("/", async (c) => {
         hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
         // Provider-aware: a bare model id (no creator prefix) needs the provider
         // to resolve its canonical id, else a hosted MCPJam model is misjudged.
-        modelEligible: isMCPJamProvidedModel(
+        modelEligible: isHostedCatalogModel(
           String(modelDefinition.id),
           modelDefinition.provider,
         ),
@@ -1129,7 +1129,10 @@ chatV2.post("/", async (c) => {
     return streamDirectChatWithLiveTrace({
       llmModel,
       modelId: String(modelDefinition.id),
-      provider: modelDefinition.provider,
+      // Server-side model definitions always carry a concrete provider (the
+      // widened `string` branch on ModelDefinition.provider is a client
+      // catalog concern), so narrowing back to ModelProvider here is safe.
+      provider: modelDefinition.provider as ModelProvider,
       messageHistory: [...scrubbedModelMessages],
       systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,
