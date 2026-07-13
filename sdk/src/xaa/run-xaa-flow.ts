@@ -23,6 +23,8 @@ import {
 } from "./constants.js";
 
 const ID_JAG_TYP = "oauth-id-jag+jwt";
+// JSON-RPC id we send on `initialize`; the response must echo it back.
+const MCP_INIT_ID = "mcpjam-xaa-cli";
 
 export interface XaaFlowConfig {
   /** Target MCP server URL (the protected resource). */
@@ -374,7 +376,7 @@ async function callAuthenticatedMcp(
     },
     body: {
       jsonrpc: "2.0",
-      id: "mcpjam-xaa-cli",
+      id: MCP_INIT_ID,
       method: "initialize",
       params: {
         protocolVersion: "2025-11-25",
@@ -414,12 +416,22 @@ function evaluateMcpInitResponse(body: unknown): string | undefined {
   if (rpcError) {
     return rpcError;
   }
-  // Require a positive result — an empty SSE envelope (no `message` event) or a
-  // 2xx non-MCP body has neither error nor result and must not read as success.
+  // Require a genuine JSON-RPC initialize result: right protocol version, the
+  // `id` we sent echoed back, and an object `result`. This rejects an empty SSE
+  // envelope (no `message` event) and a coincidental non-MCP 2xx body that
+  // merely happens to carry a `result` field.
+  const response = payload as {
+    jsonrpc?: unknown;
+    id?: unknown;
+    result?: unknown;
+  };
   if (
     !payload ||
     typeof payload !== "object" ||
-    (payload as { result?: unknown }).result === undefined
+    response.jsonrpc !== "2.0" ||
+    response.id !== MCP_INIT_ID ||
+    response.result === null ||
+    typeof response.result !== "object"
   ) {
     return "MCP server did not return a JSON-RPC initialize result";
   }

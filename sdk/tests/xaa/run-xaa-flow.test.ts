@@ -187,6 +187,30 @@ describe("runXaaFlow", () => {
     expect(result.completed).toBe(false);
   });
 
+  it("does not report success on a non-MCP 2xx body that merely has a result field", async () => {
+    global.fetch = stubFetch({
+      token: {
+        status: 200,
+        body: { access_token: "at-123", token_type: "Bearer" },
+      },
+      // A `result` field but no JSON-RPC envelope (wrong/absent jsonrpc + id).
+      mcpBody: { result: { anything: true } },
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    expect(result.mcp?.ok).toBe(false);
+    expect(result.mcp?.error).toMatch(/initialize result/i);
+    expect(result.completed).toBe(false);
+  });
+
   it("discovers PRM served at the origin root for a path resource", async () => {
     const rootPrm =
       "https://mcp.example.com/.well-known/oauth-protected-resource";
