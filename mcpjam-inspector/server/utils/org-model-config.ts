@@ -3,10 +3,10 @@ import dns from "node:dns/promises";
 import {
   getModelById,
   isBedrockModelId,
-  isMCPJamProvidedModel,
   type ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
+import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
 import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
 import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
 import {
@@ -687,7 +687,7 @@ export async function resolveSyntheticModelSource(args: {
   serverIds?: string[];
 }): Promise<SyntheticModelResolution> {
   const modelIdStr = String(args.modelDefinition.id);
-  if (isMCPJamProvidedModel(modelIdStr)) {
+  if (isHostedCatalogModel(modelIdStr)) {
     return { source: "mcpjam" };
   }
   const keyResult = deriveOrgProviderKey(args.modelDefinition);

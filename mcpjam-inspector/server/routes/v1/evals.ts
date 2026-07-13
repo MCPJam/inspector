@@ -62,10 +62,10 @@ import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
 import { synthesizeServerBody } from "./adapter.js";
 import {
   getCanonicalModelId,
-  isMCPJamProvidedModel,
   isModelSupported,
   SUPPORTED_MODELS,
 } from "@/shared/types";
+import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 
 const evals = new Hono();
 
@@ -415,14 +415,14 @@ export function assertInlineTestModelsValid(
     const provider = test.provider.trim().toLowerCase();
     if (OPEN_MODEL_PROVIDERS.has(provider)) continue;
     const canonical = getCanonicalModelId(test.model, test.provider);
-    if (isMCPJamProvidedModel(canonical, test.provider)) continue;
+    if (isHostedCatalogModel(canonical, test.provider)) continue;
     if (modelApiKeys?.[test.provider] ?? modelApiKeys?.[provider]) continue;
     if (isModelSupported(canonical)) continue;
 
     const hostedIds = SUPPORTED_MODELS.filter(
       (m) =>
         m.provider.toLowerCase() === provider &&
-        isMCPJamProvidedModel(String(m.id), m.provider)
+        isHostedCatalogModel(String(m.id), m.provider)
     ).map((m) => String(m.id));
     throw new WebRouteError(
       400,

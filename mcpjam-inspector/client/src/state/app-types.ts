@@ -1,6 +1,6 @@
 import type { MCPServerConfig, NormalizedError } from "@mcpjam/sdk/browser";
 import { OauthTokens } from "@/shared/types.js";
-import type { XaaRegistrationStrategy } from "@/shared/xaa.js";
+import type { RegistrationStrategy } from "@/shared/xaa.js";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import type {
   ProjectClientConfig,
@@ -87,7 +87,7 @@ export interface ServerWithName {
   xaaSubject?: string;
   xaaEmail?: string;
   /** XAA Debugger registration strategy (Client↔Resource-AS leg). Debugger-only. */
-  xaaRegistrationStrategy?: XaaRegistrationStrategy;
+  xaaRegistrationStrategy?: RegistrationStrategy;
 }
 
 export interface Project {

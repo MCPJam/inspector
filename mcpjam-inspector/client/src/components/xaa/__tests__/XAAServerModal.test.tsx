@@ -68,7 +68,7 @@ describe("XAAServerModal", () => {
       oauthScopes: ["read:tools", "read:resources"],
       xaaAuthzIssuer: "https://auth.staging.example.com",
       // Defaults to pre-registered when the creator doesn't change it.
-      xaaRegistrationStrategy: "pre_registered",
+      xaaRegistrationStrategy: "preregistered",
     });
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });

@@ -388,7 +388,7 @@ async function runSharedAttempt(
     email: config.email,
     scope: config.scope,
     negativeTestMode: mode,
-    registrationStrategy: "pre_registered",
+    registrationStrategy: "preregistered",
   });
   const executor = createInProcessXaaExecutor({
     issuerBaseUrl: config.issuerBaseUrl,
@@ -433,7 +433,7 @@ async function runSharedAttempt(
     clientSecret: config.clientSecret,
     scope: config.scope,
     authzServerIssuer: config.authzServerIssuer,
-    registrationStrategy: "pre_registered",
+    registrationStrategy: "preregistered",
   });
 
   await runXaaStateMachine(

@@ -261,7 +261,7 @@ describe("createInProcessXaaExecutor internal routes", () => {
 
     let state = createInitialXAAFlowState({
       serverUrl: RESOURCE,
-      registrationStrategy: "pre_registered",
+      registrationStrategy: "preregistered",
       negativeTestMode: "valid",
       userId: "user-1",
       email: "u@example.com",
@@ -283,7 +283,7 @@ describe("createInProcessXaaExecutor internal routes", () => {
       email: "u@example.com",
       clientId: "client-1",
       scope: "read:tools",
-      registrationStrategy: "pre_registered",
+      registrationStrategy: "preregistered",
     });
 
     const result = await runXaaStateMachine(machine, () => state);

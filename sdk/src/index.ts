@@ -207,6 +207,22 @@ export type {
   OAuthRegistrationStrategy,
   ResolvedAuthorizationPlan,
 } from "./oauth/authorization-plan.js";
+// Shared client-registration vocabulary (single source of truth for OAuth
+// flows AND the XAA debugger's Client↔Resource-AS leg).
+export {
+  REGISTRATION_STRATEGIES,
+  DEFAULT_REGISTRATION_STRATEGY,
+  DEFAULT_REGISTRATION_MODE,
+  AUTH_METHODS,
+  normalizeRegistrationStrategy,
+  normalizeRegistrationMode,
+  normalizeAuthMethod,
+} from "./registration.js";
+export type {
+  RegistrationStrategy,
+  RegistrationMode,
+  AuthMethod,
+} from "./registration.js";
 export {
   summarizeStructuredCases,
   renderStructuredRunJson,

@@ -1530,7 +1530,7 @@ describe("open dcr registration strategy", () => {
     expect(harness.getState().clientId).toBe("minted-client");
   });
 
-  it("is forced to pre_registered when a registrationId is present", async () => {
+  it("is forced to preregistered when a registrationId is present", async () => {
     const harness = createDynamicHarness({
       strategy: "dcr",
       registrationId: "reg-1",
@@ -1818,7 +1818,7 @@ describe("createXAAStateMachine discovery guards", () => {
   ) {
     let state = createInitialXAAFlowState({
       serverUrl,
-      registrationStrategy: "pre_registered",
+      registrationStrategy: "preregistered",
     });
     const machine = createXAAStateMachine({
       getState: () => state,

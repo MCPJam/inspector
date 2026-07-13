@@ -17,7 +17,7 @@ import { NEGATIVE_TEST_MODE_DETAILS } from "../negative-test-modes.js";
 import { type NegativeTestMode, XAA_IDP_KID } from "../constants.js";
 import type {
   BaseXAAStateMachineConfig,
-  XaaRegistrationStrategy,
+  RegistrationStrategy,
   XaaRegistrationWarning,
   XaaTokenEndpointAuthMethod,
   XAADecodedJwt,
@@ -443,7 +443,7 @@ export function createXAAStateMachine(
     registrationId,
     serverId,
     projectId,
-    registrationStrategy: requestedRegistrationStrategy = "pre_registered",
+    registrationStrategy: requestedRegistrationStrategy = "preregistered",
     dcrCredentialCache,
     dcrCacheTargetKey,
   } = config;
@@ -451,9 +451,9 @@ export function createXAAStateMachine(
   // registrationId / serverId runs skip AS discovery entirely, so the dynamic
   // strategies (which need the discovered registration_endpoint / CIMD
   // advertisement) are forced back to pre-registered.
-  const registrationStrategy: XaaRegistrationStrategy =
+  const registrationStrategy: RegistrationStrategy =
     registrationId || serverId
-      ? "pre_registered"
+      ? "preregistered"
       : requestedRegistrationStrategy;
 
   // Body fields the LOCAL server uses to forward the mint to the hosted
@@ -810,7 +810,7 @@ export function createXAAStateMachine(
             authzMetadata: metadata as XAAFlowState["authzMetadata"],
             authzServerIssuer: resolvedIssuer,
             tokenEndpoint: metadata.token_endpoint,
-            ...(registrationStrategy === "pre_registered"
+            ...(registrationStrategy === "preregistered"
               ? {
                   tokenEndpointAuthMethod: selectPreRegisteredTokenAuthMethod(
                     state.tokenEndpointAuthMethod,
@@ -1920,7 +1920,7 @@ export function createXAAStateMachine(
         await discoverAuthzMetadata();
         return;
       case "received_authz_metadata":
-        // The config-resolved strategy (which already forces pre_registered
+        // The config-resolved strategy (which already forces preregistered
         // for registrationId/serverId runs) is authoritative; the state copy
         // exists for display surfaces.
         if (registrationStrategy === "dcr") {
