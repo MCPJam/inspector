@@ -594,8 +594,11 @@ export function XAAFlowTab({
   // and reset, so the next run performs a fresh registration POST. This is
   // also the only path that clears dcrRetryMayCreateDuplicate.
   const registerAnotherClient = useCallback(() => {
+    // The cache key's first component is the encoded target key (see
+    // dcrCacheKeyFor); match on that encoded prefix.
+    const targetPrefix = `${encodeURIComponent(targetKey)}::`;
     for (const key of Array.from(dcrCredentialCacheRef.current.keys())) {
-      if (key.startsWith(`${targetKey}::`)) {
+      if (key.startsWith(targetPrefix)) {
         dcrCredentialCacheRef.current.delete(key);
       }
     }
@@ -608,7 +611,7 @@ export function XAAFlowTab({
   const dcrHasSessionRegistration =
     effectiveStrategy === "dcr" &&
     Array.from(dcrCredentialCacheRef.current.keys()).some((key) =>
-      key.startsWith(`${targetKey}::`)
+      key.startsWith(`${encodeURIComponent(targetKey)}::`)
     );
 
   // Resolve the real IdP issuer from the server's OpenID config so the ID-JAG

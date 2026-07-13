@@ -771,11 +771,17 @@ export function createXAAStateMachine(
 
   // Scope is part of the registered client's metadata, so a client registered
   // under one scope must NOT be reused when the run's scope changes — key the
-  // cache on it too (a scope change then forces a fresh registration).
+  // cache on it too (a scope change then forces a fresh registration). Each
+  // component is encodeURIComponent-escaped (which escapes ":") so a "::" inside
+  // any component can't collide with the "::" delimiter between components.
   const dcrCacheKeyFor = (registrationEndpoint: string) =>
-    `${dcrCacheTargetKey ?? serverUrl}::${registrationEndpoint}::${
-      currentState().scope ?? ""
-    }`;
+    [
+      dcrCacheTargetKey ?? serverUrl,
+      registrationEndpoint,
+      currentState().scope ?? "",
+    ]
+      .map(encodeURIComponent)
+      .join("::");
 
   const dcrSecretExpired = (creds: {
     clientSecret?: string;

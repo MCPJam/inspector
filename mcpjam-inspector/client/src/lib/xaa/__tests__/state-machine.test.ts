@@ -895,6 +895,11 @@ describe("createXAAStateMachine", () => {
 const DCR_SECRET = "dcr-minted-secret-value-123";
 const REGISTRATION_ENDPOINT = "https://auth.example.com/oauth/register";
 
+// Mirrors dcrCacheKeyFor: encodeURIComponent each component, join with "::".
+// Harness target key is "target-1".
+const dcrCacheKey = (endpoint: string, scope: string) =>
+  ["target-1", endpoint, scope].map(encodeURIComponent).join("::");
+
 interface DynamicHarnessOptions {
   strategy: "dcr" | "cimd";
   authzMetadataExtras?: Record<string, any>;
@@ -1435,7 +1440,7 @@ describe("open dcr registration strategy", () => {
 
   it("gates re-registration behind confirmation when the cached secret has expired", async () => {
     const cache = new Map<string, XaaEphemeralDcrCredentials>();
-    const key = `target-1::${REGISTRATION_ENDPOINT}::read:tools`;
+    const key = dcrCacheKey(REGISTRATION_ENDPOINT, "read:tools");
     cache.set(key, {
       clientId: "expired-client",
       clientSecret: "expired-secret",
@@ -1469,7 +1474,7 @@ describe("open dcr registration strategy", () => {
   it("does not reuse a registration cached under a different scope", async () => {
     const cache = new Map<string, XaaEphemeralDcrCredentials>();
     // Cached under a scope other than the run's "read:tools".
-    cache.set(`target-1::${REGISTRATION_ENDPOINT}::other:scope`, {
+    cache.set(dcrCacheKey(REGISTRATION_ENDPOINT, "other:scope"), {
       clientId: "other-scope-client",
       clientSecret: "s",
       tokenEndpointAuthMethod: "client_secret_post",
@@ -1528,7 +1533,7 @@ describe("open dcr registration strategy", () => {
     }
     // Expire the cached secret in place, then let redemption run. (Cache key
     // includes the run's scope.)
-    const key = `target-1::${REGISTRATION_ENDPOINT}::read:tools`;
+    const key = dcrCacheKey(REGISTRATION_ENDPOINT, "read:tools");
     cache.set(key, {
       ...cache.get(key)!,
       clientSecretExpiresAt: Math.floor(Date.now() / 1000) - 1,
