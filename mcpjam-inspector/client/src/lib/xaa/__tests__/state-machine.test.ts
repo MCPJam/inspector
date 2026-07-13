@@ -1449,6 +1449,9 @@ describe("open dcr registration strategy", () => {
 
     expect(state.currentStep).toBe("jwt_bearer_request");
     expect(state.error).toContain("no longer available");
+    // The error tells the user to "Register another client" — the gate flag
+    // must be set so that action is actually visible.
+    expect(state.dcrRetryMayCreateDuplicate).toBe(true);
     expect(
       harness.internalCalls.some((c) => c.path === "/proxy/token")
     ).toBe(false);
@@ -1596,6 +1599,7 @@ describe("cimd registration strategy", () => {
     "application/json; charset=utf-8",
     "APPLICATION/JSON",
     "application/ld+json",
+    "application/vnd_acme+json",
   ])("accepts the JSON media type %s", async (contentType) => {
     const harness = createDynamicHarness({
       strategy: "cimd",
@@ -1610,6 +1614,7 @@ describe("cimd registration strategy", () => {
     "application/jsonp",
     "text/application/json",
     "application/+json",
+    "application/-+json",
     "text/html",
   ])("parks on the non-JSON media type %s", async (contentType) => {
     const harness = createDynamicHarness({

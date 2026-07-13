@@ -1167,13 +1167,15 @@ export function createXAAStateMachine(
     // Compare the media-type ESSENCE (type/subtype before any ";" parameters,
     // trimmed + lowercased), anchored — an unanchored substring test wrongly
     // accepts "application/jsonp", "text/application/json", "application/+json".
-    // Allow exactly application/json, or a structured suffix with a NON-empty
-    // subtype tree (application/<x>+json), which the SDK proxy parses correctly.
+    // Allow exactly application/json, or a structured suffix application/<x>+json
+    // where <x> is a valid RFC 6838 subtype tree: it must START with an
+    // alphanumeric (rejects "-+json"/"+json") and may use restricted-name chars
+    // including "_" (accepts "vnd_acme+json"). The SDK proxy parses valid +json.
     const contentType = result.headers["content-type"] || "";
     const mediaTypeEssence = contentType.split(";", 1)[0].trim().toLowerCase();
     const isJsonMediaType =
       mediaTypeEssence === "application/json" ||
-      /^application\/[a-z0-9.+-]+\+json$/.test(mediaTypeEssence);
+      /^application\/[a-z0-9][a-z0-9!#$&^_.+-]*\+json$/.test(mediaTypeEssence);
     if (!isJsonMediaType) {
       park(
         `The client metadata document was served as "${contentType || "(none)"}", not a JSON media type.`
@@ -1466,6 +1468,10 @@ export function createXAAStateMachine(
             currentStep: "jwt_bearer_request",
             error:
               "This session's dynamic registration credentials are no longer available (the page may have reloaded). Register another client to continue.",
+            // A remote client was already registered this session; its secret
+            // is just gone. Set the gate so the "Register another client"
+            // action this error points at is actually visible.
+            dcrRetryMayCreateDuplicate: true,
           });
           return;
         }
