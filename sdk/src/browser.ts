@@ -182,6 +182,27 @@ export type {
   DynamicClientRegistrationOutcome,
 } from "./oauth/state-machines/shared/dynamic-client-registration.js";
 export { validateClientIdMetadataUrl } from "./oauth/state-machines/shared/client-id-metadata.js";
+export {
+  decodeJWT,
+  decodeJWTParts,
+  formatJWTTimestamp,
+} from "./oauth/state-machines/shared/jwt.js";
+export type { DecodedJwtParts } from "./oauth/state-machines/shared/jwt.js";
+// Pure XAA/ID-JAG primitives (single source of truth). Exported directly from
+// constants.js — the ./xaa/index.js barrel is node-only (crypto/fs mint).
+export {
+  XAA_IDP_KID,
+  NEGATIVE_TEST_MODES,
+  DEFAULT_NEGATIVE_TEST_MODE,
+  isNegativeTestMode,
+  XAA_REGISTRATION_STRATEGIES,
+  DEFAULT_XAA_REGISTRATION_STRATEGY,
+  normalizeXaaRegistrationStrategy,
+} from "./xaa/constants.js";
+export type {
+  NegativeTestMode,
+  XaaRegistrationStrategy,
+} from "./xaa/constants.js";
 export { EMPTY_OAUTH_FLOW_STATE } from "./oauth/state-machines/types.js";
 export type {
   HttpHistoryEntry,
