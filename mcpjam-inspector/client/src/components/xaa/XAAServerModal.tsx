@@ -29,6 +29,9 @@ interface XAAServerModalProps {
    * page so the two surfaces stay in sync.
    */
   signedInEmail?: string;
+  /** Hosted secret context used to reveal an existing saved client secret. */
+  projectId?: string | null;
+  hostedServerId?: string | null;
 }
 
 export function XAAServerModal({
@@ -38,6 +41,8 @@ export function XAAServerModal({
   existingServerNames,
   onSave,
   signedInEmail,
+  projectId,
+  hostedServerId,
 }: XAAServerModalProps) {
   const derived = useMemo(
     () => deriveOAuthProfileFromServer(server),
@@ -254,6 +259,8 @@ export function XAAServerModal({
               onXaaEmailChange={setXaaEmail}
               signedInEmail={signedInEmail}
               defaultAdvancedOpen
+              projectId={projectId}
+              hostedServerId={hostedServerId}
             />
           </div>
 

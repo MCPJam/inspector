@@ -166,7 +166,7 @@ export function analyzeAsCompatibility(
           id: "id_jag_grant_profile",
           label: "ID-JAG grant profile",
           status: "pass",
-          detail: `Advertised in authorization_grant_profiles_supported — the authorization server declares end-to-end XAA support.`,
+          detail: `Advertised in authorization_grant_profiles_supported — the authorization server can process the ID-JAG grant profile. Issuer trust and request policy still decide whether a given exchange is accepted.`,
         }
       : {
           id: "id_jag_grant_profile",

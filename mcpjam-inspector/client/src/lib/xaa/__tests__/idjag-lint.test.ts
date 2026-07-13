@@ -200,6 +200,26 @@ describe("lintIdJag", () => {
         "pass",
       );
     });
+
+    it("renders an out-of-range iat as its raw value instead of throwing", () => {
+      // A malformed JWT with an absurd iat must not crash the inspector:
+      // new Date(1e19 * 1000).toISOString() would throw a RangeError.
+      const hugeIat = 1e19;
+      expect(() =>
+        lintIdJag(
+          VALID_HEADER,
+          { ...VALID_PAYLOAD, iat: hugeIat },
+          { nowSeconds: NOW },
+        ),
+      ).not.toThrow();
+      const verdict = verdictFor(
+        VALID_HEADER,
+        { ...VALID_PAYLOAD, iat: hugeIat },
+        "iat",
+        { nowSeconds: NOW },
+      );
+      expect(verdict.actual).toBe(String(hugeIat));
+    });
   });
 
   describe("subject resolution (email / aud_sub)", () => {
@@ -255,6 +275,24 @@ describe("lintIdJag", () => {
         "exp",
       );
       expect(verdict.status).toBe("warn");
+    });
+
+    it("renders an out-of-range exp as its raw value instead of throwing", () => {
+      const hugeExp = 1e19;
+      expect(() =>
+        lintIdJag(
+          VALID_HEADER,
+          { ...VALID_PAYLOAD, exp: hugeExp },
+          { nowSeconds: NOW },
+        ),
+      ).not.toThrow();
+      const verdict = verdictFor(
+        VALID_HEADER,
+        { ...VALID_PAYLOAD, exp: hugeExp },
+        "exp",
+        { nowSeconds: NOW },
+      );
+      expect(verdict.actual).toBe(String(hugeExp));
     });
   });
 

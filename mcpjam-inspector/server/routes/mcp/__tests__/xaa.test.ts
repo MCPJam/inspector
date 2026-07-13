@@ -1146,6 +1146,27 @@ describe("hosted-issuer forwarding on the local router", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it("rejects a cross-origin forward before relaying (CSRF guard, no upstream signing)", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Origin: "https://evil.example.com",
+          Authorization: "Bearer workos-token",
+          "x-mcpjam-issuer-mode": "hosted",
+          "x-mcpjam-organization-id": "org_123",
+        },
+        body: GRANT_FORM,
+      });
+
+      expect(response.status).toBe(403);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     it("serves /token locally when the opt-in header is absent, without touching fetch", async () => {
       const fetchMock = vi.fn();
       vi.stubGlobal("fetch", fetchMock);

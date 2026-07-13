@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
+  Copy,
   Loader2,
   Pencil,
   Play,
@@ -36,6 +37,8 @@ import {
   type XAAPhaseKey,
 } from "@/lib/xaa/step-metadata";
 import type { XAAFlowState, XAAFlowStep } from "@/lib/xaa/types";
+import { generateXAAFlowText } from "@/lib/xaa/log-formatters";
+import { copyToClipboard } from "@/lib/clipboard";
 import {
   getXAAErrorGuidance,
   latestErroredHttpEntry,
@@ -399,6 +402,7 @@ export function XAAFlowLogger({
   const [expandedSteps, setExpandedSteps] = useState<Set<XAAFlowStep>>(
     new Set()
   );
+  const [copySuccess, setCopySuccess] = useState(false);
 
   const stepRefs = useRef(new Map<XAAFlowStep, HTMLDivElement | null>());
 
@@ -475,6 +479,15 @@ export function XAAFlowLogger({
   }, [groups]);
 
   const currentStepIndex = getXAAStepIndex(flowState.currentStep);
+
+  const handleCopyFlow = async () => {
+    const success = await copyToClipboard(
+      generateXAAFlowText(flowState, summary),
+    );
+    if (!success) return;
+    setCopySuccess(true);
+    setTimeout(() => setCopySuccess(false), 2000);
+  };
 
   const toggleStep = (step: XAAFlowStep) => {
     setExpandedSteps((previous) => {
@@ -560,6 +573,15 @@ export function XAAFlowLogger({
           </button>
           {hasProfile && (
             <div className="flex shrink-0 items-center justify-end gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void handleCopyFlow()}
+                className="h-7"
+              >
+                <Copy className="h-3 w-3 mr-1" />
+                {copySuccess ? "Copied!" : "Copy"}
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"

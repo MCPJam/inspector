@@ -82,6 +82,22 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+// The maximum time value a JS Date can represent (±100,000,000 days from the
+// epoch, in ms). Beyond it, `new Date(ms).toISOString()` throws a RangeError.
+const MAX_DATE_MS = 8.64e15;
+
+// Format an epoch-seconds claim as ISO-8601, falling back to the raw numeric
+// value when it's outside the representable Date range. A malformed JWT can
+// carry an out-of-range iat/exp, and the lint must render a verdict rather
+// than crash the whole inspector.
+function formatEpochSeconds(seconds: number): string {
+  const ms = seconds * 1000;
+  if (!Number.isFinite(ms) || Math.abs(ms) > MAX_DATE_MS) {
+    return String(seconds);
+  }
+  return new Date(ms).toISOString();
+}
+
 export function lintIdJag(
   header: Record<string, unknown> | null,
   payload: Record<string, unknown> | null,
@@ -310,7 +326,7 @@ export function lintIdJag(
       detail:
         "Issued in the future. Check for clock skew between the identity provider and the authorization server.",
       citation: CITATIONS.iat,
-      actual: new Date(p.iat * 1000).toISOString(),
+      actual: formatEpochSeconds(p.iat),
     });
   } else {
     verdicts.push({
@@ -319,7 +335,7 @@ export function lintIdJag(
       status: "pass",
       detail: "Issued-at present.",
       citation: CITATIONS.iat,
-      actual: new Date(p.iat * 1000).toISOString(),
+      actual: formatEpochSeconds(p.iat),
     });
   }
 
@@ -342,7 +358,7 @@ export function lintIdJag(
       detail:
         "Assertion is expired. An authorization server that still issues an access token for it is not validating exp.",
       citation: CITATIONS.exp,
-      actual: new Date(p.exp * 1000).toISOString(),
+      actual: formatEpochSeconds(p.exp),
     });
   } else if (p.exp - now > LONG_LIVED_THRESHOLD_S) {
     verdicts.push({
@@ -352,7 +368,7 @@ export function lintIdJag(
       detail:
         "Unusually long lifetime for a single-use assertion. The ID-JAG is redeemed immediately, so a short exp (minutes) keeps the replay window small.",
       citation: CITATIONS.exp,
-      actual: new Date(p.exp * 1000).toISOString(),
+      actual: formatEpochSeconds(p.exp),
     });
   } else {
     verdicts.push({
@@ -361,7 +377,7 @@ export function lintIdJag(
       status: "pass",
       detail: "Short-lived and not yet expired.",
       citation: CITATIONS.exp,
-      actual: new Date(p.exp * 1000).toISOString(),
+      actual: formatEpochSeconds(p.exp),
     });
   }
 

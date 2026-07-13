@@ -3,6 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { XAAServerModal } from "../XAAServerModal";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
+
+vi.mock("@/lib/apis/hosted-oauth-client-secret-api", () => ({
+  fetchOAuthClientSecret: vi.fn(),
+}));
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -121,6 +126,45 @@ describe("XAAServerModal", () => {
     ).toBeInTheDocument();
   });
 
+  it("reveals a saved client secret using the hosted server context", async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchOAuthClientSecret).mockResolvedValue({
+      clientSecret: "stored-super-secret",
+    });
+    const server = {
+      name: "prod-mcp",
+      config: { url: "https://prod.mcp.example.com/mcp" },
+      oauthFlowProfile: {
+        serverUrl: "https://prod.mcp.example.com/mcp",
+        clientId: "prod-client",
+        clientSecret: "",
+        scopes: "",
+        customHeaders: [],
+      },
+      hasClientSecret: true,
+      useOAuth: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+    } as unknown as ServerWithName;
+
+    renderModal({
+      server,
+      projectId: "project-123",
+      hostedServerId: "server-456",
+    });
+
+    await user.click(screen.getByRole("button", { name: "Reveal" }));
+
+    expect(fetchOAuthClientSecret).toHaveBeenCalledWith({
+      projectId: "project-123",
+      serverId: "server-456",
+    });
+    expect(screen.getByLabelText(/Client Secret/)).toHaveValue(
+      "stored-super-secret",
+    );
+  });
+
   it("clears the saved secret when the creator chooses Clear", async () => {
     const user = userEvent.setup();
     const server = {
@@ -179,9 +223,7 @@ describe("XAAServerModal", () => {
     );
     await user.type(screen.getByLabelText(/Client ID/), "staging-client");
     await user.type(screen.getByLabelText("Subject (sub)"), "bob");
-    await user.click(
-      screen.getByRole("button", { name: "Save configuration" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Save configuration" }));
 
     const { formData } = onSave.mock.calls[0][0];
     expect(formData.xaaSubject).toBe("bob");
@@ -197,7 +239,9 @@ describe("XAAServerModal", () => {
       "https://staging.mcp.example.com",
     );
     await user.type(screen.getByLabelText(/Client ID/), "staging-client");
-    await user.click(screen.getByRole("button", { name: "Save configuration" }));
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
 
     expect(onSave).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toHaveTextContent(/already exists/i);

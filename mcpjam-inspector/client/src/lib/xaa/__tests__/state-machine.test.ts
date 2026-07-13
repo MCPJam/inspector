@@ -17,6 +17,26 @@ function makeJwt(
   return `${encodePart(header)}.${encodePart(payload)}.signature`;
 }
 
+/**
+ * The RFC 8693 token-exchange response the mock IdP's /token endpoint returns
+ * in valid mode — the minted ID-JAG rides the `access_token` field. Shared by
+ * every executor fixture so the wire shape is defined once.
+ */
+function specTokenExchangeResult(idJag: string) {
+  return {
+    status: 200,
+    statusText: "OK",
+    headers: {},
+    body: {
+      access_token: idJag,
+      issued_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+      token_type: "N_A",
+      expires_in: 300,
+    },
+    ok: true,
+  };
+}
+
 describe("createXAAStateMachine", () => {
   it("walks the full happy path to completion", async () => {
     let state: XAAFlowState = createInitialXAAFlowState({
@@ -94,18 +114,7 @@ describe("createXAAStateMachine", () => {
 
         // Valid mode drives the standards-track RFC 8693 grant.
         if (path === "/token") {
-          return {
-            status: 200,
-            statusText: "OK",
-            headers: {},
-            body: {
-              access_token: idJag,
-              issued_token_type: "urn:ietf:params:oauth:token-type:id-jag",
-              token_type: "N_A",
-              expires_in: 300,
-            },
-            ok: true,
-          };
+          return specTokenExchangeResult(idJag);
         }
 
         if (path === "/token-exchange") {
@@ -159,6 +168,10 @@ describe("createXAAStateMachine", () => {
     expect(state.currentStep).toBe("complete");
     expect(state.accessToken).toBe("access-token");
     expect(state.idJagDecoded?.issues).toHaveLength(0);
+    // The resolved issuer must reach the EXTERNAL flow state (what the lint
+    // panel reads), not just the machine's internal copy, so `iss` is matched
+    // rather than presence-only on a normal run.
+    expect(state.issuerBaseUrl).toBe("https://issuer.example/api/web/xaa");
     expect(executor.internalRequest).toHaveBeenCalledWith(
       "/proxy/token",
       expect.objectContaining({
@@ -437,18 +450,7 @@ describe("createXAAStateMachine", () => {
         externalRequest: vi.fn(),
         internalRequest: vi.fn(async (path: string) => {
           if (path === "/token") {
-            return {
-              status: 200,
-              statusText: "OK",
-              headers: {},
-              body: {
-                access_token: idJag,
-                issued_token_type: "urn:ietf:params:oauth:token-type:id-jag",
-                token_type: "N_A",
-                expires_in: 300,
-              },
-              ok: true,
-            };
+            return specTokenExchangeResult(idJag);
           }
           if (path === "/token-exchange") {
             return {
@@ -682,18 +684,7 @@ describe("createXAAStateMachine", () => {
           // Valid mode drives the standards-track RFC 8693 grant. Must sit
           // before the /proxy/token fallthrough below.
           if (path === "/token") {
-            return {
-              status: 200,
-              statusText: "OK",
-              headers: {},
-              body: {
-                access_token: idJag,
-                issued_token_type: "urn:ietf:params:oauth:token-type:id-jag",
-                token_type: "N_A",
-                expires_in: 300,
-              },
-              ok: true,
-            };
+            return specTokenExchangeResult(idJag);
           }
 
           if (path === "/token-exchange") {
@@ -915,18 +906,7 @@ describe("createXAAStateMachine", () => {
           }
           // Valid mode drives the standards-track RFC 8693 grant.
           if (path === "/token") {
-            return {
-              status: 200,
-              statusText: "OK",
-              headers: {},
-              body: {
-                access_token: idJag,
-                issued_token_type: "urn:ietf:params:oauth:token-type:id-jag",
-                token_type: "N_A",
-                expires_in: 300,
-              },
-              ok: true,
-            };
+            return specTokenExchangeResult(idJag);
           }
           if (path === "/token-exchange") {
             return {

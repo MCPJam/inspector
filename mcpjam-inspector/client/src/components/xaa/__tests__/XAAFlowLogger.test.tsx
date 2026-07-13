@@ -4,10 +4,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { XAAFlowLogger } from "../XAAFlowLogger";
 import { createInitialXAAFlowState } from "@/lib/xaa/types";
 
+const copyToClipboard = vi.hoisted(() => vi.fn(async () => true));
+vi.mock("@/lib/clipboard", () => ({ copyToClipboard }));
+
 // Only unstub globals between tests — NOT restoreAllMocks, which would reset
 // the shared ResizeObserver mock that the dropdown menu's positioning needs.
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.clearAllMocks();
 });
 
 function renderLogger(
@@ -96,5 +100,68 @@ describe("XAAFlowLogger run controls", () => {
     expect(screen.getByText("client_bc147d46f04cb865")).toBeInTheDocument();
     expect(screen.getByText("Scope")).toBeInTheDocument();
     expect(screen.getByText("mcp.access")).toBeInTheDocument();
+  });
+
+  it("copies the complete XAA flow", async () => {
+    const user = userEvent.setup();
+    render(
+      <XAAFlowLogger
+        flowState={createInitialXAAFlowState({
+          serverUrl: "https://mcp.example.com",
+          currentStep: "received_resource_metadata",
+          negativeTestMode: "valid",
+          infoLogs: [
+            {
+              id: "resource-metadata",
+              step: "received_resource_metadata",
+              label: "Resource metadata received",
+              data: { authorization_servers: ["https://auth.example.com"] },
+              timestamp: 1,
+              level: "info",
+            },
+          ],
+          httpHistory: [
+            {
+              step: "discover_resource_metadata",
+              timestamp: 0,
+              request: {
+                method: "GET",
+                url: "https://mcp.example.com/.well-known/oauth-protected-resource",
+                headers: {},
+              },
+              response: {
+                status: 200,
+                statusText: "OK",
+                headers: { "content-type": "application/json" },
+                body: { resource: "https://mcp.example.com" },
+              },
+            },
+          ],
+        })}
+        hasProfile
+        actions={{
+          onConfigure: vi.fn(),
+          onReset: vi.fn(),
+          onContinue: vi.fn(),
+          continueLabel: "Continue",
+        }}
+        summary={{
+          serverUrl: "https://mcp.example.com",
+          clientId: "test-client",
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Copy" }));
+
+    expect(copyToClipboard).toHaveBeenCalledTimes(1);
+    const copied = copyToClipboard.mock.calls[0][0];
+    expect(copied).toContain("=== XAA Debugger - Flow ===");
+    expect(copied).toContain("Client ID: test-client");
+    expect(copied).toContain(
+      "GET https://mcp.example.com/.well-known/oauth-protected-resource",
+    );
+    expect(copied).toContain("Resource metadata received");
+    expect(screen.getByRole("button", { name: "Copied!" })).toBeInTheDocument();
   });
 });

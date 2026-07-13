@@ -817,6 +817,16 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   ): Promise<Response | null> => {
     if (!options.forwardHostedIssuer) return null;
     if (c.req.header("x-mcpjam-issuer-mode") !== "hosted") return null;
+    // This path signs (via the hosted issuer) before handleToken runs, so it
+    // must apply the same guards handleToken would: the cross-origin CSRF
+    // check and the per-IP cap. Otherwise a page or client could drive
+    // unbounded hosted signing requests through the local relay.
+    const crossOrigin = rejectCrossOriginPost(c, allowedBrowserOrigins);
+    if (crossOrigin) return crossOrigin;
+    const ip = getClientIp(c);
+    if (ip && !checkOidcIpCap(ip)) {
+      return oauthError(429, "temporarily_unavailable", "Too many requests");
+    }
     const authHeader = c.req.header("authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return oauthError(

@@ -1028,6 +1028,12 @@ export function createXAAStateMachine(
     machine.updateState({
       currentStep: "inspect_id_jag",
       idJagDecoded: inspection,
+      // Persist the resolved IdP issuer into the externally-managed flow state
+      // so the lint panel (which reads flowState, not the machine's internal
+      // copy) can match the ID-JAG `iss` against it. Without this, a normal
+      // new run — where the external state was initialized before the issuer
+      // resolved — would lint `iss` presence-only.
+      issuerBaseUrl,
       error: undefined,
     });
 
