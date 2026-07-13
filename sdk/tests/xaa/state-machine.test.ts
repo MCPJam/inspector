@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { XAA_DEBUG_CLIENT_ID_METADATA_URL } from "@mcpjam/sdk/browser";
-import { CLIENT_SECRET_MASK, createXAAStateMachine } from "../state-machine";
+import { XAA_DEBUG_CLIENT_ID_METADATA_URL } from "../../src/oauth/client-identity.js";
+import {
+  CLIENT_SECRET_MASK,
+  createXAAStateMachine,
+} from "../../src/xaa/state-machines/state-machine.js";
 import {
   createInitialXAAFlowState,
   type XaaEphemeralDcrCredentials,
   type XAAFlowState,
-} from "../types";
+} from "../../src/xaa/state-machines/types.js";
 
 function encodePart(value: Record<string, any>): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");

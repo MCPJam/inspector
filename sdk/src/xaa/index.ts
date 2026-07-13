@@ -13,6 +13,7 @@ export {
   normalizeXaaRegistrationStrategy,
   type XaaRegistrationStrategy,
 } from "./constants.js";
+export { NEGATIVE_TEST_MODE_DETAILS } from "./negative-test-modes.js";
 export {
   initXAAIdpKeyPair,
   getXAAIssuerUrl,

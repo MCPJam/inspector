@@ -203,6 +203,7 @@ export type {
   NegativeTestMode,
   XaaRegistrationStrategy,
 } from "./xaa/constants.js";
+export { NEGATIVE_TEST_MODE_DETAILS } from "./xaa/negative-test-modes.js";
 // Pure XAA discovery + MCP-initialize helpers (browser+node safe, no I/O).
 export {
   canonicalizeMcpResource,

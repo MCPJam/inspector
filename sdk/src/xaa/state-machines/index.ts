@@ -34,3 +34,12 @@ export type {
   XAACompatibilityReport,
 } from "./capability-preflight.js";
 export { detectVendor, analyzeAsCompatibility } from "./capability-preflight.js";
+export {
+  createXAAStateMachine,
+  CLIENT_SECRET_MASK,
+} from "./state-machine.js";
+export { runXaaStateMachine } from "./runner.js";
+export type {
+  RunXaaStateMachineOptions,
+  XaaStateMachineRunResult,
+} from "./runner.js";
