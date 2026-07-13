@@ -150,6 +150,7 @@ export const ANALYTICS_EVENTS = {
   logger_collapsed: { source: "client" },
   logger_copy_clicked: { source: "client" },
   logger_download_clicked: { source: "client" },
+  logger_item_copy_clicked: { source: "client" },
   logger_log_level_changed: { source: "client" },
   logger_search_used: { source: "client" },
   logger_source_filter_changed: { source: "client" },
