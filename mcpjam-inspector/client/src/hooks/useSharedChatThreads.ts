@@ -5,7 +5,7 @@ import type {
 } from "@/shared/eval-trace";
 import type { SessionReadiness } from "@/components/chatboxes/session-readiness";
 
-export type SharedChatSourceType = "chatbox";
+export type SharedChatSourceType = "chatbox" | "swarm";
 
 export interface SharedChatThread {
   _id: string;

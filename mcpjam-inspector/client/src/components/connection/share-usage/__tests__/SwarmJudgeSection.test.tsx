@@ -4,10 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 /**
  * The session viewer's judge section (TL must-have: on-demand UX). States:
- * completed → shared verdict card + Re-judge; failed → "Judge unavailable" +
- * Retry (failed judgments are recoverable, never hidden); running → judging
- * placeholder. Retry/Re-judge invoke `swarmJudge:requestSwarmSessionJudge`
- * with ONLY the session id.
+ * absent → Run judge; completed → shared verdict card + Re-judge; failed →
+ * "Judge unavailable" + Retry (failed judgments are recoverable, never
+ * hidden); running → judging placeholder. Controls invoke
+ * `swarmJudge:requestSwarmSessionJudge` with ONLY the session id.
  */
 const { requestJudgeMock, toastMock } = vi.hoisted(() => ({
   requestJudgeMock: vi.fn().mockResolvedValue(null),
@@ -53,6 +53,15 @@ describe("SwarmJudgeSection", () => {
     toastMock.error.mockClear();
   });
 
+  it("absent → first-run affordance invoking the action", async () => {
+    const user = userEvent.setup();
+    render(<SwarmJudgeSection threadId="session-1" />);
+
+    await user.click(screen.getByRole("button", { name: /run judge/i }));
+
+    expect(requestJudgeMock).toHaveBeenCalledWith({ sessionId: "session-1" });
+  });
+
   it("completed → verdict card with score/reason + a Re-judge affordance", async () => {
     const user = userEvent.setup();
     render(
@@ -64,7 +73,7 @@ describe("SwarmJudgeSection", () => {
           passed: true,
           reason: "accomplished the goal",
         }}
-      />,
+      />
     );
     expect(screen.getByText("82%")).toBeInTheDocument();
     expect(screen.getByText(/meets goal/)).toBeInTheDocument();
@@ -80,7 +89,7 @@ describe("SwarmJudgeSection", () => {
       <SwarmJudgeSection
         threadId="session-1"
         goalScore={{ status: "failed", error: "spend_cap_exceeded" }}
-      />,
+      />
     );
     expect(screen.getByText("Judge unavailable")).toBeInTheDocument();
     expect(screen.getByText("spend_cap_exceeded")).toBeInTheDocument();
@@ -98,17 +107,20 @@ describe("SwarmJudgeSection", () => {
           score: 0.9,
           passed: "yes" as unknown as boolean,
         }}
-      />,
+      />
     );
     expect(container.textContent).not.toMatch(/below threshold|meets goal/);
   });
 
   it("running → judging placeholder, no controls", () => {
     render(
-      <SwarmJudgeSection threadId="session-1" goalScore={{ status: "running" }} />,
+      <SwarmJudgeSection
+        threadId="session-1"
+        goalScore={{ status: "running" }}
+      />
     );
     expect(
-      screen.getByText(/Judging against the journey goal/),
+      screen.getByText(/Judging against the journey goal/)
     ).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
@@ -120,7 +132,7 @@ describe("SwarmJudgeSection", () => {
       <SwarmJudgeSection
         threadId="session-1"
         goalScore={{ status: "failed", error: "x" }}
-      />,
+      />
     );
     await user.click(screen.getByRole("button", { name: /retry/i }));
     await waitFor(() => {

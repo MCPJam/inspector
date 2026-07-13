@@ -40,21 +40,22 @@ const EMPTY_SPANS: EvalTraceSpan[] = [];
 /**
  * Goal-completion judge section for SWARM sessions — rendered under the
  * readiness insight bar so the verdict is visible on every tab. States:
- * completed → shared JudgeVerdictCard + a Re-judge affordance; failed →
- * "Judge unavailable" + Retry (a failed judgment must be recoverable, not
- * hidden); running → judging placeholder. Retry/Re-judge call the backend
- * `requestSwarmSessionJudge` (sessionId only — goal/run/project are
- * server-derived) and rely on the reactive thread subscription to refresh.
+ * absent → explicit first-run affordance; completed → shared JudgeVerdictCard
+ * + a Re-judge affordance; failed → "Judge unavailable" + Retry (a failed
+ * judgment must be recoverable, not hidden); running → judging placeholder.
+ * All controls call the backend `requestSwarmSessionJudge` (sessionId only —
+ * goal/run/project are server-derived) and rely on the reactive thread
+ * subscription to refresh.
  */
 export function SwarmJudgeSection({
   threadId,
   goalScore,
 }: {
   threadId: string;
-  goalScore: NonNullable<SharedChatThread["goalScore"]>;
+  goalScore?: SharedChatThread["goalScore"];
 }) {
   const requestJudge = useAction(
-    "swarmJudge:requestSwarmSessionJudge" as never,
+    "swarmJudge:requestSwarmSessionJudge" as never
   ) as unknown as (args: { sessionId: string }) => Promise<unknown>;
   const [requesting, setRequesting] = useState(false);
 
@@ -64,14 +65,14 @@ export function SwarmJudgeSection({
       await requestJudge({ sessionId: threadId });
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Failed to re-run the judge",
+        err instanceof Error ? err.message : "Failed to run the judge"
       );
     } finally {
       setRequesting(false);
     }
   };
 
-  const judging = requesting || goalScore.status === "running";
+  const judging = requesting || goalScore?.status === "running";
 
   return (
     <div className="shrink-0 space-y-1.5 px-4 pt-2">
@@ -79,6 +80,26 @@ export function SwarmJudgeSection({
         <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-xs text-muted-foreground">
           <Loader2 className="size-3.5 animate-spin" aria-hidden />
           Judging against the journey goal…
+        </div>
+      ) : !goalScore ? (
+        <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-xs">
+          <Gavel
+            className="size-3.5 shrink-0 text-muted-foreground"
+            aria-hidden
+          />
+          <span className="text-muted-foreground">
+            Check this session against the journey goal.
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="ml-auto shrink-0 rounded-xl"
+            onClick={() => void rerun()}
+          >
+            <Gavel className="mr-1.5 size-3.5" />
+            Run judge
+          </Button>
         </div>
       ) : goalScore.status === "completed" &&
         typeof goalScore.score === "number" &&
@@ -109,7 +130,10 @@ export function SwarmJudgeSection({
         </div>
       ) : goalScore.status === "failed" ? (
         <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-xs">
-          <Gavel className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          <Gavel
+            className="size-3.5 shrink-0 text-muted-foreground"
+            aria-hidden
+          />
           <span className="font-medium uppercase tracking-wide text-muted-foreground">
             Judge unavailable
           </span>
@@ -141,7 +165,7 @@ export function SwarmJudgeSection({
  * named seam so future read-only consumers can reuse it.
  */
 function bridgeToolRenderOverrides(
-  overrides: Record<string, unknown> | undefined,
+  overrides: Record<string, unknown> | undefined
 ): Record<string, ChatUiToolRenderOverride> | undefined {
   return overrides as Record<string, ChatUiToolRenderOverride> | undefined;
 }
@@ -160,7 +184,7 @@ interface ShareUsageThreadDetailProps {
  * Fetch span blobs from turn trace URLs and flatten into a single span array.
  */
 async function hydrateSpans(
-  traces: SharedChatTurnTrace[],
+  traces: SharedChatTurnTrace[]
 ): Promise<EvalTraceSpan[]> {
   const results = await Promise.all(
     traces.map(async (trace) => {
@@ -173,7 +197,7 @@ async function hydrateSpans(
       } catch {
         return [];
       }
-    }),
+    })
   );
   return results.flat();
 }
@@ -226,7 +250,7 @@ export function ShareUsageThreadDetail({
         if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("Failed to load thread messages:", err);
         setError(
-          err instanceof Error ? err.message : "Failed to load messages",
+          err instanceof Error ? err.message : "Failed to load messages"
         );
       } finally {
         if (isActive) {
@@ -297,7 +321,13 @@ export function ShareUsageThreadDetail({
         ? { browserInteractionSteps: interactionSteps }
         : {}),
     };
-  }, [messages, widgetSnapshots, hydratedSpans, renderObservations, interactionSteps]);
+  }, [
+    messages,
+    widgetSnapshots,
+    hydratedSpans,
+    renderObservations,
+    interactionSteps,
+  ]);
 
   // Adapt trace to UI messages for the chat view
   const adaptedTrace = useMemo(() => {
@@ -315,7 +345,7 @@ export function ShareUsageThreadDetail({
       name: thread?.modelId ?? "Unknown",
       provider: "custom" as ModelProvider,
     }),
-    [thread?.modelId],
+    [thread?.modelId]
   );
 
   // Compute trace timing from turn traces
@@ -335,7 +365,7 @@ export function ShareUsageThreadDetail({
     const ok = await copyToClipboard(text);
     if (ok) {
       toast.success(
-        sessionLink ? "Session link copied" : "Session reference copied",
+        sessionLink ? "Session link copied" : "Session reference copied"
       );
     } else {
       toast.error("Failed to copy");
@@ -459,9 +489,9 @@ export function ShareUsageThreadDetail({
         <SessionInsightBar readiness={thread.readiness} />
       ) : null}
 
-      {/* Swarm-only: goalScore exists ONLY on judge-graded swarm sessions
-          (provenance-gated backend-side), so its presence is the render gate. */}
-      {thread.goalScore ? (
+      {/* Swarm-only: render before the first score exists so deployments with
+          automatic judging disabled still expose the on-demand entry point. */}
+      {thread.sourceType === "swarm" ? (
         <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
       ) : null}
 
@@ -489,7 +519,7 @@ export function ShareUsageThreadDetail({
               messages={adaptedTrace.messages}
               model={resolvedModel}
               toolRenderOverrides={bridgeToolRenderOverrides(
-                adaptedTrace.toolRenderOverrides,
+                adaptedTrace.toolRenderOverrides
               )}
               reasoningDisplayMode={reasoningDisplayMode}
               widgetPolicy="placeholder"
