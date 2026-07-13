@@ -4,7 +4,7 @@
 // not engine types.
 export type {
   XAAFlowStep,
-  XaaRegistrationStrategy,
+  RegistrationStrategy,
   XaaTokenEndpointAuthMethod,
   XaaRegistrationWarningCode,
   XaaRegistrationWarning,

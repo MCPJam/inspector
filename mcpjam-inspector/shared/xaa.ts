@@ -8,13 +8,15 @@ export {
   XAA_IDP_KID,
   isNegativeTestMode,
   NEGATIVE_TEST_MODE_DETAILS,
-  XAA_REGISTRATION_STRATEGIES,
-  DEFAULT_XAA_REGISTRATION_STRATEGY,
-  normalizeXaaRegistrationStrategy,
+  REGISTRATION_STRATEGIES,
+  DEFAULT_REGISTRATION_STRATEGY,
+  normalizeRegistrationStrategy,
+  normalizeRegistrationMode,
 } from "@mcpjam/sdk/browser";
 export type {
   NegativeTestMode,
-  XaaRegistrationStrategy,
+  RegistrationStrategy,
+  RegistrationMode,
 } from "@mcpjam/sdk/browser";
 
 /**

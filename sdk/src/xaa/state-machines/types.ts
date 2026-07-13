@@ -29,12 +29,13 @@ export type XAAFlowStep =
   | "complete";
 
 /** How the flow's client identity at the target AS is established.
- * `pre_registered` (default) = user-supplied credentials, today's behavior.
+ * `preregistered` (default) = user-supplied credentials, today's behavior.
  * `dcr` = open RFC 7591 registration (no initial access token).
  * `cimd` = MCPJam's hosted Client ID Metadata Document URL as the client_id.
- * Canonical definition + normalizer live in shared/xaa.ts. */
-import type { XaaRegistrationStrategy } from "../constants.js";
-export type { XaaRegistrationStrategy };
+ * Canonical definition + normalizer live in ../../registration.ts — the
+ * vocabulary shared with the OAuth flows. */
+import type { RegistrationStrategy } from "../../registration.js";
+export type { RegistrationStrategy };
 
 /** Token-endpoint client-auth methods the debugger can actually redeem. */
 export type XaaTokenEndpointAuthMethod =
@@ -183,7 +184,7 @@ export interface XAAFlowState {
   compatibilityReport?: XAACompatibilityReport;
   /** How this run's client identity is established. Authoritative once the
    * machine is initialized — the UI must reset the flow to change it. */
-  registrationStrategy: XaaRegistrationStrategy;
+  registrationStrategy: RegistrationStrategy;
   /** How the jwt-bearer redemption authenticates at the token endpoint.
    * Unset = legacy body-post behavior. */
   tokenEndpointAuthMethod?: XaaTokenEndpointAuthMethod;
@@ -251,9 +252,9 @@ export interface BaseXAAStateMachineConfig {
    * neither the secret nor the destination rides in from the browser. */
   serverId?: string;
   projectId?: string;
-  /** Client-identity strategy. Forced to "pre_registered" whenever
+  /** Client-identity strategy. Forced to "preregistered" whenever
    * registrationId or serverId is set (those paths skip AS discovery). */
-  registrationStrategy?: XaaRegistrationStrategy;
+  registrationStrategy?: RegistrationStrategy;
   /** Target-scoped in-memory session cache for DCR-minted credentials. The
    * UI passes a useRef-backed cache so machine recreation neither loses nor
    * re-exposes the secret; unit tests may pass a Map-backed one. */
@@ -275,7 +276,7 @@ export interface XAAStateMachine {
 export const EMPTY_XAA_FLOW_STATE: XAAFlowState = {
   isBusy: false,
   currentStep: "idle",
-  registrationStrategy: "pre_registered",
+  registrationStrategy: "preregistered",
   serverUrl: undefined,
   resourceUrl: undefined,
   resourceMetadataUrl: undefined,
