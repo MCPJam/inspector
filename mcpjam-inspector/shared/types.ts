@@ -1,5 +1,7 @@
 // Shared types between client and server
 
+import type { XaaRegistrationStrategy } from "./xaa";
+
 // Legacy server config (keeping for compatibility)
 export interface ServerConfig {
   id: string;
@@ -929,6 +931,13 @@ export interface ServerFormData {
   xaaSubject?: string;
   /** Optional simulated-identity override (email) for the MCPJam test IdP. Blank = signed-in user. */
   xaaEmail?: string;
+  /**
+   * XAA Debugger registration strategy (Client↔Resource-AS leg): how the run
+   * establishes its client identity at the target authorization server. Chosen
+   * in the "Configure Server to Test" modal. Debugger-only — the Connect page
+   * never sets it, so merges must preserve an existing value.
+   */
+  xaaRegistrationStrategy?: XaaRegistrationStrategy;
   /** Registry credential key for resolving OAuth client ID from env (e.g. "github") */
   oauthCredentialKey?: string;
   /** True for registry servers that use backend-managed preregistered OAuth credentials */
