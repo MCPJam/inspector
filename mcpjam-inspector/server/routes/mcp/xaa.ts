@@ -26,7 +26,7 @@ import {
 } from "../../services/xaa-idjag-signer.js";
 import { createHash } from "crypto";
 import {
-  buildJwtBearerBody,
+  buildJwtBearerRequest,
   getIssuerForRequest,
   resolveServerTarget,
 } from "../../services/xaa-mint.js";
@@ -502,6 +502,11 @@ const proxyTokenSchema = z
     assertion: z.string().trim().min(1),
     clientId: z.string().trim().min(1).optional(),
     clientSecret: z.string().trim().min(1).optional(),
+    // How to authenticate at the token endpoint. Absent = legacy body-post
+    // behavior; only the methods the debugger can actually redeem.
+    tokenEndpointAuthMethod: z
+      .enum(["client_secret_post", "client_secret_basic", "none"])
+      .optional(),
     scope: z.string().trim().min(1).optional(),
     resource: z.string().trim().min(1).optional(),
     headers: z.record(z.string(), z.string()).optional(),
@@ -1060,19 +1065,53 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         url = parsed.tokenEndpoint as string;
       }
 
+      const authMethod = parsed.tokenEndpointAuthMethod;
+      if (
+        (authMethod === "client_secret_post" ||
+          authMethod === "client_secret_basic") &&
+        !clientSecret
+      ) {
+        return toJsonError(`${authMethod} requires a client secret`, {
+          status: 400,
+          code: "VALIDATION_ERROR",
+        });
+      }
+      // RFC 6749 §2.3.1: client_id is REQUIRED for post/basic; a public (none)
+      // client still needs a client_id to identify itself. Reject locally with
+      // a 400 rather than letting buildJwtBearerRequest throw into a 500.
+      if (
+        (authMethod === "client_secret_basic" ||
+          authMethod === "client_secret_post" ||
+          authMethod === "none") &&
+        !clientId
+      ) {
+        return toJsonError(`${authMethod} requires a client id`, {
+          status: 400,
+          code: "VALIDATION_ERROR",
+        });
+      }
+
+      // Method-aware client auth. The generated Authorization value carries
+      // the secret — it is passed only to the outbound proxy call and must
+      // never be copied into logs, history, or error payloads. It is merged
+      // AFTER extraHeaders so a caller-supplied header can't replace it.
+      const jwtBearerRequest = buildJwtBearerRequest({
+        assertion: parsed.assertion,
+        clientId,
+        clientSecret,
+        scope: parsed.scope,
+        resource: parsed.resource,
+        tokenEndpointAuthMethod: authMethod,
+      });
+
       const result = await executeOAuthProxy({
         url,
         method: "POST",
-        body: buildJwtBearerBody({
-          assertion: parsed.assertion,
-          clientId,
-          clientSecret,
-          scope: parsed.scope,
-          resource: parsed.resource,
-        }),
+        body: jwtBearerRequest.body,
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
           ...(extraHeaders || {}),
+          ...jwtBearerRequest.headers,
         },
         httpsOnly: options.httpsOnlyProxy,
       });

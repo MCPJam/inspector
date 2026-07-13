@@ -1,0 +1,11 @@
+---
+"@mcpjam/inspector": minor
+---
+
+XAA debugger: target-scoped **open DCR** and **CIMD** client-registration strategies, plus the hosted XAA Client ID Metadata Document.
+
+- New per-target registration-strategy control (manual public targets only; pre-registered stays the default and default runs are byte-identical to before): **Open dynamic registration (DCR)** performs an unauthenticated RFC 7591 registration at the discovered `registration_endpoint`, validates the response against the ID-JAG draft-04 client profile (explicit substitutions park; RFC 7591 echo omissions warn), and keeps the minted credentials in a browser-session-only in-memory cache — never in flow state, storage, history, logs, or telemetry. Reset/Run all reuse the session registration; a confirmed "Register another client" action (also gating retries after any ambiguous POST) is the only path that registers again. **Client metadata URL (CIMD)** preflights MCPJam's hosted document with manual-redirect handling, requires the AS to advertise `client_id_metadata_document_supported`, and uses the URL as the run's `client_id`; JWT Bearer redemption remains the operational verdict.
+- `/proxy/token` gains `tokenEndpointAuthMethod` (`client_secret_post` | `client_secret_basic` | `none`); `client_secret_basic` builds the RFC 6749 Basic header server-side (form-encoded before Base64) and never echoes it into diagnostics. Legacy callers keep body-post behavior.
+- New public route `GET /.well-known/oauth/xaa-client-metadata.json` on both server entry points: a direct-200 JSON Client ID Metadata Document whose `client_id` is the fixed production URL (`https://app.mcpjam.com/...`), declaring the ID-JAG grant profile with both required grants and `token_endpoint_auth_method: "none"`. The login CIMD document on www.mcpjam.com is untouched.
+- The OAuth debug proxy routes and executors thread an optional `redirect: "follow" | "manual"` through to the SDK proxy (hosted `httpsOnly` still forces manual and cannot be weakened).
+- AS-compatibility preflight now reports the draft-04 ID-JAG grant-profile advertisement (absent = warning, explicit contradiction = fail) and CIMD support (informational; never degrades the overall verdict).

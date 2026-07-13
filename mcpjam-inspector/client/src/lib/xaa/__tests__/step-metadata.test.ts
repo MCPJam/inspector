@@ -60,3 +60,17 @@ describe("XAA phase metadata", () => {
     ).toBe(true);
   });
 });
+
+describe("dynamic registration steps", () => {
+  it("keeps all four strategy-specific steps in the bootstrap phase", () => {
+    for (const step of [
+      "request_client_registration",
+      "received_client_credentials",
+      "fetch_client_metadata_document",
+      "received_client_metadata",
+    ] as const) {
+      expect(XAA_STEP_ORDER).toContain(step);
+      expect(XAA_STEP_METADATA[step].phase).toBe("bootstrap");
+    }
+  });
+});
