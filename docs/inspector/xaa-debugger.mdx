@@ -16,6 +16,26 @@ The XAA Debugger provides comprehensive tooling for testing Cross-App Access imp
 - **Network Inspection** - View all HTTP requests and responses including the `/proxy/token` wrapper for authorization server calls
 - **Vendor-Specific Hints** - Configuration guidance tailored to your authorization server (native support, requires config, or unsupported with workarounds)
 
+## Automatic authentication
+
+When the XAA feature is enabled, the server configuration panel's **Authentication** dropdown includes an **Automatic (XAA when configured, else OAuth)** option. Selecting it tells the inspector to choose the auth flow before connecting:
+
+- **XAA** — if the server has an IdP mode set and a stored client ID (the server is "XAA-configured").
+- **OAuth** — otherwise.
+
+The selection is made once, before the connection attempt starts. A failed XAA mint surfaces the error rather than silently retrying as OAuth. When **Automatic** is selected, the OAuth registration settings panel is shown so you can configure the client registration mode and scopes that apply to whichever flow is chosen.
+
+To use **Automatic**:
+
+1. Open the server's configuration modal.
+2. In the **Authentication** dropdown, choose **Automatic (XAA when configured, else OAuth)**.
+3. Configure the OAuth/registration settings as needed.
+4. Save and connect. The inspector selects XAA if the server has an IdP mode and a stored client ID; otherwise it runs OAuth.
+
+<Note>
+  The **Automatic** option only appears when the XAA feature is enabled for your account.
+</Note>
+
 ## Getting Started
 
 To begin debugging XAA flows:
