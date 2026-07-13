@@ -7,6 +7,10 @@ import {
   getXAAIdpJwks,
   resetXAAIdpKeyPairForTests,
 } from "../../src/xaa/mint/keypair.js";
+import {
+  JWT_BEARER_GRANT,
+  ID_JAG_GRANT_PROFILE,
+} from "../../src/oauth/client-identity.js";
 
 const SERVER_URL = "https://mcp.example.com/mcp";
 const AS_ISSUER = "https://auth.example.com";
@@ -966,5 +970,79 @@ describe("runXaaFlow", () => {
     expect(stepNames).toContain("probe:redeem_id_jag");
     expect(stepNames).not.toContain("baseline:token_exchange_request");
     expect(stepNames).not.toContain("probe:jwt_bearer_request");
+  });
+
+  it("redeems at the jwt-bearer/ID-JAG-capable AS when the resource advertises several", async () => {
+    const PLAIN_AS = "https://as-plain.example.com";
+    const CAPABLE_AS = "https://as-capable.example.com";
+    const PLAIN_TOKEN = `${PLAIN_AS}/oauth/token`;
+    const CAPABLE_TOKEN = `${CAPABLE_AS}/oauth/token`;
+
+    const fetchMock = withPublishedIssuer(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        const method = (init?.method || "GET").toUpperCase();
+        if (url.includes(".well-known/oauth-protected-resource")) {
+          return json({
+            resource: SERVER_URL,
+            authorization_servers: [PLAIN_AS, CAPABLE_AS],
+          });
+        }
+        if (
+          url.includes(".well-known/oauth-authorization-server") ||
+          url.includes(".well-known/openid-configuration")
+        ) {
+          if (url.startsWith(CAPABLE_AS)) {
+            return json({
+              issuer: CAPABLE_AS,
+              token_endpoint: CAPABLE_TOKEN,
+              grant_types_supported: [JWT_BEARER_GRANT],
+              authorization_grant_profiles_supported: [ID_JAG_GRANT_PROFILE],
+            });
+          }
+          if (url.startsWith(PLAIN_AS)) {
+            return json({ issuer: PLAIN_AS, token_endpoint: PLAIN_TOKEN });
+          }
+          return json({}, 404);
+        }
+        if (url === CAPABLE_TOKEN && method === "POST") {
+          return json({
+            access_token: "at-capable",
+            token_type: "Bearer",
+            expires_in: 300,
+          });
+        }
+        if (url === SERVER_URL && method === "POST") {
+          return json({
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: { protocolVersion: "2025-11-25", serverInfo: {} },
+          });
+        }
+        return json({}, 404);
+      }
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    expect(result.completed).toBe(true);
+    expect(result.authzServerIssuer).toBe(CAPABLE_AS);
+    expect(result.tokenEndpoint).toBe(CAPABLE_TOKEN);
+    expect(result.redemption?.tokenIssued).toBe(true);
+    // The plain AS is advertised first but must not receive the redemption.
+    const postedTo = (endpoint: string) =>
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          input.toString() === endpoint &&
+          (init?.method || "GET").toUpperCase() === "POST"
+      );
+    expect(postedTo(CAPABLE_TOKEN)).toBe(true);
+    expect(postedTo(PLAIN_TOKEN)).toBe(false);
   });
 });

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   XAA_DEBUG_CLIENT_ID_METADATA_URL,
   XAA_DEBUG_IDP_CLIENT_ID,
+  JWT_BEARER_GRANT,
+  ID_JAG_GRANT_PROFILE,
 } from "../../src/oauth/client-identity.js";
 import {
   CLIENT_SECRET_MASK,
@@ -1179,6 +1181,163 @@ describe("createXAAStateMachine", () => {
         "https://mcp.example.com/mcp/.well-known/oauth-protected-resource",
         "https://mcp.example.com/.well-known/oauth-protected-resource",
       ]);
+    });
+  });
+
+  describe("capability-ranked RAS selection", () => {
+    const SERVER = "https://mcp.example.com/mcp";
+    const ISSUER_BASE = "https://issuer.example/api/web/xaa";
+    const AS_RANK1 = "https://as-both.example.com";
+    const AS_RANK2 = "https://as-jwtonly.example.com";
+    const AS_PLAIN_A = "https://as-plain-a.example.com";
+    const AS_PLAIN_B = "https://as-plain-b.example.com";
+
+    const asMetadata = (
+      issuer: string,
+      extra: Record<string, unknown> = {}
+    ) => ({
+      issuer,
+      token_endpoint: `${issuer}/oauth/token`,
+      ...extra,
+    });
+    const rank1Meta = (issuer: string) =>
+      asMetadata(issuer, {
+        grant_types_supported: [JWT_BEARER_GRANT],
+        authorization_grant_profiles_supported: [ID_JAG_GRANT_PROFILE],
+      });
+    const rank2Meta = (issuer: string) =>
+      asMetadata(issuer, { grant_types_supported: [JWT_BEARER_GRANT] });
+    const plainMeta = (issuer: string) => asMetadata(issuer);
+
+    const ok = (body: unknown) => ({
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      body,
+      ok: true,
+    });
+    const notFound = () => ({
+      status: 404,
+      statusText: "Not Found",
+      headers: {},
+      body: {},
+      ok: false,
+    });
+
+    // Executor serving PRM (listing `authorizationServers`) plus per-issuer AS
+    // metadata from `metaByIssuer`; an issuer absent from the map 404s.
+    function rankingExecutor(
+      authorizationServers: string[],
+      metaByIssuer: Record<string, unknown>
+    ) {
+      return {
+        externalRequest: vi.fn(async (url: string) => {
+          if (url.includes("/.well-known/oauth-protected-resource")) {
+            return ok({
+              resource: SERVER,
+              authorization_servers: authorizationServers,
+            });
+          }
+          if (
+            url.includes("/.well-known/oauth-authorization-server") ||
+            url.includes("/.well-known/openid-configuration")
+          ) {
+            const issuer = Object.keys(metaByIssuer).find((i) =>
+              url.startsWith(i)
+            );
+            return issuer ? ok(metaByIssuer[issuer]) : notFound();
+          }
+          return ok({});
+        }),
+        internalRequest: vi.fn(),
+      };
+    }
+
+    async function discoverAuthzIssuer(
+      executor: ReturnType<typeof rankingExecutor>,
+      overrides: Partial<XAAFlowState> = {}
+    ): Promise<XAAFlowState> {
+      let state: XAAFlowState = createInitialXAAFlowState({
+        serverUrl: SERVER,
+        ...overrides,
+      });
+      const machine = createXAAStateMachine({
+        getState: () => state,
+        updateState: (u) => {
+          state = { ...state, ...u };
+        },
+        serverUrl: SERVER,
+        issuerBaseUrl: ISSUER_BASE,
+        requestExecutor: executor,
+        clientSecret: overrides.clientSecret,
+      });
+      await machine.proceedToNextStep(); // discover_resource_metadata
+      await machine.proceedToNextStep(); // discover_authz_metadata
+      return state;
+    }
+
+    it("prefers a rank-1 (jwt-bearer + ID-JAG) server over an earlier plain one", async () => {
+      const executor = rankingExecutor([AS_PLAIN_A, AS_RANK1], {
+        [AS_PLAIN_A]: plainMeta(AS_PLAIN_A),
+        [AS_RANK1]: rank1Meta(AS_RANK1),
+      });
+      const state = await discoverAuthzIssuer(executor);
+      expect(state.currentStep).toBe("received_authz_metadata");
+      expect(state.authzServerIssuer).toBe(AS_RANK1);
+    });
+
+    it("prefers a rank-1 server even when advertised first (order-independent)", async () => {
+      const executor = rankingExecutor([AS_RANK1, AS_PLAIN_A], {
+        [AS_RANK1]: rank1Meta(AS_RANK1),
+        [AS_PLAIN_A]: plainMeta(AS_PLAIN_A),
+      });
+      const state = await discoverAuthzIssuer(executor);
+      expect(state.authzServerIssuer).toBe(AS_RANK1);
+    });
+
+    it("prefers a rank-2 (jwt-bearer only) server over an earlier plain one when no rank-1 exists", async () => {
+      const executor = rankingExecutor([AS_PLAIN_A, AS_RANK2], {
+        [AS_PLAIN_A]: plainMeta(AS_PLAIN_A),
+        [AS_RANK2]: rank2Meta(AS_RANK2),
+      });
+      const state = await discoverAuthzIssuer(executor);
+      expect(state.authzServerIssuer).toBe(AS_RANK2);
+    });
+
+    it("falls back to the first issuer-matching server when none advertise capability", async () => {
+      const executor = rankingExecutor([AS_PLAIN_A, AS_PLAIN_B], {
+        [AS_PLAIN_A]: plainMeta(AS_PLAIN_A),
+        [AS_PLAIN_B]: plainMeta(AS_PLAIN_B),
+      });
+      const state = await discoverAuthzIssuer(executor);
+      expect(state.authzServerIssuer).toBe(AS_PLAIN_A);
+    });
+
+    it("pins a confidential client to the first issuer-matching server (no secret redirect)", async () => {
+      const executor = rankingExecutor([AS_PLAIN_A, AS_RANK1], {
+        [AS_PLAIN_A]: plainMeta(AS_PLAIN_A),
+        [AS_RANK1]: rank1Meta(AS_RANK1),
+      });
+      // A rank-1 server exists later, but the client secret is registered at
+      // the first advertised RAS — ranking must not move it.
+      const state = await discoverAuthzIssuer(executor, {
+        clientSecret: "s3cret",
+      });
+      expect(state.authzServerIssuer).toBe(AS_PLAIN_A);
+    });
+
+    it("hard-pins an explicitly configured issuer and never fetches PRM", async () => {
+      const executor = rankingExecutor([], {
+        [AS_PLAIN_A]: plainMeta(AS_PLAIN_A),
+      });
+      const state = await discoverAuthzIssuer(executor, {
+        authzServerIssuer: AS_PLAIN_A,
+      });
+      expect(state.authzServerIssuer).toBe(AS_PLAIN_A);
+      const fetchedPrm = executor.externalRequest.mock.calls.some(([url]) =>
+        String(url).includes("/.well-known/oauth-protected-resource")
+      );
+      expect(fetchedPrm).toBe(false);
     });
   });
 });
