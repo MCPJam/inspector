@@ -43,6 +43,22 @@ export {
   buildJwtBearerRequest,
   type XaaTokenEndpointAuthMethod,
 } from "./mint/jwt-bearer.js";
+export {
+  canonicalizeMcpResource,
+  buildProtectedResourceMetadataCandidates,
+  buildAuthorizationServerMetadataCandidates,
+  buildIssuerPublicationCandidates,
+  XAA_AS_METADATA_NAMES,
+} from "./discovery.js";
+export {
+  buildMcpInitializeRequest,
+  evaluateMcpInitializeResponse,
+  mcpInitializeExtensionEvidence,
+  MCP_INIT_ID,
+  MCP_PROTOCOL_VERSION,
+  XAA_MCP_EXTENSION,
+  type McpInitializeRequest,
+} from "./mcp-init.js";
 export { runXaaFlow } from "./run-xaa-flow.js";
 export type {
   XaaCapabilityEvidence,
