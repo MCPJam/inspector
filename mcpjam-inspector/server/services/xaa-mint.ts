@@ -4,8 +4,13 @@
 // assembly here (see `buildJwtBearerBody`) is what prevents the two surfaces
 // from drifting on the wire.
 import type { Context } from "hono";
-import { issueIdJag } from "./xaa-idjag-signer.js";
-import { getXAAIssuerUrl } from "./xaa-idp-keypair.js";
+import {
+  buildJwtBearerBody,
+  buildJwtBearerRequest,
+  getXAAIssuerUrl,
+  issueIdJag,
+  type XaaTokenEndpointAuthMethod,
+} from "@mcpjam/sdk";
 import {
   buildDiscoveryCandidates,
   buildResourceMetadataCandidates,
@@ -270,111 +275,13 @@ export async function resolveServerTarget(deps: {
   };
 }
 
-// The jwt-bearer (RFC 7523) token-request body posted to the resource
-// authorization server. SINGLE SOURCE OF TRUTH — both `/proxy/token` (debugger)
-// and `mintXaaAccessToken` (connect) build their request body here so the two
-// surfaces stay byte-identical on the wire.
-export function buildJwtBearerBody(args: {
-  assertion: string;
-  clientId?: string | null;
-  clientSecret?: string | null;
-  scope?: string | null;
-  resource?: string | null;
-}): Record<string, string> {
-  return {
-    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-    assertion: args.assertion,
-    ...(args.clientId ? { client_id: args.clientId } : {}),
-    ...(args.clientSecret ? { client_secret: args.clientSecret } : {}),
-    ...(args.scope ? { scope: args.scope } : {}),
-    ...(args.resource ? { resource: args.resource } : {}),
-  };
-}
-
-export type XaaTokenEndpointAuthMethod =
-  | "client_secret_post"
-  | "client_secret_basic"
-  | "none";
-
-// application/x-www-form-urlencoded encoding (WHATWG URLSearchParams rules:
-// space→"+", and "*-._"/alphanumerics kept literal, everything else percent-
-// encoded). encodeURIComponent alone leaves "!'()~" literal and encodes space
-// as %20, so it is NOT form-urlencoding and would corrupt credentials that
-// contain those characters.
-function formUrlEncode(value: string): string {
-  return encodeURIComponent(value)
-    .replace(/[!'()~]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase())
-    .replace(/%20/g, "+");
-}
-
-// RFC 6749 section 2.3.1: client_id and client_secret are each
-// application/x-www-form-urlencoded BEFORE the id:secret pair is Base64-encoded.
-function encodeBasicClientAuth(clientId: string, clientSecret: string): string {
-  return Buffer.from(
-    `${formUrlEncode(clientId)}:${formUrlEncode(clientSecret)}`
-  ).toString("base64");
-}
-
-// Method-aware variant of buildJwtBearerBody: same single-source body, plus
-// the client-auth headers the chosen token_endpoint_auth_method requires.
-// The generated Authorization value carries the secret — callers must never
-// copy `headers` into history, logs, telemetry, or error objects.
-export function buildJwtBearerRequest(args: {
-  assertion: string;
-  clientId?: string | null;
-  clientSecret?: string | null;
-  scope?: string | null;
-  resource?: string | null;
-  tokenEndpointAuthMethod?: XaaTokenEndpointAuthMethod | null;
-}): { headers: Record<string, string>; body: Record<string, string> } {
-  const method = args.tokenEndpointAuthMethod;
-
-  if (method === "client_secret_basic") {
-    if (!args.clientId || !args.clientSecret) {
-      throw new Error(
-        "client_secret_basic requires both a client_id and a client_secret"
-      );
-    }
-    return {
-      headers: {
-        Authorization: `Basic ${encodeBasicClientAuth(
-          args.clientId,
-          args.clientSecret
-        )}`,
-      },
-      // With Basic auth the client_id AND secret are carried in the
-      // Authorization header only — omit both from the body. Some token
-      // endpoints reject a request that also repeats client_id in the body
-      // (one client-auth method per request), and the repo's shared OAuth
-      // helper likewise keeps client-auth params out of the body for Basic.
-      body: buildJwtBearerBody({ ...args, clientId: null, clientSecret: null }),
-    };
-  }
-
-  if (method === "none") {
-    // Public client: client_id identifies the client and is required; no
-    // secret travels anywhere. Reject a missing client_id locally rather than
-    // forwarding an invalid request the AS will just bounce.
-    if (!args.clientId) {
-      throw new Error("A public (none) client request requires a client_id");
-    }
-    return { headers: {}, body: buildJwtBearerBody({ ...args, clientSecret: null }) };
-  }
-
-  if (method === "client_secret_post") {
-    // RFC 6749 section 2.3.1: client_id is REQUIRED alongside the secret.
-    if (!args.clientId || !args.clientSecret) {
-      throw new Error(
-        "client_secret_post requires both a client_id and a client_secret"
-      );
-    }
-    return { headers: {}, body: buildJwtBearerBody(args) };
-  }
-
-  // client_secret_post and the legacy no-method default: credentials in the
-  // form body, exactly as buildJwtBearerBody always produced.
-  return { headers: {}, body: buildJwtBearerBody(args) };
-}
+// `buildJwtBearerBody`, `buildJwtBearerRequest`, and `XaaTokenEndpointAuthMethod`
+// (the single-source jwt-bearer request body + method-aware client-auth request)
+// now live in @mcpjam/sdk and are re-exported here so existing importers keep
+// their path. This is the ONE implementation shared by the debugger's
+// `/proxy/token` endpoint, the connect-page server-side mint, and the CLI.
+export { buildJwtBearerBody, buildJwtBearerRequest };
+export type { XaaTokenEndpointAuthMethod };
 
 // Derive the MCPJam test-IdP issuer from the inbound request. Shared by the XAA
 // router endpoints and the connect-page mint so the signed ID-JAG `iss` matches

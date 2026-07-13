@@ -28,8 +28,10 @@ export type XAAFlowStep =
 /** How the flow's client identity at the target AS is established.
  * `pre_registered` (default) = user-supplied credentials, today's behavior.
  * `dcr` = open RFC 7591 registration (no initial access token).
- * `cimd` = MCPJam's hosted Client ID Metadata Document URL as the client_id. */
-export type XaaRegistrationStrategy = "pre_registered" | "dcr" | "cimd";
+ * `cimd` = MCPJam's hosted Client ID Metadata Document URL as the client_id.
+ * Canonical definition + normalizer live in shared/xaa.ts. */
+import type { XaaRegistrationStrategy } from "@/shared/xaa.js";
+export type { XaaRegistrationStrategy };
 
 /** Token-endpoint client-auth methods the debugger can actually redeem. */
 export type XaaTokenEndpointAuthMethod =

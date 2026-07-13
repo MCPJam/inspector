@@ -1,0 +1,230 @@
+import { runXaaFlow, type XaaFlowConfig, type XaaFlowResult } from "@mcpjam/sdk";
+import { Command } from "commander";
+import { getGlobalOptions } from "../lib/server-config.js";
+import { cliError, setProcessExitCode, usageError, writeResult } from "../lib/output.js";
+import { redactSensitiveValue } from "../lib/redaction.js";
+
+type XaaTokenEndpointAuthMethod =
+  | "client_secret_post"
+  | "client_secret_basic"
+  | "none";
+type XaaCliFlowConfig = XaaFlowConfig & {
+  tokenEndpointAuthMethod?: XaaTokenEndpointAuthMethod;
+  timeoutMs?: number;
+};
+
+export interface XaaCommandOptions {
+  url: string;
+  issuerBaseUrl: string;
+  sub: string;
+  clientId: string;
+  authzServerIssuer?: string;
+  tokenEndpoint?: string;
+  email?: string;
+  clientSecret?: string;
+  tokenEndpointAuthMethod?: XaaTokenEndpointAuthMethod;
+  scopes?: string;
+  httpsOnly?: boolean;
+}
+
+export function registerXaaCommands(program: Command): void {
+  const xaa = program
+    .command("xaa")
+    .description(
+      "Run the Cross-App Access (ID-JAG) debugger against an MCP server",
+    );
+
+  xaa
+    .command("run")
+    .description(
+      "Self-issue an ID-JAG, redeem it at the target authorization server (RFC 7523), and call the MCP server with the resulting access token",
+    )
+    .requiredOption("--url <url>", "Target MCP server URL (the protected resource)")
+    .requiredOption(
+      "--issuer-base-url <url>",
+      "Origin the local mock IdP issues from (the AS must be able to fetch its JWKS from here to validate the ID-JAG)",
+    )
+    .requiredOption("--sub <subject>", "Simulated end-user subject identifier")
+    .requiredOption(
+      "--client-id <id>",
+      "OAuth client the ID-JAG is issued for; also presented at redemption",
+    )
+    .option(
+      "--authz-server-issuer <issuer>",
+      "Target authorization-server issuer. When set, protected-resource metadata discovery is skipped",
+    )
+    .option(
+      "--token-endpoint <url>",
+      "Authorization-server token endpoint. When set, AS-metadata discovery is skipped",
+    )
+    .option("--email <email>", "Simulated end-user email claim")
+    .option("--client-secret <secret>", "OAuth client secret presented at redemption")
+    .option(
+      "--token-endpoint-auth-method <method>",
+      "Token endpoint client authentication: client_secret_basic, client_secret_post, or none (default: infer from metadata)",
+      parseTokenEndpointAuthMethod,
+    )
+    .option("--scopes <scopes>", "Space-separated scope string")
+    .option(
+      "--https-only",
+      "Reject non-HTTPS / private targets (default: allow http/localhost for local dev)",
+    )
+    .action(async (options, command) => {
+      const globalOptions = getGlobalOptions(command);
+      const format = globalOptions.format;
+      const config = buildXaaConfig(
+        options as XaaCommandOptions,
+        globalOptions.timeout,
+      );
+
+      const isTTY = process.stderr.isTTY && !globalOptions.quiet;
+      if (isTTY) {
+        config.onProgress = (message: string) => {
+          process.stderr.write(`\r\x1b[K${message}`);
+        };
+      }
+
+      let result: XaaFlowResult | undefined;
+      try {
+        result = await runXaaFlow(config);
+      } finally {
+        if (isTTY) {
+          process.stderr.write("\r\x1b[K");
+        }
+      }
+
+      if (!result) {
+        throw cliError("INTERNAL_ERROR", "XAA flow did not return a result.");
+      }
+
+      writeResult(redactXaaResult(result), format);
+      if (!result.completed) {
+        setProcessExitCode(1);
+      }
+    });
+}
+
+// Never emit raw bearer credentials. First mask the ID-JAG itself — the SDK's
+// recursive redactor keys on token-ish field names and won't catch a bare
+// `token` field — then run redactSensitiveValue over the whole result to scrub
+// reflected or nested secrets (the AS's access_token/refresh_token/id_token,
+// Bearer strings, etc.) anywhere in the output. The decoded `idJag.claims`, the
+// verify verdict, and the per-step report keep the debug value.
+export function redactXaaResult(result: XaaFlowResult): XaaFlowResult {
+  const rawIdJag = result.idJag?.token;
+  const masked: XaaFlowResult = result.idJag
+    ? { ...result, idJag: { ...result.idJag, token: "[REDACTED]" } }
+    : result;
+  const scrubbed = redactSensitiveValue(masked) as XaaFlowResult;
+  // A token endpoint may reflect the submitted `assertion` (the raw ID-JAG) in
+  // an error body under a non-secret field name (e.g. `assertion`,
+  // `error_description`), which the key-based redactor and the Bearer-string
+  // pattern won't catch. Scrub any remaining occurrence of the raw ID-JAG.
+  return rawIdJag
+    ? (replaceRawValue(scrubbed, rawIdJag) as XaaFlowResult)
+    : scrubbed;
+}
+
+function replaceRawValue(value: unknown, secret: string): unknown {
+  if (typeof value === "string") {
+    return value.includes(secret)
+      ? value.split(secret).join("[REDACTED]")
+      : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => replaceRawValue(entry, secret));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entryValue]) => [
+        key,
+        replaceRawValue(entryValue, secret),
+      ]),
+    );
+  }
+  return value;
+}
+
+export function buildXaaConfig(
+  options: XaaCommandOptions,
+  timeoutMs?: number,
+): XaaCliFlowConfig {
+  const serverUrl = options.url.trim();
+  assertValidUrl(serverUrl, "server URL");
+
+  const issuerBaseUrl = options.issuerBaseUrl.trim();
+  assertValidUrl(issuerBaseUrl, "issuer base URL");
+
+  const subject = options.sub.trim();
+  if (!subject) {
+    throw usageError("--sub must not be empty.");
+  }
+
+  const clientId = options.clientId.trim();
+  if (!clientId) {
+    throw usageError("--client-id must not be empty.");
+  }
+
+  const authzServerIssuer = options.authzServerIssuer?.trim() || undefined;
+  if (authzServerIssuer) {
+    assertValidUrl(authzServerIssuer, "authorization server issuer");
+  }
+
+  const tokenEndpoint = options.tokenEndpoint?.trim() || undefined;
+  if (tokenEndpoint) {
+    assertValidUrl(tokenEndpoint, "token endpoint");
+  }
+
+  if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
+    throw usageError("--timeout must be a positive number.");
+  }
+  if (
+    options.tokenEndpointAuthMethod !== "none" &&
+    options.tokenEndpointAuthMethod !== undefined &&
+    !options.clientSecret
+  ) {
+    throw usageError(
+      `--token-endpoint-auth-method ${options.tokenEndpointAuthMethod} requires --client-secret.`,
+    );
+  }
+
+  return {
+    serverUrl,
+    issuerBaseUrl,
+    subject,
+    clientId,
+    ...(authzServerIssuer ? { authzServerIssuer } : {}),
+    ...(tokenEndpoint ? { tokenEndpoint } : {}),
+    ...(options.email?.trim() ? { email: options.email.trim() } : {}),
+    ...(options.clientSecret ? { clientSecret: options.clientSecret } : {}),
+    ...(options.tokenEndpointAuthMethod
+      ? { tokenEndpointAuthMethod: options.tokenEndpointAuthMethod }
+      : {}),
+    ...(options.scopes?.trim() ? { scope: options.scopes.trim() } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    httpsOnly: options.httpsOnly ?? false,
+  };
+}
+
+function parseTokenEndpointAuthMethod(
+  value: string,
+): XaaTokenEndpointAuthMethod {
+  if (
+    value === "client_secret_basic" ||
+    value === "client_secret_post" ||
+    value === "none"
+  ) {
+    return value;
+  }
+  throw usageError(
+    "--token-endpoint-auth-method must be client_secret_basic, client_secret_post, or none.",
+  );
+}
+
+function assertValidUrl(value: string, label: string): void {
+  try {
+    new URL(value);
+  } catch {
+    throw usageError(`Invalid ${label}: ${value}`);
+  }
+}

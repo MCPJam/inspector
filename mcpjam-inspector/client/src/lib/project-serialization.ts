@@ -3,6 +3,7 @@ import {
   normalizeOAuthProtocolVersion,
   normalizeOAuthRegistrationStrategy,
 } from "@/lib/oauth/profile";
+import { normalizeXaaRegistrationStrategy } from "@/shared/xaa.js";
 
 type SerializeOptions = {
   /**
@@ -74,6 +75,9 @@ function serializeServersInternal(
     }
     if (server.xaaEmail !== undefined) {
       serializedServer.xaaEmail = server.xaaEmail;
+    }
+    if (server.xaaRegistrationStrategy !== undefined) {
+      serializedServer.xaaRegistrationStrategy = server.xaaRegistrationStrategy;
     }
 
     if (server.config) {
@@ -266,6 +270,14 @@ export function deserializeServersFromConvex(
     }
     if (serverData.xaaEmail !== undefined) {
       server.xaaEmail = serverData.xaaEmail;
+    }
+    // Narrow the bare wire string to a known strategy; drop anything unknown so
+    // the flow falls back to the safe pre_registered default.
+    const xaaRegistrationStrategy = normalizeXaaRegistrationStrategy(
+      serverData.xaaRegistrationStrategy,
+    );
+    if (xaaRegistrationStrategy !== undefined) {
+      server.xaaRegistrationStrategy = xaaRegistrationStrategy;
     }
 
     // Handle oauthFlowProfile from legacy nested structure

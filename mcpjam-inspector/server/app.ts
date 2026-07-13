@@ -58,7 +58,7 @@ import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-aut
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
-import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair.js";
+import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
 import { registerSelfFetch } from "./utils/self-app.js";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url.js";
@@ -80,6 +80,7 @@ export async function createHonoApp() {
 
   // Generate session token for API authentication
   generateSessionToken();
+  setXaaIdpLogger(appLogger);
   initXAAIdpKeyPair();
 
   startGuestAuthProvisioningInBackground();

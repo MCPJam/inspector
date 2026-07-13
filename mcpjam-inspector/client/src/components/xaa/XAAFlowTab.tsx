@@ -33,14 +33,17 @@ import { XAAIdpCard } from "./XAAIdpCard";
 import { XAAResourceAppsSection } from "./registration/XAAResourceAppsSection";
 import { NegativeTestScorecard } from "./NegativeTestScorecard";
 import type { NegativeTestsInput } from "@/lib/xaa/discovery-client";
-import type { NegativeTestMode } from "@/shared/xaa.js";
+import {
+  normalizeXaaRegistrationStrategy,
+  type NegativeTestMode,
+} from "@/shared/xaa.js";
 import {
   createInitialXAAFlowState,
   type XaaEphemeralDcrCredentials,
   type XaaRegistrationStrategy,
   type XAAFlowState,
 } from "@/lib/xaa/types";
-import { XAARegistrationStrategyControl } from "./XAARegistrationStrategyControl";
+import { XAADcrReRegisterControl } from "./XAADcrReRegisterControl";
 import { createInspectorXAAStateMachine } from "@/lib/xaa/debug-state-machine-adapter";
 import { fetchXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
 import { HOSTED_MODE } from "@/lib/config";
@@ -195,26 +198,29 @@ export function XAAFlowTab({
     hostedIssuerOptIn ? "hosted" : "local"
   }|${organizationId ?? ""}`;
 
-  // ── Registration strategy (target-scoped, session-only) ─────────────
-  // Deliberately NOT persisted to run settings / localStorage: DCR creates
-  // remote state at the target AS, so a globally saved preference must not
-  // silently apply to a different AS after navigation or reload.
-  const [strategyByTarget, setStrategyByTarget] = useState<
-    Record<string, XaaRegistrationStrategy>
-  >({});
-  // Dynamic strategies need AS discovery (registration_endpoint / the CIMD
-  // advertisement): manual public bar-server targets only. The CIMD
-  // support gate is deliberately NOT part of eligibility — it's discovered
-  // mid-run and parking on it IS the finding.
-  const dynamicStrategyEligible =
+  // ── Registration strategy (Client↔Resource-AS leg) ──────────────────
+  // Persisted per-server and chosen in the "Configure Server to Test" modal;
+  // the modal is the source of truth (no on-flow selector). The DCR credential
+  // cache below stays session-only — a persisted `dcr` re-registers a fresh
+  // client on the next run, guarded by the duplicate-risk gate.
+  const persistedStrategy =
+    normalizeXaaRegistrationStrategy(selectedServer?.xaaRegistrationStrategy) ??
+    "pre_registered";
+  // Dynamic strategies (DCR/CIMD) need AS discovery, so they apply only to
+  // manual bar-server targets (not registration/resource-app runs). An explicit
+  // dynamic choice is honored even when the server has a stored secret: the run
+  // ignores the stored pre-registered credentials (the serverId / secret gating
+  // below is suppressed) and establishes a fresh dynamic client identity.
+  const strategyAppliesToTarget =
     target.targetSource === "bar_server" &&
     isTestable &&
-    !target.usesServerSideSecret &&
     !runInput.registrationId;
-  const selectedStrategy = strategyByTarget[targetKey] ?? "pre_registered";
-  const effectiveStrategy: XaaRegistrationStrategy = dynamicStrategyEligible
-    ? selectedStrategy
+  const effectiveStrategy: XaaRegistrationStrategy = strategyAppliesToTarget
+    ? persistedStrategy
     : "pre_registered";
+  // When the run establishes its own dynamic client identity, any stored
+  // pre-registered credentials (serverId-resolved secret) must be ignored.
+  const runsDynamicRegistration = effectiveStrategy !== "pre_registered";
 
   // DCR-minted credentials, keyed by target + registration endpoint. A
   // useRef-backed Map so machine recreation neither loses nor re-exposes the
@@ -391,7 +397,13 @@ export function XAAFlowTab({
 
     // Confidential bar server: the secret + token endpoint are resolved
     // server-side from the stored config — only the issuer/resource matter.
-    if (target.usesServerSideSecret && target.serverId) {
+    // Skipped for dynamic strategies, which ignore the stored secret and mint
+    // their own client identity in the browser.
+    if (
+      target.usesServerSideSecret &&
+      target.serverId &&
+      !runsDynamicRegistration
+    ) {
       if (!audience || !resource) {
         return {
           input: null,
@@ -433,7 +445,13 @@ export function XAAFlowTab({
         scope: runInput.scope || undefined,
       },
     };
-  }, [flowState, runInput, selectedRegistration, target]);
+  }, [
+    flowState,
+    runInput,
+    selectedRegistration,
+    target,
+    runsDynamicRegistration,
+  ]);
 
   // ── Single target-reset owner ──────────────────────────────────────
   // One effect keyed on (targetKey, negativeTestMode) rebuilds the flow when
@@ -656,8 +674,13 @@ export function XAAFlowTab({
       dcrCredentialCache,
       dcrCacheTargetKey: targetKey,
       // Confidential bar-server runs send only serverId/projectId; the server
-      // resolves the secret and discovers the token endpoint.
-      ...(target.usesServerSideSecret && target.serverId
+      // resolves the secret and discovers the token endpoint. Dynamic
+      // strategies skip this: they ignore the stored secret and register their
+      // own client, so sending serverId (which the machine forces back to
+      // pre_registered) would defeat the explicit DCR/CIMD choice.
+      ...(target.usesServerSideSecret &&
+      target.serverId &&
+      !runsDynamicRegistration
         ? { serverId: target.serverId, projectId: target.projectId }
         : {}),
       // Hosted-issuer runs let the adapter derive the app.mcpjam.com issuer;
@@ -674,6 +697,7 @@ export function XAAFlowTab({
     organizationId,
     hostedIssuerOptIn,
     effectiveStrategy,
+    runsDynamicRegistration,
     dcrCredentialCache,
     targetKey,
   ]);
@@ -744,7 +768,9 @@ export function XAAFlowTab({
 
   // A confidential server whose secret can't be resolved yet must not run —
   // sending an empty secret would make the auth server reject the client.
-  const secretBlocked = target.secretUnavailable;
+  // Dynamic strategies don't use the stored secret, so they're never blocked
+  // on resolving it.
+  const secretBlocked = target.secretUnavailable && !runsDynamicRegistration;
   const secretBlockedReason = secretBlocked
     ? target.serversLoading
       ? "Resolving this server's saved secret…"
@@ -784,20 +810,14 @@ export function XAAFlowTab({
           )
         }
       />
-      {dynamicStrategyEligible ? (
-        <XAARegistrationStrategyControl
-          value={selectedStrategy}
-          onChange={(next) =>
-            setStrategyByTarget((current) => ({
-              ...current,
-              [targetKey]: next,
-            }))
-          }
+      {/* The registration strategy is chosen in the Configure Server modal;
+          only DCR's mid-run "register another client" recovery lives here (the
+          one action that clears the duplicate-risk gate). */}
+      {effectiveStrategy === "dcr" &&
+      (dcrHasSessionRegistration ||
+        Boolean(flowState.dcrRetryMayCreateDuplicate)) ? (
+        <XAADcrReRegisterControl
           disabled={flowState.isBusy || isRunningAll}
-          showRegisterAnotherClient={
-            dcrHasSessionRegistration ||
-            Boolean(flowState.dcrRetryMayCreateDuplicate)
-          }
           onRegisterAnotherClient={registerAnotherClient}
         />
       ) : null}
@@ -958,37 +978,16 @@ export function XAAFlowTab({
         open={pendingReset !== null}
         onOpenChange={(open) => {
           if (!open) {
-            // Cancel: acknowledge the switch without resetting, so the effect
-            // doesn't immediately re-prompt; the current run stays visible.
+            // Cancel ("Keep current run"): acknowledge the pending target/mode/
+            // strategy so the effect doesn't immediately re-prompt; the current
+            // run stays visible. The strategy is already persisted, so every
+            // fresh-run path (Reset, Run all, a later target/mode change)
+            // rebuilds from it — nothing is pinned to the discarded run.
             if (pendingReset) {
-              // Capture BEFORE overwriting: was this dialog a pure strategy
-              // toggle on the still-selected target, or a target switch?
-              const wasSameTarget =
-                pendingReset.targetKey === lastAppliedTargetKey.current;
               lastAppliedTargetKey.current = pendingReset.targetKey;
               lastNegativeTestMode.current = pendingReset.negativeTestMode;
-              if (
-                wasSameTarget &&
-                pendingReset.registrationStrategy !==
-                  lastRegistrationStrategy.current
-              ) {
-                // Same-target strategy toggle, cancelled: revert the selector
-                // to the strategy the still-running flow uses so UI config and
-                // the state-authoritative strategy can't diverge. Keep
-                // lastRegistrationStrategy.current (= prior) so no re-prompt.
-                const prior = lastRegistrationStrategy.current;
-                const revertKey = pendingReset.targetKey;
-                setStrategyByTarget((current) => ({
-                  ...current,
-                  [revertKey]: prior,
-                }));
-              } else {
-                // Target switch (or no strategy change) cancelled: acknowledge
-                // the new target's strategy so the effect doesn't re-prompt.
-                // Never write one target's strategy onto another's key.
-                lastRegistrationStrategy.current =
-                  pendingReset.registrationStrategy;
-              }
+              lastRegistrationStrategy.current =
+                pendingReset.registrationStrategy;
             }
             setPendingReset(null);
           }

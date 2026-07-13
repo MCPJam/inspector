@@ -1602,6 +1602,9 @@ export function useServerState({
         ...(serverEntry.xaaEmail !== undefined
           ? { xaaEmail: serverEntry.xaaEmail }
           : {}),
+        ...(serverEntry.xaaRegistrationStrategy !== undefined
+          ? { xaaRegistrationStrategy: serverEntry.xaaRegistrationStrategy }
+          : {}),
       } as const;
 
       try {
@@ -2788,6 +2791,11 @@ export function useServerState({
         xaaEmail: formData.useXaa
           ? formData.xaaEmail
           : existingServerForSave?.xaaEmail,
+        // Debugger-only field: preserve any saved value when a non-debugger
+        // save (which omits it) comes through, rather than erasing it.
+        xaaRegistrationStrategy:
+          formData.xaaRegistrationStrategy ??
+          existingServerForSave?.xaaRegistrationStrategy,
       };
       // Both modes: await Convex sync so the returned serverId is available
       // for OAuth binding (hosted) and for the new {projectId, serverId}
@@ -3202,6 +3210,11 @@ export function useServerState({
         xaaEmail: formData.useXaa
           ? formData.xaaEmail
           : existingServer?.xaaEmail,
+        // Debugger-only field: preserve any saved value when a non-debugger
+        // save (which omits it) comes through, rather than erasing it.
+        xaaRegistrationStrategy:
+          formData.xaaRegistrationStrategy ??
+          existingServer?.xaaRegistrationStrategy,
       } as ServerWithName;
 
       const hasPendingOAuthCallback = new URLSearchParams(
@@ -4731,6 +4744,11 @@ export function useServerState({
           xaaEmail: formData.useXaa
             ? formData.xaaEmail
             : originalServer?.xaaEmail,
+          // Debugger-only field: preserve any saved value when a non-debugger
+          // save (which omits it) comes through, rather than erasing it.
+          xaaRegistrationStrategy:
+            formData.xaaRegistrationStrategy ??
+            originalServer?.xaaRegistrationStrategy,
         } as ServerWithName;
 
         if (!formData.useOAuth && !formData.useXaa) {

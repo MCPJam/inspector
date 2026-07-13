@@ -16,8 +16,6 @@ import {
 import {
   getXAAIdpJwks,
   initXAAIdpKeyPair,
-} from "../../services/xaa-idp-keypair.js";
-import {
   issueAccessToken,
   issueAuthorizationCode,
   issueIdJag,
@@ -26,7 +24,7 @@ import {
   verifyXaaJwt,
   XAA_ACCESS_TOKEN_TYP,
   XAA_CODE_JWT_TYP,
-} from "../../services/xaa-idjag-signer.js";
+} from "@mcpjam/sdk";
 import { createHash } from "crypto";
 import {
   buildJwtBearerRequest,
