@@ -1,0 +1,5 @@
+---
+"@mcpjam/sdk": minor
+---
+
+XAA convergence finishing pass (mechanical): collapse the last duplicated flow logic across the engine/CLI boundary and single-source the CLI result projection. The token-endpoint auth-method selector — previously copied byte-for-byte as `selectPreRegisteredTokenAuthMethod` in the engine and `selectTokenEndpointAuthMethod` in `runXaaFlow` — is now one exported `selectTokenEndpointAuthMethod` in `xaa/state-machines/capability-preflight.ts` (re-exported from `@mcpjam/sdk/browser`). A new `deriveCapabilityEvidence` there is the single source for the flat `{idJagProfile, jwtBearerGrant}` advertisement evidence used by `runXaaFlow`'s `authorizationServerCapabilities` projection. `runXaaFlow` also now surfaces its `steps[]` in ID-JAG spec vocabulary (`mint_id_jag`, `redeem_id_jag`) instead of the engine's internal HTTP-step names; the engine's own `XAAFlowStep` names are unchanged. No behavior change to the flow, discovery, redemption, or the public `XaaFlowResult` shape; the 23 golden contract tests pass unchanged and a new test locks the step vocabulary.

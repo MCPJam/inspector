@@ -33,7 +33,12 @@ export type {
   XAACompatibilityVerdict,
   XAACompatibilityReport,
 } from "./capability-preflight.js";
-export { detectVendor, analyzeAsCompatibility } from "./capability-preflight.js";
+export {
+  detectVendor,
+  analyzeAsCompatibility,
+  deriveCapabilityEvidence,
+  selectTokenEndpointAuthMethod,
+} from "./capability-preflight.js";
 export {
   createXAAStateMachine,
   CLIENT_SECRET_MASK,

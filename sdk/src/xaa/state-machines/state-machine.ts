@@ -29,7 +29,10 @@ import type {
   XAAStateMachine,
 } from "./types.js";
 import { createInitialXAAFlowState } from "./types.js";
-import { analyzeAsCompatibility } from "./capability-preflight.js";
+import {
+  analyzeAsCompatibility,
+  selectTokenEndpointAuthMethod,
+} from "./capability-preflight.js";
 import {
   buildMcpInitializeRequest,
   evaluateMcpInitializeResponse,
@@ -223,25 +226,6 @@ function mergeHeadersForAuthServer(
   }
 
   return merged;
-}
-
-function selectPreRegisteredTokenAuthMethod(
-  explicit: XaaTokenEndpointAuthMethod | undefined,
-  clientSecret: string | undefined,
-  advertised: unknown
-): XaaTokenEndpointAuthMethod {
-  if (explicit) return explicit;
-  if (!clientSecret) return "none";
-  if (Array.isArray(advertised)) {
-    if (advertised.includes("client_secret_basic")) {
-      return "client_secret_basic";
-    }
-    if (advertised.includes("client_secret_post")) {
-      return "client_secret_post";
-    }
-    if (advertised.includes("none")) return "none";
-  }
-  return "client_secret_post";
 }
 
 function extractErrorMessage(body: any, fallback: string): string {
@@ -812,7 +796,7 @@ export function createXAAStateMachine(
             tokenEndpoint: metadata.token_endpoint,
             ...(registrationStrategy === "preregistered"
               ? {
-                  tokenEndpointAuthMethod: selectPreRegisteredTokenAuthMethod(
+                  tokenEndpointAuthMethod: selectTokenEndpointAuthMethod(
                     state.tokenEndpointAuthMethod,
                     state.clientSecret,
                     metadata.token_endpoint_auth_methods_supported

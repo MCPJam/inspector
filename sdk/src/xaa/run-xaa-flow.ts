@@ -6,10 +6,6 @@ import {
   fetchOAuthMetadata,
 } from "../oauth-proxy.js";
 import {
-  ID_JAG_GRANT_PROFILE,
-  JWT_BEARER_GRANT,
-} from "../oauth/client-identity.js";
-import {
   getXAAIdpJwks,
   getXAAIssuerUrl,
   initXAAIdpKeyPair,
@@ -32,6 +28,10 @@ import {
 import { createInProcessXaaExecutor } from "./in-process-executor.js";
 import { createXAAStateMachine } from "./state-machines/state-machine.js";
 import { runXaaStateMachine } from "./state-machines/runner.js";
+import {
+  deriveCapabilityEvidence,
+  selectTokenEndpointAuthMethod,
+} from "./state-machines/capability-preflight.js";
 import {
   createInitialXAAFlowState,
   type XAAFlowState,
@@ -113,34 +113,9 @@ export interface XaaFlowResult {
 
 type PublishedJwk = JsonWebKey & { kid?: string };
 
-function listEvidence(value: unknown, expected: string): XaaCapabilityEvidence {
-  if (value === undefined || value === null) return "unknown";
-  return Array.isArray(value) && value.includes(expected)
-    ? "advertised"
-    : "not_advertised";
-}
-
 function stringList(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   return value.filter((entry): entry is string => typeof entry === "string");
-}
-
-function selectTokenEndpointAuthMethod(
-  explicit: XaaTokenEndpointAuthMethod | undefined,
-  clientSecret: string | undefined,
-  advertised: string[] | undefined
-): XaaTokenEndpointAuthMethod {
-  if (explicit) return explicit;
-  if (!clientSecret) return "none";
-  if (advertised?.includes("client_secret_basic")) {
-    return "client_secret_basic";
-  }
-  if (advertised?.includes("client_secret_post")) {
-    return "client_secret_post";
-  }
-  if (advertised?.includes("none")) return "none";
-  // Metadata is optional; preserve the previous behavior when it is absent.
-  return "client_secret_post";
 }
 
 function publicJwkMatches(local: JsonWebKey, published: JsonWebKey): boolean {
@@ -320,14 +295,7 @@ function projectCapabilities(
     );
 
   return {
-    idJagProfile: listEvidence(
-      state.authzMetadata?.authorization_grant_profiles_supported,
-      ID_JAG_GRANT_PROFILE
-    ),
-    jwtBearerGrant: listEvidence(
-      state.authzMetadata?.grant_types_supported,
-      JWT_BEARER_GRANT
-    ),
+    ...deriveCapabilityEvidence(state.authzMetadata),
     ...(advertisedAuthMethods
       ? { tokenEndpointAuthMethods: advertisedAuthMethods }
       : {}),
@@ -335,12 +303,21 @@ function projectCapabilities(
   };
 }
 
+// The engine names HTTP steps by protocol operation; the CLI surfaces them in
+// ID-JAG spec vocabulary. Projection-only — the engine's XAAFlowStep names are
+// unchanged. Steps absent from this map pass through as-is, so the discovery
+// steps keep their RFC 9728 / RFC 8414 names.
+const CLI_STEP_VOCABULARY: Record<string, string> = {
+  token_exchange_request: "mint_id_jag",
+  jwt_bearer_request: "redeem_id_jag",
+};
+
 function projectSteps(
   state: XAAFlowState,
   prefix = ""
 ): XaaFlowStep[] {
   return (state.httpHistory ?? []).map((entry) => ({
-    step: prefix + entry.step,
+    step: prefix + (CLI_STEP_VOCABULARY[entry.step] ?? entry.step),
     ok:
       !entry.error &&
       !!entry.response &&
