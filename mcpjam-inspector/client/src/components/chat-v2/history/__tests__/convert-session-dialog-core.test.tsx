@@ -80,7 +80,8 @@ function renderCore(
   overrides: Partial<{
     detail: PromoteSessionDetailState;
     defaultHostId: string | null;
-  }> = {},
+    hostDefaultResolved: boolean;
+  }> = {}
 ) {
   return render(
     <ConvertSessionDialogCore
@@ -89,9 +90,10 @@ function renderCore(
       detail={overrides.detail ?? READY_DETAIL}
       isAuthenticated
       defaultHostId={overrides.defaultHostId}
+      hostDefaultResolved={overrides.hostDefaultResolved}
       onOpenChange={vi.fn()}
       onImported={vi.fn()}
-    />,
+    />
   );
 }
 
@@ -102,9 +104,14 @@ afterEach(() => {
 describe("ConvertSessionDialogCore", () => {
   it("renders the adapter's loading state", () => {
     renderCore({
-      detail: { loading: true, error: null, usedServerIds: [], selectedServers: [] },
+      detail: {
+        loading: true,
+        error: null,
+        usedServerIds: [],
+        selectedServers: [],
+      },
     });
-    expect(screen.getByText(/Loading chat session details/)).toBeTruthy();
+    expect(screen.getByText(/Loading session details/)).toBeTruthy();
   });
 
   it("renders the adapter's error state and blocks submission", () => {
@@ -153,18 +160,14 @@ describe("ConvertSessionDialogCore", () => {
   it("pre-seeds the client attachment from defaultHostId when it names a project host", () => {
     renderCore({ defaultHostId: "host-swarm" });
     expect(
-      screen
-        .getByTestId("client-attachments-editor")
-        .getAttribute("data-hosts"),
+      screen.getByTestId("client-attachments-editor").getAttribute("data-hosts")
     ).toBe("host-swarm");
   });
 
   it("falls back to the first project host when defaultHostId is unknown", () => {
     renderCore({ defaultHostId: "host-deleted" });
     expect(
-      screen
-        .getByTestId("client-attachments-editor")
-        .getAttribute("data-hosts"),
+      screen.getByTestId("client-attachments-editor").getAttribute("data-hosts")
     ).toBe("host-first");
   });
 
@@ -187,12 +190,10 @@ describe("ConvertSessionDialogCore", () => {
         defaultHostId={null}
         onOpenChange={vi.fn()}
         onImported={vi.fn()}
-      />,
+      />
     );
     expect(
-      screen
-        .getByTestId("client-attachments-editor")
-        .getAttribute("data-hosts"),
+      screen.getByTestId("client-attachments-editor").getAttribute("data-hosts")
     ).toBe("");
 
     rerender(
@@ -204,12 +205,44 @@ describe("ConvertSessionDialogCore", () => {
         defaultHostId="host-swarm"
         onOpenChange={vi.fn()}
         onImported={vi.fn()}
-      />,
+      />
     );
     expect(
-      screen
-        .getByTestId("client-attachments-editor")
-        .getAttribute("data-hosts"),
+      screen.getByTestId("client-attachments-editor").getAttribute("data-hosts")
+    ).toBe("host-swarm");
+  });
+
+  it("does not seed a cached project host before the adapter resolves its host default", () => {
+    const { rerender } = render(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        defaultHostId={null}
+        hostDefaultResolved={false}
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />
+    );
+    expect(
+      screen.getByTestId("client-attachments-editor").getAttribute("data-hosts")
+    ).toBe("");
+
+    rerender(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        defaultHostId="host-swarm"
+        hostDefaultResolved
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />
+    );
+    expect(
+      screen.getByTestId("client-attachments-editor").getAttribute("data-hosts")
     ).toBe("host-swarm");
   });
 });

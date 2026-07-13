@@ -21,14 +21,21 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
-import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@mcpjam/design-system/alert";
 import type { EvalSuiteOverviewEntry } from "@/components/evals/types";
 import {
   buildServerBasedSuiteName,
   normalizeServerNames,
 } from "@/components/evals/suite-environment-utils";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { useProjectServerAttachments, useProjectServers } from "@/hooks/useViews";
+import {
+  useProjectServerAttachments,
+  useProjectServers,
+} from "@/hooks/useViews";
 import { useHostList } from "@/hooks/useClients";
 import {
   ClientAttachmentsEditor,
@@ -77,6 +84,13 @@ type ConvertSessionDialogCoreProps = {
    * the client. Falls back to the project's first host when absent/unknown.
    */
   defaultHostId?: string | null;
+  /**
+   * Whether the source adapter has resolved its authoritative host default.
+   * Direct-history callers use the default (`true`) and fall back immediately;
+   * async adapters pass `false` until their session detail arrives so a cached
+   * project host cannot win the initial-render race.
+   */
+  hostDefaultResolved?: boolean;
   onOpenChange: (open: boolean) => void;
   onImported: (result: { suiteId: string; testCaseId: string }) => void;
 };
@@ -95,6 +109,7 @@ export function ConvertSessionDialogCore({
   detail,
   isAuthenticated,
   defaultHostId,
+  hostDefaultResolved = true,
   onOpenChange,
   onImported,
 }: ConvertSessionDialogCoreProps) {
@@ -105,11 +120,14 @@ export function ConvertSessionDialogCore({
   // project-less sessions preserve the legacy path that #395 already covers.
   const { isAuthenticated: convexAuthed } = useConvexAuth();
   const attachmentPickersEnabled = convexAuthed && Boolean(effectiveProjectId);
-  const { servers, serversById, isLoading: projectServersLoading } =
-    useProjectServers({
-      isAuthenticated,
-      projectId: effectiveProjectId,
-    });
+  const {
+    servers,
+    serversById,
+    isLoading: projectServersLoading,
+  } = useProjectServers({
+    isAuthenticated,
+    projectId: effectiveProjectId,
+  });
   const { serverAttachments: projectServerAttachments } =
     useProjectServerAttachments({
       isAuthenticated: attachmentPickersEnabled,
@@ -121,16 +139,16 @@ export function ConvertSessionDialogCore({
   });
   const knownServerNames = useMemo(
     () => (servers ?? []).map((s) => s.name),
-    [servers],
+    [servers]
   );
   const suitesOverview = useQuery(
     "testSuites:getTestSuitesOverview" as any,
     open && effectiveProjectId
       ? ({ projectId: effectiveProjectId } as any)
-      : "skip",
+      : "skip"
   ) as EvalSuiteOverviewEntry[] | undefined;
   const importChatSession = useAction(
-    "testSuites:importChatSessionToTestCase" as any,
+    "testSuites:importChatSessionToTestCase" as any
   );
 
   const [caseTitle, setCaseTitle] = useState("");
@@ -146,10 +164,10 @@ export function ConvertSessionDialogCore({
   // first standalone serverAttachment / `defaultHostId` (falling back to the
   // first project host), mirroring CreateSuiteDialog.
   const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
-    null,
+    null
   );
   const [hostAttachments, setHostAttachments] = useState<HostAttachmentDraft[]>(
-    [],
+    []
   );
 
   const sessionServerDisplay = useMemo(
@@ -160,24 +178,29 @@ export function ConvertSessionDialogCore({
         serversById,
         knownServerNames,
       }),
-    [detail.selectedServers, detail.usedServerIds, knownServerNames, serversById],
+    [
+      detail.selectedServers,
+      detail.usedServerIds,
+      knownServerNames,
+      serversById,
+    ]
   );
   const sessionServerLabels = useMemo(
     () => sessionServerDisplay.items.map((item) => item.label),
-    [sessionServerDisplay.items],
+    [sessionServerDisplay.items]
   );
 
   const availableSuites = useMemo(
     () =>
       (suitesOverview ?? []).filter((entry) => entry.suite.source !== "sdk"),
-    [suitesOverview],
+    [suitesOverview]
   );
 
   const selectedSuiteEntry = useMemo(
     () =>
       availableSuites.find((entry) => entry.suite._id === selectedSuiteId) ??
       null,
-    [availableSuites, selectedSuiteId],
+    [availableSuites, selectedSuiteId]
   );
   const selectedSuiteServerDisplay = useMemo(() => {
     if (!selectedSuiteEntry) {
@@ -186,7 +209,7 @@ export function ConvertSessionDialogCore({
 
     return deriveSessionServerDisplay({
       usedServerRefs: normalizeServerNames(
-        selectedSuiteEntry.suite.environment?.servers,
+        selectedSuiteEntry.suite.environment?.servers
       ),
       selectedServers: [],
       serversById,
@@ -201,20 +224,24 @@ export function ConvertSessionDialogCore({
 
     const suiteServerLabels = new Set(
       (selectedSuiteServerDisplay?.items ?? []).map((item) =>
-        item.label.toLowerCase(),
-      ),
+        item.label.toLowerCase()
+      )
     );
 
     return sessionServerDisplay.items
       .filter((item) => !suiteServerLabels.has(item.label.toLowerCase()))
       .map((item) => item.label);
-  }, [selectedSuiteEntry, selectedSuiteServerDisplay, sessionServerDisplay.items]);
+  }, [
+    selectedSuiteEntry,
+    selectedSuiteServerDisplay,
+    sessionServerDisplay.items,
+  ]);
   const sessionServersDescription =
     sessionServerDisplay.source === "used"
-      ? "Derived from stored tool activity in this chat session."
+      ? "Derived from stored tool activity in this session."
       : sessionServerDisplay.source === "selected"
-        ? "Falls back to this chat session's stored server selection."
-        : "Uses stored session metadata when server activity is available.";
+      ? "Falls back to this session's stored server selection."
+      : "Uses stored session metadata when server activity is available.";
 
   useEffect(() => {
     if (!open || !summary) {
@@ -250,6 +277,7 @@ export function ConvertSessionDialogCore({
 
   useEffect(() => {
     if (!attachmentPickersEnabled) return;
+    if (!hostDefaultResolved) return;
     // Don't seed while the adapter is still resolving detail: project hosts
     // are often already cached, so seeding here would grab projectHosts[0]
     // and the non-empty attachment would then block the reseed once the
@@ -274,6 +302,7 @@ export function ConvertSessionDialogCore({
     defaultHostId,
     detail.loading,
     hostAttachments.length,
+    hostDefaultResolved,
     projectHosts,
   ]);
 
@@ -293,7 +322,7 @@ export function ConvertSessionDialogCore({
     }
 
     setNewSuiteName(
-      buildServerBasedSuiteName(sessionServerLabels, `${summary.title} suite`),
+      buildServerBasedSuiteName(sessionServerLabels, `${summary.title} suite`)
     );
     suiteDefaultsAppliedForSessionId.current = summary.sessionId;
   }, [open, summary, detail.loading, sessionServerLabels]);
@@ -361,17 +390,17 @@ export function ConvertSessionDialogCore({
         added.length > 0
       ) {
         toast.success(
-          `Chat session promoted to a test case. Added ${added.join(", ")} to the suite.`,
+          `Session promoted to a test case. Added ${added.join(
+            ", "
+          )} to the suite.`
         );
       } else {
-        toast.success("Chat session promoted to a test case");
+        toast.success("Session promoted to a test case");
       }
       onOpenChange(false);
       onImported({ suiteId: result.suiteId, testCaseId: result.testCaseId });
     } catch (error) {
-      toast.error(
-        getBillingErrorMessage(error, "Failed to promote chat session"),
-      );
+      toast.error(getBillingErrorMessage(error, "Failed to promote session"));
     } finally {
       setIsSubmitting(false);
     }
@@ -386,7 +415,7 @@ export function ConvertSessionDialogCore({
           <DialogHeader className="space-y-1.5 pr-10">
             <DialogTitle>Promote to test case</DialogTitle>
             <DialogDescription className="text-sm text-muted-foreground">
-              Create a suite-backed test case from this chat session. The full
+              Create a suite-backed test case from this session. The full
               session is compiled into multi-turn prompt turns.
             </DialogDescription>
           </DialogHeader>
@@ -405,7 +434,9 @@ export function ConvertSessionDialogCore({
 
           <div className="space-y-2">
             <div className="space-y-0.5">
-              <p className="text-sm font-medium text-foreground">Session servers</p>
+              <p className="text-sm font-medium text-foreground">
+                Session servers
+              </p>
               <p className="text-xs text-muted-foreground leading-relaxed">
                 {sessionServersDescription}
               </p>
@@ -413,7 +444,7 @@ export function ConvertSessionDialogCore({
             {detail.loading ? (
               <div className="flex min-h-10 items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                Loading chat session details…
+                Loading session details…
               </div>
             ) : detail.error ? (
               <Alert variant="destructive">
@@ -426,8 +457,8 @@ export function ConvertSessionDialogCore({
                 <AlertTriangle className="h-4 w-4" />
                 <AlertTitle>Import unavailable</AlertTitle>
                 <AlertDescription>
-                  This chat session is not linked to a shared project yet, so
-                  it cannot be promoted to a suite-backed test case.
+                  This session is not linked to a shared project yet, so it
+                  cannot be promoted to a suite-backed test case.
                 </AlertDescription>
               </Alert>
             ) : (
@@ -441,7 +472,7 @@ export function ConvertSessionDialogCore({
                           "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium",
                           server.unresolved
                             ? "border-dashed border-border/50 bg-transparent font-mono text-muted-foreground"
-                            : "border-border/50 bg-muted/50 text-foreground",
+                            : "border-border/50 bg-muted/50 text-foreground"
                         )}
                       >
                         {server.label}
@@ -456,8 +487,8 @@ export function ConvertSessionDialogCore({
                 {!projectServersLoading &&
                 sessionServerDisplay.unresolvedCount > 0 ? (
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    Some servers could not be resolved to current project
-                    names, so raw ids are shown.
+                    Some servers could not be resolved to current project names,
+                    so raw ids are shown.
                   </p>
                 ) : null}
               </div>
@@ -466,7 +497,9 @@ export function ConvertSessionDialogCore({
 
           <div className="space-y-3">
             <div className="space-y-0.5">
-              <p className="text-sm font-medium text-foreground">Destination suite</p>
+              <p className="text-sm font-medium text-foreground">
+                Destination suite
+              </p>
               <p className="text-xs text-muted-foreground leading-relaxed">
                 Create a new suite or add the case to an existing one.
               </p>
@@ -484,7 +517,7 @@ export function ConvertSessionDialogCore({
                   "h-8 flex-1 rounded-md text-sm font-medium shadow-none",
                   destinationMode === "new"
                     ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-transparent hover:text-foreground",
+                    : "text-muted-foreground hover:bg-transparent hover:text-foreground"
                 )}
                 onClick={() => setDestinationMode("new")}
               >
@@ -498,7 +531,7 @@ export function ConvertSessionDialogCore({
                   "h-8 flex-1 rounded-md text-sm font-medium shadow-none",
                   destinationMode === "existing"
                     ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-transparent hover:text-foreground",
+                    : "text-muted-foreground hover:bg-transparent hover:text-foreground"
                 )}
                 onClick={() => setDestinationMode("existing")}
               >
@@ -561,7 +594,9 @@ export function ConvertSessionDialogCore({
             ) : (
               <div className="space-y-3">
                 <div className="space-y-2">
-                  <Label htmlFor="chat-import-existing-suite">Existing suite</Label>
+                  <Label htmlFor="chat-import-existing-suite">
+                    Existing suite
+                  </Label>
                   <Select
                     value={selectedSuiteId}
                     onValueChange={setSelectedSuiteId}
@@ -571,7 +606,10 @@ export function ConvertSessionDialogCore({
                     </SelectTrigger>
                     <SelectContent>
                       {availableSuites.map((entry) => (
-                        <SelectItem key={entry.suite._id} value={entry.suite._id}>
+                        <SelectItem
+                          key={entry.suite._id}
+                          value={entry.suite._id}
+                        >
                           {entry.suite.name}
                         </SelectItem>
                       ))}
@@ -618,8 +656,14 @@ export function ConvertSessionDialogCore({
           >
             Cancel
           </Button>
-          <Button type="button" onClick={() => void handleSubmit()} disabled={!canSubmit}>
-            {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+          <Button
+            type="button"
+            onClick={() => void handleSubmit()}
+            disabled={!canSubmit}
+          >
+            {isSubmitting ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : null}
             Promote to test case
           </Button>
         </DialogFooter>

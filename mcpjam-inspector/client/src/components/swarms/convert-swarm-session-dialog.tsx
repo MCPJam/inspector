@@ -57,11 +57,13 @@ export function ConvertSwarmSessionDialog({
 }: ConvertSwarmSessionDialogProps) {
   const { isAuthenticated } = useConvexAuth();
   const getPromoteDetail = useAction(
-    SWARM_ACTIONS.getChatSessionPromoteDetail as any,
+    SWARM_ACTIONS.getChatSessionPromoteDetail as any
   );
   const [detail, setDetail] = useState<PromoteSessionDetailState>(IDLE_DETAIL);
   const [promoteDetail, setPromoteDetail] =
     useState<SwarmSessionPromoteDetail | null>(null);
+  const resolvedPromoteDetail =
+    session && promoteDetail?.sessionId === session.id ? promoteDetail : null;
 
   useEffect(() => {
     if (!open || !session) {
@@ -118,11 +120,11 @@ export function ConvertSwarmSessionDialog({
       session
         ? {
             sessionId: session.id,
-            title: buildTitle(promoteDetail),
+            title: buildTitle(resolvedPromoteDetail),
             projectId: session.projectId,
           }
         : null,
-    [promoteDetail, session],
+    [resolvedPromoteDetail, session]
   );
 
   return (
@@ -131,7 +133,8 @@ export function ConvertSwarmSessionDialog({
       summary={summary}
       detail={detail}
       isAuthenticated={isAuthenticated}
-      defaultHostId={promoteDetail?.hostId ?? null}
+      defaultHostId={resolvedPromoteDetail?.hostId ?? null}
+      hostDefaultResolved={resolvedPromoteDetail !== null}
       onOpenChange={onOpenChange}
       onImported={onImported}
     />
