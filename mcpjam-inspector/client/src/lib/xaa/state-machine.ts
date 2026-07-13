@@ -968,9 +968,13 @@ export function createXAAStateMachine(
       });
     }
 
-    const rawMethod = outcome.credentials.tokenEndpointAuthMethod;
+    // Read the RAW response member, not credentials.tokenEndpointAuthMethod
+    // (the SDK collapses a non-string value to undefined) — so a genuinely
+    // ABSENT member gets the RFC 7591 fallback while a malformed present-but-
+    // non-string member stays parked.
+    const rawMethodMember = outcome.clientInfo.token_endpoint_auth_method;
     let method: XaaTokenEndpointAuthMethod;
-    if (rawMethod === undefined) {
+    if (rawMethodMember === undefined) {
       // RFC 7591 SHOULD echo token_endpoint_auth_method, but some servers omit
       // it. We requested client_secret_post and the token proxy treats an
       // absent method as body-post, so default to that when a secret was
@@ -984,14 +988,19 @@ export function createXAAStateMachine(
           : "The registration response omitted token_endpoint_auth_method and issued no secret; treating the client as public (none).",
       });
     } else if (
-      rawMethod === "client_secret_post" ||
-      rawMethod === "client_secret_basic" ||
-      rawMethod === "none"
+      rawMethodMember === "client_secret_post" ||
+      rawMethodMember === "client_secret_basic" ||
+      rawMethodMember === "none"
     ) {
-      method = rawMethod;
+      method = rawMethodMember;
+    } else if (typeof rawMethodMember === "string") {
+      parkRegistration(
+        `Registration succeeded, but this debugger cannot use the returned client-auth method ("${rawMethodMember}"). This is a debugger limitation, not authorization-server unreadiness.`
+      );
+      return;
     } else {
       parkRegistration(
-        `Registration succeeded, but this debugger cannot use the returned client-auth method ("${rawMethod}"). This is a debugger limitation, not authorization-server unreadiness.`
+        "The registration returned a non-string token_endpoint_auth_method — a malformed registration response. Switch to pre-registered credentials to continue."
       );
       return;
     }

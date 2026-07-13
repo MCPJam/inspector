@@ -1295,6 +1295,31 @@ describe("open dcr registration strategy", () => {
     expect(proxyBody.tokenEndpointAuthMethod).toBe("client_secret_post");
   });
 
+  it("parks on a non-string token_endpoint_auth_method (malformed, not omitted)", async () => {
+    const harness = createDynamicHarness({
+      strategy: "dcr",
+      registerResponse: {
+        status: 201,
+        headers: { "content-type": "application/json" },
+        body: {
+          client_id: "malformed-method-client",
+          client_secret: DCR_SECRET,
+          token_endpoint_auth_method: 123, // present but not a string
+        },
+      },
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    // Must NOT be treated as omitted-and-fall-back; a present malformed member
+    // is a malformed registration.
+    expect(state.currentStep).toBe("request_client_registration");
+    expect(state.error).toContain("malformed");
+    expect(
+      harness.internalCalls.some((c) => c.path === "/authenticate")
+    ).toBe(false);
+  });
+
   it("treats an omitted method with no secret as a public client", async () => {
     const harness = createDynamicHarness({
       strategy: "dcr",
