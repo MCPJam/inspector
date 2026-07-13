@@ -37,9 +37,11 @@ Once trust is established, run the flow from the XAA Flow tab. The sequence diag
 - **Auth0** — Supported with configuration. Register MCPJam's issuer as a trusted issuer and map subjects to Auth0 users; Auth0 fetches the JWKS from the issuer's discovery document.
 - **Keycloak** — Supports Token Exchange. Configure a brokered IdP that trusts MCPJam's issuer.
 
-## Local mode
+## Hosted vs. local issuer
 
-If you're running the inspector locally, the endpoint URLs point at your own machine. Your authorization server can only reach them if it can route to that machine — expose the inspector through a public tunnel first.
+When you enable the **hosted issuer** (`app.mcpjam.com`), ID tokens and ID-JAGs are minted by `app.mcpjam.com`. A cloud authorization server can discover this issuer and fetch its JWKS. No tunnel is needed. Token requests and MCP calls still run from your machine; your authorization server must be reachable over HTTPS.
+
+When running the inspector locally, the endpoint URLs point at your own machine. A cloud-hosted Okta or Auth0 tenant cannot reach `localhost`. Your authorization server can only fetch the local endpoints if it can route to that machine — expose the inspector through a public tunnel first.
 
 ## Next steps
 
