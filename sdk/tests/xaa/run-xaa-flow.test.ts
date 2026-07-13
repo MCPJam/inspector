@@ -303,8 +303,7 @@ describe("runXaaFlow", () => {
 
     expect(result.completed).toBe(true);
     expect(
-      mcpHeaders["MCP-Protocol-Version"] ??
-        mcpHeaders["mcp-protocol-version"]
+      mcpHeaders["MCP-Protocol-Version"] ?? mcpHeaders["mcp-protocol-version"]
     ).toBe("2025-11-25");
     expect(mcpRequest).toMatchObject({
       params: {
@@ -369,7 +368,11 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === serverWithSlash && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
+          return json({
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: { protocolVersion: "2025-11-25" },
+          });
         }
         return json({}, 404);
       }
@@ -412,7 +415,11 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === SERVER_URL && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
+          return json({
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: { protocolVersion: "2025-11-25" },
+          });
         }
         return json({}, 404);
       }
@@ -479,7 +486,11 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === SERVER_URL && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
+          return json({
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: { protocolVersion: "2025-11-25" },
+          });
         }
         return json({}, 404);
       }
@@ -528,7 +539,11 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === serverWithSlash && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
+          return json({
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: { protocolVersion: "2025-11-25" },
+          });
         }
         return json({}, 404);
       }
@@ -613,7 +628,11 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === serverWithQuery && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
+          return json({
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: { protocolVersion: "2025-11-25" },
+          });
         }
         return json({}, 404);
       }
@@ -770,7 +789,11 @@ describe("runXaaFlow", () => {
         return json({ access_token: "at-basic", token_type: "Bearer" });
       }
       if (url === SERVER_URL && method === "POST") {
-        return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
+        return json({
+          jsonrpc: "2.0",
+          id: "mcpjam-xaa-cli",
+          result: { protocolVersion: "2025-11-25" },
+        });
       }
       return json({}, 404);
     }) as unknown as typeof fetch;

@@ -68,7 +68,7 @@ function diagnosticKey(key: string): string {
 
 function redactDiagnosticValue(
   value: unknown,
-  knownSecrets: ReadonlyArray<string> = [],
+  knownSecrets: ReadonlyArray<string> = []
 ): any {
   const redactString = (input: string): string => {
     let redacted = input;
@@ -102,7 +102,7 @@ function redactDiagnosticValue(
       Object.entries(current).map(([childKey, childValue]) => [
         childKey,
         visit(childValue, childKey),
-      ]),
+      ])
     );
   };
 
@@ -111,7 +111,7 @@ function redactDiagnosticValue(
 
 function sanitizeDiagnosticUpdates(
   state: Partial<XAAFlowState>,
-  updates: Partial<XAAFlowState>,
+  updates: Partial<XAAFlowState>
 ): Partial<XAAFlowState> {
   const knownSecrets = [
     state.clientSecret,
@@ -135,7 +135,7 @@ function sanitizeDiagnosticUpdates(
     if (key in sanitized) {
       (sanitized as Record<string, unknown>)[key] = redactDiagnosticValue(
         sanitized[key],
-        knownSecrets,
+        knownSecrets
       );
     }
   }
@@ -469,7 +469,7 @@ export function createXAAStateMachine(
     updateState: (updates) => {
       const sanitizedUpdates = sanitizeDiagnosticUpdates(
         machine.state,
-        updates,
+        updates
       );
       machine.state = { ...machine.state, ...sanitizedUpdates };
       updateState(sanitizedUpdates);
@@ -633,9 +633,7 @@ export function createXAAStateMachine(
           typeof resourceMetadata.resource === "string"
             ? resourceMetadata.resource
             : undefined;
-        if (
-          !metadataResource || metadataResource !== requestedResource
-        ) {
+        if (!metadataResource || metadataResource !== requestedResource) {
           lastError = `Protected-resource metadata at ${resourceMetadataUrl} does not identify ${requestedResource}.`;
           continue;
         }
@@ -769,10 +767,10 @@ export function createXAAStateMachine(
             );
           }
 
-        // RFC 8414 §3.3: the metadata's `issuer` MUST match the one we asked
-        // for. A mismatched (or absent) issuer means its token endpoint can't
-        // be trusted with the signed assertion + any client secret — continue
-        // to the next candidate rather than adopting a foreign issuer.
+          // RFC 8414 §3.3: the metadata's `issuer` MUST match the one we asked
+          // for. A mismatched (or absent) issuer means its token endpoint can't
+          // be trusted with the signed assertion + any client secret — continue
+          // to the next candidate rather than adopting a foreign issuer.
           if (
             typeof metadata.issuer !== "string" ||
             metadata.issuer !== candidateIssuer
@@ -1252,15 +1250,12 @@ export function createXAAStateMachine(
 
     let result: XAARequestResult;
     try {
-      result = await runRequest(
-        "fetch_client_metadata_document",
-        request,
-        () =>
-          requestExecutor.externalRequest(documentUrl, {
-            method: "GET",
-            headers: request.headers,
-            redirect: "manual",
-          })
+      result = await runRequest("fetch_client_metadata_document", request, () =>
+        requestExecutor.externalRequest(documentUrl, {
+          method: "GET",
+          headers: request.headers,
+          redirect: "manual",
+        })
       );
     } catch {
       // runRequest already recorded the failure and set the error; the step
@@ -1577,14 +1572,11 @@ export function createXAAStateMachine(
     let manualAuthMethod = state.tokenEndpointAuthMethod;
     if (!registrationId && !serverId) {
       if (registrationStrategy === "dcr") {
-        const registrationEndpoint =
-          state.authzMetadata?.registration_endpoint;
+        const registrationEndpoint = state.authzMetadata?.registration_endpoint;
         const cacheKey = registrationEndpoint
           ? dcrCacheKeyFor(registrationEndpoint)
           : undefined;
-        const cached = cacheKey
-          ? dcrCredentialCache?.get(cacheKey)
-          : undefined;
+        const cached = cacheKey ? dcrCredentialCache?.get(cacheKey) : undefined;
         if (!cached || cached.clientId !== state.clientId) {
           machine.updateState({
             currentStep: "jwt_bearer_request",
@@ -1635,24 +1627,24 @@ export function createXAAStateMachine(
           resource: state.resourceUrl || state.serverUrl,
         }
       : serverId
-      ? {
-          serverId,
-          ...(projectId ? { projectId } : {}),
-          assertion: state.idJag,
-          scope: state.scope,
-          resource: state.resourceUrl || state.serverUrl,
-        }
-      : {
-          tokenEndpoint: state.tokenEndpoint,
-          assertion: state.idJag,
-          clientId: state.clientId,
-          ...(manualClientSecret ? { clientSecret: manualClientSecret } : {}),
-          ...(manualAuthMethod
-            ? { tokenEndpointAuthMethod: manualAuthMethod }
-            : {}),
-          scope: state.scope,
-          resource: state.resourceUrl || state.serverUrl,
-        };
+        ? {
+            serverId,
+            ...(projectId ? { projectId } : {}),
+            assertion: state.idJag,
+            scope: state.scope,
+            resource: state.resourceUrl || state.serverUrl,
+          }
+        : {
+            tokenEndpoint: state.tokenEndpoint,
+            assertion: state.idJag,
+            clientId: state.clientId,
+            ...(manualClientSecret ? { clientSecret: manualClientSecret } : {}),
+            ...(manualAuthMethod
+              ? { tokenEndpointAuthMethod: manualAuthMethod }
+              : {}),
+            scope: state.scope,
+            resource: state.resourceUrl || state.serverUrl,
+          };
 
     // The request object lands verbatim in the HTTP history panel (and any
     // export of it), so the logged copy masks the secret. Only

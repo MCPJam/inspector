@@ -1,10 +1,7 @@
 // Headless Cross-App Access (ID-JAG) flow driver. It self-issues an ID-JAG,
 // verifies that the configured issuer actually publishes the signing key,
 // redeems the assertion, and probes the protected MCP resource.
-import {
-  executeOAuthProxy,
-  fetchOAuthMetadata,
-} from "../oauth-proxy.js";
+import { executeOAuthProxy, fetchOAuthMetadata } from "../oauth-proxy.js";
 import {
   getXAAIdpJwks,
   getXAAIssuerUrl,
@@ -168,7 +165,7 @@ async function verifyIssuerPublication(
     response.body &&
     typeof response.body === "object" &&
     Array.isArray((response.body as { keys?: unknown }).keys)
-      ? (response.body as { keys: PublishedJwk[] }).keys ?? []
+      ? ((response.body as { keys: PublishedJwk[] }).keys ?? [])
       : [];
   const keys = rawKeys.filter(
     (key): key is PublishedJwk => Boolean(key) && typeof key === "object"
@@ -240,10 +237,7 @@ function projectMcpResult(state: XAAFlowState): XaaFlowResult["mcp"] {
   const error = evaluateMcpInitializeResponse(entry.response.body);
   return {
     status: entry.response.status,
-    ok:
-      entry.response.status >= 200 &&
-      entry.response.status < 300 &&
-      !error,
+    ok: entry.response.status >= 200 && entry.response.status < 300 && !error,
     ...(error ? { error } : {}),
     xaaExtension: mcpInitializeExtensionEvidence(entry.response.body),
   };
@@ -312,10 +306,7 @@ const CLI_STEP_VOCABULARY: Record<string, string> = {
   jwt_bearer_request: "redeem_id_jag",
 };
 
-function projectSteps(
-  state: XAAFlowState,
-  prefix = ""
-): XaaFlowStep[] {
+function projectSteps(state: XAAFlowState, prefix = ""): XaaFlowStep[] {
   return (state.httpHistory ?? []).map((entry) => ({
     step: prefix + (CLI_STEP_VOCABULARY[entry.step] ?? entry.step),
     ok:
@@ -323,7 +314,8 @@ function projectSteps(
       !!entry.response &&
       entry.response.status >= 200 &&
       entry.response.status < 300,
-    detail: entry.error?.message ??
+    detail:
+      entry.error?.message ??
       (entry.response ? "status " + entry.response.status : undefined),
   }));
 }
@@ -381,16 +373,16 @@ async function runSharedAttempt(
       step === "discover_resource_metadata"
         ? "Discovering protected-resource metadata (RFC 9728)…"
         : step === "discover_authz_metadata"
-        ? "Discovering authorization-server metadata (RFC 8414)…"
-        : step === "token_exchange_request"
-        ? "Minting the ID-JAG…"
-        : step === "jwt_bearer_request"
-        ? mode === "valid"
-          ? "Redeeming the ID-JAG at the authorization server…"
-          : "Redeeming the deliberately invalid ID-JAG…"
-        : step === "authenticated_mcp_request"
-        ? "Calling the MCP server with the access token…"
-        : undefined;
+          ? "Discovering authorization-server metadata (RFC 8414)…"
+          : step === "token_exchange_request"
+            ? "Minting the ID-JAG…"
+            : step === "jwt_bearer_request"
+              ? mode === "valid"
+                ? "Redeeming the ID-JAG at the authorization server…"
+                : "Redeeming the deliberately invalid ID-JAG…"
+              : step === "authenticated_mcp_request"
+                ? "Calling the MCP server with the access token…"
+                : undefined;
     if (message) progress?.(message);
   };
   const machine = createXAAStateMachine({
@@ -586,12 +578,12 @@ export async function runXaaFlow(
               "The authorization server accepted the deliberately invalid ID-JAG.",
           }
         : outcome === "inconclusive"
-        ? {
-            error:
-              projectFlowError(probeState) ??
-              "The negative probe did not produce a conclusive 4xx rejection.",
-          }
-        : {}),
+          ? {
+              error:
+                projectFlowError(probeState) ??
+                "The negative probe did not produce a conclusive 4xx rejection.",
+            }
+          : {}),
     };
   } catch (error) {
     return {
