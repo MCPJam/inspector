@@ -1,0 +1,178 @@
+---
+title: "XAA Run"
+description: "Debug Cross-App Access (ID-JAG) flows headlessly from the terminal"
+icon: "shield-check"
+---
+
+The `xaa run` command is a headless Cross-App Access (ID-JAG) debugger that mirrors `mcpjam oauth login`. It self-issues an ID-JAG using the local mock IdP, redeems it at the target authorization server (RFC 7523 jwt-bearer), and calls the MCP server with the resulting access token — streaming progress to stderr and printing a structured per-step report.
+
+## Quick start
+
+```bash
+mcpjam xaa run \
+  --url https://your-server.com/mcp \
+  --issuer-base-url https://your-issuer.example.com/api/mcp \
+  --sub user@example.com \
+  --client-id your-client-id
+```
+
+On a TTY, progress is streamed to stderr. The final structured report is written to stdout. The command exits with code `1` when the flow does not complete (for example, when the authorization server cannot reach the issuer's JWKS endpoint).
+
+## How it works
+
+`xaa run` drives the full XAA sequence without a browser:
+
+1. **Discover the authorization server** — fetches protected-resource metadata (RFC 9728) from the MCP server URL to find the authorization server, then fetches AS metadata (RFC 8414) to find the token endpoint. Both steps can be skipped by passing `--authz-server-issuer` and `--token-endpoint` directly.
+2. **Verify issuer publication** — checks that the configured `--issuer-base-url` publishes an OpenID configuration and JWKS that include the local signing key. The authorization server must be able to fetch this JWKS to validate the ID-JAG.
+3. **Mint the ID-JAG** — self-issues a signed ID-JAG using the local mock IdP keypair.
+4. **Inspect the ID-JAG** — verifies the minted token locally and includes the decoded claims in the report.
+5. **Redeem at the AS** — posts the ID-JAG to the token endpoint using the RFC 7523 jwt-bearer grant.
+6. **Call the MCP server** — sends an MCP `initialize` request with the access token and reports whether the server responds with a valid JSON-RPC result.
+
+### Reachability constraint
+
+The CLI acts as the IdP and self-signs the ID-JAG. For the authorization server to validate the ID-JAG, it must be able to fetch the JWKS from the URL derived from `--issuer-base-url`. A localhost issuer is unreachable by a cloud AS, so redemption will fail with an "issuer unreachable" error — which is itself the finding the tool reports. Use a publicly reachable origin for `--issuer-base-url`, or expose a local issuer via a tunnel.
+
+## Examples
+
+### Minimal run with explicit AS and token endpoint
+
+```bash
+mcpjam xaa run \
+  --url https://your-server.com/mcp \
+  --issuer-base-url https://your-issuer.example.com/api/mcp \
+  --sub user-1 \
+  --client-id my-client \
+  --authz-server-issuer https://auth.example.com \
+  --token-endpoint https://auth.example.com/oauth/token
+```
+
+### Confidential client with `client_secret_basic`
+
+```bash
+mcpjam xaa run \
+  --url https://your-server.com/mcp \
+  --issuer-base-url https://your-issuer.example.com/api/mcp \
+  --sub user-1 \
+  --client-id my-client \
+  --client-secret "$CLIENT_SECRET" \
+  --token-endpoint-auth-method client_secret_basic \
+  --authz-server-issuer https://auth.example.com \
+  --token-endpoint https://auth.example.com/oauth/token
+```
+
+<Warning>
+  Prefer environment variables for `--client-secret`. Passing it inline leaks
+  to shell history and process listings.
+</Warning>
+
+### With scopes and email claim
+
+```bash
+mcpjam xaa run \
+  --url https://your-server.com/mcp \
+  --issuer-base-url https://your-issuer.example.com/api/mcp \
+  --sub user-1 \
+  --email user@example.com \
+  --client-id my-client \
+  --scopes "read:tools write:tools" \
+  --authz-server-issuer https://auth.example.com \
+  --token-endpoint https://auth.example.com/oauth/token
+```
+
+### JSON output for CI or scripting
+
+```bash
+mcpjam xaa run \
+  --url https://your-server.com/mcp \
+  --issuer-base-url https://your-issuer.example.com/api/mcp \
+  --sub user-1 \
+  --client-id my-client \
+  --quiet --format json
+```
+
+## Flags
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--url <url>` | Yes | | Target MCP server URL (the protected resource) |
+| `--issuer-base-url <url>` | Yes | | Origin the local mock IdP issues from. The AS must be able to fetch its JWKS from here to validate the ID-JAG. |
+| `--sub <subject>` | Yes | | Simulated end-user subject identifier |
+| `--client-id <id>` | Yes | | OAuth client the ID-JAG is issued for; also presented at redemption |
+| `--authz-server-issuer <issuer>` | No | | Target authorization-server issuer. When set, protected-resource metadata discovery is skipped. |
+| `--token-endpoint <url>` | No | | Authorization-server token endpoint. When set, AS-metadata discovery is skipped. |
+| `--email <email>` | No | | Simulated end-user email claim |
+| `--client-secret <secret>` | No | | OAuth client secret presented at redemption |
+| `--token-endpoint-auth-method <method>` | No | Inferred from AS metadata | Token endpoint client authentication: `client_secret_basic`, `client_secret_post`, or `none` |
+| `--scopes <scopes>` | No | | Space-separated scope string |
+| `--https-only` | No | off | Reject non-HTTPS / private targets (default: allow HTTP/localhost for local dev) |
+
+The global `--timeout <ms>` flag sets a per-request timeout for all outbound fetches (discovery, JWKS, token endpoint, MCP server).
+
+<Note>
+  `--token-endpoint-auth-method client_secret_basic` and `client_secret_post`
+  require `--client-secret`. The CLI rejects the combination upfront if the
+  secret is missing.
+</Note>
+
+## Output
+
+The command prints a structured per-step report. Secret fields are redacted: the raw ID-JAG token, access tokens, refresh tokens, and any reflected assertion values are replaced with `[REDACTED]`. The decoded ID-JAG claims and the per-step verdicts remain visible for inspection.
+
+```json
+{
+  "completed": true,
+  "issuer": "https://your-issuer.example.com/api/mcp/xaa",
+  "authzServerIssuer": "https://auth.example.com",
+  "tokenEndpoint": "https://auth.example.com/oauth/token",
+  "authorizationServerCapabilities": {
+    "idJagProfile": "advertised",
+    "jwtBearerGrant": "advertised",
+    "selectedTokenEndpointAuthMethod": "client_secret_basic"
+  },
+  "idJag": {
+    "token": "[REDACTED]",
+    "claims": {
+      "iss": "https://your-issuer.example.com/api/mcp/xaa",
+      "sub": "user-1",
+      "aud": "https://auth.example.com",
+      "resource": "https://your-server.com/mcp",
+      "client_id": "my-client"
+    },
+    "verified": true
+  },
+  "redemption": {
+    "status": 200,
+    "tokenIssued": true
+  },
+  "mcp": {
+    "status": 200,
+    "ok": true,
+    "xaaExtension": "advertised"
+  },
+  "steps": [
+    { "step": "verify_issuer_publication", "ok": true },
+    { "step": "mint_id_jag", "ok": true, "detail": "valid" },
+    { "step": "inspect_id_jag", "ok": true, "detail": "verified" },
+    { "step": "redeem_id_jag", "ok": true, "detail": "access token issued" },
+    { "step": "authenticated_mcp_request", "ok": true, "detail": "status 200" },
+    { "step": "mcp_xaa_extension", "ok": true, "detail": "advertised" }
+  ]
+}
+```
+
+`completed: true` means the full flow succeeded — the AS issued an access token and the MCP server responded with a valid JSON-RPC `initialize` result. `completed: false` means the flow stopped at an earlier step; the `steps` array and the top-level `error` field identify where and why.
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Flow completed successfully |
+| `1` | Flow did not complete (discovery failed, redemption rejected, MCP call failed) |
+| `2` | Invalid arguments |
+
+## Next steps
+
+- [XAA Debugger](/inspector/xaa-debugger) — interactive browser-based XAA debugging in the Inspector
+- [XAA Test IdP](/inspector/xaa-test-idp) — configure the mock identity provider used by the Inspector and this CLI command
+- [OAuth login](/cli/oauth-login) — the equivalent headless debugger for standard OAuth flows
