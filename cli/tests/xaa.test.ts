@@ -126,6 +126,9 @@ test("redactXaaResult masks the ID-JAG token and issued bearer tokens", () => {
         expires_in: 300,
         // A nested/reflected secret the recursive redactor must also catch.
         extra: { access_token: "nested-secret" },
+        // The AS reflecting the raw ID-JAG back under non-secret field names.
+        assertion: "eyJraWQ.secret.signature",
+        error_description: "invalid assertion eyJraWQ.secret.signature",
       },
     },
     mcp: { status: 200, ok: true },
@@ -148,6 +151,9 @@ test("redactXaaResult masks the ID-JAG token and issued bearer tokens", () => {
     (body.extra as Record<string, unknown>).access_token,
     "[REDACTED]",
   );
+  // A reflected raw ID-JAG is scrubbed even under non-secret field names.
+  assert.equal(body.assertion, "[REDACTED]");
+  assert.equal(body.error_description, "invalid assertion [REDACTED]");
   assert.equal(body.token_type, "Bearer");
   assert.equal(body.expires_in, 300);
   // The original result is not mutated.

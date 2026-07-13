@@ -93,10 +93,38 @@ export function registerXaaCommands(program: Command): void {
 // Bearer strings, etc.) anywhere in the output. The decoded `idJag.claims`, the
 // verify verdict, and the per-step report keep the debug value.
 export function redactXaaResult(result: XaaFlowResult): XaaFlowResult {
+  const rawIdJag = result.idJag?.token;
   const masked: XaaFlowResult = result.idJag
     ? { ...result, idJag: { ...result.idJag, token: "[REDACTED]" } }
     : result;
-  return redactSensitiveValue(masked) as XaaFlowResult;
+  const scrubbed = redactSensitiveValue(masked) as XaaFlowResult;
+  // A token endpoint may reflect the submitted `assertion` (the raw ID-JAG) in
+  // an error body under a non-secret field name (e.g. `assertion`,
+  // `error_description`), which the key-based redactor and the Bearer-string
+  // pattern won't catch. Scrub any remaining occurrence of the raw ID-JAG.
+  return rawIdJag
+    ? (replaceRawValue(scrubbed, rawIdJag) as XaaFlowResult)
+    : scrubbed;
+}
+
+function replaceRawValue(value: unknown, secret: string): unknown {
+  if (typeof value === "string") {
+    return value.includes(secret)
+      ? value.split(secret).join("[REDACTED]")
+      : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => replaceRawValue(entry, secret));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entryValue]) => [
+        key,
+        replaceRawValue(entryValue, secret),
+      ]),
+    );
+  }
+  return value;
 }
 
 export function buildXaaConfig(options: XaaCommandOptions): XaaFlowConfig {
