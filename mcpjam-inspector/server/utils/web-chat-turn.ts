@@ -47,7 +47,8 @@ import {
   resolveOrgProviderRuntime,
   type OrgProviderRuntime,
 } from "./org-model-config.js";
-import { isMCPJamProvidedModel, type ModelDefinition } from "@/shared/types";
+import { type ModelDefinition } from "@/shared/types";
+import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
 import {
   buildWidgetModelContextSystemPrompt,
   prepareChatV2,
@@ -308,7 +309,7 @@ export async function streamWebChatTurn(
   // harness preflight (which does pass the provider) approved the turn.
   const isMCPJam =
     Boolean(prepare.modelDefinition.id) &&
-    isMCPJamProvidedModel(
+    isHostedCatalogModel(
       String(prepare.modelDefinition.id),
       prepare.modelDefinition.provider,
     );

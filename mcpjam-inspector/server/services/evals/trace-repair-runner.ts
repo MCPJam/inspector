@@ -3,7 +3,7 @@ import {
   buildRefinementVerificationPlan,
   type RefinementVerificationPlanStep,
 } from "../../../shared/refinement-verification-plan.js";
-import { isMCPJamProvidedModel } from "../../../shared/types.js";
+import { isHostedCatalogModel } from "../hosted-model-catalog.js";
 import { runEvalTestCaseWithManager } from "../../routes/shared/evals.js";
 import { logger } from "../../utils/logger.js";
 import {
@@ -117,7 +117,7 @@ function resolveModelApiKeys(
   model: string,
   modelApiKeys: Record<string, string> | undefined,
 ): Record<string, string> | undefined {
-  if (isMCPJamProvidedModel(model, provider)) {
+  if (isHostedCatalogModel(model, provider)) {
     return undefined;
   }
   const normalized = normalizeProviderKey(provider);

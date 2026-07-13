@@ -79,6 +79,24 @@ describe("MCPJam-provided model classification", () => {
     expect(isMCPJamProvidedModel("grok-4-fast", "xai")).toBe(true);
   });
 
+  it("canonicalizes against an injected catalog (catalog-only ids)", () => {
+    const catalog = [
+      { id: "newvendor/brand-new-model", provider: "newvendor" },
+    ];
+    // A bare id resolves to the prefixed catalog id when the catalog is injected…
+    expect(
+      getCanonicalModelId("brand-new-model", "newvendor", catalog),
+    ).toBe("newvendor/brand-new-model");
+    // …and an exact catalog id passes through.
+    expect(
+      getCanonicalModelId("newvendor/brand-new-model", undefined, catalog),
+    ).toBe("newvendor/brand-new-model");
+    // Without the injected catalog, the unknown bare id can't be canonicalized.
+    expect(getCanonicalModelId("brand-new-model", "newvendor")).toBe(
+      "brand-new-model",
+    );
+  });
+
   it("resolves exact hosted IDs that are allowlisted in the backend", () => {
     expect(getModelById("google/gemini-3-pro-preview")).toBeUndefined();
     expect(getModelById("openai/gpt-4o-mini")?.provider).toBe("openai");
