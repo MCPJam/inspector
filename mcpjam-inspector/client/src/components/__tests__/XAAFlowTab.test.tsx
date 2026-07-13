@@ -18,8 +18,12 @@ vi.mock("../xaa/XAAIdpCard", () => ({
   XAAIdpCard: () => <div data-testid="xaa-idp-card" />,
 }));
 
+let capturedServerModalProps: any = null;
 vi.mock("../xaa/XAAServerModal", () => ({
-  XAAServerModal: () => <div data-testid="xaa-server-modal" />,
+  XAAServerModal: (props: any) => {
+    capturedServerModalProps = props;
+    return <div data-testid="xaa-server-modal" />;
+  },
 }));
 
 let resourceApps: unknown[] = [];
@@ -182,6 +186,7 @@ describe("XAAFlowTab", () => {
     captureMock.mockClear();
     runAllMock.mockClear();
     capturedMachineConfig = null;
+    capturedServerModalProps = null;
     machineShouldComplete = true;
     resourceApps = [];
     localStorage.clear();
@@ -434,6 +439,30 @@ describe("XAAFlowTab", () => {
     expect(
       screen.getByRole("button", { name: /use bar server/i }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps the selected bar server context for the configuration modal during a registration run", () => {
+    currentTarget = makeTarget({
+      targetSource: "registration",
+      targetKey: "registration:app_1",
+      serverId: undefined,
+      projectId: undefined,
+      barServerId: "srv_bar",
+      barServerProjectId: "proj_bar",
+      runInput: { ...makeTarget().runInput, mode: "hosted-registration" },
+    });
+
+    render(
+      <XAAFlowTab
+        serverConfigs={{ staging: {} as any }}
+        selectedServerName="staging"
+      />,
+    );
+
+    expect(capturedServerModalProps).toMatchObject({
+      projectId: "proj_bar",
+      hostedServerId: "srv_bar",
+    });
   });
 
   it("xaa_flow_started carries a salted target_id (no raw name/url)", async () => {

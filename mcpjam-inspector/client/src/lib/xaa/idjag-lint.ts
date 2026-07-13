@@ -11,7 +11,17 @@ export interface IdJagLintCitation {
 }
 
 export interface IdJagLintVerdict {
-  id: "typ" | "iss" | "sub" | "aud" | "resource" | "client_id" | "jti" | "exp";
+  id:
+    | "typ"
+    | "iss"
+    | "sub"
+    | "aud"
+    | "resource"
+    | "client_id"
+    | "jti"
+    | "iat"
+    | "exp"
+    | "subject_resolution";
   claim: string;
   status: IdJagLintStatus;
   detail: string;
@@ -50,8 +60,16 @@ const CITATIONS = {
   resource: { spec: "RFC 8707 / ID-JAG draft", section: "resource indicator" },
   clientId: { spec: "ID-JAG draft", section: "client_id binding" },
   jti: { spec: "RFC 7519", section: "§4.1.7 (jti replay prevention)" },
+  iat: { spec: "ID-JAG draft", section: "iat (required claim)" },
   exp: { spec: "RFC 7523", section: "§3 (exp required; reject expired)" },
+  subjectResolution: {
+    spec: "ID-JAG draft",
+    section: "subject resolution (email / aud_sub RECOMMENDED)",
+  },
 } as const satisfies Record<string, IdJagLintCitation>;
+
+// Tolerated forward clock skew before an iat "issued in the future" warning.
+const IAT_SKEW_S = 60;
 
 function show(value: unknown): string {
   if (value === undefined) return "(absent)";
@@ -64,10 +82,26 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+// The maximum time value a JS Date can represent (±100,000,000 days from the
+// epoch, in ms). Beyond it, `new Date(ms).toISOString()` throws a RangeError.
+const MAX_DATE_MS = 8.64e15;
+
+// Format an epoch-seconds claim as ISO-8601, falling back to the raw numeric
+// value when it's outside the representable Date range. A malformed JWT can
+// carry an out-of-range iat/exp, and the lint must render a verdict rather
+// than crash the whole inspector.
+function formatEpochSeconds(seconds: number): string {
+  const ms = seconds * 1000;
+  if (!Number.isFinite(ms) || Math.abs(ms) > MAX_DATE_MS) {
+    return String(seconds);
+  }
+  return new Date(ms).toISOString();
+}
+
 export function lintIdJag(
   header: Record<string, unknown> | null,
   payload: Record<string, unknown> | null,
-  context: IdJagLintContext = {},
+  context: IdJagLintContext = {}
 ): IdJagLintVerdict[] {
   const h = header ?? {};
   const p = payload ?? {};
@@ -93,7 +127,7 @@ export function lintIdJag(
           detail: `Expected ${ID_JAG_TYP}. Without explicit typing, an authorization server may accept this token in contexts it was never meant for (token-confusion).`,
           citation: h.typ === "JWT" ? CITATIONS.typBcp : CITATIONS.typ,
           actual: show(h.typ),
-        },
+        }
   );
 
   // iss
@@ -146,7 +180,7 @@ export function lintIdJag(
             "Missing subject. The authorization server can't tell which user this grant represents.",
           citation: CITATIONS.sub,
           actual: show(p.sub),
-        },
+        }
   );
 
   // aud — exact match against the authorization server's issuer identifier.
@@ -187,9 +221,9 @@ export function lintIdJag(
     verdicts.push({
       id: "resource",
       claim: "resource",
-      status: "fail",
+      status: "warn",
       detail:
-        "Missing resource indicator. The access token's audience can't be scoped to the protected resource.",
+        "No resource indicator was included. It is optional in the ID-JAG draft, but including it can bind the resulting access token to a protected resource.",
       citation: CITATIONS.resource,
       actual: show(p.resource),
     });
@@ -270,8 +304,40 @@ export function lintIdJag(
             "No jti. Without a unique token id the authorization server can't detect a replayed assertion.",
           citation: CITATIONS.jti,
           actual: show(p.jti),
-        },
+        }
   );
+
+  // iat — REQUIRED by the ID-JAG draft; anchors the assertion's issue time.
+  if (typeof p.iat !== "number" || !Number.isFinite(p.iat)) {
+    verdicts.push({
+      id: "iat",
+      claim: "iat",
+      status: "fail",
+      detail:
+        "Missing or non-numeric issued-at. The ID-JAG draft requires iat, so the authorization server can anchor the assertion's lifetime.",
+      citation: CITATIONS.iat,
+      actual: show(p.iat),
+    });
+  } else if (p.iat > now + IAT_SKEW_S) {
+    verdicts.push({
+      id: "iat",
+      claim: "iat",
+      status: "warn",
+      detail:
+        "Issued in the future. Check for clock skew between the identity provider and the authorization server.",
+      citation: CITATIONS.iat,
+      actual: formatEpochSeconds(p.iat),
+    });
+  } else {
+    verdicts.push({
+      id: "iat",
+      claim: "iat",
+      status: "pass",
+      detail: "Issued-at present.",
+      citation: CITATIONS.iat,
+      actual: formatEpochSeconds(p.iat),
+    });
+  }
 
   // exp
   if (typeof p.exp !== "number" || !Number.isFinite(p.exp)) {
@@ -292,7 +358,7 @@ export function lintIdJag(
       detail:
         "Assertion is expired. An authorization server that still issues an access token for it is not validating exp.",
       citation: CITATIONS.exp,
-      actual: new Date(p.exp * 1000).toISOString(),
+      actual: formatEpochSeconds(p.exp),
     });
   } else if (p.exp - now > LONG_LIVED_THRESHOLD_S) {
     verdicts.push({
@@ -302,7 +368,7 @@ export function lintIdJag(
       detail:
         "Unusually long lifetime for a single-use assertion. The ID-JAG is redeemed immediately, so a short exp (minutes) keeps the replay window small.",
       citation: CITATIONS.exp,
-      actual: new Date(p.exp * 1000).toISOString(),
+      actual: formatEpochSeconds(p.exp),
     });
   } else {
     verdicts.push({
@@ -311,9 +377,41 @@ export function lintIdJag(
       status: "pass",
       detail: "Short-lived and not yet expired.",
       citation: CITATIONS.exp,
-      actual: new Date(p.exp * 1000).toISOString(),
+      actual: formatEpochSeconds(p.exp),
     });
   }
+
+  // Subject resolution — the draft RECOMMENDS email and/or aud_sub so the
+  // resource authorization server can map the grant onto one of its own
+  // users. One combined row: either claim satisfies the recommendation.
+  const hasEmail = isNonEmptyString(p.email);
+  const hasAudSub = isNonEmptyString(p.aud_sub);
+  verdicts.push(
+    hasEmail || hasAudSub
+      ? {
+          id: "subject_resolution",
+          claim: "email / aud_sub",
+          status: "pass",
+          detail:
+            "A subject-resolution hint is present, so the authorization server can map the grant onto one of its own users.",
+          citation: CITATIONS.subjectResolution,
+          actual: [
+            hasEmail ? `email: ${p.email}` : null,
+            hasAudSub ? `aud_sub: ${p.aud_sub}` : null,
+          ]
+            .filter(Boolean)
+            .join(", "),
+        }
+      : {
+          id: "subject_resolution",
+          claim: "email / aud_sub",
+          status: "warn",
+          detail:
+            "Neither email nor aud_sub is present. The authorization server only has sub — an IdP-local identifier — to resolve the user, which breaks JIT provisioning and cross-system mapping.",
+          citation: CITATIONS.subjectResolution,
+          actual: "(absent)",
+        }
+  );
 
   return verdicts;
 }

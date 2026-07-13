@@ -63,7 +63,6 @@ import { synthesizeServerBody } from "./adapter.js";
 import {
   getCanonicalModelId,
   hostedModelDefinitionsFromSnapshot,
-  isModelSupported,
   SUPPORTED_MODELS,
 } from "@/shared/types";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
@@ -425,7 +424,7 @@ export function assertInlineTestModelsValid(
     const canonical = getCanonicalModelId(test.model, test.provider);
     if (isHostedCatalogModel(canonical, test.provider)) continue;
     if (modelApiKeys?.[test.provider] ?? modelApiKeys?.[provider]) continue;
-    if (isModelSupported(canonical)) continue;
+    if (MODEL_LOOKUP.some((model) => String(model.id) === canonical)) continue;
 
     const hostedIds = MODEL_LOOKUP.filter(
       (m) =>

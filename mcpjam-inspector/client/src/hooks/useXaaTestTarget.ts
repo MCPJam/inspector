@@ -35,6 +35,11 @@ export interface XaaTestTarget {
   /** RemoteServer id — only for a confidential bar_server run. */
   serverId?: string;
   projectId?: string;
+  /** Hosted identity of the selected server in the server bar. This remains
+   * available when a resource registration overrides the active run target,
+   * so editing that bar server can still reveal its saved secret. */
+  barServerId?: string;
+  barServerProjectId?: string;
   /** bar_server with a stored secret → resolve it (and the token endpoint)
    * server-side; the browser only sends serverId. A server with a secret is
    * ALWAYS confidential — it can never run as a public client with an empty
@@ -140,9 +145,14 @@ export function useXaaTestTarget({
 
   return useMemo<XaaTestTarget>(() => {
     const { userId, email, negativeTestMode } = runSettings;
+    const barServerContext = {
+      barServerId: remoteServerId,
+      barServerProjectId: remoteProjectId ?? projectId ?? undefined,
+    };
 
     if (selectedRegistration) {
       return {
+        ...barServerContext,
         targetSource: "registration",
         runInput: {
           mode: "hosted-registration",
@@ -167,6 +177,7 @@ export function useXaaTestTarget({
     const hasServer = selectedServerName !== "none" && Boolean(server);
     if (!hasServer) {
       return {
+        ...barServerContext,
         targetSource: "none",
         runInput: emptyInput(userId, email, negativeTestMode),
         targetKey: "none",
@@ -180,6 +191,7 @@ export function useXaaTestTarget({
     const isTestable = isHttp && Boolean(serverUrl) && (useOAuth || useXaa);
     if (!isTestable) {
       return {
+        ...barServerContext,
         targetSource: "bar_server",
         runInput: emptyInput(userId, email, negativeTestMode),
         targetKey: `bar_server:${selectedServerName}`,
@@ -199,6 +211,7 @@ export function useXaaTestTarget({
     const secretUnavailable = hasClientSecret && !remoteServerId;
 
     return {
+      ...barServerContext,
       targetSource: "bar_server",
       runInput: {
         mode: "local-profile",

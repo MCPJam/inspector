@@ -11,7 +11,11 @@ import {
   generateSessionToken,
   getSessionToken,
 } from "../../../services/session-token.js";
-import { initXAAIdpKeyPair, resetXAAIdpKeyPairForTests } from "@mcpjam/sdk";
+import {
+  initXAAIdpKeyPair,
+  resetXAAIdpKeyPairForTests,
+  XAA_DEBUG_IDP_CLIENT_ID,
+} from "@mcpjam/sdk";
 import xaa, { createXaaRouter } from "../xaa.js";
 
 function jsonResponse(
@@ -153,6 +157,12 @@ describe("mcp xaa routes", () => {
 
     expect(tokenExchangeResponse.status).toBe(200);
     const tokenExchangeBody = await tokenExchangeResponse.json();
+    // The minted token is an ID-JAG, and the response must say so (the
+    // generic `…token-type:jwt` URN would teach debugger users the wrong
+    // constant).
+    expect(tokenExchangeBody.issued_token_type).toBe(
+      "urn:ietf:params:oauth:token-type:id-jag"
+    );
     const payload = decodeJwtPayload(tokenExchangeBody.id_jag);
     expect(payload.aud).toBe("https://wrong-audience.example.com");
     // The ID token's email rides into the ID-JAG (spec RECOMMENDED) so the
@@ -822,6 +832,8 @@ describe("hosted-issuer forwarding on the local router", () => {
     });
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("pragma")).toBe("no-cache");
     expect(await response.json()).toMatchObject({ id_token: "hosted-token" });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -1032,6 +1044,176 @@ describe("hosted-issuer forwarding on the local router", () => {
         process.env.XAA_IDP_KEY_DIR = originalDir;
       }
     }
+  });
+
+  describe("standards-track /token forwarding", () => {
+    const GRANT_FORM = new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+      subject_token: "a.b.c",
+      subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+      client_id: "mcpjam-xaa-debugger",
+      audience: "https://auth.example.com",
+      resource: "https://mcp.example.com",
+    }).toString();
+
+    it("relays the form body verbatim to the scoped hosted /token, stripping the opt-in headers", async () => {
+      const fetchMock = vi.fn(async () =>
+        jsonResponse({
+          issued_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+          access_token: "hosted-jag",
+          token_type: "N_A",
+          expires_in: 300,
+        })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: "Bearer workos-token",
+          "x-mcpjam-issuer-mode": "hosted",
+          "x-mcpjam-organization-id": "org_123",
+        },
+        body: GRANT_FORM,
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        access_token: "hosted-jag",
+        issued_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0] as unknown as [
+        string,
+        RequestInit
+      ];
+      expect(url).toBe(`${HOSTED_ORIGIN}/api/web/xaa/o/org_123/token`);
+      // The spec form body crosses untouched; the transport opt-in headers
+      // never reach the hosted issuer.
+      expect(String(init.body)).toBe(GRANT_FORM);
+      const headers = init.headers as Record<string, string>;
+      expect(headers.Authorization).toBe("Bearer workos-token");
+      expect(headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
+      expect(
+        Object.keys(headers).some((name) =>
+          name.toLowerCase().startsWith("x-mcpjam-")
+        )
+      ).toBe(false);
+    });
+
+    it("relays an OAuth-shaped hosted error verbatim", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          jsonResponse(
+            {
+              error: "invalid_grant",
+              error_description: "subject token expired",
+            },
+            { status: 400 }
+          )
+        )
+      );
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: "Bearer workos-token",
+          "x-mcpjam-issuer-mode": "hosted",
+          "x-mcpjam-organization-id": "org_123",
+        },
+        body: GRANT_FORM,
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: "invalid_grant" });
+    });
+
+    it("fails closed on a missing or malformed org header, without calling upstream", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      for (const orgHeader of [undefined, "not/valid"]) {
+        const response = await app.request("/api/mcp/xaa/token", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Authorization: "Bearer workos-token",
+            "x-mcpjam-issuer-mode": "hosted",
+            ...(orgHeader ? { "x-mcpjam-organization-id": orgHeader } : {}),
+          },
+          body: GRANT_FORM,
+        });
+        expect(response.status).toBe(400);
+        expect((await response.json()).error).toBe("invalid_request");
+      }
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects the hosted opt-in without a bearer, without calling upstream", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "x-mcpjam-issuer-mode": "hosted",
+          "x-mcpjam-organization-id": "org_123",
+        },
+        body: GRANT_FORM,
+      });
+
+      expect(response.status).toBe(401);
+      expect((await response.json()).error).toBe("invalid_client");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects a cross-origin forward before relaying (CSRF guard, no upstream signing)", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Origin: "https://evil.example.com",
+          Authorization: "Bearer workos-token",
+          "x-mcpjam-issuer-mode": "hosted",
+          "x-mcpjam-organization-id": "org_123",
+        },
+        body: GRANT_FORM,
+      });
+
+      expect(response.status).toBe(403);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("serves /token locally when the opt-in header is absent, without touching fetch", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "junk" }).toString(),
+      });
+
+      // handleToken ran locally (unsupported grant → OAuth 400), no relay.
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe("unsupported_grant_type");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -1285,23 +1467,28 @@ describe("mock OIDC IdP endpoints", () => {
       body: JSON.stringify({
         userId: "alice-123",
         email: "alice@example.com",
-        audience: "client-1",
+        audience: XAA_DEBUG_IDP_CLIENT_ID,
+        resourceClientId: "client-1",
       }),
     });
     const { id_token: subjectToken } = await authenticateResponse.json();
+    expect(authenticateResponse.headers.get("cache-control")).toBe("no-store");
+    expect(authenticateResponse.headers.get("pragma")).toBe("no-cache");
 
     const response = await postToken({
       grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
       requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
       subject_token: subjectToken,
       subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
-      client_id: "client-1",
+      client_id: XAA_DEBUG_IDP_CLIENT_ID,
       audience: "https://as.example.com",
       resource: "https://rs.example.com",
       scope: "chat.read",
     });
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("pragma")).toBe("no-cache");
     const body = await response.json();
     expect(body.issued_token_type).toBe(
       "urn:ietf:params:oauth:token-type:id-jag"
@@ -1317,8 +1504,21 @@ describe("mock OIDC IdP endpoints", () => {
       scope: "chat.read",
     });
 
-    // aud mismatch between the subject token and the presenting client.
-    const mismatch = await postToken({
+    const withoutResource = await postToken({
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+      subject_token: subjectToken,
+      subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+      client_id: XAA_DEBUG_IDP_CLIENT_ID,
+      audience: "https://as.example.com",
+    });
+    expect(withoutResource.status).toBe(200);
+    expect(
+      decodeJwtPayload((await withoutResource.json()).access_token)
+    ).not.toHaveProperty("resource");
+
+    // The request client identifies the IdP registration, not the RAS client.
+    const unknownIdpClient = await postToken({
       grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
       requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
       subject_token: subjectToken,
@@ -1327,8 +1527,8 @@ describe("mock OIDC IdP endpoints", () => {
       audience: "https://as.example.com",
       resource: "https://rs.example.com",
     });
-    expect(mismatch.status).toBe(400);
-    expect((await mismatch.json()).error).toBe("invalid_grant");
+    expect(unknownIdpClient.status).toBe(401);
+    expect((await unknownIdpClient.json()).error).toBe("invalid_client");
 
     // client_id is required.
     const missingClient = await postToken({
@@ -1443,6 +1643,37 @@ describe("mock OIDC IdP endpoints", () => {
       }).toString(),
     });
     expect(response.status).toBe(403);
+  });
+
+  it("allows a first-party allowlisted Origin on /token (dev-proxy Origin ≠ Host)", async () => {
+    const allowlistedApp = new Hono();
+    allowlistedApp.route(
+      "/api/mcp/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/mcp",
+        httpsOnlyProxy: false,
+        allowedBrowserOrigins: ["http://localhost:5173"],
+      })
+    );
+    const post = (origin: string) =>
+      allowlistedApp.request(`${BASE}/token`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Origin: origin,
+        },
+        body: new URLSearchParams({ grant_type: "junk" }).toString(),
+      });
+
+    // The allowlisted first-party origin passes the CSRF guard and reaches
+    // the grant dispatch (OAuth 400, not 403)…
+    const allowed = await post("http://localhost:5173");
+    expect(allowed.status).toBe(400);
+    expect((await allowed.json()).error).toBe("unsupported_grant_type");
+
+    // …while a foreign origin is still rejected outright.
+    const rejected = await post("https://evil.example.com");
+    expect(rejected.status).toBe(403);
   });
 
   it("allows a same-origin confirm POST", async () => {

@@ -26,6 +26,7 @@ const ACCESS_TOKEN_TTL_S = 5 * 60;
 // verifyXaaJwt asserts the expected typ.
 export const XAA_CODE_JWT_TYP = "xaa-code+jwt";
 export const XAA_ACCESS_TOKEN_TYP = "at+jwt";
+export const XAA_RAS_CLIENT_ID_CLAIM = "https://mcpjam.com/xaa/ras_client_id";
 
 type JwtHeader = Record<string, unknown>;
 type JwtPayload = Record<string, unknown>;
@@ -34,7 +35,7 @@ export interface IssueIdJagParams {
   issuer: string;
   subject: string;
   audience: string;
-  resource: string;
+  resource?: string;
   clientId: string;
   scope?: string;
   /**
@@ -49,7 +50,13 @@ export interface IssueMockIdTokenParams {
   issuer: string;
   subject: string;
   email: string;
-  audience?: string;
+  audience?: string | string[];
+  /** OIDC `azp`, used when the ID token has multiple audiences. */
+  authorizedParty?: string;
+  /** Mock-only signed mapping for the RAS client that receives the ID-JAG.
+   * A production IdP obtains this from its client-to-RAS registration, not
+   * from the token-exchange request. */
+  resourceClientId?: string;
   /** OIDC code flow: echo the RP's nonce into the id_token. When absent a
    * random one is invented (the debugger's mock SSO has no RP nonce). */
   nonce?: string;
@@ -63,7 +70,7 @@ function base64url(input: string | Buffer): string {
 function signJwt(
   header: JwtHeader,
   payload: JwtPayload,
-  signingKey: KeyObject,
+  signingKey: KeyObject
 ): string {
   const encodedHeader = base64url(JSON.stringify(header));
   const encodedPayload = base64url(JSON.stringify(payload));
@@ -78,17 +85,17 @@ function signJwt(
 
 function createValidIdJagPayload(
   params: IssueIdJagParams,
-  now: number,
+  now: number
 ): JwtPayload {
   return {
     iss: params.issuer,
     sub: params.subject,
     aud: params.audience,
-    resource: params.resource,
     client_id: params.clientId,
     jti: randomUUID(),
     iat: now,
     exp: now + ID_JAG_TTL_S,
+    ...(params.resource ? { resource: params.resource } : {}),
     ...(params.scope ? { scope: params.scope } : {}),
     ...(params.email ? { email: params.email } : {}),
   };
@@ -125,7 +132,7 @@ export function issueIdJag(params: IssueIdJagParams): {
 
 export function issueNegativeIdJag(
   params: IssueIdJagParams,
-  mode: NegativeTestMode = DEFAULT_NEGATIVE_TEST_MODE,
+  mode: NegativeTestMode = DEFAULT_NEGATIVE_TEST_MODE
 ): {
   token: string;
   header: JwtHeader;
@@ -158,7 +165,7 @@ export function issueNegativeIdJag(
       break;
     case "missing_claims":
       delete payload.sub;
-      delete payload.resource;
+      delete payload.jti;
       break;
     case "invalid_type_header":
       header.typ = "JWT";
@@ -219,6 +226,10 @@ export function issueMockIdToken(params: IssueMockIdTokenParams): {
     iat: now,
     exp: now + ID_TOKEN_TTL_S,
     auth_time: now,
+    ...(params.authorizedParty ? { azp: params.authorizedParty } : {}),
+    ...(params.resourceClientId
+      ? { [XAA_RAS_CLIENT_ID_CLAIM]: params.resourceClientId }
+      : {}),
     // Echo the RP's nonce; omit it when none was requested. Inventing a nonce
     // the RP never sent trips strict OIDC clients that validate its absence.
     ...(params.nonce ? { nonce: params.nonce } : {}),
@@ -323,7 +334,7 @@ export function issueAccessToken(params: IssueAccessTokenParams): {
  */
 export function verifyXaaJwt(
   token: string,
-  expected: { issuer: string; typ: string },
+  expected: { issuer: string; typ: string }
 ): JwtPayload {
   initXAAIdpKeyPair();
 
@@ -364,4 +375,57 @@ export function verifyXaaJwt(
   }
 
   return payload;
+}
+
+export interface XaaTokenExchangeSubject {
+  subject: string;
+  email?: string;
+  resourceClientId: string;
+}
+
+/**
+ * Validate the claims the mock IdP needs before exchanging an ID token.
+ * The request's `client_id` identifies the client registered at this IdP;
+ * the RAS client identity comes from a separate signed mapping claim.
+ */
+export function validateXaaTokenExchangeSubject(
+  payload: JwtPayload,
+  expectedIdpClientId: string
+): XaaTokenExchangeSubject {
+  const audiences =
+    typeof payload.aud === "string"
+      ? [payload.aud]
+      : Array.isArray(payload.aud) &&
+        payload.aud.every((entry) => typeof entry === "string")
+      ? payload.aud
+      : [];
+  if (!audiences.includes(expectedIdpClientId)) {
+    throw new Error("The subject token's aud must include client_id");
+  }
+  if (audiences.length > 1 && payload.azp !== expectedIdpClientId) {
+    throw new Error(
+      "The subject token's azp must match client_id when aud has multiple values"
+    );
+  }
+
+  const subject = typeof payload.sub === "string" ? payload.sub.trim() : "";
+  if (!subject) {
+    throw new Error("The subject token must contain a non-empty sub claim");
+  }
+
+  const resourceClientId =
+    typeof payload[XAA_RAS_CLIENT_ID_CLAIM] === "string"
+      ? payload[XAA_RAS_CLIENT_ID_CLAIM].trim()
+      : "";
+  if (!resourceClientId) {
+    throw new Error(
+      "The subject token is missing the IdP's RAS client mapping"
+    );
+  }
+
+  return {
+    subject,
+    resourceClientId,
+    ...(typeof payload.email === "string" ? { email: payload.email } : {}),
+  };
 }

@@ -40,7 +40,7 @@ export const NEGATIVE_TEST_MODE_DETAILS: Record<
   missing_claims: {
     label: "Missing Claims",
     description:
-      "Drops required claims (`sub` and `resource`). A correct server rejects a token that is missing required fields.",
+      "Drops required claims (`sub` and `jti`). A correct server rejects a token that is missing required fields.",
     expectedFailure:
       "Authorization server should reject missing required claims.",
   },

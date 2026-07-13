@@ -1,6 +1,10 @@
 import {
   evaluateIdJagClientMetadata,
   getXaaDebugClientMetadata,
+  ID_JAG_TOKEN_TYPE,
+  ID_TOKEN_TOKEN_TYPE,
+  TOKEN_EXCHANGE_GRANT,
+  XAA_DEBUG_IDP_CLIENT_ID,
   XAA_DEBUG_CLIENT_ID_METADATA_URL,
 } from "../../oauth/client-identity.js";
 import { validateClientIdMetadataUrl } from "../../oauth/state-machines/shared/client-id-metadata.js";
@@ -416,6 +420,7 @@ export function createXAAStateMachine(
     mintPathPrefix = "",
     issuerMode,
     organizationId,
+    specTokenEndpointAvailable = true,
     requestExecutor,
     negativeTestMode,
     userId,
@@ -455,6 +460,7 @@ export function createXAAStateMachine(
       ...state,
       serverUrl: state.serverUrl || serverUrl,
       resourceUrl: state.resourceUrl || serverUrl,
+      issuerBaseUrl: state.issuerBaseUrl || issuerBaseUrl,
       negativeTestMode: state.negativeTestMode || negativeTestMode,
       userId: state.userId || userId,
       email: state.email || email,
@@ -1003,8 +1009,8 @@ export function createXAAStateMachine(
         outcome.status === "http_error"
           ? "The authorization server did not accept open Dynamic Client Registration (no initial access token was sent). A protected registration endpoint is a valid deployment choice — this does not prove the server lacks DCR."
           : outcome.status === "invalid_response"
-            ? "The registration response could not be parsed as a client registration."
-            : "The registration request did not reach the authorization server.";
+          ? "The registration response could not be parsed as a client registration."
+          : "The registration request did not reach the authorization server.";
       parkRegistration(
         `${outcome.error} ${framing} Switch to pre-registered credentials to continue.`
       );
@@ -1157,7 +1163,9 @@ export function createXAAStateMachine(
     if (!responseContentType.includes("json")) {
       warnings.push({
         code: "non_json_content_type",
-        message: `The registration response parsed as JSON but was served as "${responseContentType || "(none)"}".`,
+        message: `The registration response parsed as JSON but was served as "${
+          responseContentType || "(none)"
+        }".`,
       });
     }
     const cacheControl = outcome.response.headers["cache-control"] || "";
@@ -1292,7 +1300,9 @@ export function createXAAStateMachine(
       /^application\/[a-z0-9][a-z0-9!#$&^_.+-]*\+json$/.test(mediaTypeEssence);
     if (!isJsonMediaType) {
       park(
-        `The client metadata document was served as "${contentType || "(none)"}", not a JSON media type.`
+        `The client metadata document was served as "${
+          contentType || "(none)"
+        }", not a JSON media type.`
       );
       return;
     }
@@ -1375,7 +1385,8 @@ export function createXAAStateMachine(
       body: {
         userId: activeUserId,
         email: activeEmail,
-        audience: state.clientId || "mcpjam-xaa-debugger",
+        audience: XAA_DEBUG_IDP_CLIENT_ID,
+        resourceClientId: state.clientId,
         ...hostedIssuerBodyExtras,
       },
     };
@@ -1458,24 +1469,116 @@ export function createXAAStateMachine(
       return;
     }
 
-    const request = {
-      method: "POST",
-      url: `${mintPathPrefix}/token-exchange`,
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: {
-        identityAssertion: state.identityAssertion,
-        audience: state.authzServerIssuer,
-        resource: state.resourceUrl || state.serverUrl,
-        clientId: state.clientId,
-        scope: state.scope,
-        negativeTestMode: state.negativeTestMode,
-        ...hostedIssuerBodyExtras,
-      },
-    };
+    const useSpecEndpoint =
+      state.negativeTestMode === "valid" && specTokenEndpointAvailable;
 
     try {
+      if (useSpecEndpoint) {
+        const params: Record<string, string> = {
+          grant_type: TOKEN_EXCHANGE_GRANT,
+          requested_token_type: ID_JAG_TOKEN_TYPE,
+          subject_token: state.identityAssertion,
+          subject_token_type: ID_TOKEN_TOKEN_TYPE,
+          client_id: XAA_DEBUG_IDP_CLIENT_ID,
+          audience: state.authzServerIssuer,
+          ...(state.resourceUrl || state.serverUrl
+            ? { resource: state.resourceUrl || state.serverUrl }
+            : {}),
+          ...(state.scope ? { scope: state.scope } : {}),
+        };
+        const request = {
+          method: "POST",
+          url: `${mintPathPrefix}/token`,
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: params,
+        };
+        const transportHeaders =
+          issuerMode === "hosted"
+            ? {
+                "x-mcpjam-issuer-mode": "hosted",
+                ...(organizationId
+                  ? { "x-mcpjam-organization-id": organizationId }
+                  : {}),
+              }
+            : {};
+
+        const result = await runRequest("token_exchange_request", request, () =>
+          requestExecutor.internalRequest(`${mintPathPrefix}/token`, {
+            method: "POST",
+            headers: { ...request.headers, ...transportHeaders },
+            body: new URLSearchParams(params).toString(),
+          })
+        );
+
+        if (!result.ok) {
+          throw new Error(
+            extractErrorMessage(
+              result.body,
+              `Token exchange failed with ${result.status}`
+            )
+          );
+        }
+
+        const body = asRecord(result.body, "Token exchange response");
+        if (typeof body.access_token !== "string") {
+          throw new Error(
+            "Token exchange response did not include an `access_token`."
+          );
+        }
+
+        machine.updateState({
+          currentStep: "received_id_jag",
+          idJag: body.access_token,
+          idJagDecoded: null,
+          error: undefined,
+        });
+
+        pushInfo("received_id_jag", "xaa-id-jag", "ID-JAG issued", {
+          negativeTestMode: state.negativeTestMode,
+          expectedFailure:
+            NEGATIVE_TEST_MODE_DETAILS[state.negativeTestMode].expectedFailure,
+          issued_token_type: body.issued_token_type,
+          token_type: body.token_type,
+        });
+
+        if (body.issued_token_type !== ID_JAG_TOKEN_TYPE) {
+          pushInfo(
+            "received_id_jag",
+            "xaa-id-jag-issued-token-type",
+            "Unexpected issued_token_type",
+            {
+              expected: ID_JAG_TOKEN_TYPE,
+              actual: body.issued_token_type,
+              detail:
+                "The token-exchange response did not declare the minted token as an ID-JAG.",
+            },
+            { level: "warning" }
+          );
+        }
+        return;
+      }
+
+      const request = {
+        method: "POST",
+        url: `${mintPathPrefix}/token-exchange`,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: {
+          identityAssertion: state.identityAssertion,
+          audience: state.authzServerIssuer,
+          ...(state.resourceUrl || state.serverUrl
+            ? { resource: state.resourceUrl || state.serverUrl }
+            : {}),
+          clientId: state.clientId,
+          scope: state.scope,
+          negativeTestMode: state.negativeTestMode,
+          ...hostedIssuerBodyExtras,
+        },
+      };
+
       const result = await runRequest("token_exchange_request", request, () =>
         requestExecutor.internalRequest(`${mintPathPrefix}/token-exchange`, {
           method: "POST",
@@ -1541,6 +1644,7 @@ export function createXAAStateMachine(
     machine.updateState({
       currentStep: "inspect_id_jag",
       idJagDecoded: inspection,
+      issuerBaseUrl,
       error: undefined,
     });
 
@@ -1988,6 +2092,7 @@ export function createXAAStateMachine(
       createInitialXAAFlowState({
         serverUrl: currentState().serverUrl || serverUrl,
         resourceUrl: currentState().serverUrl || serverUrl,
+        issuerBaseUrl: currentState().issuerBaseUrl || issuerBaseUrl,
         negativeTestMode: currentState().negativeTestMode || negativeTestMode,
         userId: currentState().userId || userId,
         email: currentState().email || email,

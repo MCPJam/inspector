@@ -36,6 +36,8 @@ import {
   type XAAPhaseKey,
 } from "@/lib/xaa/step-metadata";
 import type { XAAFlowState, XAAFlowStep } from "@/lib/xaa/types";
+import { generateXAAFlowText } from "@/lib/xaa/log-formatters";
+import { copyToClipboard } from "@/lib/clipboard";
 import {
   getXAAErrorGuidance,
   latestErroredHttpEntry,
@@ -399,6 +401,9 @@ export function XAAFlowLogger({
   const [expandedSteps, setExpandedSteps] = useState<Set<XAAFlowStep>>(
     new Set()
   );
+  const [copySuccess, setCopySuccess] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const copyResetTimerRef = useRef<number | null>(null);
 
   const stepRefs = useRef(new Map<XAAFlowStep, HTMLDivElement | null>());
 
@@ -475,6 +480,42 @@ export function XAAFlowLogger({
   }, [groups]);
 
   const currentStepIndex = getXAAStepIndex(flowState.currentStep);
+
+  const handleCopyFlow = async () => {
+    setCopyError(null);
+    setCopySuccess(false);
+    if (copyResetTimerRef.current !== null) {
+      window.clearTimeout(copyResetTimerRef.current);
+      copyResetTimerRef.current = null;
+    }
+
+    try {
+      const success = await copyToClipboard(
+        generateXAAFlowText(flowState, summary),
+      );
+      if (!success) {
+        setCopyError("Copy failed");
+        return;
+      }
+      setCopySuccess(true);
+    } catch {
+      setCopyError("Copy failed");
+      return;
+    }
+
+    copyResetTimerRef.current = window.setTimeout(() => {
+      setCopySuccess(false);
+      copyResetTimerRef.current = null;
+    }, 2000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimerRef.current !== null) {
+        window.clearTimeout(copyResetTimerRef.current);
+      }
+    };
+  }, []);
 
   const toggleStep = (step: XAAFlowStep) => {
     setExpandedSteps((previous) => {
@@ -622,8 +663,8 @@ export function XAAFlowLogger({
           <>
             <PhaseRail currentStep={flowState.currentStep} />
 
-            {(summary.clientId || summary.scope) && (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
                 {summary.clientId && (
                   <div className="flex min-w-0 items-center gap-1.5">
                     <span className="shrink-0 text-muted-foreground">
@@ -645,7 +686,16 @@ export function XAAFlowLogger({
                   </div>
                 )}
               </div>
-            )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleCopyFlow()}
+                className="h-8 shrink-0"
+                title={copyError ?? undefined}
+              >
+                {copyError ?? (copySuccess ? "Copied!" : "Copy")}
+              </Button>
+            </div>
           </>
         )}
       </div>
@@ -723,6 +773,7 @@ export function XAAFlowLogger({
             decoded={flowState.idJagDecoded}
             negativeTestMode={flowState.negativeTestMode}
             lintContext={{
+              expectedIssuer: flowState.issuerBaseUrl,
               expectedAudience:
                 flowState.authzMetadata?.issuer || flowState.authzServerIssuer,
               expectedResource:

@@ -147,6 +147,8 @@ export interface XAAFlowState {
     client_id_metadata_document_supported?: boolean;
   };
   tokenEndpoint?: string;
+  /** The mock IdP issuer expected in the ID-JAG `iss` claim. */
+  issuerBaseUrl?: string;
   negativeTestMode: NegativeTestMode;
   userId?: string;
   email?: string;
@@ -233,6 +235,9 @@ export interface BaseXAAStateMachineConfig {
    * request bodies so the local server forwards them to the hosted issuer. */
   issuerMode?: "local" | "hosted";
   organizationId?: string | null;
+  /** Whether the issuer accepts the RFC 8693 grant at `/token`. Hosted
+   * unscoped issuers use the JSON mint fallback. Defaults to true. */
+  specTokenEndpointAvailable?: boolean;
   requestExecutor: XAARequestExecutor;
   scheduleAutoAdvance?: (next: () => void) => void;
   negativeTestMode?: NegativeTestMode;

@@ -6,8 +6,20 @@
 // without a running inspector server. Imports crypto/fs (mint) + node:dns
 // (proxy) — MUST stay out of the browser entry.
 import { executeDebugOAuthProxy, executeOAuthProxy } from "../oauth-proxy.js";
+import {
+  ID_JAG_TOKEN_TYPE,
+  ID_TOKEN_TOKEN_TYPE,
+  TOKEN_EXCHANGE_GRANT,
+  XAA_DEBUG_IDP_CLIENT_ID,
+} from "../oauth/client-identity.js";
 import { getXAAIssuerUrl, initXAAIdpKeyPair } from "./mint/keypair.js";
-import { issueMockIdToken, issueNegativeIdJag } from "./mint/signer.js";
+import {
+  issueIdJag,
+  issueMockIdToken,
+  issueNegativeIdJag,
+  validateXaaTokenExchangeSubject,
+  verifyXaaJwt,
+} from "./mint/signer.js";
 import { buildJwtBearerRequest } from "./mint/jwt-bearer.js";
 import { decodeJWT } from "../oauth/state-machines/shared/jwt.js";
 import { DEFAULT_NEGATIVE_TEST_MODE, isNegativeTestMode } from "./constants.js";
@@ -43,11 +55,20 @@ function parseInitBody(init?: RequestInit): Record<string, unknown> {
   return asRecord(init.body);
 }
 
+function parseFormBody(init?: RequestInit): Record<string, string> {
+  if (!init || typeof init.body !== "string") return {};
+  return Object.fromEntries(new URLSearchParams(init.body));
+}
+
 function jsonResult(status: number, body: unknown): XAARequestResult {
   return {
     status,
     statusText: status >= 200 && status < 300 ? "OK" : String(status),
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+      pragma: "no-cache",
+    },
     body,
     ok: status >= 200 && status < 300,
   };
@@ -104,8 +125,74 @@ export function createInProcessXaaExecutor(
         subject: str(body.userId),
         email: str(body.email),
         audience: str(body.audience) || undefined,
+        resourceClientId: str(body.resourceClientId) || undefined,
       });
       return jsonResult(200, { id_token: token });
+    }
+
+    // Standards-track RFC 8693 token exchange. The valid debugger flow uses
+    // this form-encoded endpoint; the JSON route below remains available for
+    // intentionally malformed assertions used by negative tests.
+    if (path.endsWith("/token") && !path.endsWith("/proxy/token")) {
+      const form = parseFormBody(init);
+      if (form.grant_type !== TOKEN_EXCHANGE_GRANT) {
+        return jsonResult(400, { error: "unsupported_grant_type" });
+      }
+      if (
+        form.requested_token_type !== ID_JAG_TOKEN_TYPE ||
+        form.subject_token_type !== ID_TOKEN_TOKEN_TYPE
+      ) {
+        return jsonResult(400, { error: "invalid_request" });
+      }
+      if (!form.subject_token || !form.audience || !form.client_id) {
+        return jsonResult(400, {
+          error: "subject_token, audience and client_id are required",
+        });
+      }
+      if (form.client_id !== XAA_DEBUG_IDP_CLIENT_ID) {
+        return jsonResult(401, {
+          error: "invalid_client",
+          error_description: "Unknown mock IdP client_id",
+        });
+      }
+
+      let subjectPayload: Record<string, unknown>;
+      let subject: ReturnType<typeof validateXaaTokenExchangeSubject>;
+      try {
+        subjectPayload = verifyXaaJwt(form.subject_token, {
+          issuer: resolveIssuer(),
+          typ: "JWT",
+        });
+        subject = validateXaaTokenExchangeSubject(
+          subjectPayload,
+          XAA_DEBUG_IDP_CLIENT_ID
+        );
+      } catch (error) {
+        return jsonResult(400, {
+          error: "invalid_grant",
+          error_description:
+            error instanceof Error ? error.message : "Invalid subject_token",
+        });
+      }
+      const issued = issueIdJag({
+        issuer: resolveIssuer(),
+        subject: subject.subject,
+        email: subject.email,
+        audience: form.audience,
+        resource: form.resource || undefined,
+        clientId: subject.resourceClientId,
+        scope: form.scope || undefined,
+      });
+      return jsonResult(200, {
+        issued_token_type: ID_JAG_TOKEN_TYPE,
+        access_token: issued.token,
+        token_type: "N_A",
+        expires_in: Math.max(
+          0,
+          Math.floor((issued.expiresAt - Date.now()) / 1000)
+        ),
+        ...(form.scope ? { scope: form.scope } : {}),
+      });
     }
 
     // Token exchange → ID-JAG. Decodes the identity assertion for sub/email,
@@ -135,7 +222,6 @@ export function createInProcessXaaExecutor(
       }
       const requiredClaims = {
         audience: nonEmptyString(body.audience),
-        resource: nonEmptyString(body.resource),
         clientId: nonEmptyString(body.clientId),
       };
       const missingField = Object.entries(requiredClaims).find(
@@ -164,7 +250,7 @@ export function createInProcessXaaExecutor(
           issuer: resolveIssuer(),
           subject,
           audience: requiredClaims.audience!,
-          resource: requiredClaims.resource!,
+          resource: nonEmptyString(body.resource),
           clientId: requiredClaims.clientId!,
           scope: nonEmptyString(body.scope),
           email: typeof claims.email === "string" ? claims.email : undefined,

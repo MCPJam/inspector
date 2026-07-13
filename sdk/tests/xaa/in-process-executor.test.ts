@@ -9,6 +9,12 @@ import {
 } from "../../src/xaa/mint/keypair.js";
 import { verifyXaaJwt, issueMockIdToken } from "../../src/xaa/mint/signer.js";
 import { decodeJWT } from "../../src/oauth/state-machines/shared/jwt.js";
+import {
+  ID_JAG_TOKEN_TYPE,
+  ID_TOKEN_TOKEN_TYPE,
+  TOKEN_EXCHANGE_GRANT,
+  XAA_DEBUG_IDP_CLIENT_ID,
+} from "../../src/oauth/client-identity.js";
 
 const ISSUER_BASE = "https://issuer.example.com/api/mcp";
 const AS_ISSUER = "https://auth.example.com";
@@ -81,6 +87,54 @@ describe("createInProcessXaaExecutor internal routes", () => {
     expect(claims.resource).toBe(RESOURCE);
     expect(claims.client_id).toBe("client-1");
     expect(claims.email).toBe("u@example.com");
+  });
+
+  it("/token handles the RFC 8693 form grant", async () => {
+    const exec = createInProcessXaaExecutor({ issuerBaseUrl: ISSUER_BASE });
+    const issuer = getXAAIssuerUrl(ISSUER_BASE);
+    const { token: idToken } = issueMockIdToken({
+      issuer,
+      subject: "user-1",
+      email: "u@example.com",
+      audience: XAA_DEBUG_IDP_CLIENT_ID,
+      resourceClientId: "client-1",
+    });
+    const form = new URLSearchParams({
+      grant_type: TOKEN_EXCHANGE_GRANT,
+      requested_token_type: ID_JAG_TOKEN_TYPE,
+      subject_token: idToken,
+      subject_token_type: ID_TOKEN_TOKEN_TYPE,
+      client_id: XAA_DEBUG_IDP_CLIENT_ID,
+      audience: AS_ISSUER,
+      resource: RESOURCE,
+      scope: "read:tools",
+    });
+
+    const result = await exec.internalRequest("/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form.toString(),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.headers["cache-control"]).toBe("no-store");
+    expect(result.headers.pragma).toBe("no-cache");
+    const response = result.body as {
+      access_token: string;
+      issued_token_type: string;
+    };
+    expect(response.issued_token_type).toBe(ID_JAG_TOKEN_TYPE);
+    const claims = verifyXaaJwt(response.access_token, {
+      issuer,
+      typ: "oauth-id-jag+jwt",
+    });
+    expect(claims).toMatchObject({
+      sub: "user-1",
+      aud: AS_ISSUER,
+      resource: RESOURCE,
+      client_id: "client-1",
+      scope: "read:tools",
+    });
   });
 
   it("/token-exchange applies the negative-test tamper (wrong_audience)", async () => {
@@ -166,7 +220,7 @@ describe("createInProcessXaaExecutor internal routes", () => {
     expect(r.status).toBe(400);
   });
 
-  it("/token-exchange requires the audience, resource, clientId, and a known mode", async () => {
+  it("/token-exchange requires the audience, clientId, and a known mode", async () => {
     const exec = createInProcessXaaExecutor({ issuerBaseUrl: ISSUER_BASE });
     const identityAssertion = issueMockIdToken({
       issuer: getXAAIssuerUrl(ISSUER_BASE),
@@ -179,7 +233,7 @@ describe("createInProcessXaaExecutor internal routes", () => {
       clientId: "client-1",
     };
 
-    for (const field of ["audience", "resource", "clientId"] as const) {
+    for (const field of ["audience", "clientId"] as const) {
       const body = { ...valid, [field]: "   " };
       const result = await exec.internalRequest("/token-exchange", post(body));
       expect(result.status, field).toBe(400);

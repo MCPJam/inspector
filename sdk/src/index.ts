@@ -286,8 +286,11 @@ export type {
 // document and needs the builder/evaluator server-side.
 export {
   ID_JAG_GRANT_PROFILE,
+  ID_JAG_TOKEN_TYPE,
+  ID_TOKEN_TOKEN_TYPE,
   JWT_BEARER_GRANT,
   TOKEN_EXCHANGE_GRANT,
+  XAA_DEBUG_IDP_CLIENT_ID,
   XAA_DEBUG_CLIENT_ID_METADATA_URL,
   evaluateIdJagClientMetadata,
   getXaaDebugClientMetadata,

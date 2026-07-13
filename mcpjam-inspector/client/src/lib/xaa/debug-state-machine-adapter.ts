@@ -125,6 +125,9 @@ export function createInspectorXAAStateMachine(
     issuerBaseUrl: issuerBaseUrl ?? defaultIssuerBaseUrl,
     mintPathPrefix,
     ...(hostedIssuerOptIn ? { issuerMode: "hosted", organizationId } : {}),
+    // Hosted guests (no org) can't reach the standards-track /token grant —
+    // the unscoped hosted endpoint refuses it — so they keep the JSON mint.
+    specTokenEndpointAvailable: !HOSTED_MODE || Boolean(organizationId),
     requestExecutor: createXAADebugRequestExecutor(),
   });
 }

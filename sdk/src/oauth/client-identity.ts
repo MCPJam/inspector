@@ -15,7 +15,7 @@ const BROWSER_DEBUG_CLIENT_NAMES: Record<OAuthProtocolVersion, string> = {
 };
 
 export function getBrowserDebugDynamicRegistrationMetadata(
-  protocolVersion: OAuthProtocolVersion,
+  protocolVersion: OAuthProtocolVersion
 ): Partial<OAuthDynamicRegistrationMetadata> {
   return {
     client_name: BROWSER_DEBUG_CLIENT_NAMES[protocolVersion],
@@ -54,6 +54,8 @@ export const ID_JAG_GRANT_PROFILE =
 export const TOKEN_EXCHANGE_GRANT =
   "urn:ietf:params:oauth:grant-type:token-exchange";
 export const JWT_BEARER_GRANT = "urn:ietf:params:oauth:grant-type:jwt-bearer";
+export const ID_JAG_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id-jag";
+export const ID_TOKEN_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id_token";
 
 // The XAA debugger's Client ID Metadata Document. This is a DIFFERENT client
 // identity from DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL (the authorization-code
@@ -61,6 +63,11 @@ export const JWT_BEARER_GRANT = "urn:ietf:params:oauth:grant-type:jwt-bearer";
 // client, so XAA publishes its own document.
 export const XAA_DEBUG_CLIENT_ID_METADATA_URL =
   "https://app.mcpjam.com/.well-known/oauth/xaa-client-metadata.json";
+
+// Client identity registered at MCPJam's mock IdP for the RFC 8693
+// Client-to-IdP exchange. This is deliberately distinct from the client
+// identity carried in the resulting ID-JAG, which belongs to the RAS.
+export const XAA_DEBUG_IDP_CLIENT_ID = "mcpjam-xaa-debugger";
 
 export function getXaaDebugClientMetadata(options: {
   tokenEndpointAuthMethod: "client_secret_post" | "none";

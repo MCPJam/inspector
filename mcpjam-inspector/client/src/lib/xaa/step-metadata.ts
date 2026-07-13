@@ -207,7 +207,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
   token_exchange_request: {
     title: "Exchange the ID Token for an ID-JAG",
     summary:
-      "The Agent trades the ID token back to the IdP for an ID-JAG — a grant scoped to one MCP Server. A test mode can deliberately break it here.",
+      "The Agent trades the ID token back to the IdP for an ID-JAG — a grant scoped to one MCP Server. On the happy path this is a standard RFC 8693 form POST to the IdP's /token endpoint; a test mode instead uses MCPJam's mint endpoint to forge a deliberately broken grant.",
     phase: "token_exchange",
     teachableMoments: [
       "The Agent tells the IdP which Authorization Server the grant is for — that becomes the grant's audience.",
