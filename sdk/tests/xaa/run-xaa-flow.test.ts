@@ -88,7 +88,7 @@ function stubFetch(opts: StubOptions) {
           opts.mcpBody ?? {
             jsonrpc: "2.0",
             id: "mcpjam-xaa-cli",
-            result: { serverInfo: {} },
+            result: { protocolVersion: "2025-11-25", serverInfo: {} },
           },
           opts.mcpStatus ?? 200
         );
@@ -231,6 +231,33 @@ describe("runXaaFlow", () => {
     expect(result.completed).toBe(false);
   });
 
+  it("rejects an initialize result that negotiates a different protocol version", async () => {
+    global.fetch = stubFetch({
+      token: {
+        status: 200,
+        body: { access_token: "at-123", token_type: "Bearer" },
+      },
+      mcpBody: {
+        jsonrpc: "2.0",
+        id: "mcpjam-xaa-cli",
+        result: { protocolVersion: "2025-06-18", capabilities: {} },
+      },
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    expect(result.mcp?.ok).toBe(false);
+    expect(result.mcp?.error).toMatch(/2025-06-18.*expected 2025-11-25/i);
+    expect(result.completed).toBe(false);
+  });
+
   it("advertises the XAA extension on the MCP initialize probe", async () => {
     let mcpHeaders: Record<string, string> = {};
     let mcpRequest: Record<string, unknown> | undefined;
@@ -251,6 +278,7 @@ describe("runXaaFlow", () => {
             jsonrpc: "2.0",
             id: "mcpjam-xaa-cli",
             result: {
+              protocolVersion: "2025-11-25",
               capabilities: {
                 extensions: {
                   "io.modelcontextprotocol/enterprise-managed-authorization":
@@ -274,7 +302,10 @@ describe("runXaaFlow", () => {
     });
 
     expect(result.completed).toBe(true);
-    expect(mcpHeaders["MCP-Protocol-Version"]).toBe("2025-11-25");
+    expect(
+      mcpHeaders["MCP-Protocol-Version"] ??
+        mcpHeaders["mcp-protocol-version"]
+    ).toBe("2025-11-25");
     expect(mcpRequest).toMatchObject({
       params: {
         capabilities: {
@@ -338,7 +369,7 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === serverWithSlash && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: {} });
+          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
         }
         return json({}, 404);
       }
@@ -381,7 +412,7 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === SERVER_URL && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: {} });
+          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
         }
         return json({}, 404);
       }
@@ -398,7 +429,7 @@ describe("runXaaFlow", () => {
     expect(result.completed).toBe(true);
   });
 
-  it("mints the aud from the AS's canonical issuer, not a trailing-slash arg", async () => {
+  it("rejects AS metadata whose issuer differs only by a trailing slash", async () => {
     global.fetch = stubFetch({
       asMetadata: { issuer: AS_ISSUER, token_endpoint: TOKEN_ENDPOINT },
       token: {
@@ -416,9 +447,10 @@ describe("runXaaFlow", () => {
       clientId: "client-1",
     });
 
-    expect(result.authzServerIssuer).toBe(AS_ISSUER);
-    expect(result.idJag?.claims.aud).toBe(AS_ISSUER);
-    expect(result.completed).toBe(true);
+    expect(result.authzServerIssuer).toBe(`${AS_ISSUER}/`);
+    expect(result.idJag).toBeUndefined();
+    expect(result.error).toMatch(/does not match/i);
+    expect(result.completed).toBe(false);
   });
 
   it("tries every advertised authorization server until one resolves", async () => {
@@ -447,7 +479,7 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === SERVER_URL && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: {} });
+          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
         }
         return json({}, 404);
       }
@@ -496,7 +528,7 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === serverWithSlash && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: {} });
+          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
         }
         return json({}, 404);
       }
@@ -581,7 +613,7 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === serverWithQuery && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: {} });
+          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
         }
         return json({}, 404);
       }
@@ -738,7 +770,7 @@ describe("runXaaFlow", () => {
         return json({ access_token: "at-basic", token_type: "Bearer" });
       }
       if (url === SERVER_URL && method === "POST") {
-        return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: {} });
+        return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
       }
       return json({}, 404);
     }) as unknown as typeof fetch;

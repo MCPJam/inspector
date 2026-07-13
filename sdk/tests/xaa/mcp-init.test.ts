@@ -8,7 +8,11 @@ import {
   XAA_MCP_EXTENSION,
 } from "../../src/xaa/mcp-init.js";
 
-const ok = { jsonrpc: "2.0", id: MCP_INIT_ID, result: { capabilities: {} } };
+const ok = {
+  jsonrpc: "2.0",
+  id: MCP_INIT_ID,
+  result: { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {} },
+};
 
 describe("buildMcpInitializeRequest", () => {
   it("sends the bearer + protocol header and advertises the XAA extension", () => {
@@ -64,6 +68,23 @@ describe("evaluateMcpInitializeResponse", () => {
     expect(
       evaluateMcpInitializeResponse({ jsonrpc: "2.0", id: MCP_INIT_ID }),
     ).toMatch(/initialize result/i);
+  });
+
+  it("rejects a missing or mismatched negotiated protocol version", () => {
+    expect(
+      evaluateMcpInitializeResponse({
+        jsonrpc: "2.0",
+        id: MCP_INIT_ID,
+        result: {},
+      })
+    ).toMatch(/protocol version undefined/i);
+    expect(
+      evaluateMcpInitializeResponse({
+        jsonrpc: "2.0",
+        id: MCP_INIT_ID,
+        result: { protocolVersion: "2025-06-18" },
+      })
+    ).toMatch(/2025-06-18.*expected 2025-11-25/i);
   });
 });
 

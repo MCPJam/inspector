@@ -30,10 +30,115 @@ import type {
 } from "./types.js";
 import { createInitialXAAFlowState } from "./types.js";
 import { analyzeAsCompatibility } from "./capability-preflight.js";
+import {
+  buildMcpInitializeRequest,
+  evaluateMcpInitializeResponse,
+  mcpInitializeExtensionEvidence,
+} from "../mcp-init.js";
+import {
+  buildAuthorizationServerMetadataCandidates,
+  buildProtectedResourceMetadataCandidates,
+} from "../discovery.js";
 
 /** What the HTTP history shows in place of a client secret — the real value
  * is sent on the wire but never enters the logged request. */
 export const CLIENT_SECRET_MASK = "••••••••";
+
+const SENSITIVE_DIAGNOSTIC_KEYS = new Set([
+  "authorization",
+  "proxyauthorization",
+  "clientsecret",
+  "clientassertion",
+  "identityassertion",
+  "assertion",
+  "idtoken",
+  "idjag",
+  "accesstoken",
+  "refreshtoken",
+  "subjecttoken",
+  "actortoken",
+]);
+
+function diagnosticKey(key: string): string {
+  return key.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function redactDiagnosticValue(
+  value: unknown,
+  knownSecrets: ReadonlyArray<string> = [],
+): any {
+  const redactString = (input: string): string => {
+    let redacted = input;
+    for (const secret of knownSecrets) {
+      if (secret && secret !== CLIENT_SECRET_MASK) {
+        redacted = redacted.split(secret).join(CLIENT_SECRET_MASK);
+      }
+    }
+    return redacted.replace(
+      /(\b(?:proxy-)?authorization\s*[:=]\s*)(?:bearer|basic)\s+[^\s,;"'}]+/gi,
+      `$1${CLIENT_SECRET_MASK}`
+    );
+  };
+
+  const visit = (current: unknown, key?: string): any => {
+    if (key && SENSITIVE_DIAGNOSTIC_KEYS.has(diagnosticKey(key))) {
+      if (
+        current === CLIENT_SECRET_MASK ||
+        current === "***REDACTED***" ||
+        current === "[REDACTED]"
+      ) {
+        return current;
+      }
+      return CLIENT_SECRET_MASK;
+    }
+    if (typeof current === "string") return redactString(current);
+    if (Array.isArray(current)) return current.map((item) => visit(item));
+    if (!current || typeof current !== "object") return current;
+
+    return Object.fromEntries(
+      Object.entries(current).map(([childKey, childValue]) => [
+        childKey,
+        visit(childValue, childKey),
+      ]),
+    );
+  };
+
+  return visit(value);
+}
+
+function sanitizeDiagnosticUpdates(
+  state: Partial<XAAFlowState>,
+  updates: Partial<XAAFlowState>,
+): Partial<XAAFlowState> {
+  const knownSecrets = [
+    state.clientSecret,
+    state.identityAssertion,
+    state.idJag,
+    state.accessToken,
+    updates.clientSecret,
+    updates.identityAssertion,
+    updates.idJag,
+    updates.accessToken,
+  ].filter((value): value is string => typeof value === "string" && !!value);
+  const sanitized = { ...updates };
+
+  for (const key of [
+    "lastRequest",
+    "lastResponse",
+    "httpHistory",
+    "infoLogs",
+    "error",
+  ] as const) {
+    if (key in sanitized) {
+      (sanitized as Record<string, unknown>)[key] = redactDiagnosticValue(
+        sanitized[key],
+        knownSecrets,
+      );
+    }
+  }
+
+  return sanitized;
+}
 
 interface AddInfoLogOptions {
   level?: InfoLogLevel;
@@ -120,86 +225,23 @@ function mergeHeadersForAuthServer(
   return merged;
 }
 
-// RFC 9728 protected-resource metadata locations to probe, in order. The
-// path-insertion form (well-known segment between host and resource path) is
-// the RFC 9728 §3.1 form; the path-less root is the fallback some servers
-// (incl. MCP servers that serve PRM at the origin) use. Deduped so a
-// path-less resource yields a single URL.
-function buildResourceMetadataUrls(serverUrl: string): string[] {
-  const url = new URL(serverUrl);
-  const root = new URL(
-    "/.well-known/oauth-protected-resource",
-    url.origin
-  ).toString();
-
-  if (url.pathname !== "/" && url.pathname !== "") {
-    const pathname = url.pathname.endsWith("/")
-      ? url.pathname.slice(0, -1)
-      : url.pathname;
-    const pathInserted = new URL(
-      `/.well-known/oauth-protected-resource${pathname}`,
-      url.origin
-    ).toString();
-    return [pathInserted, root];
-  }
-
-  return [root];
-}
-
-function canonicalizeResourceUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    parsed.protocol = parsed.protocol.toLowerCase();
-    parsed.hostname = parsed.hostname.toLowerCase();
-    parsed.hash = "";
-
-    if (parsed.pathname !== "/" && parsed.pathname.endsWith("/")) {
-      parsed.pathname = parsed.pathname.slice(0, -1);
+function selectPreRegisteredTokenAuthMethod(
+  explicit: XaaTokenEndpointAuthMethod | undefined,
+  clientSecret: string | undefined,
+  advertised: unknown
+): XaaTokenEndpointAuthMethod {
+  if (explicit) return explicit;
+  if (!clientSecret) return "none";
+  if (Array.isArray(advertised)) {
+    if (advertised.includes("client_secret_basic")) {
+      return "client_secret_basic";
     }
-
-    return parsed.toString();
-  } catch {
-    return url;
+    if (advertised.includes("client_secret_post")) {
+      return "client_secret_post";
+    }
+    if (advertised.includes("none")) return "none";
   }
-}
-
-function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
-  const url = new URL(authServerUrl);
-  const urls: string[] = [];
-
-  if (url.pathname === "/" || url.pathname === "") {
-    urls.push(
-      new URL("/.well-known/oauth-authorization-server", url.origin).toString()
-    );
-    urls.push(
-      new URL("/.well-known/openid-configuration", url.origin).toString()
-    );
-  } else {
-    const pathname = url.pathname.endsWith("/")
-      ? url.pathname.slice(0, -1)
-      : url.pathname;
-
-    urls.push(
-      new URL(
-        `/.well-known/oauth-authorization-server${pathname}`,
-        url.origin
-      ).toString()
-    );
-    urls.push(
-      new URL(
-        `/.well-known/openid-configuration${pathname}`,
-        url.origin
-      ).toString()
-    );
-    urls.push(
-      new URL(
-        `${pathname}/.well-known/openid-configuration`,
-        url.origin
-      ).toString()
-    );
-  }
-
-  return urls;
+  return "client_secret_post";
 }
 
 function extractErrorMessage(body: any, fallback: string): string {
@@ -428,7 +470,7 @@ export function createXAAStateMachine(
     state: createInitialXAAFlowState({
       ...state,
       serverUrl: state.serverUrl || serverUrl,
-      resourceUrl: state.resourceUrl || canonicalizeResourceUrl(serverUrl),
+      resourceUrl: state.resourceUrl || serverUrl,
       negativeTestMode: state.negativeTestMode || negativeTestMode,
       userId: state.userId || userId,
       email: state.email || email,
@@ -441,8 +483,12 @@ export function createXAAStateMachine(
       registrationStrategy,
     }),
     updateState: (updates) => {
-      machine.state = { ...machine.state, ...updates };
-      updateState(updates);
+      const sanitizedUpdates = sanitizeDiagnosticUpdates(
+        machine.state,
+        updates,
+      );
+      machine.state = { ...machine.state, ...sanitizedUpdates };
+      updateState(sanitizedUpdates);
     },
     proceedToNextStep: async () => {},
     runAll: async () => {},
@@ -548,8 +594,7 @@ export function createXAAStateMachine(
     if (state.authzServerIssuer) {
       machine.updateState({
         currentStep: "received_resource_metadata",
-        resourceUrl:
-          state.resourceUrl || canonicalizeResourceUrl(activeServerUrl),
+        resourceUrl: state.resourceUrl || activeServerUrl,
         error: undefined,
       });
       pushInfo(
@@ -565,7 +610,8 @@ export function createXAAStateMachine(
       return;
     }
 
-    const candidateUrls = buildResourceMetadataUrls(activeServerUrl);
+    const candidateUrls =
+      buildProtectedResourceMetadataCandidates(activeServerUrl);
     let lastError = "Failed to discover resource metadata";
 
     for (const resourceMetadataUrl of candidateUrls) {
@@ -593,16 +639,29 @@ export function createXAAStateMachine(
         }
 
         const resourceMetadata = asRecord(result.body, "Resource metadata");
+
+        // RFC 9728: the metadata's `resource` MUST identify the protected
+        // resource we fetched it for. Reject a mismatched (or absent) resource
+        // so a compromised/misconfigured well-known can't redirect us to a
+        // different authorization server; try the next candidate instead.
+        const requestedResource = activeServerUrl;
+        const metadataResource =
+          typeof resourceMetadata.resource === "string"
+            ? resourceMetadata.resource
+            : undefined;
+        if (
+          !metadataResource || metadataResource !== requestedResource
+        ) {
+          lastError = `Protected-resource metadata at ${resourceMetadataUrl} does not identify ${requestedResource}.`;
+          continue;
+        }
+        const resolvedResource = metadataResource;
+
         const resolvedAuthzIssuer = Array.isArray(
           resourceMetadata.authorization_servers
         )
           ? resourceMetadata.authorization_servers[0]
           : undefined;
-        const resolvedResource =
-          typeof resourceMetadata.resource === "string"
-            ? resourceMetadata.resource
-            : canonicalizeResourceUrl(activeServerUrl);
-
         if (!resolvedAuthzIssuer) {
           throw new Error(
             "Resource metadata did not include `authorization_servers`, and no Authorization Server issuer was configured manually."
@@ -651,7 +710,7 @@ export function createXAAStateMachine(
     // the token endpoint. A registration-backed run resolves the stored
     // endpoint server-side, and a manually-set token endpoint is already
     // known — in either case skip the probe and advance.
-    if (registrationId || state.tokenEndpoint) {
+    if (registrationId || serverId || state.tokenEndpoint) {
       machine.updateState({
         currentStep: "received_authz_metadata",
         error: undefined,
@@ -681,86 +740,116 @@ export function createXAAStateMachine(
       return;
     }
 
-    const urls = buildAuthServerMetadataUrls(issuer);
+    const issuerCandidates = authzServerIssuer
+      ? [issuer]
+      : [
+          ...new Set(
+            [
+              issuer,
+              ...(state.resourceMetadata?.authorization_servers ?? []),
+            ].filter((candidate): candidate is string => !!candidate)
+          ),
+        ];
     let lastError = "Authorization server metadata discovery failed.";
 
-    for (const url of urls) {
-      const request = {
-        method: "GET",
-        url,
-        headers: mergeHeadersForAuthServer(undefined, {
-          Accept: "application/json",
-        }),
-      };
+    for (const candidateIssuer of issuerCandidates) {
+      const urls = buildAuthorizationServerMetadataCandidates(candidateIssuer);
+      for (const url of urls) {
+        const request = {
+          method: "GET",
+          url,
+          headers: mergeHeadersForAuthServer(undefined, {
+            Accept: "application/json",
+          }),
+        };
 
-      try {
-        const result = await runRequest(
-          "discover_authz_metadata",
-          request,
-          () => requestExecutor.externalRequest(url, request)
-        );
-
-        if (!result.ok) {
-          lastError = extractErrorMessage(
-            result.body,
-            `Auth server metadata request failed with ${result.status}`
+        try {
+          const result = await runRequest(
+            "discover_authz_metadata",
+            request,
+            () => requestExecutor.externalRequest(url, request)
           );
-          continue;
-        }
 
-        const metadata = asRecord(result.body, "Authorization metadata");
-        if (typeof metadata.token_endpoint !== "string") {
-          throw new Error(
-            "Authorization metadata did not include a token_endpoint."
-          );
-        }
-
-        const resolvedIssuer =
-          typeof metadata.issuer === "string" ? metadata.issuer : issuer;
-
-        // Use the resolved issuer — not raw metadata.issuer which may be
-        // absent from the AS response — so vendor detection always has a
-        // hostname to match against.
-        const compatibilityReport = analyzeAsCompatibility({
-          ...(metadata as XAAFlowState["authzMetadata"]),
-          issuer: resolvedIssuer,
-        });
-
-        machine.updateState({
-          currentStep: "received_authz_metadata",
-          authzMetadata: metadata as XAAFlowState["authzMetadata"],
-          authzServerIssuer: resolvedIssuer,
-          tokenEndpoint: metadata.token_endpoint,
-          compatibilityReport: compatibilityReport ?? undefined,
-          error: undefined,
-        });
-
-        pushInfo(
-          "received_authz_metadata",
-          "xaa-authz-metadata",
-          "Authorization metadata",
-          {
-            issuer: resolvedIssuer,
-            token_endpoint: metadata.token_endpoint,
-            grant_types_supported: metadata.grant_types_supported,
-            registration_endpoint: metadata.registration_endpoint,
-            client_id_metadata_document_supported:
-              metadata.client_id_metadata_document_supported,
-            authorization_grant_profiles_supported:
-              metadata.authorization_grant_profiles_supported,
-            compatibility: compatibilityReport
-              ? {
-                  overall: compatibilityReport.overall,
-                  vendor: compatibilityReport.vendor,
-                }
-              : undefined,
+          if (!result.ok) {
+            lastError = extractErrorMessage(
+              result.body,
+              `Auth server metadata request failed with ${result.status}`
+            );
+            continue;
           }
-        );
 
-        return;
-      } catch (error) {
-        lastError =
-          error instanceof Error ? error.message : "Metadata request failed";
+          const metadata = asRecord(result.body, "Authorization metadata");
+          if (typeof metadata.token_endpoint !== "string") {
+            throw new Error(
+              "Authorization metadata did not include a token_endpoint."
+            );
+          }
+
+        // RFC 8414 §3.3: the metadata's `issuer` MUST match the one we asked
+        // for. A mismatched (or absent) issuer means its token endpoint can't
+        // be trusted with the signed assertion + any client secret — continue
+        // to the next candidate rather than adopting a foreign issuer.
+          if (
+            typeof metadata.issuer !== "string" ||
+            metadata.issuer !== candidateIssuer
+          ) {
+            lastError = `Authorization metadata at ${url} advertises issuer "${String(
+              metadata.issuer
+            )}", which does not match the requested issuer "${candidateIssuer}".`;
+            continue;
+          }
+          const resolvedIssuer = metadata.issuer;
+
+          const compatibilityReport = analyzeAsCompatibility({
+            ...(metadata as XAAFlowState["authzMetadata"]),
+            issuer: resolvedIssuer,
+          });
+
+          machine.updateState({
+            currentStep: "received_authz_metadata",
+            authzMetadata: metadata as XAAFlowState["authzMetadata"],
+            authzServerIssuer: resolvedIssuer,
+            tokenEndpoint: metadata.token_endpoint,
+            ...(registrationStrategy === "preregistered"
+              ? {
+                  tokenEndpointAuthMethod: selectPreRegisteredTokenAuthMethod(
+                    state.tokenEndpointAuthMethod,
+                    state.clientSecret,
+                    metadata.token_endpoint_auth_methods_supported
+                  ),
+                }
+              : {}),
+            compatibilityReport: compatibilityReport ?? undefined,
+            error: undefined,
+          });
+
+          pushInfo(
+            "received_authz_metadata",
+            "xaa-authz-metadata",
+            "Authorization metadata",
+            {
+              issuer: resolvedIssuer,
+              token_endpoint: metadata.token_endpoint,
+              grant_types_supported: metadata.grant_types_supported,
+              registration_endpoint: metadata.registration_endpoint,
+              client_id_metadata_document_supported:
+                metadata.client_id_metadata_document_supported,
+              authorization_grant_profiles_supported:
+                metadata.authorization_grant_profiles_supported,
+              compatibility: compatibilityReport
+                ? {
+                    overall: compatibilityReport.overall,
+                    vendor: compatibilityReport.vendor,
+                  }
+                : undefined,
+            }
+          );
+
+          return;
+        } catch (error) {
+          lastError =
+            error instanceof Error ? error.message : "Metadata request failed";
+        }
       }
     }
 
@@ -1485,7 +1574,10 @@ export function createXAAStateMachine(
   const requestAccessToken = async () => {
     const state = currentState();
 
-    if (!state.idJag || (!state.tokenEndpoint && !registrationId)) {
+    if (
+      !state.idJag ||
+      (!state.tokenEndpoint && !registrationId && !serverId)
+    ) {
       machine.updateState({
         currentStep: "jwt_bearer_request",
         error:
@@ -1744,29 +1836,15 @@ export function createXAAStateMachine(
       return;
     }
 
-    const body = {
-      jsonrpc: "2.0",
-      id: "mcpjam-xaa-debugger",
-      method: "initialize",
-      params: {
-        protocolVersion: "2025-11-25",
-        capabilities: {},
-        clientInfo: {
-          name: "MCPJam XAA Debugger",
-          version: "1.0.0",
-        },
-      },
-    };
-
+    // Shared initialize request: advertises the enterprise-managed
+    // authorization extension and sends the MCP-Protocol-Version header (some
+    // 2025-11-25 servers enforce it), matching the CLI probe.
+    const mcpRequest = buildMcpInitializeRequest(state.accessToken);
     const request = {
       method: "POST",
       url: state.serverUrl,
-      headers: {
-        Accept: "application/json, text/event-stream",
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${state.accessToken}`,
-      },
-      body,
+      headers: mcpRequest.headers,
+      body: mcpRequest.body,
     };
 
     try {
@@ -1776,8 +1854,8 @@ export function createXAAStateMachine(
         () =>
           requestExecutor.externalRequest(state.serverUrl!, {
             method: "POST",
-            headers: request.headers,
-            body: JSON.stringify(body),
+            headers: mcpRequest.headers,
+            body: JSON.stringify(mcpRequest.body),
           })
       );
 
@@ -1788,6 +1866,17 @@ export function createXAAStateMachine(
             result.body,
             `Authenticated MCP request failed with ${result.status}`
           ),
+        });
+        return;
+      }
+
+      // A 2xx alone can carry a JSON-RPC error, an SSE parse failure, or a
+      // non-MCP body — require a genuine JSON-RPC initialize result.
+      const mcpError = evaluateMcpInitializeResponse(result.body);
+      if (mcpError) {
+        machine.updateState({
+          currentStep: "authenticated_mcp_request",
+          error: mcpError,
         });
         return;
       }
@@ -1803,6 +1892,7 @@ export function createXAAStateMachine(
         "Authenticated MCP response",
         {
           status: result.status,
+          xaa_extension: mcpInitializeExtensionEvidence(result.body),
           body: result.body,
         }
       );
@@ -1921,9 +2011,7 @@ export function createXAAStateMachine(
     machine.updateState(
       createInitialXAAFlowState({
         serverUrl: currentState().serverUrl || serverUrl,
-        resourceUrl: canonicalizeResourceUrl(
-          currentState().serverUrl || serverUrl
-        ),
+        resourceUrl: currentState().serverUrl || serverUrl,
         negativeTestMode: currentState().negativeTestMode || negativeTestMode,
         userId: currentState().userId || userId,
         email: currentState().email || email,

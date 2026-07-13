@@ -42,6 +42,26 @@ describe("buildProtectedResourceMetadataCandidates (RFC 9728)", () => {
       "https://mcp.example.com/.well-known/oauth-protected-resource",
     ]);
   });
+
+  it("preserves the resource query in path-insertion candidates", () => {
+    expect(
+      buildProtectedResourceMetadataCandidates(
+        "https://mcp.example.com/mcp/?tenant=acme",
+      ),
+    ).toEqual([
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp/?tenant=acme",
+      "https://mcp.example.com/mcp/.well-known/oauth-protected-resource?tenant=acme",
+      "https://mcp.example.com/.well-known/oauth-protected-resource",
+    ]);
+
+    expect(
+      buildProtectedResourceMetadataCandidates(
+        "https://mcp.example.com?tenant=acme",
+      ),
+    ).toEqual([
+      "https://mcp.example.com/.well-known/oauth-protected-resource?tenant=acme",
+    ]);
+  });
 });
 
 describe("buildAuthorizationServerMetadataCandidates (RFC 8414 + OIDC)", () => {

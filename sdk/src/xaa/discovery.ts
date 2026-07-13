@@ -30,23 +30,29 @@ export function canonicalizeMcpResource(serverUrl: string): string {
 // path-insertion (preserving a trailing slash), path-append, then origin-root.
 // A path-less input yields only the root form; an unparseable input degrades to
 // a single best-effort root candidate.
-function wellKnownCandidates(issuer: string, name: string): string[] {
+function wellKnownCandidates(
+  issuer: string,
+  name: string,
+  preserveQuery = false,
+): string[] {
   let origin: string;
   let path: string;
+  let query: string;
   try {
     const url = new URL(issuer);
     origin = url.origin;
     path = url.pathname === "/" ? "" : url.pathname;
+    query = preserveQuery ? url.search : "";
   } catch {
     return [`${issuer.replace(/\/+$/, "")}/.well-known/${name}`];
   }
-  if (!path) return [`${origin}/.well-known/${name}`];
+  if (!path) return [`${origin}/.well-known/${name}${query}`];
 
   const pathNoTrailing = path.replace(/\/+$/, "");
   return [
     ...new Set([
-      `${origin}/.well-known/${name}${path}`,
-      `${origin}${pathNoTrailing}/.well-known/${name}`,
+      `${origin}/.well-known/${name}${path}${query}`,
+      `${origin}${pathNoTrailing}/.well-known/${name}${query}`,
       `${origin}/.well-known/${name}`,
     ]),
   ];
@@ -65,7 +71,7 @@ export const XAA_AS_METADATA_NAMES = [
 export function buildProtectedResourceMetadataCandidates(
   resource: string,
 ): string[] {
-  return wellKnownCandidates(resource, "oauth-protected-resource");
+  return wellKnownCandidates(resource, "oauth-protected-resource", true);
 }
 
 /**
