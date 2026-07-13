@@ -78,7 +78,7 @@ describe("useServerForm", () => {
       url: "https://example.com/mcp",
       useOAuth: true,
       oauthProtocolMode: "2025-06-18",
-      oauthRegistrationMode: "dcr",
+      registrationMode: "dcr",
       oauthScopes: ["openid", "profile"],
     });
   });
@@ -784,7 +784,45 @@ describe("useServerForm", () => {
     const { result } = renderHook(() => useServerForm(server));
 
     await waitFor(() => {
-      expect(result.current.oauthRegistrationMode).toBe("auto");
+      expect(result.current.registrationMode).toBe("auto");
+    });
+  });
+
+  it("prefers the canonical registrationMode over the legacy concrete profile strategy", async () => {
+    // A row saved by the unified pipeline: canonical "auto" plus the
+    // rollback-compat concrete on the legacy profile field. The form must
+    // show "auto" — preferring the concrete would rewrite the stored "auto"
+    // on any unrelated edit (the Edit-form flavor of the auto-clobber bug).
+    const server = {
+      name: "Canonical auto server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      useOAuth: true,
+      registrationMode: "auto",
+      oauthFlowProfile: {
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "dcr",
+      },
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.registrationMode).toBe("auto");
+    });
+
+    // An unrelated edit + save keeps emitting the canonical "auto".
+    act(() => {
+      result.current.setAuthType("oauth");
+      result.current.setOauthScopesInput("openid");
+    });
+    expect(result.current.buildFormData()).toMatchObject({
+      registrationMode: "auto",
     });
   });
 

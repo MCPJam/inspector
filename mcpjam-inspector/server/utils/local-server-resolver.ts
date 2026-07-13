@@ -53,6 +53,10 @@ type LocalAuthorizeServerConfig =
       authServerMode?: "mcpjam" | "own";
       xaaSubject?: string;
       xaaEmail?: string;
+      // Unified canonical auth fields (useOAuth/useXaa are their derived
+      // compat mirrors). Absent on legacy rows.
+      authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
+      registrationMode?: "auto" | "preregistered" | "cimd" | "dcr";
     }
   | {
       transportType: "stdio";

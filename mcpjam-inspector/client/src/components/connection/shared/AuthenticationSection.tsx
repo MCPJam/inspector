@@ -19,11 +19,12 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { resolveAuthorizationPlan } from "@mcpjam/sdk/browser";
+import type { RegistrationMode } from "@/shared/xaa.js";
 import type {
   ServerFormAuthType,
   ServerFormOAuthProtocolMode,
-  ServerFormOAuthRegistrationMode,
 } from "@/shared/types.js";
+import { REGISTRATION_MODE_OPTIONS } from "@/lib/registration-strategy";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 import { XaaCredentialFields } from "./XaaCredentialFields";
 
@@ -44,9 +45,9 @@ interface AuthenticationSectionProps {
   onOauthScopesChange: (value: string) => void;
   oauthProtocolMode: ServerFormOAuthProtocolMode;
   onOauthProtocolModeChange: (value: ServerFormOAuthProtocolMode) => void;
-  oauthRegistrationMode: ServerFormOAuthRegistrationMode;
+  registrationMode: RegistrationMode;
   onOauthRegistrationModeChange: (
-    value: ServerFormOAuthRegistrationMode,
+    value: RegistrationMode,
   ) => void;
   useCustomClientId: boolean;
   onUseCustomClientIdChange: (value: boolean) => void;
@@ -86,15 +87,9 @@ const PROTOCOL_OPTIONS: Array<{
   { value: "2025-03-26", label: "2025-03-26 (Legacy)" },
 ];
 
-const REGISTRATION_OPTIONS: Array<{
-  value: ServerFormOAuthRegistrationMode;
-  label: string;
-}> = [
-  { value: "auto", label: "Automatic" },
-  { value: "preregistered", label: "Preregistration (Client Credentials)" },
-  { value: "cimd", label: "Client ID Metadata Documents (CIMD)" },
-  { value: "dcr", label: "Dynamic Client Registration (DCR)" },
-];
+// Options come from the shared registration-vocabulary label module, so the
+// Connect page and the XAA debugger stay keyed on the same union.
+const REGISTRATION_OPTIONS = REGISTRATION_MODE_OPTIONS;
 
 export function AuthenticationSection({
   serverUrl,
@@ -111,7 +106,7 @@ export function AuthenticationSection({
   onOauthScopesChange,
   oauthProtocolMode,
   onOauthProtocolModeChange,
-  oauthRegistrationMode,
+  registrationMode,
   onOauthRegistrationModeChange,
   useCustomClientId,
   onUseCustomClientIdChange,
@@ -266,7 +261,7 @@ export function AuthenticationSection({
     ? clientSecret
     : (visibleRevealedClientSecret ?? "");
   const showClientCredentials =
-    oauthRegistrationMode === "preregistered" || useCustomClientId;
+    registrationMode === "preregistered" || useCustomClientId;
   const effectiveOauthProtocolMode =
     oauthProtocolMode === "auto" ? "2025-11-25" : oauthProtocolMode;
   const oauthPlan =
@@ -274,7 +269,7 @@ export function AuthenticationSection({
       ? resolveAuthorizationPlan({
           serverUrl,
           protocolMode: effectiveOauthProtocolMode,
-          registrationMode: oauthRegistrationMode,
+          registrationMode: registrationMode,
           clientId: showClientCredentials ? clientId : undefined,
           clientSecret: showClientCredentials ? clientSecret : undefined,
           hasClientSecret: showClientCredentials
@@ -289,7 +284,7 @@ export function AuthenticationSection({
       ? (oauthPlan.blockerDetails ?? []).filter(
           (blocker) =>
             !(
-              oauthRegistrationMode === "preregistered" &&
+              registrationMode === "preregistered" &&
               clientId.trim() === "" &&
               blocker.code === "PREREGISTERED_MISSING_CLIENT_ID"
             ),
@@ -459,9 +454,9 @@ export function AuthenticationSection({
                       Registration Strategy
                     </label>
                     <Select
-                      value={oauthRegistrationMode}
+                      value={registrationMode}
                       onValueChange={(
-                        value: ServerFormOAuthRegistrationMode,
+                        value: RegistrationMode,
                       ) => {
                         onOauthRegistrationModeChange(value);
                         onUseCustomClientIdChange(
@@ -480,7 +475,7 @@ export function AuthenticationSection({
                         ))}
                       </SelectContent>
                     </Select>
-                    {oauthRegistrationMode === "cimd" &&
+                    {registrationMode === "cimd" &&
                       oauthPlan?.clientIdMetadataUrl && (
                         <p className="text-xs text-muted-foreground break-all">
                           SDK client metadata URL:{" "}
@@ -512,7 +507,7 @@ export function AuthenticationSection({
                     <div className="space-y-2">
                       <label className="block text-sm font-medium text-foreground">
                         Client ID
-                        {oauthRegistrationMode === "preregistered" ? (
+                        {registrationMode === "preregistered" ? (
                           <span className="text-destructive" aria-hidden="true">
                             {" *"}
                           </span>
@@ -523,7 +518,7 @@ export function AuthenticationSection({
                         onChange={(e) => onClientIdChange(e.target.value)}
                         placeholder="Your OAuth Client ID"
                         aria-required={
-                          oauthRegistrationMode === "preregistered"
+                          registrationMode === "preregistered"
                             ? true
                             : undefined
                         }

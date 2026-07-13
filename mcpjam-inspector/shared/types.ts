@@ -1,7 +1,7 @@
 // Shared types between client and server
 import { HOSTED_MODEL_IDS } from "./hosted-model-ids.generated";
 
-import type { RegistrationStrategy } from "./xaa";
+import type { RegistrationMode } from "./xaa";
 
 // Legacy server config (keeping for compatibility)
 export interface ServerConfig {
@@ -712,11 +712,12 @@ export type ServerFormOAuthProtocolMode =
   | "2025-06-18"
   | "2025-11-25";
 
-export type ServerFormOAuthRegistrationMode =
-  | "auto"
-  | "cimd"
-  | "dcr"
-  | "preregistered";
+/**
+ * @deprecated Use {@link RegistrationMode} (re-exported from shared/xaa) — the
+ * unified client-registration vocabulary shared by the OAuth flows and the
+ * XAA debugger. Structurally identical; kept as an alias for older imports.
+ */
+export type ServerFormOAuthRegistrationMode = RegistrationMode;
 
 /**
  * The auth type a server-form row is configured with. "xaa" (Cross-App Access)
@@ -740,7 +741,16 @@ export interface ServerFormData {
   clientCapabilities?: Record<string, unknown>;
   useOAuth?: boolean;
   oauthProtocolMode?: ServerFormOAuthProtocolMode;
-  oauthRegistrationMode?: ServerFormOAuthRegistrationMode;
+  /**
+   * Unified client-registration mode (Client↔AS leg) shared by the OAuth
+   * flows and the XAA debugger: how this server's client establishes its
+   * identity at the authorization server. "auto" resolves to a concrete
+   * strategy at flow time (OAuth: resolveAuthorizationPlan; XAA debugger:
+   * falls back to preregistered). Persisted per-server (Convex
+   * `registrationMode` column). Replaces `oauthRegistrationMode` and the
+   * XAA-only `xaaRegistrationStrategy`.
+   */
+  registrationMode?: RegistrationMode;
   oauthScopes?: string[];
   clientId?: string;
   clientSecret?: string;
@@ -770,13 +780,6 @@ export interface ServerFormData {
   xaaSubject?: string;
   /** Optional simulated-identity override (email) for the MCPJam test IdP. Blank = signed-in user. */
   xaaEmail?: string;
-  /**
-   * XAA Debugger registration strategy (Client↔Resource-AS leg): how the run
-   * establishes its client identity at the target authorization server. Chosen
-   * in the "Configure Server to Test" modal. Debugger-only — the Connect page
-   * never sets it, so merges must preserve an existing value.
-   */
-  xaaRegistrationStrategy?: RegistrationStrategy;
   /** Registry credential key for resolving OAuth client ID from env (e.g. "github") */
   oauthCredentialKey?: string;
   /** True for registry servers that use backend-managed preregistered OAuth credentials */
