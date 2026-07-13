@@ -20,10 +20,7 @@ export type {
   BaseXAAStateMachineConfig,
   XAAStateMachine,
 } from "./types.js";
-export {
-  EMPTY_XAA_FLOW_STATE,
-  createInitialXAAFlowState,
-} from "./types.js";
+export { EMPTY_XAA_FLOW_STATE, createInitialXAAFlowState } from "./types.js";
 export type {
   XAAVendor,
   XAAVendorVerdict,
@@ -33,11 +30,13 @@ export type {
   XAACompatibilityVerdict,
   XAACompatibilityReport,
 } from "./capability-preflight.js";
-export { detectVendor, analyzeAsCompatibility } from "./capability-preflight.js";
 export {
-  createXAAStateMachine,
-  CLIENT_SECRET_MASK,
-} from "./state-machine.js";
+  detectVendor,
+  analyzeAsCompatibility,
+  deriveCapabilityEvidence,
+  selectTokenEndpointAuthMethod,
+} from "./capability-preflight.js";
+export { createXAAStateMachine, CLIENT_SECRET_MASK } from "./state-machine.js";
 export { runXaaStateMachine } from "./runner.js";
 export type {
   RunXaaStateMachineOptions,

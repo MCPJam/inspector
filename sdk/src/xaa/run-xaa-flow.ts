@@ -1,14 +1,7 @@
 // Headless Cross-App Access (ID-JAG) flow driver. It self-issues an ID-JAG,
 // verifies that the configured issuer actually publishes the signing key,
 // redeems the assertion, and probes the protected MCP resource.
-import {
-  executeOAuthProxy,
-  fetchOAuthMetadata,
-} from "../oauth-proxy.js";
-import {
-  ID_JAG_GRANT_PROFILE,
-  JWT_BEARER_GRANT,
-} from "../oauth/client-identity.js";
+import { executeOAuthProxy, fetchOAuthMetadata } from "../oauth-proxy.js";
 import {
   getXAAIdpJwks,
   getXAAIssuerUrl,
@@ -32,6 +25,10 @@ import {
 import { createInProcessXaaExecutor } from "./in-process-executor.js";
 import { createXAAStateMachine } from "./state-machines/state-machine.js";
 import { runXaaStateMachine } from "./state-machines/runner.js";
+import {
+  deriveCapabilityEvidence,
+  selectTokenEndpointAuthMethod,
+} from "./state-machines/capability-preflight.js";
 import {
   createInitialXAAFlowState,
   type XAAFlowState,
@@ -113,34 +110,9 @@ export interface XaaFlowResult {
 
 type PublishedJwk = JsonWebKey & { kid?: string };
 
-function listEvidence(value: unknown, expected: string): XaaCapabilityEvidence {
-  if (value === undefined || value === null) return "unknown";
-  return Array.isArray(value) && value.includes(expected)
-    ? "advertised"
-    : "not_advertised";
-}
-
 function stringList(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   return value.filter((entry): entry is string => typeof entry === "string");
-}
-
-function selectTokenEndpointAuthMethod(
-  explicit: XaaTokenEndpointAuthMethod | undefined,
-  clientSecret: string | undefined,
-  advertised: string[] | undefined
-): XaaTokenEndpointAuthMethod {
-  if (explicit) return explicit;
-  if (!clientSecret) return "none";
-  if (advertised?.includes("client_secret_basic")) {
-    return "client_secret_basic";
-  }
-  if (advertised?.includes("client_secret_post")) {
-    return "client_secret_post";
-  }
-  if (advertised?.includes("none")) return "none";
-  // Metadata is optional; preserve the previous behavior when it is absent.
-  return "client_secret_post";
 }
 
 function publicJwkMatches(local: JsonWebKey, published: JsonWebKey): boolean {
@@ -193,7 +165,7 @@ async function verifyIssuerPublication(
     response.body &&
     typeof response.body === "object" &&
     Array.isArray((response.body as { keys?: unknown }).keys)
-      ? (response.body as { keys: PublishedJwk[] }).keys ?? []
+      ? ((response.body as { keys: PublishedJwk[] }).keys ?? [])
       : [];
   const keys = rawKeys.filter(
     (key): key is PublishedJwk => Boolean(key) && typeof key === "object"
@@ -265,10 +237,7 @@ function projectMcpResult(state: XAAFlowState): XaaFlowResult["mcp"] {
   const error = evaluateMcpInitializeResponse(entry.response.body);
   return {
     status: entry.response.status,
-    ok:
-      entry.response.status >= 200 &&
-      entry.response.status < 300 &&
-      !error,
+    ok: entry.response.status >= 200 && entry.response.status < 300 && !error,
     ...(error ? { error } : {}),
     xaaExtension: mcpInitializeExtensionEvidence(entry.response.body),
   };
@@ -320,14 +289,7 @@ function projectCapabilities(
     );
 
   return {
-    idJagProfile: listEvidence(
-      state.authzMetadata?.authorization_grant_profiles_supported,
-      ID_JAG_GRANT_PROFILE
-    ),
-    jwtBearerGrant: listEvidence(
-      state.authzMetadata?.grant_types_supported,
-      JWT_BEARER_GRANT
-    ),
+    ...deriveCapabilityEvidence(state.authzMetadata),
     ...(advertisedAuthMethods
       ? { tokenEndpointAuthMethods: advertisedAuthMethods }
       : {}),
@@ -335,18 +297,25 @@ function projectCapabilities(
   };
 }
 
-function projectSteps(
-  state: XAAFlowState,
-  prefix = ""
-): XaaFlowStep[] {
+// The engine names HTTP steps by protocol operation; the CLI surfaces them in
+// ID-JAG spec vocabulary. Projection-only — the engine's XAAFlowStep names are
+// unchanged. Steps absent from this map pass through as-is, so the discovery
+// steps keep their RFC 9728 / RFC 8414 names.
+const CLI_STEP_VOCABULARY: Record<string, string> = {
+  token_exchange_request: "mint_id_jag",
+  jwt_bearer_request: "redeem_id_jag",
+};
+
+function projectSteps(state: XAAFlowState, prefix = ""): XaaFlowStep[] {
   return (state.httpHistory ?? []).map((entry) => ({
-    step: prefix + entry.step,
+    step: prefix + (CLI_STEP_VOCABULARY[entry.step] ?? entry.step),
     ok:
       !entry.error &&
       !!entry.response &&
       entry.response.status >= 200 &&
       entry.response.status < 300,
-    detail: entry.error?.message ??
+    detail:
+      entry.error?.message ??
       (entry.response ? "status " + entry.response.status : undefined),
   }));
 }
@@ -404,16 +373,16 @@ async function runSharedAttempt(
       step === "discover_resource_metadata"
         ? "Discovering protected-resource metadata (RFC 9728)…"
         : step === "discover_authz_metadata"
-        ? "Discovering authorization-server metadata (RFC 8414)…"
-        : step === "token_exchange_request"
-        ? "Minting the ID-JAG…"
-        : step === "jwt_bearer_request"
-        ? mode === "valid"
-          ? "Redeeming the ID-JAG at the authorization server…"
-          : "Redeeming the deliberately invalid ID-JAG…"
-        : step === "authenticated_mcp_request"
-        ? "Calling the MCP server with the access token…"
-        : undefined;
+          ? "Discovering authorization-server metadata (RFC 8414)…"
+          : step === "token_exchange_request"
+            ? "Minting the ID-JAG…"
+            : step === "jwt_bearer_request"
+              ? mode === "valid"
+                ? "Redeeming the ID-JAG at the authorization server…"
+                : "Redeeming the deliberately invalid ID-JAG…"
+              : step === "authenticated_mcp_request"
+                ? "Calling the MCP server with the access token…"
+                : undefined;
     if (message) progress?.(message);
   };
   const machine = createXAAStateMachine({
@@ -609,12 +578,12 @@ export async function runXaaFlow(
               "The authorization server accepted the deliberately invalid ID-JAG.",
           }
         : outcome === "inconclusive"
-        ? {
-            error:
-              projectFlowError(probeState) ??
-              "The negative probe did not produce a conclusive 4xx rejection.",
-          }
-        : {}),
+          ? {
+              error:
+                projectFlowError(probeState) ??
+                "The negative probe did not produce a conclusive 4xx rejection.",
+            }
+          : {}),
     };
   } catch (error) {
     return {

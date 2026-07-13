@@ -303,8 +303,7 @@ describe("runXaaFlow", () => {
 
     expect(result.completed).toBe(true);
     expect(
-      mcpHeaders["MCP-Protocol-Version"] ??
-        mcpHeaders["mcp-protocol-version"]
+      mcpHeaders["MCP-Protocol-Version"] ?? mcpHeaders["mcp-protocol-version"]
     ).toBe("2025-11-25");
     expect(mcpRequest).toMatchObject({
       params: {
@@ -369,7 +368,11 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === serverWithSlash && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
+          return json({
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: { protocolVersion: "2025-11-25" },
+          });
         }
         return json({}, 404);
       }
@@ -412,7 +415,11 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === SERVER_URL && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
+          return json({
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: { protocolVersion: "2025-11-25" },
+          });
         }
         return json({}, 404);
       }
@@ -479,7 +486,11 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === SERVER_URL && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
+          return json({
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: { protocolVersion: "2025-11-25" },
+          });
         }
         return json({}, 404);
       }
@@ -528,7 +539,11 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === serverWithSlash && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
+          return json({
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: { protocolVersion: "2025-11-25" },
+          });
         }
         return json({}, 404);
       }
@@ -613,7 +628,11 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === serverWithQuery && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
+          return json({
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: { protocolVersion: "2025-11-25" },
+          });
         }
         return json({}, 404);
       }
@@ -770,7 +789,11 @@ describe("runXaaFlow", () => {
         return json({ access_token: "at-basic", token_type: "Bearer" });
       }
       if (url === SERVER_URL && method === "POST") {
-        return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
+        return json({
+          jsonrpc: "2.0",
+          id: "mcpjam-xaa-cli",
+          result: { protocolVersion: "2025-11-25" },
+        });
       }
       return json({}, 404);
     }) as unknown as typeof fetch;
@@ -886,5 +909,62 @@ describe("runXaaFlow", () => {
           input.toString() === SERVER_URL && init?.method === "POST"
       )
     ).toBe(false);
+  });
+
+  it("reports steps in ID-JAG spec vocabulary for a valid flow", async () => {
+    global.fetch = stubFetch({
+      token: {
+        status: 200,
+        body: { access_token: "at-123", token_type: "Bearer", expires_in: 300 },
+      },
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    const stepNames = result.steps.map((s) => s.step);
+    expect(stepNames).toContain("verify_issuer_publication");
+    expect(stepNames).toContain("mint_id_jag");
+    expect(stepNames).toContain("redeem_id_jag");
+    expect(stepNames).toContain("authenticated_mcp_request");
+    // The engine's internal HTTP-step names must not leak into CLI output.
+    expect(stepNames).not.toContain("token_exchange_request");
+    expect(stepNames).not.toContain("jwt_bearer_request");
+  });
+
+  it("prefixes and renames baseline/probe steps in a negative flow", async () => {
+    global.fetch = stubFetch({
+      tokenResponses: [
+        {
+          status: 200,
+          body: { access_token: "baseline-token", token_type: "Bearer" },
+        },
+        { status: 401, body: { error: "invalid_grant" } },
+      ],
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+      negativeTestMode: "bad_signature",
+    });
+
+    const stepNames = result.steps.map((s) => s.step);
+    expect(stepNames).toContain("baseline:mint_id_jag");
+    expect(stepNames).toContain("baseline:redeem_id_jag");
+    expect(stepNames).toContain("probe:mint_id_jag");
+    expect(stepNames).toContain("probe:redeem_id_jag");
+    expect(stepNames).not.toContain("baseline:token_exchange_request");
+    expect(stepNames).not.toContain("probe:jwt_bearer_request");
   });
 });
