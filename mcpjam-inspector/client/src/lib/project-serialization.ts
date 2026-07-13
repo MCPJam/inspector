@@ -3,7 +3,7 @@ import {
   normalizeOAuthProtocolVersion,
   normalizeOAuthRegistrationStrategy,
 } from "@/lib/oauth/profile";
-import { normalizeXaaRegistrationStrategy } from "@/shared/xaa.js";
+import { normalizeRegistrationStrategy } from "@/shared/xaa.js";
 
 type SerializeOptions = {
   /**
@@ -272,8 +272,8 @@ export function deserializeServersFromConvex(
       server.xaaEmail = serverData.xaaEmail;
     }
     // Narrow the bare wire string to a known strategy; drop anything unknown so
-    // the flow falls back to the safe pre_registered default.
-    const xaaRegistrationStrategy = normalizeXaaRegistrationStrategy(
+    // the flow falls back to the safe preregistered default.
+    const xaaRegistrationStrategy = normalizeRegistrationStrategy(
       serverData.xaaRegistrationStrategy,
     );
     if (xaaRegistrationStrategy !== undefined) {
