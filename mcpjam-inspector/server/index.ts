@@ -139,7 +139,7 @@ import {
   CANIUSE_LANDING_HOSTS,
 } from "./config";
 import "./types/hono"; // Type extensions
-import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair";
+import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 
 // Utility function to extract MCP server config from environment variables
 function getMCPConfigFromEnv() {
@@ -238,6 +238,7 @@ warnOnConvexDevMisconfiguration(loadedEnv);
 
 // Generate session token for API authentication
 generateSessionToken();
+setXaaIdpLogger(appLogger);
 initXAAIdpKeyPair();
 
 startGuestAuthProvisioningInBackground();

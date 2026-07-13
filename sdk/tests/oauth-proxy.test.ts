@@ -24,14 +24,14 @@ describe("oauth-proxy helpers", () => {
       executeOAuthProxy({
         url: "https://127.0.0.1/foo",
         httpsOnly: true,
-      }),
+      })
     ).rejects.toBeInstanceOf(OAuthProxyError);
 
     await expect(
       executeOAuthProxy({
         url: "https://127.0.0.1/foo",
         httpsOnly: true,
-      }),
+      })
     ).rejects.toMatchObject({ status: 400 });
   });
 
@@ -43,7 +43,7 @@ describe("oauth-proxy helpers", () => {
       new Response(JSON.stringify({ ok: true }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
-      }),
+      })
     );
 
     await executeOAuthProxy({
@@ -53,7 +53,7 @@ describe("oauth-proxy helpers", () => {
 
     expect(global.fetch).toHaveBeenCalledWith(
       expect.stringContaining("https://example.com/path"),
-      expect.any(Object),
+      expect.any(Object)
     );
   });
 
@@ -62,14 +62,34 @@ describe("oauth-proxy helpers", () => {
       new Response(JSON.stringify({ issuer: "https://auth.example.com" }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
-      }),
+      })
     );
 
     await expect(
-      fetchOAuthMetadata("https://auth.example.com/.well-known/oauth"),
+      fetchOAuthMetadata("https://auth.example.com/.well-known/oauth")
     ).resolves.toEqual({
       metadata: { issuer: "https://auth.example.com" },
     });
+  });
+
+  it("bounds regular, debug, and metadata requests with timeoutMs", async () => {
+    global.fetch = vi.fn(async (_input, init?: RequestInit) => {
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(init.signal?.reason);
+        });
+      });
+    }) as unknown as typeof fetch;
+
+    await expect(
+      executeOAuthProxy({ url: "https://example.com", timeoutMs: 10 })
+    ).rejects.toThrow(/timeout/i);
+    await expect(
+      executeDebugOAuthProxy({ url: "https://example.com", timeoutMs: 10 })
+    ).rejects.toThrow(/timeout/i);
+    await expect(
+      fetchOAuthMetadata("https://example.com/.well-known/oauth", false, 10)
+    ).rejects.toThrow(/timeout/i);
   });
 
   describe("redirect option plumbing", () => {

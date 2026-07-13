@@ -4,8 +4,11 @@
 // assembly here (see `buildJwtBearerBody`) is what prevents the two surfaces
 // from drifting on the wire.
 import type { Context } from "hono";
-import { issueIdJag } from "./xaa-idjag-signer.js";
-import { getXAAIssuerUrl } from "./xaa-idp-keypair.js";
+import {
+  buildJwtBearerBody,
+  getXAAIssuerUrl,
+  issueIdJag,
+} from "@mcpjam/sdk";
 import {
   buildDiscoveryCandidates,
   buildResourceMetadataCandidates,
@@ -270,26 +273,9 @@ export async function resolveServerTarget(deps: {
   };
 }
 
-// The jwt-bearer (RFC 7523) token-request body posted to the resource
-// authorization server. SINGLE SOURCE OF TRUTH — both `/proxy/token` (debugger)
-// and `mintXaaAccessToken` (connect) build their request body here so the two
-// surfaces stay byte-identical on the wire.
-export function buildJwtBearerBody(args: {
-  assertion: string;
-  clientId?: string | null;
-  clientSecret?: string | null;
-  scope?: string | null;
-  resource?: string | null;
-}): Record<string, string> {
-  return {
-    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-    assertion: args.assertion,
-    ...(args.clientId ? { client_id: args.clientId } : {}),
-    ...(args.clientSecret ? { client_secret: args.clientSecret } : {}),
-    ...(args.scope ? { scope: args.scope } : {}),
-    ...(args.resource ? { resource: args.resource } : {}),
-  };
-}
+// `buildJwtBearerBody` (the single-source jwt-bearer request body) now lives in
+// @mcpjam/sdk and is re-exported here so existing importers keep their path.
+export { buildJwtBearerBody };
 
 export type XaaTokenEndpointAuthMethod =
   | "client_secret_post"

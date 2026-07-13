@@ -7,7 +7,7 @@ import {
   getXAAIdpJwks,
   initXAAIdpKeyPair,
   resetXAAIdpKeyPairForTests,
-} from "../xaa-idp-keypair.js";
+} from "../../src/xaa/mint/keypair.js";
 import {
   issueAccessToken,
   issueAuthorizationCode,
@@ -17,12 +17,12 @@ import {
   verifyXaaJwt,
   XAA_ACCESS_TOKEN_TYP,
   XAA_CODE_JWT_TYP,
-} from "../xaa-idjag-signer.js";
+} from "../../src/xaa/mint/signer.js";
 import {
   NEGATIVE_TEST_MODES,
   XAA_IDP_KID,
   type NegativeTestMode,
-} from "../../../shared/xaa.js";
+} from "../../src/xaa/constants.js";
 
 function decodeJwt(token: string): {
   header: Record<string, any>;

@@ -12,8 +12,8 @@ import {
   getXAAIdpJwks,
   initXAAIdpKeyPair,
   resetXAAIdpKeyPairForTests,
-} from "../xaa-idp-keypair.js";
-import { issueIdJag } from "../xaa-idjag-signer.js";
+} from "../../src/xaa/mint/keypair.js";
+import { issueIdJag } from "../../src/xaa/mint/signer.js";
 
 function publishedModulus(): string {
   const jwk = getXAAIdpJwks().keys[0] as JsonWebKey & { n: string };
