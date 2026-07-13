@@ -187,6 +187,34 @@ describe("runXaaFlow", () => {
     expect(result.completed).toBe(false);
   });
 
+  it("sends the MCP-Protocol-Version header on the initialize probe", async () => {
+    let mcpHeaders: Record<string, string> = {};
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const method = (init?.method || "GET").toUpperCase();
+      if (url === TOKEN_ENDPOINT && method === "POST") {
+        return json({ access_token: "at-1", token_type: "Bearer" });
+      }
+      if (url === SERVER_URL && method === "POST") {
+        mcpHeaders = (init?.headers as Record<string, string>) ?? {};
+        return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: {} });
+      }
+      return json({}, 404);
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    expect(result.completed).toBe(true);
+    expect(mcpHeaders["MCP-Protocol-Version"]).toBe("2025-11-25");
+  });
+
   it("does not report success on a non-MCP 2xx body that merely has a result field", async () => {
     global.fetch = stubFetch({
       token: {

@@ -25,6 +25,10 @@ import {
 const ID_JAG_TYP = "oauth-id-jag+jwt";
 // JSON-RPC id we send on `initialize`; the response must echo it back.
 const MCP_INIT_ID = "mcpjam-xaa-cli";
+// Protocol version advertised on the initialize probe — sent both in the params
+// and as the MCP-Protocol-Version HTTP header (some 2025-11-25 servers enforce
+// the header on streamable-HTTP requests).
+const MCP_PROTOCOL_VERSION = "2025-11-25";
 
 export interface XaaFlowConfig {
   /** Target MCP server URL (the protected resource). */
@@ -372,6 +376,7 @@ async function callAuthenticatedMcp(
     headers: {
       Accept: "application/json, text/event-stream",
       "Content-Type": "application/json",
+      "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
       Authorization: `Bearer ${accessToken}`,
     },
     body: {
@@ -379,7 +384,7 @@ async function callAuthenticatedMcp(
       id: MCP_INIT_ID,
       method: "initialize",
       params: {
-        protocolVersion: "2025-11-25",
+        protocolVersion: MCP_PROTOCOL_VERSION,
         capabilities: {},
         clientInfo: { name: "MCPJam XAA CLI", version: "1.0.0" },
       },
