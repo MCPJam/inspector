@@ -3,9 +3,8 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { track } from "@/lib/analytics";
 import {
-  SUPPORTED_MODELS,
-  isMCPJamGuestAllowedModel,
-  isMCPJamProvidedModel,
+  hostedModelDefinitionsFromSnapshot,
+  hostedProviderFromCanonicalId,
   type ModelDefinition,
 } from "@/shared/types";
 import type { OpenRouterModel } from "@/types/model-metadata";
@@ -34,25 +33,12 @@ export interface HostedModelCatalogState {
   status: HostedCatalogStatus;
 }
 
-// Catalog id prefixes whose logo/display live under a different provider key.
-const PROVIDER_ALIASES: Record<string, string> = {
-  "meta-llama": "meta",
-  "x-ai": "xai",
-  mistralai: "mistral",
-};
-
 /**
- * Derive the provider key from a canonical (slash-prefixed) catalog id. The
- * catalog carries no `provider` field; the id prefix is the source of truth
- * (e.g. "anthropic/claude-haiku-4.5" → "anthropic"). Unknown prefixes are
- * returned verbatim — the picker renders them with a monogram + title-cased
- * name, so a brand-new provider needs no code change.
+ * Derive the provider key from a canonical (slash-prefixed) catalog id (e.g.
+ * "anthropic/claude-haiku-4.5" → "anthropic"). Re-exported from shared so the
+ * live catalog mapping and the snapshot fallback agree on prefix→provider.
  */
-export function providerFromCanonicalId(id: string): string {
-  const slash = id.indexOf("/");
-  const prefix = (slash > 0 ? id.slice(0, slash) : id).toLowerCase();
-  return PROVIDER_ALIASES[prefix] ?? prefix;
-}
+export const providerFromCanonicalId = hostedProviderFromCanonicalId;
 
 function catalogDtoToModelDefinition(dto: OpenRouterModel): ModelDefinition {
   return {
@@ -65,15 +51,9 @@ function catalogDtoToModelDefinition(dto: OpenRouterModel): ModelDefinition {
   };
 }
 
-/** The pre-catalog behavior: the static hosted subset, tagged `hosted`. */
+/** Hosted models from the checked-in snapshot seed — the offline/guest floor. */
 function staticHostedFallback(): ModelDefinition[] {
-  return SUPPORTED_MODELS.filter((model) =>
-    isMCPJamProvidedModel(String(model.id))
-  ).map((model) => ({
-    ...model,
-    hosted: true,
-    guestAllowed: isMCPJamGuestAllowedModel(String(model.id)),
-  }));
+  return hostedModelDefinitionsFromSnapshot();
 }
 
 function loadCachedCatalog(): ModelDefinition[] | null {
