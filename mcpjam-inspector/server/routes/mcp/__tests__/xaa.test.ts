@@ -11,10 +11,7 @@ import {
   generateSessionToken,
   getSessionToken,
 } from "../../../services/session-token.js";
-import {
-  initXAAIdpKeyPair,
-  resetXAAIdpKeyPairForTests,
-} from "../../../services/xaa-idp-keypair.js";
+import { initXAAIdpKeyPair, resetXAAIdpKeyPairForTests } from "@mcpjam/sdk";
 import xaa, { createXaaRouter } from "../xaa.js";
 
 function jsonResponse(

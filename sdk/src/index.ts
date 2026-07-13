@@ -290,6 +290,10 @@ export type {
 } from "./oauth/state-machines/shared/dynamic-client-registration.js";
 export { validateClientIdMetadataUrl } from "./oauth/state-machines/shared/client-id-metadata.js";
 
+// XAA (Cross-App Access / ID-JAG) mock-IdP mint — node-only (crypto/fs).
+// Consumed by the inspector server and the CLI's headless `runXaaFlow`.
+export * from "./xaa/index.js";
+
 // HostExecutor interface (for deterministic testing without concrete HostRunner)
 export type { HostExecutor, PromptOptions } from "./HostExecutor.js";
 

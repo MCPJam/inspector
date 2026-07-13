@@ -13,14 +13,25 @@ import {
 } from "fs";
 import os from "os";
 import path from "path";
-import { logger } from "../utils/logger.js";
-import { XAA_IDP_KID } from "../../shared/xaa.js";
+import { XAA_IDP_KID } from "../constants.js";
 
 export type XAAIdpJwk = JsonWebKey & {
   kid: string;
   alg: string;
   use: string;
 };
+
+// The mint emits a few startup diagnostics (which key source it used, where it
+// persisted the pair). It's a library, so those are silent by default; a host
+// (the inspector server) can inject its own logger.
+export interface XaaIdpLogger {
+  info(message: string): void;
+  warn(message: string): void;
+}
+let mintLogger: XaaIdpLogger = { info() {}, warn() {} };
+export function setXaaIdpLogger(logger: XaaIdpLogger): void {
+  mintLogger = logger;
+}
 
 let privateKey: KeyObject | undefined;
 let publicKey: KeyObject | undefined;
@@ -65,12 +76,12 @@ function loadSecretKeyPair(): boolean {
     const nextPrivateKey = createPrivateKey(pem);
     const nextPublicKey = createPublicKey(nextPrivateKey);
     setKeyPair(nextPrivateKey, nextPublicKey);
-    logger.info(
+    mintLogger.info(
       "XAA issuer: using signing key pair from XAA_IDP_PRIVATE_KEY secret.",
     );
     return true;
   } catch (error) {
-    logger.warn(
+    mintLogger.warn(
       `XAA issuer: XAA_IDP_PRIVATE_KEY is set but could not be parsed, falling back (${error instanceof Error ? error.message : String(error)})`,
     );
     return false;
@@ -97,7 +108,7 @@ function createAndPersistLocalKeyPair(): void {
   }
 
   setKeyPair(createPrivateKey(privatePem), createPublicKey(publicPem));
-  logger.info(`XAA issuer: created signing key pair at ${dir}`);
+  mintLogger.info(`XAA issuer: created signing key pair at ${dir}`);
 }
 
 function loadPersistedLocalKeyPair(): boolean {
@@ -110,12 +121,12 @@ function loadPersistedLocalKeyPair(): boolean {
     const privatePem = readFileSync(privatePath, "utf-8");
     const publicPem = readFileSync(publicPath, "utf-8");
     setKeyPair(createPrivateKey(privatePem), createPublicKey(publicPem));
-    logger.info(
+    mintLogger.info(
       `XAA issuer: using signing key pair from ${path.dirname(privatePath)}`,
     );
     return true;
   } catch (error) {
-    logger.warn(
+    mintLogger.warn(
       `XAA issuer: failed to load signing key pair, regenerating (${error instanceof Error ? error.message : String(error)})`,
     );
     return false;
@@ -125,7 +136,7 @@ function loadPersistedLocalKeyPair(): boolean {
 function generateEphemeralKeyPair(): void {
   const pair = generateKeyPairSync("rsa", { modulusLength: 2048 });
   setKeyPair(pair.privateKey, pair.publicKey);
-  logger.warn(
+  mintLogger.warn(
     "XAA issuer: falling back to ephemeral signing keys; assertions will change after restart.",
   );
 }
@@ -156,7 +167,7 @@ export function initXAAIdpKeyPair(): void {
     try {
       createAndPersistLocalKeyPair();
     } catch (error) {
-      logger.warn(
+      mintLogger.warn(
         `XAA issuer: failed to persist signing key pair, using ephemeral keys (${error instanceof Error ? error.message : String(error)})`,
       );
       generateEphemeralKeyPair();

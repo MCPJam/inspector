@@ -9,12 +9,12 @@ import {
   getXAAIdpPrivateKey,
   getXAAIdpPublicKeyObject,
   initXAAIdpKeyPair,
-} from "./xaa-idp-keypair.js";
+} from "./keypair.js";
 import {
   DEFAULT_NEGATIVE_TEST_MODE,
   type NegativeTestMode,
   XAA_IDP_KID,
-} from "../../shared/xaa.js";
+} from "../constants.js";
 
 const ID_JAG_TTL_S = 5 * 60;
 const ID_TOKEN_TTL_S = 5 * 60;

@@ -8,10 +8,7 @@ import { createXaaRouter } from "../../mcp/xaa.js";
 import { bearerAuthMiddleware } from "../../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../../middleware/guest-rate-limit.js";
 import { ErrorCode, WebRouteError } from "../errors.js";
-import {
-  initXAAIdpKeyPair,
-  resetXAAIdpKeyPairForTests,
-} from "../../../services/xaa-idp-keypair.js";
+import { initXAAIdpKeyPair, resetXAAIdpKeyPairForTests } from "@mcpjam/sdk";
 
 function decodeJwtPayload(token: string): Record<string, any> {
   const [, payload] = token.split(".");
