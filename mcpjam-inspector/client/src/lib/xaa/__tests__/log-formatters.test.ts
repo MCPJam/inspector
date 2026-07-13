@@ -42,7 +42,7 @@ describe("generateXAAFlowText", () => {
           },
         ],
       }),
-      { serverUrl: "https://mcp.example.com" },
+      { serverUrl: "https://mcp.example.com" }
     );
 
     for (const secret of [
@@ -81,12 +81,55 @@ describe("generateXAAFlowText", () => {
           },
         ],
       }),
-      {},
+      {}
     );
 
     expect(copied).not.toContain("form-id-token");
     expect(copied).not.toContain("form-client-secret");
     expect(copied).toContain("grant_type=token-exchange");
+  });
+
+  it("redacts URL credentials, fragments, Basic auth, and generic secrets", () => {
+    const copied = generateXAAFlowText(
+      createInitialXAAFlowState({
+        currentStep: "token_exchange_request",
+        httpHistory: [
+          {
+            step: "token_exchange_request",
+            timestamp: 1,
+            request: {
+              method: "POST",
+              url: "https://alice:url-password@example.com/token?api_key=query-api-key#fragment-secret",
+              headers: {
+                Authorization: "Basic basic-secret",
+              },
+              body: "password=form-password&api_key=form-api-key&scope=read",
+            },
+          },
+        ],
+      }),
+      {
+        serverUrl:
+          "https://summary-user:summary-password@example.com/mcp#summary-fragment",
+      }
+    );
+
+    for (const secret of [
+      "alice",
+      "url-password",
+      "query-api-key",
+      "fragment-secret",
+      "basic-secret",
+      "form-password",
+      "form-api-key",
+      "summary-user",
+      "summary-password",
+      "summary-fragment",
+    ]) {
+      expect(copied).not.toContain(secret);
+    }
+    expect(copied).toContain("[REDACTED]");
+    expect(copied).toContain("scope=read");
   });
 
   it("redacts failed requests duplicated into info logs and error text", () => {
@@ -115,7 +158,7 @@ describe("generateXAAFlowText", () => {
           },
         ],
       }),
-      {},
+      {}
     );
 
     for (const secret of [

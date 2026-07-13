@@ -14,9 +14,11 @@ import {
   issueIdJag,
   issueMockIdToken,
   issueNegativeIdJag,
+  validateXaaTokenExchangeSubject,
   verifyXaaJwt,
   XAA_ACCESS_TOKEN_TYP,
   XAA_CODE_JWT_TYP,
+  XAA_RAS_CLIENT_ID_CLAIM,
 } from "../../src/xaa/mint/signer.js";
 import {
   NEGATIVE_TEST_MODES,
@@ -33,9 +35,11 @@ function decodeJwt(token: string): {
   const [encodedHeader, encodedPayload, encodedSignature] = token.split(".");
 
   return {
-    header: JSON.parse(Buffer.from(encodedHeader, "base64url").toString("utf-8")),
+    header: JSON.parse(
+      Buffer.from(encodedHeader, "base64url").toString("utf-8")
+    ),
     payload: JSON.parse(
-      Buffer.from(encodedPayload, "base64url").toString("utf-8"),
+      Buffer.from(encodedPayload, "base64url").toString("utf-8")
     ),
     signature: Buffer.from(encodedSignature, "base64url"),
     signingInput: `${encodedHeader}.${encodedPayload}`,
@@ -104,6 +108,17 @@ describe("xaa-idjag-signer", () => {
     expect(verifyWithPublishedKey(result.token)).toBe(true);
   });
 
+  it("omits the optional resource claim when none is requested", () => {
+    const result = issueIdJag({
+      issuer: "https://issuer.example/api/web/xaa",
+      subject: "user-12345",
+      audience: "https://auth.example.com",
+      clientId: "mcpjam-debugger",
+    });
+
+    expect(decodeJwt(result.token).payload).not.toHaveProperty("resource");
+  });
+
   it("issues a mock ID token with the published signing key", () => {
     const result = issueMockIdToken({
       issuer: "https://issuer.example/api/web/xaa",
@@ -127,6 +142,44 @@ describe("xaa-idjag-signer", () => {
     expect(verifyWithPublishedKey(result.token)).toBe(true);
   });
 
+  it("strictly validates the IdP audience and separate RAS client mapping", () => {
+    const valid = {
+      sub: "user-12345",
+      email: "demo.user@example.com",
+      aud: "idp-client",
+      [XAA_RAS_CLIENT_ID_CLAIM]: "ras-client",
+    };
+    expect(validateXaaTokenExchangeSubject(valid, "idp-client")).toEqual({
+      subject: "user-12345",
+      email: "demo.user@example.com",
+      resourceClientId: "ras-client",
+    });
+    expect(() =>
+      validateXaaTokenExchangeSubject(
+        { ...valid, aud: undefined },
+        "idp-client"
+      )
+    ).toThrow(/aud/);
+    expect(() =>
+      validateXaaTokenExchangeSubject(
+        { ...valid, aud: ["idp-client", "other"] },
+        "idp-client"
+      )
+    ).toThrow(/azp/);
+    expect(
+      validateXaaTokenExchangeSubject(
+        { ...valid, aud: ["idp-client", "other"], azp: "idp-client" },
+        "idp-client"
+      ).resourceClientId
+    ).toBe("ras-client");
+    expect(() =>
+      validateXaaTokenExchangeSubject(
+        { ...valid, [XAA_RAS_CLIENT_ID_CLAIM]: undefined },
+        "idp-client"
+      )
+    ).toThrow(/RAS client mapping/);
+  });
+
   const assertions: Record<
     NegativeTestMode,
     (decoded: ReturnType<typeof decodeJwt>) => void
@@ -139,15 +192,14 @@ describe("xaa-idjag-signer", () => {
       expect(decoded.payload.exp).toBeLessThan(Math.floor(Date.now() / 1000)),
     missing_claims: (decoded) => {
       expect(decoded.payload).not.toHaveProperty("sub");
-      expect(decoded.payload).not.toHaveProperty("resource");
+      expect(decoded.payload).not.toHaveProperty("jti");
     },
-    invalid_type_header: (decoded) =>
-      expect(decoded.header.typ).toBe("JWT"),
+    invalid_type_header: (decoded) => expect(decoded.header.typ).toBe("JWT"),
     wrong_issuer: (decoded) =>
       expect(decoded.payload.iss).toBe("https://wrong-issuer.example.com"),
     resource_mismatch: (decoded) =>
       expect(decoded.payload.resource).toBe(
-        "https://wrong-resource.example.com",
+        "https://wrong-resource.example.com"
       ),
     client_id_mismatch: (decoded) =>
       expect(decoded.payload.client_id).toBe("wrong-client-id"),
@@ -160,7 +212,7 @@ describe("xaa-idjag-signer", () => {
   };
 
   for (const mode of NEGATIVE_TEST_MODES.filter(
-    (candidate) => candidate !== "valid",
+    (candidate) => candidate !== "valid"
   )) {
     it(`issues ${mode} ID-JAGs with the expected defect`, () => {
       const result = issueNegativeIdJag(
@@ -172,7 +224,7 @@ describe("xaa-idjag-signer", () => {
           clientId: "mcpjam-debugger",
           scope: "read:tools",
         },
-        mode,
+        mode
       );
 
       const decoded = decodeJwt(result.token);
@@ -274,7 +326,7 @@ describe("mock OIDC token minting + verification", () => {
     });
     // A code can never be redeemed as an access token.
     expect(() =>
-      verifyXaaJwt(code.token, { issuer: ISSUER, typ: XAA_ACCESS_TOKEN_TYP }),
+      verifyXaaJwt(code.token, { issuer: ISSUER, typ: XAA_ACCESS_TOKEN_TYP })
     ).toThrow(/type/i);
     // An ID-JAG can never be a code.
     const idJag = issueIdJag({
@@ -285,7 +337,7 @@ describe("mock OIDC token minting + verification", () => {
       clientId: "client-1",
     });
     expect(() =>
-      verifyXaaJwt(idJag.token, { issuer: ISSUER, typ: XAA_CODE_JWT_TYP }),
+      verifyXaaJwt(idJag.token, { issuer: ISSUER, typ: XAA_CODE_JWT_TYP })
     ).toThrow(/type/i);
   });
 
@@ -300,7 +352,7 @@ describe("mock OIDC token minting + verification", () => {
       verifyXaaJwt(issued.token, {
         issuer: "https://other.example.com",
         typ: XAA_ACCESS_TOKEN_TYP,
-      }),
+      })
     ).toThrow(/issuer/i);
 
     // Re-keying the IdP invalidates previously-signed tokens (foreign key).
@@ -310,7 +362,7 @@ describe("mock OIDC token minting + verification", () => {
     process.env.XAA_IDP_KEY_DIR = tempDir;
     initXAAIdpKeyPair();
     expect(() =>
-      verifyXaaJwt(issued.token, { issuer: ISSUER, typ: XAA_ACCESS_TOKEN_TYP }),
+      verifyXaaJwt(issued.token, { issuer: ISSUER, typ: XAA_ACCESS_TOKEN_TYP })
     ).toThrow(/signature/i);
   });
 });

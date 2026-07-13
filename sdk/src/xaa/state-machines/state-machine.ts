@@ -4,6 +4,7 @@ import {
   ID_JAG_TOKEN_TYPE,
   ID_TOKEN_TOKEN_TYPE,
   TOKEN_EXCHANGE_GRANT,
+  XAA_DEBUG_IDP_CLIENT_ID,
   XAA_DEBUG_CLIENT_ID_METADATA_URL,
 } from "../../oauth/client-identity.js";
 import { validateClientIdMetadataUrl } from "../../oauth/state-machines/shared/client-id-metadata.js";
@@ -68,7 +69,7 @@ function diagnosticKey(key: string): string {
 
 function redactDiagnosticValue(
   value: unknown,
-  knownSecrets: ReadonlyArray<string> = [],
+  knownSecrets: ReadonlyArray<string> = []
 ): any {
   const redactString = (input: string): string => {
     let redacted = input;
@@ -102,7 +103,7 @@ function redactDiagnosticValue(
       Object.entries(current).map(([childKey, childValue]) => [
         childKey,
         visit(childValue, childKey),
-      ]),
+      ])
     );
   };
 
@@ -111,7 +112,7 @@ function redactDiagnosticValue(
 
 function sanitizeDiagnosticUpdates(
   state: Partial<XAAFlowState>,
-  updates: Partial<XAAFlowState>,
+  updates: Partial<XAAFlowState>
 ): Partial<XAAFlowState> {
   const knownSecrets = [
     state.clientSecret,
@@ -135,7 +136,7 @@ function sanitizeDiagnosticUpdates(
     if (key in sanitized) {
       (sanitized as Record<string, unknown>)[key] = redactDiagnosticValue(
         sanitized[key],
-        knownSecrets,
+        knownSecrets
       );
     }
   }
@@ -490,7 +491,7 @@ export function createXAAStateMachine(
     updateState: (updates) => {
       const sanitizedUpdates = sanitizeDiagnosticUpdates(
         machine.state,
-        updates,
+        updates
       );
       machine.state = { ...machine.state, ...sanitizedUpdates };
       updateState(sanitizedUpdates);
@@ -654,9 +655,7 @@ export function createXAAStateMachine(
           typeof resourceMetadata.resource === "string"
             ? resourceMetadata.resource
             : undefined;
-        if (
-          !metadataResource || metadataResource !== requestedResource
-        ) {
+        if (!metadataResource || metadataResource !== requestedResource) {
           lastError = `Protected-resource metadata at ${resourceMetadataUrl} does not identify ${requestedResource}.`;
           continue;
         }
@@ -790,10 +789,10 @@ export function createXAAStateMachine(
             );
           }
 
-        // RFC 8414 §3.3: the metadata's `issuer` MUST match the one we asked
-        // for. A mismatched (or absent) issuer means its token endpoint can't
-        // be trusted with the signed assertion + any client secret — continue
-        // to the next candidate rather than adopting a foreign issuer.
+          // RFC 8414 §3.3: the metadata's `issuer` MUST match the one we asked
+          // for. A mismatched (or absent) issuer means its token endpoint can't
+          // be trusted with the signed assertion + any client secret — continue
+          // to the next candidate rather than adopting a foreign issuer.
           if (
             typeof metadata.issuer !== "string" ||
             metadata.issuer !== candidateIssuer
@@ -1026,8 +1025,8 @@ export function createXAAStateMachine(
         outcome.status === "http_error"
           ? "The authorization server did not accept open Dynamic Client Registration (no initial access token was sent). A protected registration endpoint is a valid deployment choice — this does not prove the server lacks DCR."
           : outcome.status === "invalid_response"
-            ? "The registration response could not be parsed as a client registration."
-            : "The registration request did not reach the authorization server.";
+          ? "The registration response could not be parsed as a client registration."
+          : "The registration request did not reach the authorization server.";
       parkRegistration(
         `${outcome.error} ${framing} Switch to pre-registered credentials to continue.`
       );
@@ -1180,7 +1179,9 @@ export function createXAAStateMachine(
     if (!responseContentType.includes("json")) {
       warnings.push({
         code: "non_json_content_type",
-        message: `The registration response parsed as JSON but was served as "${responseContentType || "(none)"}".`,
+        message: `The registration response parsed as JSON but was served as "${
+          responseContentType || "(none)"
+        }".`,
       });
     }
     const cacheControl = outcome.response.headers["cache-control"] || "";
@@ -1273,15 +1274,12 @@ export function createXAAStateMachine(
 
     let result: XAARequestResult;
     try {
-      result = await runRequest(
-        "fetch_client_metadata_document",
-        request,
-        () =>
-          requestExecutor.externalRequest(documentUrl, {
-            method: "GET",
-            headers: request.headers,
-            redirect: "manual",
-          })
+      result = await runRequest("fetch_client_metadata_document", request, () =>
+        requestExecutor.externalRequest(documentUrl, {
+          method: "GET",
+          headers: request.headers,
+          redirect: "manual",
+        })
       );
     } catch {
       // runRequest already recorded the failure and set the error; the step
@@ -1318,7 +1316,9 @@ export function createXAAStateMachine(
       /^application\/[a-z0-9][a-z0-9!#$&^_.+-]*\+json$/.test(mediaTypeEssence);
     if (!isJsonMediaType) {
       park(
-        `The client metadata document was served as "${contentType || "(none)"}", not a JSON media type.`
+        `The client metadata document was served as "${
+          contentType || "(none)"
+        }", not a JSON media type.`
       );
       return;
     }
@@ -1401,7 +1401,8 @@ export function createXAAStateMachine(
       body: {
         userId: activeUserId,
         email: activeEmail,
-        audience: state.clientId || "mcpjam-xaa-debugger",
+        audience: XAA_DEBUG_IDP_CLIENT_ID,
+        resourceClientId: state.clientId,
         ...hostedIssuerBodyExtras,
       },
     };
@@ -1494,9 +1495,11 @@ export function createXAAStateMachine(
           requested_token_type: ID_JAG_TOKEN_TYPE,
           subject_token: state.identityAssertion,
           subject_token_type: ID_TOKEN_TOKEN_TYPE,
-          client_id: state.clientId,
+          client_id: XAA_DEBUG_IDP_CLIENT_ID,
           audience: state.authzServerIssuer,
-          resource: state.resourceUrl || state.serverUrl || "",
+          ...(state.resourceUrl || state.serverUrl
+            ? { resource: state.resourceUrl || state.serverUrl }
+            : {}),
           ...(state.scope ? { scope: state.scope } : {}),
         };
         const request = {
@@ -1582,7 +1585,9 @@ export function createXAAStateMachine(
         body: {
           identityAssertion: state.identityAssertion,
           audience: state.authzServerIssuer,
-          resource: state.resourceUrl || state.serverUrl,
+          ...(state.resourceUrl || state.serverUrl
+            ? { resource: state.resourceUrl || state.serverUrl }
+            : {}),
           clientId: state.clientId,
           scope: state.scope,
           negativeTestMode: state.negativeTestMode,
@@ -1687,14 +1692,11 @@ export function createXAAStateMachine(
     let manualAuthMethod = state.tokenEndpointAuthMethod;
     if (!registrationId && !serverId) {
       if (registrationStrategy === "dcr") {
-        const registrationEndpoint =
-          state.authzMetadata?.registration_endpoint;
+        const registrationEndpoint = state.authzMetadata?.registration_endpoint;
         const cacheKey = registrationEndpoint
           ? dcrCacheKeyFor(registrationEndpoint)
           : undefined;
-        const cached = cacheKey
-          ? dcrCredentialCache?.get(cacheKey)
-          : undefined;
+        const cached = cacheKey ? dcrCredentialCache?.get(cacheKey) : undefined;
         if (!cached || cached.clientId !== state.clientId) {
           machine.updateState({
             currentStep: "jwt_bearer_request",

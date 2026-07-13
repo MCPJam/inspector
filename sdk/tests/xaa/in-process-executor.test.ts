@@ -13,6 +13,7 @@ import {
   ID_JAG_TOKEN_TYPE,
   ID_TOKEN_TOKEN_TYPE,
   TOKEN_EXCHANGE_GRANT,
+  XAA_DEBUG_IDP_CLIENT_ID,
 } from "../../src/oauth/client-identity.js";
 
 const ISSUER_BASE = "https://issuer.example.com/api/mcp";
@@ -95,14 +96,15 @@ describe("createInProcessXaaExecutor internal routes", () => {
       issuer,
       subject: "user-1",
       email: "u@example.com",
-      audience: "client-1",
+      audience: XAA_DEBUG_IDP_CLIENT_ID,
+      resourceClientId: "client-1",
     });
     const form = new URLSearchParams({
       grant_type: TOKEN_EXCHANGE_GRANT,
       requested_token_type: ID_JAG_TOKEN_TYPE,
       subject_token: idToken,
       subject_token_type: ID_TOKEN_TOKEN_TYPE,
-      client_id: "client-1",
+      client_id: XAA_DEBUG_IDP_CLIENT_ID,
       audience: AS_ISSUER,
       resource: RESOURCE,
       scope: "read:tools",
@@ -115,6 +117,8 @@ describe("createInProcessXaaExecutor internal routes", () => {
     });
 
     expect(result.ok).toBe(true);
+    expect(result.headers["cache-control"]).toBe("no-store");
+    expect(result.headers.pragma).toBe("no-cache");
     const response = result.body as {
       access_token: string;
       issued_token_type: string;
@@ -216,7 +220,7 @@ describe("createInProcessXaaExecutor internal routes", () => {
     expect(r.status).toBe(400);
   });
 
-  it("/token-exchange requires the audience, resource, clientId, and a known mode", async () => {
+  it("/token-exchange requires the audience, clientId, and a known mode", async () => {
     const exec = createInProcessXaaExecutor({ issuerBaseUrl: ISSUER_BASE });
     const identityAssertion = issueMockIdToken({
       issuer: getXAAIssuerUrl(ISSUER_BASE),
@@ -229,7 +233,7 @@ describe("createInProcessXaaExecutor internal routes", () => {
       clientId: "client-1",
     };
 
-    for (const field of ["audience", "resource", "clientId"] as const) {
+    for (const field of ["audience", "clientId"] as const) {
       const body = { ...valid, [field]: "   " };
       const result = await exec.internalRequest("/token-exchange", post(body));
       expect(result.status, field).toBe(400);

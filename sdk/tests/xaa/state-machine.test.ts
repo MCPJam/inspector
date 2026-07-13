@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { XAA_DEBUG_CLIENT_ID_METADATA_URL } from "../../src/oauth/client-identity.js";
+import {
+  XAA_DEBUG_CLIENT_ID_METADATA_URL,
+  XAA_DEBUG_IDP_CLIENT_ID,
+} from "../../src/oauth/client-identity.js";
 import {
   CLIENT_SECRET_MASK,
   createXAAStateMachine,
@@ -105,7 +108,14 @@ describe("createXAAStateMachine", () => {
           status: 200,
           statusText: "OK",
           headers: {},
-          body: { jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25", serverInfo: { name: "demo" } } },
+          body: {
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: {
+              protocolVersion: "2025-11-25",
+              serverInfo: { name: "demo" },
+            },
+          },
           ok: true,
         };
       }),
@@ -250,7 +260,13 @@ describe("createXAAStateMachine", () => {
             ok: true,
           };
         }
-        return { status: 200, statusText: "OK", headers: {}, body: {}, ok: true };
+        return {
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: {},
+          ok: true,
+        };
       }),
     };
 
@@ -546,7 +562,7 @@ describe("createXAAStateMachine", () => {
       expect(sent.get("subject_token_type")).toBe(
         "urn:ietf:params:oauth:token-type:id_token"
       );
-      expect(sent.get("client_id")).toBe("mcpjam-debugger");
+      expect(sent.get("client_id")).toBe(XAA_DEBUG_IDP_CLIENT_ID);
       expect(sent.get("audience")).toBe("https://auth.example.com");
       expect(sent.get("resource")).toBe("https://mcp.example.com");
       expect(sent.get("scope")).toBe("read:tools");
@@ -708,7 +724,14 @@ describe("createXAAStateMachine", () => {
             status: 200,
             statusText: "OK",
             headers: {},
-            body: { jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25", serverInfo: { name: "demo" } } },
+            body: {
+              jsonrpc: "2.0",
+              id: "mcpjam-xaa-cli",
+              result: {
+                protocolVersion: "2025-11-25",
+                serverInfo: { name: "demo" },
+              },
+            },
             ok: true,
           };
         }),
@@ -932,7 +955,14 @@ describe("createXAAStateMachine", () => {
             status: 200,
             statusText: "OK",
             headers: {},
-            body: { jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25", serverInfo: { name: "demo" } } },
+            body: {
+              jsonrpc: "2.0",
+              id: "mcpjam-xaa-cli",
+              result: {
+                protocolVersion: "2025-11-25",
+                serverInfo: { name: "demo" },
+              },
+            },
             ok: true,
           };
         }),
@@ -1197,9 +1227,7 @@ function createDynamicHarness(options: DynamicHarnessOptions) {
     registrationStrategy: options.strategy,
     // Simulates the per-target duplicate-risk flag re-seeded into a fresh
     // (from-idle) run after an ordinary reset.
-    ...(options.seedDuplicateRisk
-      ? { dcrRetryMayCreateDuplicate: true }
-      : {}),
+    ...(options.seedDuplicateRisk ? { dcrRetryMayCreateDuplicate: true } : {}),
   });
 
   const externalCalls: Array<{ url: string; init?: any }> = [];
@@ -1295,7 +1323,14 @@ function createDynamicHarness(options: DynamicHarnessOptions) {
         status: 200,
         statusText: "OK",
         headers: {},
-        body: { jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25", serverInfo: { name: "demo" } } },
+        body: {
+          jsonrpc: "2.0",
+          id: "mcpjam-xaa-cli",
+          result: {
+            protocolVersion: "2025-11-25",
+            serverInfo: { name: "demo" },
+          },
+        },
         ok: true,
       };
     }),
@@ -1317,13 +1352,19 @@ function createDynamicHarness(options: DynamicHarnessOptions) {
       }
       if (path === "/token") {
         const body = new URLSearchParams(init.body);
+        const authenticateCall = internalCalls.find(
+          (entry) => entry.path === "/authenticate"
+        );
+        const resourceClientId = authenticateCall
+          ? JSON.parse(authenticateCall.init.body).resourceClientId
+          : undefined;
         return specTokenExchangeResult(
           makeJwt({
             iss: "https://issuer.example/api/web/xaa",
             sub: "user-12345",
             aud: "https://auth.example.com",
             resource: "https://mcp.example.com",
-            client_id: body.get("client_id"),
+            client_id: resourceClientId,
             exp: Math.floor(Date.now() / 1000) + 300,
             scope: "read:tools",
           })
@@ -1417,7 +1458,15 @@ function createDynamicHarness(options: DynamicHarnessOptions) {
       if (!call) return undefined;
       if (call.path === "/token") {
         const body = new URLSearchParams(call.init.body);
-        return { clientId: body.get("client_id") };
+        const authenticateCall = internalCalls.find(
+          (entry) => entry.path === "/authenticate"
+        );
+        return {
+          clientId: body.get("client_id"),
+          resourceClientId: authenticateCall
+            ? JSON.parse(authenticateCall.init.body).resourceClientId
+            : undefined,
+        };
       }
       return JSON.parse(call.init.body);
     },
@@ -1435,8 +1484,12 @@ describe("open dcr registration strategy", () => {
     expect(state.tokenEndpointAuthMethod).toBe("client_secret_post");
     expect(harness.registerCalls()).toHaveLength(1);
 
-    // The ID-JAG mint and the redemption both carry the minted identity.
-    expect(harness.tokenExchangeBody().clientId).toBe("minted-client");
+    // The IdP exchange uses its own client registration; the signed mock IdP
+    // mapping and RAS redemption carry the separately-minted RAS identity.
+    expect(harness.tokenExchangeBody()).toEqual({
+      clientId: XAA_DEBUG_IDP_CLIENT_ID,
+      resourceClientId: "minted-client",
+    });
     const proxyBody = harness.proxyTokenBody();
     expect(proxyBody.clientId).toBe("minted-client");
     expect(proxyBody.clientSecret).toBe(DCR_SECRET);
@@ -1529,9 +1582,9 @@ describe("open dcr registration strategy", () => {
     expect(state.currentStep).toBe("request_client_registration");
     expect(state.error).toContain("JWT Bearer");
     expect(state.dcrRetryMayCreateDuplicate).toBe(true);
-    expect(
-      harness.internalCalls.some((c) => c.path === "/authenticate")
-    ).toBe(false);
+    expect(harness.internalCalls.some((c) => c.path === "/authenticate")).toBe(
+      false
+    );
   });
 
   it("parks on an unusable client-auth method as a debugger limitation", async () => {
@@ -1577,7 +1630,9 @@ describe("open dcr registration strategy", () => {
 
     expect(state.currentStep).toBe("complete");
     expect(
-      state.registrationWarnings?.some((w) => w.code === "auth_method_not_echoed")
+      state.registrationWarnings?.some(
+        (w) => w.code === "auth_method_not_echoed"
+      )
     ).toBe(true);
     const proxyBody = harness.proxyTokenBody();
     expect(proxyBody.clientId).toBe("no-method-client");
@@ -1604,9 +1659,9 @@ describe("open dcr registration strategy", () => {
     // is a malformed registration.
     expect(state.currentStep).toBe("request_client_registration");
     expect(state.error).toContain("malformed");
-    expect(
-      harness.internalCalls.some((c) => c.path === "/authenticate")
-    ).toBe(false);
+    expect(harness.internalCalls.some((c) => c.path === "/authenticate")).toBe(
+      false
+    );
   });
 
   it("treats an omitted method with no secret as a public client", async () => {
@@ -1644,9 +1699,9 @@ describe("open dcr registration strategy", () => {
     expect(state.error).toContain("open Dynamic Client Registration");
     expect(state.dcrRetryMayCreateDuplicate).toBe(true);
     expect(harness.registerCalls()).toHaveLength(1);
-    expect(
-      harness.internalCalls.some((c) => c.path === "/authenticate")
-    ).toBe(false);
+    expect(harness.internalCalls.some((c) => c.path === "/authenticate")).toBe(
+      false
+    );
 
     // Ordinary Continue must NOT POST again while the flag is set...
     await harness.machine.proceedToNextStep();
@@ -1676,9 +1731,9 @@ describe("open dcr registration strategy", () => {
     expect(state.currentStep).toBe("request_client_registration");
     expect(state.error).toContain("Register another client");
     expect(harness.registerCalls()).toHaveLength(0);
-    expect(
-      harness.internalCalls.some((c) => c.path === "/authenticate")
-    ).toBe(false);
+    expect(harness.internalCalls.some((c) => c.path === "/authenticate")).toBe(
+      false
+    );
 
     // Clearing the flag (the confirmed "Register another client" path — which
     // also rebuilds the flow, clearing the parked error) lets exactly one
@@ -1831,9 +1886,9 @@ describe("open dcr registration strategy", () => {
     // The recovery action ("Register another client") is gated on this flag —
     // it must be set so the error's instruction is actually actionable.
     expect(state.dcrRetryMayCreateDuplicate).toBe(true);
-    expect(
-      harness.internalCalls.some((c) => c.path === "/proxy/token")
-    ).toBe(false);
+    expect(harness.internalCalls.some((c) => c.path === "/proxy/token")).toBe(
+      false
+    );
   });
 
   it("parks the token request when the session credentials are gone", async () => {
@@ -1853,9 +1908,9 @@ describe("open dcr registration strategy", () => {
     // The error tells the user to "Register another client" — the gate flag
     // must be set so that action is actually visible.
     expect(state.dcrRetryMayCreateDuplicate).toBe(true);
-    expect(
-      harness.internalCalls.some((c) => c.path === "/proxy/token")
-    ).toBe(false);
+    expect(harness.internalCalls.some((c) => c.path === "/proxy/token")).toBe(
+      false
+    );
   });
 });
 
@@ -1882,10 +1937,12 @@ describe("cimd registration strategy", () => {
     expect(fetches).toHaveLength(1);
     expect(fetches[0].init.redirect).toBe("manual");
 
-    // The ID-JAG claim and redemption both carry the exact URL, no secret.
-    expect(harness.tokenExchangeBody().clientId).toBe(
-      XAA_DEBUG_CLIENT_ID_METADATA_URL
-    );
+    // The IdP exchange and the RAS identity stay separate; the latter is the
+    // exact CIMD URL and is also used at redemption, with no secret.
+    expect(harness.tokenExchangeBody()).toEqual({
+      clientId: XAA_DEBUG_IDP_CLIENT_ID,
+      resourceClientId: XAA_DEBUG_CLIENT_ID_METADATA_URL,
+    });
     const proxyBody = harness.proxyTokenBody();
     expect(proxyBody.clientId).toBe(XAA_DEBUG_CLIENT_ID_METADATA_URL);
     expect(proxyBody.clientSecret).toBeUndefined();
@@ -2005,7 +2062,11 @@ describe("cimd registration strategy", () => {
     const harness = createDynamicHarness({
       strategy: "cimd",
       authzMetadataExtras: CIMD_SUPPORTED,
-      cimdResponse: { status: 200, headers: { "content-type": contentType }, body: cimdDoc },
+      cimdResponse: {
+        status: 200,
+        headers: { "content-type": contentType },
+        body: cimdDoc,
+      },
     });
     await harness.machine.runAll();
     expect(harness.getState().currentStep).toBe("complete");
@@ -2021,7 +2082,11 @@ describe("cimd registration strategy", () => {
     const harness = createDynamicHarness({
       strategy: "cimd",
       authzMetadataExtras: CIMD_SUPPORTED,
-      cimdResponse: { status: 200, headers: { "content-type": contentType }, body: cimdDoc },
+      cimdResponse: {
+        status: 200,
+        headers: { "content-type": contentType },
+        body: cimdDoc,
+      },
     });
     await harness.machine.runAll();
     const state = harness.getState();
@@ -2100,16 +2165,13 @@ describe("createXAAStateMachine discovery guards", () => {
   it("treats a trailing slash and query as part of the resource identity", async () => {
     const serverUrl = "https://mcp.example.com/mcp/?tenant=acme";
     const externalUrls: string[] = [];
-    const { machine, getState } = driveDiscovery(
-      async (url) => {
-        externalUrls.push(url);
-        return ok({
-          resource: "https://mcp.example.com/mcp?tenant=acme",
-          authorization_servers: ["https://auth.example.com"],
-        });
-      },
-      serverUrl
-    );
+    const { machine, getState } = driveDiscovery(async (url) => {
+      externalUrls.push(url);
+      return ok({
+        resource: "https://mcp.example.com/mcp?tenant=acme",
+        authorization_servers: ["https://auth.example.com"],
+      });
+    }, serverUrl);
 
     await machine.runAll();
 

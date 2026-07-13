@@ -101,7 +101,7 @@ function formatEpochSeconds(seconds: number): string {
 export function lintIdJag(
   header: Record<string, unknown> | null,
   payload: Record<string, unknown> | null,
-  context: IdJagLintContext = {},
+  context: IdJagLintContext = {}
 ): IdJagLintVerdict[] {
   const h = header ?? {};
   const p = payload ?? {};
@@ -127,7 +127,7 @@ export function lintIdJag(
           detail: `Expected ${ID_JAG_TYP}. Without explicit typing, an authorization server may accept this token in contexts it was never meant for (token-confusion).`,
           citation: h.typ === "JWT" ? CITATIONS.typBcp : CITATIONS.typ,
           actual: show(h.typ),
-        },
+        }
   );
 
   // iss
@@ -180,7 +180,7 @@ export function lintIdJag(
             "Missing subject. The authorization server can't tell which user this grant represents.",
           citation: CITATIONS.sub,
           actual: show(p.sub),
-        },
+        }
   );
 
   // aud — exact match against the authorization server's issuer identifier.
@@ -221,9 +221,9 @@ export function lintIdJag(
     verdicts.push({
       id: "resource",
       claim: "resource",
-      status: "fail",
+      status: "warn",
       detail:
-        "Missing resource indicator. The access token's audience can't be scoped to the protected resource.",
+        "No resource indicator was included. It is optional in the ID-JAG draft, but including it can bind the resulting access token to a protected resource.",
       citation: CITATIONS.resource,
       actual: show(p.resource),
     });
@@ -304,7 +304,7 @@ export function lintIdJag(
             "No jti. Without a unique token id the authorization server can't detect a replayed assertion.",
           citation: CITATIONS.jti,
           actual: show(p.jti),
-        },
+        }
   );
 
   // iat — REQUIRED by the ID-JAG draft; anchors the assertion's issue time.
@@ -410,7 +410,7 @@ export function lintIdJag(
             "Neither email nor aud_sub is present. The authorization server only has sub — an IdP-local identifier — to resolve the user, which breaks JIT provisioning and cross-system mapping.",
           citation: CITATIONS.subjectResolution,
           actual: "(absent)",
-        },
+        }
   );
 
   return verdicts;

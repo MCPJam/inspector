@@ -33,7 +33,7 @@ function verdictFor(
   header: Record<string, unknown>,
   payload: Record<string, unknown>,
   id: string,
-  context: IdJagLintContext = CONTEXT,
+  context: IdJagLintContext = CONTEXT
 ) {
   const verdict = lintIdJag(header, payload, context).find((v) => v.id === id);
   if (!verdict) throw new Error(`no verdict for ${id}`);
@@ -53,7 +53,7 @@ describe("lintIdJag", () => {
       const verdict = verdictFor(
         { ...VALID_HEADER, typ: "JWT" },
         VALID_PAYLOAD,
-        "typ",
+        "typ"
       );
       expect(verdict.status).toBe("fail");
       expect(verdict.citation.spec).toBe("RFC 8725");
@@ -73,7 +73,7 @@ describe("lintIdJag", () => {
       const verdict = verdictFor(
         VALID_HEADER,
         { ...VALID_PAYLOAD, iss: "https://wrong-issuer.example.com" },
-        "iss",
+        "iss"
       );
       expect(verdict.status).toBe("fail");
       expect(verdict.detail).toContain("https://idp.example.com");
@@ -84,7 +84,7 @@ describe("lintIdJag", () => {
         VALID_HEADER,
         { ...VALID_PAYLOAD, iss: "https://anything.example.com" },
         "iss",
-        { nowSeconds: NOW },
+        { nowSeconds: NOW }
       );
       expect(verdict.status).toBe("pass");
     });
@@ -105,7 +105,7 @@ describe("lintIdJag", () => {
       const verdict = verdictFor(
         VALID_HEADER,
         { ...VALID_PAYLOAD, sub: "  " },
-        "sub",
+        "sub"
       );
       expect(verdict.status).toBe("fail");
     });
@@ -116,7 +116,7 @@ describe("lintIdJag", () => {
       const verdict = verdictFor(
         VALID_HEADER,
         { ...VALID_PAYLOAD, aud: "https://wrong-audience.example.com" },
-        "aud",
+        "aud"
       );
       expect(verdict.status).toBe("fail");
       expect(verdict.detail).toContain("exactly match");
@@ -126,7 +126,7 @@ describe("lintIdJag", () => {
       const verdict = verdictFor(
         VALID_HEADER,
         { ...VALID_PAYLOAD, aud: ["https://as.example.com"] },
-        "aud",
+        "aud"
       );
       expect(verdict.status).toBe("fail");
       expect(verdict.detail).toContain("array");
@@ -138,14 +138,14 @@ describe("lintIdJag", () => {
       const verdict = verdictFor(
         VALID_HEADER,
         { ...VALID_PAYLOAD, resource: "https://wrong-resource.example.com" },
-        "resource",
+        "resource"
       );
       expect(verdict.status).toBe("fail");
     });
 
-    it("fails a missing resource", () => {
+    it("warns for an optional missing resource", () => {
       const { resource: _resource, ...payload } = VALID_PAYLOAD;
-      expect(verdictFor(VALID_HEADER, payload, "resource").status).toBe("fail");
+      expect(verdictFor(VALID_HEADER, payload, "resource").status).toBe("warn");
     });
   });
 
@@ -154,7 +154,7 @@ describe("lintIdJag", () => {
       const verdict = verdictFor(
         VALID_HEADER,
         { ...VALID_PAYLOAD, client_id: "wrong-client-id" },
-        "client_id",
+        "client_id"
       );
       expect(verdict.status).toBe("fail");
       expect(verdict.detail).toContain("client-abc");
@@ -163,7 +163,7 @@ describe("lintIdJag", () => {
     it("fails a missing client_id", () => {
       const { client_id: _clientId, ...payload } = VALID_PAYLOAD;
       expect(verdictFor(VALID_HEADER, payload, "client_id").status).toBe(
-        "fail",
+        "fail"
       );
     });
   });
@@ -189,7 +189,7 @@ describe("lintIdJag", () => {
       const verdict = verdictFor(
         VALID_HEADER,
         { ...VALID_PAYLOAD, iat: NOW + 10 * 60 },
-        "iat",
+        "iat"
       );
       expect(verdict.status).toBe("warn");
       expect(verdict.detail).toContain("clock skew");
@@ -197,7 +197,7 @@ describe("lintIdJag", () => {
 
     it("passes a present iat", () => {
       expect(verdictFor(VALID_HEADER, VALID_PAYLOAD, "iat").status).toBe(
-        "pass",
+        "pass"
       );
     });
 
@@ -209,14 +209,14 @@ describe("lintIdJag", () => {
         lintIdJag(
           VALID_HEADER,
           { ...VALID_PAYLOAD, iat: hugeIat },
-          { nowSeconds: NOW },
-        ),
+          { nowSeconds: NOW }
+        )
       ).not.toThrow();
       const verdict = verdictFor(
         VALID_HEADER,
         { ...VALID_PAYLOAD, iat: hugeIat },
         "iat",
-        { nowSeconds: NOW },
+        { nowSeconds: NOW }
       );
       expect(verdict.actual).toBe(String(hugeIat));
     });
@@ -227,7 +227,7 @@ describe("lintIdJag", () => {
       const verdict = verdictFor(
         VALID_HEADER,
         VALID_PAYLOAD,
-        "subject_resolution",
+        "subject_resolution"
       );
       expect(verdict.status).toBe("pass");
       expect(verdict.actual).toContain("user@example.com");
@@ -238,7 +238,7 @@ describe("lintIdJag", () => {
       const verdict = verdictFor(
         VALID_HEADER,
         { ...payload, aud_sub: "as-user-42" },
-        "subject_resolution",
+        "subject_resolution"
       );
       expect(verdict.status).toBe("pass");
       expect(verdict.actual).toContain("as-user-42");
@@ -257,7 +257,7 @@ describe("lintIdJag", () => {
       const verdict = verdictFor(
         VALID_HEADER,
         { ...VALID_PAYLOAD, exp: NOW - 60 },
-        "exp",
+        "exp"
       );
       expect(verdict.status).toBe("fail");
       expect(verdict.detail).toContain("expired");
@@ -272,7 +272,7 @@ describe("lintIdJag", () => {
       const verdict = verdictFor(
         VALID_HEADER,
         { ...VALID_PAYLOAD, exp: NOW + 24 * 60 * 60 },
-        "exp",
+        "exp"
       );
       expect(verdict.status).toBe("warn");
     });
@@ -283,14 +283,14 @@ describe("lintIdJag", () => {
         lintIdJag(
           VALID_HEADER,
           { ...VALID_PAYLOAD, exp: hugeExp },
-          { nowSeconds: NOW },
-        ),
+          { nowSeconds: NOW }
+        )
       ).not.toThrow();
       const verdict = verdictFor(
         VALID_HEADER,
         { ...VALID_PAYLOAD, exp: hugeExp },
         "exp",
-        { nowSeconds: NOW },
+        { nowSeconds: NOW }
       );
       expect(verdict.actual).toBe(String(hugeExp));
     });

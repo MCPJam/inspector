@@ -40,12 +40,15 @@ export {
   issueAuthorizationCode,
   issueAccessToken,
   verifyXaaJwt,
+  validateXaaTokenExchangeSubject,
   XAA_CODE_JWT_TYP,
   XAA_ACCESS_TOKEN_TYP,
+  XAA_RAS_CLIENT_ID_CLAIM,
   type IssueIdJagParams,
   type IssueMockIdTokenParams,
   type IssueAuthorizationCodeParams,
   type IssueAccessTokenParams,
+  type XaaTokenExchangeSubject,
 } from "./mint/signer.js";
 export {
   buildJwtBearerBody,

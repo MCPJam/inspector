@@ -118,6 +118,7 @@ export {
   MCPJAM_CLIENT_URI,
   MCPJAM_LOGO_URI,
   TOKEN_EXCHANGE_GRANT,
+  XAA_DEBUG_IDP_CLIENT_ID,
   XAA_DEBUG_CLIENT_ID_METADATA_URL,
   evaluateIdJagClientMetadata,
   getBrowserDebugDynamicRegistrationMetadata,

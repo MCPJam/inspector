@@ -22,8 +22,10 @@ import {
   ID_JAG_TOKEN_TYPE,
   ID_TOKEN_TOKEN_TYPE,
   TOKEN_EXCHANGE_GRANT,
+  XAA_DEBUG_IDP_CLIENT_ID,
   XAA_ACCESS_TOKEN_TYP,
   XAA_CODE_JWT_TYP,
+  validateXaaTokenExchangeSubject,
 } from "@mcpjam/sdk";
 import { createHash } from "crypto";
 import {
@@ -55,6 +57,10 @@ import { CORS_ORIGINS, MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 
 const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 const NEGATIVE_TEST_CASE_TIMEOUT_MS = 8_000;
+const TOKEN_NO_STORE_HEADERS = {
+  "Cache-Control": "no-store",
+  Pragma: "no-cache",
+} as const;
 
 // Hard per-host daily cap on negative-test runs. This is a server-side
 // backstop independent of the client-side "passed a positive run" gate: even
@@ -203,7 +209,7 @@ function oauthError(
 ): Response {
   return Response.json(
     { error, error_description: description },
-    { status, headers: { "Cache-Control": "no-store" } }
+    { status, headers: TOKEN_NO_STORE_HEADERS }
   );
 }
 
@@ -364,12 +370,13 @@ const authenticateSchema = z.object({
   userId: z.string().trim().min(1).optional(),
   email: z.string().trim().email().optional(),
   audience: z.string().trim().min(1).optional(),
+  resourceClientId: z.string().trim().min(1).optional(),
 });
 
 const tokenExchangeSchema = z.object({
   identityAssertion: z.string().trim().min(1),
   audience: z.string().trim().min(1),
-  resource: z.string().trim().min(1),
+  resource: z.string().trim().min(1).optional(),
   clientId: z.string().trim().min(1),
   scope: z.string().trim().min(1).optional(),
   negativeTestMode: z.string().trim().optional(),
@@ -469,7 +476,7 @@ function buildNegativeDiff(
       };
     case "missing_claims":
       return {
-        field: "sub, resource",
+        field: "sub, jti",
         sent: "(omitted)",
         expected: "both present",
       };
@@ -769,7 +776,10 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
 
     // Preserve auth-relevant upstream headers so a hosted challenge survives
     // the relay instead of being silently dropped.
-    const relayHeaders: Record<string, string> = {};
+    const relayHeaders: Record<string, string> = {
+      "cache-control": "no-store",
+      pragma: "no-cache",
+    };
     for (const name of ["www-authenticate", "retry-after"]) {
       const value = upstream.headers.get(name);
       if (value) relayHeaders[name] = value;
@@ -984,7 +994,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   const handleAuthenticate = async (c: Context, issuer: string) => {
     try {
       const body = await c.req.json();
-      const { userId, email, audience } = parseRequest(
+      const { userId, email, audience, resourceClientId } = parseRequest(
         authenticateSchema,
         body
       );
@@ -995,20 +1005,25 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         subject,
         email: resolvedEmail,
         audience,
+        resourceClientId,
       });
 
-      return c.json({
-        id_token: issued.token,
-        token_type: "Bearer",
-        expires_in: Math.max(
-          0,
-          Math.floor((issued.expiresAt - Date.now()) / 1000)
-        ),
-        user: {
-          sub: subject,
-          email: resolvedEmail,
+      return c.json(
+        {
+          id_token: issued.token,
+          token_type: "Bearer",
+          expires_in: Math.max(
+            0,
+            Math.floor((issued.expiresAt - Date.now()) / 1000)
+          ),
+          user: {
+            sub: subject,
+            email: resolvedEmail,
+          },
         },
-      });
+        200,
+        TOKEN_NO_STORE_HEADERS
+      );
     } catch (error) {
       return toJsonError(
         error instanceof Error ? error.message : "Invalid authenticate request",
@@ -1069,16 +1084,20 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
               negativeTestMode
             );
 
-      return c.json({
-        id_jag: issued.token,
-        token_type: "N_A",
-        issued_token_type: ID_JAG_TOKEN_TYPE,
-        expires_in: Math.max(
-          0,
-          Math.floor((issued.expiresAt - Date.now()) / 1000)
-        ),
-        negative_test_mode: negativeTestMode,
-      });
+      return c.json(
+        {
+          id_jag: issued.token,
+          token_type: "N_A",
+          issued_token_type: ID_JAG_TOKEN_TYPE,
+          expires_in: Math.max(
+            0,
+            Math.floor((issued.expiresAt - Date.now()) / 1000)
+          ),
+          negative_test_mode: negativeTestMode,
+        },
+        200,
+        TOKEN_NO_STORE_HEADERS
+      );
     } catch (error) {
       return toJsonError(
         error instanceof Error
@@ -1863,7 +1882,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           ),
           scope: "openid profile email",
         },
-        { headers: { "Cache-Control": "no-store" } }
+        { headers: TOKEN_NO_STORE_HEADERS }
       );
     };
 
@@ -1887,18 +1906,24 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       }
       const clientId = form.client_id;
       if (!clientId) {
-        // The ID-JAG's client_id claim is REQUIRED by the draft.
         return oauthError(400, "invalid_request", "client_id is required");
       }
-      if (!form.subject_token || !form.audience || !form.resource) {
+      // This endpoint models the Client-to-IdP exchange. Its client_id is the
+      // public debugger client registered at the mock IdP, not the separate
+      // client identity that the RAS expects in the resulting ID-JAG.
+      if (clientId !== XAA_DEBUG_IDP_CLIENT_ID) {
+        return oauthError(401, "invalid_client", "Unknown mock IdP client_id");
+      }
+      if (!form.subject_token || !form.audience) {
         return oauthError(
           400,
           "invalid_request",
-          "subject_token, audience and resource are required"
+          "subject_token and audience are required"
         );
       }
 
       let subjectPayload: Record<string, unknown>;
+      let subject: ReturnType<typeof validateXaaTokenExchangeSubject>;
       try {
         // Stricter than the legacy JSON endpoint's unsafe decode: the subject
         // token must be an ID token THIS issuer signed, unexpired.
@@ -1906,6 +1931,10 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           issuer,
           typ: "JWT",
         });
+        subject = validateXaaTokenExchangeSubject(
+          subjectPayload,
+          XAA_DEBUG_IDP_CLIENT_ID
+        );
       } catch (error) {
         return oauthError(
           400,
@@ -1913,29 +1942,13 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           error instanceof Error ? error.message : "Invalid subject_token"
         );
       }
-      // Draft §4.3.3: the assertion's audience must match the client identity
-      // presenting it.
-      if (
-        typeof subjectPayload.aud === "string" &&
-        subjectPayload.aud !== clientId
-      ) {
-        return oauthError(
-          400,
-          "invalid_grant",
-          "The subject token's aud must match client_id"
-        );
-      }
-
       const issued = issueIdJag({
         issuer,
-        subject: String(subjectPayload.sub ?? "user-12345"),
-        email:
-          typeof subjectPayload.email === "string"
-            ? subjectPayload.email
-            : undefined,
+        subject: subject.subject,
+        email: subject.email,
         audience: form.audience,
-        resource: form.resource,
-        clientId,
+        resource: form.resource || undefined,
+        clientId: subject.resourceClientId,
         scope: form.scope || undefined,
       });
 
@@ -1950,7 +1963,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           ),
           ...(form.scope ? { scope: form.scope } : {}),
         },
-        { headers: { "Cache-Control": "no-store" } }
+        { headers: TOKEN_NO_STORE_HEADERS }
       );
     };
 
@@ -2022,7 +2035,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           email: payload.email,
           email_verified: true,
         },
-        { headers: { "Cache-Control": "no-store" } }
+        { headers: TOKEN_NO_STORE_HEADERS }
       );
     };
 

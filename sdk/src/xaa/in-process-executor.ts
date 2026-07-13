@@ -10,12 +10,14 @@ import {
   ID_JAG_TOKEN_TYPE,
   ID_TOKEN_TOKEN_TYPE,
   TOKEN_EXCHANGE_GRANT,
+  XAA_DEBUG_IDP_CLIENT_ID,
 } from "../oauth/client-identity.js";
 import { getXAAIssuerUrl, initXAAIdpKeyPair } from "./mint/keypair.js";
 import {
   issueIdJag,
   issueMockIdToken,
   issueNegativeIdJag,
+  validateXaaTokenExchangeSubject,
   verifyXaaJwt,
 } from "./mint/signer.js";
 import { buildJwtBearerRequest } from "./mint/jwt-bearer.js";
@@ -62,7 +64,11 @@ function jsonResult(status: number, body: unknown): XAARequestResult {
   return {
     status,
     statusText: status >= 200 && status < 300 ? "OK" : String(status),
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+      pragma: "no-cache",
+    },
     body,
     ok: status >= 200 && status < 300,
   };
@@ -119,6 +125,7 @@ export function createInProcessXaaExecutor(
         subject: str(body.userId),
         email: str(body.email),
         audience: str(body.audience) || undefined,
+        resourceClientId: str(body.resourceClientId) || undefined,
       });
       return jsonResult(200, { id_token: token });
     }
@@ -137,23 +144,29 @@ export function createInProcessXaaExecutor(
       ) {
         return jsonResult(400, { error: "invalid_request" });
       }
-      if (
-        !form.subject_token ||
-        !form.audience ||
-        !form.resource ||
-        !form.client_id
-      ) {
+      if (!form.subject_token || !form.audience || !form.client_id) {
         return jsonResult(400, {
-          error: "subject_token, audience, resource and client_id are required",
+          error: "subject_token, audience and client_id are required",
+        });
+      }
+      if (form.client_id !== XAA_DEBUG_IDP_CLIENT_ID) {
+        return jsonResult(401, {
+          error: "invalid_client",
+          error_description: "Unknown mock IdP client_id",
         });
       }
 
       let subjectPayload: Record<string, unknown>;
+      let subject: ReturnType<typeof validateXaaTokenExchangeSubject>;
       try {
         subjectPayload = verifyXaaJwt(form.subject_token, {
           issuer: resolveIssuer(),
           typ: "JWT",
         });
+        subject = validateXaaTokenExchangeSubject(
+          subjectPayload,
+          XAA_DEBUG_IDP_CLIENT_ID
+        );
       } catch (error) {
         return jsonResult(400, {
           error: "invalid_grant",
@@ -161,26 +174,13 @@ export function createInProcessXaaExecutor(
             error instanceof Error ? error.message : "Invalid subject_token",
         });
       }
-      if (
-        typeof subjectPayload.aud === "string" &&
-        subjectPayload.aud !== form.client_id
-      ) {
-        return jsonResult(400, {
-          error: "invalid_grant",
-          error_description: "The subject token's aud must match client_id",
-        });
-      }
-
       const issued = issueIdJag({
         issuer: resolveIssuer(),
-        subject: str(subjectPayload.sub, "user-12345"),
-        email:
-          typeof subjectPayload.email === "string"
-            ? subjectPayload.email
-            : undefined,
+        subject: subject.subject,
+        email: subject.email,
         audience: form.audience,
-        resource: form.resource,
-        clientId: form.client_id,
+        resource: form.resource || undefined,
+        clientId: subject.resourceClientId,
         scope: form.scope || undefined,
       });
       return jsonResult(200, {
@@ -222,7 +222,6 @@ export function createInProcessXaaExecutor(
       }
       const requiredClaims = {
         audience: nonEmptyString(body.audience),
-        resource: nonEmptyString(body.resource),
         clientId: nonEmptyString(body.clientId),
       };
       const missingField = Object.entries(requiredClaims).find(
@@ -251,7 +250,7 @@ export function createInProcessXaaExecutor(
           issuer: resolveIssuer(),
           subject,
           audience: requiredClaims.audience!,
-          resource: requiredClaims.resource!,
+          resource: nonEmptyString(body.resource),
           clientId: requiredClaims.clientId!,
           scope: nonEmptyString(body.scope),
           email: typeof claims.email === "string" ? claims.email : undefined,

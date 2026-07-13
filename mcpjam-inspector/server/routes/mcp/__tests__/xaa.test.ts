@@ -11,7 +11,11 @@ import {
   generateSessionToken,
   getSessionToken,
 } from "../../../services/session-token.js";
-import { initXAAIdpKeyPair, resetXAAIdpKeyPairForTests } from "@mcpjam/sdk";
+import {
+  initXAAIdpKeyPair,
+  resetXAAIdpKeyPairForTests,
+  XAA_DEBUG_IDP_CLIENT_ID,
+} from "@mcpjam/sdk";
 import xaa, { createXaaRouter } from "../xaa.js";
 
 function jsonResponse(
@@ -828,6 +832,8 @@ describe("hosted-issuer forwarding on the local router", () => {
     });
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("pragma")).toBe("no-cache");
     expect(await response.json()).toMatchObject({ id_token: "hosted-token" });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -1083,7 +1089,7 @@ describe("hosted-issuer forwarding on the local router", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const [url, init] = fetchMock.mock.calls[0] as unknown as [
         string,
-        RequestInit,
+        RequestInit
       ];
       expect(url).toBe(`${HOSTED_ORIGIN}/api/web/xaa/o/org_123/token`);
       // The spec form body crosses untouched; the transport opt-in headers
@@ -1091,9 +1097,7 @@ describe("hosted-issuer forwarding on the local router", () => {
       expect(String(init.body)).toBe(GRANT_FORM);
       const headers = init.headers as Record<string, string>;
       expect(headers.Authorization).toBe("Bearer workos-token");
-      expect(headers["Content-Type"]).toBe(
-        "application/x-www-form-urlencoded"
-      );
+      expect(headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
       expect(
         Object.keys(headers).some((name) =>
           name.toLowerCase().startsWith("x-mcpjam-")
@@ -1463,23 +1467,28 @@ describe("mock OIDC IdP endpoints", () => {
       body: JSON.stringify({
         userId: "alice-123",
         email: "alice@example.com",
-        audience: "client-1",
+        audience: XAA_DEBUG_IDP_CLIENT_ID,
+        resourceClientId: "client-1",
       }),
     });
     const { id_token: subjectToken } = await authenticateResponse.json();
+    expect(authenticateResponse.headers.get("cache-control")).toBe("no-store");
+    expect(authenticateResponse.headers.get("pragma")).toBe("no-cache");
 
     const response = await postToken({
       grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
       requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
       subject_token: subjectToken,
       subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
-      client_id: "client-1",
+      client_id: XAA_DEBUG_IDP_CLIENT_ID,
       audience: "https://as.example.com",
       resource: "https://rs.example.com",
       scope: "chat.read",
     });
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("pragma")).toBe("no-cache");
     const body = await response.json();
     expect(body.issued_token_type).toBe(
       "urn:ietf:params:oauth:token-type:id-jag"
@@ -1495,8 +1504,21 @@ describe("mock OIDC IdP endpoints", () => {
       scope: "chat.read",
     });
 
-    // aud mismatch between the subject token and the presenting client.
-    const mismatch = await postToken({
+    const withoutResource = await postToken({
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+      subject_token: subjectToken,
+      subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+      client_id: XAA_DEBUG_IDP_CLIENT_ID,
+      audience: "https://as.example.com",
+    });
+    expect(withoutResource.status).toBe(200);
+    expect(
+      decodeJwtPayload((await withoutResource.json()).access_token)
+    ).not.toHaveProperty("resource");
+
+    // The request client identifies the IdP registration, not the RAS client.
+    const unknownIdpClient = await postToken({
       grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
       requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
       subject_token: subjectToken,
@@ -1505,8 +1527,8 @@ describe("mock OIDC IdP endpoints", () => {
       audience: "https://as.example.com",
       resource: "https://rs.example.com",
     });
-    expect(mismatch.status).toBe(400);
-    expect((await mismatch.json()).error).toBe("invalid_grant");
+    expect(unknownIdpClient.status).toBe(401);
+    expect((await unknownIdpClient.json()).error).toBe("invalid_client");
 
     // client_id is required.
     const missingClient = await postToken({

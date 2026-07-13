@@ -16,42 +16,83 @@ export interface XAAFlowCopySummary {
 const formatTimestamp = (timestamp: number) =>
   new Date(timestamp).toLocaleTimeString();
 
-const stringify = (value: unknown) =>
-  typeof value === "string" ? value : JSON.stringify(value, null, 2);
+const stringify = (value: unknown): string =>
+  typeof value === "string"
+    ? value
+    : JSON.stringify(value, null, 2) ?? String(value);
 
 const REDACTED = "[REDACTED]";
 const SENSITIVE_FIELDS = new Set([
-  "accesstoken",
+  "access_token",
+  "actor_token",
+  "api_key",
   "assertion",
-  "actortoken",
   "authorization",
-  "clientsecret",
+  "authorization_code",
+  "client_secret",
   "code",
-  "codeverifier",
+  "code_verifier",
   "cookie",
-  "idjag",
-  "identityassertion",
-  "idtoken",
-  "refreshtoken",
-  "subjecttoken",
+  "credential",
+  "id_jag",
+  "identity_assertion",
+  "id_token",
+  "password",
+  "refresh_token",
+  "set_cookie",
+  "state",
+  "subject_token",
+  "token",
 ]);
 
 const normalizeFieldName = (name: string) =>
-  name.toLowerCase().replace(/[^a-z0-9]/g, "");
+  name
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .toLowerCase();
 
 const isSensitiveField = (name: string) =>
   SENSITIVE_FIELDS.has(normalizeFieldName(name));
 
+const isSensitiveContainerKey = (name: string) => {
+  const normalized = normalizeFieldName(name);
+  return (
+    SENSITIVE_FIELDS.has(normalized) ||
+    /(^|_)(token|secret|password|credential|cookie|auth)(_|$)/.test(
+      normalized
+    ) ||
+    /(^|_)api_?key(_|$)/.test(normalized)
+  );
+};
+
+const escapeRegExp = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const sensitiveStringFieldPattern = [...SENSITIVE_FIELDS]
+  .flatMap((field) => [
+    field,
+    field.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase()),
+    field.replaceAll("_", "-"),
+  ])
+  .sort((a, b) => b.length - a.length)
+  .map(escapeRegExp)
+  .join("|");
+
+const sensitiveStringAssignmentPattern = new RegExp(
+  `\\b((?:${sensitiveStringFieldPattern})\\s*["']?\\s*[:=]\\s*["']?)([^"'&\\r\\n,}]+)`,
+  "gi"
+);
+
 function sanitizeHeaders(
-  headers: Record<string, string>,
+  headers: Record<string, string>
 ): Record<string, string> {
   return Object.fromEntries(
     Object.entries(headers).map(([name, value]) => [
       name,
-      /^(authorization|proxy-authorization|cookie|set-cookie)$/i.test(name)
+      isSensitiveContainerKey(name)
         ? REDACTED
-        : value.replace(/\bBearer\s+[^\s,;]+/gi, `Bearer ${REDACTED}`),
-    ]),
+        : stringify(sanitizeString(value)),
+    ])
   );
 }
 
@@ -68,15 +109,9 @@ function sanitizeString(value: string): unknown {
     }
   }
 
-  let sanitized = value.replace(
-    /\bBearer\s+[^\s,;]+/gi,
-    `Bearer ${REDACTED}`,
-  );
-  sanitized = sanitized.replace(
-    /\b((?:access_token|refresh_token|id_token|id_jag|client_secret|assertion|subject_token|actor_token|identity_assertion|code_verifier|code)\s*["']?\s*[:=]\s*["']?)([^"'&\s,}]+)/gi,
-    `$1${REDACTED}`,
-  );
-  return sanitized;
+  return value
+    .replace(/\b(Bearer|Basic)\s+[^\s,;]+/gi, `$1 ${REDACTED}`)
+    .replace(sensitiveStringAssignmentPattern, `$1${REDACTED}`);
 }
 
 function sanitizeBody(value: unknown): unknown {
@@ -88,16 +123,19 @@ function sanitizeBody(value: unknown): unknown {
     Object.entries(value).map(([name, entryValue]) => [
       name,
       isSensitiveField(name) ? REDACTED : sanitizeBody(entryValue),
-    ]),
+    ])
   );
 }
 
 function sanitizeUrl(rawUrl: string): string {
   try {
     const url = new URL(rawUrl);
+    if (url.username) url.username = REDACTED;
+    if (url.password) url.password = REDACTED;
     for (const name of [...url.searchParams.keys()]) {
-      if (isSensitiveField(name)) url.searchParams.set(name, REDACTED);
+      if (isSensitiveContainerKey(name)) url.searchParams.set(name, REDACTED);
     }
+    if (url.hash) url.hash = `#${REDACTED}`;
     return url.toString();
   } catch {
     return String(sanitizeString(rawUrl));
@@ -106,7 +144,7 @@ function sanitizeUrl(rawUrl: string): string {
 
 const appendError = (
   text: string,
-  error: XAAInfoLogEntry["error"] | XAAHttpHistoryEntry["error"],
+  error: XAAInfoLogEntry["error"] | XAAHttpHistoryEntry["error"]
 ) => {
   if (!error) return text;
   text += `ERROR: ${stringify(sanitizeString(error.message))}\n`;
@@ -123,19 +161,23 @@ const appendError = (
 
 export function generateXAAFlowText(
   flowState: XAAFlowState,
-  summary: XAAFlowCopySummary,
+  summary: XAAFlowCopySummary
 ): string {
   let text = "=== XAA Debugger - Flow ===\n\n";
-  text += `Server URL: ${
+  text += `Server URL: ${sanitizeUrl(
     summary.serverUrl || flowState.serverUrl || "Not set"
-  }\n`;
-  text += `Authorization Server: ${
+  )}\n`;
+  text += `Authorization Server: ${sanitizeUrl(
     summary.authzServerIssuer ||
-    flowState.authzServerIssuer ||
-    "Discovered at runtime"
-  }\n`;
-  text += `Client ID: ${summary.clientId || flowState.clientId || "Not set"}\n`;
-  text += `Scope: ${summary.scope || flowState.scope || "Not set"}\n`;
+      flowState.authzServerIssuer ||
+      "Discovered at runtime"
+  )}\n`;
+  text += `Client ID: ${sanitizeUrl(
+    summary.clientId || flowState.clientId || "Not set"
+  )}\n`;
+  text += `Scope: ${String(
+    sanitizeString(summary.scope || flowState.scope || "Not set")
+  )}\n`;
   text += `Test mode: ${flowState.negativeTestMode}\n`;
   text += `Current step: ${flowState.currentStep}\n`;
   if (flowState.error) {
@@ -162,7 +204,7 @@ export function generateXAAFlowText(
   }
 
   const steps = Array.from(byStep.keys()).sort(
-    (a, b) => getXAAStepIndex(a) - getXAAStepIndex(b),
+    (a, b) => getXAAStepIndex(a) - getXAAStepIndex(b)
   );
   if (steps.length === 0) return `${text}No activity yet.\n`;
 
@@ -178,7 +220,7 @@ export function generateXAAFlowText(
       if (entry.type === "info") {
         const log = entry.value;
         text += `[${formatTimestamp(
-          log.timestamp,
+          log.timestamp
         )}] [${log.level.toUpperCase()}] ${log.label}\n`;
         if (log.data !== undefined) {
           text += `${stringify(sanitizeBody(log.data))}\n`;
@@ -189,31 +231,31 @@ export function generateXAAFlowText(
       }
 
       const http = entry.value;
-      text += `[${formatTimestamp(http.timestamp)}] ${http.request.method} ${
-        sanitizeUrl(http.request.url)
-      }\n`;
+      text += `[${formatTimestamp(http.timestamp)}] ${
+        http.request.method
+      } ${sanitizeUrl(http.request.url)}\n`;
       if (http.duration !== undefined) text += `Duration: ${http.duration}ms\n`;
       if (http.response) {
         text += `Status: ${http.response.status} ${http.response.statusText}\n`;
       }
       if (Object.keys(http.request.headers).length > 0) {
         text += `\nRequest Headers:\n${stringify(
-          sanitizeHeaders(http.request.headers),
+          sanitizeHeaders(http.request.headers)
         )}\n`;
       }
       if (http.request.body !== undefined) {
         text += `\nRequest Body:\n${stringify(
-          sanitizeBody(http.request.body),
+          sanitizeBody(http.request.body)
         )}\n`;
       }
       if (http.response && Object.keys(http.response.headers).length > 0) {
         text += `\nResponse Headers:\n${stringify(
-          sanitizeHeaders(http.response.headers),
+          sanitizeHeaders(http.response.headers)
         )}\n`;
       }
       if (http.response?.body !== undefined) {
         text += `\nResponse Body:\n${stringify(
-          sanitizeBody(http.response.body),
+          sanitizeBody(http.response.body)
         )}\n`;
       }
       text = appendError(text, http.error);
