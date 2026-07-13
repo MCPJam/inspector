@@ -16,10 +16,7 @@ import {
   initXAAIdpKeyPair,
 } from "./mint/keypair.js";
 import { issueNegativeIdJag, verifyXaaJwt } from "./mint/signer.js";
-import {
-  buildJwtBearerRequest,
-  type XaaTokenEndpointAuthMethod,
-} from "./mint/jwt-bearer.js";
+import type { XaaTokenEndpointAuthMethod } from "./mint/jwt-bearer.js";
 import {
   DEFAULT_NEGATIVE_TEST_MODE,
   type NegativeTestMode,
@@ -36,6 +33,8 @@ import {
   mcpInitializeExtensionEvidence,
   type XaaCapabilityEvidence,
 } from "./mcp-init.js";
+import { createInProcessXaaExecutor } from "./in-process-executor.js";
+import type { XAARequestExecutor } from "./state-machines/types.js";
 
 const ID_JAG_TYP = "oauth-id-jag+jwt";
 
@@ -247,58 +246,63 @@ async function verifyIssuerPublication(
   return { ok: true, detail: `${jwksUri} (${localKey.kid})` };
 }
 
-async function redeemAssertion(args: {
-  assertion: string;
-  tokenEndpoint: string;
-  tokenEndpointAuthMethod: XaaTokenEndpointAuthMethod;
-  clientId: string;
-  clientSecret?: string;
-  scope?: string;
-  resource: string;
-  httpsOnly: boolean;
-  timeoutMs?: number;
-}): Promise<RedeemedAssertion> {
-  const request = buildJwtBearerRequest({
-    assertion: args.assertion,
-    clientId: args.clientId,
-    clientSecret: args.clientSecret,
-    scope: args.scope,
-    resource: args.resource,
-    tokenEndpointAuthMethod: args.tokenEndpointAuthMethod,
-  });
-  const response = await executeOAuthProxy({
-    url: args.tokenEndpoint,
+// Redeem an ID-JAG through the SHARED in-process executor's `/proxy/token`
+// route — the exact seam the state machine uses — instead of inlining the
+// jwt-bearer request + proxy call. The executor already carries httpsOnly and
+// the timeout, and returns the upstream `{ status, body }` wrapper; this
+// interprets that wrapper into the CLI's XaaRedemptionResult.
+async function redeemAssertion(
+  executor: XAARequestExecutor,
+  args: {
+    assertion: string;
+    tokenEndpoint: string;
+    tokenEndpointAuthMethod: XaaTokenEndpointAuthMethod;
+    clientId: string;
+    clientSecret?: string;
+    scope?: string;
+    resource: string;
+  }
+): Promise<RedeemedAssertion> {
+  const proxied = await executor.internalRequest("/proxy/token", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      ...request.headers,
-    },
-    body: request.body,
-    httpsOnly: args.httpsOnly,
-    timeoutMs: args.timeoutMs,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      tokenEndpoint: args.tokenEndpoint,
+      assertion: args.assertion,
+      clientId: args.clientId,
+      ...(args.clientSecret ? { clientSecret: args.clientSecret } : {}),
+      tokenEndpointAuthMethod: args.tokenEndpointAuthMethod,
+      scope: args.scope,
+      resource: args.resource,
+    }),
   });
+  const wrapper =
+    proxied.body && typeof proxied.body === "object"
+      ? (proxied.body as { status?: unknown; body?: unknown })
+      : {};
+  const status =
+    typeof wrapper.status === "number" ? wrapper.status : proxied.status;
+  const upstreamBody = wrapper.body;
   const body =
-    response.body && typeof response.body === "object"
-      ? (response.body as Record<string, unknown>)
+    upstreamBody && typeof upstreamBody === "object"
+      ? (upstreamBody as Record<string, unknown>)
       : undefined;
   const accessToken = body?.access_token;
   const tokenIssued =
-    response.status >= 200 &&
-    response.status < 300 &&
-    typeof accessToken === "string";
+    status >= 200 && status < 300 && typeof accessToken === "string";
   const errorDescription = body?.error_description;
   const oauthError = body?.error;
   const error = !tokenIssued
     ? (typeof errorDescription === "string" ? errorDescription : undefined) ||
       (typeof oauthError === "string" ? oauthError : undefined) ||
-      `Authorization server returned ${response.status}`
+      `Authorization server returned ${status}`
     : undefined;
   return {
     result: {
-      status: response.status,
+      status,
       tokenIssued,
       ...(error ? { error } : {}),
-      body: response.body,
+      body: upstreamBody,
     },
     ...(typeof accessToken === "string" ? { accessToken } : {}),
   };
@@ -315,6 +319,14 @@ export async function runXaaFlow(
     return ok;
   };
   const resource = canonicalizeMcpResource(config.serverUrl);
+  // The shared in-process executor the state machine also drives; the CLI
+  // redeems ID-JAGs through its `/proxy/token` route rather than inlining the
+  // jwt-bearer + proxy call, so both surfaces share one redemption path.
+  const executor = createInProcessXaaExecutor({
+    issuerBaseUrl: config.issuerBaseUrl,
+    httpsOnly,
+    timeoutMs: config.timeoutMs,
+  });
 
   try {
     let candidateIssuers: string[];
@@ -499,13 +511,11 @@ export async function runXaaFlow(
       clientSecret: config.clientSecret,
       scope: config.scope,
       resource,
-      httpsOnly,
-      timeoutMs: config.timeoutMs,
     };
 
     if (mode !== "valid") {
       progress("Establishing a valid ID-JAG redemption baseline…");
-      const baseline = await redeemAssertion({
+      const baseline = await redeemAssertion(executor, {
         ...redemptionArgs,
         assertion: issueNegativeIdJag(issueParams, "valid").token,
       });
@@ -540,7 +550,7 @@ export async function runXaaFlow(
       }
 
       progress("Redeeming the deliberately invalid ID-JAG…");
-      const probe = await redeemAssertion({
+      const probe = await redeemAssertion(executor, {
         ...redemptionArgs,
         assertion: minted.token,
       });
@@ -588,7 +598,7 @@ export async function runXaaFlow(
     }
 
     progress("Redeeming the ID-JAG at the authorization server…");
-    const redeemed = await redeemAssertion({
+    const redeemed = await redeemAssertion(executor, {
       ...redemptionArgs,
       assertion: minted.token,
     });
