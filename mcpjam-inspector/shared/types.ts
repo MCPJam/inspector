@@ -202,14 +202,31 @@ const MCPJAM_GUEST_ALLOWED_MODEL_IDS: string[] =
     (modelId) => !gatedGuestModelIds.has(modelId)
   );
 
+/** Minimal shape `getCanonicalModelId` matches against — `SUPPORTED_MODELS`
+ * satisfies it, and so does a `ModelDefinition[]` derived from the backend
+ * catalog. */
+export type CanonicalModelCandidate = { id: string | Model; provider: string };
+
 export const getCanonicalModelId = (
   modelId: string,
-  provider?: string
+  provider?: string,
+  /**
+   * Extra known models to canonicalize against (unioned with the static
+   * `SUPPORTED_MODELS`). The client injects the dynamic backend catalog ∪ BYOK
+   * list here so catalog-only ids canonicalize correctly; defaults to `[]`, so
+   * every server/shared caller keeps the exact prior static behavior.
+   */
+  extraModels: readonly CanonicalModelCandidate[] = []
 ): string => {
   const normalizedModelId = modelId.trim();
   if (!normalizedModelId) {
     return normalizedModelId;
   }
+
+  const knownModels: readonly CanonicalModelCandidate[] =
+    extraModels.length > 0
+      ? [...SUPPORTED_MODELS, ...extraModels]
+      : SUPPORTED_MODELS;
 
   const normalizedProvider = provider?.trim().toLowerCase();
 
@@ -217,7 +234,7 @@ export const getCanonicalModelId = (
   // bare ids (e.g. "gpt-4o-mini" — BYOK) don't shadow their hosted
   // counterparts (e.g. "openai/gpt-4o-mini" — MCPJam-provided).
   if (normalizedProvider) {
-    const providerModels = SUPPORTED_MODELS.filter(
+    const providerModels = knownModels.filter(
       (model) => model.provider.toLowerCase() === normalizedProvider
     );
 
@@ -238,7 +255,7 @@ export const getCanonicalModelId = (
     }
   }
 
-  const exactMatch = SUPPORTED_MODELS.find(
+  const exactMatch = knownModels.find(
     (model) => String(model.id) === normalizedModelId
   );
   if (exactMatch) {
@@ -279,12 +296,28 @@ export const isGPT5Model = (modelId: string | Model): boolean => {
 export interface ModelDefinition {
   id: Model | string;
   name: string;
-  provider: ModelProvider;
+  /**
+   * Known provider keys keep autocomplete; `string` is accepted so a brand-new
+   * backend-catalog provider (e.g. "alibaba", "nvidia") renders on its own with
+   * no code change — the whole point of sourcing the picker from the catalog.
+   */
+  provider: ModelProvider | (string & {});
   /** Set when provider === "custom" to identify which custom provider to use */
   customProviderName?: string;
   contextLength?: number;
   disabled?: boolean;
   disabledReason?: string;
+  /**
+   * True when the model comes from the MCPJam backend hosted catalog (billed to
+   * MCPJam credits). Drives `isMCPJamProvidedModelMenuItem` and the free/paid
+   * locks. Absent on BYOK/org/custom models.
+   */
+  hosted?: boolean;
+  /**
+   * Whether MCPJam serves this hosted model to signed-out guests. Sourced from
+   * the catalog DTO; absent → treated as guest-gated (locked for guests).
+   */
+  guestAllowed?: boolean;
 }
 
 export enum Model {
