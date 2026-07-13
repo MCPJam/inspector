@@ -1129,7 +1129,10 @@ chatV2.post("/", async (c) => {
     return streamDirectChatWithLiveTrace({
       llmModel,
       modelId: String(modelDefinition.id),
-      provider: modelDefinition.provider,
+      // Server-side model definitions always carry a concrete provider (the
+      // widened `string` branch on ModelDefinition.provider is a client
+      // catalog concern), so narrowing back to ModelProvider here is safe.
+      provider: modelDefinition.provider as ModelProvider,
       messageHistory: [...scrubbedModelMessages],
       systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,
