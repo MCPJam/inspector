@@ -72,7 +72,7 @@ When the flow encounters an error, the debugger surfaces a guidance callout with
 ### Common Error Scenarios
 
 **Client ID Required**
-- The ID-JAG needs a `client_id` claim. Configure it in the target settings and register the client at your authorization server.
+- The ID-JAG needs a `client_id` claim. Open **Configure Server to Test**, ensure the **Registration** strategy is set to **Pre-registered client**, enter your Client ID, and register the client at your authorization server. Client ID is not required for DCR or CIMD strategies.
 
 **Authorization Server Doesn't Support jwt-bearer Grant**
 - The AS returned `unsupported_grant_type`. Most authorization servers don't support RFC 7523 yet. Check vendor-specific guidance or run a bridge service.
