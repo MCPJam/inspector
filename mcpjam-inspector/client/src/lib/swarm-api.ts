@@ -50,11 +50,38 @@ export interface JourneyHostSummary {
   rateLimited: number;
 }
 
+/**
+ * Aggregated goal-completion judge rollup — backend `GoalScoreSummary`
+ * (`convex/lib/swarmJudge.ts`). `avgScore` averages COMPLETED verdicts only.
+ */
+export interface GoalScoreRollup {
+  gradedCount: number;
+  passedCount: number;
+  avgScore: number | null;
+  pendingCount?: number;
+  failedCount?: number;
+}
+
+/**
+ * Compact per-session judge verdict — the denormalized
+ * `chatSessions.goalScore` subset (full verdict lives on the check row).
+ */
+export interface SessionGoalScore {
+  status?: string;
+  score?: number;
+  passed?: boolean;
+  threshold?: number;
+  reason?: string;
+  error?: string;
+}
+
 export interface JourneyRun {
   _id: string;
   status: JourneyRunStatus | string;
   summary: JourneyRunSummary;
   hostSummaries: JourneyHostSummary[];
+  /** Judge rollup for this run's sessions (absent until first grading). */
+  goalScoreSummary?: GoalScoreRollup;
   createdAt: number;
 }
 
@@ -82,6 +109,8 @@ export interface JourneySessionRow {
     verdict?: string;
     issueCount?: number;
   };
+  /** Server-denormalized judge verdict subset (see `swarmJudge.ts` backend). */
+  goalScore?: SessionGoalScore;
 }
 
 /**
@@ -97,6 +126,8 @@ export interface PersonaTrackRecord {
   runCount: number;
   sessionCount: number;
   readiness?: Record<string, unknown>;
+  /** Persona-level judge rollup (absent on older backends). */
+  goalScore?: GoalScoreRollup;
   sessionExamples?: unknown[];
 }
 
@@ -108,6 +139,8 @@ export interface JourneyHostRollup {
   failed: number;
   rateLimited: number;
   readiness?: Record<string, unknown>;
+  /** Per-host judge rollup (absent on older backends). */
+  goalScore?: GoalScoreRollup;
 }
 
 /**

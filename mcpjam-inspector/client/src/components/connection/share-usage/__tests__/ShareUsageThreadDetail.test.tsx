@@ -7,20 +7,27 @@ const {
   mockMessageView,
   mockReadOnlyTranscript,
   mockAdaptTraceToUiMessages,
+  mockRequestJudge,
   mockThreadState,
   mockBrowserArtifactsState,
 } = vi.hoisted(() => ({
   mockMessageView: vi.fn(),
   mockReadOnlyTranscript: vi.fn(),
   mockAdaptTraceToUiMessages: vi.fn(),
+  mockRequestJudge: vi.fn().mockResolvedValue(null),
   mockThreadState: {
     sourceType: "chatbox",
     synthetic: false as boolean,
     readiness: undefined as unknown,
+    goalScore: undefined as unknown,
   },
   mockBrowserArtifactsState: {
     artifacts: undefined as unknown,
   },
+}));
+
+vi.mock("convex/react", () => ({
+  useAction: () => mockRequestJudge,
 }));
 
 vi.mock("@/hooks/useSharedChatThreads", () => ({
@@ -29,6 +36,7 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
       sourceType: mockThreadState.sourceType,
       synthetic: mockThreadState.synthetic,
       readiness: mockThreadState.readiness,
+      goalScore: mockThreadState.goalScore,
       messagesBlobUrl: "https://storage.example.com/thread.json",
       modelId: "openai/gpt-oss-120b",
       visitorDisplayName: "Marcelo Jimenez",
@@ -80,6 +88,7 @@ describe("ShareUsageThreadDetail", () => {
     mockThreadState.sourceType = "chatbox";
     mockThreadState.synthetic = false;
     mockThreadState.readiness = undefined;
+    mockThreadState.goalScore = undefined;
     mockBrowserArtifactsState.artifacts = undefined;
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -111,22 +120,18 @@ describe("ShareUsageThreadDetail", () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: "Chat" }),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: "Trace" }),
-      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Trace" })).toBeInTheDocument();
       expect(mockAdaptTraceToUiMessages).toHaveBeenCalledWith(
         expect.objectContaining({
           toolResultDisplay: "attached-to-tool",
-        }),
+        })
       );
       expect(mockReadOnlyTranscript).toHaveBeenCalledWith(
         expect.objectContaining({
           reasoningDisplayMode: "collapsible",
           widgetPolicy: "placeholder",
-        }),
+        })
       );
     });
   });
@@ -138,9 +143,19 @@ describe("ShareUsageThreadDetail", () => {
       expect(mockReadOnlyTranscript).toHaveBeenCalledWith(
         expect.objectContaining({
           reasoningDisplayMode: "collapsible",
-        }),
+        })
       );
     });
+  });
+
+  it("offers an initial judge action for an ungraded swarm session", async () => {
+    mockThreadState.sourceType = "swarm";
+    const user = userEvent.setup();
+
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await user.click(await screen.findByRole("button", { name: /run judge/i }));
+    expect(mockRequestJudge).toHaveBeenCalledWith({ sessionId: "thread-1" });
   });
 
   it("hides the App tab when the session has no browser artifacts", async () => {
@@ -150,7 +165,7 @@ describe("ShareUsageThreadDetail", () => {
       expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
     });
     expect(
-      screen.queryByRole("button", { name: "App" }),
+      screen.queryByRole("button", { name: "App" })
     ).not.toBeInTheDocument();
   });
 
@@ -192,7 +207,7 @@ describe("ShareUsageThreadDetail", () => {
     // eval replay uses). The per-step interaction timeline now lives on the
     // Trace tab (`Interact · …` spans), not in the App tab.
     expect(
-      await screen.findByTestId("browser-artifacts-view"),
+      await screen.findByTestId("browser-artifacts-view")
     ).toBeInTheDocument();
     expect(screen.getByTestId("render-observation-card")).toBeInTheDocument();
     expect(screen.queryByText("Computer Use timeline")).toBeNull();
@@ -215,10 +230,10 @@ describe("ShareUsageThreadDetail", () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     expect(
-      await screen.findByText(/Why this needs attention/i),
+      await screen.findByText(/Why this needs attention/i)
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Only 20% of advertised tools were used/i),
+      screen.getByText(/Only 20% of advertised tools were used/i)
     ).toBeInTheDocument();
   });
 
@@ -243,11 +258,9 @@ describe("ShareUsageThreadDetail", () => {
     };
 
     const { rerender } = render(<ShareUsageThreadDetail threadId="thread-1" />);
-    await userEvent.click(
-      await screen.findByRole("button", { name: "App" }),
-    );
+    await userEvent.click(await screen.findByRole("button", { name: "App" }));
     expect(
-      await screen.findByTestId("browser-artifacts-view"),
+      await screen.findByTestId("browser-artifacts-view")
     ).toBeInTheDocument();
 
     // The next session has no artifacts (same mounted component instance).
@@ -259,15 +272,17 @@ describe("ShareUsageThreadDetail", () => {
 
     await waitFor(() => {
       expect(
-        screen.queryByTestId("browser-artifacts-view"),
+        screen.queryByTestId("browser-artifacts-view")
       ).not.toBeInTheDocument();
     });
     expect(
-      screen.queryByRole("button", { name: "App" }),
+      screen.queryByRole("button", { name: "App" })
     ).not.toBeInTheDocument();
     // Chat content renders instead of a blank panel. findBy: the messages
     // blob re-fetch on thread switch is async — don't depend on the previous
     // thread's messages state being retained (CodeRabbit, PR 2610).
-    expect(await screen.findByTestId("read-only-transcript")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("read-only-transcript")
+    ).toBeInTheDocument();
   });
 });

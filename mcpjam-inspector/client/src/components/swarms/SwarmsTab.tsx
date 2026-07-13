@@ -15,11 +15,14 @@ import {
   launchJourneyRun,
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
+  type GoalScoreRollup,
   type JourneyRun,
   type JourneySessionRow,
   type PersonaTrackRecord,
   type JourneyRollup,
+  type SessionGoalScore,
 } from "@/lib/swarm-api";
+import { formatScore } from "@/components/shared/session-quality/judge-presentation";
 import {
   EMPTY_SESSION_FILTER,
   sessionMatchesFilter,
@@ -75,6 +78,81 @@ function toSessionReadiness(
         ? raw.issueCount
         : 0,
   };
+}
+
+// Judge-verdict guard, same philosophy as `toSessionReadiness`: the backend
+// denormalizes a WIDE `goalScore` subset; validate the status enum + score
+// before rendering so a malformed record degrades to "no badge".
+const GOAL_SCORE_STATUSES = ["running", "completed", "failed"] as const;
+type GoalScoreStatus = (typeof GOAL_SCORE_STATUSES)[number];
+
+export function toSessionGoalScore(raw: JourneySessionRow["goalScore"]):
+  | (SessionGoalScore & { status: GoalScoreStatus })
+  | undefined {
+  if (!raw) return undefined;
+  if (!(GOAL_SCORE_STATUSES as readonly string[]).includes(raw.status ?? "")) {
+    return undefined;
+  }
+  const status = raw.status as GoalScoreStatus;
+  // A completed verdict must carry BOTH a finite score and a boolean passed —
+  // a malformed `passed` must not silently render as "below threshold".
+  if (
+    status === "completed" &&
+    (!Number.isFinite(raw.score) || typeof raw.passed !== "boolean")
+  ) {
+    return undefined;
+  }
+  return { ...raw, status };
+}
+
+/**
+ * Per-session judge score badge, rendered next to the readiness badge.
+ * completed → "82% · meets goal"; running → "judging…"; failed → "judge
+ * unavailable" (never silently hidden — the viewer offers Retry); absent →
+ * nothing.
+ */
+export function SessionGoalScoreBadge({
+  goalScore,
+}: {
+  goalScore: JourneySessionRow["goalScore"];
+}) {
+  const gs = toSessionGoalScore(goalScore);
+  if (!gs) return null;
+  if (gs.status === "running") {
+    return (
+      <span className="rounded-sm bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+        judging…
+      </span>
+    );
+  }
+  if (gs.status === "failed") {
+    return (
+      <span
+        className="rounded-sm bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
+        title={gs.error ?? "Judge run failed — open the session to retry"}
+      >
+        judge unavailable
+      </span>
+    );
+  }
+  return (
+    <span
+      className={`rounded-sm px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide ${
+        gs.passed ? "bg-success/50 text-foreground" : "bg-warning/50 text-foreground"
+      }`}
+      title={gs.reason ?? undefined}
+    >
+      {formatScore(gs.score ?? NaN)} · {gs.passed ? "meets goal" : "below threshold"}
+    </span>
+  );
+}
+
+/** `· goal 78% avg (4 judged)` — shared by the run card + persona strip. */
+export function goalScoreAvgLabel(rollup: GoalScoreRollup | undefined): string | null {
+  if (!rollup || rollup.gradedCount === 0 || rollup.avgScore === null) {
+    return null;
+  }
+  return `goal ${formatScore(rollup.avgScore)} avg (${rollup.gradedCount} judged)`;
 }
 
 type Persona = {
@@ -336,6 +414,9 @@ function PersonaTrackRecordStrip({ personaRefId }: { personaRefId: string }) {
       <span className="text-muted-foreground">
         {record.sessionCount} session{record.sessionCount === 1 ? "" : "s"} ·{" "}
         {record.runCount} run{record.runCount === 1 ? "" : "s"}
+        {goalScoreAvgLabel(record.goalScore)
+          ? ` · ${goalScoreAvgLabel(record.goalScore)}`
+          : ""}
       </span>
     </div>
   );
@@ -481,6 +562,9 @@ function JourneyCard({
                   {r.summary.failed > 0 && ` · ${r.summary.failed} failed`}
                   {r.summary.rateLimited > 0 &&
                     ` · ${r.summary.rateLimited} rate-limited`}
+                  {goalScoreAvgLabel(r.goalScoreSummary)
+                    ? ` · ${goalScoreAvgLabel(r.goalScoreSummary)}`
+                    : ""}
                 </span>
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -629,6 +713,7 @@ function RunSessionsView({
                   {s.modelId ? ` · ${s.modelId}` : ""}
                 </span>
               </span>
+              <SessionGoalScoreBadge goalScore={s.goalScore} />
               <SessionReadinessBadge readiness={toSessionReadiness(s.readiness)} />
             </button>
           ))}
