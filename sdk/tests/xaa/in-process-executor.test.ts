@@ -44,7 +44,7 @@ describe("createInProcessXaaExecutor internal routes", () => {
     const exec = createInProcessXaaExecutor({ issuerBaseUrl: ISSUER_BASE });
     const result = await exec.internalRequest(
       "/authenticate",
-      post({ userId: "user-1", email: "u@example.com", audience: "client-1" }),
+      post({ userId: "user-1", email: "u@example.com", audience: "client-1" })
     );
     expect(result.ok).toBe(true);
     const token = (result.body as { id_token: string }).id_token;
@@ -71,7 +71,7 @@ describe("createInProcessXaaExecutor internal routes", () => {
         clientId: "client-1",
         scope: "read:tools",
         negativeTestMode: "valid",
-      }),
+      })
     );
     expect(result.ok).toBe(true);
     const idJag = (result.body as { id_jag: string }).id_jag;
@@ -99,23 +99,28 @@ describe("createInProcessXaaExecutor internal routes", () => {
         resource: RESOURCE,
         clientId: "client-1",
         negativeTestMode: "wrong_audience",
-      }),
+      })
     );
     const idJag = (result.body as { id_jag: string }).id_jag;
     expect(decodeJWT(idJag)!.aud).toBe("https://wrong-audience.example.com");
   });
 
   it("/proxy/token redeems and wraps the upstream {status, body}", async () => {
-    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url === TOKEN_ENDPOINT && (init?.method || "").toUpperCase() === "POST") {
-        return new Response(
-          JSON.stringify({ access_token: "at-1", token_type: "Bearer" }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
+    global.fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (
+          url === TOKEN_ENDPOINT &&
+          (init?.method || "").toUpperCase() === "POST"
+        ) {
+          return new Response(
+            JSON.stringify({ access_token: "at-1", token_type: "Bearer" }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        return new Response("{}", { status: 404 });
       }
-      return new Response("{}", { status: 404 });
-    }) as unknown as typeof fetch;
+    ) as unknown as typeof fetch;
 
     const exec = createInProcessXaaExecutor({ issuerBaseUrl: ISSUER_BASE });
     const result = await exec.internalRequest(
@@ -126,7 +131,7 @@ describe("createInProcessXaaExecutor internal routes", () => {
         clientId: "client-1",
         scope: "read:tools",
         resource: RESOURCE,
-      }),
+      })
     );
     expect(result.ok).toBe(true);
     const wrapper = result.body as { status: number; body: any };
@@ -139,13 +144,13 @@ describe("createInProcessXaaExecutor internal routes", () => {
     // Missing assertion.
     let r = await exec.internalRequest(
       "/token-exchange",
-      post({ audience: AS_ISSUER, resource: RESOURCE, clientId: "c" }),
+      post({ audience: AS_ISSUER, resource: RESOURCE, clientId: "c" })
     );
     expect(r.status).toBe(400);
     // Non-JWT garbage.
     r = await exec.internalRequest(
       "/token-exchange",
-      post({ identityAssertion: "not-a-jwt", clientId: "c" }),
+      post({ identityAssertion: "not-a-jwt", clientId: "c" })
     );
     expect(r.status).toBe(400);
     // Well-formed JWT with no `sub`.
@@ -156,9 +161,39 @@ describe("createInProcessXaaExecutor internal routes", () => {
     }).token;
     r = await exec.internalRequest(
       "/token-exchange",
-      post({ identityAssertion: subless, clientId: "c" }),
+      post({ identityAssertion: subless, clientId: "c" })
     );
     expect(r.status).toBe(400);
+  });
+
+  it("/token-exchange requires the audience, resource, clientId, and a known mode", async () => {
+    const exec = createInProcessXaaExecutor({ issuerBaseUrl: ISSUER_BASE });
+    const identityAssertion = issueMockIdToken({
+      issuer: getXAAIssuerUrl(ISSUER_BASE),
+      subject: "user-1",
+    }).token;
+    const valid = {
+      identityAssertion,
+      audience: AS_ISSUER,
+      resource: RESOURCE,
+      clientId: "client-1",
+    };
+
+    for (const field of ["audience", "resource", "clientId"] as const) {
+      const body = { ...valid, [field]: "   " };
+      const result = await exec.internalRequest("/token-exchange", post(body));
+      expect(result.status, field).toBe(400);
+      expect((result.body as { error: string }).error).toContain(field);
+    }
+
+    const invalidMode = await exec.internalRequest(
+      "/token-exchange",
+      post({ ...valid, negativeTestMode: "not-a-mode" })
+    );
+    expect(invalidMode.status).toBe(400);
+    expect((invalidMode.body as { error: string }).error).toMatch(
+      /unsupported negative test mode/i
+    );
   });
 
   it("rejects an unknown internal route with 404", async () => {
@@ -169,35 +204,50 @@ describe("createInProcessXaaExecutor internal routes", () => {
   });
 
   it("drives the shared engine to completion via the in-process executor", async () => {
-    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input.toString();
-      const method = (init?.method || "GET").toUpperCase();
-      const json = (b: unknown, status = 200) =>
-        new Response(JSON.stringify(b), {
-          status,
-          headers: { "Content-Type": "application/json" },
-        });
-      if (url.includes(".well-known/oauth-protected-resource")) {
-        return json({ resource: RESOURCE, authorization_servers: [AS_ISSUER] });
+    global.fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        const method = (init?.method || "GET").toUpperCase();
+        const json = (b: unknown, status = 200) =>
+          new Response(JSON.stringify(b), {
+            status,
+            headers: { "Content-Type": "application/json" },
+          });
+        if (url.includes(".well-known/oauth-protected-resource")) {
+          return json({
+            resource: RESOURCE,
+            authorization_servers: [AS_ISSUER],
+          });
+        }
+        if (
+          url.includes(".well-known/oauth-authorization-server") ||
+          url.includes(".well-known/openid-configuration")
+        ) {
+          return json({
+            issuer: AS_ISSUER,
+            token_endpoint: TOKEN_ENDPOINT,
+            grant_types_supported: [
+              "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            ],
+          });
+        }
+        if (url === TOKEN_ENDPOINT && method === "POST") {
+          return json({
+            access_token: "at-1",
+            token_type: "Bearer",
+            expires_in: 300,
+          });
+        }
+        if (url === RESOURCE && method === "POST") {
+          return json({
+            jsonrpc: "2.0",
+            id: "xaa",
+            result: { capabilities: {} },
+          });
+        }
+        return json({}, 404);
       }
-      if (
-        url.includes(".well-known/oauth-authorization-server") ||
-        url.includes(".well-known/openid-configuration")
-      ) {
-        return json({
-          issuer: AS_ISSUER,
-          token_endpoint: TOKEN_ENDPOINT,
-          grant_types_supported: ["urn:ietf:params:oauth:grant-type:jwt-bearer"],
-        });
-      }
-      if (url === TOKEN_ENDPOINT && method === "POST") {
-        return json({ access_token: "at-1", token_type: "Bearer", expires_in: 300 });
-      }
-      if (url === RESOURCE && method === "POST") {
-        return json({ jsonrpc: "2.0", id: "xaa", result: { capabilities: {} } });
-      }
-      return json({}, 404);
-    }) as unknown as typeof fetch;
+    ) as unknown as typeof fetch;
 
     const { createXAAStateMachine } = await import(
       "../../src/xaa/state-machines/state-machine.js"
@@ -225,7 +275,9 @@ describe("createInProcessXaaExecutor internal routes", () => {
       },
       serverUrl: RESOURCE,
       issuerBaseUrl: ISSUER_BASE,
-      requestExecutor: createInProcessXaaExecutor({ issuerBaseUrl: ISSUER_BASE }),
+      requestExecutor: createInProcessXaaExecutor({
+        issuerBaseUrl: ISSUER_BASE,
+      }),
       negativeTestMode: "valid",
       userId: "user-1",
       email: "u@example.com",

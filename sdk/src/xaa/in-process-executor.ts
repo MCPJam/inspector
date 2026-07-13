@@ -5,18 +5,12 @@
 // This is the seam that lets the CLI drive the shared browser-safe state machine
 // without a running inspector server. Imports crypto/fs (mint) + node:dns
 // (proxy) — MUST stay out of the browser entry.
-import {
-  executeDebugOAuthProxy,
-  executeOAuthProxy,
-} from "../oauth-proxy.js";
+import { executeDebugOAuthProxy, executeOAuthProxy } from "../oauth-proxy.js";
 import { getXAAIssuerUrl, initXAAIdpKeyPair } from "./mint/keypair.js";
 import { issueMockIdToken, issueNegativeIdJag } from "./mint/signer.js";
 import { buildJwtBearerRequest } from "./mint/jwt-bearer.js";
 import { decodeJWT } from "../oauth/state-machines/shared/jwt.js";
-import {
-  DEFAULT_NEGATIVE_TEST_MODE,
-  isNegativeTestMode,
-} from "./constants.js";
+import { DEFAULT_NEGATIVE_TEST_MODE, isNegativeTestMode } from "./constants.js";
 import type {
   XAARequestExecutor,
   XAARequestResult,
@@ -63,9 +57,15 @@ function str(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
+function nonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 // Normalize any HeadersInit (Record, Headers, or tuple array) to a plain record.
 function normalizeHeaders(
-  headers: HeadersInit | undefined,
+  headers: HeadersInit | undefined
 ): Record<string, string> | undefined {
   if (!headers) return undefined;
   const out: Record<string, string> = {};
@@ -80,7 +80,7 @@ function normalizeHeaders(
  * unrecognized MCPJam route returns 404 rather than silently succeeding.
  */
 export function createInProcessXaaExecutor(
-  options: InProcessXaaExecutorOptions,
+  options: InProcessXaaExecutorOptions
 ): XAARequestExecutor {
   const httpsOnly = options.httpsOnly ?? false;
   const timeoutMs = options.timeoutMs;
@@ -93,7 +93,7 @@ export function createInProcessXaaExecutor(
 
   const internalRequest = async (
     path: string,
-    init?: RequestInit,
+    init?: RequestInit
   ): Promise<XAARequestResult> => {
     const body = parseInitBody(init);
 
@@ -114,7 +114,7 @@ export function createInProcessXaaExecutor(
     // missing/malformed assertion or one without a subject is a 400 — never a
     // silently minted empty-subject ID-JAG.
     if (path.endsWith("/token-exchange")) {
-      const assertion = str(body.identityAssertion);
+      const assertion = nonEmptyString(body.identityAssertion);
       if (!assertion) {
         return jsonResult(400, {
           error: "Token exchange requires a non-empty identity assertion.",
@@ -127,10 +127,33 @@ export function createInProcessXaaExecutor(
         });
       }
       const claims = asRecord(decoded);
-      const subject = str(claims.sub);
+      const subject = nonEmptyString(claims.sub);
       if (!subject) {
         return jsonResult(400, {
           error: "The identity assertion has no subject (`sub`) claim.",
+        });
+      }
+      const requiredClaims = {
+        audience: nonEmptyString(body.audience),
+        resource: nonEmptyString(body.resource),
+        clientId: nonEmptyString(body.clientId),
+      };
+      const missingField = Object.entries(requiredClaims).find(
+        ([, value]) => value === undefined
+      )?.[0];
+      if (missingField) {
+        return jsonResult(400, {
+          error: `Token exchange requires a non-empty ${missingField}.`,
+        });
+      }
+      if (
+        body.negativeTestMode !== undefined &&
+        !isNegativeTestMode(body.negativeTestMode)
+      ) {
+        return jsonResult(400, {
+          error: `Unsupported negative test mode: ${String(
+            body.negativeTestMode
+          )}`,
         });
       }
       const mode = isNegativeTestMode(body.negativeTestMode)
@@ -140,13 +163,13 @@ export function createInProcessXaaExecutor(
         {
           issuer: resolveIssuer(),
           subject,
-          audience: str(body.audience),
-          resource: str(body.resource),
-          clientId: str(body.clientId),
-          scope: str(body.scope) || undefined,
+          audience: requiredClaims.audience!,
+          resource: requiredClaims.resource!,
+          clientId: requiredClaims.clientId!,
+          scope: nonEmptyString(body.scope),
           email: typeof claims.email === "string" ? claims.email : undefined,
         },
-        mode,
+        mode
       );
       return jsonResult(200, { id_jag: token });
     }
@@ -175,7 +198,10 @@ export function createInProcessXaaExecutor(
       const upstream = await executeOAuthProxy({
         url: tokenEndpoint,
         method: "POST",
-        headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
+        headers: {
+          ...headers,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
         body: form,
         httpsOnly,
         timeoutMs,
@@ -188,7 +214,7 @@ export function createInProcessXaaExecutor(
 
   const externalRequest = async (
     url: string,
-    init?: RequestInit,
+    init?: RequestInit
   ): Promise<XAARequestResult> => {
     // Preserve the caller's redirect intent (CIMD's document preflight sends
     // `redirect: "manual"` and MUST NOT follow redirects) and normalize the
@@ -197,8 +223,8 @@ export function createInProcessXaaExecutor(
       init?.redirect === "manual"
         ? "manual"
         : init?.redirect === "follow"
-          ? "follow"
-          : undefined;
+        ? "follow"
+        : undefined;
     const response = await executeDebugOAuthProxy({
       url,
       method: (init?.method ?? "GET").toUpperCase(),
@@ -221,7 +247,7 @@ export function createInProcessXaaExecutor(
 }
 
 function isTokenAuthMethod(
-  value: unknown,
+  value: unknown
 ): value is "client_secret_post" | "client_secret_basic" | "none" {
   return (
     value === "client_secret_post" ||
