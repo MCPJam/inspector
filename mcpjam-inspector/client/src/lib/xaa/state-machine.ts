@@ -769,8 +769,13 @@ export function createXAAStateMachine(
 
   // --- Dynamic client-identity strategies (dcr / cimd) ----------------------
 
+  // Scope is part of the registered client's metadata, so a client registered
+  // under one scope must NOT be reused when the run's scope changes — key the
+  // cache on it too (a scope change then forces a fresh registration).
   const dcrCacheKeyFor = (registrationEndpoint: string) =>
-    `${dcrCacheTargetKey ?? serverUrl}::${registrationEndpoint}`;
+    `${dcrCacheTargetKey ?? serverUrl}::${registrationEndpoint}::${
+      currentState().scope ?? ""
+    }`;
 
   const dcrSecretExpired = (creds: {
     clientSecret?: string;
@@ -798,7 +803,19 @@ export function createXAAStateMachine(
     const cacheKey = dcrCacheKeyFor(registrationEndpoint);
     const cached = dcrCredentialCache?.get(cacheKey);
     if (cached && dcrSecretExpired(cached)) {
+      // The registered remote client still exists; only its secret died.
+      // Replacing it means minting ANOTHER remote client, so gate that behind
+      // the same "Register another client" confirmation as every other
+      // duplicate-creating path rather than silently re-registering.
       dcrCredentialCache?.delete(cacheKey);
+      machine.updateState({
+        currentStep: "request_client_registration",
+        isBusy: false,
+        error:
+          'This session\'s dynamic client secret has expired. Confirm "Register another client" to register a replacement.',
+        dcrRetryMayCreateDuplicate: true,
+      });
+      return;
     } else if (cached) {
       // Reuse this browser session's registration instead of minting another
       // remote client on every Run all / Reset.

@@ -1433,9 +1433,10 @@ describe("open dcr registration strategy", () => {
     expect(second.proxyTokenBody().clientSecret).toBe(DCR_SECRET);
   });
 
-  it("discards an expired cached registration and registers again", async () => {
+  it("gates re-registration behind confirmation when the cached secret has expired", async () => {
     const cache = new Map<string, XaaEphemeralDcrCredentials>();
-    cache.set(`target-1::${REGISTRATION_ENDPOINT}`, {
+    const key = `target-1::${REGISTRATION_ENDPOINT}::read:tools`;
+    cache.set(key, {
       clientId: "expired-client",
       clientSecret: "expired-secret",
       tokenEndpointAuthMethod: "client_secret_post",
@@ -1444,7 +1445,42 @@ describe("open dcr registration strategy", () => {
     });
     const harness = createDynamicHarness({ strategy: "dcr", cache });
     await harness.machine.runAll();
+    let state = harness.getState();
 
+    // Replacing an expired client mints another remote client — gate it behind
+    // confirmation rather than silently re-registering.
+    expect(state.currentStep).toBe("request_client_registration");
+    expect(state.error).toContain("expired");
+    expect(state.dcrRetryMayCreateDuplicate).toBe(true);
+    expect(harness.registerCalls()).toHaveLength(0);
+    expect(cache.has(key)).toBe(false); // the dead entry is discarded
+
+    // After the confirmed "Register another client" (flag cleared), exactly one
+    // fresh registration goes through.
+    harness.machine.updateState({
+      dcrRetryMayCreateDuplicate: false,
+      error: undefined,
+    });
+    await harness.machine.runAll();
+    expect(harness.registerCalls()).toHaveLength(1);
+    expect(harness.getState().clientId).toBe("minted-client");
+  });
+
+  it("does not reuse a registration cached under a different scope", async () => {
+    const cache = new Map<string, XaaEphemeralDcrCredentials>();
+    // Cached under a scope other than the run's "read:tools".
+    cache.set(`target-1::${REGISTRATION_ENDPOINT}::other:scope`, {
+      clientId: "other-scope-client",
+      clientSecret: "s",
+      tokenEndpointAuthMethod: "client_secret_post",
+      clientSecretExpiresAt: 0,
+      registrationEndpoint: REGISTRATION_ENDPOINT,
+    });
+    const harness = createDynamicHarness({ strategy: "dcr", cache });
+    await harness.machine.runAll();
+
+    // Scope is part of the client's metadata, so the different-scope entry is
+    // not reused — the run registers a fresh client.
     expect(harness.registerCalls()).toHaveLength(1);
     expect(harness.getState().clientId).toBe("minted-client");
   });
@@ -1490,8 +1526,9 @@ describe("open dcr registration strategy", () => {
     for (let index = 0; index < 5; index += 1) {
       await harness.machine.proceedToNextStep();
     }
-    // Expire the cached secret in place, then let redemption run.
-    const key = `target-1::${REGISTRATION_ENDPOINT}`;
+    // Expire the cached secret in place, then let redemption run. (Cache key
+    // includes the run's scope.)
+    const key = `target-1::${REGISTRATION_ENDPOINT}::read:tools`;
     cache.set(key, {
       ...cache.get(key)!,
       clientSecretExpiresAt: Math.floor(Date.now() / 1000) - 1,
