@@ -1415,6 +1415,10 @@ export function useServerState({
       secretOptions?: {
         clientSecret?: string;
         clearClientSecret?: boolean;
+        // One-shot command (like clearClientSecret): resets the sticky XAA
+        // identity config server-side. Rides the call, never app state — a
+        // persisted flag would re-fire on every future sync.
+        clearXaaConfig?: boolean;
         env?: Record<string, string>;
         headers?: Record<string, string>;
       },
@@ -1465,6 +1469,7 @@ export function useServerState({
 
       const clientSecret = secretOptions?.clientSecret?.trim();
       const clearClientSecret = secretOptions?.clearClientSecret === true;
+      const clearXaaConfig = secretOptions?.clearXaaConfig === true;
       const config = serverEntry.config as any;
       const headers = extractRequestHeaders(config?.requestInit);
       const hasEnvSecretPatch = Object.prototype.hasOwnProperty.call(
@@ -1606,6 +1611,9 @@ export function useServerState({
         ...(serverEntry.registrationMode !== undefined
           ? { registrationMode: serverEntry.registrationMode }
           : {}),
+        ...(serverEntry.authMethod !== undefined
+          ? { authMethod: serverEntry.authMethod }
+          : {}),
       } as const;
 
       try {
@@ -1615,6 +1623,7 @@ export function useServerState({
             ...payload,
             ...(clientSecret ? { clientSecret } : {}),
             ...(clearClientSecret ? { clearClientSecret: true } : {}),
+            ...(clearXaaConfig ? { clearXaaConfig: true } : {}),
           };
           if (hasSecretOperation) {
             await convexUpdateServerWithClientSecret(updatePayload);
@@ -1663,6 +1672,7 @@ export function useServerState({
               ...payload,
               ...(clientSecret ? { clientSecret } : {}),
               ...(clearClientSecret ? { clearClientSecret: true } : {}),
+              ...(clearXaaConfig ? { clearXaaConfig: true } : {}),
             };
             if (hasSecretOperation) {
               await convexUpdateServerWithClientSecret(updatePayload);
@@ -2747,6 +2757,8 @@ export function useServerState({
           ? { clientSecret: formData.clientSecret }
           : {}),
         ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
+        // One-shot XAA-config reset (modal moved the server off XAA).
+        ...(formData.clearXaaConfig ? { clearXaaConfig: true } : {}),
         ...(formData.secretPatch?.env !== undefined
           ? { env: formData.secretPatch.env }
           : {}),
@@ -2792,11 +2804,12 @@ export function useServerState({
         xaaEmail: formData.useXaa
           ? formData.xaaEmail
           : existingServerForSave?.xaaEmail,
-        // Debugger-only field: preserve any saved value when a non-debugger
-        // save (which omits it) comes through, rather than erasing it.
+        // Unified fields: preserve any saved value when a save that omits
+        // them comes through, rather than erasing it.
         registrationMode:
           formData.registrationMode ??
           existingServerForSave?.registrationMode,
+        authMethod: formData.authMethod ?? existingServerForSave?.authMethod,
       };
       // Both modes: await Convex sync so the returned serverId is available
       // for OAuth binding (hosted) and for the new {projectId, serverId}
@@ -3211,11 +3224,12 @@ export function useServerState({
         xaaEmail: formData.useXaa
           ? formData.xaaEmail
           : existingServer?.xaaEmail,
-        // Debugger-only field: preserve any saved value when a non-debugger
-        // save (which omits it) comes through, rather than erasing it.
+        // Unified fields: preserve any saved value when a save that omits
+        // them comes through, rather than erasing it.
         registrationMode:
           formData.registrationMode ??
           existingServer?.registrationMode,
+        authMethod: formData.authMethod ?? existingServer?.authMethod,
       } as ServerWithName;
 
       const hasPendingOAuthCallback = new URLSearchParams(
@@ -3240,6 +3254,8 @@ export function useServerState({
                 ? { clientSecret: formData.clientSecret }
                 : {}),
               ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
+              // One-shot XAA-config reset (modal moved the server off XAA).
+              ...(formData.clearXaaConfig ? { clearXaaConfig: true } : {}),
               ...(formData.secretPatch?.env !== undefined
                 ? { env: formData.secretPatch.env }
                 : {}),
@@ -4751,11 +4767,12 @@ export function useServerState({
           xaaEmail: formData.useXaa
             ? formData.xaaEmail
             : originalServer?.xaaEmail,
-          // Debugger-only field: preserve any saved value when a non-debugger
-          // save (which omits it) comes through, rather than erasing it.
+          // Unified fields: preserve any saved value when a save that omits
+          // them comes through, rather than erasing it.
           registrationMode:
             formData.registrationMode ??
             originalServer?.registrationMode,
+          authMethod: formData.authMethod ?? originalServer?.authMethod,
         } as ServerWithName;
 
         if (!formData.useOAuth && !formData.useXaa) {

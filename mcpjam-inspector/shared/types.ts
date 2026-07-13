@@ -1,7 +1,7 @@
 // Shared types between client and server
 import { HOSTED_MODEL_IDS } from "./hosted-model-ids.generated";
 
-import type { RegistrationMode } from "./xaa";
+import type { AuthMethod, RegistrationMode } from "./xaa";
 
 // Legacy server config (keeping for compatibility)
 export interface ServerConfig {
@@ -723,8 +723,11 @@ export type ServerFormOAuthRegistrationMode = RegistrationMode;
  * The auth type a server-form row is configured with. "xaa" (Cross-App Access)
  * is a distinct flow from "oauth": the inspector server mints the access token
  * server-side via token-exchange rather than running a browser OAuth flow.
+ * "auto" SELECTS between them at connect time — XAA when the server is
+ * XAA-configured (IdP mode + stored client id), OAuth otherwise. A selection
+ * before the flow starts, never a fallback after a failed attempt.
  */
-export type ServerFormAuthType = "oauth" | "bearer" | "none" | "xaa";
+export type ServerFormAuthType = "auto" | "oauth" | "bearer" | "none" | "xaa";
 
 export interface ServerFormData {
   name: string;
@@ -740,6 +743,19 @@ export interface ServerFormData {
   };
   clientCapabilities?: Record<string, unknown>;
   useOAuth?: boolean;
+  /**
+   * Canonical auth method (Convex `authMethod` column). The useOAuth/useXaa
+   * booleans are its derived compat mirrors — the backend re-derives them on
+   * every write. "auto" selects XAA when the server is XAA-configured,
+   * OAuth otherwise (see server/utils/effective-auth.ts).
+   */
+  authMethod?: AuthMethod;
+  /**
+   * Reset boundary: when true the backend nulls the sticky XAA identity
+   * config (authServerMode, xaaSubject, xaaEmail). Sent when a modal save
+   * explicitly moves the server's auth type off XAA; plain saves preserve.
+   */
+  clearXaaConfig?: boolean;
   oauthProtocolMode?: ServerFormOAuthProtocolMode;
   /**
    * Unified client-registration mode (Client↔AS leg) shared by the OAuth

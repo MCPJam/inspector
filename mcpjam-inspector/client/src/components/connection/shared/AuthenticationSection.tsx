@@ -265,7 +265,7 @@ export function AuthenticationSection({
   const effectiveOauthProtocolMode =
     oauthProtocolMode === "auto" ? "2025-11-25" : oauthProtocolMode;
   const oauthPlan =
-    authType === "oauth"
+    authType === "oauth" || authType === "auto"
       ? resolveAuthorizationPlan({
           serverUrl,
           protocolMode: effectiveOauthProtocolMode,
@@ -304,7 +304,7 @@ export function AuthenticationSection({
           <Select
             value={authType}
             onValueChange={(value: ServerFormAuthType) => {
-              if (value !== "oauth") {
+              if (value !== "oauth" && value !== "auto") {
                 setShowAdvancedOAuth(false);
               }
               onAuthTypeChange(value);
@@ -320,8 +320,21 @@ export function AuthenticationSection({
               {showXaaOption && (
                 <SelectItem value="xaa">Cross-App Access (XAA)</SelectItem>
               )}
+              {showXaaOption && (
+                <SelectItem value="auto">
+                  Automatic (XAA when configured, else OAuth)
+                </SelectItem>
+              )}
             </SelectContent>
           </Select>
+          {authType === "auto" && (
+            <p className="text-xs text-muted-foreground">
+              Selects Cross-App Access when this server has an IdP mode and a
+              stored client ID, and OAuth otherwise. The selection happens
+              before connecting — a failed XAA mint surfaces the error rather
+              than retrying as OAuth.
+            </p>
+          )}
         </div>
 
         {/* Bearer Token Settings */}
@@ -391,7 +404,7 @@ export function AuthenticationSection({
         )}
 
         {/* OAuth Settings */}
-        {showAuthSettings && authType === "oauth" && (
+        {showAuthSettings && (authType === "oauth" || authType === "auto") && (
           <div className="border-t border-border bg-muted/30">
             {oauthPlan && showOauthPlanBanner && (
               <div className="px-3 py-3 space-y-2 border-b border-border bg-background/60">

@@ -826,6 +826,91 @@ describe("useServerForm", () => {
     });
   });
 
+  it("emits authMethod 'auto' with backend-mirrored derived booleans", async () => {
+    // Auto on a server WITH sticky XAA config + a client id → selects XAA.
+    const xaaConfigured = {
+      name: "auto-xaa",
+      config: { url: "https://example.com/mcp" },
+      authMethod: "auto",
+      authServerMode: "mcpjam",
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+    const { result } = renderHook(() => useServerForm(xaaConfigured));
+    await waitFor(() => {
+      expect(result.current.authType).toBe("auto");
+    });
+    act(() => {
+      result.current.setClientId("client-1");
+    });
+    expect(result.current.buildFormData()).toMatchObject({
+      authMethod: "auto",
+      useXaa: true,
+      useOAuth: false,
+    });
+
+    // Auto WITHOUT XAA config → selects OAuth.
+    const { result: plain } = renderHook(() => useServerForm());
+    act(() => {
+      plain.current.setName("auto-oauth");
+      plain.current.setUrl("https://example.com/mcp");
+      plain.current.setAuthType("auto");
+    });
+    expect(plain.current.buildFormData()).toMatchObject({
+      authMethod: "auto",
+      useOAuth: true,
+      useXaa: false,
+    });
+  });
+
+  it("sends clearXaaConfig only when explicitly moving off XAA", async () => {
+    const xaaServer = {
+      name: "was-xaa",
+      config: { url: "https://example.com/mcp" },
+      useXaa: true,
+      authServerMode: "mcpjam",
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    // Switching to OAuth clears the sticky XAA identity config.
+    const { result } = renderHook(() => useServerForm(xaaServer));
+    await waitFor(() => {
+      expect(result.current.authType).toBe("xaa");
+    });
+    act(() => {
+      result.current.setAuthType("oauth");
+    });
+    expect(result.current.buildFormData()).toMatchObject({
+      authMethod: "oauth",
+      clearXaaConfig: true,
+    });
+
+    // Switching to "auto" preserves it — auto selects ON that config.
+    const { result: toAuto } = renderHook(() => useServerForm(xaaServer));
+    await waitFor(() => {
+      expect(toAuto.current.authType).toBe("xaa");
+    });
+    act(() => {
+      toAuto.current.setAuthType("auto");
+    });
+    const autoData = toAuto.current.buildFormData();
+    expect(autoData.authMethod).toBe("auto");
+    expect(autoData.clearXaaConfig).toBeUndefined();
+
+    // Staying on XAA never sends the reset.
+    const { result: stays } = renderHook(() => useServerForm(xaaServer));
+    await waitFor(() => {
+      expect(stays.current.authType).toBe("xaa");
+    });
+    const xaaData = stays.current.buildFormData();
+    expect(xaaData.clearXaaConfig).toBeUndefined();
+  });
+
   it("blocks submit for preregistered OAuth until client ID passes validation", () => {
     const { result } = renderHook(() => useServerForm());
 

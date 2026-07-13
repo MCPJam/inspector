@@ -19,6 +19,10 @@ import {
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { setRequestLogContext } from "../../utils/request-logger.js";
 import { logger } from "../../utils/logger.js";
+import {
+  resolveEffectiveAuthMethod,
+  withXaaExtensionCapability,
+} from "../../utils/effective-auth.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import {
   type InternalLogContext,
@@ -868,8 +872,14 @@ export async function createAuthorizedManager(
 
       const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
       const displayServerName = serverNamesById?.[serverId] ?? serverId;
+      // One resolver decides the flow for every dispatch below: canonical
+      // authMethod wins ("auto" selects XAA when configured, OAuth
+      // otherwise); legacy rows fall back to the boolean pair. Must match
+      // the local resolver's dispatch (hosted/local/swarm parity).
+      const effectiveAuth = resolveEffectiveAuthMethod(auth.serverConfig);
+      const usesOAuthFlow = effectiveAuth === "oauth";
       const onUnauthorized =
-        auth.serverConfig.useOAuth && auth.oauthAccessToken
+        usesOAuthFlow && auth.oauthAccessToken
           ? buildHostedOAuthUnauthorizedHandler({
               bearerToken,
               projectId,
@@ -882,7 +892,7 @@ export async function createAuthorizedManager(
             })
           : undefined;
 
-      if (auth.serverConfig.useOAuth) {
+      if (usesOAuthFlow) {
         if (auth.serverConfig.url) {
           oauthServerUrls[serverId] = auth.serverConfig.url;
         }
@@ -903,18 +913,29 @@ export async function createAuthorizedManager(
 
       // Cross-App Access: mint the resource access token server-side (MCPJam as
       // the test IdP) and inject it through the same `oauthAccessToken` channel
-      // that sets the Bearer header. Strictly gated on `useXaa === true &&
-      // useOAuth !== true` so it can never collide with the OAuth branch above.
-      // The XAA token always overrides whatever the authorize batch returned: a
-      // server converted from OAuth still has a stored OAuth token, and reusing
-      // it would inject the wrong credential.
+      // that sets the Bearer header. The effective method is a hard selection
+      // (auto picked XAA because the server is XAA-configured, or the row says
+      // xaa) — it can never collide with the OAuth branch above. The XAA token
+      // always overrides whatever the authorize batch returned: a server
+      // converted from OAuth still has a stored OAuth token, and reusing it
+      // would inject the wrong credential.
       let connectToken = oauthToken;
       let connectOnUnauthorized = onUnauthorized;
       const useXaa =
-        auth.serverConfig.transportType === "http" &&
-        auth.serverConfig.useXaa === true &&
-        auth.serverConfig.useOAuth !== true;
+        auth.serverConfig.transportType === "http" && effectiveAuth === "xaa";
       if (useXaa) {
+        // XAA connect runs on stored pre-registered credentials only; a
+        // dynamic registrationMode (dcr/cimd) applies to the debugger and
+        // OAuth flows.
+        if (
+          auth.serverConfig.registrationMode === "dcr" ||
+          auth.serverConfig.registrationMode === "cimd"
+        ) {
+          logger.info(
+            "[XAA connect] registrationMode is dynamic; connect uses stored pre-registered credentials — the mode applies to the debugger and OAuth flows only",
+            { serverId, registrationMode: auth.serverConfig.registrationMode }
+          );
+        }
         if (!options?.xaaIssuer) {
           // Caller-contract violation: a `useXaa` server reached a manager
           // builder that didn't thread the issuer (only callers holding the
@@ -1014,13 +1035,20 @@ export async function createAuthorizedManager(
             }
           : auth;
 
+      // Spec (MCP enterprise-managed authorization): a client whose access is
+      // enterprise-managed MUST advertise the extension in initialize. Merged
+      // — never overwriting — into the caller-configured capabilities.
+      const perServerCapabilities = useXaa
+        ? withXaaExtensionCapability(clientCapabilities)
+        : clientCapabilities;
+
       return [
         serverId,
         toHttpConfig(
           authForConfig,
           effectiveTimeoutMs,
           connectToken,
-          clientCapabilities,
+          perServerCapabilities,
           connectOnUnauthorized,
           effectiveInitializePins
         ),

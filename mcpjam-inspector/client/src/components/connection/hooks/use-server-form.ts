@@ -334,11 +334,23 @@ export function useServerForm(
         !hasBearer &&
         (server.hasBearerToken === true ||
           getRedactedConfigFlag(config, "hasBearerToken"));
-      // XAA is checked FIRST: an XAA server keeps `useOAuth === false`, so
-      // without this branch it would fall through to the "oauth" catch-all and
-      // a save would silently rewrite it to OAuth. See CLAUDE.local.md guard.
+      // The CANONICAL authMethod wins over the derived booleans (see
+      // feedback: canonical-wins-every-read-site) — a persisted "auto" must
+      // display as Automatic, not as whichever flow it currently derives to.
+      // On legacy rows XAA is checked FIRST: an XAA server keeps
+      // `useOAuth === false`, so without this branch it would fall through to
+      // the "oauth" catch-all and a save would silently rewrite it to OAuth.
+      const canonicalAuthType =
+        server.authMethod === "auto" ||
+        server.authMethod === "oauth" ||
+        server.authMethod === "xaa" ||
+        server.authMethod === "bearer" ||
+        server.authMethod === "none"
+          ? server.authMethod
+          : undefined;
       const resolvedAuthType: ServerFormAuthType =
-        server.useXaa === true
+        canonicalAuthType ??
+        (server.useXaa === true
           ? "xaa"
           : hasServerOAuth
           ? "oauth"
@@ -346,7 +358,7 @@ export function useServerForm(
           ? "bearer"
           : hasOAuth
           ? "oauth"
-          : "none";
+          : "none");
       const timeoutValue =
         typeof config.timeout === "number" && Number.isFinite(config.timeout)
           ? String(config.timeout)
@@ -390,6 +402,9 @@ export function useServerForm(
       // Set auth type based on multiple OAuth detection sources
       if (resolvedAuthType === "xaa") {
         setAuthType("xaa");
+        setShowAuthSettings(true);
+      } else if (resolvedAuthType === "auto") {
+        setAuthType("auto");
         setShowAuthSettings(true);
       } else if (resolvedAuthType === "oauth") {
         setAuthType("oauth");
@@ -779,7 +794,8 @@ export function useServerForm(
       .split(/\s+/)
       .filter((s) => s.length > 0);
     const shouldUsePreregisteredCredentials =
-      authType === "oauth" && registrationMode === "preregistered";
+      (authType === "oauth" || authType === "auto") &&
+      registrationMode === "preregistered";
     const isXaa = authType === "xaa";
     // XAA also collects resource-authorization-server client id / secret, so it
     // shares the preregistered-credential emission path.
@@ -798,7 +814,11 @@ export function useServerForm(
       (hasStoredClientSecret || hasReplacementClientSecret);
 
     // Handle authentication. useOAuth and useXaa are mutually exclusive by
-    // construction — this else-if chain sets at most one.
+    // construction — this else-if chain sets at most one. For "auto" the
+    // booleans mirror the backend's derivation (deriveAuthBooleans: XAA iff
+    // an IdP mode is configured AND a client id is stored) so localStorage-
+    // only mode matches hosted behavior; the backend re-derives on write
+    // regardless.
     let useOAuth = false;
     let useXaa = false;
     if (authType === "bearer" && bearerToken.trim()) {
@@ -807,7 +827,21 @@ export function useServerForm(
       useOAuth = true;
     } else if (authType === "xaa") {
       useXaa = true;
+    } else if (authType === "auto") {
+      const autoSelectsXaa =
+        server?.authServerMode != null && Boolean(clientId.trim());
+      useXaa = autoSelectsXaa;
+      useOAuth = !autoSelectsXaa;
     }
+    // Reset boundary: an explicit modal move OFF XAA clears the sticky XAA
+    // identity config server-side ("auto" keeps it — that's what auto
+    // selects on). Plain non-modal saves never reach this builder with a
+    // changed authType, so they keep preserving.
+    const wasXaa =
+      server?.authMethod === "xaa" ||
+      (server?.authMethod == null && server?.useXaa === true);
+    const clearXaaConfig =
+      wasXaa && authType !== "xaa" && authType !== "auto" ? true : undefined;
     const explicitHeaders =
       Object.keys(headers).length > 0 ? headers : undefined;
     const canPatchHeaders =
@@ -824,11 +858,17 @@ export function useServerForm(
       clientCapabilities,
       useOAuth,
       useXaa,
-      authServerMode: useXaa ? "mcpjam" : undefined,
+      // Canonical method — the booleans above are its derived compat mirrors
+      // (the backend re-derives them through deriveAuthBooleans on write).
+      authMethod: authType,
+      ...(clearXaaConfig ? { clearXaaConfig } : {}),
+      authServerMode:
+        authType === "xaa" ? "mcpjam" : useXaa ? server?.authServerMode : undefined,
       oauthProtocolMode: useOAuth ? oauthProtocolMode : undefined,
-      // The unified registration mode rides with BOTH auth flows — the XAA
-      // debugger reads the same per-server field the OAuth flow does.
-      registrationMode: useOAuth || useXaa ? registrationMode : undefined,
+      // The unified registration mode rides with every authorization flow —
+      // the XAA debugger reads the same per-server field the OAuth flow does.
+      registrationMode:
+        useOAuth || useXaa || authType === "auto" ? registrationMode : undefined,
       oauthScopes: scopes.length > 0 ? scopes : undefined,
       clientId: usesClientCredentials
         ? clientId.trim() || undefined

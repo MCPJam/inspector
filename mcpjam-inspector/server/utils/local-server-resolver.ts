@@ -15,6 +15,10 @@ import {
   forceRefreshHostedOAuthAccessToken,
 } from "./hosted-oauth-refresh.js";
 import { logger } from "./logger.js";
+import {
+  resolveEffectiveAuthMethod,
+  withXaaExtensionCapability,
+} from "./effective-auth.js";
 import { exportSingleServerForInspection } from "./export-helpers.js";
 import { ConvexHttpClient } from "convex/browser";
 import { getInspectorClientRuntimeConfig } from "../env.js";
@@ -424,9 +428,17 @@ export function toMCPServerConfig(
 ): MCPServerConfig {
   const { serverConfig } = authResult;
   const timeout = options?.timeoutMs ?? serverConfig.timeout;
-  const clientCapabilities =
+  const baseClientCapabilities =
     options?.clientCapabilities ??
     (serverConfig.clientCapabilities as Record<string, unknown> | undefined);
+  // Spec (MCP enterprise-managed authorization): a client whose access is
+  // enterprise-managed MUST advertise the extension in initialize. Merged —
+  // never overwriting — into whatever capabilities the caller configured.
+  const clientCapabilities =
+    serverConfig.transportType === "http" &&
+    resolveEffectiveAuthMethod(serverConfig) === "xaa"
+      ? withXaaExtensionCapability(baseClientCapabilities)
+      : baseClientCapabilities;
 
   if (serverConfig.transportType === "stdio") {
     const stdio: any = {
@@ -510,7 +522,11 @@ export function toMCPServerConfig(
   // server (we have a token from `authorize-batch-local`) AND the caller
   // supplied refresh context. Header-only HTTP servers can't be refreshed
   // server-side, so the hook would be a no-op there.
-  if (oauthToken && serverConfig.useOAuth === true && options?.refreshContext) {
+  if (
+    oauthToken &&
+    resolveEffectiveAuthMethod(serverConfig) === "oauth" &&
+    options?.refreshContext
+  ) {
     http.onUnauthorized = buildHostedOAuthUnauthorizedHandler({
       bearerToken: options.refreshContext.bearerToken,
       projectId: options.refreshContext.projectId,
@@ -519,7 +535,7 @@ export function toMCPServerConfig(
     });
   } else if (
     oauthToken &&
-    serverConfig.useXaa === true &&
+    resolveEffectiveAuthMethod(serverConfig) === "xaa" &&
     options?.xaaUnauthorizedHandler
   ) {
     // XAA re-mint on 401 — mutually exclusive with the OAuth hook above.
@@ -559,9 +575,14 @@ export async function resolveLocalServerForConnect(
 }> {
   let result = await authorizeServerLocal(c, bearerToken, projectId, serverId);
 
-  const useOAuth =
-    result.serverConfig.transportType === "http" &&
-    result.serverConfig.useOAuth === true;
+  // One resolver decides the flow for every dispatch below: canonical
+  // authMethod wins ("auto" selects XAA when configured, OAuth otherwise);
+  // legacy rows fall back to the boolean pair.
+  const effectiveAuth =
+    result.serverConfig.transportType === "http"
+      ? resolveEffectiveAuthMethod(result.serverConfig)
+      : "none";
+  const useOAuth = effectiveAuth === "oauth";
   // Track the access token we'll hand to `toMCPServerConfig`. Starts from
   // whatever `authorize-batch-local` returned, but for hosted-OAuth servers
   // we fall back to a server-side refresh — same `force-refresh` endpoint
@@ -614,18 +635,24 @@ export async function resolveLocalServerForConnect(
 
   // Cross-App Access: mint the resource access token server-side (MCPJam as the
   // test IdP), then hand it to `toMCPServerConfig` through the same
-  // `oauthAccessToken` channel that injects the Bearer header. Gated strictly on
-  // `useXaa === true && useOAuth !== true` so it can never collide with the
+  // `oauthAccessToken` channel that injects the Bearer header. The effective
+  // method is a hard selection (auto picked XAA because the server is
+  // XAA-configured, or the row says xaa) — it can never collide with the
   // OAuth branch above.
-  const useXaa =
-    result.serverConfig.transportType === "http" &&
-    result.serverConfig.useXaa === true &&
-    result.serverConfig.useOAuth !== true;
+  const useXaa = effectiveAuth === "xaa";
   let xaaUnauthorizedHandler:
     | (() => Promise<{ accessToken: string }>)
     | undefined;
   if (useXaa && result.serverConfig.transportType === "http") {
     const sc = result.serverConfig;
+    // XAA connect runs on stored pre-registered credentials only; a dynamic
+    // registrationMode (dcr/cimd) applies to the debugger and OAuth flows.
+    if (sc.registrationMode === "dcr" || sc.registrationMode === "cimd") {
+      logger.info(
+        "[XAA connect] registrationMode is dynamic; connect uses stored pre-registered credentials — the mode applies to the debugger and OAuth flows only",
+        { serverId, registrationMode: sc.registrationMode }
+      );
+    }
     const mintArgs = buildXaaMintArgs({
       issuer: resolveXaaIssuer(c, HOSTED_MODE),
       hostedMode: HOSTED_MODE,

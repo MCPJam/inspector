@@ -1,6 +1,6 @@
 import type { MCPServerConfig, NormalizedError } from "@mcpjam/sdk/browser";
 import { OauthTokens } from "@/shared/types.js";
-import type { RegistrationMode } from "@/shared/xaa.js";
+import type { AuthMethod, RegistrationMode } from "@/shared/xaa.js";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import type {
   ProjectClientConfig,
@@ -91,6 +91,11 @@ export interface ServerWithName {
    * flows and the XAA debugger. Persisted per-server; may be "auto".
    */
   registrationMode?: RegistrationMode;
+  /**
+   * Canonical auth method (useOAuth/useXaa are its derived compat mirrors).
+   * "auto" selects XAA when the server is XAA-configured, OAuth otherwise.
+   */
+  authMethod?: AuthMethod;
 }
 
 export interface Project {
