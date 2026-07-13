@@ -167,4 +167,49 @@ describe("ConvertSessionDialogCore", () => {
         .getAttribute("data-hosts"),
     ).toBe("host-first");
   });
+
+  it("does not seed hosts while detail is loading, so a late defaultHostId still wins", () => {
+    // Project hosts are typically cached before the promote detail resolves;
+    // seeding during load would grab projectHosts[0] and the non-empty
+    // attachment would then block the authoritative reseed.
+    const loading: PromoteSessionDetailState = {
+      loading: true,
+      error: null,
+      usedServerIds: [],
+      selectedServers: [],
+    };
+    const { rerender } = render(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={loading}
+        isAuthenticated
+        defaultHostId={null}
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />,
+    );
+    expect(
+      screen
+        .getByTestId("client-attachments-editor")
+        .getAttribute("data-hosts"),
+    ).toBe("");
+
+    rerender(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        defaultHostId="host-swarm"
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />,
+    );
+    expect(
+      screen
+        .getByTestId("client-attachments-editor")
+        .getAttribute("data-hosts"),
+    ).toBe("host-swarm");
+  });
 });

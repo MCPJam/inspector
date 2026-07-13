@@ -250,6 +250,12 @@ export function ConvertSessionDialogCore({
 
   useEffect(() => {
     if (!attachmentPickersEnabled) return;
+    // Don't seed while the adapter is still resolving detail: project hosts
+    // are often already cached, so seeding here would grab projectHosts[0]
+    // and the non-empty attachment would then block the reseed once the
+    // authoritative `defaultHostId` arrives — silently attaching the wrong
+    // host. A user edit before load completes still wins (non-empty guard).
+    if (detail.loading) return;
     if (hostAttachments.length === 0 && projectHosts.length > 0) {
       const preferredHostId =
         defaultHostId &&
@@ -266,6 +272,7 @@ export function ConvertSessionDialogCore({
   }, [
     attachmentPickersEnabled,
     defaultHostId,
+    detail.loading,
     hostAttachments.length,
     projectHosts,
   ]);
