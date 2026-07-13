@@ -11,7 +11,17 @@ export interface IdJagLintCitation {
 }
 
 export interface IdJagLintVerdict {
-  id: "typ" | "iss" | "sub" | "aud" | "resource" | "client_id" | "jti" | "exp";
+  id:
+    | "typ"
+    | "iss"
+    | "sub"
+    | "aud"
+    | "resource"
+    | "client_id"
+    | "jti"
+    | "iat"
+    | "exp"
+    | "subject_resolution";
   claim: string;
   status: IdJagLintStatus;
   detail: string;
@@ -50,8 +60,16 @@ const CITATIONS = {
   resource: { spec: "RFC 8707 / ID-JAG draft", section: "resource indicator" },
   clientId: { spec: "ID-JAG draft", section: "client_id binding" },
   jti: { spec: "RFC 7519", section: "§4.1.7 (jti replay prevention)" },
+  iat: { spec: "ID-JAG draft", section: "iat (required claim)" },
   exp: { spec: "RFC 7523", section: "§3 (exp required; reject expired)" },
+  subjectResolution: {
+    spec: "ID-JAG draft",
+    section: "subject resolution (email / aud_sub RECOMMENDED)",
+  },
 } as const satisfies Record<string, IdJagLintCitation>;
+
+// Tolerated forward clock skew before an iat "issued in the future" warning.
+const IAT_SKEW_S = 60;
 
 function show(value: unknown): string {
   if (value === undefined) return "(absent)";
@@ -273,6 +291,38 @@ export function lintIdJag(
         },
   );
 
+  // iat — REQUIRED by the ID-JAG draft; anchors the assertion's issue time.
+  if (typeof p.iat !== "number" || !Number.isFinite(p.iat)) {
+    verdicts.push({
+      id: "iat",
+      claim: "iat",
+      status: "fail",
+      detail:
+        "Missing or non-numeric issued-at. The ID-JAG draft requires iat, so the authorization server can anchor the assertion's lifetime.",
+      citation: CITATIONS.iat,
+      actual: show(p.iat),
+    });
+  } else if (p.iat > now + IAT_SKEW_S) {
+    verdicts.push({
+      id: "iat",
+      claim: "iat",
+      status: "warn",
+      detail:
+        "Issued in the future. Check for clock skew between the identity provider and the authorization server.",
+      citation: CITATIONS.iat,
+      actual: new Date(p.iat * 1000).toISOString(),
+    });
+  } else {
+    verdicts.push({
+      id: "iat",
+      claim: "iat",
+      status: "pass",
+      detail: "Issued-at present.",
+      citation: CITATIONS.iat,
+      actual: new Date(p.iat * 1000).toISOString(),
+    });
+  }
+
   // exp
   if (typeof p.exp !== "number" || !Number.isFinite(p.exp)) {
     verdicts.push({
@@ -314,6 +364,38 @@ export function lintIdJag(
       actual: new Date(p.exp * 1000).toISOString(),
     });
   }
+
+  // Subject resolution — the draft RECOMMENDS email and/or aud_sub so the
+  // resource authorization server can map the grant onto one of its own
+  // users. One combined row: either claim satisfies the recommendation.
+  const hasEmail = isNonEmptyString(p.email);
+  const hasAudSub = isNonEmptyString(p.aud_sub);
+  verdicts.push(
+    hasEmail || hasAudSub
+      ? {
+          id: "subject_resolution",
+          claim: "email / aud_sub",
+          status: "pass",
+          detail:
+            "A subject-resolution hint is present, so the authorization server can map the grant onto one of its own users.",
+          citation: CITATIONS.subjectResolution,
+          actual: [
+            hasEmail ? `email: ${p.email}` : null,
+            hasAudSub ? `aud_sub: ${p.aud_sub}` : null,
+          ]
+            .filter(Boolean)
+            .join(", "),
+        }
+      : {
+          id: "subject_resolution",
+          claim: "email / aud_sub",
+          status: "warn",
+          detail:
+            "Neither email nor aud_sub is present. The authorization server only has sub — an IdP-local identifier — to resolve the user, which breaks JIT provisioning and cross-system mapping.",
+          citation: CITATIONS.subjectResolution,
+          actual: "(absent)",
+        },
+  );
 
   return verdicts;
 }

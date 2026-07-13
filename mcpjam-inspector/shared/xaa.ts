@@ -18,6 +18,14 @@ export type NegativeTestMode = (typeof NEGATIVE_TEST_MODES)[number];
 export const DEFAULT_NEGATIVE_TEST_MODE: NegativeTestMode = "valid";
 export const XAA_IDP_KID = "xaa-idp-1";
 
+// RFC 8693 / ID-JAG draft URNs, shared by the mock IdP (server) and the
+// debugger state machine (client) so the two sides can never drift.
+export const XAA_TOKEN_EXCHANGE_GRANT =
+  "urn:ietf:params:oauth:grant-type:token-exchange";
+export const XAA_ID_JAG_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id-jag";
+export const XAA_ID_TOKEN_TOKEN_TYPE =
+  "urn:ietf:params:oauth:token-type:id_token";
+
 export const NEGATIVE_TEST_MODE_DETAILS: Record<
   NegativeTestMode,
   {

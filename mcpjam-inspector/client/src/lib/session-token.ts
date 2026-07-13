@@ -318,6 +318,10 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // in pure-local mode: the local mint ignores the header.
   "/api/mcp/xaa/authenticate",
   "/api/mcp/xaa/token-exchange",
+  // The standards-track RFC 8693 grant the debugger drives on the happy path;
+  // needs the bearer for the hosted-issuer forward (harmless locally).
+  // Boundary matching keeps this from also matching /token-exchange.
+  "/api/mcp/xaa/token",
   // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
   "/web/oauth/",
 ];

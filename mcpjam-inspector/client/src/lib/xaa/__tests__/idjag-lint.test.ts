@@ -18,6 +18,7 @@ const VALID_PAYLOAD = {
   jti: "f81d4fae-7dec-11d0-a765-00a0c91e6bf6",
   iat: NOW,
   exp: NOW + 5 * 60,
+  email: "user@example.com",
 };
 
 const CONTEXT: IdJagLintContext = {
@@ -42,7 +43,7 @@ function verdictFor(
 describe("lintIdJag", () => {
   it("passes every claim on a valid ID-JAG", () => {
     const verdicts = lintIdJag(VALID_HEADER, VALID_PAYLOAD, CONTEXT);
-    expect(verdicts).toHaveLength(8);
+    expect(verdicts).toHaveLength(10);
     expect(verdicts.every((v) => v.status === "pass")).toBe(true);
     expect(verdicts.every((v) => v.citation.spec.length > 0)).toBe(true);
   });
@@ -176,6 +177,61 @@ describe("lintIdJag", () => {
     });
   });
 
+  describe("iat", () => {
+    it("fails a missing iat (required claim)", () => {
+      const { iat: _iat, ...payload } = VALID_PAYLOAD;
+      const verdict = verdictFor(VALID_HEADER, payload, "iat");
+      expect(verdict.status).toBe("fail");
+      expect(verdict.citation.spec).toBe("ID-JAG draft");
+    });
+
+    it("warns on an iat in the future (clock skew)", () => {
+      const verdict = verdictFor(
+        VALID_HEADER,
+        { ...VALID_PAYLOAD, iat: NOW + 10 * 60 },
+        "iat",
+      );
+      expect(verdict.status).toBe("warn");
+      expect(verdict.detail).toContain("clock skew");
+    });
+
+    it("passes a present iat", () => {
+      expect(verdictFor(VALID_HEADER, VALID_PAYLOAD, "iat").status).toBe(
+        "pass",
+      );
+    });
+  });
+
+  describe("subject resolution (email / aud_sub)", () => {
+    it("passes when email is present", () => {
+      const verdict = verdictFor(
+        VALID_HEADER,
+        VALID_PAYLOAD,
+        "subject_resolution",
+      );
+      expect(verdict.status).toBe("pass");
+      expect(verdict.actual).toContain("user@example.com");
+    });
+
+    it("passes when only aud_sub is present", () => {
+      const { email: _email, ...payload } = VALID_PAYLOAD;
+      const verdict = verdictFor(
+        VALID_HEADER,
+        { ...payload, aud_sub: "as-user-42" },
+        "subject_resolution",
+      );
+      expect(verdict.status).toBe("pass");
+      expect(verdict.actual).toContain("as-user-42");
+    });
+
+    it("warns when neither email nor aud_sub is present", () => {
+      const { email: _email, ...payload } = VALID_PAYLOAD;
+      const verdict = verdictFor(VALID_HEADER, payload, "subject_resolution");
+      expect(verdict.status).toBe("warn");
+      expect(verdict.detail).toContain("provisioning");
+    });
+  });
+
   describe("exp", () => {
     it("fails an expired assertion", () => {
       const verdict = verdictFor(
@@ -204,7 +260,7 @@ describe("lintIdJag", () => {
 
   it("handles null header and payload without throwing", () => {
     const verdicts = lintIdJag(null, null, { nowSeconds: NOW });
-    expect(verdicts).toHaveLength(8);
+    expect(verdicts).toHaveLength(10);
     expect(verdicts.some((v) => v.status === "pass")).toBe(false);
   });
 });

@@ -59,6 +59,44 @@ describe("analyzeAsCompatibility", () => {
     expect(report?.vendorHint?.verdict).toBe("native");
     const jwtCheck = report?.checks.find((c) => c.id === "jwt_bearer_grant");
     expect(jwtCheck?.status).toBe("pass");
+    // The grant-profile metadata is absent (like virtually every AS today):
+    // the check reports unknown but MUST NOT degrade the overall verdict.
+    const profileCheck = report?.checks.find(
+      (c) => c.id === "id_jag_grant_profile",
+    );
+    expect(profileCheck?.status).toBe("unknown");
+  });
+
+  it("passes the grant-profile check when the ID-JAG profile is advertised", () => {
+    const report = analyzeAsCompatibility({
+      issuer: "https://dev-123.okta.com",
+      token_endpoint: "https://dev-123.okta.com/oauth2/v1/token",
+      grant_types_supported: [JWT_BEARER_GRANT],
+      authorization_grant_profiles_supported: [
+        "urn:ietf:params:oauth:grant-profile:id-jag",
+      ],
+    });
+    expect(report?.overall).toBe("pass");
+    const profileCheck = report?.checks.find(
+      (c) => c.id === "id_jag_grant_profile",
+    );
+    expect(profileCheck?.status).toBe("pass");
+  });
+
+  it("warns when grant profiles are advertised without the ID-JAG profile", () => {
+    const report = analyzeAsCompatibility({
+      issuer: "https://dev-123.okta.com",
+      token_endpoint: "https://dev-123.okta.com/oauth2/v1/token",
+      grant_types_supported: [JWT_BEARER_GRANT],
+      authorization_grant_profiles_supported: [
+        "urn:ietf:params:oauth:grant-profile:something-else",
+      ],
+    });
+    expect(report?.overall).toBe("warn");
+    const profileCheck = report?.checks.find(
+      (c) => c.id === "id_jag_grant_profile",
+    );
+    expect(profileCheck?.status).toBe("warn");
   });
 
   it("fails when the AS doesn't advertise jwt-bearer", () => {

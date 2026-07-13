@@ -7,6 +7,9 @@ import {
   NEGATIVE_TEST_MODES,
   NEGATIVE_TEST_MODE_DETAILS,
   XAA_IDP_KID,
+  XAA_ID_JAG_TOKEN_TYPE,
+  XAA_ID_TOKEN_TOKEN_TYPE,
+  XAA_TOKEN_EXCHANGE_GRANT,
   type NegativeTestDiff,
   type NegativeTestMode,
 } from "../../../shared/xaa.js";
@@ -50,7 +53,7 @@ import type {
   XaaResourceAppSecretResult,
 } from "../../utils/server-secrets.js";
 import { logger } from "../../utils/logger.js";
-import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
+import { CORS_ORIGINS, MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 
 const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 const NEGATIVE_TEST_CASE_TIMEOUT_MS = 8_000;
@@ -105,9 +108,9 @@ function validateOrgSegment(c: Context): string | Response {
 }
 
 // ── Mock OIDC IdP (authorization_code + userinfo) ─────────────────────────
-const TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange";
-const ID_JAG_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id-jag";
-const ID_TOKEN_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id_token";
+const TOKEN_EXCHANGE_GRANT = XAA_TOKEN_EXCHANGE_GRANT;
+const ID_JAG_TOKEN_TYPE = XAA_ID_JAG_TOKEN_TYPE;
+const ID_TOKEN_TOKEN_TYPE = XAA_ID_TOKEN_TOKEN_TYPE;
 
 // Best-effort per-IP sliding-window cap on the public OIDC endpoints that sign
 // something (/token, /authorize/confirm). X-Forwarded-For is client-spoofable
@@ -163,16 +166,25 @@ function getClientIp(c: {
 // cross-site browser request carries a foreign Origin — blocking it stops a
 // third-party page from driving /authorize/confirm (open redirect) or /token
 // (unauthenticated ID-JAG mint) against the user's issuer.
-function rejectCrossOriginPost(c: Context): Response | null {
+// `allowedOrigins` are exact first-party UI origins accepted in addition to
+// same-host: the dev proxy rewrites Host but not Origin, so the debugger's own
+// browser POST to /token would otherwise fail the same-host comparison.
+function rejectCrossOriginPost(
+  c: Context,
+  allowedOrigins: string[]
+): Response | null {
   const origin = c.req.header("origin");
   if (!origin) return null;
-  let originHost: string;
+  let parsedOrigin: URL;
   try {
-    originHost = new URL(origin).host;
+    parsedOrigin = new URL(origin);
   } catch {
     return oauthError(403, "access_denied", "Invalid Origin header");
   }
-  if (originHost !== new URL(c.req.url).host) {
+  if (
+    parsedOrigin.host !== new URL(c.req.url).host &&
+    !allowedOrigins.includes(parsedOrigin.origin)
+  ) {
     return oauthError(403, "access_denied", "Cross-origin request rejected");
   }
   return null;
@@ -558,6 +570,11 @@ interface CreateXaaRouterOptions {
   // origin is config, never derived from the request. The hosted router never
   // sets this — hosted IS the hosted issuer and ignores `issuerMode`.
   forwardHostedIssuer?: { origin: string };
+  // Exact first-party UI origins additionally accepted by the state-changing
+  // OIDC endpoints' cross-origin guard. Needed because the dev proxy rewrites
+  // Host (changeOrigin) but not Origin, so the debugger's own browser POST to
+  // /token would read as cross-site under a pure same-host check.
+  allowedBrowserOrigins?: string[];
 }
 
 type ParsedJwtPayload = {
@@ -634,6 +651,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   const protectedMiddlewares = options.protectedMiddlewares ?? [];
   const trustForwardedHeaders = options.trustForwardedHeaders ?? false;
   const authorizeOrgIssuer = options.authorizeOrgIssuer;
+  const allowedBrowserOrigins = options.allowedBrowserOrigins ?? [];
 
   if (protectedMiddlewares.length > 0) {
     router.use("/authenticate", ...protectedMiddlewares);
@@ -684,20 +702,30 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     }
     const scopedSegment = `/o/${organizationId}`;
 
+    return relayToHostedIssuer(`${origin}/api/web/xaa${scopedSegment}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: authHeader,
+      },
+      body: JSON.stringify(forwardBody),
+    });
+  };
+
+  // The fetch/relay half of the hosted-issuer forward: POSTs to the fixed
+  // hosted URL and surfaces the upstream response verbatim (status, JSON body,
+  // auth-relevant headers) so hosted 401/403/429 stay explainable rather than
+  // collapsing into a generic 502.
+  const relayToHostedIssuer = async (
+    url: string,
+    init: { method: "POST"; headers: Record<string, string>; body: string }
+  ): Promise<Response> => {
     let upstream: Response;
     try {
-      upstream = await fetch(
-        `${origin}/api/web/xaa${scopedSegment}${path}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: authHeader,
-          },
-          body: JSON.stringify(forwardBody),
-          signal: AbortSignal.timeout(HOSTED_FORWARD_TIMEOUT_MS),
-        }
-      );
+      upstream = await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(HOSTED_FORWARD_TIMEOUT_MS),
+      });
     } catch (error) {
       const isTimeout =
         error instanceof Error &&
@@ -776,6 +804,50 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       return null;
     }
     return forwardToHostedIssuer(c, path, body as Record<string, unknown>);
+  };
+
+  // Hosted-issuer forward for the standards-track /token endpoint. The RFC
+  // 8693 form body must stay spec-pure, so the opt-in rides transport headers
+  // (x-mcpjam-issuer-mode / x-mcpjam-organization-id) instead of body fields;
+  // they are consumed here and never forwarded upstream. Without this, a local
+  // run that promised the hosted issuer would mint an ID-JAG with the local
+  // `iss`, which a remote AS can't discover.
+  const maybeForwardHostedTokenGrant = async (
+    c: Context
+  ): Promise<Response | null> => {
+    if (!options.forwardHostedIssuer) return null;
+    if (c.req.header("x-mcpjam-issuer-mode") !== "hosted") return null;
+    const authHeader = c.req.header("authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return oauthError(
+        401,
+        "invalid_client",
+        "Minting through the hosted issuer requires signing in"
+      );
+    }
+    // Fail closed on the org, same as forwardToHostedIssuer: the unscoped
+    // hosted /token refuses this grant, and downgrading would mint under the
+    // wrong `iss`.
+    const organizationId = c.req.header("x-mcpjam-organization-id");
+    if (!isValidOrgId(organizationId)) {
+      return oauthError(
+        400,
+        "invalid_request",
+        "Hosted issuer minting requires an active organization"
+      );
+    }
+    const body = await c.req.text();
+    return relayToHostedIssuer(
+      `${options.forwardHostedIssuer.origin}/api/web/xaa/o/${organizationId}/token`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: authHeader,
+        },
+        body,
+      }
+    );
   };
 
   const unscopedIssuer = (c: Context): string =>
@@ -964,7 +1036,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       return c.json({
         id_jag: issued.token,
         token_type: "N_A",
-        issued_token_type: "urn:ietf:params:oauth:token-type:jwt",
+        issued_token_type: ID_JAG_TOKEN_TYPE,
         expires_in: Math.max(
           0,
           Math.floor((issued.expiresAt - Date.now()) / 1000)
@@ -1592,7 +1664,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       // The confirm POST issues a code and 302s to redirect_uri, so it must be
       // driven by our own interstitial, never a cross-site auto-submit (which
       // would make this a POST-triggered open redirector).
-      const crossOrigin = rejectCrossOriginPost(c);
+      const crossOrigin = rejectCrossOriginPost(c, allowedBrowserOrigins);
       if (crossOrigin) return crossOrigin;
       const ip = getClientIp(c);
       if (ip && !checkOidcIpCap(ip)) {
@@ -1805,7 +1877,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       // A relying party's token call is server-to-server (no Origin). Block a
       // cross-site browser POST so a third-party page can't chain the public
       // /authorize mock sign-in into an unauthenticated ID-JAG mint.
-      const crossOrigin = rejectCrossOriginPost(c);
+      const crossOrigin = rejectCrossOriginPost(c, allowedBrowserOrigins);
       if (crossOrigin) return crossOrigin;
       const ip = getClientIp(c);
       if (ip && !checkOidcIpCap(ip)) {
@@ -1874,8 +1946,10 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     router.post("/authorize/confirm", (c) =>
       handleAuthorizeConfirm(c, unscopedIssuer(c))
     );
-    router.post("/token", (c) =>
-      handleToken(c, unscopedIssuer(c), async () =>
+    router.post("/token", async (c) => {
+      const forwarded = await maybeForwardHostedTokenGrant(c);
+      if (forwarded) return forwarded;
+      return handleToken(c, unscopedIssuer(c), async () =>
         unscopedTokenExchangeAtToken
           ? null
           : oauthError(
@@ -1883,8 +1957,8 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
               "unsupported_grant_type",
               "Standard token exchange is only served under an organization-scoped issuer (…/o/<orgId>/token)"
             )
-      )
-    );
+      );
+    });
     router.get("/userinfo", (c) => handleUserinfo(c, unscopedIssuer(c)));
 
     // Org-scoped surface: public front-channel endpoints (anyone can sign in
@@ -1948,6 +2022,9 @@ const xaa = createXaaRouter({
   // cloud AS can discover the issuer — no tunnel needed for the common
   // local-MCP-server + remote-AS setup.
   forwardHostedIssuer: { origin: MCPJAM_HOSTED_ORIGIN },
+  // The debugger drives /token from the browser through the dev proxy, whose
+  // Origin doesn't match the rewritten Host.
+  allowedBrowserOrigins: CORS_ORIGINS,
 });
 
 export default xaa;

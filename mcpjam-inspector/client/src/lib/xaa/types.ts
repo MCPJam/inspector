@@ -85,8 +85,15 @@ export interface XAAFlowState {
     response_types_supported?: string[];
     scopes_supported?: string[];
     token_endpoint_auth_methods_supported?: string[];
+    /** ID-JAG draft: the resource AS's declaration of end-to-end XAA support
+     * (contains urn:ietf:params:oauth:grant-profile:id-jag when supported). */
+    authorization_grant_profiles_supported?: string[];
   };
   tokenEndpoint?: string;
+  /** The MCPJam test-IdP issuer for this run — the expected ID-JAG `iss`.
+   * Mirrored from the machine config so display surfaces (lint panel) can
+   * compare against it without access to the config. */
+  issuerBaseUrl?: string;
   negativeTestMode: NegativeTestMode;
   userId?: string;
   email?: string;
@@ -159,6 +166,11 @@ export interface BaseXAAStateMachineConfig {
    * request bodies so the local server forwards them to the hosted issuer. */
   issuerMode?: "local" | "hosted";
   organizationId?: string | null;
+  /** Whether the issuer serves the standards-track RFC 8693 grant at /token.
+   * Hosted builds without an organization must keep using the JSON mint —
+   * the unscoped hosted /token refuses the token-exchange grant so a public
+   * endpoint can't launder MCPJam-signed ID-JAGs. Defaults to true. */
+  specTokenEndpointAvailable?: boolean;
   requestExecutor: XAARequestExecutor;
   scheduleAutoAdvance?: (next: () => void) => void;
   negativeTestMode?: NegativeTestMode;
@@ -240,6 +252,7 @@ export const EMPTY_XAA_FLOW_STATE: XAAFlowState = {
   authzServerIssuer: undefined,
   authzMetadata: undefined,
   tokenEndpoint: undefined,
+  issuerBaseUrl: undefined,
   negativeTestMode: DEFAULT_NEGATIVE_TEST_MODE,
   userId: undefined,
   email: undefined,

@@ -92,6 +92,22 @@ describe("createXAAStateMachine", () => {
           };
         }
 
+        // Valid mode drives the standards-track RFC 8693 grant.
+        if (path === "/token") {
+          return {
+            status: 200,
+            statusText: "OK",
+            headers: {},
+            body: {
+              access_token: idJag,
+              issued_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+              token_type: "N_A",
+              expires_in: 300,
+            },
+            ok: true,
+          };
+        }
+
         if (path === "/token-exchange") {
           return {
             status: 200,
@@ -393,6 +409,194 @@ describe("createXAAStateMachine", () => {
     );
   });
 
+  describe("phase-2 token exchange transport", () => {
+    function buildExchangeHarness(
+      configExtras: Record<string, any> = {},
+      stateExtras: Partial<XAAFlowState> = {}
+    ) {
+      let state: XAAFlowState = createInitialXAAFlowState({
+        serverUrl: "https://mcp.example.com",
+        authzServerIssuer: "https://auth.example.com",
+        clientId: "mcpjam-debugger",
+        scope: "read:tools",
+        identityAssertion: "id.token.jwt",
+        currentStep: "received_identity_assertion",
+        ...stateExtras,
+      });
+
+      const idJag = makeJwt({
+        iss: "https://issuer.example/api/web/xaa",
+        sub: "user-12345",
+        aud: "https://auth.example.com",
+        resource: "https://mcp.example.com",
+        client_id: "mcpjam-debugger",
+        exp: Math.floor(Date.now() / 1000) + 300,
+      });
+
+      const executor = {
+        externalRequest: vi.fn(),
+        internalRequest: vi.fn(async (path: string) => {
+          if (path === "/token") {
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: {
+                access_token: idJag,
+                issued_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+                token_type: "N_A",
+                expires_in: 300,
+              },
+              ok: true,
+            };
+          }
+          if (path === "/token-exchange") {
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: { id_jag: idJag },
+              ok: true,
+            };
+          }
+          throw new Error(`Unexpected internal request: ${path}`);
+        }),
+      };
+
+      const machine = createXAAStateMachine({
+        getState: () => state,
+        updateState: (updates) => {
+          state = { ...state, ...updates };
+        },
+        serverUrl: "https://mcp.example.com",
+        issuerBaseUrl: "https://issuer.example/api/web/xaa",
+        requestExecutor: executor,
+        clientId: "mcpjam-debugger",
+        scope: "read:tools",
+        authzServerIssuer: "https://auth.example.com",
+        ...configExtras,
+      });
+
+      return { machine, executor, getStateSnapshot: () => state, idJag };
+    }
+
+    it("sends a genuine RFC 8693 form request to /token in valid mode", async () => {
+      const { machine, executor, getStateSnapshot, idJag } =
+        buildExchangeHarness();
+
+      await machine.proceedToNextStep();
+
+      const [path, init] = executor.internalRequest.mock.calls[0];
+      expect(path).toBe("/token");
+      expect((init as RequestInit).headers).toMatchObject({
+        "Content-Type": "application/x-www-form-urlencoded",
+      });
+      const sent = new URLSearchParams(String((init as RequestInit).body));
+      expect(sent.get("grant_type")).toBe(
+        "urn:ietf:params:oauth:grant-type:token-exchange"
+      );
+      expect(sent.get("requested_token_type")).toBe(
+        "urn:ietf:params:oauth:token-type:id-jag"
+      );
+      expect(sent.get("subject_token")).toBe("id.token.jwt");
+      expect(sent.get("subject_token_type")).toBe(
+        "urn:ietf:params:oauth:token-type:id_token"
+      );
+      expect(sent.get("client_id")).toBe("mcpjam-debugger");
+      expect(sent.get("audience")).toBe("https://auth.example.com");
+      expect(sent.get("resource")).toBe("https://mcp.example.com");
+      expect(sent.get("scope")).toBe("read:tools");
+
+      const state = getStateSnapshot();
+      expect(state.currentStep).toBe("received_id_jag");
+      // The ID-JAG rides the spec response's access_token field.
+      expect(state.idJag).toBe(idJag);
+
+      // The displayed wire request is the spec-pure form request.
+      const entry = (state.httpHistory || []).find(
+        (item) => item.step === "token_exchange_request"
+      );
+      expect(entry?.request.url).toBe("/token");
+      expect(entry?.request.headers).toEqual({
+        "Content-Type": "application/x-www-form-urlencoded",
+      });
+      expect(entry?.request.body).toMatchObject({
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+      });
+    });
+
+    it("rides the hosted opt-in on transport headers without showing them in the logged request", async () => {
+      const { machine, executor, getStateSnapshot } = buildExchangeHarness({
+        issuerMode: "hosted",
+        organizationId: "org_123",
+      });
+
+      await machine.proceedToNextStep();
+
+      const [, init] = executor.internalRequest.mock.calls[0];
+      expect((init as RequestInit).headers).toMatchObject({
+        "x-mcpjam-issuer-mode": "hosted",
+        "x-mcpjam-organization-id": "org_123",
+      });
+      // The form body stays spec-pure — no opt-in fields.
+      const sent = new URLSearchParams(String((init as RequestInit).body));
+      expect(sent.get("issuerMode")).toBeNull();
+      expect(sent.get("organizationId")).toBeNull();
+
+      const entry = (getStateSnapshot().httpHistory || []).find(
+        (item) => item.step === "token_exchange_request"
+      );
+      expect(entry?.request.headers).toEqual({
+        "Content-Type": "application/x-www-form-urlencoded",
+      });
+    });
+
+    it("falls back to the JSON mint when the spec endpoint is unavailable (hosted guest)", async () => {
+      const { machine, executor } = buildExchangeHarness({
+        specTokenEndpointAvailable: false,
+      });
+
+      await machine.proceedToNextStep();
+
+      const [path, init] = executor.internalRequest.mock.calls[0];
+      expect(path).toBe("/token-exchange");
+      const parsed = JSON.parse(String((init as RequestInit).body));
+      expect(parsed).toMatchObject({
+        identityAssertion: "id.token.jwt",
+        audience: "https://auth.example.com",
+        clientId: "mcpjam-debugger",
+      });
+    });
+
+    it("keeps negative modes on the JSON mint", async () => {
+      const { machine, executor } = buildExchangeHarness(
+        { negativeTestMode: "wrong_audience" },
+        { negativeTestMode: "wrong_audience" }
+      );
+
+      await machine.proceedToNextStep();
+
+      const [path, init] = executor.internalRequest.mock.calls[0];
+      expect(path).toBe("/token-exchange");
+      const parsed = JSON.parse(String((init as RequestInit).body));
+      expect(parsed.negativeTestMode).toBe("wrong_audience");
+    });
+
+    it("exposes the configured issuerBaseUrl in flow state, surviving resets", async () => {
+      const { machine, getStateSnapshot } = buildExchangeHarness();
+
+      expect(machine.state.issuerBaseUrl).toBe(
+        "https://issuer.example/api/web/xaa"
+      );
+
+      machine.resetFlow();
+      expect(getStateSnapshot().issuerBaseUrl).toBe(
+        "https://issuer.example/api/web/xaa"
+      );
+    });
+  });
+
   describe("runner mode (runAll)", () => {
     function buildRunnerHarness(options: {
       registrationId?: string;
@@ -471,6 +675,23 @@ describe("createXAAStateMachine", () => {
               statusText: "OK",
               headers: {},
               body: { id_token: idToken },
+              ok: true,
+            };
+          }
+
+          // Valid mode drives the standards-track RFC 8693 grant. Must sit
+          // before the /proxy/token fallthrough below.
+          if (path === "/token") {
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: {
+                access_token: idJag,
+                issued_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+                token_type: "N_A",
+                expires_in: 300,
+              },
               ok: true,
             };
           }
@@ -689,6 +910,21 @@ describe("createXAAStateMachine", () => {
               statusText: "OK",
               headers: {},
               body: { id_token: idToken },
+              ok: true,
+            };
+          }
+          // Valid mode drives the standards-track RFC 8693 grant.
+          if (path === "/token") {
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: {
+                access_token: idJag,
+                issued_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+                token_type: "N_A",
+                expires_in: 300,
+              },
               ok: true,
             };
           }

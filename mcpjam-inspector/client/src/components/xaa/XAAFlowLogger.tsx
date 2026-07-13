@@ -703,6 +703,7 @@ export function XAAFlowLogger({
             decoded={flowState.idJagDecoded}
             negativeTestMode={flowState.negativeTestMode}
             lintContext={{
+              expectedIssuer: flowState.issuerBaseUrl,
               expectedAudience:
                 flowState.authzMetadata?.issuer || flowState.authzServerIssuer,
               expectedResource:

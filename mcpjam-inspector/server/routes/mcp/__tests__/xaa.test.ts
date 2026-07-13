@@ -156,6 +156,12 @@ describe("mcp xaa routes", () => {
 
     expect(tokenExchangeResponse.status).toBe(200);
     const tokenExchangeBody = await tokenExchangeResponse.json();
+    // The minted token is an ID-JAG, and the response must say so (the
+    // generic `…token-type:jwt` URN would teach debugger users the wrong
+    // constant).
+    expect(tokenExchangeBody.issued_token_type).toBe(
+      "urn:ietf:params:oauth:token-type:id-jag"
+    );
     const payload = decodeJwtPayload(tokenExchangeBody.id_jag);
     expect(payload.aud).toBe("https://wrong-audience.example.com");
     // The ID token's email rides into the ID-JAG (spec RECOMMENDED) so the
@@ -1006,6 +1012,157 @@ describe("hosted-issuer forwarding on the local router", () => {
       }
     }
   });
+
+  describe("standards-track /token forwarding", () => {
+    const GRANT_FORM = new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+      subject_token: "a.b.c",
+      subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+      client_id: "mcpjam-xaa-debugger",
+      audience: "https://auth.example.com",
+      resource: "https://mcp.example.com",
+    }).toString();
+
+    it("relays the form body verbatim to the scoped hosted /token, stripping the opt-in headers", async () => {
+      const fetchMock = vi.fn(async () =>
+        jsonResponse({
+          issued_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+          access_token: "hosted-jag",
+          token_type: "N_A",
+          expires_in: 300,
+        })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: "Bearer workos-token",
+          "x-mcpjam-issuer-mode": "hosted",
+          "x-mcpjam-organization-id": "org_123",
+        },
+        body: GRANT_FORM,
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        access_token: "hosted-jag",
+        issued_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0] as unknown as [
+        string,
+        RequestInit,
+      ];
+      expect(url).toBe(`${HOSTED_ORIGIN}/api/web/xaa/o/org_123/token`);
+      // The spec form body crosses untouched; the transport opt-in headers
+      // never reach the hosted issuer.
+      expect(String(init.body)).toBe(GRANT_FORM);
+      const headers = init.headers as Record<string, string>;
+      expect(headers.Authorization).toBe("Bearer workos-token");
+      expect(headers["Content-Type"]).toBe(
+        "application/x-www-form-urlencoded"
+      );
+      expect(
+        Object.keys(headers).some((name) =>
+          name.toLowerCase().startsWith("x-mcpjam-")
+        )
+      ).toBe(false);
+    });
+
+    it("relays an OAuth-shaped hosted error verbatim", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          jsonResponse(
+            {
+              error: "invalid_grant",
+              error_description: "subject token expired",
+            },
+            { status: 400 }
+          )
+        )
+      );
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: "Bearer workos-token",
+          "x-mcpjam-issuer-mode": "hosted",
+          "x-mcpjam-organization-id": "org_123",
+        },
+        body: GRANT_FORM,
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: "invalid_grant" });
+    });
+
+    it("fails closed on a missing or malformed org header, without calling upstream", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      for (const orgHeader of [undefined, "not/valid"]) {
+        const response = await app.request("/api/mcp/xaa/token", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Authorization: "Bearer workos-token",
+            "x-mcpjam-issuer-mode": "hosted",
+            ...(orgHeader ? { "x-mcpjam-organization-id": orgHeader } : {}),
+          },
+          body: GRANT_FORM,
+        });
+        expect(response.status).toBe(400);
+        expect((await response.json()).error).toBe("invalid_request");
+      }
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects the hosted opt-in without a bearer, without calling upstream", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "x-mcpjam-issuer-mode": "hosted",
+          "x-mcpjam-organization-id": "org_123",
+        },
+        body: GRANT_FORM,
+      });
+
+      expect(response.status).toBe(401);
+      expect((await response.json()).error).toBe("invalid_client");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("serves /token locally when the opt-in header is absent, without touching fetch", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "junk" }).toString(),
+      });
+
+      // handleToken ran locally (unsupported grant → OAuth 400), no relay.
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe("unsupported_grant_type");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("mock OIDC IdP endpoints", () => {
@@ -1414,6 +1571,37 @@ describe("mock OIDC IdP endpoints", () => {
       body: new URLSearchParams({ grant_type: "authorization_code" }).toString(),
     });
     expect(response.status).toBe(403);
+  });
+
+  it("allows a first-party allowlisted Origin on /token (dev-proxy Origin ≠ Host)", async () => {
+    const allowlistedApp = new Hono();
+    allowlistedApp.route(
+      "/api/mcp/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/mcp",
+        httpsOnlyProxy: false,
+        allowedBrowserOrigins: ["http://localhost:5173"],
+      })
+    );
+    const post = (origin: string) =>
+      allowlistedApp.request(`${BASE}/token`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Origin: origin,
+        },
+        body: new URLSearchParams({ grant_type: "junk" }).toString(),
+      });
+
+    // The allowlisted first-party origin passes the CSRF guard and reaches
+    // the grant dispatch (OAuth 400, not 403)…
+    const allowed = await post("http://localhost:5173");
+    expect(allowed.status).toBe(400);
+    expect((await allowed.json()).error).toBe("unsupported_grant_type");
+
+    // …while a foreign origin is still rejected outright.
+    const rejected = await post("https://evil.example.com");
+    expect(rejected.status).toBe(403);
   });
 
   it("allows a same-origin confirm POST", async () => {
