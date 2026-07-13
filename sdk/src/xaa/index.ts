@@ -60,6 +60,8 @@ export {
   XAA_MCP_EXTENSION,
   type McpInitializeRequest,
 } from "./mcp-init.js";
+export { createInProcessXaaExecutor } from "./in-process-executor.js";
+export type { InProcessXaaExecutorOptions } from "./in-process-executor.js";
 export { runXaaFlow } from "./run-xaa-flow.js";
 export type {
   XaaCapabilityEvidence,
