@@ -36,6 +36,7 @@ import { createInitialXAAFlowState } from "./types.js";
 import {
   analyzeAsCompatibility,
   selectTokenEndpointAuthMethod,
+  type XAACompatibilityReport,
 } from "./capability-preflight.js";
 import {
   buildMcpInitializeRequest,
@@ -230,6 +231,31 @@ function mergeHeadersForAuthServer(
   }
 
   return merged;
+}
+
+/** Rank an issuer-matching authorization-server candidate by its advertised
+ * ID-JAG capability, using the two SPECIFIC compatibility checks — never the
+ * vendor-influenced `overall` verdict. Draft-04: advertising the ID-JAG grant
+ * profile requires also advertising the jwt-bearer grant, so the only valid
+ * "partial" is jwt-bearer present with the ID-JAG profile omitted.
+ *   1 = jwt-bearer AND ID-JAG profile advertised (best)
+ *   2 = jwt-bearer advertised, ID-JAG profile omitted (draft-04 SHOULD)
+ *   3 = otherwise — jwt-bearer unconfirmed, or ID-JAG explicitly unsupported.
+ * Rank 3 is the historical "first issuer-matching wins" fallback: capability
+ * advertisement is a preference heuristic, never a hard filter, since a server
+ * may accept the grant without advertising it. */
+function rankAuthServerCandidate(
+  report: XAACompatibilityReport | null
+): 1 | 2 | 3 {
+  if (!report) return 3;
+  const jwtBearer = report.checks.find(
+    (c) => c.id === "jwt_bearer_grant"
+  )?.status;
+  if (jwtBearer !== "pass") return 3;
+  const idJag = report.checks.find((c) => c.id === "id_jag_profile")?.status;
+  if (idJag === "pass") return 1;
+  if (idJag === "warn") return 2;
+  return 3;
 }
 
 function extractErrorMessage(body: any, fallback: string): string {
@@ -740,6 +766,71 @@ export function createXAAStateMachine(
         ];
     let lastError = "Authorization server metadata discovery failed.";
 
+    // Adopt a chosen candidate's metadata as the authorization server: record
+    // the token endpoint, the pre-registered client-auth method, and the
+    // compatibility report, and log the discovery.
+    const adoptAuthServer = (
+      metadata: Record<string, unknown>,
+      resolvedIssuer: string,
+      compatibilityReport: XAACompatibilityReport | null
+    ) => {
+      machine.updateState({
+        currentStep: "received_authz_metadata",
+        authzMetadata: metadata as XAAFlowState["authzMetadata"],
+        authzServerIssuer: resolvedIssuer,
+        tokenEndpoint: metadata.token_endpoint as string,
+        ...(registrationStrategy === "preregistered"
+          ? {
+              tokenEndpointAuthMethod: selectTokenEndpointAuthMethod(
+                state.tokenEndpointAuthMethod,
+                state.clientSecret,
+                metadata.token_endpoint_auth_methods_supported
+              ),
+            }
+          : {}),
+        compatibilityReport: compatibilityReport ?? undefined,
+        error: undefined,
+      });
+
+      pushInfo(
+        "received_authz_metadata",
+        "xaa-authz-metadata",
+        "Authorization metadata",
+        {
+          issuer: resolvedIssuer,
+          token_endpoint: metadata.token_endpoint,
+          grant_types_supported: metadata.grant_types_supported,
+          registration_endpoint: metadata.registration_endpoint,
+          client_id_metadata_document_supported:
+            metadata.client_id_metadata_document_supported,
+          authorization_grant_profiles_supported:
+            metadata.authorization_grant_profiles_supported,
+          compatibility: compatibilityReport
+            ? {
+                overall: compatibilityReport.overall,
+                vendor: compatibilityReport.vendor,
+              }
+            : undefined,
+        }
+      );
+    };
+
+    // A confidential client's secret is registered at one specific RAS, so
+    // capability ranking must NOT redirect it to a different advertised issuer
+    // than it would have reached before — pin such runs to the first
+    // issuer-matching candidate (pre-ranking behavior). Public clients (no
+    // secret) may rank freely. An explicitly-configured issuer is already a
+    // hard pin above (issuerCandidates collapses to a single entry).
+    const allowRankSwitch = !state.clientSecret;
+
+    type AsCandidate = {
+      metadata: Record<string, unknown>;
+      issuer: string;
+      report: XAACompatibilityReport | null;
+    };
+    let firstIssuerMatch: AsCandidate | undefined;
+    let jwtBearerOnly: AsCandidate | undefined;
+
     for (const candidateIssuer of issuerCandidates) {
       const urls = buildAuthorizationServerMetadataCandidates(candidateIssuer);
       for (const url of urls) {
@@ -793,52 +884,40 @@ export function createXAAStateMachine(
             issuer: resolvedIssuer,
           });
 
-          machine.updateState({
-            currentStep: "received_authz_metadata",
-            authzMetadata: metadata as XAAFlowState["authzMetadata"],
-            authzServerIssuer: resolvedIssuer,
-            tokenEndpoint: metadata.token_endpoint,
-            ...(registrationStrategy === "preregistered"
-              ? {
-                  tokenEndpointAuthMethod: selectTokenEndpointAuthMethod(
-                    state.tokenEndpointAuthMethod,
-                    state.clientSecret,
-                    metadata.token_endpoint_auth_methods_supported
-                  ),
-                }
-              : {}),
-            compatibilityReport: compatibilityReport ?? undefined,
-            error: undefined,
-          });
+          // Confidential run: pin to the first issuer-matching candidate,
+          // preserving pre-ranking behavior so no secret moves issuers.
+          if (!allowRankSwitch) {
+            adoptAuthServer(metadata, resolvedIssuer, compatibilityReport);
+            return;
+          }
 
-          pushInfo(
-            "received_authz_metadata",
-            "xaa-authz-metadata",
-            "Authorization metadata",
-            {
-              issuer: resolvedIssuer,
-              token_endpoint: metadata.token_endpoint,
-              grant_types_supported: metadata.grant_types_supported,
-              registration_endpoint: metadata.registration_endpoint,
-              client_id_metadata_document_supported:
-                metadata.client_id_metadata_document_supported,
-              authorization_grant_profiles_supported:
-                metadata.authorization_grant_profiles_supported,
-              compatibility: compatibilityReport
-                ? {
-                    overall: compatibilityReport.overall,
-                    vendor: compatibilityReport.vendor,
-                  }
-                : undefined,
-            }
-          );
-
-          return;
+          const candidate: AsCandidate = {
+            metadata,
+            issuer: resolvedIssuer,
+            report: compatibilityReport,
+          };
+          const rank = rankAuthServerCandidate(compatibilityReport);
+          if (rank === 1) {
+            // Both jwt-bearer and ID-JAG advertised — can't do better; adopt.
+            adoptAuthServer(metadata, resolvedIssuer, compatibilityReport);
+            return;
+          }
+          if (rank === 2 && !jwtBearerOnly) jwtBearerOnly = candidate;
+          if (!firstIssuerMatch) firstIssuerMatch = candidate;
+          // keep scanning the remaining candidates for a rank-1 server
         } catch (error) {
           lastError =
             error instanceof Error ? error.message : "Metadata request failed";
         }
       }
+    }
+
+    // No rank-1 candidate: prefer a jwt-bearer-capable one (rank 2), else fall
+    // back to the first issuer-matching candidate (historical behavior).
+    const chosen = jwtBearerOnly ?? firstIssuerMatch;
+    if (chosen) {
+      adoptAuthServer(chosen.metadata, chosen.issuer, chosen.report);
+      return;
     }
 
     machine.updateState({
