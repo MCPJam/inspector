@@ -24,9 +24,23 @@ import {
   resolveHostModelDefinition,
   resolveSyntheticModelSource,
 } from "../org-model-config";
+import {
+  __resetHostedModelCatalogForTests,
+  __setHostedCatalogForTests,
+} from "../../services/hosted-model-catalog";
+
+// A hosted model the dynamic backend catalog knows about but the static seed
+// (MCPJAM_PROVIDED_MODEL_IDS) does NOT — i.e. a backend bulk-add the inspector
+// hasn't shipped a seed for. This is the case the whole dynamic-catalog PR
+// exists for; a seed id would classify identically under the legacy check.
+const CATALOG_ONLY_MODEL = "futurevendor/brand-new-model";
 
 describe("resolveSyntheticModelSource", () => {
-  it("returns `mcpjam` source with no orgRuntime for MCPJam-catalog models", async () => {
+  afterEach(() => {
+    __resetHostedModelCatalogForTests();
+  });
+
+  it("returns `mcpjam` source with no orgRuntime for static-seed models", async () => {
     const result = await resolveSyntheticModelSource({
       modelDefinition: {
         id: "openai/gpt-oss-120b",
@@ -37,6 +51,42 @@ describe("resolveSyntheticModelSource", () => {
     });
 
     expect(result).toEqual({ source: "mcpjam" });
+  });
+
+  it("dispatches a catalog-only model (absent from the seed) to `mcpjam` once the catalog is warm", async () => {
+    // Guards the swap at org-model-config.ts (isMCPJamProvidedModel →
+    // isHostedCatalogModel). Reverting it would make this catalog-only id fall
+    // through to BYOK key derivation and throw here — the seed-only test above
+    // would NOT catch that regression.
+    __setHostedCatalogForTests([CATALOG_ONLY_MODEL]);
+
+    const result = await resolveSyntheticModelSource({
+      modelDefinition: {
+        id: CATALOG_ONLY_MODEL,
+        name: "Future JAM model",
+        provider: "openai",
+      } as ModelDefinition,
+      projectId: "proj-1",
+    });
+
+    expect(result).toEqual({ source: "mcpjam" });
+  });
+
+  it("a catalog-only model is NOT mcpjam on a cold catalog (byte-identical to the legacy seed-only check)", async () => {
+    // Cold start / catalog unreachable = pre-service behavior: a non-seed id
+    // must fall through to BYOK. `futurevendor/...` isn't local-runtime
+    // eligible and isn't `custom:`, so it short-circuits to cloud BYOK without
+    // a Convex round-trip (no CONVEX_HTTP_URL needed).
+    const result = await resolveSyntheticModelSource({
+      modelDefinition: {
+        id: CATALOG_ONLY_MODEL,
+        name: "Future JAM model",
+        provider: "openai",
+      } as ModelDefinition,
+      projectId: "proj-1",
+    });
+
+    expect(result.source).toBe("byok");
   });
 
   it("returns `byok` + cloud orgRuntime for non-MCPJam providers that aren't local-runtime-eligible (no Convex round-trip)", async () => {

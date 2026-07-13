@@ -54,10 +54,10 @@ import {
 import {
   getCanonicalModelId,
   getModelById,
-  isMCPJamProvidedModel,
   type ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
+import { isHostedCatalogModel } from "./hosted-model-catalog.js";
 import {
   hasSkillTools,
   mergeToolCallsByPromptIndex,
@@ -1566,7 +1566,7 @@ const executeTestCase = async (params: {
     String(modelDefinition.id),
     modelDefinition.provider
   );
-  const isJamModel = isMCPJamProvidedModel(
+  const isJamModel = isHostedCatalogModel(
     resolvedModelId,
     modelDefinition.provider
   );

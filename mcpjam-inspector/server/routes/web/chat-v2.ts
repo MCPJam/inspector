@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
-import { getCanonicalModelId, isMCPJamProvidedModel } from "@/shared/types";
+import { getCanonicalModelId } from "@/shared/types";
+import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
 import { isMCPAuthError } from "@mcpjam/sdk";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
@@ -311,7 +312,7 @@ chatV2.post("/", async (c) => {
         // "no MCP servers" fail-closed gate.
         hasSelectedMcpServers:
           (resolvedExecution.selectedServerIds ?? selectedServerIds).length > 0,
-        modelEligible: isMCPJamProvidedModel(
+        modelEligible: isHostedCatalogModel(
           String(modelDefinition.id),
           modelDefinition.provider,
         ),

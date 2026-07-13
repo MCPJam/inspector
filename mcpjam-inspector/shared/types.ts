@@ -112,7 +112,10 @@ export type ModelProvider =
   | "qwen"
   | "custom";
 
-const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
+// Exported so the server-side hosted-model catalog can PRE-SEED its dynamic
+// cache from this static list — the union of (seed ∪ backend catalog) keeps
+// billing classification byte-identical when the catalog is empty/unreachable.
+export const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "mistralai/mistral-small-2603",
   "mistralai/mistral-medium-3-5",
   "mistralai/mistral-large-2512",
