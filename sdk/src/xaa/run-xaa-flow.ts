@@ -80,7 +80,7 @@ export interface XaaFlowResult {
     error?: string;
     body?: unknown;
   };
-  mcp?: { status: number; ok: boolean };
+  mcp?: { status: number; ok: boolean; jsonRpcError?: string };
   steps: XaaFlowStep[];
   error?: string;
 }
@@ -88,7 +88,11 @@ export interface XaaFlowResult {
 function canonicalResource(serverUrl: string): string {
   try {
     const u = new URL(serverUrl);
-    return `${u.origin}${u.pathname.replace(/\/+$/, "")}`;
+    // Preserve the query — some MCP servers use it to identify/scope the
+    // protected resource, and the `resource` we mint/redeem for must match the
+    // URL the access token is ultimately used against. Keep the root "/" too.
+    const path = u.pathname === "/" ? "/" : u.pathname.replace(/\/+$/, "");
+    return `${u.origin}${path}${u.search}`;
   } catch {
     return serverUrl.replace(/\/+$/, "");
   }
@@ -105,13 +109,17 @@ function wellKnownCandidates(issuer: string, name: string): string[] {
   } catch {
     /* keep trimmed as origin */
   }
-  const candidates = new Set<string>([
-    // RFC 8414 path-insertion form.
+  if (!path) {
+    return [`${origin}/.well-known/${name}`];
+  }
+  // Path issuer: try the RFC 8414 path-insertion form AND the OIDC
+  // path-appended form (`issuer + /.well-known/...`), which OIDC-only servers
+  // require. Do NOT fall back to the root well-known — on a multi-tenant host
+  // that would fetch a different tenant's metadata.
+  return [
     `${origin}/.well-known/${name}${path}`,
-    // Root form.
-    `${origin}/.well-known/${name}`,
-  ]);
-  return [...candidates];
+    `${trimmed}/.well-known/${name}`,
+  ];
 }
 
 export async function runXaaFlow(
@@ -171,8 +179,16 @@ export async function runXaaFlow(
         for (const url of wellKnownCandidates(authzServerIssuer, name)) {
           const meta = await fetchOAuthMetadata(url, httpsOnly);
           if (!("status" in meta)) {
+            // RFC 8414 §3.3: the metadata's `issuer` MUST match the one we asked
+            // for. Reject a mismatched document so it can't redirect the signed
+            // assertion (and any client_secret) to another issuer's endpoint.
+            const metaIssuer = meta.metadata.issuer;
+            const issuerMatches =
+              typeof metaIssuer === "string" &&
+              metaIssuer.replace(/\/+$/, "") ===
+                authzServerIssuer.replace(/\/+$/, "");
             const te = meta.metadata.token_endpoint;
-            if (typeof te === "string") {
+            if (issuerMatches && typeof te === "string") {
               tokenEndpoint = te;
               break;
             }
@@ -303,7 +319,9 @@ export async function runXaaFlow(
     record(
       "authenticated_mcp_request",
       mcpResult.ok,
-      `status ${mcpResult.status}`,
+      mcpResult.jsonRpcError
+        ? `status ${mcpResult.status}, JSON-RPC error ${mcpResult.jsonRpcError}`
+        : `status ${mcpResult.status}`,
     );
 
     return {
@@ -330,7 +348,7 @@ async function callAuthenticatedMcp(
   serverUrl: string,
   accessToken: string,
   httpsOnly: boolean,
-): Promise<{ status: number; ok: boolean }> {
+): Promise<{ status: number; ok: boolean; jsonRpcError?: string }> {
   const response = await executeDebugOAuthProxy({
     url: serverUrl,
     method: "POST",
@@ -351,8 +369,33 @@ async function callAuthenticatedMcp(
     },
     httpsOnly,
   });
+  // A streamable-HTTP `initialize` can answer 200 OK while carrying a JSON-RPC
+  // error in the body (e.g. the MCP server rejects the token or the init). Treat
+  // that as a failed call, not a completed flow — transport status alone lies.
+  const transportOk = response.status >= 200 && response.status < 300;
+  const jsonRpcError = extractJsonRpcError(response.body);
   return {
     status: response.status,
-    ok: response.status >= 200 && response.status < 300,
+    ok: transportOk && !jsonRpcError,
+    ...(jsonRpcError ? { jsonRpcError } : {}),
   };
+}
+
+function extractJsonRpcError(body: unknown): string | undefined {
+  if (!body || typeof body !== "object") {
+    return undefined;
+  }
+  const error = (body as { error?: unknown }).error;
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  const parts: string[] = [];
+  if (typeof code === "number") {
+    parts.push(String(code));
+  }
+  if (typeof message === "string" && message.length > 0) {
+    parts.push(message);
+  }
+  return parts.length > 0 ? parts.join(": ") : "JSON-RPC error";
 }

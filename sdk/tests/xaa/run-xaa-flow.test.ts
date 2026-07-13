@@ -21,6 +21,7 @@ interface StubOptions {
   asMetadata?: unknown;
   token?: { status: number; body: unknown };
   mcpStatus?: number;
+  mcpBody?: unknown;
 }
 
 function stubFetch(opts: StubOptions) {
@@ -42,7 +43,11 @@ function stubFetch(opts: StubOptions) {
     }
     if (url === SERVER_URL && method === "POST") {
       return json(
-        { jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { serverInfo: {} } },
+        opts.mcpBody ?? {
+          jsonrpc: "2.0",
+          id: "mcpjam-xaa-cli",
+          result: { serverInfo: {} },
+        },
         opts.mcpStatus ?? 200,
       );
     }
@@ -121,6 +126,87 @@ describe("runXaaFlow", () => {
 
     expect(result.authzServerIssuer).toBe(AS_ISSUER);
     expect(result.tokenEndpoint).toBe(TOKEN_ENDPOINT);
+    expect(result.completed).toBe(true);
+  });
+
+  it("does not report completion when the MCP init returns a 200 JSON-RPC error", async () => {
+    global.fetch = stubFetch({
+      token: {
+        status: 200,
+        body: { access_token: "at-123", token_type: "Bearer" },
+      },
+      mcpStatus: 200,
+      mcpBody: {
+        jsonrpc: "2.0",
+        id: "mcpjam-xaa-cli",
+        error: { code: -32001, message: "Unauthorized" },
+      },
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    expect(result.redemption?.tokenIssued).toBe(true); // token was still issued
+    expect(result.mcp?.status).toBe(200);
+    expect(result.mcp?.ok).toBe(false);
+    expect(result.mcp?.jsonRpcError).toBe("-32001: Unauthorized");
+    expect(result.completed).toBe(false);
+  });
+
+  it("rejects AS metadata whose issuer does not match the requested issuer", async () => {
+    global.fetch = stubFetch({
+      prm: { authorization_servers: [AS_ISSUER] },
+      // Mismatched issuer — must not be trusted to source the token endpoint.
+      asMetadata: {
+        issuer: "https://evil.example.com",
+        token_endpoint: "https://evil.example.com/token",
+      },
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    expect(result.completed).toBe(false);
+    expect(result.tokenEndpoint).toBeUndefined();
+    expect(result.error).toMatch(/token endpoint/i);
+  });
+
+  it("preserves the query string in the canonical resource", async () => {
+    const serverWithQuery = "https://mcp.example.com/mcp?tenant=acme";
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const method = (init?.method || "GET").toUpperCase();
+      if (url === TOKEN_ENDPOINT && method === "POST") {
+        return json({ access_token: "at-1", token_type: "Bearer" });
+      }
+      if (url === serverWithQuery && method === "POST") {
+        return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: {} });
+      }
+      return json({}, 404);
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: serverWithQuery,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    expect(result.idJag?.claims.resource).toBe(
+      "https://mcp.example.com/mcp?tenant=acme",
+    );
     expect(result.completed).toBe(true);
   });
 
