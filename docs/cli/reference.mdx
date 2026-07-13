@@ -277,6 +277,28 @@ Plus shared connection flags.
 
 ---
 
+## `xaa` commands
+
+### `xaa run`
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--url <url>` | Yes | | Target MCP server URL (the protected resource) |
+| `--issuer-base-url <url>` | Yes | | Origin the local mock IdP issues from; the AS must be able to fetch its JWKS from here |
+| `--sub <subject>` | Yes | | Simulated end-user subject identifier |
+| `--client-id <id>` | Yes | | OAuth client the ID-JAG is issued for; also presented at redemption |
+| `--authz-server-issuer <issuer>` | No | | Target authorization-server issuer; skips protected-resource metadata discovery |
+| `--token-endpoint <url>` | No | | Authorization-server token endpoint; skips AS-metadata discovery |
+| `--email <email>` | No | | Simulated end-user email claim |
+| `--client-secret <secret>` | No | | OAuth client secret presented at redemption |
+| `--token-endpoint-auth-method <method>` | No | Inferred | `client_secret_basic`, `client_secret_post`, or `none` |
+| `--scopes <scopes>` | No | | Space-separated scope string |
+| `--https-only` | No | off | Reject non-HTTPS / private targets |
+
+The global `--timeout <ms>` flag applies a per-request timeout to all outbound fetches.
+
+---
+
 ## `protocol` commands
 
 ### `protocol conformance`
