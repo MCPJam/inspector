@@ -56,6 +56,7 @@ import {
 } from "./env.js";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
+import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
@@ -85,6 +86,9 @@ export async function createHonoApp() {
 
   startGuestAuthProvisioningInBackground();
   startLocalBrowserRenderingSetupInBackground();
+  // Warm the hosted-model catalog (seed ∪ backend /v1/models) so billing
+  // dispatch classifies newly-added hosted models correctly. Memoized.
+  startHostedModelCatalogRefresh();
   // Mirror of the call in server/index.ts — both production entries must
   // wire this up so the Electron/embedded path also gets a working Computer
   // tab. Memoized, so it's harmless if a process ever ran both. AWAITED (the
@@ -265,9 +269,9 @@ export async function createHonoApp() {
             code: "VALIDATION_ERROR",
             message: "Request body exceeds 1MB limit",
           },
-          400,
+          400
         ),
-    }),
+    })
   );
   app.route("/api/v1", v1Routes);
 
@@ -429,8 +433,9 @@ export async function createHonoApp() {
           })
         ) {
           try {
-            const { session, setCookies } =
-              await mintGuestSessionForDocument(c);
+            const { session, setCookies } = await mintGuestSessionForDocument(
+              c
+            );
             if (session && session.expiresAt > Date.now()) {
               const bootstrapScript = buildGuestBootstrapScript(session);
               html = html.replace("</head>", `${bootstrapScript}</head>`);
@@ -441,7 +446,7 @@ export async function createHonoApp() {
           } catch (error) {
             appLogger.warn(
               "[guest-bootstrap] document mint failed; serving without blob",
-              { error: error instanceof Error ? error.message : String(error) },
+              { error: error instanceof Error ? error.message : String(error) }
             );
           }
         }

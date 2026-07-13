@@ -45,6 +45,7 @@ import { securityHeadersMiddleware } from "./middleware/security-headers";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
+import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog";
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
@@ -243,6 +244,9 @@ initXAAIdpKeyPair();
 
 startGuestAuthProvisioningInBackground();
 startLocalBrowserRenderingSetupInBackground();
+// Warm the hosted-model catalog (seed ∪ backend /v1/models) so billing
+// dispatch classifies newly-added hosted models correctly. Memoized.
+startHostedModelCatalogRefresh();
 // Mirror of the call in server/app.ts::createHonoApp — both production
 // entries must wire this up. Memoized, so it's harmless if a process ever
 // ran both. Kicked off here so it overlaps route setup; AWAITED before
@@ -635,8 +639,7 @@ if (process.env.NODE_ENV === "production") {
         })
       ) {
         try {
-          const { session, setCookies } =
-            await mintGuestSessionForDocument(c);
+          const { session, setCookies } = await mintGuestSessionForDocument(c);
           if (session && session.expiresAt > Date.now()) {
             const bootstrapScript = buildGuestBootstrapScript(session);
             htmlContent = htmlContent.replace(

@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 
-// Gate the engine signal: an MCPJam-provided model id reports true, BYOK false.
+// Gate the engine signal: an MCPJam-hosted model id reports true, BYOK false.
 // Mirrors the real helper's provider-aware canonicalization: a BARE id only
-// counts as MCPJam-provided when the provider is supplied (bare + provider →
-// prefixed hosted id).
-vi.mock("@/shared/types", () => ({
-  isMCPJamProvidedModel: (id: string, provider?: string) =>
+// counts as hosted when the provider is supplied (bare + provider → prefixed
+// hosted id).
+vi.mock("../../../services/hosted-model-catalog.js", () => ({
+  isHostedCatalogModel: (id: string, provider?: string) =>
     id.startsWith("mcpjam/") || (provider === "mcpjam" && !id.includes("/")),
 }));
 
