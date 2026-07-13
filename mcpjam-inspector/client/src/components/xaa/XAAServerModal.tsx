@@ -27,7 +27,7 @@ import {
 import {
   XAA_STRATEGY_HINTS,
   XAA_STRATEGY_OPTIONS,
-} from "@/lib/xaa/registration-strategy";
+} from "@/lib/registration-strategy";
 import { deriveOAuthProfileFromServer } from "../oauth/utils";
 import { XaaCredentialFields } from "../connection/shared/XaaCredentialFields";
 
@@ -64,11 +64,19 @@ export function XAAServerModal({
 
   const [serverName, setServerName] = useState("");
   const [serverUrl, setServerUrl] = useState("");
-  // Registration strategy (Client↔Resource-AS leg). Persisted per-server; the
-  // modal is the source of truth. Pre-registered requires a Client ID; DCR/CIMD
-  // mint or URL-address the client identity instead.
+  // Registration strategy (Client↔Resource-AS leg), read from the UNIFIED
+  // per-server `registrationMode` shared with the OAuth flows. Pre-registered
+  // requires a Client ID; DCR/CIMD mint or URL-address the client identity.
   const [registrationStrategy, setRegistrationStrategy] =
     useState<RegistrationStrategy>(DEFAULT_REGISTRATION_STRATEGY);
+  // Auto-clobber guard: the selector DISPLAYS the resolved strategy (a stored
+  // "auto" shows as pre-registered), but only an explicit user edit may write
+  // it back — otherwise saving this modal would silently rewrite a stored
+  // "auto" to "preregistered" and change the OAuth flow's behavior for the
+  // same server. Untouched selector ⇒ the save omits `registrationMode` and
+  // the `?? existing` merge preserves the raw stored value.
+  const [registrationStrategyDirty, setRegistrationStrategyDirty] =
+    useState(false);
   const [clientId, setClientId] = useState("");
   const [scopes, setScopes] = useState("");
   const [authzIssuer, setAuthzIssuer] = useState("");
@@ -90,9 +98,10 @@ export function XAAServerModal({
     setServerName(server?.name ?? "");
     setServerUrl(derived.serverUrl ?? "");
     setRegistrationStrategy(
-      normalizeRegistrationStrategy(server?.xaaRegistrationStrategy) ??
+      normalizeRegistrationStrategy(server?.registrationMode) ??
         DEFAULT_REGISTRATION_STRATEGY,
     );
+    setRegistrationStrategyDirty(false);
     setClientId(derived.clientId ?? "");
     // Scopes can be stored comma- or space-separated upstream; normalize to
     // the space-separated form this modal edits.
@@ -189,8 +198,13 @@ export function XAAServerModal({
       // blank — identical to the Connect page so the two surfaces stay synced.
       xaaSubject: xaaSubject.trim() || signedInEmail || undefined,
       xaaEmail: xaaEmail.trim() || signedInEmail || undefined,
-      // Debugger-owned registration strategy (Client↔Resource-AS leg).
-      xaaRegistrationStrategy: registrationStrategy,
+      // Unified registration mode — written ONLY on explicit user edit (see
+      // the auto-clobber guard above); an untouched selector omits the field
+      // so the save-path `?? existing` merge preserves the stored value
+      // (which may be "auto", shared with the OAuth flow).
+      ...(registrationStrategyDirty
+        ? { registrationMode: registrationStrategy }
+        : {}),
     };
 
     // Final gate: the exact validator the save path runs. Any rule added there
@@ -257,15 +271,17 @@ export function XAAServerModal({
               />
             </div>
 
-            {/* Registration strategy (Client↔Resource-AS leg). Debugger-only —
-                not part of the shared Connect-page fields below. */}
+            {/* Registration strategy (Client↔Resource-AS leg). Shares the
+                per-server registrationMode with the OAuth flow — an edit here
+                changes what the Connect page's OAuth flow reads too. */}
             <div className="space-y-2">
               <Label htmlFor="xaa-registration-strategy">Registration</Label>
               <Select
                 value={registrationStrategy}
-                onValueChange={(value) =>
-                  setRegistrationStrategy(value as RegistrationStrategy)
-                }
+                onValueChange={(value) => {
+                  setRegistrationStrategy(value as RegistrationStrategy);
+                  setRegistrationStrategyDirty(true);
+                }}
               >
                 <SelectTrigger id="xaa-registration-strategy" className="h-10">
                   <SelectValue />

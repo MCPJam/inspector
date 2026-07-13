@@ -204,7 +204,7 @@ export function XAAFlowTab({
   // cache below stays session-only — a persisted `dcr` re-registers a fresh
   // client on the next run, guarded by the duplicate-risk gate.
   const persistedStrategy =
-    normalizeRegistrationStrategy(selectedServer?.xaaRegistrationStrategy) ??
+    normalizeRegistrationStrategy(selectedServer?.registrationMode) ??
     "preregistered";
   // Dynamic strategies (DCR/CIMD) need AS discovery, so they apply only to
   // manual bar-server targets (not registration/resource-app runs). An explicit

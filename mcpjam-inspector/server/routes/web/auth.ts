@@ -246,6 +246,13 @@ export type ConvexAuthorizeResponse = {
     oauthScopes?: string[];
     xaaSubject?: string;
     xaaEmail?: string;
+    // Which IdP mints the XAA assertion — on the wire from the backend
+    // projection; needed by the C2 effective-auth resolver's `auto` branch.
+    authServerMode?: "mcpjam" | "own";
+    // Unified canonical auth fields (the booleans above are their derived
+    // compat mirrors). Absent on legacy rows.
+    authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
+    registrationMode?: "auto" | "preregistered" | "cimd" | "dcr";
   };
   internalLogContext?: InternalLogContext;
 };

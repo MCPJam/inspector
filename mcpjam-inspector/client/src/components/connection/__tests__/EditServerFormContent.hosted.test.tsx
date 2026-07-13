@@ -58,7 +58,7 @@ function createFormState(overrides: Record<string, unknown> = {}) {
     setOauthScopesInput: vi.fn(),
     oauthProtocolMode: "2025-11-25",
     setOauthProtocolMode: vi.fn(),
-    oauthRegistrationMode: "auto",
+    registrationMode: "auto",
     setOauthRegistrationMode: vi.fn(),
     useCustomClientId: false,
     setUseCustomClientId: vi.fn(),

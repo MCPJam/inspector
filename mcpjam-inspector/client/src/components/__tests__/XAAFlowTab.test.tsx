@@ -484,9 +484,9 @@ describe("XAAFlowTab", () => {
   describe("registration strategy (persisted, modal-owned)", () => {
     // The on-flow selector band was removed: the strategy is chosen in the
     // Configure Server modal and persisted on the server config. The flow reads
-    // it from serverConfigs[selectedServerName].xaaRegistrationStrategy.
+    // it from serverConfigs[selectedServerName].registrationMode.
     const withStrategy = (strategy: string) =>
-      ({ staging: { xaaRegistrationStrategy: strategy } }) as any;
+      ({ staging: { registrationMode: strategy } }) as any;
 
     it("threads a persisted dcr strategy to the machine, with the session cache", () => {
       render(

@@ -276,7 +276,7 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   const existingOAuthConfig = readStoredOAuthConfig(formData.name);
   const protocolMode = formData.oauthProtocolMode ?? "auto";
   const registrationMode =
-    formData.oauthRegistrationMode ??
+    formData.registrationMode ??
     (formData.clientId || formData.clientSecret ? "preregistered" : "auto");
 
   oauthConfig.protocolMode = protocolMode;
@@ -492,8 +492,8 @@ function buildOAuthProfileFromFormData(
       ? formData.oauthProtocolMode
       : existingProfile?.protocolVersion ?? "2025-11-25";
   const registrationStrategy =
-    formData.oauthRegistrationMode && formData.oauthRegistrationMode !== "auto"
-      ? formData.oauthRegistrationMode
+    formData.registrationMode && formData.registrationMode !== "auto"
+      ? formData.registrationMode
       : existingProfile?.registrationStrategy ??
         (formData.clientId || formData.clientSecret || formData.hasClientSecret
           ? "preregistered"
@@ -1602,8 +1602,8 @@ export function useServerState({
         ...(serverEntry.xaaEmail !== undefined
           ? { xaaEmail: serverEntry.xaaEmail }
           : {}),
-        ...(serverEntry.xaaRegistrationStrategy !== undefined
-          ? { xaaRegistrationStrategy: serverEntry.xaaRegistrationStrategy }
+        ...(serverEntry.registrationMode !== undefined
+          ? { registrationMode: serverEntry.registrationMode }
           : {}),
       } as const;
 
@@ -2793,9 +2793,9 @@ export function useServerState({
           : existingServerForSave?.xaaEmail,
         // Debugger-only field: preserve any saved value when a non-debugger
         // save (which omits it) comes through, rather than erasing it.
-        xaaRegistrationStrategy:
-          formData.xaaRegistrationStrategy ??
-          existingServerForSave?.xaaRegistrationStrategy,
+        registrationMode:
+          formData.registrationMode ??
+          existingServerForSave?.registrationMode,
       };
       // Both modes: await Convex sync so the returned serverId is available
       // for OAuth binding (hosted) and for the new {projectId, serverId}
@@ -2931,7 +2931,7 @@ export function useServerState({
             existingOAuthProfile?.protocolVersion ??
             "auto";
           const registrationMode =
-            formData.oauthRegistrationMode ??
+            formData.registrationMode ??
             existingOAuthProfile?.registrationStrategy ??
             "auto";
           const oauthOptions: any = {
@@ -3212,9 +3212,9 @@ export function useServerState({
           : existingServer?.xaaEmail,
         // Debugger-only field: preserve any saved value when a non-debugger
         // save (which omits it) comes through, rather than erasing it.
-        xaaRegistrationStrategy:
-          formData.xaaRegistrationStrategy ??
-          existingServer?.xaaRegistrationStrategy,
+        registrationMode:
+          formData.registrationMode ??
+          existingServer?.registrationMode,
       } as ServerWithName;
 
       const hasPendingOAuthCallback = new URLSearchParams(
@@ -4746,9 +4746,9 @@ export function useServerState({
             : originalServer?.xaaEmail,
           // Debugger-only field: preserve any saved value when a non-debugger
           // save (which omits it) comes through, rather than erasing it.
-          xaaRegistrationStrategy:
-            formData.xaaRegistrationStrategy ??
-            originalServer?.xaaRegistrationStrategy,
+          registrationMode:
+            formData.registrationMode ??
+            originalServer?.registrationMode,
         } as ServerWithName;
 
         if (!formData.useOAuth && !formData.useXaa) {

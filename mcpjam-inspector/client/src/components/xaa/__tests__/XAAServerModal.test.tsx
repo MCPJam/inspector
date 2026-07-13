@@ -67,9 +67,11 @@ describe("XAAServerModal", () => {
       clientSecret: "super-secret",
       oauthScopes: ["read:tools", "read:resources"],
       xaaAuthzIssuer: "https://auth.staging.example.com",
-      // Defaults to pre-registered when the creator doesn't change it.
-      xaaRegistrationStrategy: "preregistered",
     });
+    // Untouched selector ⇒ the save omits registrationMode entirely (the
+    // auto-clobber guard): the save-path `?? existing` merge preserves
+    // whatever is stored, and the run resolves preregistered by default.
+    expect("registrationMode" in formData).toBe(false);
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
@@ -240,7 +242,7 @@ describe("XAAServerModal", () => {
 
     expect(onSave).toHaveBeenCalledTimes(1);
     const { formData } = onSave.mock.calls[0][0];
-    expect(formData.xaaRegistrationStrategy).toBe("dcr");
+    expect(formData.registrationMode).toBe("dcr");
   });
 
   it("prefills the persisted registration strategy when editing", async () => {
@@ -249,7 +251,7 @@ describe("XAAServerModal", () => {
       name: "prod-mcp",
       config: { url: "https://prod.mcp.example.com/mcp" },
       useXaa: true,
-      xaaRegistrationStrategy: "cimd",
+      registrationMode: "cimd",
       lastConnectionTime: new Date(),
       connectionStatus: "disconnected",
       retryCount: 0,
@@ -257,12 +259,58 @@ describe("XAAServerModal", () => {
 
     const { onSave } = renderModal({ server });
 
-    // The persisted strategy round-trips on save without re-selecting it.
+    // The selector displays the persisted choice…
+    expect(screen.getByLabelText("Registration")).toHaveTextContent(/CIMD/i);
+    // …and an untouched save OMITS the field so the `?? existing` merge
+    // preserves the stored value rather than re-writing it.
     await user.click(
       screen.getByRole("button", { name: "Save configuration" }),
     );
     const { formData } = onSave.mock.calls[0][0];
-    expect(formData.xaaRegistrationStrategy).toBe("cimd");
+    expect("registrationMode" in formData).toBe(false);
+  });
+
+  it("preserves a stored 'auto' mode on an untouched save (auto-clobber guard)", async () => {
+    const user = userEvent.setup();
+    // A server whose unified registrationMode was set to "auto" from the
+    // Connect page. The debugger modal DISPLAYS the resolved default
+    // (pre-registered) but must not write it back on save — that would
+    // silently change the OAuth flow's behavior for the same server.
+    const server = {
+      name: "auto-mcp",
+      config: { url: "https://auto.mcp.example.com/mcp" },
+      useXaa: true,
+      registrationMode: "auto",
+      oauthFlowProfile: {
+        serverUrl: "https://auto.mcp.example.com/mcp",
+        clientId: "auto-client",
+        clientSecret: "",
+        scopes: "",
+        customHeaders: [],
+      },
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+    } as unknown as ServerWithName;
+
+    const { onSave } = renderModal({ server });
+
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+    const { formData } = onSave.mock.calls[0][0];
+    expect("registrationMode" in formData).toBe(false);
+
+    // An explicit edit DOES write the new choice.
+    onSave.mockClear();
+    await user.click(screen.getByLabelText("Registration"));
+    await user.click(
+      screen.getByRole("option", { name: /open dynamic registration/i }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+    expect(onSave.mock.calls[0][0].formData.registrationMode).toBe("dcr");
   });
 
   it("rejects a duplicate name when creating a new server", async () => {

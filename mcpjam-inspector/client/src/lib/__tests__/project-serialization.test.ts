@@ -86,7 +86,7 @@ describe("project-serialization OAuth scopes coercion", () => {
   });
 });
 
-describe("xaaRegistrationStrategy round-trip", () => {
+describe("registrationMode round-trip", () => {
   it("round-trips a known strategy through deserialize", () => {
     const servers = deserializeServersFromConvex([
       {
@@ -94,10 +94,10 @@ describe("xaaRegistrationStrategy round-trip", () => {
         enabled: true,
         useXaa: true,
         url: "https://example.test/mcp",
-        xaaRegistrationStrategy: "dcr",
+        registrationMode: "dcr",
       },
     ]);
-    expect(servers.s1.xaaRegistrationStrategy).toBe("dcr");
+    expect(servers.s1.registrationMode).toBe("dcr");
   });
 
   it("normalizes the legacy pre_registered spelling to preregistered", () => {
@@ -107,10 +107,42 @@ describe("xaaRegistrationStrategy round-trip", () => {
         enabled: true,
         useXaa: true,
         url: "https://example.test/mcp",
-        xaaRegistrationStrategy: "pre_registered",
+        registrationMode: "pre_registered",
       },
     ]);
-    expect(servers.s1.xaaRegistrationStrategy).toBe("preregistered");
+    expect(servers.s1.registrationMode).toBe("preregistered");
+  });
+
+  it("imports the legacy per-flow keys into the unified field (canonical wins)", () => {
+    // Old exports carried xaaRegistrationStrategy (debugger) and/or
+    // oauthRegistrationMode; both must land on registrationMode.
+    const servers = deserializeServersFromConvex([
+      {
+        name: "legacy-xaa",
+        enabled: true,
+        useXaa: true,
+        url: "https://example.test/mcp",
+        xaaRegistrationStrategy: "pre_registered",
+      },
+      {
+        name: "legacy-oauth",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+        oauthRegistrationMode: "auto",
+      },
+      {
+        name: "both-keys",
+        enabled: true,
+        useXaa: true,
+        url: "https://example.test/mcp",
+        registrationMode: "cimd",
+        xaaRegistrationStrategy: "dcr",
+      },
+    ]);
+    expect(servers["legacy-xaa"].registrationMode).toBe("preregistered");
+    expect(servers["legacy-oauth"].registrationMode).toBe("auto");
+    expect(servers["both-keys"].registrationMode).toBe("cimd");
   });
 
   it("drops an unknown persisted strategy so the flow falls back to the default", () => {
@@ -120,10 +152,10 @@ describe("xaaRegistrationStrategy round-trip", () => {
         enabled: true,
         useXaa: true,
         url: "https://example.test/mcp",
-        xaaRegistrationStrategy: "totally-bogus",
+        registrationMode: "totally-bogus",
       },
     ]);
-    expect(servers.s1.xaaRegistrationStrategy).toBeUndefined();
+    expect(servers.s1.registrationMode).toBeUndefined();
   });
 
   it("serializes a known strategy for persistence", () => {
@@ -136,11 +168,11 @@ describe("xaaRegistrationStrategy round-trip", () => {
         lastConnectionTime: new Date(),
         connectionStatus: "disconnected",
         config: { url: new URL("https://example.test/mcp") },
-        xaaRegistrationStrategy: "cimd",
+        registrationMode: "cimd",
       } as unknown as ServerWithName,
     };
     const out = serializeServersForPersistence(server);
-    expect((out.s1 as any).xaaRegistrationStrategy).toBe("cimd");
+    expect((out.s1 as any).registrationMode).toBe("cimd");
   });
 });
 

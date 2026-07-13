@@ -3,7 +3,7 @@ import {
   normalizeOAuthProtocolVersion,
   normalizeOAuthRegistrationStrategy,
 } from "@/lib/oauth/profile";
-import { normalizeRegistrationStrategy } from "@/shared/xaa.js";
+import { normalizeRegistrationMode } from "@/shared/xaa.js";
 
 type SerializeOptions = {
   /**
@@ -76,8 +76,8 @@ function serializeServersInternal(
     if (server.xaaEmail !== undefined) {
       serializedServer.xaaEmail = server.xaaEmail;
     }
-    if (server.xaaRegistrationStrategy !== undefined) {
-      serializedServer.xaaRegistrationStrategy = server.xaaRegistrationStrategy;
+    if (server.registrationMode !== undefined) {
+      serializedServer.registrationMode = server.registrationMode;
     }
 
     if (server.config) {
@@ -271,13 +271,17 @@ export function deserializeServersFromConvex(
     if (serverData.xaaEmail !== undefined) {
       server.xaaEmail = serverData.xaaEmail;
     }
-    // Narrow the bare wire string to a known strategy; drop anything unknown so
-    // the flow falls back to the safe preregistered default.
-    const xaaRegistrationStrategy = normalizeRegistrationStrategy(
-      serverData.xaaRegistrationStrategy,
+    // Narrow the bare wire value to a known mode; drop anything unknown so the
+    // flows fall back to their defaults. Accepts the legacy per-flow keys
+    // (xaaRegistrationStrategy, oauthRegistrationMode) from old exports —
+    // canonical key wins when both are present.
+    const registrationMode = normalizeRegistrationMode(
+      serverData.registrationMode ??
+        serverData.xaaRegistrationStrategy ??
+        serverData.oauthRegistrationMode,
     );
-    if (xaaRegistrationStrategy !== undefined) {
-      server.xaaRegistrationStrategy = xaaRegistrationStrategy;
+    if (registrationMode !== undefined) {
+      server.registrationMode = registrationMode;
     }
 
     // Handle oauthFlowProfile from legacy nested structure

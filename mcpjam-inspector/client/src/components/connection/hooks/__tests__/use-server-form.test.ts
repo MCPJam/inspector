@@ -78,7 +78,7 @@ describe("useServerForm", () => {
       url: "https://example.com/mcp",
       useOAuth: true,
       oauthProtocolMode: "2025-06-18",
-      oauthRegistrationMode: "dcr",
+      registrationMode: "dcr",
       oauthScopes: ["openid", "profile"],
     });
   });
@@ -784,7 +784,7 @@ describe("useServerForm", () => {
     const { result } = renderHook(() => useServerForm(server));
 
     await waitFor(() => {
-      expect(result.current.oauthRegistrationMode).toBe("auto");
+      expect(result.current.registrationMode).toBe("auto");
     });
   });
 

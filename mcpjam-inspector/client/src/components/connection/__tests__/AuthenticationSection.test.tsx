@@ -28,7 +28,7 @@ const hostedSecretProps = {
   onOauthScopesChange: vi.fn(),
   oauthProtocolMode: "2025-11-25" as const,
   onOauthProtocolModeChange: vi.fn(),
-  oauthRegistrationMode: "preregistered" as const,
+  registrationMode: "preregistered" as const,
   onOauthRegistrationModeChange: vi.fn(),
   useCustomClientId: true,
   onUseCustomClientIdChange: vi.fn(),
@@ -62,7 +62,7 @@ describe("AuthenticationSection", () => {
         onOauthScopesChange={vi.fn()}
         oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
-        oauthRegistrationMode="auto"
+        registrationMode="auto"
         onOauthRegistrationModeChange={vi.fn()}
         useCustomClientId={false}
         onUseCustomClientIdChange={vi.fn()}
@@ -95,7 +95,7 @@ describe("AuthenticationSection", () => {
         onOauthScopesChange={vi.fn()}
         oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
-        oauthRegistrationMode="auto"
+        registrationMode="auto"
         onOauthRegistrationModeChange={vi.fn()}
         useCustomClientId={false}
         onUseCustomClientIdChange={vi.fn()}
@@ -126,7 +126,7 @@ describe("AuthenticationSection", () => {
         onOauthScopesChange={vi.fn()}
         oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
-        oauthRegistrationMode="auto"
+        registrationMode="auto"
         onOauthRegistrationModeChange={vi.fn()}
         useCustomClientId={false}
         onUseCustomClientIdChange={vi.fn()}
@@ -155,7 +155,7 @@ describe("AuthenticationSection", () => {
         onOauthScopesChange={vi.fn()}
         oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
-        oauthRegistrationMode="auto"
+        registrationMode="auto"
         onOauthRegistrationModeChange={vi.fn()}
         useCustomClientId={false}
         onUseCustomClientIdChange={vi.fn()}
@@ -190,7 +190,7 @@ describe("AuthenticationSection", () => {
         onOauthScopesChange={vi.fn()}
         oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
-        oauthRegistrationMode="auto"
+        registrationMode="auto"
         onOauthRegistrationModeChange={vi.fn()}
         useCustomClientId={false}
         onUseCustomClientIdChange={vi.fn()}
@@ -226,7 +226,7 @@ describe("AuthenticationSection", () => {
         onOauthScopesChange={vi.fn()}
         oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
-        oauthRegistrationMode="preregistered"
+        registrationMode="preregistered"
         onOauthRegistrationModeChange={vi.fn()}
         useCustomClientId={true}
         onUseCustomClientIdChange={vi.fn()}
@@ -265,7 +265,7 @@ describe("AuthenticationSection", () => {
         onOauthScopesChange={vi.fn()}
         oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
-        oauthRegistrationMode="auto"
+        registrationMode="auto"
         onOauthRegistrationModeChange={vi.fn()}
         useCustomClientId={false}
         onUseCustomClientIdChange={vi.fn()}
@@ -298,7 +298,7 @@ describe("AuthenticationSection", () => {
         onOauthScopesChange={vi.fn()}
         oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
-        oauthRegistrationMode="cimd"
+        registrationMode="cimd"
         onOauthRegistrationModeChange={vi.fn()}
         useCustomClientId={false}
         onUseCustomClientIdChange={vi.fn()}
@@ -332,7 +332,7 @@ describe("AuthenticationSection", () => {
       onOauthScopesChange: vi.fn(),
       oauthProtocolMode: "2025-11-25" as const,
       onOauthProtocolModeChange: vi.fn(),
-      oauthRegistrationMode: "preregistered" as const,
+      registrationMode: "preregistered" as const,
       onOauthRegistrationModeChange: vi.fn(),
       useCustomClientId: true,
       onUseCustomClientIdChange: vi.fn(),

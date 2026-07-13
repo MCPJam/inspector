@@ -3,8 +3,11 @@ import {
   ServerFormData,
   type ServerFormAuthType,
   type ServerFormOAuthProtocolMode,
-  type ServerFormOAuthRegistrationMode,
 } from "@/shared/types.js";
+import {
+  normalizeRegistrationMode,
+  type RegistrationMode,
+} from "@/shared/xaa.js";
 import { ServerWithName } from "@/hooks/use-app-state";
 import type { ProjectClientConfig } from "@/lib/client-config";
 import { getEffectiveProjectConnectionDefaults } from "@/lib/client-config";
@@ -20,7 +23,7 @@ interface InitialFormValues {
   bearerToken: string;
   oauthScopesInput: string;
   oauthProtocolMode: ServerFormOAuthProtocolMode;
-  oauthRegistrationMode: ServerFormOAuthRegistrationMode;
+  registrationMode: RegistrationMode;
   useCustomClientId: boolean;
   clientId: string;
   clientSecret: string;
@@ -41,7 +44,7 @@ interface InitialFormValues {
 }
 
 const DEFAULT_OAUTH_PROTOCOL_MODE: ServerFormOAuthProtocolMode = "2025-11-25";
-const DEFAULT_OAUTH_REGISTRATION_MODE: ServerFormOAuthRegistrationMode = "auto";
+const DEFAULT_OAUTH_REGISTRATION_MODE: RegistrationMode = "auto";
 
 interface HeaderEntry {
   id?: string;
@@ -59,16 +62,9 @@ function normalizeOauthProtocolMode(
     : DEFAULT_OAUTH_PROTOCOL_MODE;
 }
 
-function normalizeOauthRegistrationMode(
-  value?: string
-): ServerFormOAuthRegistrationMode | undefined {
-  return value === "auto" ||
-    value === "cimd" ||
-    value === "dcr" ||
-    value === "preregistered"
-    ? value
-    : undefined;
-}
+// Single-sourced in the SDK's registration vocabulary (accepts the legacy
+// pre_registered alias; unknown → undefined so callers apply defaults).
+const normalizeOauthRegistrationMode = normalizeRegistrationMode;
 
 function createHeaderEntry(key = "", value = ""): HeaderEntry {
   return {
@@ -136,8 +132,8 @@ export function useServerForm(
   const [oauthScopesInput, setOauthScopesInput] = useState("");
   const [oauthProtocolMode, setOauthProtocolMode] =
     useState<ServerFormOAuthProtocolMode>(DEFAULT_OAUTH_PROTOCOL_MODE);
-  const [oauthRegistrationMode, setOauthRegistrationMode] =
-    useState<ServerFormOAuthRegistrationMode>(DEFAULT_OAUTH_REGISTRATION_MODE);
+  const [registrationMode, setOauthRegistrationMode] =
+    useState<RegistrationMode>(DEFAULT_OAUTH_REGISTRATION_MODE);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [hasStoredClientSecret, setHasStoredClientSecret] = useState(false);
@@ -217,7 +213,7 @@ export function useServerForm(
       let scopes: string[] = [];
       let protocolModeValue: ServerFormOAuthProtocolMode =
         DEFAULT_OAUTH_PROTOCOL_MODE;
-      let registrationModeValue: ServerFormOAuthRegistrationMode =
+      let registrationModeValue: RegistrationMode =
         DEFAULT_OAUTH_REGISTRATION_MODE;
       let clientIdValue = "";
       let clientSecretValue = "";
@@ -467,7 +463,7 @@ export function useServerForm(
         bearerToken: bearerTokenValue,
         oauthScopesInput: scopes.join(" "),
         oauthProtocolMode: protocolModeValue,
-        oauthRegistrationMode: registrationModeValue,
+        registrationMode: registrationModeValue,
         useCustomClientId: shouldShowClientCredentials,
         clientId: clientIdValue,
         clientSecret: clientSecretValue,
@@ -777,7 +773,7 @@ export function useServerForm(
       .split(/\s+/)
       .filter((s) => s.length > 0);
     const shouldUsePreregisteredCredentials =
-      authType === "oauth" && oauthRegistrationMode === "preregistered";
+      authType === "oauth" && registrationMode === "preregistered";
     const isXaa = authType === "xaa";
     // XAA also collects resource-authorization-server client id / secret, so it
     // shares the preregistered-credential emission path.
@@ -824,7 +820,9 @@ export function useServerForm(
       useXaa,
       authServerMode: useXaa ? "mcpjam" : undefined,
       oauthProtocolMode: useOAuth ? oauthProtocolMode : undefined,
-      oauthRegistrationMode: useOAuth ? oauthRegistrationMode : undefined,
+      // The unified registration mode rides with BOTH auth flows — the XAA
+      // debugger reads the same per-server field the OAuth flow does.
+      registrationMode: useOAuth || useXaa ? registrationMode : undefined,
       oauthScopes: scopes.length > 0 ? scopes : undefined,
       clientId: usesClientCredentials
         ? clientId.trim() || undefined
@@ -905,7 +903,7 @@ export function useServerForm(
       bearerToken !== iv.bearerToken ||
       oauthScopesInput !== iv.oauthScopesInput ||
       oauthProtocolMode !== iv.oauthProtocolMode ||
-      oauthRegistrationMode !== iv.oauthRegistrationMode ||
+      registrationMode !== iv.registrationMode ||
       useCustomClientId !== iv.useCustomClientId ||
       clientId !== iv.clientId ||
       clientSecret !== iv.clientSecret ||
@@ -939,7 +937,7 @@ export function useServerForm(
 
   const preregisteredOauthBlocksSubmit =
     type === "http" &&
-    ((authType === "oauth" && oauthRegistrationMode === "preregistered") ||
+    ((authType === "oauth" && registrationMode === "preregistered") ||
       authType === "xaa") &&
     validateClientId(clientId) !== null;
   const oauthAuthorizationHeaderWarning =
@@ -969,7 +967,7 @@ export function useServerForm(
     setOauthScopesInput,
     oauthProtocolMode,
     setOauthProtocolMode,
-    oauthRegistrationMode,
+    registrationMode,
     setOauthRegistrationMode,
     clientId,
     setClientId,

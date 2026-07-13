@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { toast } from "@/lib/toast";
+import { normalizeRegistrationMode } from "@/shared/xaa.js";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@mcpjam/design-system/dialog";
@@ -44,16 +45,9 @@ function normalizeOauthProtocolMode(
     : "2025-11-25";
 }
 
-function normalizeOauthRegistrationMode(
-  value?: ServerFormData["oauthRegistrationMode"],
-): ServerFormData["oauthRegistrationMode"] | undefined {
-  return value === "auto" ||
-    value === "cimd" ||
-    value === "dcr" ||
-    value === "preregistered"
-    ? value
-    : undefined;
-}
+// Single-sourced in the SDK's registration vocabulary (accepts the legacy
+// pre_registered alias; unknown → undefined so callers apply defaults).
+const normalizeOauthRegistrationMode = normalizeRegistrationMode;
 
 function isAuthorizationHeader(key: string): boolean {
   return key.trim().toLowerCase() === "authorization";
@@ -145,13 +139,13 @@ export function AddServerModal({
             normalizeOauthProtocolMode(initialData.oauthProtocolMode),
           );
         }
-        if (initialData.oauthRegistrationMode) {
+        if (initialData.registrationMode) {
           formState.setOauthRegistrationMode(
-            normalizeOauthRegistrationMode(initialData.oauthRegistrationMode) ??
+            normalizeOauthRegistrationMode(initialData.registrationMode) ??
               "auto",
           );
           formState.setUseCustomClientId(
-            initialData.oauthRegistrationMode === "preregistered",
+            initialData.registrationMode === "preregistered",
           );
         }
         if (initialData.oauthScopes && initialData.oauthScopes.length > 0) {
@@ -226,7 +220,7 @@ export function AddServerModal({
     // Validate Client ID if using custom configuration
     if (
       formState.authType === "oauth" &&
-      formState.oauthRegistrationMode === "preregistered"
+      formState.registrationMode === "preregistered"
     ) {
       const clientIdError = formState.validateClientId(formState.clientId);
       if (clientIdError) {
@@ -405,7 +399,7 @@ export function AddServerModal({
               onOauthScopesChange={formState.setOauthScopesInput}
               oauthProtocolMode={formState.oauthProtocolMode}
               onOauthProtocolModeChange={formState.setOauthProtocolMode}
-              oauthRegistrationMode={formState.oauthRegistrationMode}
+              registrationMode={formState.registrationMode}
               onOauthRegistrationModeChange={
                 formState.setOauthRegistrationMode
               }

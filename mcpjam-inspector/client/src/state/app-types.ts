@@ -1,6 +1,6 @@
 import type { MCPServerConfig, NormalizedError } from "@mcpjam/sdk/browser";
 import { OauthTokens } from "@/shared/types.js";
-import type { RegistrationStrategy } from "@/shared/xaa.js";
+import type { RegistrationMode } from "@/shared/xaa.js";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import type {
   ProjectClientConfig,
@@ -86,8 +86,11 @@ export interface ServerWithName {
   /** Optional simulated-identity overrides for the MCPJam test IdP. Blank = signed-in user. */
   xaaSubject?: string;
   xaaEmail?: string;
-  /** XAA Debugger registration strategy (Client↔Resource-AS leg). Debugger-only. */
-  xaaRegistrationStrategy?: RegistrationStrategy;
+  /**
+   * Unified client-registration mode (Client↔AS leg) shared by the OAuth
+   * flows and the XAA debugger. Persisted per-server; may be "auto".
+   */
+  registrationMode?: RegistrationMode;
 }
 
 export interface Project {
