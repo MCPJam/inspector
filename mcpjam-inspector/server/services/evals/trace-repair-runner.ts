@@ -33,7 +33,7 @@ const REFINEMENT_CASE_CONCURRENCY_DEFAULT = 2;
 
 /** @internal Exported for unit tests. */
 export function parseRefinementCaseConcurrency(
-  raw: string | undefined
+  raw: string | undefined,
 ): number {
   if (raw == null || raw === "") {
     return REFINEMENT_CASE_CONCURRENCY_DEFAULT;
@@ -52,7 +52,7 @@ export function parseRefinementCaseConcurrency(
 export async function runWithConcurrencyLimit<T, R>(
   items: readonly T[],
   limit: number,
-  fn: (item: T, index: number) => Promise<R>
+  fn: (item: T, index: number) => Promise<R>,
 ): Promise<R[]> {
   if (items.length === 0) {
     return [];
@@ -82,7 +82,7 @@ function sleep(ms: number) {
 /** Never throws; disconnect failures are logged only (avoids masking real errors / unhandled rejections). */
 async function safeDisconnectReplayManager(
   manager: ReturnType<typeof buildReplayManager>,
-  context: string
+  context: string,
 ): Promise<void> {
   try {
     await manager.disconnectAllServers();
@@ -115,7 +115,7 @@ function normalizeProviderKey(provider: string): string | null {
 function resolveModelApiKeys(
   provider: string,
   model: string,
-  modelApiKeys: Record<string, string> | undefined
+  modelApiKeys: Record<string, string> | undefined,
 ): Record<string, string> | undefined {
   if (isHostedCatalogModel(model, provider)) {
     return undefined;
@@ -131,7 +131,7 @@ function resolveModelApiKeys(
 }
 
 function collectSuiteModels(
-  testCases: Array<{ models?: Array<{ model: string; provider: string }> }>
+  testCases: Array<{ models?: Array<{ model: string; provider: string }> }>,
 ): Array<{ model: string; provider: string }> {
   const map = new Map<string, { model: string; provider: string }>();
   for (const tc of testCases ?? []) {
@@ -175,7 +175,7 @@ export function signatureFromFailedTraceRepairAttempt(
     passed: boolean;
     failureSignature?: string;
   }>,
-  orderedLabels?: string[]
+  orderedLabels?: string[],
 ): string {
   const order =
     orderedLabels && orderedLabels.length > 0
@@ -197,7 +197,7 @@ export function failedQuickIterationId(
     passed: boolean;
     iterationId?: string;
   }>,
-  orderedLabels?: string[]
+  orderedLabels?: string[],
 ): string | undefined {
   const order =
     orderedLabels && orderedLabels.length > 0
@@ -214,7 +214,7 @@ export function failedQuickIterationId(
 
 /** @internal exported for unit tests */
 export function isTraceRepairGenerationFailureSession(
-  session: TraceRepairSessionSnapshot
+  session: TraceRepairSessionSnapshot,
 ): boolean {
   if (!session || session.status !== "failed" || session.candidateRevisionId) {
     return false;
@@ -229,7 +229,7 @@ export function isTraceRepairGenerationFailureSession(
 /** @internal exported for unit tests */
 export function resolveTraceRepairFailureStopReason(
   failedCaseCount: number,
-  caseResults: TraceRepairCaseResult[]
+  caseResults: TraceRepairCaseResult[],
 ):
   | "completed_server_likely"
   | "stopped_generation_error"
@@ -277,7 +277,7 @@ export async function captureTraceRepairJobToolSnapshot(args: {
         args.replayServerIds,
         {
           logPrefix: "trace-repair",
-        }
+        },
       );
 
     await args.convexClient.mutation(
@@ -287,7 +287,7 @@ export async function captureTraceRepairJobToolSnapshot(args: {
         leaseOwner: args.leaseOwner,
         toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
         toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
-      }
+      },
     );
   } catch (error) {
     logger.warn("[trace-repair] Failed to capture tool snapshot", {
@@ -303,7 +303,7 @@ export async function captureTraceRepairJobToolSnapshot(args: {
  * Exits early with a dedicated stop reason when there are no failed cases to repair.
  */
 export async function runTraceRepairJob(
-  params: TraceRepairRunnerParams
+  params: TraceRepairRunnerParams,
 ): Promise<void> {
   const { convexClient, convexAuthToken, jobId } = params;
   const modelApiKeys =
@@ -317,7 +317,7 @@ export async function runTraceRepairJob(
     try {
       const job = await convexClient.query(
         "traceRepair:getTraceRepairJob" as any,
-        { jobId }
+        { jobId },
       );
       const repairProjectId =
         typeof job?.projectId === "string" ? job.projectId : undefined;
@@ -325,9 +325,12 @@ export async function runTraceRepairJob(
         ? { projectId: repairProjectId }
         : undefined;
       if (repairOrgConfigTarget) {
-        const orgConfig = await resolveOrgModelConfig(repairOrgConfigTarget, {
-          bearerToken: convexAuthToken,
-        });
+        const orgConfig = await resolveOrgModelConfig(
+          repairOrgConfigTarget,
+          {
+            bearerToken: convexAuthToken,
+          },
+        );
         orgModelConfig = orgConfig;
       }
     } catch (error) {
@@ -372,7 +375,7 @@ export async function runTraceRepairJob(
       "traceRepair:getTraceRepairJob" as any,
       {
         jobId,
-      }
+      },
     );
 
     const checkCancelled = async () => {
@@ -386,7 +389,7 @@ export async function runTraceRepairJob(
             jobId,
             leaseOwner,
             stopReason: "cancelled_by_user",
-          }
+          },
         );
         return true;
       }
@@ -394,12 +397,12 @@ export async function runTraceRepairJob(
         "testSuites:getTestSuite" as any,
         {
           suiteId: job.testSuiteId,
-        }
+        },
       );
       if (suiteNow.configRevision !== job.expectedConfigRevision) {
         await convexClient.mutation(
           "traceRepair:cancelTraceRepairJobForSuiteChange" as any,
-          { jobId, leaseOwner }
+          { jobId, leaseOwner },
         );
         return true;
       }
@@ -412,7 +415,7 @@ export async function runTraceRepairJob(
     if (suite.configRevision !== job.expectedConfigRevision) {
       await convexClient.mutation(
         "traceRepair:cancelTraceRepairJobForSuiteChange" as any,
-        { jobId, leaseOwner }
+        { jobId, leaseOwner },
       );
       return;
     }
@@ -426,14 +429,14 @@ export async function runTraceRepairJob(
     if (job.scope === "case") {
       if (!job.targetSourceIterationId) {
         throw new Error(
-          "Trace repair case job is missing targetSourceIterationId; restart repair from the inspector."
+          "Trace repair case job is missing targetSourceIterationId; restart repair from the inspector.",
         );
       }
       const iteration = await convexClient.query(
         "testSuites:getTestIteration" as any,
         {
           iterationId: job.targetSourceIterationId,
-        }
+        },
       );
       const itTc = iteration?.testCaseId as string | undefined;
       if (!itTc) {
@@ -441,7 +444,7 @@ export async function runTraceRepairJob(
       }
       if (String(itTc) !== String(job.targetTestCaseId)) {
         throw new Error(
-          "Trace repair job target test case does not match source iteration"
+          "Trace repair job target test case does not match source iteration",
         );
       }
       const caseKey = iteration.testCaseSnapshot?.caseKey ?? `ui:${itTc}`;
@@ -455,7 +458,7 @@ export async function runTraceRepairJob(
     } else {
       const refinement = await convexClient.query(
         "testSuites:getRunRefinementState" as any,
-        { suiteRunId: job.sourceRunId }
+        { suiteRunId: job.sourceRunId },
       );
       failedCases = (refinement?.failedCases ?? []).map((fc: any) => ({
         sourceIterationId: fc.sourceIterationId,
@@ -490,7 +493,7 @@ export async function runTraceRepairJob(
       "testSuites:getTestSuiteRunDetails" as any,
       {
         runId: job.sourceRunId,
-      }
+      },
     );
     const iterationByCaseKey = new Map<
       string,
@@ -509,14 +512,14 @@ export async function runTraceRepairJob(
 
     const replayMetadata = await convexClient.query(
       "testSuites:getRunReplayMetadata" as any,
-      { runId: job.sourceRunId }
+      { runId: job.sourceRunId },
     );
     if (!replayMetadata?.hasServerReplayConfig) {
       throw new Error("This run does not have stored replay config");
     }
     const replayConfig = await fetchReplayConfig(
       job.sourceRunId,
-      convexAuthToken
+      convexAuthToken,
     );
     if (!replayConfig || replayConfig.servers.length === 0) {
       throw new Error("No replay configuration found for this run");
@@ -538,7 +541,7 @@ export async function runTraceRepairJob(
 
     const caseConcurrency = parseRefinementCaseConcurrency(
       process.env.TRACE_REPAIR_CASE_CONCURRENCY ??
-        process.env.REFINEMENT_CASE_CONCURRENCY
+        process.env.REFINEMENT_CASE_CONCURRENCY,
     );
 
     const caseResults = await runWithConcurrencyLimit(
@@ -561,7 +564,7 @@ export async function runTraceRepairJob(
             leaseOwner,
             phase: "repairing",
             currentCaseKey: fc.caseKey,
-          }
+          },
         );
 
         let sourceIterationId = fc.sourceIterationId;
@@ -584,7 +587,7 @@ export async function runTraceRepairJob(
               sourceIterationId,
               traceRepairJobId: jobId,
               attemptNumber: attempt,
-            }
+            },
           );
           const sessionId = req.sessionId as string;
           lastSessionId = sessionId;
@@ -598,7 +601,7 @@ export async function runTraceRepairJob(
               "testSuites:getRefinementSession" as any,
               {
                 sessionId,
-              }
+              },
             );
             if (s?.status === "ready") {
               sessionReady = true;
@@ -626,12 +629,12 @@ export async function runTraceRepairJob(
             "testSuites:beginRefinementVerification" as any,
             {
               sessionId,
-            }
+            },
           );
 
           const pack = await convexClient.query(
             "testSuites:getRefinementSessionForVerification" as any,
-            { sessionId }
+            { sessionId },
           );
           const sess = pack?.session;
           const candSnap = pack?.candidateSnapshot;
@@ -660,7 +663,7 @@ export async function runTraceRepairJob(
           }
           const k = Math.min(
             fullPlan.length,
-            Math.max(1, Math.min(2, Number(job.quickPassesRequired) || 1))
+            Math.max(1, Math.min(2, Number(job.quickPassesRequired) || 1)),
           );
           const plan = fullPlan.slice(0, k);
 
@@ -670,7 +673,7 @@ export async function runTraceRepairJob(
               sessionId,
               quickPassesRequired: plan.length,
               verificationPlan: plan,
-            }
+            },
           );
 
           let quickOutcome: string | undefined;
@@ -684,12 +687,12 @@ export async function runTraceRepairJob(
               const stepKeys = resolveModelApiKeys(
                 step.provider,
                 step.model,
-                modelApiKeys
+                modelApiKeys,
               );
               const mergedApiKeys =
                 stepKeys && modelApiKeys
                   ? { ...modelApiKeys, ...stepKeys }
-                  : stepKeys ?? modelApiKeys;
+                  : (stepKeys ?? modelApiKeys);
               const res = await runEvalTestCaseWithManager(
                 manager,
                 {
@@ -709,7 +712,7 @@ export async function runTraceRepairJob(
                     runs: 1,
                   },
                 },
-                { skipLastMessageRunUpdate: true }
+                { skipLastMessageRunUpdate: true },
               );
               const iterationId = (res.iteration as { _id?: string } | null)
                 ?._id;
@@ -722,18 +725,18 @@ export async function runTraceRepairJob(
                   sessionId,
                   label: step.label,
                   iterationId,
-                }
+                },
               );
             } finally {
               await safeDisconnectReplayManager(
                 manager,
-                `verification step ${step.label}`
+                `verification step ${step.label}`,
               );
             }
 
             const sCheck = await convexClient.query(
               "testSuites:getRefinementSession" as any,
-              { sessionId }
+              { sessionId },
             );
             if (sCheck?.status === "completed") {
               quickOutcome = sCheck.outcome as string | undefined;
@@ -746,11 +749,11 @@ export async function runTraceRepairJob(
               "testSuites:promoteRefinementCandidate" as any,
               {
                 sessionId,
-              }
+              },
             );
             await convexClient.mutation(
               "traceRepair:syncTraceRepairJobConfigAfterPromote" as any,
-              { jobId, leaseOwner }
+              { jobId, leaseOwner },
             );
             promoted = true;
             break;
@@ -760,19 +763,19 @@ export async function runTraceRepairJob(
             "testSuites:getRefinementSession" as any,
             {
               sessionId,
-            }
+            },
           );
           const planLabels = plan.map(
-            (s: RefinementVerificationPlanStep) => s.label
+            (s: RefinementVerificationPlanStep) => s.label,
           );
           const sig = signatureFromFailedTraceRepairAttempt(
             sFinal?.verificationRuns ?? [],
-            planLabels
+            planLabels,
           );
           attemptSigs.push(sig);
           const nextIt = failedQuickIterationId(
             sFinal?.verificationRuns ?? [],
-            planLabels
+            planLabels,
           );
           if (nextIt) {
             sourceIterationId = nextIt;
@@ -792,13 +795,13 @@ export async function runTraceRepairJob(
               attemptSignatures: attemptSigs,
               traceRepairJobId: jobId,
               leaseOwner,
-            }
+            },
           );
           const sDone = await convexClient.query(
             "testSuites:getRefinementSession" as any,
             {
               sessionId: lastSessionId,
-            }
+            },
           );
           if (sDone?.outcome === "server_likely") {
             serverLikely = true;
@@ -813,7 +816,7 @@ export async function runTraceRepairJob(
             !promoted && !serverLikely && generationFailedOnly,
           lastSessionId,
         };
-      }
+      },
     );
 
     if (await checkCancelled()) {
@@ -823,7 +826,7 @@ export async function runTraceRepairJob(
     const anyPromoted = caseResults.some((r) => r.promoted);
     const failedStopReason = resolveTraceRepairFailureStopReason(
       failedCases.length,
-      caseResults
+      caseResults,
     );
     const allServerLikely = failedStopReason === "completed_server_likely";
 
@@ -835,7 +838,7 @@ export async function runTraceRepairJob(
             jobId,
             leaseOwner,
             stopReason: "completed_case",
-          }
+          },
         );
       } else if (allServerLikely) {
         await convexClient.mutation(
@@ -844,7 +847,7 @@ export async function runTraceRepairJob(
             jobId,
             leaseOwner,
             stopReason: "completed_server_likely",
-          }
+          },
         );
       } else {
         await convexClient.mutation(
@@ -853,7 +856,7 @@ export async function runTraceRepairJob(
             jobId,
             leaseOwner,
             stopReason: failedStopReason,
-          }
+          },
         );
       }
       return;
@@ -877,7 +880,7 @@ export async function runTraceRepairJob(
       "testSuites:getTestSuite" as any,
       {
         suiteId: job.testSuiteId,
-      }
+      },
     );
 
     const replay = await executeSuiteReplayFromRun({
@@ -899,17 +902,17 @@ export async function runTraceRepairJob(
       "testSuites:getTestSuiteRun" as any,
       {
         runId: replay.runId,
-      }
+      },
     );
     const sourceRun = await convexClient.query(
       "testSuites:getTestSuiteRun" as any,
       {
         runId: job.sourceRunId,
-      }
+      },
     );
     const replayDetails = await convexClient.query(
       "testSuites:getTestSuiteRunDetails" as any,
-      { runId: replay.runId }
+      { runId: replay.runId },
     );
     const replayFailedCaseKeys = Array.from(
       new Set(
@@ -918,12 +921,12 @@ export async function runTraceRepairJob(
           .map(
             (it: any) =>
               it.testCaseSnapshot?.caseKey ??
-              (it.testCaseId ? `ui:${it.testCaseId}` : undefined)
+              (it.testCaseId ? `ui:${it.testCaseId}` : undefined),
           )
           .filter((caseKey: string | undefined): caseKey is string =>
-            Boolean(caseKey)
-          )
-      )
+            Boolean(caseKey),
+          ),
+      ),
     );
     const promotedCaseKeys = caseResults
       .filter((result) => result.promoted)
@@ -951,7 +954,7 @@ export async function runTraceRepairJob(
               : "durable_fix",
           })),
         },
-      }
+      },
     );
 
     await convexClient.mutation("traceRepair:finalizeTraceRepairJob" as any, {
@@ -969,7 +972,7 @@ export async function runTraceRepairJob(
           leaseOwner,
           stopReason: "worker_error",
           lastError: err instanceof Error ? err.message : String(err),
-        }
+        },
       );
     } catch {
       /* best effort */

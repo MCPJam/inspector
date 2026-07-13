@@ -9,7 +9,9 @@ import {
 import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
 import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
 import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
-import { isUnsafeHostedOutboundUrl as isUnsafeHostedOutboundUrlLiteral } from "@/shared/local-only-mcp";
+import {
+  isUnsafeHostedOutboundUrl as isUnsafeHostedOutboundUrlLiteral,
+} from "@/shared/local-only-mcp";
 import { HOSTED_MODE } from "../config.js";
 import { logger } from "./logger";
 
@@ -89,7 +91,7 @@ const resolveCache = new Map<
 >();
 
 function normalizeAuthHeader(
-  auth: ResolveOrgModelConfigAuth | undefined
+  auth: ResolveOrgModelConfigAuth | undefined,
 ): string | undefined {
   const header = auth?.authHeader?.trim();
   if (header) return header;
@@ -106,13 +108,13 @@ function normalizeServerIds(serverIds: string[] | undefined): string[] {
     new Set(
       (serverIds ?? [])
         .map((serverId) => serverId.trim())
-        .filter((serverId) => serverId.length > 0)
-    )
+        .filter((serverId) => serverId.length > 0),
+    ),
   ).sort();
 }
 
 function formatTargetForCache(
-  params: ResolveOrgModelConfigTarget | ResolveOrgProviderRuntimeTarget
+  params: ResolveOrgModelConfigTarget | ResolveOrgProviderRuntimeTarget,
 ): string {
   return "projectId" in params
     ? `project:${params.projectId}`
@@ -121,7 +123,7 @@ function formatTargetForCache(
 
 function buildCacheKey(
   params: ResolveOrgModelConfigTarget,
-  auth: ResolveOrgModelConfigAuth | undefined
+  auth: ResolveOrgModelConfigAuth | undefined,
 ): string {
   const target = formatTargetForCache(params);
   // Cache key hashes (chatboxId, accessVersion) so a link-token rotation
@@ -133,13 +135,12 @@ function buildCacheKey(
         authorization: normalizeAuthHeader(auth) ?? "",
         chatboxId: auth?.chatboxId?.trim() ?? "",
         accessVersion:
-          auth?.chatboxId &&
-          auth.chatboxId.trim() &&
+          auth?.chatboxId && auth.chatboxId.trim() &&
           Number.isFinite(auth?.accessVersion)
             ? auth.accessVersion
             : null,
         serverIds: normalizeServerIds(auth?.serverIds),
-      })
+      }),
     )
     .digest("hex");
   return `${target}:auth:${authHash}`;
@@ -147,7 +148,7 @@ function buildCacheKey(
 
 export async function resolveOrgModelConfig(
   params: ResolveOrgModelConfigTarget,
-  auth?: ResolveOrgModelConfigAuth
+  auth?: ResolveOrgModelConfigAuth,
 ): Promise<ResolvedOrgModelConfig> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) {
@@ -167,10 +168,7 @@ export async function resolveOrgModelConfig(
     return cached.result;
   }
 
-  const url = `${convexHttpUrl.replace(
-    /\/$/,
-    ""
-  )}/internal/v1/org-model-config/resolve`;
+  const url = `${convexHttpUrl.replace(/\/$/, "")}/internal/v1/org-model-config/resolve`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), RESOLVE_TIMEOUT_MS);
 
@@ -240,7 +238,7 @@ export async function resolveOrgModelConfig(
               "[org-model-config] Dropping bedrock provider with blocked baseUrl",
               {
                 error: error instanceof Error ? error.message : String(error),
-              }
+              },
             );
             continue;
           }
@@ -274,7 +272,7 @@ export type DeriveOrgProviderKeyResult =
   | { ok: false; error: string };
 
 export function deriveOrgProviderKey(
-  modelDefinition: ModelDefinition
+  modelDefinition: ModelDefinition,
 ): DeriveOrgProviderKeyResult {
   if (modelDefinition.provider === "custom") {
     if (!modelDefinition.customProviderName) {
@@ -293,7 +291,7 @@ export function deriveOrgProviderKey(
 // ---------------------------------------------------------------------------
 
 export function buildModelApiKeysFromOrgConfig(
-  config: ResolvedOrgModelConfig
+  config: ResolvedOrgModelConfig,
 ): Record<string, string> {
   const keys: Record<string, string> = {};
   for (const p of config.providers) {
@@ -315,7 +313,7 @@ export type OrgLlmRuntimeConfig = {
 };
 
 export function buildLlmRuntimeConfigFromOrgConfig(
-  config: ResolvedOrgModelConfig
+  config: ResolvedOrgModelConfig,
 ): OrgLlmRuntimeConfig {
   const runtime: OrgLlmRuntimeConfig = {
     modelApiKeys: buildModelApiKeysFromOrgConfig(config),
@@ -398,7 +396,7 @@ export function isUnsafeHostedOutboundUrl(rawUrl: string): boolean {
 async function assertSafeHostedOutboundUrl(rawUrl: string): Promise<void> {
   if (isUnsafeHostedOutboundUrl(rawUrl)) {
     throw new Error(
-      `Provider base URL is blocked: points to a private or internal address`
+      `Provider base URL is blocked: points to a private or internal address`,
     );
   }
   // For non-IP-literal hostnames, also validate the DNS-resolved IPs.
@@ -408,17 +406,11 @@ async function assertSafeHostedOutboundUrl(rawUrl: string): Promise<void> {
   if (isIpLiteral) return;
 
   const resolvedIps: string[] = [];
-  try {
-    resolvedIps.push(...(await dns.resolve4(host)));
-  } catch {
-    /* NXDOMAIN etc */
-  }
-  try {
-    resolvedIps.push(...(await dns.resolve6(host)));
-  } catch {}
+  try { resolvedIps.push(...await dns.resolve4(host)); } catch { /* NXDOMAIN etc */ }
+  try { resolvedIps.push(...await dns.resolve6(host)); } catch {}
   if (resolvedIps.length === 0) {
     throw new Error(
-      `Provider base URL is blocked: hostname "${host}" could not be resolved`
+      `Provider base URL is blocked: hostname "${host}" could not be resolved`,
     );
   }
   for (const ip of resolvedIps) {
@@ -426,7 +418,7 @@ async function assertSafeHostedOutboundUrl(rawUrl: string): Promise<void> {
     const testUrl = ip.includes(":") ? `http://[${ip}]` : `http://${ip}`;
     if (isUnsafeHostedOutboundUrl(testUrl)) {
       throw new Error(
-        `Provider base URL is blocked: hostname "${host}" resolves to a private or internal address`
+        `Provider base URL is blocked: hostname "${host}" resolves to a private or internal address`,
       );
     }
   }
@@ -447,9 +439,7 @@ export type OrgProviderRuntimeLocal = {
   provider: OrgProviderResolvedConfig;
 };
 
-export type OrgProviderRuntime =
-  | OrgProviderRuntimeCloud
-  | OrgProviderRuntimeLocal;
+export type OrgProviderRuntime = OrgProviderRuntimeCloud | OrgProviderRuntimeLocal;
 
 const RUNTIME_CACHE_TTL_MS = 60_000;
 const RUNTIME_CACHE_MAX_ENTRIES = 1_000;
@@ -479,7 +469,7 @@ function buildRuntimeCacheKey(
   target: ResolveOrgProviderRuntimeTarget,
   providerKey: string,
   model: string,
-  auth: ResolveOrgModelConfigAuth | undefined
+  auth: ResolveOrgModelConfigAuth | undefined,
 ): string {
   const authHash = createHash("sha256")
     .update(
@@ -487,18 +477,15 @@ function buildRuntimeCacheKey(
         authorization: normalizeAuthHeader(auth) ?? "",
         chatboxId: auth?.chatboxId?.trim() ?? "",
         accessVersion:
-          auth?.chatboxId &&
-          auth.chatboxId.trim() &&
+          auth?.chatboxId && auth.chatboxId.trim() &&
           Number.isFinite(auth?.accessVersion)
             ? auth.accessVersion
             : null,
         serverIds: normalizeServerIds(auth?.serverIds),
-      })
+      }),
     )
     .digest("hex");
-  return `runtime:${formatTargetForCache(
-    target
-  )}:${providerKey}:${model}:auth:${authHash}`;
+  return `runtime:${formatTargetForCache(target)}:${providerKey}:${model}:auth:${authHash}`;
 }
 
 /**
@@ -516,13 +503,13 @@ export async function resolveOrgProviderRuntime(
   projectId: string,
   providerKey: string,
   model: string,
-  auth?: ResolveOrgModelConfigAuth
+  auth?: ResolveOrgModelConfigAuth,
 ): Promise<OrgProviderRuntime> {
   return resolveOrgProviderRuntimeForTarget(
     { projectId },
     providerKey,
     model,
-    auth
+    auth,
   );
 }
 
@@ -530,7 +517,7 @@ export async function resolveOrgProviderRuntimeForTarget(
   target: ResolveOrgProviderRuntimeTarget,
   providerKey: string,
   model: string,
-  auth?: ResolveOrgModelConfigAuth
+  auth?: ResolveOrgModelConfigAuth,
 ): Promise<OrgProviderRuntime> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) throw new Error("CONVEX_HTTP_URL is not set");
@@ -606,7 +593,7 @@ export async function resolveOrgProviderRuntimeForTarget(
         rawProvider.providerKey.length === 0
       ) {
         throw new Error(
-          "Org runtime resolve returned invalid local provider config"
+          "Org runtime resolve returned invalid local provider config",
         );
       }
       // SSRF guard: in hosted mode reject baseUrls that point to private,
@@ -706,7 +693,7 @@ export async function resolveSyntheticModelSource(args: {
   const keyResult = deriveOrgProviderKey(args.modelDefinition);
   if (!keyResult.ok) {
     throw new Error(
-      `Synthetic dispatch failed to derive org provider key: ${keyResult.error}`
+      `Synthetic dispatch failed to derive org provider key: ${keyResult.error}`,
     );
   }
   const orgRuntime: OrgProviderRuntime = isLocalRuntimeEligible(keyResult.key)
@@ -719,7 +706,7 @@ export async function resolveSyntheticModelSource(args: {
           chatboxId: args.chatboxId,
           accessVersion: args.accessVersion,
           serverIds: args.serverIds,
-        }
+        },
       )
     : { runtimeLocation: "cloud", providerKey: keyResult.key };
   return {
@@ -787,7 +774,7 @@ const ID_PREFIX_TO_PROVIDER: Record<string, ModelProvider> = {
  * id shape, never from the request body's model.
  */
 export function buildSyntheticModelDefinition(
-  modelId: string
+  modelId: string,
 ): ModelDefinition {
   // An unpinned host persists modelId "" — without this guard the bare-id
   // fallback below silently classifies it as an Ollama BYOK model and the
@@ -865,7 +852,7 @@ export function buildSyntheticModelDefinition(
  */
 export function matchOrgProviderForModelId(
   config: ResolvedOrgModelConfig,
-  modelId: string
+  modelId: string,
 ): ModelDefinition | null {
   for (const p of config.providers) {
     if (p.providerKey === "openrouter" || p.providerKey === "bedrock") {
@@ -930,7 +917,7 @@ export async function resolveHostModelDefinition(args: {
           modelId,
           projectId,
           error: error instanceof Error ? error.message : String(error),
-        }
+        },
       );
     }
   }

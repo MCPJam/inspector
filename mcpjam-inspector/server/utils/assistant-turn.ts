@@ -518,7 +518,7 @@ export async function runAssistantTurn(
   // fall back to emulated.
   const canonicalHarnessModelId = getCanonicalModelId(
     harnessModelId,
-    opts.modelDefinition.provider
+    opts.modelDefinition.provider,
   );
   const modelEligible =
     isHostedCatalogModel(harnessModelId, opts.modelDefinition.provider) &&
@@ -536,7 +536,7 @@ export async function runAssistantTurn(
         modelId: harnessModelId,
         provider: opts.modelDefinition.provider,
         sourceType: opts.sourceType,
-      }
+      },
     );
   }
   const engineResult = useHarness

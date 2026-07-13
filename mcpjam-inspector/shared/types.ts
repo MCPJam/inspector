@@ -113,7 +113,6 @@ export type ModelProvider =
 // Exported so the server-side hosted-model catalog can PRE-SEED its dynamic
 // cache from this static list — the union of (seed ∪ backend catalog) keeps
 // billing classification byte-identical when the catalog is empty/unreachable.
-// Canonical (slash-prefixed) ids; keep in sync with the backend allowlist.
 export const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "mistralai/mistral-small-2603",
   "mistralai/mistral-medium-3-5",
@@ -549,7 +548,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     "mistral",
     262144
   ),
-  freeModel("mistralai/devstral-2512", "Devstral 2 2512", "mistral", 262144),
+  freeModel(
+    "mistralai/devstral-2512",
+    "Devstral 2 2512",
+    "mistral",
+    262144
+  ),
   freeModel("openai/gpt-4o-mini", "GPT-4o Mini", "openai", 128000),
   {
     id: "openai/gpt-5-nano",

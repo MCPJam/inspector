@@ -9,7 +9,7 @@
  *   5. scrubMessages lambda construction
  *
  * Intentionally NOT shared:
- *   - Model type check (isHostedCatalogModel) — web rejects non-MCPJam; mcp supports user-provided
+ *   - Model type check (isMCPJamProvidedModel) — web rejects non-MCPJam; mcp supports user-provided
  *   - Error shape — web throws WebRouteError; mcp returns c.json()
  *   - Manager lifecycle — web has onStreamComplete cleanup; mcp uses singleton
  *   - streamText path — only in mcp
@@ -632,7 +632,9 @@ export interface PrepareChatV2Options {
    * never set it → the existing precedence is byte-identical. `pinned` tools
    * bypass approval (pure reads of frozen content under an auto-deny eval run).
    */
-  skillsSource?: { kind: "pinned"; skills: PinnableSkill[] } | { kind: "none" };
+  skillsSource?:
+    | { kind: "pinned"; skills: PinnableSkill[] }
+    | { kind: "none" };
 }
 
 /**
@@ -832,7 +834,7 @@ export async function prepareChatV2(
   // this throw is belt-and-suspenders at the single point both paths funnel through.
   if (harness && skillsArePinned) {
     throw new Error(
-      "Pinned skills are not supported on harness runs (they live-fetch skills)."
+      "Pinned skills are not supported on harness runs (they live-fetch skills).",
     );
   }
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
@@ -841,13 +843,13 @@ export async function prepareChatV2(
         ? getPinnedSkillToolsAndPrompt(skillsSource.skills)
         : { tools: {}, systemPromptSection: "" }
       : cloudSkills
-      ? getCloudSkillToolsAndPrompt({
-          authHeader: cloudSkills.authHeader,
-          projectId: cloudSkills.projectId,
-        })
-      : HOSTED_MODE
-      ? { tools: {}, systemPromptSection: "" }
-      : await getSkillToolsAndPrompt();
+        ? getCloudSkillToolsAndPrompt({
+            authHeader: cloudSkills.authHeader,
+            projectId: cloudSkills.projectId,
+          })
+        : HOSTED_MODE
+          ? { tools: {}, systemPromptSection: "" }
+          : await getSkillToolsAndPrompt();
 
   // Pinned skill tools NEVER require approval (pure reads of frozen content; the
   // eval run is auto-deny). Otherwise the normal approval wrap applies.
@@ -882,7 +884,7 @@ export async function prepareChatV2(
   for (const name of Object.keys(uiToolEntries)) {
     if (Object.prototype.hasOwnProperty.call(mcpTools, name)) {
       logger.warn(
-        `[chat-v2] UI tool '${name}' shadows an MCP tool with the same name; using the UI tool`
+        `[chat-v2] UI tool '${name}' shadows an MCP tool with the same name; using the UI tool`,
       );
       delete mcpTools[name];
     }
@@ -911,7 +913,7 @@ export async function prepareChatV2(
       Object.prototype.hasOwnProperty.call(finalSkillTools, name)
     ) {
       throw new Error(
-        `Built-in tool '${name}' collides with an existing app, UI, or skill tool.`
+        `Built-in tool '${name}' collides with an existing app, UI, or skill tool.`,
       );
     }
   }

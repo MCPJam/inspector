@@ -6,9 +6,12 @@ import {
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
-import { getCanonicalModelId, isMCPJamGuestAllowedModel } from "@/shared/types";
-import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
+import {
+  getCanonicalModelId,
+  isMCPJamGuestAllowedModel,
+} from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
+import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
@@ -142,7 +145,7 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
 }
 
 function toPersistedUsage(
-  usage: LiveChatTraceUsage | undefined
+  usage: LiveChatTraceUsage | undefined,
 ): { inputTokens: number; outputTokens: number } | undefined {
   if (
     typeof usage?.inputTokens !== "number" ||
@@ -248,7 +251,7 @@ function streamDirectChatWithLiveTrace(options: {
           },
         })) {
           writer.write(
-            withMcpToolOriginChunkMetadata(chunk, turnOptions.tools)
+            withMcpToolOriginChunkMetadata(chunk, turnOptions.tools),
           );
         }
       } catch (error) {
@@ -308,7 +311,7 @@ chatV2.post("/", async (c) => {
       ? "chatbox"
       : "playground";
     const chatSessionSurface: "preview" | "share_link" | undefined =
-      isChatboxSession ? bodySurface ?? "preview" : undefined;
+      isChatboxSession ? (bodySurface ?? "preview") : undefined;
 
     // Chatbox-bound turns re-resolve execution config from Convex so the
     // host's hostConfigs row is the source of truth (model / prompt /
@@ -352,7 +355,7 @@ chatV2.post("/", async (c) => {
             error:
               "Couldn't authenticate this chatbox turn to load its settings — sign in (or retry) to continue.",
           },
-          401
+          401,
         );
       }
       {
@@ -375,7 +378,7 @@ chatV2.post("/", async (c) => {
               chatboxId: bodyChatboxId,
               status: runtime.status,
               error: runtime.error,
-            }
+            },
           );
           return c.json(
             {
@@ -403,13 +406,13 @@ chatV2.post("/", async (c) => {
       } else {
         logger.warn(
           "[mcp/chat-v2] host runtime-config fetch failed; failing closed",
-          { hostId: bodyHostId, status: runtime.status, error: runtime.error }
+          { hostId: bodyHostId, status: runtime.status, error: runtime.error },
         );
         return c.json(
           {
             error: `Couldn't load this host's settings, so the turn was stopped to avoid running with the wrong engine. ${runtime.error}`,
           },
-          runtime.status >= 500 ? 502 : (runtime.status as 400 | 401 | 403)
+          runtime.status >= 500 ? 502 : (runtime.status as 400 | 401 | 403),
         );
       }
     }
@@ -441,7 +444,7 @@ chatV2.post("/", async (c) => {
             chatboxId: bodyChatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          }
+          },
         );
       } else if (entry.field === "progressiveToolDiscovery") {
         logger.warn(
@@ -450,7 +453,7 @@ chatV2.post("/", async (c) => {
             chatboxId: bodyChatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          }
+          },
         );
       } else if (entry.field === "respectToolVisibility") {
         logger.warn(
@@ -459,7 +462,7 @@ chatV2.post("/", async (c) => {
             chatboxId: bodyChatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          }
+          },
         );
       } else if (
         entry.field === "modelVisibleMcpToolResults" ||
@@ -471,7 +474,7 @@ chatV2.post("/", async (c) => {
             chatboxId: bodyChatboxId,
             body: entry.overrideValue,
             host: entry.hostValue,
-          }
+          },
         );
       }
     }
@@ -505,7 +508,7 @@ chatV2.post("/", async (c) => {
           body: model.id,
           host: hostModelId,
           provider: hostModel.provider,
-        }
+        },
       );
       resolvedModelOverride = hostModel;
     }
@@ -572,7 +575,7 @@ chatV2.post("/", async (c) => {
           error:
             "This MCPJam model is not available for guest access. Sign in to continue.",
         },
-        403
+        403,
       );
     }
     let mcpJamAuthHeader = requestAuthHeader;
@@ -603,7 +606,7 @@ chatV2.post("/", async (c) => {
     // independent — this conversion is solely for hydration.
     const priorModelMessages = await convertToMcpjamModelMessages(
       messages,
-      inboundMcpToolResultModelOutputOptions
+      inboundMcpToolResultModelOutputOptions,
     );
 
     // SEP-1865 App-Provided Tools: validate the client snapshot at the
@@ -639,7 +642,7 @@ chatV2.post("/", async (c) => {
     let validatedWidgetModelContext;
     try {
       validatedWidgetModelContext = validateWidgetModelContextEntries(
-        body.widgetModelContext
+        body.widgetModelContext,
       );
     } catch (error) {
       if (error instanceof WidgetModelContextValidationError) {
@@ -660,13 +663,13 @@ chatV2.post("/", async (c) => {
         // to resolve its canonical id, else a hosted MCPJam model is misjudged.
         modelEligible: isHostedCatalogModel(
           String(modelDefinition.id),
-          modelDefinition.provider
+          modelDefinition.provider,
         ),
         // Canonical id so the adapter's supportsModel check sees the prefixed
         // form (bare hosted ids like `gpt-5-nano` → `openai/gpt-5-nano`).
         modelId: getCanonicalModelId(
           String(modelDefinition.id),
-          modelDefinition.provider
+          modelDefinition.provider,
         ),
       });
       if (!availability.ok) {
@@ -674,7 +677,7 @@ chatV2.post("/", async (c) => {
           {
             error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
           },
-          503
+          503,
         );
       }
     }
@@ -712,7 +715,7 @@ chatV2.post("/", async (c) => {
               ? { chatSessionId: body.chatSessionId }
               : {}),
           }
-        : null
+        : null,
     );
 
     let prepared;
@@ -764,7 +767,7 @@ chatV2.post("/", async (c) => {
       discoveryState,
     } = prepared;
     const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
-      validatedWidgetModelContext
+      validatedWidgetModelContext,
     );
     const effectiveEnhancedSystemPrompt = [
       enhancedSystemPrompt,
@@ -803,7 +806,7 @@ chatV2.post("/", async (c) => {
       if (!process.env.CONVEX_HTTP_URL) {
         return c.json(
           { error: "Server missing CONVEX_HTTP_URL configuration" },
-          500
+          500,
         );
       }
 
@@ -816,13 +819,13 @@ chatV2.post("/", async (c) => {
             error:
               "Unable to authenticate with MCPJam servers. Please try again or sign in.",
           },
-          503
+          503,
         );
       }
 
       const modelMessages = await convertToMcpjamModelMessages(
         messages,
-        inboundMcpToolResultModelOutputOptions
+        inboundMcpToolResultModelOutputOptions,
       );
       const sessionStartedAt = Date.now();
 
@@ -890,7 +893,7 @@ chatV2.post("/", async (c) => {
                 sessionMessages: stampSenderUserIdsOnSessionMessages(
                   fullHistory,
                   messages,
-                  { authenticatedUserId }
+                  { authenticatedUserId },
                 ),
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
@@ -943,8 +946,8 @@ chatV2.post("/", async (c) => {
       const modelMessages = scrubMessages(
         await convertToMcpjamModelMessages(
           messages,
-          inboundMcpToolResultModelOutputOptions
-        )
+          inboundMcpToolResultModelOutputOptions,
+        ),
       );
       const sessionStartedAt = Date.now();
       const chatSessionId = body.chatSessionId;
@@ -976,7 +979,7 @@ chatV2.post("/", async (c) => {
       const onConversationComplete = chatSessionId
         ? async (
             fullHistory: ModelMessage[],
-            turnTrace: PersistedTurnTrace
+            turnTrace: PersistedTurnTrace,
           ) => {
             await persistChatSessionToConvex({
               chatSessionId,
@@ -994,7 +997,7 @@ chatV2.post("/", async (c) => {
               sessionMessages: stampSenderUserIdsOnSessionMessages(
                 fullHistory,
                 messages,
-                { authenticatedUserId }
+                { authenticatedUserId },
               ),
               startedAt: sessionStartedAt,
               lastActivityAt: Date.now(),
@@ -1091,7 +1094,7 @@ chatV2.post("/", async (c) => {
             "Personal provider keys aren't supported. Configure cloud models in your organization's settings (Organization Models).",
           code: "personal_byok_unsupported",
         },
-        401
+        401,
       );
     }
 
@@ -1103,12 +1106,12 @@ chatV2.post("/", async (c) => {
         ollama: body.ollamaBaseUrl,
         azure: body.azureBaseUrl,
       },
-      body.customProviders
+      body.customProviders,
     );
 
     const modelMessages = await convertToMcpjamModelMessages(
       messages,
-      inboundMcpToolResultModelOutputOptions
+      inboundMcpToolResultModelOutputOptions,
     );
 
     const streamStartedAt = Date.now();
@@ -1120,7 +1123,7 @@ chatV2.post("/", async (c) => {
     warnIfChatAbortSignalMissing(inboundAbortSignalDirect, "mcp/chat-v2");
 
     const scrubbedModelMessages = scrubMessages(
-      modelMessages as ModelMessage[]
+      modelMessages as ModelMessage[],
     );
 
     return streamDirectChatWithLiveTrace({
@@ -1159,7 +1162,7 @@ chatV2.post("/", async (c) => {
               messages: stampSenderUserIdsOnSessionMessages(
                 modelMessages as ModelMessage[],
                 messages,
-                { authenticatedUserId }
+                { authenticatedUserId },
               ),
               systemPrompt: enhancedSystemPrompt,
               ...(responseMessages.length > 0 ? { responseMessages } : {}),

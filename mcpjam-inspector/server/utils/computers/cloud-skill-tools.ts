@@ -148,9 +148,7 @@ export function createCloudSkillTools(ctx: CloudSkillsContext) {
         name: z.string().describe("The skill name."),
         path: z
           .string()
-          .describe(
-            "Relative path within the skill (e.g., 'scripts/fill.py')."
-          ),
+          .describe("Relative path within the skill (e.g., 'scripts/fill.py')."),
       }),
       execute: async ({ name, path }) => {
         if (!NAME_RE.test(name)) {
