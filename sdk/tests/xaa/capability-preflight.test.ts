@@ -3,7 +3,7 @@ import {
   analyzeAsCompatibility,
   detectVendor,
   JWT_BEARER_GRANT,
-} from "../capability-preflight";
+} from "../../src/xaa/state-machines/capability-preflight.js";
 
 describe("detectVendor", () => {
   it("identifies okta tenants", () => {

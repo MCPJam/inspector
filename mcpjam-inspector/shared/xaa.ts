@@ -1,114 +1,23 @@
-export const NEGATIVE_TEST_MODES = [
-  "valid",
-  "bad_signature",
-  "wrong_audience",
-  "expired",
-  "missing_claims",
-  "invalid_type_header",
-  "wrong_issuer",
-  "resource_mismatch",
-  "client_id_mismatch",
-  "unknown_kid",
-  "unknown_sub",
-  "scope_denial",
-] as const;
-
-export type NegativeTestMode = (typeof NEGATIVE_TEST_MODES)[number];
-
-export const DEFAULT_NEGATIVE_TEST_MODE: NegativeTestMode = "valid";
-export const XAA_IDP_KID = "xaa-idp-1";
-
-// RFC 8693 / ID-JAG draft URNs, shared by the mock IdP (server) and the
-// debugger state machine (client) so the two sides can never drift.
-export const XAA_TOKEN_EXCHANGE_GRANT =
-  "urn:ietf:params:oauth:grant-type:token-exchange";
-export const XAA_ID_JAG_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id-jag";
-export const XAA_ID_TOKEN_TOKEN_TYPE =
-  "urn:ietf:params:oauth:token-type:id_token";
-
-export const NEGATIVE_TEST_MODE_DETAILS: Record<
+// XAA/ID-JAG primitives are single-sourced in @mcpjam/sdk. This module
+// re-exports them from the browser-safe entry (importable from both the client
+// and the server) so the inspector's importers keep their `shared/xaa.js` path.
+// The only thing it still owns is the UI-only `NegativeTestDiff` scorecard type.
+export {
+  NEGATIVE_TEST_MODES,
+  DEFAULT_NEGATIVE_TEST_MODE,
+  XAA_IDP_KID,
+  isNegativeTestMode,
+  NEGATIVE_TEST_MODE_DETAILS,
+  REGISTRATION_STRATEGIES,
+  DEFAULT_REGISTRATION_STRATEGY,
+  normalizeRegistrationStrategy,
+  normalizeRegistrationMode,
+} from "@mcpjam/sdk/browser";
+export type {
   NegativeTestMode,
-  {
-    label: string;
-    description: string;
-    expectedFailure: string;
-  }
-> = {
-  valid: {
-    label: "Valid",
-    description:
-      "Issues a correct ID-JAG. Your server should accept this one and mint an access token.",
-    expectedFailure: "No failure expected.",
-  },
-  bad_signature: {
-    label: "Bad Signature",
-    description:
-      "Signs the token with the wrong key. A correct server checks the signature against your published JWKS and rejects it.",
-    expectedFailure: "Authorization server should reject the signature.",
-  },
-  wrong_audience: {
-    label: "Wrong Audience",
-    description:
-      "Addresses the token to a different server (the `aud` claim). A correct server only accepts tokens addressed to its own issuer.",
-    expectedFailure: "Authorization server should reject the audience.",
-  },
-  expired: {
-    label: "Expired",
-    description:
-      "Backdates the token so it is already expired. A correct server rejects tokens past their `exp` time.",
-    expectedFailure:
-      "Authorization server should reject the expired assertion.",
-  },
-  missing_claims: {
-    label: "Missing Claims",
-    description:
-      "Drops required claims (`sub` and `resource`). A correct server rejects a token that is missing required fields.",
-    expectedFailure:
-      "Authorization server should reject missing required claims.",
-  },
-  invalid_type_header: {
-    label: "Invalid `typ` Header",
-    description:
-      "Labels the token as a plain `JWT` instead of `oauth-id-jag+jwt`. A correct server checks the header type and rejects the wrong one.",
-    expectedFailure: "Authorization server should reject the JWT type.",
-  },
-  wrong_issuer: {
-    label: "Wrong Issuer",
-    description:
-      "Claims the token came from an issuer you don't trust. A correct server only accepts issuers it is configured to trust.",
-    expectedFailure: "Authorization server should reject the issuer.",
-  },
-  resource_mismatch: {
-    label: "Resource Mismatch",
-    description:
-      "Points the token at a different resource. A correct server checks the `resource` matches the MCP server it protects.",
-    expectedFailure: "Authorization server should reject the resource claim.",
-  },
-  client_id_mismatch: {
-    label: "Client ID Mismatch",
-    description:
-      "Names a different OAuth client than the one making the request. A correct server rejects the `client_id` mismatch.",
-    expectedFailure: "Authorization server should reject the client identity.",
-  },
-  unknown_kid: {
-    label: "Unknown `kid`",
-    description:
-      "References a signing key (`kid`) that isn't in your published JWKS. A correct server can't find the key and rejects the token.",
-    expectedFailure: "Authorization server should fail JWKS key lookup.",
-  },
-  unknown_sub: {
-    label: "Unknown Subject",
-    description:
-      "Names a user (`sub`) the server has never seen. A correct server rejects an unknown subject.",
-    expectedFailure: "Authorization server should reject the unknown subject.",
-  },
-  scope_denial: {
-    label: "Scope Denial",
-    description:
-      "Requests high-privilege scopes the mock user shouldn't get. A correct server refuses to grant them.",
-    expectedFailure: "Authorization server should reject the requested scopes.",
-  },
-};
+  RegistrationStrategy,
+  RegistrationMode,
+} from "@mcpjam/sdk/browser";
 
 /**
  * The single field a negative test tampered with, paired with what a valid
@@ -122,43 +31,4 @@ export interface NegativeTestDiff {
   sent: string;
   /** What a valid assertion would carry. */
   expected: string;
-}
-
-export function isNegativeTestMode(value: unknown): value is NegativeTestMode {
-  return (
-    typeof value === "string" &&
-    (NEGATIVE_TEST_MODES as readonly string[]).includes(value)
-  );
-}
-
-/**
- * How the flow's client identity at the target authorization server is
- * established (the Client↔Resource-AS registration leg). Ordered per MCP
- * authorization guidance: pre-registered first, then CIMD (URL-based), with
- * DCR as the fallback for clients that can't pre-register or use a metadata
- * document.
- */
-export const XAA_REGISTRATION_STRATEGIES = [
-  "pre_registered",
-  "cimd",
-  "dcr",
-] as const;
-
-export type XaaRegistrationStrategy = (typeof XAA_REGISTRATION_STRATEGIES)[number];
-
-export const DEFAULT_XAA_REGISTRATION_STRATEGY: XaaRegistrationStrategy =
-  "pre_registered";
-
-/**
- * Narrow an arbitrary persisted/wire value (Convex returns a bare string) to a
- * known strategy. Returns undefined for anything unrecognized so callers can
- * fall back to the safe default rather than trusting the wire.
- */
-export function normalizeXaaRegistrationStrategy(
-  value: unknown,
-): XaaRegistrationStrategy | undefined {
-  return typeof value === "string" &&
-    (XAA_REGISTRATION_STRATEGIES as readonly string[]).includes(value)
-    ? (value as XaaRegistrationStrategy)
-    : undefined;
 }

@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { XAA_DEBUG_CLIENT_ID_METADATA_URL } from "@mcpjam/sdk/browser";
-import { CLIENT_SECRET_MASK, createXAAStateMachine } from "../state-machine";
+import { XAA_DEBUG_CLIENT_ID_METADATA_URL } from "../../src/oauth/client-identity.js";
+import {
+  CLIENT_SECRET_MASK,
+  createXAAStateMachine,
+} from "../../src/xaa/state-machines/state-machine.js";
 import {
   createInitialXAAFlowState,
   type XaaEphemeralDcrCredentials,
   type XAAFlowState,
-} from "../types";
+} from "../../src/xaa/state-machines/types.js";
 
 function encodePart(value: Record<string, any>): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -102,7 +105,7 @@ describe("createXAAStateMachine", () => {
           status: 200,
           statusText: "OK",
           headers: {},
-          body: { result: { serverInfo: { name: "demo" } } },
+          body: { jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25", serverInfo: { name: "demo" } } },
           ok: true,
         };
       }),
@@ -172,6 +175,8 @@ describe("createXAAStateMachine", () => {
 
     expect(state.currentStep).toBe("complete");
     expect(state.accessToken).toBe("access-token");
+    expect(state.identityAssertion).toBe(idToken);
+    expect(state.idJag).toBe(idJag);
     expect(state.idJagDecoded?.issues).toHaveLength(0);
     // The resolved issuer must reach the EXTERNAL flow state (what the lint
     // panel reads), not just the machine's internal copy, so `iss` is matched
@@ -183,6 +188,38 @@ describe("createXAAStateMachine", () => {
         method: "POST",
       })
     );
+
+    const tokenExchangeCall = executor.internalRequest.mock.calls.find(
+      ([path]) => path === "/token"
+    );
+    const tokenProxyCall = executor.internalRequest.mock.calls.find(
+      ([path]) => path === "/proxy/token"
+    );
+    const mcpCall = executor.externalRequest.mock.calls.find(
+      ([url]) => url === "https://mcp.example.com"
+    );
+    expect(
+      new URLSearchParams(String(tokenExchangeCall?.[1]?.body)).get(
+        "subject_token"
+      )
+    ).toBe(idToken);
+    expect(JSON.parse(String(tokenProxyCall?.[1]?.body))).toMatchObject({
+      assertion: idJag,
+    });
+    expect(mcpCall?.[1]?.headers).toMatchObject({
+      Authorization: "Bearer access-token",
+    });
+
+    const diagnostics = JSON.stringify({
+      lastRequest: state.lastRequest,
+      lastResponse: state.lastResponse,
+      httpHistory: state.httpHistory,
+      infoLogs: state.infoLogs,
+      error: state.error,
+    });
+    expect(diagnostics).not.toContain(idToken);
+    expect(diagnostics).not.toContain(idJag);
+    expect(diagnostics).not.toContain("access-token");
   });
 
   it("authenticates with the live config identity, not a stale flow snapshot", async () => {
@@ -671,7 +708,7 @@ describe("createXAAStateMachine", () => {
             status: 200,
             statusText: "OK",
             headers: {},
-            body: { result: { serverInfo: { name: "demo" } } },
+            body: { jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25", serverInfo: { name: "demo" } } },
             ok: true,
           };
         }),
@@ -895,7 +932,7 @@ describe("createXAAStateMachine", () => {
             status: 200,
             statusText: "OK",
             headers: {},
-            body: { result: { serverInfo: { name: "demo" } } },
+            body: { jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25", serverInfo: { name: "demo" } } },
             ok: true,
           };
         }),
@@ -1066,7 +1103,10 @@ describe("createXAAStateMachine", () => {
               ok: false,
             };
           }
-          if (url.endsWith("/.well-known/oauth-protected-resource")) {
+          if (
+            url ===
+            "https://mcp.example.com/.well-known/oauth-protected-resource"
+          ) {
             return {
               status: 200,
               statusText: "OK",
@@ -1102,9 +1142,11 @@ describe("createXAAStateMachine", () => {
 
       expect(state.currentStep).toBe("received_resource_metadata");
       expect(state.authzServerIssuer).toBe("https://auth.example.com");
-      // Both forms were attempted, path-insertion first.
+      // Shared discovery tries the RFC path-insertion form, the compatibility
+      // append form, then the origin-root fallback.
       expect(externalUrls).toEqual([
         "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+        "https://mcp.example.com/mcp/.well-known/oauth-protected-resource",
         "https://mcp.example.com/.well-known/oauth-protected-resource",
       ]);
     });
@@ -1253,7 +1295,7 @@ function createDynamicHarness(options: DynamicHarnessOptions) {
         status: 200,
         statusText: "OK",
         headers: {},
-        body: { result: { serverInfo: { name: "demo" } } },
+        body: { jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25", serverInfo: { name: "demo" } } },
         ok: true,
       };
     }),
@@ -1732,7 +1774,7 @@ describe("open dcr registration strategy", () => {
     expect(harness.getState().clientId).toBe("minted-client");
   });
 
-  it("is forced to pre_registered when a registrationId is present", async () => {
+  it("is forced to preregistered when a registrationId is present", async () => {
     const harness = createDynamicHarness({
       strategy: "dcr",
       registrationId: "reg-1",
@@ -2002,5 +2044,153 @@ describe("cimd registration strategy", () => {
     });
     await harness.machine.runAll();
     expect(harness.getState().error).toContain("insufficient");
+  });
+});
+
+describe("createXAAStateMachine discovery guards", () => {
+  const ok = (body: unknown) => ({
+    status: 200,
+    statusText: "OK",
+    headers: {},
+    body,
+    ok: true,
+  });
+
+  function driveDiscovery(
+    externalRequest: (url: string) => Promise<any>,
+    serverUrl = "https://mcp.example.com"
+  ) {
+    let state = createInitialXAAFlowState({
+      serverUrl,
+      registrationStrategy: "preregistered",
+    });
+    const machine = createXAAStateMachine({
+      getState: () => state,
+      updateState: (u) => {
+        state = { ...state, ...u };
+      },
+      serverUrl,
+      issuerBaseUrl: "https://issuer.example/api/web/xaa",
+      requestExecutor: {
+        externalRequest: vi.fn(externalRequest),
+        internalRequest: vi.fn(async () => ok({})),
+      },
+      clientId: "mcpjam-debugger",
+      userId: "user-1",
+      email: "u@example.com",
+    });
+    return { machine, getState: () => state };
+  }
+
+  it("rejects protected-resource metadata whose resource does not match (RFC 9728)", async () => {
+    const { machine, getState } = driveDiscovery(async (url) => {
+      if (url.includes(".well-known/oauth-protected-resource")) {
+        return ok({
+          resource: "https://other.example.com",
+          authorization_servers: ["https://auth.example.com"],
+        });
+      }
+      return ok({});
+    });
+    await machine.runAll();
+    expect(getState().currentStep).toBe("discover_resource_metadata");
+    expect(getState().error).toMatch(/does not identify/i);
+  });
+
+  it("treats a trailing slash and query as part of the resource identity", async () => {
+    const serverUrl = "https://mcp.example.com/mcp/?tenant=acme";
+    const externalUrls: string[] = [];
+    const { machine, getState } = driveDiscovery(
+      async (url) => {
+        externalUrls.push(url);
+        return ok({
+          resource: "https://mcp.example.com/mcp?tenant=acme",
+          authorization_servers: ["https://auth.example.com"],
+        });
+      },
+      serverUrl
+    );
+
+    await machine.runAll();
+
+    expect(externalUrls[0]).toBe(
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp/?tenant=acme"
+    );
+    expect(getState().currentStep).toBe("discover_resource_metadata");
+    expect(getState().error).toMatch(/does not identify/i);
+  });
+
+  it("rejects authorization-server metadata whose issuer does not match (RFC 8414)", async () => {
+    const { machine, getState } = driveDiscovery(async (url) => {
+      if (url.includes(".well-known/oauth-protected-resource")) {
+        return ok({
+          resource: "https://mcp.example.com",
+          authorization_servers: ["https://auth.example.com"],
+        });
+      }
+      if (url.includes(".well-known/")) {
+        return ok({
+          issuer: "https://evil.example.com",
+          token_endpoint: "https://evil.example.com/token",
+        });
+      }
+      return ok({});
+    });
+    await machine.runAll();
+    expect(getState().currentStep).toBe("discover_authz_metadata");
+    expect(getState().error).toMatch(/does not match/i);
+  });
+
+  it("falls back to the next advertised authorization server", async () => {
+    const deadIssuer = "https://dead.example.com";
+    const liveIssuer = "https://auth.example.com";
+    const { machine, getState } = driveDiscovery(async (url) => {
+      if (url.includes("oauth-protected-resource")) {
+        return ok({
+          resource: "https://mcp.example.com",
+          authorization_servers: [deadIssuer, liveIssuer],
+        });
+      }
+      if (url.startsWith(deadIssuer)) {
+        return {
+          status: 404,
+          statusText: "Not Found",
+          headers: {},
+          body: {},
+          ok: false,
+        };
+      }
+      return ok({
+        issuer: liveIssuer,
+        token_endpoint: `${liveIssuer}/token`,
+      });
+    });
+
+    await machine.proceedToNextStep();
+    await machine.proceedToNextStep();
+
+    expect(getState().currentStep).toBe("received_authz_metadata");
+    expect(getState().authzServerIssuer).toBe(liveIssuer);
+    expect(getState().tokenEndpoint).toBe(`${liveIssuer}/token`);
+  });
+
+  it("does not normalize a trailing slash when matching an AS issuer", async () => {
+    const { machine, getState } = driveDiscovery(async (url) => {
+      if (url.includes(".well-known/oauth-protected-resource")) {
+        return ok({
+          resource: "https://mcp.example.com",
+          authorization_servers: ["https://auth.example.com/tenant/"],
+        });
+      }
+      return ok({
+        issuer: "https://auth.example.com/tenant",
+        token_endpoint: "https://auth.example.com/token",
+      });
+    });
+
+    await machine.runAll();
+
+    expect(getState().currentStep).toBe("discover_authz_metadata");
+    expect(getState().error).toMatch(/does not match/i);
   });
 });

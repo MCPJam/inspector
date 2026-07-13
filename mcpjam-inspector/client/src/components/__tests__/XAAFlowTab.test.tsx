@@ -536,18 +536,18 @@ describe("XAAFlowTab", () => {
       );
     });
 
-    it("defaults to pre_registered when nothing is persisted", () => {
+    it("defaults to preregistered when nothing is persisted", () => {
       render(
         <XAAFlowTab
           serverConfigs={{ staging: {} as any }}
           selectedServerName="staging"
         />,
       );
-      expect(capturedMachineConfig.registrationStrategy).toBe("pre_registered");
+      expect(capturedMachineConfig.registrationStrategy).toBe("preregistered");
     });
 
     it("honors an explicit dcr even with a stored secret, and does NOT send serverId", () => {
-      // A stored secret used to downgrade dynamic strategies to pre_registered.
+      // A stored secret used to downgrade dynamic strategies to preregistered.
       // Now an explicit dcr is honored and the stored serverId/secret is ignored
       // so the browser performs its own dynamic registration.
       currentTarget = makeTarget({
@@ -566,7 +566,7 @@ describe("XAAFlowTab", () => {
       expect(capturedMachineConfig.serverId).toBeUndefined();
     });
 
-    it("still sends serverId for a stored-secret pre_registered target", () => {
+    it("still sends serverId for a stored-secret preregistered target", () => {
       currentTarget = makeTarget({
         usesServerSideSecret: true,
         serverId: "srv_1",
@@ -579,7 +579,7 @@ describe("XAAFlowTab", () => {
           projectId="proj_1"
         />,
       );
-      expect(capturedMachineConfig.registrationStrategy).toBe("pre_registered");
+      expect(capturedMachineConfig.registrationStrategy).toBe("preregistered");
       expect(capturedMachineConfig.serverId).toBe("srv_1");
     });
 
@@ -620,14 +620,14 @@ describe("XAAFlowTab", () => {
         screen.getByRole("button", { name: /keep current run/i }),
       );
       // Start a fresh run. On the old pinned code this rebuilt with the stale
-      // pre_registered strategy; the machine driving Run all must be dcr.
+      // preregistered strategy; the machine driving Run all must be dcr.
       await user.click(screen.getByRole("button", { name: /run all/i }));
       await waitFor(() =>
         expect(capturedMachineConfig.registrationStrategy).toBe("dcr"),
       );
     });
 
-    it("forces pre_registered for registration-backed targets regardless of persisted strategy", () => {
+    it("forces preregistered for registration-backed targets regardless of persisted strategy", () => {
       currentTarget = makeTarget({
         targetSource: "registration",
         runInput: {
@@ -641,7 +641,7 @@ describe("XAAFlowTab", () => {
           selectedServerName="staging"
         />,
       );
-      expect(capturedMachineConfig.registrationStrategy).toBe("pre_registered");
+      expect(capturedMachineConfig.registrationStrategy).toBe("preregistered");
     });
   });
 });

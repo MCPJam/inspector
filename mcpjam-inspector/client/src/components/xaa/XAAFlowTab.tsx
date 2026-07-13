@@ -34,13 +34,13 @@ import { XAAResourceAppsSection } from "./registration/XAAResourceAppsSection";
 import { NegativeTestScorecard } from "./NegativeTestScorecard";
 import type { NegativeTestsInput } from "@/lib/xaa/discovery-client";
 import {
-  normalizeXaaRegistrationStrategy,
+  normalizeRegistrationStrategy,
   type NegativeTestMode,
 } from "@/shared/xaa.js";
 import {
   createInitialXAAFlowState,
   type XaaEphemeralDcrCredentials,
-  type XaaRegistrationStrategy,
+  type RegistrationStrategy,
   type XAAFlowState,
 } from "@/lib/xaa/types";
 import { XAADcrReRegisterControl } from "./XAADcrReRegisterControl";
@@ -59,7 +59,7 @@ const INITIAL_RESOURCE_PARAM =
 
 function buildFlowStateFromInput(
   input: XAAFlowInput,
-  registrationStrategy: XaaRegistrationStrategy = "pre_registered",
+  registrationStrategy: RegistrationStrategy = "preregistered",
   // A prior ambiguous DCR POST may have created a remote client. This risk is
   // tracked per-target OUTSIDE flow state so an ordinary reset re-seeds it —
   // clearing it only through the confirmed "Register another client" path.
@@ -204,8 +204,8 @@ export function XAAFlowTab({
   // cache below stays session-only — a persisted `dcr` re-registers a fresh
   // client on the next run, guarded by the duplicate-risk gate.
   const persistedStrategy =
-    normalizeXaaRegistrationStrategy(selectedServer?.xaaRegistrationStrategy) ??
-    "pre_registered";
+    normalizeRegistrationStrategy(selectedServer?.xaaRegistrationStrategy) ??
+    "preregistered";
   // Dynamic strategies (DCR/CIMD) need AS discovery, so they apply only to
   // manual bar-server targets (not registration/resource-app runs). An explicit
   // dynamic choice is honored even when the server has a stored secret: the run
@@ -215,12 +215,12 @@ export function XAAFlowTab({
     target.targetSource === "bar_server" &&
     isTestable &&
     !runInput.registrationId;
-  const effectiveStrategy: XaaRegistrationStrategy = strategyAppliesToTarget
+  const effectiveStrategy: RegistrationStrategy = strategyAppliesToTarget
     ? persistedStrategy
-    : "pre_registered";
+    : "preregistered";
   // When the run establishes its own dynamic client identity, any stored
   // pre-registered credentials (serverId-resolved secret) must be ignored.
-  const runsDynamicRegistration = effectiveStrategy !== "pre_registered";
+  const runsDynamicRegistration = effectiveStrategy !== "preregistered";
 
   // DCR-minted credentials, keyed by target + registration endpoint. A
   // useRef-backed Map so machine recreation neither loses nor re-exposes the
@@ -325,7 +325,7 @@ export function XAAFlowTab({
       // fire with the configured (often absent) client, not the identity the
       // run established, so the scorecard stays disabled for those (see the
       // scorecard memo) and must not be unlocked here either.
-      if (flowStateRef.current.registrationStrategy === "pre_registered") {
+      if (flowStateRef.current.registrationStrategy === "preregistered") {
         setPositiveRunTargets((current) => {
           if (current.has(runGateKey)) return current;
           const next = new Set(current);
@@ -459,7 +459,7 @@ export function XAAFlowTab({
   // refs; confirms via AlertDialog before discarding a busy or completed run.
   const lastAppliedTargetKey = useRef<string | null>(null);
   const lastNegativeTestMode = useRef(runSettings.negativeTestMode);
-  const lastRegistrationStrategy = useRef<XaaRegistrationStrategy>(
+  const lastRegistrationStrategy = useRef<RegistrationStrategy>(
     effectiveStrategy
   );
   // The simulated identity the flow was last (re)built with. Tracked so an
@@ -474,7 +474,7 @@ export function XAAFlowTab({
   const [pendingReset, setPendingReset] = useState<{
     targetKey: string;
     negativeTestMode: NegativeTestMode;
-    registrationStrategy: XaaRegistrationStrategy;
+    registrationStrategy: RegistrationStrategy;
   } | null>(null);
 
   // Rebuild the flow from the current input and record the identity it was
@@ -483,7 +483,7 @@ export function XAAFlowTab({
   // applied the current identity — and skip a stale timer that would otherwise
   // wipe a freshly-started run.
   const rebuildFlow = useCallback(
-    (strategyOverride?: XaaRegistrationStrategy) => {
+    (strategyOverride?: RegistrationStrategy) => {
       lastAppliedIdentity.current = {
         userId: runInput.userId,
         email: runInput.email,
@@ -521,7 +521,7 @@ export function XAAFlowTab({
     (
       nextTargetKey: string,
       nextMode: NegativeTestMode,
-      nextStrategy: XaaRegistrationStrategy
+      nextStrategy: RegistrationStrategy
     ) => {
       lastAppliedTargetKey.current = nextTargetKey;
       lastNegativeTestMode.current = nextMode;
@@ -667,7 +667,7 @@ export function XAAFlowTab({
       scope: runInput.scope,
       authzServerIssuer: runInput.authzServerIssuer,
       registrationId: runInput.registrationId,
-      // Client-identity strategy (forced to pre_registered inside the machine
+      // Client-identity strategy (forced to preregistered inside the machine
       // for registrationId/serverId runs) plus the session credential cache
       // DCR runs mint into and redeem from.
       registrationStrategy: effectiveStrategy,
@@ -677,7 +677,7 @@ export function XAAFlowTab({
       // resolves the secret and discovers the token endpoint. Dynamic
       // strategies skip this: they ignore the stored secret and register their
       // own client, so sending serverId (which the machine forces back to
-      // pre_registered) would defeat the explicit DCR/CIMD choice.
+      // preregistered) would defeat the explicit DCR/CIMD choice.
       ...(target.usesServerSideSecret &&
       target.serverId &&
       !runsDynamicRegistration

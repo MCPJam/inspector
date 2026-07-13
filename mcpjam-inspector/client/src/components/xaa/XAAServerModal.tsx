@@ -20,9 +20,9 @@ import { validateServerFormData } from "@/lib/server-form-validation";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import {
-  DEFAULT_XAA_REGISTRATION_STRATEGY,
-  normalizeXaaRegistrationStrategy,
-  type XaaRegistrationStrategy,
+  DEFAULT_REGISTRATION_STRATEGY,
+  normalizeRegistrationStrategy,
+  type RegistrationStrategy,
 } from "@/shared/xaa.js";
 import {
   XAA_STRATEGY_HINTS,
@@ -73,7 +73,7 @@ export function XAAServerModal({
   // modal is the source of truth. Pre-registered requires a Client ID; DCR/CIMD
   // mint or URL-address the client identity instead.
   const [registrationStrategy, setRegistrationStrategy] =
-    useState<XaaRegistrationStrategy>(DEFAULT_XAA_REGISTRATION_STRATEGY);
+    useState<RegistrationStrategy>(DEFAULT_REGISTRATION_STRATEGY);
   const [clientId, setClientId] = useState("");
   const [scopes, setScopes] = useState("");
   const [authzIssuer, setAuthzIssuer] = useState("");
@@ -95,8 +95,8 @@ export function XAAServerModal({
     setServerName(server?.name ?? "");
     setServerUrl(derived.serverUrl ?? "");
     setRegistrationStrategy(
-      normalizeXaaRegistrationStrategy(server?.xaaRegistrationStrategy) ??
-        DEFAULT_XAA_REGISTRATION_STRATEGY,
+      normalizeRegistrationStrategy(server?.xaaRegistrationStrategy) ??
+        DEFAULT_REGISTRATION_STRATEGY,
     );
     setClientId(derived.clientId ?? "");
     // Scopes can be stored comma- or space-separated upstream; normalize to
@@ -144,7 +144,7 @@ export function XAAServerModal({
     const trimmedClientId = clientId.trim();
     // Client ID is only required for pre-registered clients. DCR mints one and
     // CIMD addresses the client via a metadata URL, so both leave it optional.
-    if (registrationStrategy === "pre_registered" && !trimmedClientId) {
+    if (registrationStrategy === "preregistered" && !trimmedClientId) {
       setError("Client ID is required for pre-registered clients.");
       return;
     }
@@ -269,7 +269,7 @@ export function XAAServerModal({
               <Select
                 value={registrationStrategy}
                 onValueChange={(value) =>
-                  setRegistrationStrategy(value as XaaRegistrationStrategy)
+                  setRegistrationStrategy(value as RegistrationStrategy)
                 }
               >
                 <SelectTrigger id="xaa-registration-strategy" className="h-10">
@@ -293,7 +293,7 @@ export function XAAServerModal({
             <XaaCredentialFields
               clientId={clientId}
               onClientIdChange={setClientId}
-              clientIdRequired={registrationStrategy === "pre_registered"}
+              clientIdRequired={registrationStrategy === "preregistered"}
               clientSecret={clientSecret}
               onClientSecretChange={(value) => {
                 setClientSecret(value);

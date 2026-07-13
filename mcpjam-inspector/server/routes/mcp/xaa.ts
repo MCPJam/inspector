@@ -7,9 +7,6 @@ import {
   NEGATIVE_TEST_MODES,
   NEGATIVE_TEST_MODE_DETAILS,
   XAA_IDP_KID,
-  XAA_ID_JAG_TOKEN_TYPE,
-  XAA_ID_TOKEN_TOKEN_TYPE,
-  XAA_TOKEN_EXCHANGE_GRANT,
   type NegativeTestDiff,
   type NegativeTestMode,
 } from "../../../shared/xaa.js";
@@ -22,6 +19,9 @@ import {
   issueMockIdToken,
   issueNegativeIdJag,
   verifyXaaJwt,
+  ID_JAG_TOKEN_TYPE,
+  ID_TOKEN_TOKEN_TYPE,
+  TOKEN_EXCHANGE_GRANT,
   XAA_ACCESS_TOKEN_TYP,
   XAA_CODE_JWT_TYP,
 } from "@mcpjam/sdk";
@@ -106,10 +106,6 @@ function validateOrgSegment(c: Context): string | Response {
 }
 
 // ── Mock OIDC IdP (authorization_code + userinfo) ─────────────────────────
-const TOKEN_EXCHANGE_GRANT = XAA_TOKEN_EXCHANGE_GRANT;
-const ID_JAG_TOKEN_TYPE = XAA_ID_JAG_TOKEN_TYPE;
-const ID_TOKEN_TOKEN_TYPE = XAA_ID_TOKEN_TOKEN_TYPE;
-
 // Best-effort per-IP sliding-window cap on the public OIDC endpoints that sign
 // something (/token, /authorize/confirm). X-Forwarded-For is client-spoofable
 // so this only slows casual abuse, not a determined attacker — acceptable for
@@ -118,7 +114,10 @@ const ID_TOKEN_TOKEN_TYPE = XAA_ID_TOKEN_TOKEN_TYPE;
 const OIDC_RATE_LIMIT_PER_MIN = 60;
 const OIDC_RATE_WINDOW_MS = 60 * 1000;
 const OIDC_RATE_MAX_KEYS = 10_000;
-const oidcIpCounters = new Map<string, { count: number; windowStart: number }>();
+const oidcIpCounters = new Map<
+  string,
+  { count: number; windowStart: number }
+>();
 
 function checkOidcIpCap(ip: string): boolean {
   const now = Date.now();
@@ -239,7 +238,10 @@ function parseAuthorizeParams(
   } catch {
     return { error: "redirect_uri is not a valid URL" };
   }
-  if (parsedRedirect.protocol !== "https:" && parsedRedirect.protocol !== "http:") {
+  if (
+    parsedRedirect.protocol !== "https:" &&
+    parsedRedirect.protocol !== "http:"
+  ) {
     return { error: "redirect_uri must be http(s)" };
   }
   if (parsedRedirect.hash) {
@@ -262,7 +264,13 @@ function parseAuthorizeParams(
     // a PKCE-looking request, which redeems with no verifier — reject it.
     return { error: "code_challenge_method requires code_challenge" };
   }
-  for (const field of ["state", "nonce", "scope", "subject", "email"] as const) {
+  for (const field of [
+    "state",
+    "nonce",
+    "scope",
+    "subject",
+    "email",
+  ] as const) {
     const value = raw[field];
     if (value !== undefined && value.length > 512) {
       return { error: `${field} is too long` };
@@ -293,7 +301,9 @@ function renderAuthorizePage(args: {
   const redirectHost = new URL(params.redirectUri).host;
   const hidden = (name: string, value: string | undefined) =>
     value
-      ? `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}" />`
+      ? `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(
+          value
+        )}" />`
       : "";
   return `<!DOCTYPE html>
 <html>
@@ -332,9 +342,13 @@ function renderAuthorizePage(args: {
       ${params.codeChallenge ? hidden("code_challenge_method", "S256") : ""}
       <input type="hidden" name="response_type" value="code" />
       <label for="subject">Subject (sub)</label>
-      <input type="text" id="subject" name="subject" value="${escapeHtml(params.subject || "user-12345")}" />
+      <input type="text" id="subject" name="subject" value="${escapeHtml(
+        params.subject || "user-12345"
+      )}" />
       <label for="email">Email</label>
-      <input type="email" id="email" name="email" value="${escapeHtml(params.email || "demo.user@example.com")}" />
+      <input type="email" id="email" name="email" value="${escapeHtml(
+        params.email || "demo.user@example.com"
+      )}" />
       <button type="submit">Continue to ${escapeHtml(redirectHost)}</button>
     </form>
     <p class="warn">
@@ -782,7 +796,8 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       `The hosted issuer returned HTTP ${upstream.status}`;
     return Response.json(
       {
-        code: upstream.status >= 500 ? "SERVER_UNREACHABLE" : "HOSTED_ISSUER_ERROR",
+        code:
+          upstream.status >= 500 ? "SERVER_UNREACHABLE" : "HOSTED_ISSUER_ERROR",
         message,
         error: message,
       },
@@ -1014,7 +1029,15 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       const parsed = parseRequest(tokenExchangeSchema, body);
       const negativeTestMode = resolveNegativeTestMode(parsed.negativeTestMode);
       const identityPayload = decodeJwtPayloadUnsafe(parsed.identityAssertion);
-      const subject = identityPayload.sub || "user-12345";
+      const subject =
+        typeof identityPayload.sub === "string"
+          ? identityPayload.sub.trim()
+          : "";
+      if (!subject) {
+        throw new Error(
+          "Identity assertion payload must contain a non-empty `sub` claim"
+        );
+      }
       // Carry the ID token's email into the ID-JAG (spec RECOMMENDED) so the
       // Resource AS can use it for subject resolution / JIT provisioning.
       const email =
@@ -1558,7 +1581,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           status: response.status,
           detail: accepted
             ? `The auth server returned HTTP ${response.status} with an access token for this broken assertion. ` +
-              `This test ${details.description.charAt(0).toLowerCase()}${details.description.slice(1)} ` +
+              `This test ${details.description
+                .charAt(0)
+                .toLowerCase()}${details.description.slice(1)} ` +
               `${details.expectedFailure} Because a token was issued instead, a malformed or unauthorized ` +
               `assertion would be accepted in production.`
             : undefined,
@@ -1693,7 +1718,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         // Never redirect on a validation failure — the redirect_uri may be
         // the invalid part. A plain error page is the safe terminal.
         return c.html(
-          `<!DOCTYPE html><html><body><h1>Invalid authorization request</h1><p>${escapeHtml(parsed.error)}</p></body></html>`,
+          `<!DOCTYPE html><html><body><h1>Invalid authorization request</h1><p>${escapeHtml(
+            parsed.error
+          )}</p></body></html>`,
           400
         );
       }
@@ -1728,7 +1755,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       const parsed = parseAuthorizeParams(form);
       if ("error" in parsed) {
         return c.html(
-          `<!DOCTYPE html><html><body><h1>Invalid authorization request</h1><p>${escapeHtml(parsed.error)}</p></body></html>`,
+          `<!DOCTYPE html><html><body><h1>Invalid authorization request</h1><p>${escapeHtml(
+            parsed.error
+          )}</p></body></html>`,
           400
         );
       }
@@ -1774,7 +1803,10 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           error instanceof Error ? error.message : "Invalid code"
         );
       }
-      if (payload.client_id !== clientId || payload.redirect_uri !== redirectUri) {
+      if (
+        payload.client_id !== clientId ||
+        payload.redirect_uri !== redirectUri
+      ) {
         return oauthError(
           400,
           "invalid_grant",
@@ -1792,7 +1824,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
             "code_verifier is required for a PKCE authorization code"
           );
         }
-        const computed = createHash("sha256").update(verifier).digest("base64url");
+        const computed = createHash("sha256")
+          .update(verifier)
+          .digest("base64url");
         if (computed !== payload.code_challenge) {
           return oauthError(
             400,
@@ -1811,7 +1845,12 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         audience: clientId,
         nonce: typeof payload.nonce === "string" ? payload.nonce : undefined,
       });
-      const accessToken = issueAccessToken({ issuer, subject, email, clientId });
+      const accessToken = issueAccessToken({
+        issuer,
+        subject,
+        email,
+        clientId,
+      });
 
       return Response.json(
         {
@@ -2040,7 +2079,11 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           const status = orgIdOrError.status;
           return oauthError(
             status,
-            status === 401 ? "invalid_client" : status === 403 ? "access_denied" : "invalid_request",
+            status === 401
+              ? "invalid_client"
+              : status === 403
+              ? "access_denied"
+              : "invalid_request",
             "Token exchange under an organization issuer requires an org member's bearer token"
           );
         });

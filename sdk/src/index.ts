@@ -207,6 +207,22 @@ export type {
   OAuthRegistrationStrategy,
   ResolvedAuthorizationPlan,
 } from "./oauth/authorization-plan.js";
+// Shared client-registration vocabulary (single source of truth for OAuth
+// flows AND the XAA debugger's Client↔Resource-AS leg).
+export {
+  REGISTRATION_STRATEGIES,
+  DEFAULT_REGISTRATION_STRATEGY,
+  DEFAULT_REGISTRATION_MODE,
+  AUTH_METHODS,
+  normalizeRegistrationStrategy,
+  normalizeRegistrationMode,
+  normalizeAuthMethod,
+} from "./registration.js";
+export type {
+  RegistrationStrategy,
+  RegistrationMode,
+  AuthMethod,
+} from "./registration.js";
 export {
   summarizeStructuredCases,
   renderStructuredRunJson,
@@ -270,6 +286,8 @@ export type {
 // document and needs the builder/evaluator server-side.
 export {
   ID_JAG_GRANT_PROFILE,
+  ID_JAG_TOKEN_TYPE,
+  ID_TOKEN_TOKEN_TYPE,
   JWT_BEARER_GRANT,
   TOKEN_EXCHANGE_GRANT,
   XAA_DEBUG_CLIENT_ID_METADATA_URL,
@@ -289,6 +307,12 @@ export type {
   DynamicClientRegistrationOutcome,
 } from "./oauth/state-machines/shared/dynamic-client-registration.js";
 export { validateClientIdMetadataUrl } from "./oauth/state-machines/shared/client-id-metadata.js";
+export {
+  decodeJWT,
+  decodeJWTParts,
+  formatJWTTimestamp,
+} from "./oauth/state-machines/shared/jwt.js";
+export type { DecodedJwtParts } from "./oauth/state-machines/shared/jwt.js";
 
 // XAA (Cross-App Access / ID-JAG) mock-IdP mint — node-only (crypto/fs).
 // Consumed by the inspector server and the CLI's headless `runXaaFlow`.

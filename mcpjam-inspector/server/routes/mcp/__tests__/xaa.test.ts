@@ -166,6 +166,36 @@ describe("mcp xaa routes", () => {
     expect(payload.email).toBe("demo.user@example.com");
   });
 
+  it("rejects a token-exchange identity assertion without a subject", async () => {
+    const headers = {
+      "Content-Type": "application/json",
+      "X-MCP-Session-Auth": `Bearer ${getSessionToken() || token}`,
+    };
+    const subjectlessAssertion = [
+      Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString(
+        "base64url"
+      ),
+      Buffer.from(JSON.stringify({ email: "demo.user@example.com" })).toString(
+        "base64url"
+      ),
+      "signature",
+    ].join(".");
+
+    const response = await app.request("/api/mcp/xaa/token-exchange", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        identityAssertion: subjectlessAssertion,
+        audience: "https://auth.example.com",
+        resource: "https://mcp.example.com",
+        clientId: "mcpjam-debugger",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toMatch(/non-empty `sub`/i);
+  });
+
   describe("POST /discover-as", () => {
     afterEach(() => {
       vi.unstubAllGlobals();
@@ -836,7 +866,7 @@ describe("hosted-issuer forwarding on the local router", () => {
       async () =>
         new Response("forbidden", {
           status: 403,
-          headers: { "WWW-Authenticate": "Bearer error=\"insufficient_scope\"" },
+          headers: { "WWW-Authenticate": 'Bearer error="insufficient_scope"' },
         })
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -1287,7 +1317,7 @@ describe("mock OIDC IdP endpoints", () => {
   it("escapes echoed values on the authorize page", async () => {
     const response = await app.request(
       authorizeUrl({
-        client_id: '<script>alert(1)</script>',
+        client_id: "<script>alert(1)</script>",
         redirect_uri: REDIRECT_URI,
         response_type: "code",
       })
@@ -1586,7 +1616,9 @@ describe("mock OIDC IdP endpoints", () => {
         "Content-Type": "application/x-www-form-urlencoded",
         Origin: "https://evil.example.com",
       },
-      body: new URLSearchParams({ grant_type: "authorization_code" }).toString(),
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+      }).toString(),
     });
     expect(response.status).toBe(403);
   });
@@ -1638,7 +1670,9 @@ describe("mock OIDC IdP endpoints", () => {
       }).toString(),
     });
     expect(response.status).toBe(302);
-    expect(new URL(response.headers.get("location")!).searchParams.get("code")).toBeTruthy();
+    expect(
+      new URL(response.headers.get("location")!).searchParams.get("code")
+    ).toBeTruthy();
   });
 
   it("rejects code_challenge_method without a code_challenge", async () => {

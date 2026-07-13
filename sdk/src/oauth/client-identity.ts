@@ -54,6 +54,8 @@ export const ID_JAG_GRANT_PROFILE =
 export const TOKEN_EXCHANGE_GRANT =
   "urn:ietf:params:oauth:grant-type:token-exchange";
 export const JWT_BEARER_GRANT = "urn:ietf:params:oauth:grant-type:jwt-bearer";
+export const ID_JAG_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id-jag";
+export const ID_TOKEN_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id_token";
 
 // The XAA debugger's Client ID Metadata Document. This is a DIFFERENT client
 // identity from DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL (the authorization-code
