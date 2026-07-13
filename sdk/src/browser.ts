@@ -223,6 +223,8 @@ export type {
   McpInitializeRequest,
   XaaCapabilityEvidence,
 } from "./xaa/mcp-init.js";
+// XAA flow-core types + capability preflight (browser-safe engine primitives).
+export * from "./xaa/state-machines/index.js";
 export { EMPTY_OAUTH_FLOW_STATE } from "./oauth/state-machines/types.js";
 export type {
   HttpHistoryEntry,
