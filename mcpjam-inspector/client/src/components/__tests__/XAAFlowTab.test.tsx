@@ -584,12 +584,15 @@ describe("XAAFlowTab", () => {
         ).toBeInTheDocument(),
       );
 
-      // "Keep current run" must NOT pin the old strategy: the newly persisted
-      // choice still reaches the machine (regression guard for the stale-pin
-      // bug where Reset/Run all kept rebuilding with the pre-change strategy).
+      // Keep the current run, then start a FRESH run: the fresh-run path
+      // (Run all → rebuildFlow) must use the newly persisted strategy, not a
+      // stale pin. This is the exact path the stale-pin bug regressed.
       await user.click(
         screen.getByRole("button", { name: /keep current run/i }),
       );
+      // Start a fresh run. On the old pinned code this rebuilt with the stale
+      // pre_registered strategy; the machine driving Run all must be dcr.
+      await user.click(screen.getByRole("button", { name: /run all/i }));
       await waitFor(() =>
         expect(capturedMachineConfig.registrationStrategy).toBe("dcr"),
       );
