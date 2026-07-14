@@ -58,6 +58,14 @@ Set defaults on the suite; override per case with **inherit** (use suite default
 | **Final message non-empty** | The model produced a final assistant message. |
 | **Token budget under N** | Total token usage stayed below the cap. |
 
+### Harness system tools in assertion dropdowns
+
+When a suite is configured to run under a harness host (such as Claude Code or Codex), the tool-name pickers in the case editor also offer the harness's native **system tools** — for example `bash`, `read`, `webSearch`, `WebFetch` — alongside your MCP server tools. This lets you write assertions like **Tool was never called** for `bash` or **Tool was called with…** for `read` without having to type the wire name by hand.
+
+System tools appear only in assertion pickers. They are not available in pinned tool-call steps or widget-assertion "View (tool)" selects, because those require a tool that MCPJam can invoke directly.
+
+If an MCP tool and a system tool share the same name, the MCP tool takes precedence and the system tool is not added to the list.
+
 ### Argument matching
 
 Tool-call argument comparison runs in one of three modes, configured at the suite:
