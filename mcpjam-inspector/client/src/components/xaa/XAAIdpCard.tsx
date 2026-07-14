@@ -7,7 +7,6 @@ import {
   KeyRound,
   Settings2,
 } from "lucide-react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Switch } from "@mcpjam/design-system/switch";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
@@ -136,10 +135,9 @@ export function XAAIdpCard({
   // Entry point to the setup center (org People / app connections / access
   // policy). Hosted + org + registration flag: exactly the surface the setup
   // routes require, so the gear never links to a blank page.
-  const registrationEnabled = useFeatureFlagEnabled("xaa-registration");
   const navigate = useAppNavigate();
   const showSetupLink =
-    HOSTED_MODE && Boolean(organizationId) && registrationEnabled === true;
+    HOSTED_MODE && Boolean(organizationId);
 
   // Start from the browser-origin guess, then swap in the server-advertised
   // issuer once resolved — see fetchXaaIdpUrls for why the guess can be wrong.

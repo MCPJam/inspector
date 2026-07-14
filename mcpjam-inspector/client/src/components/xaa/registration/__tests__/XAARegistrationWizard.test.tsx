@@ -4,11 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { XAARegistrationWizard } from "../XAARegistrationWizard";
 import type { XaaResourceApp } from "@/lib/xaa/types";
 
-let flagValue: boolean | undefined = true;
-vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: () => flagValue,
-}));
-
 const trackMock = vi.fn();
 vi.mock("@/lib/analytics", () => ({
   track: (...args: unknown[]) => trackMock(...args),
@@ -61,25 +56,10 @@ async function fillBasicInfoAndAdvance(
 
 describe("XAARegistrationWizard", () => {
   beforeEach(() => {
-    flagValue = true;
     upsert.mockClear();
     discoverMock.mockReset();
     healthCheckMock.mockReset();
     trackMock.mockClear();
-  });
-
-  describe("flag gating", () => {
-    it("renders nothing when the flag is false", () => {
-      flagValue = false;
-      renderWizard();
-      expect(screen.queryByText("Register resource app")).toBeNull();
-    });
-
-    it("renders nothing when the flag is undefined (bootstrap)", () => {
-      flagValue = undefined;
-      renderWizard();
-      expect(screen.queryByText("Register resource app")).toBeNull();
-    });
   });
 
   describe("step validation", () => {
