@@ -321,21 +321,23 @@ export function XAAFlowTab({
   const runSettings = useXaaRunSettings();
   const { user: signedInUser } = useAuth();
   // Local-only hosted-issuer opt-in: mints route through app.mcpjam.com so a
-  // cloud AS can discover the issuer. Requires a signed-in session AND an
-  // active org — the hosted mint targets the membership-gated org-scoped
-  // issuer (/o/<orgId>), and the server fails closed without one rather than
-  // downgrading to the forgeable unscoped issuer. (A local guest bearer is
-  // signed with a local key the hosted issuer rejects.)
-  const canUseHostedIssuer =
-    !HOSTED_MODE && Boolean(signedInUser) && Boolean(organizationId);
-  // Why the toggle is disabled — the two gates fail for different reasons and
-  // the hint must name the one the user can act on.
+  // cloud AS can discover the issuer. Requires an active org — signed-in
+  // users mint under the membership-gated org-scoped issuer (/o/<orgId>);
+  // guest sessions mint under the visibly separate ANONYMOUS TEST issuer
+  // (/g/<personalOrgId>), which a RAS must explicitly allowlist and which is
+  // NOT enterprise-managed-authorization conformance. The server fails
+  // closed without an org rather than downgrading to the forgeable unscoped
+  // issuer. (Dev-only caveat: a guest bearer signed by a locally-provisioned
+  // Convex key is rejected by the hosted issuer and surfaces as a 401 on the
+  // forward.)
+  const hostedIssuerKind: "org" | "anonymous" = signedInUser
+    ? "org"
+    : "anonymous";
+  const canUseHostedIssuer = !HOSTED_MODE && Boolean(organizationId);
   const hostedIssuerDisabledReason =
     HOSTED_MODE || canUseHostedIssuer
       ? undefined
-      : !signedInUser
-      ? "sign in to mint through the hosted issuer"
-      : "select an organization to mint through the hosted issuer";
+      : "waiting for an organization — sign in or continue as guest to mint through the hosted issuer";
   const hostedIssuerOptIn =
     canUseHostedIssuer && runSettings.issuerMode === "hosted";
   const target = useXaaTestTarget({
@@ -422,8 +424,7 @@ export function XAAFlowTab({
       effectiveAssertionFormat
     )
   );
-  const [configurationSaveVersion, setConfigurationSaveVersion] =
-    useState(0);
+  const [configurationSaveVersion, setConfigurationSaveVersion] = useState(0);
 
   // Unlocks and scorecard results belong to the exact client identity the
   // completed run exercised. Dynamic client ids come from the flow, not the
@@ -436,6 +437,7 @@ export function XAAFlowTab({
     targetKey,
     hostedIssuerOptIn ? "hosted" : "local",
     organizationId ?? "",
+    hostedIssuerKind,
     flowState.registrationStrategy,
     scorecardClientId,
     flowConfigurationKey,
@@ -507,14 +509,16 @@ export function XAAFlowTab({
         // The strategy the completed run actually used (state-authoritative).
         registration_strategy: flowStateRef.current.registrationStrategy,
       });
-      // A green run proves these exact credentials can redeem an ID-JAG, which
-      // authorizes the scorecard to send deliberately broken assertions.
-      setPositiveRunTargets((current) => {
-        if (current.has(runGateKey)) return current;
-        const next = new Set(current);
-        next.add(runGateKey);
-        return next;
-      });
+      // This PR enables dynamic scorecards for DCR only. Keep CIMD locked
+      // until its client-auth behavior is implemented and reviewed separately.
+      if (flowStateRef.current.registrationStrategy !== "cimd") {
+        setPositiveRunTargets((current) => {
+          if (current.has(runGateKey)) return current;
+          const next = new Set(current);
+          next.add(runGateKey);
+          return next;
+        });
+      }
     }
   }, [flowState.currentStep, authServerModeForTelemetry, runGateKey]);
 
@@ -534,25 +538,9 @@ export function XAAFlowTab({
       flowState.resourceMetadata?.resource || runInput.serverUrl || "";
 
     if (flowState.registrationStrategy === "cimd") {
-      if (!flowState.tokenEndpoint || !flowState.clientId) {
-        return {
-          input: null,
-          unavailableReason:
-            "Run client identity resolution first so the CIMD client and token endpoint are known.",
-        };
-      }
-      if (!audience || !resource) return { input: null };
-
       return {
-        input: {
-          tokenEndpoint: flowState.tokenEndpoint,
-          audience,
-          resource,
-          subject: runInput.userId || undefined,
-          clientId: flowState.clientId,
-          tokenEndpointAuthMethod: "none",
-          scope: runInput.scope || undefined,
-        },
+        input: null,
+        unavailableReason: "CIMD negative tests are not supported yet.",
       };
     }
 
@@ -724,6 +712,7 @@ export function XAAFlowTab({
     target,
     targetKey,
     runsDynamicRegistration,
+    hostedIssuerOptIn,
   ]);
 
   // ── Single target-reset owner ──────────────────────────────────────
@@ -979,13 +968,20 @@ export function XAAFlowTab({
     // new org's `iss` against the old issuer and report a spurious mismatch.
     // With it cleared, the machine falls back to the correct current-org guess.
     setResolvedIssuerBaseUrl(undefined);
-    void fetchXaaIdpUrls(controller.signal, organizationId).then((urls) => {
+    // Thread issuerKind so a hosted guest discovers its /g/ (anonymous) issuer
+    // rather than /o/ — otherwise the ID-JAG inspection would lint the
+    // /g/-minted `iss` against the wrong /o/ issuer and report a mismatch.
+    void fetchXaaIdpUrls(
+      controller.signal,
+      organizationId,
+      hostedIssuerKind
+    ).then((urls) => {
       if (urls && !controller.signal.aborted) {
         setResolvedIssuerBaseUrl(urls.issuerBaseUrl);
       }
     });
     return () => controller.abort();
-  }, [organizationId]);
+  }, [organizationId, hostedIssuerKind]);
 
   const xaaStateMachine = useMemo(() => {
     return createInspectorXAAStateMachine({
@@ -1028,6 +1024,7 @@ export function XAAFlowTab({
       issuerBaseUrl: hostedIssuerOptIn ? undefined : resolvedIssuerBaseUrl,
       organizationId,
       issuerMode: hostedIssuerOptIn ? "hosted" : "local",
+      issuerKind: hostedIssuerKind,
     });
   }, [
     runInput,
@@ -1036,6 +1033,7 @@ export function XAAFlowTab({
     resolvedIssuerBaseUrl,
     organizationId,
     hostedIssuerOptIn,
+    hostedIssuerKind,
     effectiveStrategy,
     effectiveAssertionFormat,
     runsDynamicRegistration,
@@ -1140,6 +1138,7 @@ export function XAAFlowTab({
         onIssuerModeChange={runSettings.setIssuerMode}
         canUseHostedIssuer={canUseHostedIssuer}
         hostedIssuerDisabledReason={hostedIssuerDisabledReason}
+        issuerKind={hostedIssuerKind}
       />
       <XAAResourceAppsSection
         organizationId={organizationId ?? null}
@@ -1197,6 +1196,9 @@ export function XAAFlowTab({
                   ? {
                       ...scorecard.input,
                       organizationId: organizationId ?? null,
+                      // Guests mint under /g/; without issuerKind the
+                      // negative-test run would default to /o/ and 403.
+                      issuerKind: hostedIssuerKind,
                       ...(hostedIssuerOptIn
                         ? { issuerMode: "hosted" as const }
                         : {}),
@@ -1208,6 +1210,7 @@ export function XAAFlowTab({
                   ? () => ({
                       ...scorecard.resolveInput!(),
                       organizationId: organizationId ?? null,
+                      issuerKind: hostedIssuerKind,
                       ...(hostedIssuerOptIn
                         ? { issuerMode: "hosted" as const }
                         : {}),

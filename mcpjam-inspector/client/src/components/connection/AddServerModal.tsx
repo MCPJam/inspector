@@ -450,6 +450,7 @@ export function AddServerModal({
               xaaEmail={formState.xaaEmail}
               onXaaEmailChange={formState.setXaaEmail}
               signedInEmail={user?.email}
+              autoSelectsXaa={formState.autoSelectsXaa}
             />
           )}
 

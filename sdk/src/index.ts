@@ -108,6 +108,7 @@ export {
   MCPAuthError,
   isAuthError,
   isMCPAuthError,
+  isUnauthorized401,
 } from "./mcp-client-manager/index.js";
 export type { RetryPolicy } from "./retry.js";
 export {

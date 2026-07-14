@@ -279,6 +279,7 @@ export function EditServerFormContent({
             xaaEmail={formState.xaaEmail}
             onXaaEmailChange={formState.setXaaEmail}
             signedInEmail={signedInUser?.email}
+            autoSelectsXaa={formState.autoSelectsXaa}
           />
         </div>
       )}

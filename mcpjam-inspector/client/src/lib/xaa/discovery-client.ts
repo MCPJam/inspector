@@ -121,6 +121,9 @@ export interface NegativeTestsInput {
   // AS actually trusts (a local `iss` would make every case "pass" on issuer
   // mismatch alone).
   issuerMode?: "local" | "hosted";
+  // Scoped issuer flavor: "org" (/o/, signed-in members) or "anonymous"
+  // (/g/, guest sessions). Defaults to "org".
+  issuerKind?: "org" | "anonymous";
 }
 
 /**
@@ -132,13 +135,23 @@ export interface NegativeTestsInput {
 export async function runNegativeTests(
   input: NegativeTestsInput
 ): Promise<NegativeTestsResult> {
-  const { organizationId, issuerMode, ...requestBody } = input;
+  const { organizationId, issuerMode, issuerKind, ...requestBody } = input;
+  const resolvedIssuerKind = issuerKind ?? "org";
   // Hosted builds hit the scoped PATH; local hosted-issuer runs carry the
   // opt-in in the BODY and the local server forwards server-to-server.
-  const scopedSegment = getOrgScopedIssuerSegment(organizationId);
+  const scopedSegment = getOrgScopedIssuerSegment(
+    organizationId,
+    resolvedIssuerKind
+  );
   const forwardExtras =
     !HOSTED_MODE && issuerMode === "hosted"
-      ? { issuerMode, ...(organizationId ? { organizationId } : {}) }
+      ? {
+          issuerMode,
+          ...(organizationId ? { organizationId } : {}),
+          ...(resolvedIssuerKind === "anonymous"
+            ? { issuerKind: "anonymous" }
+            : {}),
+        }
       : {};
   const response = await authFetch(
     `${XAA_API_BASE}${scopedSegment}/negative-tests`,

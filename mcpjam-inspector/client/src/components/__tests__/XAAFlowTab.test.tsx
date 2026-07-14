@@ -11,8 +11,10 @@ vi.mock("@/lib/analytics", () => ({
   track: (...args: unknown[]) => captureMock(...args),
 }));
 
+// Controllable signed-in state: null simulates a guest session.
+let authUser: { email: string } | null = { email: "tester@example.com" };
 vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => ({ user: { email: "tester@example.com" } }),
+  useAuth: () => ({ user: authUser }),
 }));
 
 vi.mock("../xaa/XAAIdpCard", () => ({
@@ -51,7 +53,13 @@ let runSettingsState: {
   userId: string;
   email: string;
   negativeTestMode: "valid" | "expired" | "wrong_audience" | "bad_signature";
-} = { userId: "u", email: "e@example.com", negativeTestMode: "valid" };
+  issuerMode: "local" | "hosted";
+} = {
+  userId: "u",
+  email: "e@example.com",
+  negativeTestMode: "valid",
+  issuerMode: "local",
+};
 const setIdentityMock = vi.fn();
 const setNegativeTestModeMock = vi.fn();
 vi.mock("@/hooks/useXaaRunSettings", () => ({
@@ -214,12 +222,17 @@ describe("XAAFlowTab", () => {
     capturedScorecardProps = null;
     machineShouldComplete = true;
     machineCompletionUpdates = {};
+    // Reset like every other module-level mutable: the issuer-kind test flips
+    // authUser to null (guest), and a mid-test failure must not leak that into
+    // later tests.
+    authUser = { email: "tester@example.com" };
     resourceApps = [];
     localStorage.clear();
     runSettingsState = {
       userId: "u",
       email: "e@example.com",
       negativeTestMode: "valid",
+      issuerMode: "local",
     };
     setIdentityMock.mockClear();
     setNegativeTestModeMock.mockClear();
@@ -491,6 +504,33 @@ describe("XAAFlowTab", () => {
     ).toBeInTheDocument();
   });
 
+  it("derives the org issuer kind for signed-in users and anonymous for guests", () => {
+    currentTarget = makeTarget({});
+
+    authUser = { email: "tester@example.com" };
+    const { unmount } = render(
+      <XAAFlowTab
+        serverConfigs={{}}
+        selectedServerName="staging"
+        organizationId="org_1"
+      />
+    );
+    expect(capturedMachineConfig).toMatchObject({ issuerKind: "org" });
+    unmount();
+
+    capturedMachineConfig = null;
+    authUser = null; // guest session
+    render(
+      <XAAFlowTab
+        serverConfigs={{}}
+        selectedServerName="staging"
+        organizationId="org_1"
+      />
+    );
+    expect(capturedMachineConfig).toMatchObject({ issuerKind: "anonymous" });
+    authUser = { email: "tester@example.com" };
+  });
+
   it("passes serverId/projectId to the machine for a confidential server", () => {
     currentTarget = makeTarget({
       usesServerSideSecret: true,
@@ -698,11 +738,61 @@ describe("XAAFlowTab", () => {
           clientId: "dynamic-client",
           clientSecret: "session-only-secret",
           tokenEndpointAuthMethod: "client_secret_basic",
+          issuerKind: "org",
         })
       );
     });
 
-    it("unlocks CIMD negative tests with the metadata URL public client", async () => {
+    it("keeps confidential DCR secrets out of the hosted issuer scorecard", async () => {
+      runSettingsState = { ...runSettingsState, issuerMode: "hosted" };
+      const user = userEvent.setup();
+      render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+          organizationId="org_123"
+        />
+      );
+
+      const registrationEndpoint = "https://auth.example.com/register";
+      const cacheKey = buildXaaDcrCredentialCacheKey({
+        targetKey: currentTarget.targetKey,
+        registrationEndpoint,
+      });
+      capturedMachineConfig.dcrCredentialCache.set(cacheKey, {
+        clientId: "dynamic-client",
+        clientSecret: "session-only-secret",
+        clientSecretExpiresAt: 0,
+        tokenEndpointAuthMethod: "client_secret_post",
+        registrationEndpoint,
+      });
+      machineCompletionUpdates = {
+        registrationStrategy: "dcr",
+        clientId: "dynamic-client",
+        tokenEndpoint: "https://auth.example.com/token",
+        authzMetadata: {
+          issuer: "https://auth.example.com",
+          registration_endpoint: registrationEndpoint,
+        },
+        resourceMetadata: { resource: "https://staging.mcp.example.com" },
+      };
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+          "data-unavailable-reason",
+          expect.stringMatching(/confidential DCR/i)
+        )
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-has-input",
+        "false"
+      );
+      expect(capturedScorecardProps.resolveInput).toBeUndefined();
+    });
+
+    it("keeps CIMD negative tests unavailable", async () => {
       const user = userEvent.setup();
       render(
         <XAAFlowTab
@@ -725,17 +815,17 @@ describe("XAAFlowTab", () => {
 
       await waitFor(() =>
         expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
-          "data-unlocked",
-          "true"
+          "data-unavailable-reason",
+          expect.stringMatching(/not supported yet/i)
         )
       );
       expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
-        "data-client-id",
-        clientId
+        "data-unlocked",
+        "false"
       );
       expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
-        "data-auth-method",
-        "none"
+        "data-has-input",
+        "false"
       );
       expect(capturedScorecardProps.resolveInput).toBeUndefined();
     });
@@ -750,9 +840,10 @@ describe("XAAFlowTab", () => {
       );
 
       const registrationEndpoint = "https://auth.example.com/register";
-      const cacheKey = [currentTarget.targetKey, registrationEndpoint, ""]
-        .map(encodeURIComponent)
-        .join("::");
+      const cacheKey = buildXaaDcrCredentialCacheKey({
+        targetKey: currentTarget.targetKey,
+        registrationEndpoint,
+      });
       capturedMachineConfig.dcrCredentialCache.set(cacheKey, {
         clientId: "expired-client",
         clientSecret: "expired-secret",

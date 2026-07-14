@@ -451,6 +451,7 @@ export function createXAAStateMachine(
     mintPathPrefix = "",
     issuerMode,
     organizationId,
+    issuerKind,
     specTokenEndpointAvailable = true,
     requestExecutor,
     negativeTestMode,
@@ -484,7 +485,13 @@ export function createXAAStateMachine(
   // routers ignore them.
   const hostedIssuerBodyExtras =
     issuerMode === "hosted"
-      ? { issuerMode, ...(organizationId ? { organizationId } : {}) }
+      ? {
+          issuerMode,
+          ...(organizationId ? { organizationId } : {}),
+          ...(issuerKind === "anonymous"
+            ? { issuerKind: "anonymous" as const }
+            : {}),
+        }
       : {};
 
   const state: Partial<XAAFlowState> = initialState ?? {};
@@ -1669,6 +1676,9 @@ export function createXAAStateMachine(
                 "x-mcpjam-issuer-mode": "hosted",
                 ...(organizationId
                   ? { "x-mcpjam-organization-id": organizationId }
+                  : {}),
+                ...(issuerKind === "anonymous"
+                  ? { "x-mcpjam-issuer-kind": "anonymous" }
                   : {}),
               }
             : {};

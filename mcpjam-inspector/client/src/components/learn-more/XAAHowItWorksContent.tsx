@@ -301,7 +301,7 @@ export function XAAHowItWorksContent() {
               <strong>Run negative tests</strong>. A strict check passes when
               the authorization server rejects the broken assertion. The MCP
               server is not called during these checks. The scorecard reuses the
-              pre-registered, DCR, or CIMD client identity from that flow.
+              pre-registered or DCR client identity from that flow.
             </p>
             <div className="mt-6 grid gap-x-6 gap-y-3 sm:grid-cols-2">
               {strictNegativeTests.map((test) => (

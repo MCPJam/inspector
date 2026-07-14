@@ -167,10 +167,11 @@ export function NegativeTestScorecard({
         input.resource,
         input.clientId ?? "",
         input.tokenEndpointAuthMethod ?? "",
-        // Issuer mode + org change the minted `iss`, so they are part of the
-        // target identity: switching them must reset a prior run's results.
+        // Client auth and issuer identity both affect the request under test,
+        // so switching either must reset a prior run's results.
         input.issuerMode ?? "local",
         input.organizationId ?? "",
+        input.issuerKind ?? "org",
       ].join("|")
     : "";
   useEffect(() => {
