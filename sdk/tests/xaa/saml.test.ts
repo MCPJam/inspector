@@ -287,6 +287,37 @@ describe("mock SAML assertion mint + hardened verification", () => {
     );
   });
 
+  it("rejects a bearer confirmation whose NotBefore is in the future", () => {
+    const { xml } = rawAssertionXml({});
+    const future = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const withNotBefore = xml.replace(
+      "<saml:SubjectConfirmationData ",
+      `<saml:SubjectConfirmationData NotBefore="${future}" `
+    );
+    expect(() => verify(b64(signRawAssertion(withNotBefore)))).toThrow(
+      /bearer confirmation is not yet valid/i
+    );
+  });
+
+  it("rejects when a second AudienceRestriction excludes the client SP (AND semantics)", () => {
+    const { xml } = rawAssertionXml({});
+    const twoRestrictions = xml.replace(
+      "</saml:AudienceRestriction></saml:Conditions>",
+      "</saml:AudienceRestriction>" +
+        "<saml:AudienceRestriction><saml:Audience>another-sp</saml:Audience></saml:AudienceRestriction>" +
+        "</saml:Conditions>"
+    );
+    expect(() => verify(b64(signRawAssertion(twoRestrictions)))).toThrow(
+      /AudienceRestriction/
+    );
+  });
+
+  it("rejects minting when a user value has XML 1.0-invalid control characters", () => {
+    expect(() => mint({ subject: "user\u0000one" })).toThrow(
+      /not permitted in XML 1\.0/i
+    );
+  });
+
   it("rejects a missing RAS-client-id attribute", () => {
     const issued = mint({ resourceClientId: undefined });
     expect(() => verify(issued.assertionB64)).toThrow(/RAS client mapping/);

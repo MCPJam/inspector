@@ -35,6 +35,11 @@ describe("browser entry import graph", () => {
           name: "record-and-externalize-bare-imports",
           setup(pluginBuild) {
             pluginBuild.onResolve({ filter: /^[^./]/ }, (args) => {
+              // The entry point can match this bare-path filter on Windows
+              // (absolute paths like `C:\...`). Externalizing it would yield an
+              // empty bundle and fail the non-vacuity assertion below, so let
+              // esbuild resolve entry points normally.
+              if (args.kind === "entry-point") return null;
               bareImports.add(args.path);
               return { path: args.path, external: true };
             });
