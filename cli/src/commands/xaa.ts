@@ -59,7 +59,7 @@ export function registerXaaCommands(program: Command): void {
     )
     .option(
       "--registration <method>",
-      "Client-registration strategy: preregistered (default), dcr (RFC 7591 dynamic registration), or cimd (Client ID Metadata Document, public client)",
+      "Client-registration strategy: preregistered (default); dcr (RFC 7591 dynamic registration at the RAS — a diagnostic that simulates the IdP→RAS client_id mapping and may leave a registration behind each run); or cimd (Client ID Metadata Document — public client, interop-only, not a recommended production posture)",
       parseRegistration,
     )
     .option(
@@ -115,10 +115,41 @@ export function registerXaaCommands(program: Command): void {
       }
 
       writeResult(redactXaaResult(result), format);
+      printRegistrationNotes(result, globalOptions.quiet);
       if (!result.completed) {
         setProcessExitCode(1);
       }
     });
+}
+
+/**
+ * Emit the security/semantics caveats the ID-JAG draft calls for to stderr (so
+ * the stdout result stays clean): DCR is a RAS diagnostic that simulates the
+ * IdP↔RAS client_id mapping and leaks a registration per run (no RFC 7592
+ * cleanup); public-client CIMD is interop-only, not a recommended posture.
+ */
+function printRegistrationNotes(result: XaaFlowResult, quiet?: boolean): void {
+  if (quiet) return;
+  const reg = result.registration;
+  if (!reg) return;
+  if (reg.strategy === "dcr" && reg.clientId) {
+    process.stderr.write(
+      `Note: DCR is a RAS diagnostic — the CLI supplies the IdP→RAS client_id ` +
+        `mapping itself (simulated IdP), so a real enterprise IdP would still ` +
+        `need to be told the RAS-minted client_id ("${reg.clientId}"). Each run ` +
+        `may leave another registration behind (no RFC 7592 cleanup).\n`,
+    );
+  }
+  if (
+    reg.strategy === "cimd" &&
+    reg.warnings.some((w) => w.code === "public_client")
+  ) {
+    process.stderr.write(
+      `Note: public-client CIMD — interoperability passed, but the security ` +
+        `posture is not recommended (ID-JAG draft-04 §9.1 recommends ` +
+        `confidential clients / private_key_jwt).\n`,
+    );
+  }
 }
 
 // Never emit raw bearer credentials. First mask the ID-JAG itself — the SDK's

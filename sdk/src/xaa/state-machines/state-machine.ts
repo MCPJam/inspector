@@ -1435,7 +1435,7 @@ export function createXAAStateMachine(
         {
           code: "public_client",
           message:
-            "CIMD without a key-based auth method is inherently a public client: anyone can present this URL as their client_id. Findings show the RAS accepted the URL identity, not that client authentication was exercised.",
+            "Public-client CIMD (token_endpoint_auth_method \"none\"): interoperability is exercised, but the security posture is NOT recommended — ID-JAG draft-04 §9.1 recommends confidential clients. Anyone can present this URL as their client_id; findings show the RAS accepted the URL identity, not proof of client authentication. Use private_key_jwt (confidential CIMD) for a production posture.",
         },
       ],
       error: undefined,

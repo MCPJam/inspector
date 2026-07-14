@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "fs";
 import os from "os";
 import path from "path";
 import { runXaaFlow } from "../../src/xaa/run-xaa-flow.js";
+import * as oauthProxy from "../../src/oauth-proxy.js";
 import {
   getXAAIdpJwks,
   resetXAAIdpKeyPairForTests,
@@ -255,15 +256,25 @@ describe("runXaaFlow — registration strategies", () => {
   });
 
   it("public CIMD fetches the custom metadata URL and uses it as the ID-JAG client_id", async () => {
-    const { fetchImpl, counts } = registrationStub({
+    const { fetchImpl } = registrationStub({
       asMetadata: cimdAsMetadata,
-      cimdDoc: publicCimdDoc,
       token: {
         status: 200,
         body: { access_token: "at-cimd", token_type: "Bearer", expires_in: 300 },
       },
     });
     global.fetch = fetchImpl as unknown as typeof fetch;
+    // The CIMD document fetch goes through the SSRF-hardened, connection-pinned
+    // path (real https.request) — not global.fetch — so mock it here. Its own
+    // guards are covered in oauth-proxy.test.ts.
+    const pinnedSpy = vi
+      .spyOn(oauthProxy, "fetchPinnedPublicDocument")
+      .mockResolvedValue({
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json" },
+        body: publicCimdDoc,
+      });
 
     const result = await runXaaFlow({
       serverUrl: SERVER_URL,
@@ -274,7 +285,8 @@ describe("runXaaFlow — registration strategies", () => {
       clientIdMetadataUrl: CIMD_URL,
     });
 
-    expect(counts.cimdDoc).toBeGreaterThanOrEqual(1);
+    expect(pinnedSpy).toHaveBeenCalledWith(CIMD_URL, expect.anything());
+    pinnedSpy.mockRestore();
     expect(result.completed).toBe(true);
     expect(result.redemption?.tokenIssued).toBe(true);
     expect(result.registration?.strategy).toBe("cimd");

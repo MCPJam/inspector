@@ -5,7 +5,11 @@
 // This is the seam that lets the CLI drive the shared browser-safe state machine
 // without a running inspector server. Imports crypto/fs (mint) + node:dns
 // (proxy) — MUST stay out of the browser entry.
-import { executeDebugOAuthProxy, executeOAuthProxy } from "../oauth-proxy.js";
+import {
+  executeDebugOAuthProxy,
+  executeOAuthProxy,
+  fetchPinnedPublicDocument,
+} from "../oauth-proxy.js";
 import {
   ID_JAG_TOKEN_TYPE,
   ID_TOKEN_TOKEN_TYPE,
@@ -313,16 +317,30 @@ export function createInProcessXaaExecutor(
         : init?.redirect === "follow"
         ? "follow"
         : undefined;
-    // `enforcePublicHost` runs the private-host/DNS guard at fetch time even when
-    // the executor default is `httpsOnly: false` (local dev fetches the
-    // http://localhost RS). This is what closes the DNS-rebinding window for the
-    // caller-influenced CIMD document fetch without blocking the loopback RS.
+    // `enforcePublicHost` (the caller-influenced CIMD document fetch) uses the
+    // connection-pinned GET: resolve once, reject private/reserved (RFC 6890),
+    // and pin the validated IP into the socket so there is no second DNS
+    // resolution to rebind. This holds even with the executor's local-dev
+    // `httpsOnly: false` default, and never touches the loopback RS calls.
+    if (options?.enforcePublicHost === true) {
+      const pinned = await fetchPinnedPublicDocument(url, {
+        headers: normalizeHeaders(init?.headers),
+        timeoutMs,
+      });
+      return {
+        status: pinned.status,
+        statusText: pinned.statusText,
+        headers: pinned.headers,
+        body: pinned.body,
+        ok: pinned.status >= 200 && pinned.status < 300,
+      };
+    }
     const response = await executeDebugOAuthProxy({
       url,
       method: (init?.method ?? "GET").toUpperCase(),
       headers: normalizeHeaders(init?.headers),
       body: init?.body ?? undefined,
-      httpsOnly: httpsOnly || options?.enforcePublicHost === true,
+      httpsOnly,
       ...(redirect ? { redirect } : {}),
       timeoutMs,
     });
