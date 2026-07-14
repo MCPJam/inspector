@@ -41,6 +41,10 @@ interface XAARegistrationWizardProps {
   organizationId: string | null;
   /** When set, the wizard edits this registration instead of creating. */
   editing?: XaaResourceApp | null;
+  /** Create-mode draft seed (ignored while editing) — e.g. the debugger's
+   * "register this bar server" prompt pre-fills the target's URL/issuer. The
+   * secret is never prefillable. */
+  prefill?: Partial<Omit<RegistrationDraft, "secret">> | null;
   onSaved?: (id: string) => void;
 }
 
@@ -49,6 +53,7 @@ export function XAARegistrationWizard({
   onOpenChange,
   organizationId,
   editing,
+  prefill,
   onSaved,
 }: XAARegistrationWizardProps) {
   // Hooks run unconditionally — the flag gate returns null at the bottom of
@@ -65,14 +70,23 @@ export function XAARegistrationWizard({
 
   // Reset to a fresh (or edit-seeded) draft whenever the dialog opens. The
   // secret field is intentionally never pre-filled.
+  // Seed only on the closed→open transition: `prefill`/`editing` may not be
+  // referentially stable across parent re-renders, and re-seeding while open
+  // would wipe the user's in-progress edits.
+  const wasOpenRef = useRef(false);
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpenRef.current) {
       setStep(1);
-      setDraft(editing ? draftFromResourceApp(editing) : EMPTY_DRAFT);
+      setDraft(
+        editing
+          ? draftFromResourceApp(editing)
+          : { ...EMPTY_DRAFT, ...(prefill ?? {}) },
+      );
       setValidationError(null);
       setSaveError(null);
     }
-  }, [open, editing]);
+    wasOpenRef.current = open;
+  }, [open, editing, prefill]);
 
   // Move focus to the step heading on step change so keyboard/screen-reader
   // users land at the top of the new step.

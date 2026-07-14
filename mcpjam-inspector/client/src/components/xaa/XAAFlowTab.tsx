@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
+import { useConvexAuth } from "convex/react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { track } from "@/lib/analytics";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -23,6 +25,8 @@ import type { ServerFormData } from "@/shared/types.js";
 import { useXaaResourceApps } from "@/hooks/useXaaResourceApps";
 import { useXaaRunSettings } from "@/hooks/useXaaRunSettings";
 import { useXaaPeople } from "@/hooks/useXaaPeople";
+import { useOrgXaaPeople } from "@/hooks/useOrgXaaPeople";
+import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import {
   useXaaTestTarget,
   type XAAFlowInput,
@@ -36,6 +40,7 @@ import { XAAFlowLogger } from "./XAAFlowLogger";
 import { XAAServerModal } from "./XAAServerModal";
 import { XAAIdpCard } from "./XAAIdpCard";
 import { XAAResourceAppsSection } from "./registration/XAAResourceAppsSection";
+import { XAARegistrationWizard } from "./registration/XAARegistrationWizard";
 import { NegativeTestScorecard } from "./NegativeTestScorecard";
 import type { NegativeTestsInput } from "@/lib/xaa/discovery-client";
 import {
@@ -93,21 +98,42 @@ function buildFlowStateFromInput(
 // ── Per-person outcome recording (session-only) ─────────────────────────────
 
 /** A recorded outcome plus the context that scopes its validity: it renders
- * only while the person is unedited (updatedAt) and the target's material
- * inputs are unchanged (fingerprint). */
+ * only while the person is unedited (updatedAt), the target's material
+ * inputs are unchanged (fingerprint), and — for dynamic strategies — the
+ * client identity that produced it hasn't been re-registered (generation). */
 interface RecordedPersonOutcome extends XaaPersonOutcome {
   personUpdatedAt: number;
   targetFingerprint: string;
+  /** Client-identity strategy the run actually used (state-authoritative). */
+  registrationStrategy: RegistrationStrategy;
+  /** Fresh-registration generation the run's result belongs to. Compared at
+   * read time only for dynamic strategies — a preregistered run's client
+   * identity never changes underneath it. */
+  registrationGeneration: number;
 }
 
 /** Material run inputs whose change invalidates a recorded outcome — a result
  * against one server/AS/client/scope says nothing about another. */
-function computeTargetFingerprint(input: XAAFlowInput): string {
+function computeTargetFingerprint(
+  input: XAAFlowInput,
+  registrationStrategy: RegistrationStrategy
+): string {
   return [
     input.serverUrl,
     input.authzServerIssuer,
     input.clientId,
     input.scope,
+    // Managed-policy context: a managed ruling says nothing about an
+    // unmanaged run (and vice versa), and rulings are per resource app.
+    // `testIdentityId` is deliberately EXCLUDED — the per-person dimension is
+    // the outcome-map key itself, and folding the CURRENTLY-selected person
+    // into the display fingerprint would hide every other person's badge.
+    input.policyMode ?? "",
+    input.resourceAppId ?? "",
+    // Client-identity strategy: a preregistered result must not stay
+    // attributed after switching to DCR/CIMD — a different client identity
+    // at the AS is a different question.
+    registrationStrategy,
   ].join("|");
 }
 
@@ -175,9 +201,12 @@ function sameOutcome(
   return (
     a.status === b.status &&
     a.oauthErrorCode === b.oauthErrorCode &&
+    a.reasonCode === b.reasonCode &&
     a.failedStep === b.failedStep &&
     a.personUpdatedAt === b.personUpdatedAt &&
-    a.targetFingerprint === b.targetFingerprint
+    a.targetFingerprint === b.targetFingerprint &&
+    a.registrationStrategy === b.registrationStrategy &&
+    a.registrationGeneration === b.registrationGeneration
   );
 }
 
@@ -233,7 +262,9 @@ export function XAAFlowTab({
       : undefined;
 
   // ── Registration selection (hosted) ────────────────────────────────
-  const { resourceApps } = useXaaResourceApps(organizationId ?? null);
+  const { resourceApps, isAuthenticated: registrationApiAvailable } =
+    useXaaResourceApps(organizationId ?? null);
+  const registrationFlagEnabled = useFeatureFlagEnabled("xaa-registration");
   const [selectedRegistrationId, setSelectedRegistrationId] = useState<
     string | null
   >(null);
@@ -284,29 +315,119 @@ export function XAAFlowTab({
       : "select an organization to mint through the hosted issuer";
   const hostedIssuerOptIn =
     canUseHostedIssuer && runSettings.issuerMode === "hosted";
-  // ── "Run as" people (project-scoped synthetic test identities) ──────
+
+  // ── Managed-IdP mode (org-registered resource-app runs) ─────────────
+  const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
+  const { sortedOrganizations } = useOrganizationQueries({
+    isAuthenticated: isConvexAuthenticated,
+  });
+  const activeOrg = sortedOrganizations.find((o) => o._id === organizationId);
+  // Admin derivation mirrors XAASetupPage / XAAResourceAppsSection.
+  const isOrgAdmin =
+    activeOrg?.myRole === "owner" ||
+    activeOrg?.myRole === "admin" ||
+    activeOrg?.isCreator === true;
+  // Managed policy needs an org-registered target AND the org-scoped hosted
+  // issuer (direct on hosted builds, or the local hosted-issuer opt-in) —
+  // the local unscoped issuer has no evaluator to consult.
+  const managedCapable =
+    Boolean(selectedRegistration) &&
+    Boolean(organizationId) &&
+    (HOSTED_MODE || hostedIssuerOptIn);
+  // Admin-only escape hatch back to direct RAS testing. Session-only by
+  // design (a bypass should never survive a reload unnoticed); the toggle is
+  // pure UX — the issuer's evaluator independently enforces the admin check
+  // server-side and denies a non-admin bypass.
+  const [unmanagedOverride, setUnmanagedOverride] = useState(false);
+  const policyMode: "managed" | "unmanaged" | undefined = managedCapable
+    ? unmanagedOverride && isOrgAdmin
+      ? "unmanaged"
+      : "managed"
+    : undefined;
+
+  // ── "Run as" people ──────────────────────────────────────────────────
+  // Managed-capable runs use the ORG roster (the managed test IdP's shared
+  // identities, edited in the setup center); everything else keeps the
+  // project fixtures — an unregistered/bar-server run is untouched.
   const {
-    people,
-    isLoading: peopleLoading,
-    isAvailable: peopleAvailable,
+    people: projectPeople,
+    isLoading: projectPeopleLoading,
+    isAvailable: projectPeopleAvailable,
   } = useXaaPeople({ projectId: projectId ?? null });
-  const selectedPersonId = projectId
-    ? (runSettings.selectedPersonIdByProject[projectId] ?? null)
-    : null;
-  const selectedPerson = useMemo(
-    () => people?.find((p) => p._id === selectedPersonId) ?? null,
-    [people, selectedPersonId]
+  const orgPeople = useOrgXaaPeople(
+    managedCapable ? (organizationId ?? null) : null
   );
-  const { setSelectedPersonId } = runSettings;
-  // Tidy a stale selection (person deleted elsewhere) only once the roster
-  // has LOADED without it — clearing while loading would wipe a valid
-  // selection on every mount.
+  // Suspended people are hidden from selection (the strip filters the same
+  // way) — the evaluator is guaranteed to deny them at mint, so they can't
+  // be a run identity either.
+  const selectableOrgPeople = useMemo(
+    () => orgPeople.people.filter((p) => p.status !== "suspended"),
+    [orgPeople.people]
+  );
+  const people = managedCapable ? orgPeople.people : projectPeople;
+  const peopleLoading = managedCapable
+    ? orgPeople.isLoading
+    : projectPeopleLoading;
+  const peopleAvailable = managedCapable
+    ? orgPeople.isAuthenticated
+    : projectPeopleAvailable;
+  const selectablePeople = managedCapable ? selectableOrgPeople : projectPeople;
+  // Selection is persisted per project (fixtures) or per org (managed
+  // roster) — two maps with identical reset/stale semantics.
+  const selectedPersonId = managedCapable
+    ? organizationId
+      ? (runSettings.selectedOrgPersonIdByOrg[organizationId] ?? null)
+      : null
+    : projectId
+      ? (runSettings.selectedPersonIdByProject[projectId] ?? null)
+      : null;
+  const selectedPerson = useMemo(
+    () => selectablePeople?.find((p) => p._id === selectedPersonId) ?? null,
+    [selectablePeople, selectedPersonId]
+  );
+  const { setSelectedPersonId, setSelectedOrgPersonId } = runSettings;
+  // Tidy a stale selection (person deleted/archived/suspended elsewhere)
+  // only once the roster has LOADED without it — clearing while loading
+  // would wipe a valid selection on every mount.
   useEffect(() => {
-    if (!projectId || !selectedPersonId || peopleLoading || !people) return;
-    if (!people.some((p) => p._id === selectedPersonId)) {
+    if (managedCapable) {
+      if (
+        !organizationId ||
+        !selectedPersonId ||
+        orgPeople.isLoading ||
+        !orgPeople.isAuthenticated
+      ) {
+        return;
+      }
+      if (!selectableOrgPeople.some((p) => p._id === selectedPersonId)) {
+        setSelectedOrgPersonId(organizationId, null);
+      }
+      return;
+    }
+    if (
+      !projectId ||
+      !selectedPersonId ||
+      projectPeopleLoading ||
+      !projectPeople
+    ) {
+      return;
+    }
+    if (!projectPeople.some((p) => p._id === selectedPersonId)) {
       setSelectedPersonId(projectId, null);
     }
-  }, [projectId, selectedPersonId, peopleLoading, people, setSelectedPersonId]);
+  }, [
+    managedCapable,
+    organizationId,
+    projectId,
+    selectedPersonId,
+    orgPeople.isLoading,
+    orgPeople.isAuthenticated,
+    selectableOrgPeople,
+    projectPeopleLoading,
+    projectPeople,
+    setSelectedPersonId,
+    setSelectedOrgPersonId,
+  ]);
 
   const target = useXaaTestTarget({
     server: selectedServer,
@@ -316,6 +437,7 @@ export function XAAFlowTab({
     selectedPerson,
     projectId: projectId ?? null,
     projectDefault: projectXaaTestDefaults?.defaultIdentity ?? null,
+    policyMode,
   });
   const runInput = target.runInput;
   const { targetKey, isTestable } = target;
@@ -323,10 +445,50 @@ export function XAAFlowTab({
   // The positive-run unlock must be specific to the exact issuer the run
   // exercised: switching issuer mode (local↔hosted) or organization changes
   // the minted `iss`, so a green run under one must NOT unlock negative tests
-  // under another. Key the gate on target + issuer mode + org.
+  // under another. Key the gate on target + issuer mode + org + policy mode —
+  // a managed and an unmanaged (bypass) run must never cross-validate.
   const runGateKey = `${targetKey}|${
     hostedIssuerOptIn ? "hosted" : "local"
-  }|${organizationId ?? ""}`;
+  }|${organizationId ?? ""}|${policyMode ?? ""}`;
+
+  // ── Bar-server register prompt ───────────────────────────────────────
+  // A managed-capable org running against a plain bar server: policy can't
+  // apply until the target is registered. Offer registering it (wizard
+  // prefilled, admin-gated) or continuing unmanaged — runs are NOT blocked.
+  const [dismissedBarPromptTargets, setDismissedBarPromptTargets] = useState<
+    Set<string>
+  >(() => new Set());
+  const [registerTargetWizardOpen, setRegisterTargetWizardOpen] =
+    useState(false);
+  const orgPolicyAvailable =
+    Boolean(organizationId) &&
+    (HOSTED_MODE || hostedIssuerOptIn) &&
+    registrationApiAvailable &&
+    registrationFlagEnabled === true;
+  const showBarServerRegisterPrompt =
+    orgPolicyAvailable &&
+    target.targetSource === "bar_server" &&
+    isTestable &&
+    !dismissedBarPromptTargets.has(targetKey);
+  // Stable across renders so the wizard's open-seeded draft isn't re-seeded
+  // (and user edits wiped) by a parent re-render while it's open.
+  const registerTargetPrefill = useMemo(
+    () => ({
+      name: selectedServerName !== "none" ? selectedServerName : "",
+      resourceType: "mcp" as const,
+      resourceUrl: runInput.serverUrl,
+      issuer: runInput.authzServerIssuer,
+      targetClientId: runInput.clientId,
+      scopes: runInput.scope,
+    }),
+    [
+      selectedServerName,
+      runInput.serverUrl,
+      runInput.authzServerIssuer,
+      runInput.clientId,
+      runInput.scope,
+    ]
+  );
 
   // ── Registration strategy (Client↔Resource-AS leg) ──────────────────
   // Persisted per-server and chosen in the "Configure Server to Test" modal;
@@ -424,7 +586,43 @@ export function XAAFlowTab({
   const [personOutcomes, setPersonOutcomes] = useState<
     Map<string, RecordedPersonOutcome>
   >(() => new Map());
-  const targetFingerprint = computeTargetFingerprint(runInput);
+  const targetFingerprint = computeTargetFingerprint(
+    runInput,
+    effectiveStrategy
+  );
+
+  // Fresh-registration generation: bumped whenever a NEW dynamic client
+  // identity is established (a DCR/CIMD run registering a fresh client, or
+  // the explicit "Register another client" action), so person outcomes
+  // recorded against the previous client identity stop rendering. The ref
+  // mirrors the state so the recording effect can stamp the CURRENT value —
+  // a run that itself registered a fresh client mid-flight attributes its
+  // result to the identity it actually used.
+  const [registrationGeneration, setRegistrationGeneration] = useState(0);
+  const registrationGenerationRef = useRef(0);
+  const bumpRegistrationGeneration = useCallback(() => {
+    registrationGenerationRef.current += 1;
+    setRegistrationGeneration(registrationGenerationRef.current);
+  }, []);
+  // A dynamic (DCR/CIMD) run establishing a NEW client identity bumps the
+  // generation: the machine writes the freshly-registered clientId into flow
+  // state, while a reused session registration keeps the same clientId (no
+  // bump — prior results still describe that client). Declared BEFORE the
+  // recording effect below: when the registration and the terminal state land
+  // in one commit, the ref must already carry the new generation when the
+  // outcome is stamped.
+  const lastDynamicClientIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (flowState.registrationStrategy === "preregistered") return;
+    const clientId = flowState.clientId;
+    if (!clientId || lastDynamicClientIdRef.current === clientId) return;
+    lastDynamicClientIdRef.current = clientId;
+    bumpRegistrationGeneration();
+  }, [
+    flowState.clientId,
+    flowState.registrationStrategy,
+    bumpRegistrationGeneration,
+  ]);
   // The whole run context is captured atomically at run START — recording
   // against live values at completion could attribute an old run to a newly
   // selected person/target/mode.
@@ -510,17 +708,33 @@ export function XAAFlowTab({
     if (!ctx || ctx.negativeTestMode !== "valid") return;
 
     let outcome: RecordedPersonOutcome | null = null;
+    // Validity context beyond the captured run context: the strategy is
+    // state-authoritative for the run, and the generation is read at
+    // RECORDING time so a dynamic run that itself registered a fresh client
+    // attributes its result to the identity it actually used.
+    const validity = {
+      personUpdatedAt: ctx.personUpdatedAt,
+      targetFingerprint: ctx.targetFingerprint,
+      registrationStrategy: flowState.registrationStrategy,
+      registrationGeneration: registrationGenerationRef.current,
+    };
     if (flowState.currentStep === "complete") {
-      // "Complete" does not prove full access — compare the requested scope
-      // against what the AS actually granted (draft-04 leaves scope decisions
-      // to the RAS).
-      outcome = {
-        status: isDownscoped(flowState.scope, flowState.grantedScope)
-          ? "downscoped"
-          : "allowed",
-        personUpdatedAt: ctx.personUpdatedAt,
-        targetFingerprint: ctx.targetFingerprint,
-      };
+      // "Complete" does not prove full access — either stage may have
+      // narrowed the grant. Earliest stage wins: a managed-IdP downscope at
+      // mint is reported as such, and the RAS comparison baseline SHIFTS to
+      // the ID-JAG's granted scope — the RAS honoring an already-narrowed
+      // grant is not a second downscope (no double-reporting).
+      const idpPolicy = flowState.idpPolicy;
+      const status: XaaPersonOutcome["status"] =
+        idpPolicy?.outcome === "downscoped"
+          ? "idp_downscoped"
+          : isDownscoped(
+                idpPolicy?.grantedScope ?? flowState.scope,
+                flowState.grantedScope
+              )
+            ? "ras_downscoped"
+            : "allowed";
+      outcome = { status, ...validity };
     } else if (flowState.error && !flowState.isBusy) {
       if (errorRecordedRef.current) return;
       errorRecordedRef.current = true;
@@ -529,20 +743,40 @@ export function XAAFlowTab({
         flowState.error,
         flowState.lastResponse
       );
+      const idpPolicy = flowState.idpPolicy;
+      // The managed IdP refusing the mint is a policy ruling about this
+      // person — EXCEPT an evaluator outage (`temporarily_unavailable`),
+      // which says nothing about the subject and stays a test problem.
+      const isIdpDenial =
+        failedStep === "token_exchange_request" &&
+        idpPolicy?.outcome === "denied" &&
+        idpPolicy.errorCode !== "temporarily_unavailable";
       // Only a policy-shaped refusal of the jwt-bearer redemption counts as
-      // "rejected" — anything else (discovery, network, invalid_client, an
-      // MCP 401) is a test problem, not your AS ruling on the subject. Even
-      // invalid_grant can be technical, so the code is displayed, not
-      // editorialized.
-      const isPolicyRejection =
+      // the RAS rejecting the subject — anything else (discovery, network,
+      // invalid_client, an MCP 401) is a test problem, not your AS ruling on
+      // the subject. Even invalid_grant can be technical, so the code is
+      // displayed, not editorialized.
+      const isRasRejection =
         failedStep === "jwt_bearer_request" &&
         (code === "invalid_grant" || code === "access_denied");
       outcome = {
-        status: isPolicyRejection ? "rejected" : "test_error",
-        ...(code ? { oauthErrorCode: code } : {}),
+        status: isIdpDenial
+          ? "idp_denied"
+          : isRasRejection
+            ? "ras_rejected"
+            : "test_error",
+        // Prefer the response-derived code; an IdP denial falls back to the
+        // SDK's allowlisted policy errorCode. Never a raw string.
+        ...(code
+          ? { oauthErrorCode: code }
+          : isIdpDenial && idpPolicy?.errorCode
+            ? { oauthErrorCode: idpPolicy.errorCode }
+            : {}),
+        ...(isIdpDenial && idpPolicy?.reasonCode
+          ? { reasonCode: idpPolicy.reasonCode }
+          : {}),
         failedStep,
-        personUpdatedAt: ctx.personUpdatedAt,
-        targetFingerprint: ctx.targetFingerprint,
+        ...validity,
       };
     }
     if (!outcome) return;
@@ -566,6 +800,8 @@ export function XAAFlowTab({
     flowState.scope,
     flowState.grantedScope,
     flowState.lastResponse,
+    flowState.idpPolicy,
+    flowState.registrationStrategy,
   ]);
 
   // ── Negative-test scorecard input ───────────────────────────────────
@@ -631,10 +867,27 @@ export function XAAFlowTab({
           resource,
           // Use the flow's simulated identity (not the server's user-12345
           // default) so an app with Allowed Users set doesn't reject every
-          // negative test on `sub` before its own check is evaluated.
+          // negative test on `sub` before its own check is evaluated. The
+          // email rides along because the managed evaluator's exact
+          // claims-match requires BOTH subject and email — a managed
+          // scorecard without it is denied `identity_claims_mismatch`.
           subject: runInput.userId || undefined,
+          email: runInput.email || undefined,
           clientId: runInput.clientId || undefined,
           scope: runInput.scope || undefined,
+          // Managed-IdP policy context: the server evaluates policy once
+          // before firing the broken-token matrix, so a denied person's
+          // scorecard surfaces the policy error instead of a misleading
+          // all-green (or all-red) matrix.
+          ...(runInput.policyMode
+            ? {
+                policyMode: runInput.policyMode,
+                resourceAppId: runInput.resourceAppId,
+                ...(runInput.testIdentityId
+                  ? { testIdentityId: runInput.testIdentityId }
+                  : {}),
+              }
+            : {}),
         },
       };
     }
@@ -662,6 +915,7 @@ export function XAAFlowTab({
           audience,
           resource,
           subject: runInput.userId || undefined,
+          email: runInput.email || undefined,
           clientId: runInput.clientId || undefined,
           scope: runInput.scope || undefined,
         },
@@ -685,6 +939,7 @@ export function XAAFlowTab({
         audience,
         resource,
         subject: runInput.userId || undefined,
+        email: runInput.email || undefined,
         clientId: runInput.clientId || undefined,
         scope: runInput.scope || undefined,
       },
@@ -902,8 +1157,11 @@ export function XAAFlowTab({
     // The confirmed action is the ONLY thing that clears the duplicate-risk
     // gate — the user has acknowledged a second remote client may be created.
     dcrDuplicateRiskRef.current.delete(targetKey);
+    // A new client identity is about to be established: person outcomes
+    // recorded against the previous registration must stop rendering.
+    bumpRegistrationGeneration();
     rebuildFlow();
-  }, [targetKey, rebuildFlow]);
+  }, [targetKey, rebuildFlow, bumpRegistrationGeneration]);
 
   const dcrHasSessionRegistration =
     effectiveStrategy === "dcr" &&
@@ -946,6 +1204,18 @@ export function XAAFlowTab({
       scope: runInput.scope,
       authzServerIssuer: runInput.authzServerIssuer,
       registrationId: runInput.registrationId,
+      // Managed-IdP policy context — the machine emits it on the ID-JAG mint
+      // (headers on the spec /token form, body fields on the JSON mint) so
+      // the org-scoped issuer can enforce per-person policy.
+      ...(runInput.policyMode
+        ? {
+            policyMode: runInput.policyMode,
+            resourceAppId: runInput.resourceAppId,
+            ...(runInput.testIdentityId
+              ? { testIdentityId: runInput.testIdentityId }
+              : {}),
+          }
+        : {}),
       // Client-identity strategy (forced to preregistered inside the machine
       // for registrationId/serverId runs) plus the session credential cache
       // DCR runs mint into and redeem from.
@@ -1033,19 +1303,41 @@ export function XAAFlowTab({
 
   const handleSelectPerson = useCallback(
     (personId: string | null) => {
-      if (!projectId) return;
       // Switching identities mid-run could reuse an assertion minted for the
       // previous person — the strip disables its chips; this is the backstop.
       if (flowStateRef.current.isBusy || isRunningAll) return;
+      if (managedCapable) {
+        if (!organizationId) return;
+        setSelectedOrgPersonId(organizationId, personId);
+        return;
+      }
+      if (!projectId) return;
       setSelectedPersonId(projectId, personId);
     },
-    [projectId, isRunningAll, setSelectedPersonId]
+    [
+      managedCapable,
+      organizationId,
+      projectId,
+      isRunningAll,
+      setSelectedPersonId,
+      setSelectedOrgPersonId,
+    ]
   );
 
   const outcomeForPerson = useCallback(
     (personId: string): XaaPersonOutcome | undefined => {
       const record = personOutcomes.get(`${runGateKey}|${personId}`);
       if (!record || record.targetFingerprint !== targetFingerprint) {
+        return undefined;
+      }
+      // A dynamic-strategy result is valid only for the client identity that
+      // produced it — a later fresh registration (re-register action or a
+      // new DCR/CIMD client) invalidates it. Preregistered results ignore
+      // the generation: their client identity never changes underneath them.
+      if (
+        record.registrationStrategy !== "preregistered" &&
+        record.registrationGeneration !== registrationGeneration
+      ) {
         return undefined;
       }
       // An edited person invalidates their stale result — the subject/email
@@ -1056,7 +1348,13 @@ export function XAAFlowTab({
       }
       return record;
     },
-    [personOutcomes, runGateKey, targetFingerprint, people]
+    [
+      personOutcomes,
+      runGateKey,
+      targetFingerprint,
+      registrationGeneration,
+      people,
+    ]
   );
 
   const continueLabel = !isTestable
@@ -1128,6 +1426,7 @@ export function XAAFlowTab({
         onSelectPerson={handleSelectPerson}
         disabled={flowState.isBusy || isRunningAll}
         outcomeFor={outcomeForPerson}
+        mode={managedCapable ? "org" : "project"}
       />
       <XAAResourceAppsSection
         organizationId={organizationId ?? null}
@@ -1161,6 +1460,73 @@ export function XAAFlowTab({
           >
             Use bar server
           </Button>
+        </div>
+      ) : null}
+      {managedCapable ? (
+        <div
+          className="flex items-center justify-between gap-2 border-b border-border bg-muted/30 px-4 py-1.5 text-xs text-muted-foreground"
+          role="status"
+        >
+          <span>
+            {policyMode === "unmanaged"
+              ? "Org policy bypassed — this run goes straight to the authorization server."
+              : "Org IdP policy applies — pick a person to run as."}
+          </span>
+          {isOrgAdmin ? (
+            // Session-only UX toggle; the issuer independently enforces the
+            // admin check server-side, so this can never GRANT a bypass.
+            <label className="flex shrink-0 cursor-pointer items-center gap-1.5">
+              <input
+                type="checkbox"
+                className="h-3 w-3 accent-primary"
+                checked={unmanagedOverride}
+                disabled={flowState.isBusy || isRunningAll}
+                onChange={(event) =>
+                  setUnmanagedOverride(event.target.checked)
+                }
+              />
+              Advanced: bypass org policy
+            </label>
+          ) : null}
+        </div>
+      ) : null}
+      {showBarServerRegisterPrompt ? (
+        <div
+          className="flex items-center justify-between gap-2 border-b border-border bg-muted/30 px-4 py-1.5 text-xs text-muted-foreground"
+          role="status"
+        >
+          <span>
+            This server isn&apos;t registered with your org&apos;s test IdP —
+            no per-person policy applies to this run.
+          </span>
+          <div className="flex shrink-0 items-center gap-1">
+            {isOrgAdmin ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-6 text-xs"
+                onClick={() => setRegisterTargetWizardOpen(true)}
+              >
+                Register this server
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 text-xs"
+              onClick={() =>
+                setDismissedBarPromptTargets((current) => {
+                  const next = new Set(current);
+                  next.add(targetKey);
+                  return next;
+                })
+              }
+            >
+              Run unmanaged
+            </Button>
+          </div>
         </div>
       ) : null}
       {secretBlockedReason ? (
@@ -1311,6 +1677,17 @@ export function XAAFlowTab({
           // A bar server overrides any selected registration.
           setSelectedRegistrationId(null);
         }}
+      />
+
+      {/* "Register this server" from the bar-server prompt: create-mode
+          wizard seeded with the current target; saving selects the new
+          registration so the run flips to managed immediately. */}
+      <XAARegistrationWizard
+        open={registerTargetWizardOpen}
+        onOpenChange={setRegisterTargetWizardOpen}
+        organizationId={organizationId ?? null}
+        prefill={registerTargetPrefill}
+        onSaved={(id) => setSelectedRegistrationId(id)}
       />
 
       <AlertDialog

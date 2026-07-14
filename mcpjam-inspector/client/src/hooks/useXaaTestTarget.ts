@@ -26,6 +26,16 @@ export interface XAAFlowInput {
   userId: string;
   email: string;
   negativeTestMode: NegativeTestMode;
+  /** Managed-IdP policy context — filled only on registration targets when
+   * the caller resolved a policy mode (managed-capable org). Unset ⇒ legacy
+   * behavior, the mint carries no managed context. */
+  policyMode?: "managed" | "unmanaged";
+  /** The selected org person's xaaTestIdentities id. Sent whenever a policy
+   * mode is active and an org person is selected — the evaluator validates
+   * the identity in BOTH modes (the unmanaged bypass still checks claims). */
+  testIdentityId?: string;
+  /** The registered resource app the managed run targets. */
+  resourceAppId?: string;
 }
 
 export type XaaTargetSource = "registration" | "bar_server" | "none";
@@ -110,6 +120,10 @@ interface UseXaaTestTargetParams {
    * (atomic pair), threaded from the owning page. Sits between the
    * per-server override and the run-settings fallback in precedence. */
   projectDefault?: XaaIdentityPair | null;
+  /** Resolved managed-IdP policy mode (managed-capable org ± admin bypass).
+   * Only registration targets carry it into the run input — bar-server and
+   * empty targets stay policy-free regardless. */
+  policyMode?: "managed" | "unmanaged";
 }
 
 /** Identity precedence (all ATOMIC pairs — never one source's subject with
@@ -160,6 +174,7 @@ export function useXaaTestTarget({
   selectedPerson,
   projectId,
   projectDefault = null,
+  policyMode,
 }: UseXaaTestTargetParams): XaaTestTarget {
   const { isAuthenticated } = useConvexAuth();
   const { servers: remoteServers, isLoading: serversLoading } =
@@ -228,6 +243,18 @@ export function useXaaTestTarget({
           userId: identity.userId,
           email: identity.email,
           negativeTestMode,
+          // Managed context rides only on registration targets. The person id
+          // is sent in both modes when selected — the issuer's evaluator
+          // validates identity claims even on the unmanaged (admin) bypass.
+          ...(policyMode
+            ? {
+                policyMode,
+                resourceAppId: selectedRegistration.id,
+                ...(selectedPerson
+                  ? { testIdentityId: selectedPerson._id }
+                  : {}),
+              }
+            : {}),
         },
         targetKey: `registration:${selectedRegistration.id}`,
         usesServerSideSecret: false,
@@ -329,5 +356,6 @@ export function useXaaTestTarget({
     runSettings,
     selectedPerson,
     projectDefault,
+    policyMode,
   ]);
 }

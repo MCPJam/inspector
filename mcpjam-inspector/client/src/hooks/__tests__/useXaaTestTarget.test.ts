@@ -155,6 +155,87 @@ describe("useXaaTestTarget", () => {
     expect(result.current.serverId).toBeUndefined();
     expect(result.current.barServerId).toBe("srv_1");
     expect(result.current.barServerProjectId).toBe("proj_1");
+    // No policy mode resolved → no managed context in the run input.
+    expect(result.current.runInput.policyMode).toBeUndefined();
+    expect(result.current.runInput.testIdentityId).toBeUndefined();
+    expect(result.current.runInput.resourceAppId).toBeUndefined();
+  });
+
+  it("fills the managed-policy context on the registration branch only", () => {
+    remoteServers = [];
+    const registration: XaaResourceApp = {
+      id: "app_1",
+      name: "AcmeApp",
+      resourceType: "mcp",
+      resourceUrl: "https://acme.example.com/mcp",
+      authServerMode: "own",
+      issuer: "https://acme-as.example.com",
+      targetClientId: "acme-client",
+      scopes: ["read"],
+      hasSecret: true,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+    const person = {
+      _id: "xperson_1",
+      subject: "alice-001",
+      email: "alice@example.test",
+    };
+
+    const managed = renderHook(() =>
+      useXaaTestTarget({
+        server: undefined,
+        selectedServerName: "none",
+        selectedRegistration: registration,
+        runSettings,
+        selectedPerson: person,
+        projectId: null,
+        policyMode: "managed",
+      }),
+    );
+    expect(managed.result.current.runInput).toMatchObject({
+      policyMode: "managed",
+      resourceAppId: "app_1",
+      testIdentityId: "xperson_1",
+      userId: "alice-001",
+      email: "alice@example.test",
+    });
+
+    // The unmanaged (admin bypass) mode still carries the person id — the
+    // issuer validates identity claims in both modes.
+    const unmanaged = renderHook(() =>
+      useXaaTestTarget({
+        server: undefined,
+        selectedServerName: "none",
+        selectedRegistration: registration,
+        runSettings,
+        selectedPerson: person,
+        projectId: null,
+        policyMode: "unmanaged",
+      }),
+    );
+    expect(unmanaged.result.current.runInput).toMatchObject({
+      policyMode: "unmanaged",
+      resourceAppId: "app_1",
+      testIdentityId: "xperson_1",
+    });
+
+    // A bar-server target ignores the policy mode entirely — managed policy
+    // only exists for org-registered resource apps.
+    const barServer = renderHook(() =>
+      useXaaTestTarget({
+        server: httpServer(),
+        selectedServerName: "staging-mcp",
+        selectedRegistration: null,
+        runSettings,
+        selectedPerson: person,
+        projectId: "proj_1",
+        policyMode: "managed",
+      }),
+    );
+    expect(barServer.result.current.runInput.policyMode).toBeUndefined();
+    expect(barServer.result.current.runInput.resourceAppId).toBeUndefined();
+    expect(barServer.result.current.runInput.testIdentityId).toBeUndefined();
   });
 
   it("marks a STDIO server not testable", () => {
