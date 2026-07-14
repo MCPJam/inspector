@@ -42,7 +42,7 @@ Most "failed to connect" / `fetch failed` / `ECONNREFUSED` / `MCP error -32000: 
 
 4. **Right auth setting?**
 
-   For local development servers, pick **No Authentication**. If you get `401`, see [Getting 401 Unauthorized errors](#getting-401-unauthorized-errors) below.
+   New servers default to **Auto**, which connects without credentials and escalates to OAuth on 401. For local development servers that have no auth, pick **No Authentication** to skip the escalation prompt. If you get `401`, see [Getting 401 Unauthorized errors](#getting-401-unauthorized-errors) below.
 
 5. **Did the server actually finish booting before the handshake?**
 
