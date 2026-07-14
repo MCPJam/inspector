@@ -200,3 +200,13 @@ describe("Inspector OAuth adapter pre-registered client secret", () => {
     expect(stored.client_id).toBe("client_abc");
   });
 });
+
+describe("Inspector OAuth adapter one-step stepping", () => {
+  it("omits scheduleAutoAdvance so each Continue advances exactly one step", () => {
+    const config = buildMachineConfig({}) as unknown as Record<string, unknown>;
+    // Absent, not merely undefined: the SDK debug machines call
+    // scheduleAutoAdvance via optional chaining, so leaving it out is precisely
+    // what stops the prepare -> send -> receive burst on a single click.
+    expect("scheduleAutoAdvance" in config).toBe(false);
+  });
+});

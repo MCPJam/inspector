@@ -3161,3 +3161,33 @@ describe("createXAAStateMachine SAML axes", () => {
     expect(state.identityAssertion).toBe("id-token");
   });
 });
+
+describe("negative-test probe is terminal", () => {
+  it("does not advance past an accepted probe into the authenticated MCP call", async () => {
+    // A negative-mode run the authorization server WRONGLY accepts rests at
+    // received_access_token with negativeProbe set. A direct proceedToNextStep
+    // must not carry the illegitimately issued token into the MCP request.
+    let state: XAAFlowState = createInitialXAAFlowState({
+      serverUrl: "https://mcp.example.com",
+      accessToken: "leaked-token",
+      currentStep: "received_access_token",
+      negativeProbe: { outcome: "accepted", status: 200 },
+    });
+    const externalRequest = vi.fn();
+    const machine = createXAAStateMachine({
+      state,
+      getState: () => state,
+      updateState: (updates) => {
+        state = { ...state, ...updates };
+      },
+      serverUrl: "https://mcp.example.com",
+      issuerBaseUrl: "https://issuer.example/api/web/xaa",
+      requestExecutor: { externalRequest, internalRequest: vi.fn() },
+    });
+
+    await machine.proceedToNextStep();
+
+    expect(state.currentStep).toBe("received_access_token");
+    expect(externalRequest).not.toHaveBeenCalled();
+  });
+});

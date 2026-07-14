@@ -2422,6 +2422,15 @@ export function createXAAStateMachine(
   machine.proceedToNextStep = async () => {
     const step = currentState().currentStep;
 
+    // A negative-test probe (rejected OR accepted) is a terminal outcome: the
+    // broken assertion was deliberately sent to observe the authorization
+    // server's verdict. Never advance past it — e.g. into the authenticated
+    // MCP call carrying an illegitimately issued token. Mirrors runAll's guard
+    // and the UI's disabled Continue.
+    if (currentState().negativeProbe) {
+      return;
+    }
+
     switch (step) {
       case "idle":
         await discoverResourceMetadata();
@@ -2485,7 +2494,6 @@ export function createXAAStateMachine(
         return;
       case "jwt_bearer_request":
         if (currentState().error) await requestAccessToken();
-        else if (currentState().negativeProbe) return;
         else requestAccessTokenProcess();
         return;
       case "received_access_token":
