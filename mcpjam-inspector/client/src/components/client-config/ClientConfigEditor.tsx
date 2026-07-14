@@ -50,7 +50,9 @@ import {
   type HostConfigMcpProfileV1,
   type HostStyleId,
   DEFAULT_TEMPERATURE_V2,
+  hasXaaExtensionSimulation,
   SEP_1865_PERMISSION_FEATURES,
+  setXaaExtensionSimulation,
 } from "@/lib/client-config-v2";
 import {
   getHostCapabilitiesForStyle,
@@ -471,6 +473,36 @@ export function ClientConfigEditor({
             onErrorChange={setCapsError}
             placeholder="{}"
           />
+        </div>
+
+        <div className="grid gap-2">
+          <Label className="text-xs font-medium">
+            Advanced protocol simulation
+          </Label>
+          <div className="flex items-start justify-between gap-4">
+            <div className="grid gap-1">
+              <Label htmlFor={`${reactId}-xaaExtensionSimulation`}>
+                Advertise Enterprise-Managed Authorization
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Adds the extension to MCP <code>initialize</code>; it does not
+                configure XAA, obtain an ID-JAG, or change the server's auth
+                method.
+              </p>
+            </div>
+            <Switch
+              id={`${reactId}-xaaExtensionSimulation`}
+              checked={hasXaaExtensionSimulation(value.clientCapabilities)}
+              onCheckedChange={(checked) =>
+                update({
+                  clientCapabilities: setXaaExtensionSimulation(
+                    value.clientCapabilities,
+                    checked
+                  ),
+                })
+              }
+            />
+          </div>
         </div>
 
         {owner !== "connection-only" ? (

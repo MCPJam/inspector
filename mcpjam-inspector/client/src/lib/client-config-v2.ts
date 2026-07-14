@@ -60,11 +60,17 @@ import type {
   McpProtocolVersion,
 } from "@mcpjam/sdk/host-config/internal";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config";
+// The MCP Enterprise-Managed Authorization extension key
+// ("io.modelcontextprotocol/enterprise-managed-authorization") — single
+// source of truth in the SDK (sdk/src/xaa/mcp-init.ts), shared with the
+// server's connect-time `withXaaExtensionCapability`.
+import { XAA_MCP_EXTENSION } from "@mcpjam/sdk/browser";
 
 export {
   DEFAULT_TEMPERATURE_V2,
   resolveEffectiveMcpProtocolVersion,
   SEP_1865_PERMISSION_FEATURES,
+  XAA_MCP_EXTENSION,
 };
 export type {
   CspDomainSet,
@@ -769,6 +775,86 @@ export function setMcpAppsOverridesOnDraft(
       ? undefined
       : { ...baseProfile, apps: appsEmpty ? undefined : nextApps },
   };
+}
+
+/**
+ * Read the `clientCapabilities.extensions` container defensively. Persisted
+ * configs are user-editable JSON, so `extensions` can be malformed (string,
+ * array, null); anything that isn't a plain object is treated as absent.
+ */
+function readClientCapabilityExtensions(
+  capabilities: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  const raw = capabilities.extensions;
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  return undefined;
+}
+
+/**
+ * Derived state for the "Advertise Enterprise-Managed Authorization"
+ * simulation switch: ON iff the extension key is present in the edited
+ * config's `clientCapabilities.extensions`. No separate boolean field —
+ * the capability JSON is the single source of truth, so the switch can
+ * never drift from what `initialize` will actually advertise.
+ */
+export function hasXaaExtensionSimulation(
+  capabilities: Record<string, unknown>
+): boolean {
+  const extensions = readClientCapabilityExtensions(capabilities);
+  return (
+    extensions !== undefined &&
+    Object.prototype.hasOwnProperty.call(extensions, XAA_MCP_EXTENSION)
+  );
+}
+
+/**
+ * Immutably set/remove `clientCapabilities.extensions[XAA_MCP_EXTENSION]`,
+ * preserving every other capability and every sibling extension.
+ *
+ * This deliberately simulates ONLY the `initialize` advertisement; it does
+ * not configure XAA, obtain an ID-JAG, or change the server's auth method.
+ * The actual XAA Connect path advertises the same key derivedly via the
+ * server's `withXaaExtensionCapability` whenever effective auth is XAA.
+ *
+ * Removal deletes the `extensions` container only when this removal made it
+ * empty — an untouched config round-trips byte-identically (same
+ * `computeHostConfigHashV2`), and a pre-existing non-empty container is
+ * never damaged. A malformed non-object `extensions` value is treated as
+ * absent (overwritten on set, left alone on remove).
+ */
+export function setXaaExtensionSimulation(
+  capabilities: Record<string, unknown>,
+  advertise: boolean
+): Record<string, unknown> {
+  const extensions = readClientCapabilityExtensions(capabilities);
+  if (advertise) {
+    return {
+      ...capabilities,
+      extensions: {
+        ...(extensions ?? {}),
+        [XAA_MCP_EXTENSION]: extensions?.[XAA_MCP_EXTENSION] ?? {},
+      },
+    };
+  }
+  if (
+    extensions === undefined ||
+    !Object.prototype.hasOwnProperty.call(extensions, XAA_MCP_EXTENSION)
+  ) {
+    // Nothing to remove (absent or malformed container) — return the input
+    // unchanged so untouched configs stay reference- and hash-identical.
+    return capabilities;
+  }
+  const { [XAA_MCP_EXTENSION]: _removed, ...siblingExtensions } = extensions;
+  if (Object.keys(siblingExtensions).length === 0) {
+    // The container became empty because of this removal — drop the key
+    // entirely so a toggle-on/toggle-off round trip hashes identically to
+    // never having touched the switch.
+    const { extensions: _extensions, ...rest } = capabilities;
+    return rest;
+  }
+  return { ...capabilities, extensions: siblingExtensions };
 }
 
 /**

@@ -3,8 +3,10 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { ClientConfigEditor } from "../ClientConfigEditor";
 import {
   emptyHostConfigInputV2,
+  XAA_MCP_EXTENSION,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
+import { computeHostConfigHashV2 } from "@mcpjam/sdk/host-config/internal";
 
 // The editor self-fetches the built-in tools catalog via Convex; mock it so
 // these tests don't need a ConvexProvider. Default `[]` keeps the section
@@ -254,6 +256,128 @@ describe("ClientConfigEditor MCP profile clientInfo draft", () => {
     ).toBe("");
     // And the persisted envelope must still be empty — no stale flush.
     expect(current.mcpProfile?.initialize?.clientInfo).toBeUndefined();
+  });
+});
+
+describe("ClientConfigEditor advanced protocol simulation (XAA extension)", () => {
+  // The client's strict HostConfigInputV2 is field-identical to the SDK's
+  // storage shape (guarded by host-template-seed-parity.test.ts); cast at
+  // the hash boundary the same way client-config-v2.ts casts the builder.
+  const hashOf = (cfg: HostConfigInputV2) =>
+    computeHostConfigHashV2(
+      cfg as unknown as Parameters<typeof computeHostConfigHashV2>[0],
+    );
+
+  const getSimSwitch = () =>
+    screen.getByRole("switch", {
+      name: "Advertise Enterprise-Managed Authorization",
+    });
+
+  it("toggle on adds exactly the one extension entry and preserves siblings", () => {
+    const { getCurrent } = renderEditor({});
+    const before = getCurrent().clientCapabilities;
+    // The default seed carries the MCP UI extension as a pre-existing
+    // sibling; the XAA key must not be advertised by default.
+    const beforeExtensions = before.extensions as Record<string, unknown>;
+    expect(beforeExtensions["io.modelcontextprotocol/ui"]).toBeDefined();
+    expect(beforeExtensions[XAA_MCP_EXTENSION]).toBeUndefined();
+    expect(getSimSwitch()).not.toBeChecked();
+
+    fireEvent.click(getSimSwitch());
+
+    expect(getCurrent().clientCapabilities).toEqual({
+      ...before,
+      extensions: { ...beforeExtensions, [XAA_MCP_EXTENSION]: {} },
+    });
+    // Derived state: the switch reflects the key's presence in the config.
+    expect(getSimSwitch()).toBeChecked();
+  });
+
+  it("toggle off removes the entry, preserving sibling extensions and other capabilities", () => {
+    const { getCurrent } = renderEditor({
+      clientCapabilities: {
+        sampling: {},
+        extensions: {
+          "com.example/other": { enabled: true },
+          [XAA_MCP_EXTENSION]: {},
+        },
+      },
+    });
+    expect(getSimSwitch()).toBeChecked();
+
+    fireEvent.click(getSimSwitch());
+
+    expect(getCurrent().clientCapabilities).toEqual({
+      sampling: {},
+      extensions: { "com.example/other": { enabled: true } },
+    });
+    expect(getSimSwitch()).not.toBeChecked();
+  });
+
+  it("cleans up a toggle-created empty extensions container on removal", () => {
+    const { getCurrent } = renderEditor({
+      clientCapabilities: { sampling: {} },
+    });
+
+    fireEvent.click(getSimSwitch());
+    expect(getCurrent().clientCapabilities).toEqual({
+      sampling: {},
+      extensions: { [XAA_MCP_EXTENSION]: {} },
+    });
+
+    fireEvent.click(getSimSwitch());
+    // The container became empty because of this removal → the key is
+    // deleted entirely so the config hashes identically to untouched.
+    expect("extensions" in getCurrent().clientCapabilities).toBe(false);
+    expect(getCurrent().clientCapabilities).toEqual({ sampling: {} });
+  });
+
+  it("preserves a pre-existing non-empty extensions container across on/off", () => {
+    const { getCurrent } = renderEditor({
+      clientCapabilities: {
+        extensions: {
+          "io.modelcontextprotocol/ui": { mimeTypes: ["text/html+mcp"] },
+        },
+      },
+    });
+
+    fireEvent.click(getSimSwitch());
+    fireEvent.click(getSimSwitch());
+
+    expect(getCurrent().clientCapabilities).toEqual({
+      extensions: {
+        "io.modelcontextprotocol/ui": { mimeTypes: ["text/html+mcp"] },
+      },
+    });
+  });
+
+  it("treats a malformed extensions value as absent without crashing", () => {
+    const { getCurrent } = renderEditor({
+      clientCapabilities: { extensions: "not-an-object" },
+    });
+    // Renders with the switch derived OFF rather than crashing.
+    expect(getSimSwitch()).not.toBeChecked();
+
+    // Toggling on replaces the malformed value with a proper container.
+    fireEvent.click(getSimSwitch());
+    expect(getCurrent().clientCapabilities).toEqual({
+      extensions: { [XAA_MCP_EXTENSION]: {} },
+    });
+  });
+
+  it("computeHostConfigHashV2: unchanged untouched, changed on add, restored on remove", async () => {
+    const { onChange, getCurrent } = renderEditor({});
+    const baseline = await hashOf(getCurrent());
+
+    // Untouched config: mount performs no writes, hash is stable.
+    expect(onChange).not.toHaveBeenCalled();
+    expect(await hashOf(getCurrent())).toBe(baseline);
+
+    fireEvent.click(getSimSwitch());
+    expect(await hashOf(getCurrent())).not.toBe(baseline);
+
+    fireEvent.click(getSimSwitch());
+    expect(await hashOf(getCurrent())).toBe(baseline);
   });
 });
 
