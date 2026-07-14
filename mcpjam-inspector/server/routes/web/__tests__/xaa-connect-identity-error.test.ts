@@ -119,4 +119,57 @@ describe("createAuthorizedManager — backend-resolved XAA identity error", () =
     // fallback.
     expect(mintXaaAccessTokenMock).not.toHaveBeenCalled();
   });
+
+  it("surfaces the actionable 400 even when the caller omits xaaIssuer (eval routes)", async () => {
+    const identityError =
+      "Complete or clear the server identity override: this server has a partial legacy override";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          results: {
+            "srv-xaa": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: "https://xaa.example.com/mcp",
+                useOAuth: false,
+                useXaa: true,
+                authServerMode: "mcpjam",
+                xaaIdentityError: identityError,
+              },
+            },
+          },
+        }),
+      } as unknown as Response),
+    );
+
+    // No options.xaaIssuer (eval/registration surfaces don't thread it). The
+    // identity check must run BEFORE the issuer guard, so this stays a 400
+    // configuration error rather than the caller-contract "Missing XAA issuer"
+    // 500 that would otherwise mask it.
+    await expect(
+      createAuthorizedManager(
+        callerContextFromHono(makeContext()),
+        "bearer-token",
+        "ws-1",
+        ["srv-xaa"],
+        30_000,
+        undefined,
+        undefined,
+        {},
+      ),
+    ).rejects.toMatchObject({
+      status: 400,
+      code: "VALIDATION_ERROR",
+      message: identityError,
+    });
+
+    expect(mintXaaAccessTokenMock).not.toHaveBeenCalled();
+  });
 });

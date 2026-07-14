@@ -125,7 +125,10 @@ describe("ProjectSettingsTab — XAA test identity defaults", () => {
     await user.type(screen.getByLabelText("Email"), " proj@example.com ");
     await user.click(screen.getByRole("button", { name: "Save defaults" }));
 
-    expect(onUpdateProject).toHaveBeenCalledWith("proj-local-1", {
+    // Convex-only field: the update must target the Convex project id
+    // (convexProjectId) even when a local mirror (activeProjectId
+    // "proj-local-1" with sharedProjectId "proj-remote-1") is active.
+    expect(onUpdateProject).toHaveBeenCalledWith("proj-remote-1", {
       xaaTestDefaults: {
         defaultIdentity: {
           subject: "proj-sub-1",
@@ -155,7 +158,7 @@ describe("ProjectSettingsTab — XAA test identity defaults", () => {
     await user.clear(screen.getByLabelText("Email"));
     await user.click(screen.getByRole("button", { name: "Save defaults" }));
 
-    expect(onUpdateProject).toHaveBeenCalledWith("proj-local-1", {
+    expect(onUpdateProject).toHaveBeenCalledWith("proj-remote-1", {
       xaaTestDefaults: null,
     });
   });

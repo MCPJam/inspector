@@ -87,6 +87,10 @@ function XaaTestDefaultsSection({
           : // Explicit clear — the mutation removes the stored default.
             null,
       });
+    } catch {
+      // onUpdateProject (handleUpdateProject) already surfaces a toast and
+      // rethrows; swallow here so the `void handleSave()` caller doesn't leave
+      // an unobserved rejection. The edited values stay in the form for retry.
     } finally {
       setIsSaving(false);
     }
@@ -323,7 +327,7 @@ export function ProjectSettingsTab({
             local-project update path is a no-op for this field). */}
         {isAuthenticated && convexProjectId && (
           <XaaTestDefaultsSection
-            projectId={activeProjectId}
+            projectId={convexProjectId}
             storedIdentity={project?.xaaTestDefaults?.defaultIdentity}
             canManage={canManageMembers}
             onUpdateProject={onUpdateProject}

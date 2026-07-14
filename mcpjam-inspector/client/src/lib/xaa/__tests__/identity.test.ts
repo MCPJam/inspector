@@ -150,6 +150,22 @@ describe("resolveXaaTestIdentity — atomic precedence matrix", () => {
       source: "run_fallback",
     });
   });
+
+  it("an incomplete selected person (blank email) falls through, never a subject-only identity", () => {
+    const result = resolveXaaTestIdentity({
+      selectedPerson: { subject: "person-sub", email: "" },
+      serverOverride: null,
+      projectDefault,
+      runFallback,
+    });
+    // Person is atomic: an incomplete one is treated as absent, so the
+    // complete project default wins rather than a mixed subject-only identity.
+    expect(result).toEqual({
+      ok: true,
+      identity: projectDefault,
+      source: "project_default",
+    });
+  });
 });
 
 describe("isCompleteIdentityPair", () => {
@@ -229,6 +245,24 @@ describe("resolveXaaIdentitySaveFields — shared save-path semantics", () => {
       authServerMode: "mcpjam",
       xaaSubject: "patched-sub",
       xaaEmail: "stored@example.com",
+    });
+  });
+
+  it("clears both members when the resolved pair would be one-sided (atomic)", () => {
+    // Explicit empty subject with no stored value to complete it, email set:
+    // the result would be a partial persisted override, so normalize to an
+    // atomic clear of both fields rather than storing a half-identity.
+    expect(
+      resolveXaaIdentitySaveFields({
+        useXaa: true,
+        formSubject: "",
+        formEmail: "kept@example.com",
+        existing: undefined,
+      }),
+    ).toEqual({
+      authServerMode: "mcpjam",
+      xaaSubject: "",
+      xaaEmail: "",
     });
   });
 

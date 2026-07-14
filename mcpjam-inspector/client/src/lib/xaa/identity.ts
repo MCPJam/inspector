@@ -80,7 +80,11 @@ export function resolveXaaTestIdentity({
   /** The debugger's run-settings identity (terminal fallback). */
   runFallback: XaaIdentityPair;
 }): XaaTestIdentityResolution {
-  if (selectedPerson && isNonEmpty(selectedPerson.subject)) {
+  // A person is an atomic identity too: require BOTH members so a roster row
+  // with a blank email can never emit a subject-only identity. An incomplete
+  // person falls through to the next source (rows are created with a required
+  // email, so this is defensive).
+  if (isCompleteIdentityPair(selectedPerson)) {
     return {
       ok: true,
       identity: { subject: selectedPerson.subject, email: selectedPerson.email },
@@ -174,9 +178,18 @@ export function resolveXaaIdentitySaveFields({
     };
   }
 
+  const resolvedSubject = (formSubject ?? existing?.xaaSubject ?? "").trim();
+  const resolvedEmail = (formEmail ?? existing?.xaaEmail ?? "").trim();
+  // Atomic: a one-sided result is never a valid persisted override. The form
+  // blocks partial saves, but guard here too so a caller that bypasses that
+  // validation (e.g. local, non-Convex persistence with no backend
+  // normalization) can't store a half-identity — clear both instead.
+  if ((resolvedSubject === "") !== (resolvedEmail === "")) {
+    return { authServerMode, xaaSubject: "", xaaEmail: "" };
+  }
   return {
     authServerMode,
-    xaaSubject: (formSubject ?? existing?.xaaSubject ?? "").trim(),
-    xaaEmail: (formEmail ?? existing?.xaaEmail ?? "").trim(),
+    xaaSubject: resolvedSubject,
+    xaaEmail: resolvedEmail,
   };
 }

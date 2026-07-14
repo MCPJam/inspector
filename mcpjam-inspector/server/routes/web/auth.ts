@@ -942,6 +942,20 @@ export async function createAuthorizedManager(
             { serverId, registrationMode: auth.serverConfig.registrationMode }
           );
         }
+        // Backend-resolved identity failure (legacy partial per-server
+        // override): a distinct configuration error, surfaced BEFORE any
+        // mint AND before the issuer guard below — eval routes omit
+        // `xaaIssuer`, so checking it first would mask this actionable 400
+        // behind the caller-contract 500. No silent fallback to the demo
+        // identity, no silent XAA→OAuth fallback.
+        if (auth.serverConfig.xaaIdentityError) {
+          throw new WebRouteError(
+            400,
+            ErrorCode.VALIDATION_ERROR,
+            auth.serverConfig.xaaIdentityError,
+            { serverId, serverName: displayServerName }
+          );
+        }
         if (!options?.xaaIssuer) {
           // Caller-contract violation: a `useXaa` server reached a manager
           // builder that didn't thread the issuer (only callers holding the
@@ -951,18 +965,6 @@ export async function createAuthorizedManager(
             500,
             ErrorCode.INTERNAL_ERROR,
             `Missing XAA issuer for server "${displayServerName}". This connect surface must pass options.xaaIssuer.`
-          );
-        }
-        // Backend-resolved identity failure (legacy partial per-server
-        // override): a distinct configuration error, surfaced BEFORE any
-        // mint. No silent fallback to the demo identity, no silent
-        // XAA→OAuth fallback.
-        if (auth.serverConfig.xaaIdentityError) {
-          throw new WebRouteError(
-            400,
-            ErrorCode.VALIDATION_ERROR,
-            auth.serverConfig.xaaIdentityError,
-            { serverId, serverName: displayServerName }
           );
         }
         const mintArgs = buildXaaMintArgs({

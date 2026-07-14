@@ -573,6 +573,18 @@ export function XAAFlowTab({
     input: NegativeTestsInput | null;
     unavailableReason?: string;
   } => {
+    // A partial per-server override is a configuration error that blocks every
+    // XAA test path. The negative-test scorecard has its own ownership
+    // override that bypasses the positive-run lock, so it must be suppressed
+    // here explicitly — otherwise it could still fire against a server whose
+    // identity the run itself refuses to mint.
+    if (target.identityError) {
+      return {
+        input: null,
+        unavailableReason: `${target.identityError} in Configure Server to Test.`,
+      };
+    }
+
     const audience =
       flowState.authzMetadata?.issuer ||
       runInput.authzServerIssuer ||
@@ -813,21 +825,34 @@ export function XAAFlowTab({
     ) {
       return;
     }
+    // Defer to run end: an async identity source (a project default resolving,
+    // the roster loading) must not reset an in-progress run. The tracker stays
+    // stale while busy, so this effect re-fires and rebuilds once isBusy/
+    // isRunningAll clear — matching the person-switch path below.
+    if (flowStateRef.current.isBusy || isRunningAll) return;
     const timer = setTimeout(() => {
       // Another path (Run all, Reset, target switch, person switch) may have
-      // rebuilt the flow with this identity while the timer was pending. If so
-      // the tracker already matches — bail rather than wipe that fresh
-      // (possibly running) state a second time.
+      // rebuilt the flow with this identity while the timer was pending, or a
+      // run may have started inside the debounce window. Bail rather than wipe
+      // that fresh (possibly running) state a second time.
       if (
-        lastAppliedIdentity.current.userId === nextUserId &&
-        lastAppliedIdentity.current.email === nextEmail
+        flowStateRef.current.isBusy ||
+        isRunningAll ||
+        (lastAppliedIdentity.current.userId === nextUserId &&
+          lastAppliedIdentity.current.email === nextEmail)
       ) {
         return;
       }
       rebuildFlow();
     }, 400);
     return () => clearTimeout(timer);
-  }, [runInput.userId, runInput.email, rebuildFlow]);
+  }, [
+    runInput.userId,
+    runInput.email,
+    flowState.isBusy,
+    isRunningAll,
+    rebuildFlow,
+  ]);
 
   // A person switch is discrete and resets SYNCHRONOUSLY — a debounce window
   // here would let the next step reuse an assertion already minted for the

@@ -13,6 +13,7 @@ import type { ProjectClientConfig } from "@/lib/client-config";
 import { getEffectiveProjectConnectionDefaults } from "@/lib/client-config";
 import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
+import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
 
 interface InitialFormValues {
   name: string;
@@ -575,7 +576,7 @@ export function useServerForm(
       xaaIdentityDirty &&
       (xaaSubject.trim() === "") !== (xaaEmail.trim() === "")
     ) {
-      return "Complete or clear the server identity override";
+      return XAA_PARTIAL_OVERRIDE_ERROR;
     }
 
     return null;
