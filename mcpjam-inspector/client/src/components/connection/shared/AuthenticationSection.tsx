@@ -156,11 +156,11 @@ export function AuthenticationSection({
   const [isBearerTokenVisible, setIsBearerTokenVisible] = useState(false);
 
   const xaaFlagEnabled = useFeatureFlagEnabled("xaa");
-  // Keep the options visible if a server is already configured with XAA or
-  // Auto, even when the flag is off, so the trigger doesn't render blank for
-  // it.
-  const showXaaOption =
-    xaaFlagEnabled === true || authType === "xaa" || authType === "auto";
+  // Keep the XAA option visible if a server is already configured with it,
+  // even when the flag is off, so the trigger doesn't render blank for it.
+  // Auto is un-gated: its discover behavior (no auth first, OAuth on 401) is
+  // for everyone — only the XAA leg and its mention stay behind the flag.
+  const showXaaOption = xaaFlagEnabled === true || authType === "xaa";
 
   const canRevealClientSecret =
     hasStoredClientSecret &&
@@ -323,6 +323,16 @@ export function AuthenticationSection({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem
+                value="auto"
+                description={
+                  showXaaOption
+                    ? "Cross-App Access when configured — otherwise connects without credentials, then OAuth if required"
+                    : "Connects without credentials, then OAuth if the server requires it"
+                }
+              >
+                Auto
+              </SelectItem>
               <SelectItem value="none" description="Connect without credentials">
                 No Authentication
               </SelectItem>
@@ -341,14 +351,6 @@ export function AuthenticationSection({
                   description="Server-side token exchange via your IdP"
                 >
                   Cross-App Access (XAA)
-                </SelectItem>
-              )}
-              {showXaaOption && (
-                <SelectItem
-                  value="auto"
-                  description="Cross-App Access when configured — otherwise connects without credentials, then OAuth if required"
-                >
-                  Auto
                 </SelectItem>
               )}
             </SelectContent>

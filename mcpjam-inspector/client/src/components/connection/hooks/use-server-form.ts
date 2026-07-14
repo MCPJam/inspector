@@ -143,7 +143,10 @@ export function useServerForm(
   // from the config (hosted/redacted load). The field stays blank but the form
   // knows auth is "bearer" and must not wipe the hidden token on save.
   const [hasStoredBearerToken, setHasStoredBearerToken] = useState(false);
-  const [authType, setAuthType] = useState<ServerFormAuthType>("none");
+  // New servers default to Auto: connect without credentials, upgrade to
+  // OAuth on 401 (or XAA when configured) — the spec's discovery flow.
+  // Existing servers overwrite this from their resolved auth type.
+  const [authType, setAuthType] = useState<ServerFormAuthType>("auto");
   const [useCustomClientId, setUseCustomClientId] = useState(false);
   // Cross-App Access (XAA) fields. Client id / secret / scopes are shared with
   // the OAuth preregistered path; these three are XAA-specific.
@@ -918,7 +921,7 @@ export function useServerForm(
     setXaaEmail("");
     setBearerToken("");
     setHasStoredBearerToken(false);
-    setAuthType("none");
+    setAuthType("auto");
     setUseCustomClientId(false);
     setClientIdError(null);
     setClientSecretError(null);
