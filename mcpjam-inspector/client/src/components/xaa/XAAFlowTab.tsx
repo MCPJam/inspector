@@ -400,21 +400,23 @@ export function XAAFlowTab({
   const runSettings = useXaaRunSettings();
   const { user: signedInUser } = useAuth();
   // Local-only hosted-issuer opt-in: mints route through app.mcpjam.com so a
-  // cloud AS can discover the issuer. Requires a signed-in session AND an
-  // active org — the hosted mint targets the membership-gated org-scoped
-  // issuer (/o/<orgId>), and the server fails closed without one rather than
-  // downgrading to the forgeable unscoped issuer. (A local guest bearer is
-  // signed with a local key the hosted issuer rejects.)
-  const canUseHostedIssuer =
-    !HOSTED_MODE && Boolean(signedInUser) && Boolean(organizationId);
-  // Why the toggle is disabled — the two gates fail for different reasons and
-  // the hint must name the one the user can act on.
+  // cloud AS can discover the issuer. Requires an active org — signed-in
+  // users mint under the membership-gated org-scoped issuer (/o/<orgId>);
+  // guest sessions mint under the visibly separate ANONYMOUS TEST issuer
+  // (/g/<personalOrgId>), which a RAS must explicitly allowlist and which is
+  // NOT enterprise-managed-authorization conformance. The server fails
+  // closed without an org rather than downgrading to the forgeable unscoped
+  // issuer. (Dev-only caveat: a guest bearer signed by a locally-provisioned
+  // Convex key is rejected by the hosted issuer and surfaces as a 401 on the
+  // forward.)
+  const hostedIssuerKind: "org" | "anonymous" = signedInUser
+    ? "org"
+    : "anonymous";
+  const canUseHostedIssuer = !HOSTED_MODE && Boolean(organizationId);
   const hostedIssuerDisabledReason =
     HOSTED_MODE || canUseHostedIssuer
       ? undefined
-      : !signedInUser
-      ? "sign in to mint through the hosted issuer"
-      : "select an organization to mint through the hosted issuer";
+      : "waiting for an organization — sign in or continue as guest to mint through the hosted issuer";
   const hostedIssuerOptIn =
     canUseHostedIssuer && runSettings.issuerMode === "hosted";
   // ── "Run as" people (project-scoped synthetic test identities) ──────
@@ -453,12 +455,13 @@ export function XAAFlowTab({
   const { targetKey, isTestable } = target;
 
   // The positive-run unlock must be specific to the exact issuer the run
-  // exercised: switching issuer mode (local↔hosted) or organization changes
-  // the minted `iss`, so a green run under one must NOT unlock negative tests
-  // under another. Key the gate on target + issuer mode + org.
+  // exercised: switching issuer mode (local↔hosted), organization, or issuer
+  // kind (org↔anonymous, e.g. guest→signed-in promotion) changes the minted
+  // `iss`, so a green run under one must NOT unlock negative tests under
+  // another. Key the gate on target + issuer mode + org + kind.
   const runGateKey = `${targetKey}|${hostedIssuerOptIn ? "hosted" : "local"}|${
     organizationId ?? ""
-  }`;
+  }|${hostedIssuerKind}`;
 
   // ── Registration strategy (Client↔Resource-AS leg) ──────────────────
   // Persisted per-server and chosen in the "Configure Server to Test" modal;
@@ -1077,13 +1080,20 @@ export function XAAFlowTab({
     // new org's `iss` against the old issuer and report a spurious mismatch.
     // With it cleared, the machine falls back to the correct current-org guess.
     setResolvedIssuerBaseUrl(undefined);
-    void fetchXaaIdpUrls(controller.signal, organizationId).then((urls) => {
+    // Thread issuerKind so a hosted guest discovers its /g/ (anonymous) issuer
+    // rather than /o/ — otherwise the ID-JAG inspection would lint the
+    // /g/-minted `iss` against the wrong /o/ issuer and report a mismatch.
+    void fetchXaaIdpUrls(
+      controller.signal,
+      organizationId,
+      hostedIssuerKind,
+    ).then((urls) => {
       if (urls && !controller.signal.aborted) {
         setResolvedIssuerBaseUrl(urls.issuerBaseUrl);
       }
     });
     return () => controller.abort();
-  }, [organizationId]);
+  }, [organizationId, hostedIssuerKind]);
 
   const xaaStateMachine = useMemo(() => {
     return createInspectorXAAStateMachine({
@@ -1126,6 +1136,7 @@ export function XAAFlowTab({
       issuerBaseUrl: hostedIssuerOptIn ? undefined : resolvedIssuerBaseUrl,
       organizationId,
       issuerMode: hostedIssuerOptIn ? "hosted" : "local",
+      issuerKind: hostedIssuerKind,
     });
   }, [
     runInput,
@@ -1134,6 +1145,7 @@ export function XAAFlowTab({
     resolvedIssuerBaseUrl,
     organizationId,
     hostedIssuerOptIn,
+    hostedIssuerKind,
     effectiveStrategy,
     effectiveAssertionFormat,
     runsDynamicRegistration,
@@ -1269,6 +1281,7 @@ export function XAAFlowTab({
         onIssuerModeChange={runSettings.setIssuerMode}
         canUseHostedIssuer={canUseHostedIssuer}
         hostedIssuerDisabledReason={hostedIssuerDisabledReason}
+        issuerKind={hostedIssuerKind}
       />
       <XAAPeopleStrip
         people={people}
@@ -1344,6 +1357,9 @@ export function XAAFlowTab({
                   ? {
                       ...scorecard.input,
                       organizationId: organizationId ?? null,
+                      // Guests mint under /g/; without issuerKind the
+                      // negative-test run would default to /o/ and 403.
+                      issuerKind: hostedIssuerKind,
                       ...(hostedIssuerOptIn
                         ? { issuerMode: "hosted" as const }
                         : {}),
