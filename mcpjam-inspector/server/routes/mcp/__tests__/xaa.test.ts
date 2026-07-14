@@ -543,6 +543,7 @@ describe("registration-backed /proxy/token", () => {
     expect(resolver).toHaveBeenCalledWith({
       registrationId: "app_1",
       bearerToken: "user-token",
+      clientIp: null,
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -852,6 +853,59 @@ describe("hosted-issuer forwarding on the local router", () => {
     expect(forwarded).toEqual({ userId: "user-12345" });
   });
 
+  it("forwards issuerKind:anonymous mints to the /g/ hosted endpoint", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ id_token: "hosted-guest-token", token_type: "Bearer" })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = buildApp();
+    const response = await app.request("/api/mcp/xaa/authenticate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer guest-token",
+      },
+      body: JSON.stringify({
+        userId: "user-12345",
+        issuerMode: "hosted",
+        issuerKind: "anonymous",
+        organizationId: "org_guest1",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${HOSTED_ORIGIN}/api/web/xaa/g/org_guest1/authenticate`);
+    // issuerKind is stripped along with the other opt-in fields.
+    const forwarded = JSON.parse(String(init.body));
+    expect(forwarded).toEqual({ userId: "user-12345" });
+  });
+
+  it("rejects an unknown issuerKind instead of guessing a path", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = buildApp();
+    const response = await app.request("/api/mcp/xaa/authenticate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer guest-token",
+      },
+      body: JSON.stringify({
+        userId: "user-12345",
+        issuerMode: "hosted",
+        issuerKind: "sneaky",
+        organizationId: "org_guest1",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("fails closed (no unscoped fallback) when organizationId is missing", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -1146,6 +1200,56 @@ describe("hosted-issuer forwarding on the local router", () => {
           name.toLowerCase().startsWith("x-mcpjam-")
         )
       ).toBe(false);
+    });
+
+    it("relays to the /g/ hosted /token when the anonymous issuer kind header is set", async () => {
+      const fetchMock = vi.fn(async () =>
+        jsonResponse({
+          issued_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+          access_token: "hosted-anon-jag",
+          token_type: "N_A",
+          expires_in: 300,
+        })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: "Bearer guest-token",
+          "x-mcpjam-issuer-mode": "hosted",
+          "x-mcpjam-organization-id": "org_guest1",
+          "x-mcpjam-issuer-kind": "anonymous",
+        },
+        body: GRANT_FORM,
+      });
+
+      expect(response.status).toBe(200);
+      const [url] = fetchMock.mock.calls[0] as unknown as [string];
+      expect(url).toBe(`${HOSTED_ORIGIN}/api/web/xaa/g/org_guest1/token`);
+    });
+
+    it("rejects an unknown issuer-kind header instead of guessing a path", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: "Bearer guest-token",
+          "x-mcpjam-issuer-mode": "hosted",
+          "x-mcpjam-organization-id": "org_guest1",
+          "x-mcpjam-issuer-kind": "sneaky",
+        },
+        body: GRANT_FORM,
+      });
+
+      expect(response.status).toBe(400);
+      expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it("relays an OAuth-shaped hosted error verbatim", async () => {
