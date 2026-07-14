@@ -1,5 +1,6 @@
 import type { Action } from "@/components/oauth/shared/types";
-import type { XAAFlowState } from "./types";
+import type { XAAFlowState, XAAFlowStep } from "./types";
+import { getXAAStepIndex } from "./step-metadata";
 import { NEGATIVE_TEST_MODE_DETAILS, SAML2_TOKEN_TYPE } from "@/shared/xaa.js";
 
 const XAA_PROTOCOL = "RFC 8693 + RFC 7523";
@@ -16,6 +17,7 @@ function safePath(url?: string): string | undefined {
 }
 
 export function buildXAAActions(flowState: XAAFlowState): Action[] {
+  const reachedIndex = getXAAStepIndex(flowState.currentStep);
   // Input axis (D6): the three identity-leg actions change wording for SAML
   // runs so the diagram visibly reflects the assertion format. OIDC labels
   // stay byte-identical to the pre-SAML diagram.
@@ -95,7 +97,7 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
           ]
         : [];
 
-  return [
+  const actions: Action[] = [
     {
       id: "discover_resource_metadata",
       label: "Fetch resource metadata",
@@ -263,4 +265,14 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
         : undefined,
     },
   ];
+
+  // Only reveal an arrow's detail chip once its step has actually been reached.
+  // The request/process split stores a step's resolved values while still
+  // resting at the prior "request" step, so gating on value-presence alone
+  // would surface a "received" detail one click early.
+  return actions.map((action) =>
+    getXAAStepIndex(action.id as XAAFlowStep) <= reachedIndex
+      ? action
+      : { ...action, details: undefined },
+  );
 }

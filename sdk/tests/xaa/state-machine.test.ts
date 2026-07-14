@@ -17,6 +17,23 @@ import {
   type XAAFlowState,
 } from "../../src/xaa/state-machines/types.js";
 
+// One step per Continue click: each request step now takes two
+// proceedToNextStep calls (fire the request, then process the response), so
+// tests drive to a target step instead of assuming a fixed count. Stops early
+// if the flow parks (no step change).
+async function advanceUntil(
+  machine: { proceedToNextStep: () => Promise<void> },
+  readStep: () => XAAFlowState["currentStep"],
+  target: XAAFlowState["currentStep"],
+  cap = 40
+): Promise<void> {
+  for (let i = 0; i < cap && readStep() !== target; i += 1) {
+    const before = readStep();
+    await machine.proceedToNextStep();
+    if (readStep() === before) return;
+  }
+}
+
 function encodePart(value: Record<string, any>): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
 }
@@ -189,9 +206,7 @@ describe("createXAAStateMachine", () => {
       scope: "read:tools write:tools",
     });
 
-    for (let index = 0; index < 7; index += 1) {
-      await machine.proceedToNextStep();
-    }
+    await advanceUntil(machine, () => state.currentStep, "complete");
 
     expect(state.currentStep).toBe("complete");
     expect(state.accessToken).toBe("access-token");
@@ -296,7 +311,11 @@ describe("createXAAStateMachine", () => {
       scope: "read:tools",
     });
 
-    await machine.proceedToNextStep();
+    await advanceUntil(
+      machine,
+      () => state.currentStep,
+      "received_identity_assertion"
+    );
 
     expect(authBodies).toHaveLength(1);
     expect(authBodies[0].userId).toBe("john");
@@ -477,9 +496,7 @@ describe("createXAAStateMachine", () => {
       authzServerIssuer: "https://auth.example.com",
     });
 
-    for (let index = 0; index < 5; index += 1) {
-      await machine.proceedToNextStep();
-    }
+    await advanceUntil(machine, () => state.currentStep, "inspect_id_jag");
 
     expect(state.currentStep).toBe("inspect_id_jag");
     expect(state.idJagDecoded?.issues).toEqual(
@@ -555,7 +572,11 @@ describe("createXAAStateMachine", () => {
       const { machine, executor, getStateSnapshot, idJag } =
         buildExchangeHarness();
 
-      await machine.proceedToNextStep();
+      await advanceUntil(
+        machine,
+        () => getStateSnapshot().currentStep,
+        "received_id_jag"
+      );
 
       const [path, init] = executor.internalRequest.mock.calls[0];
       expect(path).toBe("/token");
@@ -1444,8 +1465,12 @@ describe("createXAAStateMachine", () => {
         externalUrls.some((u) => u.includes("oauth-protected-resource"))
       ).toBe(false);
 
-      // received_resource_metadata -> AS discovery (RFC 8414) actually runs
-      await machine.proceedToNextStep();
+      // received_resource_metadata -> AS discovery (RFC 8414): request + process
+      await advanceUntil(
+        machine,
+        () => state.currentStep,
+        "received_authz_metadata"
+      );
       expect(state.currentStep).toBe("received_authz_metadata");
       expect(state.tokenEndpoint).toBe("https://auth.example.com/oauth/token");
       expect(
@@ -1510,7 +1535,11 @@ describe("createXAAStateMachine", () => {
         requestExecutor: executor,
       });
 
-      await machine.proceedToNextStep();
+      await advanceUntil(
+        machine,
+        () => state.currentStep,
+        "received_resource_metadata"
+      );
 
       expect(state.currentStep).toBe("received_resource_metadata");
       expect(state.authzServerIssuer).toBe("https://auth.example.com");
@@ -1611,8 +1640,11 @@ describe("createXAAStateMachine", () => {
         requestExecutor: executor,
         clientSecret: overrides.clientSecret,
       });
-      await machine.proceedToNextStep(); // discover_resource_metadata
-      await machine.proceedToNextStep(); // discover_authz_metadata
+      await advanceUntil(
+        machine,
+        () => state.currentStep,
+        "received_authz_metadata"
+      );
       return state;
     }
 
@@ -2371,9 +2403,11 @@ describe("open dcr registration strategy", () => {
     });
     // Behavior, not just the flag: at received_authz_metadata the machine
     // goes straight to IdP authentication — no registration POST is issued.
-    for (let index = 0; index < 3; index += 1) {
-      await harness.machine.proceedToNextStep();
-    }
+    await advanceUntil(
+      harness.machine,
+      () => harness.getState().currentStep,
+      "received_identity_assertion"
+    );
     expect(harness.registerCalls()).toHaveLength(0);
     expect(
       harness.internalCalls.some((call) => call.path === "/authenticate")
@@ -2815,8 +2849,11 @@ describe("createXAAStateMachine discovery guards", () => {
       });
     });
 
-    await machine.proceedToNextStep();
-    await machine.proceedToNextStep();
+    await advanceUntil(
+      machine,
+      () => getState().currentStep,
+      "received_authz_metadata"
+    );
 
     expect(getState().currentStep).toBe("received_authz_metadata");
     expect(getState().authzServerIssuer).toBe(liveIssuer);

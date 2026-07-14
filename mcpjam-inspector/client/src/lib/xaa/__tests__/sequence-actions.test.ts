@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildXAAActions } from "../sequence-actions";
 import { createInitialXAAFlowState } from "../types";
-import type { XAAFlowState } from "../types";
+import type { XAAFlowState, XAAFlowStep } from "../types";
 
 // The sequence diagram is data-driven: these actions ARE the diagram. The
 // three identity-leg actions branch on the identity assertion format (input
@@ -102,5 +102,62 @@ describe("buildXAAActions identity assertion format", () => {
     expect(
       actionById(actions, "received_identity_assertion").details,
     ).toBeUndefined();
+  });
+});
+
+// The request/process split stores a step's resolved values (idJag, accessToken,
+// tokenEndpoint, ...) while the machine is still resting at the PRIOR "request"
+// step. buildXAAActions must therefore reveal an arrow's detail chip only once
+// its step has actually been reached — never one click early just because the
+// underlying value already exists in state.
+
+const detailsFor = (flowStep: XAAFlowStep, id: string) =>
+  buildXAAActions(
+    createInitialXAAFlowState({
+      currentStep: flowStep,
+      serverUrl: "https://mcp.example.com",
+      resourceUrl: "https://mcp.example.com",
+      resourceMetadataUrl: "https://mcp.example.com/.well-known/x",
+      authzServerIssuer: "https://auth.example.com",
+      tokenEndpoint: "https://auth.example.com/token",
+      identityAssertion: "id-token",
+      idJag: "id-jag",
+      accessToken: "access-token",
+      tokenType: "Bearer",
+      email: "user@example.com",
+    }),
+  ).find((action) => action.id === id)?.details;
+
+describe("buildXAAActions detail gating", () => {
+  it("hides every chip at idle even when values are already populated", () => {
+    const actions = buildXAAActions(
+      createInitialXAAFlowState({
+        currentStep: "idle",
+        accessToken: "access-token",
+        idJag: "id-jag",
+        tokenEndpoint: "https://auth.example.com/token",
+      }),
+    );
+    expect(actions.every((action) => action.details === undefined)).toBe(true);
+  });
+
+  it("does not reveal a 'received' chip while resting at its request step", () => {
+    // Resting at jwt_bearer_request (request fired, not yet processed): the
+    // access token is in state, but the received_access_token arrow and the
+    // downstream complete arrow must stay chip-less until reached.
+    expect(detailsFor("jwt_bearer_request", "received_access_token")).toBeUndefined();
+    expect(detailsFor("jwt_bearer_request", "complete")).toBeUndefined();
+    // The arrow the user just fired does show its own chip.
+    expect(detailsFor("jwt_bearer_request", "jwt_bearer_request")).toBeDefined();
+  });
+
+  it("keeps the ID-JAG chip hidden until the token-exchange is processed", () => {
+    expect(detailsFor("token_exchange_request", "received_id_jag")).toBeUndefined();
+    expect(detailsFor("received_id_jag", "received_id_jag")).toBeDefined();
+  });
+
+  it("reveals a chip once its own step is reached", () => {
+    expect(detailsFor("received_access_token", "received_access_token")).toBeDefined();
+    expect(detailsFor("received_authz_metadata", "received_authz_metadata")).toBeDefined();
   });
 });

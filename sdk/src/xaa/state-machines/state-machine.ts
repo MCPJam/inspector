@@ -795,8 +795,9 @@ export function createXAAStateMachine(
           );
         }
 
+        // Resolved — rest at the request step; the process half advances.
         machine.updateState({
-          currentStep: "received_resource_metadata",
+          currentStep: "discover_resource_metadata",
           resourceMetadataUrl,
           resourceMetadata:
             resourceMetadata as XAAFlowState["resourceMetadata"],
@@ -804,16 +805,6 @@ export function createXAAStateMachine(
           authzServerIssuer: resolvedAuthzIssuer,
           error: undefined,
         });
-
-        pushInfo(
-          "received_resource_metadata",
-          "xaa-resource-metadata",
-          "Resource metadata",
-          {
-            resource: resolvedResource,
-            authorization_servers: resourceMetadata.authorization_servers,
-          }
-        );
         return;
       } catch (error) {
         lastError =
@@ -827,6 +818,23 @@ export function createXAAStateMachine(
       currentStep: "discover_resource_metadata",
       error: lastError,
     });
+  };
+
+  const discoverResourceMetadataProcess = () => {
+    machine.updateState({
+      currentStep: "received_resource_metadata",
+      error: undefined,
+    });
+    const state = currentState();
+    pushInfo(
+      "received_resource_metadata",
+      "xaa-resource-metadata",
+      "Resource metadata",
+      {
+        resource: state.resourceUrl,
+        authorization_servers: state.resourceMetadata?.authorization_servers,
+      }
+    );
   };
 
   const discoverAuthzMetadata = async () => {
@@ -887,8 +895,9 @@ export function createXAAStateMachine(
       resolvedIssuer: string,
       compatibilityReport: XAACompatibilityReport | null
     ) => {
+      // Resolved — rest at the request step; the process half advances.
       machine.updateState({
-        currentStep: "received_authz_metadata",
+        currentStep: "discover_authz_metadata",
         authzMetadata: metadata as XAAFlowState["authzMetadata"],
         authzServerIssuer: resolvedIssuer,
         tokenEndpoint: metadata.token_endpoint as string,
@@ -904,28 +913,6 @@ export function createXAAStateMachine(
         compatibilityReport: compatibilityReport ?? undefined,
         error: undefined,
       });
-
-      pushInfo(
-        "received_authz_metadata",
-        "xaa-authz-metadata",
-        "Authorization metadata",
-        {
-          issuer: resolvedIssuer,
-          token_endpoint: metadata.token_endpoint,
-          grant_types_supported: metadata.grant_types_supported,
-          registration_endpoint: metadata.registration_endpoint,
-          client_id_metadata_document_supported:
-            metadata.client_id_metadata_document_supported,
-          authorization_grant_profiles_supported:
-            metadata.authorization_grant_profiles_supported,
-          compatibility: compatibilityReport
-            ? {
-                overall: compatibilityReport.overall,
-                vendor: compatibilityReport.vendor,
-              }
-            : undefined,
-        }
-      );
     };
 
     // A confidential client's secret is registered at one specific RAS, so
@@ -1037,6 +1024,35 @@ export function createXAAStateMachine(
       currentStep: "discover_authz_metadata",
       error: lastError,
     });
+  };
+
+  const discoverAuthzMetadataProcess = () => {
+    machine.updateState({
+      currentStep: "received_authz_metadata",
+      error: undefined,
+    });
+    const state = currentState();
+    pushInfo(
+      "received_authz_metadata",
+      "xaa-authz-metadata",
+      "Authorization metadata",
+      {
+        issuer: state.authzServerIssuer,
+        token_endpoint: state.authzMetadata?.token_endpoint,
+        grant_types_supported: state.authzMetadata?.grant_types_supported,
+        registration_endpoint: state.authzMetadata?.registration_endpoint,
+        client_id_metadata_document_supported:
+          state.authzMetadata?.client_id_metadata_document_supported,
+        authorization_grant_profiles_supported:
+          state.authzMetadata?.authorization_grant_profiles_supported,
+        compatibility: state.compatibilityReport
+          ? {
+              overall: state.compatibilityReport.overall,
+              vendor: state.compatibilityReport.vendor,
+            }
+          : undefined,
+      }
+    );
   };
 
   // --- Dynamic client-identity strategies (dcr / cimd) ----------------------
@@ -1368,8 +1384,19 @@ export function createXAAStateMachine(
       registrationEndpoint,
     });
 
+    // outcome.infoLogData is local to this call (not re-derivable from flow
+    // state), so its pushInfo stays here rather than moving to the process
+    // half — right before the rest-at-request-step advance.
+    pushInfo(
+      "received_client_credentials",
+      "xaa-dcr",
+      "Dynamic Client Registration",
+      outcome.infoLogData
+    );
+
+    // Resolved — rest at the request step; the process half advances.
     machine.updateState({
-      currentStep: "received_client_credentials",
+      currentStep: "request_client_registration",
       clientId,
       tokenEndpointAuthMethod: method,
       registrationWarnings: warnings,
@@ -1380,13 +1407,13 @@ export function createXAAStateMachine(
       isBusy: false,
       error: undefined,
     });
+  };
 
-    pushInfo(
-      "received_client_credentials",
-      "xaa-dcr",
-      "Dynamic Client Registration",
-      outcome.infoLogData
-    );
+  const registerClientDynamicallyProcess = () => {
+    machine.updateState({
+      currentStep: "received_client_credentials",
+      error: undefined,
+    });
   };
 
   const adoptClientMetadataDocument = async () => {
@@ -1541,8 +1568,24 @@ export function createXAAStateMachine(
     }
     const confidential = docAuthMethod === "private_key_jwt";
 
+    // documentUrl/doc are local to this call (doc.client_name is not
+    // re-derivable from flow state), so this pushInfo stays here rather than
+    // moving to the process half — right before the rest-at-request-step
+    // advance.
+    pushInfo(
+      "received_client_metadata",
+      "xaa-cimd",
+      "Client ID Metadata Document ready",
+      {
+        "Client ID": documentUrl,
+        "Client Name": (doc as Record<string, any>).client_name,
+        Note: "Debugger preflight only — the RAS performs its own fetch or metadata association; JWT Bearer redemption is the operational verdict.",
+      }
+    );
+
+    // Resolved — rest at the request step; the process half advances.
     machine.updateState({
-      currentStep: "received_client_metadata",
+      currentStep: "fetch_client_metadata_document",
       clientId: documentUrl,
       tokenEndpointAuthMethod: confidential ? "private_key_jwt" : "none",
       // Confidential CIMD is the recommended posture — no warning. Public CIMD
@@ -1558,17 +1601,13 @@ export function createXAAStateMachine(
           ],
       error: undefined,
     });
+  };
 
-    pushInfo(
-      "received_client_metadata",
-      "xaa-cimd",
-      "Client ID Metadata Document ready",
-      {
-        "Client ID": documentUrl,
-        "Client Name": (doc as Record<string, any>).client_name,
-        Note: "Debugger preflight only — the RAS performs its own fetch or metadata association; JWT Bearer redemption is the operational verdict.",
-      }
-    );
+  const adoptClientMetadataDocumentProcess = () => {
+    machine.updateState({
+      currentStep: "received_client_metadata",
+      error: undefined,
+    });
   };
 
   const authenticateUser = async () => {
@@ -1678,21 +1717,16 @@ export function createXAAStateMachine(
         );
       }
 
+      // Resolved — rest at the request step; the process half advances.
+      // Persist the resolved identity now so the process half can read it
+      // back from state rather than recomputing from the config closure.
       machine.updateState({
-        currentStep: "received_identity_assertion",
+        currentStep: "user_authentication",
         identityAssertion: body.id_token,
+        userId: activeUserId,
+        email: activeEmail,
         error: undefined,
       });
-
-      pushInfo(
-        "received_identity_assertion",
-        "xaa-identity-assertion",
-        "Identity assertion issued",
-        {
-          userId: activeUserId,
-          email: activeEmail,
-        }
-      );
     } catch (error) {
       machine.updateState({
         currentStep: "user_authentication",
@@ -1700,6 +1734,23 @@ export function createXAAStateMachine(
           error instanceof Error ? error.message : "Mock authentication failed",
       });
     }
+  };
+
+  const authenticateUserProcess = () => {
+    machine.updateState({
+      currentStep: "received_identity_assertion",
+      error: undefined,
+    });
+    const state = currentState();
+    pushInfo(
+      "received_identity_assertion",
+      "xaa-identity-assertion",
+      "Identity assertion issued",
+      {
+        userId: state.userId,
+        email: state.email,
+      }
+    );
   };
 
   const exchangeIdTokenForIdJag = async () => {
@@ -1832,18 +1883,10 @@ export function createXAAStateMachine(
           );
         }
 
-        machine.updateState({
-          currentStep: "received_id_jag",
-          idJag: body.access_token,
-          idJagDecoded: null,
-          // The response `scope` is the granted scope; compare against the
-          // requested one to surface an IdP downscope.
-          ...(policyMode
-            ? { idpPolicy: buildIdpPolicyOutcome(body.scope, state.scope) }
-            : {}),
-          error: undefined,
-        });
-
+        // body.issued_token_type/token_type are local to this call (not
+        // re-derivable from flow state), so these pushInfo calls stay here
+        // rather than moving to the process half — right before the
+        // rest-at-request-step advance.
         pushInfo("received_id_jag", "xaa-id-jag", "ID-JAG issued", {
           negativeTestMode: state.negativeTestMode,
           expectedFailure:
@@ -1866,6 +1909,19 @@ export function createXAAStateMachine(
             { level: "warning" }
           );
         }
+
+        // Resolved — rest at the request step; the process half advances.
+        machine.updateState({
+          currentStep: "token_exchange_request",
+          idJag: body.access_token,
+          idJagDecoded: null,
+          // The response `scope` is the granted scope; compare against the
+          // requested one to surface an IdP downscope.
+          ...(policyMode
+            ? { idpPolicy: buildIdpPolicyOutcome(body.scope, state.scope) }
+            : {}),
+          error: undefined,
+        });
         return;
       }
 
@@ -1923,8 +1979,11 @@ export function createXAAStateMachine(
         throw new Error("Token exchange response did not include an `id_jag`.");
       }
 
+      // Resolved — rest at the request step; the process half advances.
+      // This pushInfo comes only from state (negativeTestMode), so it moves
+      // into exchangeIdTokenForIdJagProcess.
       machine.updateState({
-        currentStep: "received_id_jag",
+        currentStep: "token_exchange_request",
         idJag: body.id_jag,
         idJagDecoded: null,
         // Gated mints echo the granted scope as a `scope` response field.
@@ -1933,16 +1992,30 @@ export function createXAAStateMachine(
           : {}),
         error: undefined,
       });
-
-      pushInfo("received_id_jag", "xaa-id-jag", "ID-JAG issued", {
-        negativeTestMode: state.negativeTestMode,
-        expectedFailure:
-          NEGATIVE_TEST_MODE_DETAILS[state.negativeTestMode].expectedFailure,
-      });
     } catch (error) {
       machine.updateState({
         currentStep: "token_exchange_request",
         error: error instanceof Error ? error.message : "Token exchange failed",
+      });
+    }
+  };
+
+  const exchangeIdTokenForIdJagProcess = () => {
+    machine.updateState({
+      currentStep: "received_id_jag",
+      error: undefined,
+    });
+    const state = currentState();
+    // The spec-endpoint success branch already pushed its (locally-sourced)
+    // "ID-JAG issued" info in the request half; only the non-spec branch's
+    // state-derivable pushInfo needs firing here, or it would double-log.
+    const useSpecEndpoint =
+      state.negativeTestMode === "valid" && specTokenEndpointAvailable;
+    if (!useSpecEndpoint) {
+      pushInfo("received_id_jag", "xaa-id-jag", "ID-JAG issued", {
+        negativeTestMode: state.negativeTestMode,
+        expectedFailure:
+          NEGATIVE_TEST_MODE_DETAILS[state.negativeTestMode].expectedFailure,
       });
     }
   };
@@ -2211,8 +2284,9 @@ export function createXAAStateMachine(
         return;
       }
 
+      // Resolved — rest at the request step; the process half advances.
       machine.updateState({
-        currentStep: "received_access_token",
+        currentStep: "jwt_bearer_request",
         accessToken: tokenResponse.access_token,
         tokenType:
           typeof tokenResponse.token_type === "string"
@@ -2228,16 +2302,6 @@ export function createXAAStateMachine(
             : undefined,
         error: undefined,
       });
-
-      pushInfo(
-        "received_access_token",
-        "xaa-access-token",
-        "Access token issued",
-        {
-          token_type: tokenResponse.token_type,
-          expires_in: tokenResponse.expires_in,
-        }
-      );
     } catch (error) {
       machine.updateState({
         currentStep: "jwt_bearer_request",
@@ -2245,6 +2309,23 @@ export function createXAAStateMachine(
           error instanceof Error ? error.message : "JWT bearer request failed",
       });
     }
+  };
+
+  const requestAccessTokenProcess = () => {
+    machine.updateState({
+      currentStep: "received_access_token",
+      error: undefined,
+    });
+    const state = currentState();
+    pushInfo(
+      "received_access_token",
+      "xaa-access-token",
+      "Access token issued",
+      {
+        token_type: state.tokenType,
+        expires_in: state.expiresIn,
+      }
+    );
   };
 
   const callAuthenticatedMcp = async () => {
@@ -2304,21 +2385,11 @@ export function createXAAStateMachine(
         return;
       }
 
+      // Resolved — rest at the request step; the process half advances.
       machine.updateState({
-        currentStep: "complete",
+        currentStep: "authenticated_mcp_request",
         error: undefined,
       });
-
-      pushInfo(
-        "complete",
-        "xaa-authenticated-mcp",
-        "Authenticated MCP response",
-        {
-          status: result.status,
-          xaa_extension: mcpInitializeExtensionEvidence(result.body),
-          body: result.body,
-        }
-      );
     } catch (error) {
       machine.updateState({
         currentStep: "authenticated_mcp_request",
@@ -2330,22 +2401,43 @@ export function createXAAStateMachine(
     }
   };
 
+  const callAuthenticatedMcpProcess = () => {
+    machine.updateState({
+      currentStep: "complete",
+      error: undefined,
+    });
+    const state = currentState();
+    pushInfo(
+      "complete",
+      "xaa-authenticated-mcp",
+      "Authenticated MCP response",
+      {
+        status: state.lastResponse?.status,
+        xaa_extension: mcpInitializeExtensionEvidence(state.lastResponse?.body),
+        body: state.lastResponse?.body,
+      }
+    );
+  };
+
   machine.proceedToNextStep = async () => {
     const step = currentState().currentStep;
 
     switch (step) {
       case "idle":
-      case "discover_resource_metadata":
         await discoverResourceMetadata();
         return;
+      case "discover_resource_metadata":
+        if (currentState().error) await discoverResourceMetadata();
+        else discoverResourceMetadataProcess();
+        return;
       case "received_resource_metadata":
-      case "discover_authz_metadata":
         await discoverAuthzMetadata();
         return;
+      case "discover_authz_metadata":
+        if (currentState().error) await discoverAuthzMetadata();
+        else discoverAuthzMetadataProcess();
+        return;
       case "received_authz_metadata":
-        // The config-resolved strategy (which already forces preregistered
-        // for registrationId/serverId runs) is authoritative; the state copy
-        // exists for display surfaces.
         if (registrationStrategy === "dcr") {
           await registerClientDynamically();
           return;
@@ -2357,37 +2449,51 @@ export function createXAAStateMachine(
         await authenticateUser();
         return;
       case "request_client_registration":
-        // First attempt or retry (retry is gated on the duplicate-client
-        // confirmation inside registerClientDynamically).
-        await registerClientDynamically();
+        // Only advance once registration actually succeeded (clientId set).
+        // Resting here with no error but no clientId means the confirmed
+        // "Register another client" path cleared the parked error to force a
+        // fresh POST — re-run rather than mistaking it for a completed step.
+        if (currentState().error || !currentState().clientId)
+          await registerClientDynamically();
+        else registerClientDynamicallyProcess();
         return;
       case "fetch_client_metadata_document":
-        // First attempt or freely-retryable CIMD preflight.
-        await adoptClientMetadataDocument();
+        if (currentState().error || !currentState().clientId)
+          await adoptClientMetadataDocument();
+        else adoptClientMetadataDocumentProcess();
         return;
       case "received_client_credentials":
       case "received_client_metadata":
-      case "user_authentication":
         await authenticateUser();
         return;
+      case "user_authentication":
+        if (currentState().error) await authenticateUser();
+        else authenticateUserProcess();
+        return;
       case "received_identity_assertion":
-      case "token_exchange_request":
         await exchangeIdTokenForIdJag();
         return;
+      case "token_exchange_request":
+        if (currentState().error) await exchangeIdTokenForIdJag();
+        else exchangeIdTokenForIdJagProcess();
+        return;
       case "received_id_jag":
+        inspectIdJag();
+        return;
       case "inspect_id_jag":
-        if (step === "received_id_jag") {
-          inspectIdJag();
-          return;
-        }
         await requestAccessToken();
         return;
       case "jwt_bearer_request":
-        await requestAccessToken();
+        if (currentState().error) await requestAccessToken();
+        else if (currentState().negativeProbe) return;
+        else requestAccessTokenProcess();
         return;
       case "received_access_token":
-      case "authenticated_mcp_request":
         await callAuthenticatedMcp();
+        return;
+      case "authenticated_mcp_request":
+        if (currentState().error) await callAuthenticatedMcp();
+        else callAuthenticatedMcpProcess();
         return;
       case "complete":
         return;
@@ -2423,8 +2529,15 @@ export function createXAAStateMachine(
       ) {
         return;
       }
-      if (after.currentStep === before.currentStep) {
-        // No progress and no error — bail rather than loop forever.
+      if (
+        after.currentStep === before.currentStep &&
+        (after.httpHistory?.length ?? 0) ===
+          (before.httpHistory?.length ?? 0)
+      ) {
+        // No step change AND no new request — genuinely stuck, bail rather
+        // than loop forever. A confirmed "Register another client" re-register
+        // rests at the same request step but grows httpHistory (it POSTed), so
+        // it counts as progress and the run continues to the process step.
         return;
       }
     }
