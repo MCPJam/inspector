@@ -228,6 +228,7 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
       transportType: "http";
       url: string;
       useOAuth?: boolean;
+      authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
       headers?: Record<string, string>;
       hasHeaders?: boolean;
     };
@@ -319,6 +320,115 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
     expect(config.requestInit.headers).toMatchObject({
       Authorization: "Bearer fresh-token",
     });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("discover (tokenless auto): swallows a failed silent refresh and connects unauthenticated", async () => {
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return authorizeBatchLocalResponse({
+          serverId: "srv-auto",
+          serverConfig: {
+            transportType: "http",
+            url: "https://open.example.com/mcp",
+            authMethod: "auto",
+          },
+          oauthAccessToken: null,
+        });
+      }
+      if (url.endsWith("/web/oauth/force-refresh")) {
+        // Never-OAuth'd server: no stored credential to refresh.
+        return new Response(
+          JSON.stringify({
+            success: false,
+            code: "refresh_token_invalid",
+            message: "No hosted OAuth credential found.",
+          }),
+          { status: 401, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { config, effectiveAuth }: any = await resolveLocalServerForConnect(
+      fakeContext,
+      "bearer-xyz",
+      "proj-1",
+      "srv-auto",
+      { serverDisplayName: "Open Server" }
+    );
+
+    expect(effectiveAuth).toBe("discover");
+    expect(config.requestInit.headers.Authorization).toBeUndefined();
+    expect(config.onUnauthorized).toBeUndefined();
+  });
+
+  it("discover (tokenless auto): a broken refresh helper also degrades to unauthenticated, not a throw", async () => {
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return authorizeBatchLocalResponse({
+          serverId: "srv-auto-2",
+          serverConfig: {
+            transportType: "http",
+            url: "https://open.example.com/mcp",
+            authMethod: "auto",
+          },
+          oauthAccessToken: null,
+        });
+      }
+      if (url.endsWith("/web/oauth/force-refresh")) {
+        return new Response("backend exploded", { status: 500 });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { config, effectiveAuth }: any = await resolveLocalServerForConnect(
+      fakeContext,
+      "bearer-xyz",
+      "proj-1",
+      "srv-auto-2",
+      { serverDisplayName: "Open Server" }
+    );
+
+    expect(effectiveAuth).toBe("discover");
+    expect(config.requestInit.headers.Authorization).toBeUndefined();
+  });
+
+  it("discover (auto with a stored token): rides the oauth rails with the refresh hook", async () => {
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return authorizeBatchLocalResponse({
+          serverId: "srv-auto-3",
+          serverConfig: {
+            transportType: "http",
+            url: "https://hosted.example.com/mcp",
+            authMethod: "auto",
+          },
+          oauthAccessToken: "stored-token",
+        });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { config, effectiveAuth }: any = await resolveLocalServerForConnect(
+      fakeContext,
+      "bearer-xyz",
+      "proj-1",
+      "srv-auto-3",
+      { serverDisplayName: "Hosted Server" }
+    );
+
+    expect(effectiveAuth).toBe("discover");
+    expect(config.requestInit.headers).toMatchObject({
+      Authorization: "Bearer stored-token",
+    });
+    expect(config.onUnauthorized).toEqual(expect.any(Function));
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

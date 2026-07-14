@@ -173,13 +173,15 @@ describe("AuthenticationSection", () => {
     expect(trigger).toHaveTextContent("Auto");
     expect(
       screen.queryByText(
-        "Uses Cross-App Access when configured, otherwise OAuth",
+        "Cross-App Access when configured — otherwise connects without credentials, then OAuth if required",
       ),
     ).not.toBeInTheDocument();
 
     await userEvent.click(trigger);
     expect(
-      screen.getByText("Uses Cross-App Access when configured, otherwise OAuth"),
+      screen.getByText(
+        "Cross-App Access when configured — otherwise connects without credentials, then OAuth if required",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -190,11 +192,15 @@ describe("AuthenticationSection", () => {
     expect(screen.getByRole("combobox")).toHaveTextContent("Auto");
   });
 
-  it("explains Auto per-server: OAuth when XAA is not configured", () => {
+  it("explains Auto per-server: discover when XAA is not configured", () => {
     xaaFlagValue = true;
     render(<AuthenticationSection {...autoProps} autoSelectsXaa={false} />);
 
-    expect(screen.getByText("Auto will use OAuth.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Connects without credentials first; if the server requires authorization, you'll be prompted to continue with OAuth.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("explains Auto per-server: XAA when configured", () => {

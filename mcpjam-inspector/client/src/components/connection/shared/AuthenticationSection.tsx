@@ -346,7 +346,7 @@ export function AuthenticationSection({
               {showXaaOption && (
                 <SelectItem
                   value="auto"
-                  description="Uses Cross-App Access when configured, otherwise OAuth"
+                  description="Cross-App Access when configured — otherwise connects without credentials, then OAuth if required"
                 >
                   Auto
                 </SelectItem>
@@ -357,7 +357,7 @@ export function AuthenticationSection({
             <p className="text-xs text-muted-foreground">
               {autoSelectsXaa
                 ? "Cross-App Access is configured — connecting mints a cross-app token."
-                : "Auto will use OAuth."}
+                : "Connects without credentials first; if the server requires authorization, you'll be prompted to continue with OAuth."}
             </p>
           )}
         </div>

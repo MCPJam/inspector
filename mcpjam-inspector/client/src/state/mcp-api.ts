@@ -132,10 +132,17 @@ async function safeValidateHostedServer(
     // the ErrorCard via `lastNormalizedError` on the server reducer.
     const normalized =
       error instanceof WebApiError ? error.normalized : undefined;
+    // Thread the tagged-401 escalation flag through so the hosted connect
+    // path can detect "needs interactive OAuth" structurally, matching the
+    // local envelope's top-level `oauthRequired`.
+    const oauthRequired =
+      error instanceof WebApiError &&
+      error.details?.oauthRequired === true;
     return {
       success: false,
       error: normalizeHostedValidationError(error),
       ...(normalized ? { normalized } : {}),
+      ...(oauthRequired ? { oauthRequired: true } : {}),
     };
   }
 }
