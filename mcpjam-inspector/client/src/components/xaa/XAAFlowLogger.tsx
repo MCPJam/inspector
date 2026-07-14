@@ -845,7 +845,10 @@ export function XAAFlowLogger({
                 />
               )}
               {section.groups.map((group, indexInPhase) => {
-                const stepInfo = getXAAStepInfo(group.step);
+                const stepInfo = getXAAStepInfo(
+                  group.step,
+                  flowState.identityAssertionFormat,
+                );
                 const status = getStatus(group.step);
                 const StatusIcon = status.icon;
                 const entryCount =

@@ -2714,3 +2714,284 @@ describe("createXAAStateMachine discovery guards", () => {
     expect(getState().error).toMatch(/does not match/i);
   });
 });
+
+describe("createXAAStateMachine SAML axes", () => {
+  const fakeSamlAssertionB64 = Buffer.from(
+    `<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_a1"/>`
+  ).toString("base64");
+
+  function samlExecutor(options: { subjectIdFormatParam?: boolean } = {}) {
+    const idJag = makeJwt({
+      iss: "https://issuer.example/api/web/xaa",
+      sub: "user-12345",
+      aud: "https://auth.example.com",
+      resource: "https://mcp.example.com",
+      client_id: "mcpjam-debugger",
+      exp: Math.floor(Date.now() / 1000) + 300,
+      ...(options.subjectIdFormatParam
+        ? {
+            sub_id: {
+              format: "saml-nameid",
+              issuer: "https://issuer.example/api/web/xaa",
+              nameid: "user-12345",
+              sp_name_qualifier: "https://auth.example.com",
+            },
+          }
+        : {}),
+    });
+
+    return {
+      idJag,
+      executor: {
+        externalRequest: vi.fn(async () => ({
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: {
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: {
+              protocolVersion: "2025-11-25",
+              serverInfo: { name: "demo" },
+            },
+          },
+          ok: true,
+        })),
+        internalRequest: vi.fn(async (path: string) => {
+          if (path === "/authenticate") {
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: {
+                assertion: fakeSamlAssertionB64,
+                assertion_format: "saml",
+                token_type: "Bearer",
+                expires_in: 300,
+                subject: {
+                  issuer: "https://issuer.example/api/web/xaa",
+                  nameid: "user-12345",
+                  nameidFormat:
+                    "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+                  spNameQualifier: "mcpjam-xaa-debugger",
+                },
+                user: { sub: "user-12345", email: "demo.user@example.com" },
+              },
+              ok: true,
+            };
+          }
+          if (path === "/token") {
+            return specTokenExchangeResult(idJag);
+          }
+          return {
+            status: 200,
+            statusText: "OK",
+            headers: {},
+            body: {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: {
+                access_token: "access-token",
+                token_type: "Bearer",
+                expires_in: 300,
+              },
+            },
+            ok: true,
+          };
+        }),
+      },
+    };
+  }
+
+  function buildSamlMachine(
+    executor: {
+      internalRequest: ReturnType<typeof vi.fn>;
+      externalRequest: ReturnType<typeof vi.fn>;
+    },
+    stateOverrides: Partial<XAAFlowState> = {}
+  ) {
+    let state: XAAFlowState = createInitialXAAFlowState({
+      serverUrl: "https://mcp.example.com",
+      authzServerIssuer: "https://auth.example.com",
+      tokenEndpoint: "https://auth.example.com/oauth/token",
+      clientId: "mcpjam-debugger",
+      userId: "user-12345",
+      email: "demo.user@example.com",
+      identityAssertionFormat: "saml",
+      subjectIdentifierFormat: "saml-nameid",
+      ...stateOverrides,
+    });
+    const machine = createXAAStateMachine({
+      state,
+      getState: () => state,
+      updateState: (updates) => {
+        state = { ...state, ...updates };
+      },
+      serverUrl: "https://mcp.example.com",
+      issuerBaseUrl: "https://issuer.example/api/web/xaa",
+      requestExecutor: executor,
+      clientId: "mcpjam-debugger",
+      userId: "user-12345",
+      email: "demo.user@example.com",
+      identityAssertionFormat: state.identityAssertionFormat,
+      subjectIdentifierFormat: state.subjectIdentifierFormat,
+    });
+    return { machine, getState: () => state };
+  }
+
+  it("walks a full SAML run: saml2 subject_token_type + subject_id_format + subject metadata", async () => {
+    const { executor } = samlExecutor({ subjectIdFormatParam: true });
+    const { machine, getState } = buildSamlMachine(executor);
+
+    await machine.runAll();
+
+    const state = getState();
+    expect(state.currentStep).toBe("complete");
+    expect(state.identityAssertion).toBe(fakeSamlAssertionB64);
+    expect(state.identityAssertionSubject).toEqual({
+      issuer: "https://issuer.example/api/web/xaa",
+      nameid: "user-12345",
+      nameidFormat: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+      spNameQualifier: "mcpjam-xaa-debugger",
+    });
+
+    // The authenticate request declares the input axis.
+    const authCall = executor.internalRequest.mock.calls.find(
+      ([path]) => path === "/authenticate"
+    );
+    expect(JSON.parse(String(authCall?.[1]?.body)).assertionFormat).toBe(
+      "saml"
+    );
+
+    // The RFC 8693 exchange presents the SAML token type and asks for the
+    // saml-nameid output axis via the mock-extension param.
+    const tokenCall = executor.internalRequest.mock.calls.find(
+      ([path]) => path === "/token"
+    );
+    const form = new URLSearchParams(String(tokenCall?.[1]?.body));
+    expect(form.get("subject_token")).toBe(fakeSamlAssertionB64);
+    expect(form.get("subject_token_type")).toBe(
+      "urn:ietf:params:oauth:token-type:saml2"
+    );
+    expect(form.get("subject_id_format")).toBe("saml-nameid");
+
+    // Format-aware log label.
+    const assertionLog = state.infoLogs?.find(
+      (log) => log.id === "xaa-identity-assertion"
+    );
+    expect(assertionLog?.label).toBe("SAML assertion issued");
+    expect(assertionLog?.data).toMatchObject({ nameid: "user-12345" });
+
+    // The assertion stays out of every diagnostic surface.
+    const diagnostics = JSON.stringify({
+      lastRequest: state.lastRequest,
+      lastResponse: state.lastResponse,
+      httpHistory: state.httpHistory,
+      infoLogs: state.infoLogs,
+      error: state.error,
+    });
+    expect(diagnostics).not.toContain(fakeSamlAssertionB64);
+  });
+
+  it("omits subject_id_format for the oauth-sub output axis (OIDC wire unchanged)", async () => {
+    const { executor } = samlExecutor();
+    const { machine, getState } = buildSamlMachine(executor, {
+      subjectIdentifierFormat: "oauth-sub",
+    });
+
+    await machine.runAll();
+
+    expect(getState().currentStep).toBe("complete");
+    const tokenCall = executor.internalRequest.mock.calls.find(
+      ([path]) => path === "/token"
+    );
+    expect(tokenCall).toBeDefined();
+    const form = new URLSearchParams(String(tokenCall?.[1]?.body));
+    expect(form.get("subject_token_type")).toBe(
+      "urn:ietf:params:oauth:token-type:saml2"
+    );
+    expect(form.get("subject_id_format")).toBeNull();
+  });
+
+  it("hard-fails when a SAML run receives an OIDC-only response (older issuer)", async () => {
+    const { executor } = samlExecutor();
+    executor.internalRequest.mockImplementation(async (path: string) => {
+      if (path === "/authenticate") {
+        return {
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: { id_token: "an-oidc-token" },
+          ok: true,
+        };
+      }
+      throw new Error("unexpected call");
+    });
+    const { machine, getState } = buildSamlMachine(executor);
+
+    await machine.runAll();
+
+    const state = getState();
+    expect(state.currentStep).toBe("user_authentication");
+    expect(state.error).toMatch(/did not include an `assertion`/);
+    expect(state.identityAssertion).toBeUndefined();
+  });
+
+  it("keeps both format axes sticky across resetFlow", async () => {
+    const { executor } = samlExecutor();
+    const { machine, getState } = buildSamlMachine(executor);
+
+    await machine.proceedToNextStep();
+    machine.resetFlow();
+
+    const state = getState();
+    expect(state.currentStep).toBe("idle");
+    expect(state.identityAssertionFormat).toBe("saml");
+    expect(state.subjectIdentifierFormat).toBe("saml-nameid");
+    expect(state.identityAssertionSubject).toBeUndefined();
+  });
+
+  it("defaults both axes to oidc/oauth-sub and sends assertionFormat=oidc", async () => {
+    let state: XAAFlowState = createInitialXAAFlowState({
+      serverUrl: "https://mcp.example.com",
+      authzServerIssuer: "https://auth.example.com",
+      tokenEndpoint: "https://auth.example.com/oauth/token",
+      clientId: "mcpjam-debugger",
+      currentStep: "received_authz_metadata",
+    });
+    expect(state.identityAssertionFormat).toBe("oidc");
+    expect(state.subjectIdentifierFormat).toBe("oauth-sub");
+
+    const executor = {
+      externalRequest: vi.fn(),
+      internalRequest: vi.fn(async () => ({
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: { id_token: "id-token" },
+        ok: true,
+      })),
+    };
+    const machine = createXAAStateMachine({
+      state,
+      getState: () => state,
+      updateState: (updates) => {
+        state = { ...state, ...updates };
+      },
+      serverUrl: "https://mcp.example.com",
+      issuerBaseUrl: "https://issuer.example/api/web/xaa",
+      requestExecutor: executor,
+      clientId: "mcpjam-debugger",
+    });
+
+    await machine.proceedToNextStep();
+
+    const authCall = executor.internalRequest.mock.calls[0];
+    expect(JSON.parse(String(authCall?.[1]?.body)).assertionFormat).toBe(
+      "oidc"
+    );
+    expect(state.currentStep).toBe("received_identity_assertion");
+    expect(state.identityAssertion).toBe("id-token");
+  });
+});
