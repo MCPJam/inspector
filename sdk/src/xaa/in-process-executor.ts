@@ -15,7 +15,12 @@ import {
   handleXaaTokenExchangeGrant,
 } from "./mint/handlers.js";
 import { buildJwtBearerRequest } from "./mint/jwt-bearer.js";
-import { DEFAULT_NEGATIVE_TEST_MODE, isNegativeTestMode } from "./constants.js";
+import {
+  DEFAULT_NEGATIVE_TEST_MODE,
+  isNegativeTestMode,
+  normalizeIdentityAssertionFormat,
+  normalizeSubjectIdentifierFormat,
+} from "./constants.js";
 import type {
   XAARequestExecutor,
   XAARequestResult,
@@ -111,15 +116,27 @@ export function createInProcessXaaExecutor(
   ): Promise<XAARequestResult> => {
     const body = parseInitBody(init);
 
-    // Mock OIDC login → id_token. Thin adapter over the shared core, which
-    // owns the server's demo-identity defaults and rich response body.
+    // Mock login → identity assertion (OIDC id_token or SAML assertion).
+    // Thin adapter over the shared core, which owns the server's
+    // demo-identity defaults and rich response body.
     if (path.endsWith("/authenticate")) {
+      if (
+        body.assertionFormat !== undefined &&
+        normalizeIdentityAssertionFormat(body.assertionFormat) === undefined
+      ) {
+        return jsonResult(400, {
+          error: `Unsupported assertion format: ${String(
+            body.assertionFormat
+          )}`,
+        });
+      }
       const result = handleXaaAuthenticate({
         issuer: resolveIssuer(),
         userId: nonEmptyString(body.userId),
         email: nonEmptyString(body.email),
         audience: nonEmptyString(body.audience),
         resourceClientId: nonEmptyString(body.resourceClientId),
+        assertionFormat: normalizeIdentityAssertionFormat(body.assertionFormat),
       });
       return jsonResult(result.status, result.body);
     }
@@ -173,6 +190,26 @@ export function createInProcessXaaExecutor(
           )}`,
         });
       }
+      if (
+        body.assertionFormat !== undefined &&
+        normalizeIdentityAssertionFormat(body.assertionFormat) === undefined
+      ) {
+        return jsonResult(400, {
+          error: `Unsupported assertion format: ${String(
+            body.assertionFormat
+          )}`,
+        });
+      }
+      if (
+        body.subjectIdFormat !== undefined &&
+        normalizeSubjectIdentifierFormat(body.subjectIdFormat) === undefined
+      ) {
+        return jsonResult(400, {
+          error: `Unsupported subject identifier format: ${String(
+            body.subjectIdFormat
+          )}`,
+        });
+      }
       try {
         const result = handleXaaJsonTokenExchange({
           issuer: resolveIssuer(),
@@ -184,6 +221,12 @@ export function createInProcessXaaExecutor(
           negativeTestMode: isNegativeTestMode(body.negativeTestMode)
             ? body.negativeTestMode
             : DEFAULT_NEGATIVE_TEST_MODE,
+          assertionFormat: normalizeIdentityAssertionFormat(
+            body.assertionFormat
+          ),
+          subjectIdFormat: normalizeSubjectIdentifierFormat(
+            body.subjectIdFormat
+          ),
         });
         return jsonResult(result.status, result.body);
       } catch (error) {

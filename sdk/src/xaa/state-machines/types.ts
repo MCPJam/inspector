@@ -3,8 +3,12 @@ import type {
   LogErrorDetails,
 } from "../../oauth/state-machines/types.js";
 import {
+  DEFAULT_IDENTITY_ASSERTION_FORMAT,
   DEFAULT_NEGATIVE_TEST_MODE,
+  DEFAULT_SUBJECT_IDENTIFIER_FORMAT,
+  type IdentityAssertionFormat,
   type NegativeTestMode,
+  type SubjectIdentifierFormat,
 } from "../constants.js";
 import type { XAACompatibilityReport } from "./capability-preflight.js";
 
@@ -150,6 +154,21 @@ export interface XAAFlowState {
   /** The mock IdP issuer expected in the ID-JAG `iss` claim. */
   issuerBaseUrl?: string;
   negativeTestMode: NegativeTestMode;
+  /** Input axis: assertion format the mock IdP mints and the exchange
+   * presents. Sticky like negativeTestMode — the UI resets the flow to
+   * change it. */
+  identityAssertionFormat: IdentityAssertionFormat;
+  /** Output axis: whether the ID-JAG carries a saml-nameid `sub_id`. Sticky
+   * like negativeTestMode. Independent of the input axis. */
+  subjectIdentifierFormat: SubjectIdentifierFormat;
+  /** Structured subject metadata from a SAML `/authenticate` response, for
+   * UI display — the client never parses assertion XML. */
+  identityAssertionSubject?: {
+    issuer: string;
+    nameid: string;
+    nameidFormat?: string;
+    spNameQualifier?: string;
+  };
   userId?: string;
   email?: string;
   clientId?: string;
@@ -241,6 +260,10 @@ export interface BaseXAAStateMachineConfig {
   requestExecutor: XAARequestExecutor;
   scheduleAutoAdvance?: (next: () => void) => void;
   negativeTestMode?: NegativeTestMode;
+  /** Input axis (see XAAFlowState.identityAssertionFormat). */
+  identityAssertionFormat?: IdentityAssertionFormat;
+  /** Output axis (see XAAFlowState.subjectIdentifierFormat). */
+  subjectIdentifierFormat?: SubjectIdentifierFormat;
   userId?: string;
   email?: string;
   clientId?: string;
@@ -290,6 +313,9 @@ export const EMPTY_XAA_FLOW_STATE: XAAFlowState = {
   authzMetadata: undefined,
   tokenEndpoint: undefined,
   negativeTestMode: DEFAULT_NEGATIVE_TEST_MODE,
+  identityAssertionFormat: DEFAULT_IDENTITY_ASSERTION_FORMAT,
+  subjectIdentifierFormat: DEFAULT_SUBJECT_IDENTIFIER_FORMAT,
+  identityAssertionSubject: undefined,
   userId: undefined,
   email: undefined,
   clientId: undefined,
@@ -317,6 +343,10 @@ export function createInitialXAAFlowState(
     ...EMPTY_XAA_FLOW_STATE,
     ...overrides,
     negativeTestMode: overrides.negativeTestMode ?? DEFAULT_NEGATIVE_TEST_MODE,
+    identityAssertionFormat:
+      overrides.identityAssertionFormat ?? DEFAULT_IDENTITY_ASSERTION_FORMAT,
+    subjectIdentifierFormat:
+      overrides.subjectIdentifierFormat ?? DEFAULT_SUBJECT_IDENTIFIER_FORMAT,
     httpHistory: overrides.httpHistory ?? [],
     infoLogs: overrides.infoLogs ?? [],
   };

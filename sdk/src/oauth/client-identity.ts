@@ -56,6 +56,9 @@ export const TOKEN_EXCHANGE_GRANT =
 export const JWT_BEARER_GRANT = "urn:ietf:params:oauth:grant-type:jwt-bearer";
 export const ID_JAG_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id-jag";
 export const ID_TOKEN_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id_token";
+// Draft §4.3 alternative subject-token type: a signed SAML 2.0 assertion
+// (base64 of the XML) representing the requesting client's SSO session.
+export const SAML2_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:saml2";
 
 // The XAA debugger's Client ID Metadata Document. This is a DIFFERENT client
 // identity from DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL (the authorization-code
