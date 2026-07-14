@@ -98,8 +98,10 @@ export interface XaaAuthenticateParams {
 export function handleXaaAuthenticate(
   params: XaaAuthenticateParams
 ): XaaMintHandlerResult {
-  const subject = params.userId || "user-12345";
-  const email = params.email || "demo.user@example.com";
+  // Trim first so a whitespace-only value falls back to the demo default,
+  // matching the JSON token-exchange path (which trims before validating).
+  const subject = params.userId?.trim() || "user-12345";
+  const email = params.email?.trim() || "demo.user@example.com";
 
   if (
     (params.assertionFormat ?? DEFAULT_IDENTITY_ASSERTION_FORMAT) === "saml"
@@ -178,10 +180,9 @@ function decodeJwtPayloadUnsafe(token: string): Record<string, unknown> {
     throw new Error("Identity assertion must be a JWT");
   }
 
+  let parsed: unknown;
   try {
-    return JSON.parse(
-      Buffer.from(parts[1], "base64url").toString("utf-8")
-    ) as Record<string, unknown>;
+    parsed = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8"));
   } catch (error) {
     throw new Error(
       `Identity assertion payload is not valid JSON (${
@@ -189,6 +190,12 @@ function decodeJwtPayloadUnsafe(token: string): Record<string, unknown> {
       })`
     );
   }
+  // A payload of JSON `null`, a primitive, or an array parses fine but has no
+  // claims; reject it here instead of throwing a TypeError on `.sub` access.
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Identity assertion payload must be a JSON object");
+  }
+  return parsed as Record<string, unknown>;
 }
 
 /**
