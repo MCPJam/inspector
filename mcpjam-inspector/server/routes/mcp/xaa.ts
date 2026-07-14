@@ -57,6 +57,7 @@ import type {
   XaaResourceAppSecretResult,
 } from "../../utils/server-secrets.js";
 import { logger } from "../../utils/logger.js";
+import { getClientIp as getTrustedClientIp } from "../../utils/client-ip.js";
 import { CORS_ORIGINS, MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 
 const HEALTH_CHECK_TIMEOUT_MS = 10_000;
@@ -156,16 +157,14 @@ function checkOidcIpCap(ip: string): boolean {
   return true;
 }
 
-// The client IP for rate limiting, or null when there is no proxy in front
-// (local desktop): a no-proxy deployment has no public DoS surface, and
-// bucketing every local request under one key would self-DoS legitimate
-// bursts (test loops, batch mints).
-function getClientIp(c: {
-  req: { header: (name: string) => string | undefined };
-}): string | null {
-  const forwarded = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
-  return forwarded || null;
-}
+// The client IP for rate limiting / the backend's per-IP guest quota. Uses the
+// shared trusted-edge resolver (cf-connecting-ip → x-real-ip → x-forwarded-for
+// → socket) rather than trusting the raw first x-forwarded-for hop, which a
+// caller can spoof to rotate past a per-IP cap. Returns null when there is no
+// proxy in front (local desktop): a no-proxy deployment has no public DoS
+// surface, and bucketing every local request under one key would self-DoS
+// legitimate bursts (test loops, batch mints).
+const getClientIp = getTrustedClientIp;
 
 // Reject cross-site browser POSTs to the state-changing OIDC endpoints. A
 // legitimate caller is either our own interstitial form (same-origin Origin)
@@ -639,10 +638,13 @@ interface CreateXaaRouterOptions {
   protectedMiddlewares?: MiddlewareHandler[];
   // Resolves a registered resource app's client secret + stored token
   // endpoint server-side, using the caller's bearer to read Convex. When
-  // absent, registration-backed proxy requests are rejected.
+  // absent, registration-backed proxy requests are rejected. `clientIp` is
+  // the end user's IP as seen by this server, forwarded so the backend's
+  // per-IP guest quota doesn't collapse into one bucket.
   resolveRegistrationSecret?: (args: {
     registrationId: string;
     bearerToken: string;
+    clientIp?: string | null;
   }) => Promise<XaaResourceAppSecretResult>;
   // Resolves a server target's confidential client secret + non-secret config
   // (clientId/url/issuer) server-side, using the caller's bearer to read
@@ -651,13 +653,19 @@ interface CreateXaaRouterOptions {
     serverId: string;
     projectId: string;
     bearerToken: string;
+    clientIp?: string | null;
   }) => Promise<ServerClientSecretResult>;
-  // Confirms the caller is a member of the organization before minting under
-  // the org-scoped issuer path (/o/:orgId/...). When absent, the scoped
-  // routes are not registered at all — the local router has no org concept.
+  // Confirms the caller may mint under a scoped issuer path before minting.
+  // Two flavors, selected by issuerKind: "org" (/o/:orgId/...) requires org
+  // membership and always rejects guests; "anonymous" (/g/:orgId/...) is the
+  // visibly separate anonymous test issuer, bound to the caller's own
+  // personal org (guests included). When absent, neither scoped route family
+  // is registered — the local router has no org concept.
   authorizeOrgIssuer?: (args: {
     organizationId: string;
     bearerToken: string;
+    issuerKind: "org" | "anonymous";
+    clientIp?: string | null;
   }) => Promise<void>;
   // Evaluates the managed-IdP policy for an org-scoped mint that carries a
   // managed context, using the caller's bearer. Only meaningful alongside
@@ -752,6 +760,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       router.use("/o/:orgId/authenticate", ...protectedMiddlewares);
       router.use("/o/:orgId/token-exchange", ...protectedMiddlewares);
       router.use("/o/:orgId/negative-tests", ...protectedMiddlewares);
+      router.use("/g/:orgId/authenticate", ...protectedMiddlewares);
+      router.use("/g/:orgId/token-exchange", ...protectedMiddlewares);
+      router.use("/g/:orgId/negative-tests", ...protectedMiddlewares);
     }
   }
 
@@ -777,18 +788,34 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       );
     }
 
-    const { issuerMode: _issuerMode, organizationId, ...forwardBody } = body;
+    const {
+      issuerMode: _issuerMode,
+      issuerKind,
+      organizationId,
+      ...forwardBody
+    } = body;
     // Fail closed: the hosted issuer must be the caller's membership-gated
-    // org-scoped issuer. Falling back to the unscoped issuer (mintable by
-    // anyone) would silently mint a forgeable token under the wrong `iss`, so
-    // a missing/invalid org is rejected rather than quietly downgraded.
+    // org-scoped issuer (or, for issuerKind "anonymous", their personal-org
+    // anonymous test issuer under /g/). Falling back to the unscoped issuer
+    // (mintable by anyone) would silently mint a forgeable token under the
+    // wrong `iss`, so a missing/invalid org is rejected rather than quietly
+    // downgraded.
     if (!isValidOrgId(organizationId)) {
       return toJsonError(
         "Hosted issuer minting requires an active organization",
         { status: 400, code: "VALIDATION_ERROR" }
       );
     }
-    const scopedSegment = `/o/${organizationId}`;
+    if (issuerKind !== undefined && issuerKind !== "anonymous") {
+      return toJsonError("issuerKind must be omitted or 'anonymous'", {
+        status: 400,
+        code: "VALIDATION_ERROR",
+      });
+    }
+    const scopedSegment =
+      issuerKind === "anonymous"
+        ? `/g/${organizationId}`
+        : `/o/${organizationId}`;
 
     return relayToHostedIssuer(`${origin}/api/web/xaa${scopedSegment}${path}`, {
       method: "POST",
@@ -938,6 +965,20 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         "Hosted issuer minting requires an active organization"
       );
     }
+    // Anonymous test issuer opt-in rides the same transport-header channel
+    // as the hosted opt-in (the RFC 8693 form body stays spec-pure).
+    const issuerKindHeader = c.req.header("x-mcpjam-issuer-kind");
+    if (issuerKindHeader !== undefined && issuerKindHeader !== "anonymous") {
+      return oauthError(
+        400,
+        "invalid_request",
+        "x-mcpjam-issuer-kind must be omitted or 'anonymous'"
+      );
+    }
+    const scopedSegment =
+      issuerKindHeader === "anonymous"
+        ? `/g/${organizationId}`
+        : `/o/${organizationId}`;
     const body = await c.req.text();
     // The managed-policy context also rides x-mcpjam-* headers and is meant
     // for the HOSTED issuer's mint gate — copy it into the explicit upstream
@@ -957,7 +998,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       if (value) upstreamHeaders[name] = value;
     }
     return relayToHostedIssuer(
-      `${options.forwardHostedIssuer.origin}/api/web/xaa/o/${organizationId}/token`,
+      `${options.forwardHostedIssuer.origin}/api/web/xaa${scopedSegment}/token`,
       {
         method: "POST",
         headers: upstreamHeaders,
@@ -973,14 +1014,19 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   // embedded into the ID-JAG `iss`), require a bearer, and confirm org
   // membership via the backend. Returns the validated orgId, or the error
   // Response to send. Fail-closed: any backend failure blocks the mint.
-  const requireScopedOrg = async (c: Context): Promise<string | Response> => {
+  const requireScopedIssuer = async (
+    c: Context,
+    issuerKind: "org" | "anonymous"
+  ): Promise<string | Response> => {
     const orgIdOrError = validateOrgSegment(c);
     if (orgIdOrError instanceof Response) return orgIdOrError;
     const orgId = orgIdOrError;
     const authHeader = c.req.header("authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return toJsonError(
-        "Minting under an organization issuer requires signing in",
+        issuerKind === "anonymous"
+          ? "Minting under the anonymous test issuer requires a session"
+          : "Minting under an organization issuer requires signing in",
         { status: 401, code: "UNAUTHORIZED" }
       );
     }
@@ -988,6 +1034,8 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       await authorizeOrgIssuer!({
         organizationId: orgId,
         bearerToken: authHeader.slice("Bearer ".length),
+        issuerKind,
+        clientIp: getClientIp(c),
       });
     } catch (error) {
       if (error instanceof WebRouteError) {
@@ -1005,6 +1053,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     }
     return orgId;
   };
+  const requireScopedOrg = (c: Context) => requireScopedIssuer(c, "org");
+  const requireScopedAnonymousOrg = (c: Context) =>
+    requireScopedIssuer(c, "anonymous");
 
   // Managed-policy context for an org-scoped mint. Body fields win (the
   // legacy JSON endpoints declare them in their schemas); the x-mcpjam-*
@@ -1120,7 +1171,14 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     // Unscoped hosted refuses it (public token exchange would launder the
     // org-membership gate through the public /authorize mock sign-in), so its
     // doc must not advertise it — advertise only what is served.
-    oidc: { tokenExchangeAtToken: boolean }
+    oidc: {
+      tokenExchangeAtToken: boolean;
+      // The /g/ anonymous test issuer stamps its kind into the discovery
+      // document so a RAS can only trust it by EXPLICIT allowlisting —
+      // assertions minted under it prove control of an anonymous session,
+      // not IdP-assured identity.
+      anonymousTestIssuer?: boolean;
+    }
   ) => {
     initXAAIdpKeyPair();
 
@@ -1143,6 +1201,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
                 ID_JAG_TOKEN_TYPE,
               ],
             }
+          : {}),
+        ...(oidc.anonymousTestIssuer
+          ? { "mcpjam:issuer_kind": "anonymous-test" }
           : {}),
         code_challenge_methods_supported: ["S256"],
         scopes_supported: ["openid", "profile", "email"],
@@ -1323,6 +1384,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           serverId: parsed.serverId,
           projectId: parsed.projectId,
           bearerToken: authHeader.slice("Bearer ".length),
+          clientIp: getClientIp(c),
         });
         url = resolved.tokenEndpoint;
         clientId = resolved.clientId;
@@ -1347,6 +1409,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         const resolved = await options.resolveRegistrationSecret({
           registrationId: parsed.registrationId,
           bearerToken: authHeader.slice("Bearer ".length),
+          clientIp: getClientIp(c),
         });
 
         if (!resolved.tokenEndpoint) {
@@ -1624,6 +1687,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           serverId: parsed.serverId,
           projectId: parsed.projectId,
           bearerToken: authHeader.slice("Bearer ".length),
+          clientIp: getClientIp(c),
         });
         tokenEndpoint = resolved.tokenEndpoint;
         clientId = resolved.clientId;
@@ -1646,6 +1710,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         const resolved = await options.resolveRegistrationSecret({
           registrationId: parsed.registrationId,
           bearerToken: authHeader.slice("Bearer ".length),
+          clientIp: getClientIp(c),
         });
         if (!resolved.tokenEndpoint) {
           // mcpjam-issuer-only registration: there is no external auth server
@@ -1903,6 +1968,54 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       return handleNegativeTests(c, scopedIssuer(c, orgIdOrError), (context) =>
         buildMintPolicyGate(c, orgIdOrError, context)
       );
+    });
+
+    // Anonymous test issuer surface: the same mock IdP under /g/:orgId, in a
+    // VISIBLY separate namespace from the membership-gated /o/ issuers. Its
+    // discovery document carries "mcpjam:issuer_kind": "anonymous-test", so a
+    // RAS accepts it only by explicit allowlisting — assertions minted here
+    // prove control of an anonymous session (guest bound to their own
+    // personal org via the backend's requirePersonalOrgOwnership), not
+    // IdP-assured identity. Never enterprise-managed-authorization
+    // conformance.
+    const anonymousScopedIssuer = (c: Context, orgId: string): string =>
+      `${unscopedIssuer(c)}/g/${orgId}`;
+
+    router.get("/g/:orgId/.well-known/jwks.json", (c) => {
+      const orgIdOrError = validateOrgSegment(c);
+      if (orgIdOrError instanceof Response) return orgIdOrError;
+      return serveJwks(c);
+    });
+
+    router.get("/g/:orgId/.well-known/openid-configuration", (c) => {
+      const orgIdOrError = validateOrgSegment(c);
+      if (orgIdOrError instanceof Response) return orgIdOrError;
+      return serveOpenidConfiguration(
+        c,
+        anonymousScopedIssuer(c, orgIdOrError),
+        {
+          tokenExchangeAtToken: true,
+          anonymousTestIssuer: true,
+        }
+      );
+    });
+
+    router.post("/g/:orgId/authenticate", async (c) => {
+      const orgIdOrError = await requireScopedAnonymousOrg(c);
+      if (orgIdOrError instanceof Response) return orgIdOrError;
+      return handleAuthenticate(c, anonymousScopedIssuer(c, orgIdOrError));
+    });
+
+    router.post("/g/:orgId/token-exchange", async (c) => {
+      const orgIdOrError = await requireScopedAnonymousOrg(c);
+      if (orgIdOrError instanceof Response) return orgIdOrError;
+      return handleTokenExchange(c, anonymousScopedIssuer(c, orgIdOrError));
+    });
+
+    router.post("/g/:orgId/negative-tests", async (c) => {
+      const orgIdOrError = await requireScopedAnonymousOrg(c);
+      if (orgIdOrError instanceof Response) return orgIdOrError;
+      return handleNegativeTests(c, anonymousScopedIssuer(c, orgIdOrError));
     });
   }
 
@@ -2310,6 +2423,52 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       });
       router.get("/o/:orgId/userinfo", (c) => {
         const issuerOrError = scopedIssuerFromParam(c);
+        if (issuerOrError instanceof Response) return issuerOrError;
+        return handleUserinfo(c, issuerOrError);
+      });
+
+      // Anonymous test issuer (/g/): same public front-channel endpoints;
+      // the token-exchange grant is gated to the caller's own personal org
+      // (guest sessions included) via the anonymous authorize flavor.
+      const anonymousIssuerFromParam = (c: Context): string | Response => {
+        const orgId = c.req.param("orgId");
+        if (!orgId || !ORG_ID_RE.test(orgId)) {
+          return oauthError(400, "invalid_request", "Invalid organization id");
+        }
+        return `${unscopedIssuer(c)}/g/${orgId}`;
+      };
+
+      router.get("/g/:orgId/authorize", (c) => {
+        const issuerOrError = anonymousIssuerFromParam(c);
+        if (issuerOrError instanceof Response) return issuerOrError;
+        return handleAuthorize(c, issuerOrError);
+      });
+      router.post("/g/:orgId/authorize/confirm", (c) => {
+        const issuerOrError = anonymousIssuerFromParam(c);
+        if (issuerOrError instanceof Response) return issuerOrError;
+        return handleAuthorizeConfirm(c, issuerOrError);
+      });
+      router.post("/g/:orgId/token", (c) => {
+        const issuerOrError = anonymousIssuerFromParam(c);
+        if (issuerOrError instanceof Response) return issuerOrError;
+        return handleToken(c, issuerOrError, async () => {
+          const orgIdOrError = await requireScopedAnonymousOrg(c);
+          if (!(orgIdOrError instanceof Response)) return null;
+          // Map the gate's JSON error shape onto OAuth token-endpoint errors.
+          const status = orgIdOrError.status;
+          return oauthError(
+            status,
+            status === 401
+              ? "invalid_client"
+              : status === 403
+              ? "access_denied"
+              : "invalid_request",
+            "Token exchange under the anonymous test issuer requires the owner's session bearer"
+          );
+        });
+      });
+      router.get("/g/:orgId/userinfo", (c) => {
+        const issuerOrError = anonymousIssuerFromParam(c);
         if (issuerOrError instanceof Response) return issuerOrError;
         return handleUserinfo(c, issuerOrError);
       });
