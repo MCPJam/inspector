@@ -209,7 +209,7 @@ export function generateXAAFlowText(
   if (steps.length === 0) return `${text}No activity yet.\n`;
 
   for (const step of steps) {
-    const stepInfo = getXAAStepInfo(step);
+    const stepInfo = getXAAStepInfo(step, flowState.identityAssertionFormat);
     text += `${"=".repeat(60)}\n`;
     text += `${stepInfo.title} [${step}]\n`;
     text += `${"=".repeat(60)}\n`;

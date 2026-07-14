@@ -355,6 +355,82 @@ describe("XAAServerModal", () => {
     expect(onSave.mock.calls[0][0].formData.registrationMode).toBe("dcr");
   });
 
+  it("defaults the identity assertion preset to the OIDC ID token", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderModal();
+
+    expect(screen.getByLabelText("Identity assertion")).toHaveTextContent(
+      /OIDC ID token/i,
+    );
+
+    await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://staging.mcp.example.com",
+    );
+    await user.type(screen.getByLabelText(/Client ID/), "staging-client");
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+
+    // Unlike registrationMode there is no shared "auto" to preserve, so the
+    // save always carries the displayed preset.
+    const { formData } = onSave.mock.calls[0][0];
+    expect(formData.xaaIdentityAssertionFormat).toBe("oidc");
+  });
+
+  it("persists the SAML identity assertion preset when selected", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderModal();
+
+    await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://staging.mcp.example.com",
+    );
+    await user.type(screen.getByLabelText(/Client ID/), "staging-client");
+    await user.click(screen.getByLabelText("Identity assertion"));
+    await user.click(screen.getByRole("option", { name: /SAML assertion/i }));
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+
+    const { formData } = onSave.mock.calls[0][0];
+    expect(formData.xaaIdentityAssertionFormat).toBe("saml");
+  });
+
+  it("prefills the persisted identity assertion preset when editing", async () => {
+    const user = userEvent.setup();
+    const server = {
+      name: "prod-mcp",
+      config: { url: "https://prod.mcp.example.com/mcp" },
+      useXaa: true,
+      xaaIdentityAssertionFormat: "saml",
+      oauthFlowProfile: {
+        serverUrl: "https://prod.mcp.example.com/mcp",
+        clientId: "prod-client",
+        clientSecret: "",
+        scopes: "",
+        customHeaders: [],
+      },
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+    } as unknown as ServerWithName;
+
+    const { onSave } = renderModal({ server });
+
+    expect(screen.getByLabelText("Identity assertion")).toHaveTextContent(
+      /SAML assertion/i,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+    const { formData } = onSave.mock.calls[0][0];
+    expect(formData.xaaIdentityAssertionFormat).toBe("saml");
+  });
+
   it("rejects a duplicate name when creating a new server", async () => {
     const user = userEvent.setup();
     const { onSave } = renderModal({ existingServerNames: ["staging-mcp"] });

@@ -57,6 +57,7 @@ export interface RemoteServer {
   authServerMode?: "mcpjam" | "own";
   xaaSubject?: string;
   xaaEmail?: string;
+  xaaIdentityAssertionFormat?: string;
   registrationMode?: string;
   authMethod?: string;
   createdAt: number;
