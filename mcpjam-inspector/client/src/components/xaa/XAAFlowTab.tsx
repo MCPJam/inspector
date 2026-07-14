@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+  type ReactNode,
+} from "react";
+import type { ImperativePanelHandle } from "react-resizable-panels";
 import { useAuth } from "@workos-inc/authkit-react";
 import { track } from "@/lib/analytics";
 import { Loader2, ShieldAlert } from "lucide-react";
@@ -22,10 +31,7 @@ import type { ServerWithName } from "@/hooks/use-app-state";
 import type { ServerFormData } from "@/shared/types.js";
 import { useXaaResourceApps } from "@/hooks/useXaaResourceApps";
 import { useXaaRunSettings } from "@/hooks/useXaaRunSettings";
-import {
-  useXaaTestTarget,
-  type XAAFlowInput,
-} from "@/hooks/useXaaTestTarget";
+import { useXaaTestTarget, type XAAFlowInput } from "@/hooks/useXaaTestTarget";
 import { XAASequenceDiagram } from "./XAASequenceDiagram";
 import { XAAFlowLogger } from "./XAAFlowLogger";
 import { XAAServerModal } from "./XAAServerModal";
@@ -100,9 +106,7 @@ function buildFlowStateFromInput(
     subjectIdentifierFormat: subjectIdentifierFormatFor(
       identityAssertionFormat
     ),
-    ...(dcrRetryMayCreateDuplicate
-      ? { dcrRetryMayCreateDuplicate: true }
-      : {}),
+    ...(dcrRetryMayCreateDuplicate ? { dcrRetryMayCreateDuplicate: true } : {}),
   });
 }
 
@@ -124,6 +128,88 @@ interface XAAFlowTabProps {
   openServerModalSignal?: number;
 }
 
+function XAAWorkspaceLayout({
+  children,
+  scorecard,
+  scorecardPanelRef,
+  compactScorecardContentHeight,
+  scorecardHasResults,
+}: {
+  children: ReactNode;
+  scorecard?: ReactNode;
+  scorecardPanelRef?: RefObject<ImperativePanelHandle | null>;
+  compactScorecardContentHeight?: number | null;
+  scorecardHasResults?: boolean;
+}) {
+  const layoutRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (
+      scorecardHasResults ||
+      !compactScorecardContentHeight ||
+      !scorecardPanelRef?.current
+    ) {
+      return;
+    }
+    const resizeToContent = () => {
+      const height = layoutRef.current?.getBoundingClientRect().height;
+      if (!height) return;
+
+      // Card margins + the resize handle need a little room beyond the card's
+      // measured content height. Keep the panel within its declared bounds.
+      const size = Math.min(
+        90,
+        Math.max(5, ((compactScorecardContentHeight + 20) / height) * 100)
+      );
+      scorecardPanelRef.current?.resize(size);
+    };
+    resizeToContent();
+
+    // A compact card needs a smaller percentage on taller screens. Recompute
+    // when the workspace changes height instead of retaining the old slice.
+    if (typeof ResizeObserver === "undefined" || !layoutRef.current) return;
+    const observer = new ResizeObserver(resizeToContent);
+    observer.observe(layoutRef.current);
+    return () => observer.disconnect();
+  }, [compactScorecardContentHeight, scorecardHasResults, scorecardPanelRef]);
+
+  return (
+    <div ref={layoutRef} className="min-h-0 flex-1">
+      <ResizablePanelGroup direction="vertical" className="h-full">
+        <ResizablePanel
+          id="xaa-workspace"
+          order={1}
+          defaultSize={scorecard ? 92 : 100}
+          minSize={5}
+          className="min-h-0 overflow-hidden"
+        >
+          {children}
+        </ResizablePanel>
+
+        {scorecard && (
+          <>
+            <ResizableHandle
+              withHandle
+              aria-label="Resize negative-test scorecard"
+            />
+            <ResizablePanel
+              id="xaa-negative-test-scorecard"
+              order={2}
+              defaultSize={8}
+              minSize={5}
+              maxSize={90}
+              className="min-h-0 overflow-hidden"
+              ref={scorecardPanelRef}
+            >
+              {scorecard}
+            </ResizablePanel>
+          </>
+        )}
+      </ResizablePanelGroup>
+    </div>
+  );
+}
+
 export function XAAFlowTab({
   serverConfigs,
   selectedServerName,
@@ -135,6 +221,35 @@ export function XAAFlowTab({
 }: XAAFlowTabProps) {
   const [isServerModalOpen, setIsServerModalOpen] = useState(false);
   const [isRunningAll, setIsRunningAll] = useState(false);
+  const [scorecardHasResults, setScorecardHasResults] = useState(false);
+  const [compactScorecardContentHeight, setCompactScorecardContentHeight] =
+    useState<number | null>(null);
+  const scorecardPanelRef = useRef<ImperativePanelHandle>(null);
+  const collapseScorecard = useCallback(() => {
+    setScorecardHasResults(false);
+    setCompactScorecardContentHeight(null);
+  }, []);
+  const expandScorecardForResults = useCallback(() => {
+    setScorecardHasResults(true);
+    scorecardPanelRef.current?.resize(50);
+  }, []);
+  const handleScorecardExpandedChange = useCallback(
+    (expanded: boolean, hasResults: boolean) => {
+      if (expanded && hasResults) {
+        expandScorecardForResults();
+        return;
+      }
+      setScorecardHasResults(false);
+      setCompactScorecardContentHeight(null);
+    },
+    [expandScorecardForResults]
+  );
+  const updateCompactScorecardContentHeight = useCallback((height: number) => {
+    if (!height) return;
+    setCompactScorecardContentHeight((current) =>
+      current !== null && Math.abs(current - height) < 1 ? current : height
+    );
+  }, []);
 
   // Open the modal when the shell bumps the signal (header "Add Server"). Skip
   // the initial value so it doesn't pop open on mount.
@@ -216,9 +331,9 @@ export function XAAFlowTab({
   // exercised: switching issuer mode (local↔hosted) or organization changes
   // the minted `iss`, so a green run under one must NOT unlock negative tests
   // under another. Key the gate on target + issuer mode + org.
-  const runGateKey = `${targetKey}|${
-    hostedIssuerOptIn ? "hosted" : "local"
-  }|${organizationId ?? ""}`;
+  const runGateKey = `${targetKey}|${hostedIssuerOptIn ? "hosted" : "local"}|${
+    organizationId ?? ""
+  }`;
 
   // ── Registration strategy (Client↔Resource-AS leg) ──────────────────
   // Persisted per-server and chosen in the "Configure Server to Test" modal;
@@ -380,6 +495,7 @@ export function XAAFlowTab({
   } => {
     const audience =
       flowState.authzMetadata?.issuer ||
+      flowState.authzServerIssuer ||
       runInput.authzServerIssuer ||
       selectedRegistration?.issuer ||
       "";
@@ -499,9 +615,8 @@ export function XAAFlowTab({
   const lastAssertionFormat = useRef<IdentityAssertionFormat>(
     effectiveAssertionFormat
   );
-  const lastRegistrationStrategy = useRef<RegistrationStrategy>(
-    effectiveStrategy
-  );
+  const lastRegistrationStrategy =
+    useRef<RegistrationStrategy>(effectiveStrategy);
   // The simulated identity the flow was last (re)built with. Tracked so an
   // identity edit rebuilds the flow (clearing the already-minted ID token /
   // ID-JAG that carry the old sub) — without that, advancing step-by-step
@@ -854,8 +969,7 @@ export function XAAFlowTab({
     !isTestable || secretBlocked || flowState.isBusy || isRunningAll;
 
   // A server is selected but can't be XAA-tested (STDIO / non-OAuth).
-  const showNotTestable =
-    target.targetSource === "bar_server" && !isTestable;
+  const showNotTestable = target.targetSource === "bar_server" && !isTestable;
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -913,7 +1027,34 @@ export function XAAFlowTab({
           <span>{secretBlockedReason}</span>
         </div>
       ) : null}
-      <div className="flex-1 overflow-hidden">
+      <XAAWorkspaceLayout
+        scorecard={
+          isTestable ? (
+            <NegativeTestScorecard
+              input={
+                scorecard.input
+                  ? {
+                      ...scorecard.input,
+                      organizationId: organizationId ?? null,
+                      ...(hostedIssuerOptIn
+                        ? { issuerMode: "hosted" as const }
+                        : {}),
+                    }
+                  : null
+              }
+              unlocked={positiveRunTargets.has(runGateKey)}
+              unavailableReason={scorecard.unavailableReason}
+              onResultsReady={expandScorecardForResults}
+              onTargetChange={collapseScorecard}
+              onExpandedChange={handleScorecardExpandedChange}
+              onCompactContentHeightChange={updateCompactScorecardContentHeight}
+            />
+          ) : undefined
+        }
+        scorecardPanelRef={scorecardPanelRef}
+        compactScorecardContentHeight={compactScorecardContentHeight}
+        scorecardHasResults={scorecardHasResults}
+      >
         {showNotTestable ? (
           <div className="flex h-full items-center justify-center p-6">
             <div className="max-w-md rounded-lg border border-border bg-background p-8 text-center shadow-lg">
@@ -1002,23 +1143,7 @@ export function XAAFlowTab({
             onConfigure={() => setIsServerModalOpen(true)}
           />
         )}
-      </div>
-
-      {isTestable && (
-        <NegativeTestScorecard
-          input={
-            scorecard.input
-              ? {
-                  ...scorecard.input,
-                  organizationId: organizationId ?? null,
-                  ...(hostedIssuerOptIn ? { issuerMode: "hosted" as const } : {}),
-                }
-              : null
-          }
-          unlocked={positiveRunTargets.has(runGateKey)}
-          unavailableReason={scorecard.unavailableReason}
-        />
-      )}
+      </XAAWorkspaceLayout>
 
       <XAAServerModal
         open={isServerModalOpen}

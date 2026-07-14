@@ -227,7 +227,10 @@ export type {
   RegistrationMode,
   AuthMethod,
 } from "./registration.js";
-export { NEGATIVE_TEST_MODE_DETAILS } from "./xaa/negative-test-modes.js";
+export {
+  NEGATIVE_TEST_MODE_DETAILS,
+  isPolicyDependentNegativeTestMode,
+} from "./xaa/negative-test-modes.js";
 // Pure XAA discovery + MCP-initialize helpers (browser+node safe, no I/O).
 export {
   canonicalizeMcpResource,

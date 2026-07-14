@@ -8,6 +8,7 @@ export {
   XAA_IDP_KID,
   isNegativeTestMode,
   NEGATIVE_TEST_MODE_DETAILS,
+  isPolicyDependentNegativeTestMode,
   REGISTRATION_STRATEGIES,
   DEFAULT_REGISTRATION_STRATEGY,
   normalizeRegistrationStrategy,
