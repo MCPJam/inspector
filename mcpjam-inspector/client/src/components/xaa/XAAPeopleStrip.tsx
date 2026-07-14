@@ -56,28 +56,45 @@ function OutcomeBadge({ outcome }: { outcome: XaaPersonOutcome }) {
   }
 }
 
-interface PersonDraft {
+export interface PersonDraft {
   name: string;
   subject: string;
   email: string;
 }
 
-const EMPTY_DRAFT: PersonDraft = { name: "", subject: "", email: "" };
+export const EMPTY_PERSON_DRAFT: PersonDraft = {
+  name: "",
+  subject: "",
+  email: "",
+};
 
-/** Add/edit form shared by the "+" popover and the per-chip edit popover. */
-function PersonForm({
+/**
+ * Add/edit form shared by the "+" popover and the per-chip edit popover.
+ * Also reused by the org setup center (`/xaa-flow/setup`): `submitOverride`
+ * redirects the save to the org-scoped mutations (and hides the built-in
+ * project delete — org identities archive via row actions instead). Without
+ * the override props, behavior is exactly the project-strip default.
+ */
+export function PersonForm({
   initial,
   personId,
   projectId,
   onDone,
   onDeleted,
+  submitOverride,
+  subjectLocked,
 }: {
   initial: PersonDraft;
   /** Present = edit; absent = create. */
   personId?: string;
+  /** Unused when `submitOverride` is provided (pass ""). */
   projectId: string;
   onDone: () => void;
   onDeleted?: () => void;
+  /** Replaces the project-scoped save; the built-in delete is hidden. */
+  submitOverride?: (draft: PersonDraft, personId?: string) => Promise<void>;
+  /** Org identities have immutable subjects — lock the field when editing. */
+  subjectLocked?: boolean;
 }) {
   const { create, update, remove } = useXaaPeopleMutations();
   const [draft, setDraft] = useState<PersonDraft>(initial);
@@ -98,7 +115,9 @@ function PersonForm({
     setBusy(true);
     setError(null);
     try {
-      if (personId) {
+      if (submitOverride) {
+        await submitOverride(draft, personId);
+      } else if (personId) {
         await update({
           testIdentityId: personId,
           name: draft.name,
@@ -170,6 +189,7 @@ function PersonForm({
           value={draft.subject}
           placeholder="test-user-1"
           className="font-mono"
+          disabled={Boolean(subjectLocked && personId)}
           onChange={(e) => setDraft((d) => ({ ...d, subject: e.target.value }))}
         />
       </div>
@@ -187,7 +207,7 @@ function PersonForm({
       </div>
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
       <div className="flex items-center justify-between gap-2">
-        {personId ? (
+        {personId && !submitOverride ? (
           <Button
             type="button"
             variant="ghost"
@@ -270,7 +290,7 @@ export function XAAPeopleStrip({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80">
         <PersonForm
-          initial={EMPTY_DRAFT}
+          initial={EMPTY_PERSON_DRAFT}
           projectId={projectId}
           onDone={() => setAdding(false)}
         />

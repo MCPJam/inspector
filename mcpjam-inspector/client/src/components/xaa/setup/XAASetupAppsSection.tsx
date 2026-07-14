@@ -1,7 +1,5 @@
 import { useState } from "react";
-import { useConvexAuth } from "convex/react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
-import { KeyRound, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { KeyRound, Loader2, Pencil, Play, Plus, Trash2 } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,80 +13,60 @@ import {
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { Card } from "@mcpjam/design-system/card";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@mcpjam/design-system/tooltip";
-import { cn } from "@/lib/utils";
-import { useOrganizationQueries } from "@/hooks/useOrganizations";
+import { LockedIconButton } from "@/components/xaa/registration/XAAResourceAppsSection";
+import { XAARegistrationWizard } from "@/components/xaa/registration/XAARegistrationWizard";
 import { useXaaResourceApps } from "@/hooks/useXaaResourceApps";
-import type { XaaResourceApp } from "@/lib/xaa/types";
-import { XAARegistrationWizard } from "./XAARegistrationWizard";
+import { useXaaManagedConnections } from "@/hooks/useXaaManagedConnections";
+import { openXaaAppInDebugger } from "@/lib/app-navigation";
+import type { XaaManagedConnection, XaaResourceApp } from "@/lib/xaa/types";
 
-const LOCKED_REASON = "Only organization admins can manage registrations.";
-
-interface XAAResourceAppsSectionProps {
-  organizationId: string | null;
-  /** Registration currently selected as the flow runner's target. */
-  selectedId?: string | null;
-  /** Row click — toggles the runner target. */
-  onSelect?: (app: XaaResourceApp) => void;
-}
-
-/**
- * Edit/delete affordance for non-admins: rendered (so the feature is
- * discoverable) but inert, with a tooltip explaining why. A truly `disabled`
- * button wouldn't fire the tooltip's hover/focus events, hence
- * aria-disabled + no onClick. Exported for the setup center's locked states.
- */
-export function LockedIconButton({
-  label,
-  children,
-  reason = LOCKED_REASON,
+function ConnectionStatusBadge({
+  connection,
 }: {
-  label: string;
-  children: React.ReactNode;
-  /** Tooltip copy; defaults to the registration-management reason. */
-  reason?: string;
+  connection: XaaManagedConnection | undefined;
 }) {
+  if (!connection) {
+    return (
+      <Badge variant="outline" className="text-[10px] text-muted-foreground">
+        Not connected
+      </Badge>
+    );
+  }
+  if (!connection.enabled) {
+    return (
+      <Badge
+        variant="outline"
+        className="border-amber-500/50 text-[10px] text-amber-600 dark:text-amber-400"
+      >
+        Disabled
+      </Badge>
+    );
+  }
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          aria-disabled={true}
-          aria-label={label}
-          tabIndex={0}
-          onClick={(event) => event.stopPropagation()}
-          onKeyDown={(event) => event.stopPropagation()}
-          className="opacity-50"
-        >
-          {children}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent side="top" className="max-w-[14rem] text-center">
-        {reason}
-      </TooltipContent>
-    </Tooltip>
+    <Badge
+      variant="outline"
+      className="border-emerald-500/50 text-[10px] text-emerald-600 dark:text-emerald-400"
+    >
+      Connected
+    </Badge>
   );
 }
 
-export function XAAResourceAppsSection({
+/**
+ * Registered resource apps with their MCPJam Agent connection status.
+ * Registration CRUD reuses the debugger's wizard; the connection itself is
+ * managed in the Access section — the badge here is a read-only summary.
+ */
+export function XAASetupAppsSection({
   organizationId,
-  selectedId,
-  onSelect,
-}: XAAResourceAppsSectionProps) {
-  // Hooks run unconditionally; the flag/auth gates return null below.
-  const registrationEnabled = useFeatureFlagEnabled("xaa-registration");
-  const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
-  const { resourceApps, isLoading, isAuthenticated, remove } =
+  canManage,
+}: {
+  organizationId: string | null;
+  canManage: boolean;
+}) {
+  const { resourceApps, isLoading, error, remove } =
     useXaaResourceApps(organizationId);
-  const { sortedOrganizations } = useOrganizationQueries({
-    isAuthenticated: isConvexAuthenticated,
-  });
+  const { connectionByAppId } = useXaaManagedConnections(organizationId);
 
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editing, setEditing] = useState<XaaResourceApp | null>(null);
@@ -96,16 +74,6 @@ export function XAAResourceAppsSection({
     null,
   );
   const [isDeleting, setIsDeleting] = useState(false);
-
-  if (registrationEnabled !== true || !isAuthenticated) {
-    return null;
-  }
-
-  const activeOrg = sortedOrganizations.find((o) => o._id === organizationId);
-  const canManage =
-    activeOrg?.myRole === "owner" ||
-    activeOrg?.myRole === "admin" ||
-    activeOrg?.isCreator === true;
 
   const openCreate = () => {
     setEditing(null);
@@ -129,21 +97,16 @@ export function XAAResourceAppsSection({
   };
 
   return (
-    <Card className="mx-3 mt-2 mb-1 gap-0 p-0">
+    <Card className="gap-0 p-0">
       <div className="flex items-center gap-2 px-4 py-3">
         <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold">Registered resource apps</h3>
+          <h3 className="text-sm font-semibold">Apps</h3>
           <p className="truncate text-xs text-muted-foreground">
-            Saved targets the flow runner can drive end to end.
+            Registered resource apps the Agent can be connected to.
           </p>
         </div>
         {canManage ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={openCreate}
-          >
+          <Button type="button" size="sm" variant="outline" onClick={openCreate}>
             <Plus className="mr-1 h-3.5 w-3.5" />
             Register
           </Button>
@@ -156,6 +119,9 @@ export function XAAResourceAppsSection({
       </div>
 
       <div className="px-4 pb-3">
+        {error ? (
+          <p className="pb-2 text-xs text-destructive">{error}</p>
+        ) : null}
         {isLoading ? (
           <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -163,43 +129,21 @@ export function XAAResourceAppsSection({
           </div>
         ) : resourceApps.length === 0 ? (
           <div
-            data-testid="xaa-reg-empty"
+            data-testid="xaa-setup-apps-empty"
             className="rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground"
           >
-            No resource apps registered yet. Register one to run the full flow
-            against it without re-entering config each session.
+            No resource apps registered yet. Register one, then connect the
+            Agent to it in the Access section.
           </div>
         ) : (
           <ul className="space-y-1.5">
             {resourceApps.map((app) => {
-              const isSelected = selectedId === app.id;
+              const connection = connectionByAppId.get(app.id);
               return (
                 <li key={app.id}>
-                  {/* Row-as-button (it contains real buttons, so the outer
-                      can't be a <button>). Click toggles the runner target. */}
                   <div
-                    data-testid={`xaa-reg-row-${app.id}`}
-                    role={onSelect ? "button" : undefined}
-                    tabIndex={onSelect ? 0 : undefined}
-                    aria-pressed={onSelect ? isSelected : undefined}
-                    onClick={onSelect ? () => onSelect(app) : undefined}
-                    onKeyDown={
-                      onSelect
-                        ? (event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
-                              onSelect(app);
-                            }
-                          }
-                        : undefined
-                    }
-                    className={cn(
-                      "flex items-center gap-2 rounded-md border px-3 py-2",
-                      isSelected
-                        ? "border-primary/60 bg-primary/5"
-                        : "border-border",
-                      onSelect && "cursor-pointer",
-                    )}
+                    data-testid={`xaa-setup-app-${app.id}`}
+                    className="flex items-center gap-2 rounded-md border border-border px-3 py-2"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
@@ -220,14 +164,23 @@ export function XAAResourceAppsSection({
                             className="h-3 w-3 text-muted-foreground"
                           />
                         )}
-                        {isSelected && (
-                          <Badge className="text-[10px]">Run target</Badge>
-                        )}
+                        <ConnectionStatusBadge connection={connection} />
                       </div>
                       <div className="truncate font-mono text-[11px] text-muted-foreground">
                         {app.resourceUrl}
                       </div>
                     </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Test ${app.name} in debugger`}
+                      title="Open the debugger with this app selected"
+                      onClick={() => openXaaAppInDebugger(app.id)}
+                    >
+                      <Play className="mr-1 h-3.5 w-3.5" />
+                      Test in debugger
+                    </Button>
                     {canManage ? (
                       <>
                         <Button
@@ -235,11 +188,7 @@ export function XAAResourceAppsSection({
                           variant="ghost"
                           size="sm"
                           aria-label={`Edit ${app.name}`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            openEdit(app);
-                          }}
-                          onKeyDown={(event) => event.stopPropagation()}
+                          onClick={() => openEdit(app)}
                         >
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
@@ -248,11 +197,7 @@ export function XAAResourceAppsSection({
                           variant="ghost"
                           size="sm"
                           aria-label={`Delete ${app.name}`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setPendingDelete(app);
-                          }}
-                          onKeyDown={(event) => event.stopPropagation()}
+                          onClick={() => setPendingDelete(app)}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
@@ -292,8 +237,9 @@ export function XAAResourceAppsSection({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {pendingDelete?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              The registration and its stored credentials are removed. Flow
-              history is unaffected.
+              The registration and its stored credentials are removed, along
+              with the Agent&apos;s connection and assignments for this app.
+              Flow history is unaffected.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
