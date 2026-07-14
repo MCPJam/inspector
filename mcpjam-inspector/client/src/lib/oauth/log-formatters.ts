@@ -5,11 +5,18 @@ import {
   type OAuthFlowStep,
 } from "@mcpjam/sdk/browser";
 import { Circle, CheckCircle2 } from "lucide-react";
+import type { HttpEntryView } from "@/lib/http-entry-views";
+import { getOAuthReceivedStepForRequest } from "@/lib/oauth/step-pairing";
 
 interface StepEntry {
   type: "info" | "http";
   log?: NonNullable<OAuthFlowState["infoLogs"]>[number];
   entry?: NonNullable<OAuthFlowState["httpHistory"]>[number];
+  /** Which half of the exchange this item presents (split display); absent
+   * means the classic combined entry. */
+  view?: HttpEntryView;
+  /** Display timestamp for split items (response items sort at arrival). */
+  timestamp?: number;
 }
 
 interface StepGroup {
@@ -259,18 +266,35 @@ export function generateGuideText(
         text += "\n";
       } else if (entry.type === "http" && entry.entry) {
         const httpEntry = entry.entry;
-        text += `[${formatTimestamp(httpEntry.timestamp)}] ${httpEntry.request.method} ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
+        // Mirrors the Guide tab's split: request halves print under the
+        // request step, response halves under the paired received step.
+        const view = entry.view ?? "full";
+        const showRequest = view !== "response";
+        const showResponse = view !== "request";
 
-        if (httpEntry.duration) {
+        if (view === "response") {
+          text += `[${formatTimestamp(entry.timestamp ?? httpEntry.timestamp)}] Response to ${httpEntry.request.method} ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
+        } else {
+          text += `[${formatTimestamp(httpEntry.timestamp)}] ${httpEntry.request.method} ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
+        }
+
+        if (showResponse && httpEntry.duration) {
           text += `Duration: ${httpEntry.duration}ms\n`;
         }
 
-        if (httpEntry.response?.status) {
+        if (showResponse && httpEntry.response?.status) {
           text += `Status: ${httpEntry.response.status} ${httpEntry.response.statusText || ""}\n`;
+        }
+
+        if (view === "request" && httpEntry.response) {
+          text += `Response: recorded under [${getOAuthReceivedStepForRequest(
+            httpEntry.step,
+          )}]\n`;
         }
 
         // Request details
         if (
+          showRequest &&
           httpEntry.request.headers &&
           Object.keys(httpEntry.request.headers).length > 0
         ) {
@@ -282,13 +306,14 @@ export function generateGuideText(
           )}\n`;
         }
 
-        if (httpEntry.request.body) {
+        if (showRequest && httpEntry.request.body) {
           text += "\nRequest Body:\n";
           text += `${stringifyCopyValue(httpEntry.request.body)}\n`;
         }
 
         // Response details
         if (
+          showResponse &&
           httpEntry.response?.headers &&
           Object.keys(httpEntry.response.headers).length > 0
         ) {
@@ -300,7 +325,7 @@ export function generateGuideText(
           )}\n`;
         }
 
-        if (httpEntry.response?.body) {
+        if (showResponse && httpEntry.response?.body) {
           text += "\nResponse Body:\n";
           text += `${stringifyCopyValue(httpEntry.response.body)}\n`;
         }

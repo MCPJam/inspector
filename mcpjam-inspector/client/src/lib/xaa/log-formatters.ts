@@ -1,4 +1,12 @@
-import { getXAAStepInfo, getXAAStepIndex } from "./step-metadata";
+import {
+  getXAAReceivedStepForRequest,
+  getXAAStepInfo,
+  getXAAStepIndex,
+} from "./step-metadata";
+import {
+  splitHttpEntriesForDisplay,
+  type HttpEntryView,
+} from "@/lib/http-entry-views";
 import type {
   XAAFlowState,
   XAAFlowStep,
@@ -187,7 +195,12 @@ export function generateXAAFlowText(
 
   type TimelineEntry =
     | { type: "info"; timestamp: number; value: XAAInfoLogEntry }
-    | { type: "http"; timestamp: number; value: XAAHttpHistoryEntry };
+    | {
+        type: "http";
+        timestamp: number;
+        value: XAAHttpHistoryEntry;
+        view: HttpEntryView;
+      };
 
   const byStep = new Map<XAAFlowStep, TimelineEntry[]>();
   const add = (step: XAAFlowStep, entry: TimelineEntry) => {
@@ -199,8 +212,24 @@ export function generateXAAFlowText(
   for (const entry of flowState.infoLogs ?? []) {
     add(entry.step, { type: "info", timestamp: entry.timestamp, value: entry });
   }
-  for (const entry of flowState.httpHistory ?? []) {
-    add(entry.step, { type: "http", timestamp: entry.timestamp, value: entry });
+  // Same request/response placement as the logger UI: the request prints under
+  // the request step, the response under the paired received step once the
+  // flow has reached it — otherwise the exchange prints whole.
+  for (const item of splitHttpEntriesForDisplay<
+    XAAFlowStep,
+    XAAHttpHistoryEntry
+  >({
+    entries: flowState.httpHistory ?? [],
+    pairedReceivedStep: getXAAReceivedStepForRequest,
+    getStepIndex: getXAAStepIndex,
+    reachedIndex: getXAAStepIndex(flowState.currentStep),
+  })) {
+    add(item.step, {
+      type: "http",
+      timestamp: item.timestamp,
+      value: item.entry,
+      view: item.view,
+    });
   }
 
   const steps = Array.from(byStep.keys()).sort(
@@ -231,29 +260,49 @@ export function generateXAAFlowText(
       }
 
       const http = entry.value;
-      text += `[${formatTimestamp(http.timestamp)}] ${
-        http.request.method
-      } ${sanitizeUrl(http.request.url)}\n`;
-      if (http.duration !== undefined) text += `Duration: ${http.duration}ms\n`;
-      if (http.response) {
+      const view = entry.view;
+      const showRequest = view !== "response";
+      const showResponse = view !== "request";
+
+      if (view === "response") {
+        text += `[${formatTimestamp(entry.timestamp)}] Response to ${
+          http.request.method
+        } ${sanitizeUrl(http.request.url)}\n`;
+      } else {
+        text += `[${formatTimestamp(http.timestamp)}] ${
+          http.request.method
+        } ${sanitizeUrl(http.request.url)}\n`;
+      }
+      if (showResponse && http.duration !== undefined) {
+        text += `Duration: ${http.duration}ms\n`;
+      }
+      if (showResponse && http.response) {
         text += `Status: ${http.response.status} ${http.response.statusText}\n`;
       }
-      if (Object.keys(http.request.headers).length > 0) {
+      if (view === "request" && http.response) {
+        const receivedStep = getXAAReceivedStepForRequest(http.step);
+        text += `Response: recorded under [${receivedStep}]\n`;
+      }
+      if (showRequest && Object.keys(http.request.headers).length > 0) {
         text += `\nRequest Headers:\n${stringify(
           sanitizeHeaders(http.request.headers)
         )}\n`;
       }
-      if (http.request.body !== undefined) {
+      if (showRequest && http.request.body !== undefined) {
         text += `\nRequest Body:\n${stringify(
           sanitizeBody(http.request.body)
         )}\n`;
       }
-      if (http.response && Object.keys(http.response.headers).length > 0) {
+      if (
+        showResponse &&
+        http.response &&
+        Object.keys(http.response.headers).length > 0
+      ) {
         text += `\nResponse Headers:\n${stringify(
           sanitizeHeaders(http.response.headers)
         )}\n`;
       }
-      if (http.response?.body !== undefined) {
+      if (showResponse && http.response?.body !== undefined) {
         text += `\nResponse Body:\n${stringify(
           sanitizeBody(http.response.body)
         )}\n`;

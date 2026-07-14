@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { XAAFlowLogger } from "../XAAFlowLogger";
 import { createInitialXAAFlowState } from "@/lib/xaa/types";
+import { getXAAStepInfo } from "@/lib/xaa/step-metadata";
 
 const copyToClipboard = vi.hoisted(() => vi.fn(async () => true));
 vi.mock("@/lib/clipboard", () => ({ copyToClipboard }));
@@ -194,5 +195,91 @@ describe("XAAFlowLogger run controls", () => {
     expect(
       screen.getByRole("button", { name: "Copied!" }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("XAAFlowLogger request/response card split", () => {
+  const JWT_BEARER_EXCHANGE = {
+    step: "jwt_bearer_request" as const,
+    timestamp: 1,
+    duration: 40,
+    request: {
+      method: "POST",
+      url: "https://auth.example.com/token",
+      headers: { "Content-Type": "application/json" },
+      body: { scope: "mcp.access" },
+    },
+    response: {
+      status: 200,
+      statusText: "OK",
+      headers: { "content-type": "application/json" },
+      body: { token_type: "Bearer" },
+    },
+  };
+
+  function renderWithExchange(
+    overrides: Partial<
+      Parameters<typeof createInitialXAAFlowState>[0]
+    > = {},
+  ) {
+    return render(
+      <XAAFlowLogger
+        flowState={createInitialXAAFlowState({
+          serverUrl: "https://mcp.example.com",
+          currentStep: "received_access_token",
+          httpHistory: [JWT_BEARER_EXCHANGE],
+          ...overrides,
+        })}
+        hasProfile
+        actions={{
+          onConfigure: vi.fn(),
+          onReset: vi.fn(),
+          onContinue: vi.fn(),
+          continueLabel: "Continue",
+        }}
+        summary={{ serverUrl: "https://mcp.example.com" }}
+      />,
+    );
+  }
+
+  async function expandStep(user: ReturnType<typeof userEvent.setup>, step: Parameters<typeof getXAAStepInfo>[0]) {
+    const title = getXAAStepInfo(step).title;
+    await user.click(
+      screen.getByRole("button", { name: new RegExp(title, "i") }),
+    );
+  }
+
+  it("renders the response on the received card once the step is reached", async () => {
+    const user = userEvent.setup();
+    renderWithExchange();
+
+    // received_access_token (current step) is auto-expanded; expand the
+    // request card too so both halves are visible.
+    await expandStep(user, "jwt_bearer_request");
+
+    // The request card shows the request half with a deferred-response hint.
+    expect(screen.getByText("response → next step")).toBeInTheDocument();
+    // The status renders exactly once — on the received card's response item.
+    expect(screen.getAllByText("200")).toHaveLength(1);
+    // Both halves show the method/url context line.
+    expect(screen.getAllByText("POST")).toHaveLength(2);
+  });
+
+  it("keeps the exchange whole on the request card while parked there", async () => {
+    renderWithExchange({ currentStep: "jwt_bearer_request" });
+    // Current step auto-expands; the full exchange renders in place.
+    expect(screen.queryByText("response → next step")).not.toBeInTheDocument();
+    expect(screen.getAllByText("200")).toHaveLength(1);
+    expect(screen.getAllByText("POST")).toHaveLength(1);
+  });
+
+  it("keeps a terminal negative-rejected exchange whole at jwt_bearer_request", () => {
+    renderWithExchange({
+      currentStep: "jwt_bearer_request",
+      negativeTestMode: "bad_signature",
+      negativeProbe: { outcome: "rejected", status: 400 },
+    });
+    expect(screen.queryByText("response → next step")).not.toBeInTheDocument();
+    expect(screen.getAllByText("200")).toHaveLength(1);
   });
 });

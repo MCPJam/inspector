@@ -28,6 +28,7 @@ import { InfoLogEntry } from "@/components/oauth/InfoLogEntry";
 import { IdJagInspector } from "./IdJagInspector";
 import {
   getXAAPhaseNumber,
+  getXAAReceivedStepForRequest,
   getXAAStepInfo,
   getXAAStepIndex,
   XAA_PHASE_ORDER,
@@ -37,6 +38,10 @@ import {
 } from "@/lib/xaa/step-metadata";
 import type { XAAFlowState, XAAFlowStep } from "@/lib/xaa/types";
 import { generateXAAFlowText } from "@/lib/xaa/log-formatters";
+import {
+  splitHttpEntriesForDisplay,
+  type HttpEntryDisplayItem,
+} from "@/lib/http-entry-views";
 import { copyToClipboard } from "@/lib/clipboard";
 import {
   getXAAErrorGuidance,
@@ -426,13 +431,22 @@ export function XAAFlowLogger({
       ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [activeStep]);
 
+  const currentStepIndex = getXAAStepIndex(flowState.currentStep);
+
   const groups = useMemo(() => {
+    type XAAHttpEntry = NonNullable<XAAFlowState["httpHistory"]>[number];
     const steps = new Map<
       XAAFlowStep,
       {
         step: XAAFlowStep;
         infoEntries: NonNullable<XAAFlowState["infoLogs"]>;
+        /** Raw entries tagged with this step — feeds error guidance and the
+         * phase-skip check, which read the unsplit data. */
         httpEntries: NonNullable<XAAFlowState["httpHistory"]>;
+        /** What this card actually renders: each exchange's request half under
+         * its request step, the response half under the paired received step
+         * once reached. */
+        displayItems: HttpEntryDisplayItem<XAAFlowStep, XAAHttpEntry>[];
       }
     >();
 
@@ -442,6 +456,7 @@ export function XAAFlowLogger({
           step,
           infoEntries: [],
           httpEntries: [],
+          displayItems: [],
         });
       }
 
@@ -456,10 +471,19 @@ export function XAAFlowLogger({
       ensureGroup(entry.step as XAAFlowStep).httpEntries.push(entry);
     });
 
+    splitHttpEntriesForDisplay<XAAFlowStep, XAAHttpEntry>({
+      entries: flowState.httpHistory || [],
+      pairedReceivedStep: getXAAReceivedStepForRequest,
+      getStepIndex: getXAAStepIndex,
+      reachedIndex: currentStepIndex,
+    }).forEach((item) => {
+      ensureGroup(item.step).displayItems.push(item);
+    });
+
     return Array.from(steps.values()).sort(
       (a, b) => getXAAStepIndex(a.step) - getXAAStepIndex(b.step)
     );
-  }, [flowState.httpHistory, flowState.infoLogs]);
+  }, [flowState.httpHistory, flowState.infoLogs, currentStepIndex]);
 
   // Bucket consecutive step groups by phase so each phase renders one header.
   const phasedGroups = useMemo(() => {
@@ -478,8 +502,6 @@ export function XAAFlowLogger({
     }
     return sections;
   }, [groups]);
-
-  const currentStepIndex = getXAAStepIndex(flowState.currentStep);
 
   const handleCopyFlow = async () => {
     setCopyError(null);
@@ -852,8 +874,12 @@ export function XAAFlowLogger({
                 const status = getStatus(group.step);
                 const StatusIcon = status.icon;
                 const entryCount =
-                  group.infoEntries.length + group.httpEntries.length;
-                const hasError = group.httpEntries.some((entry) => entry.error);
+                  group.infoEntries.length + group.displayItems.length;
+                // Errored exchanges always render whole ("full") on the request
+                // card, so error attribution is unchanged by the split.
+                const hasError = group.displayItems.some(
+                  (item) => item.entry.error
+                );
                 const stepLabel = section.phase
                   ? `${getXAAPhaseNumber(section.phase)}.${indexInPhase + 1} ${
                       stepInfo.title
@@ -942,9 +968,9 @@ export function XAAFlowLogger({
                           />
                         ))}
 
-                        {group.httpEntries.map((entry) => (
+                        {group.displayItems.map(({ entry, view }) => (
                           <HTTPHistoryEntry
-                            key={`${entry.timestamp}-${entry.request.url}`}
+                            key={`${entry.timestamp}-${entry.request.url}-${view}`}
                             method={entry.request.method}
                             url={entry.request.url}
                             status={entry.response?.status}
@@ -956,6 +982,7 @@ export function XAAFlowLogger({
                             responseBody={entry.response?.body}
                             error={entry.error}
                             step={entry.step}
+                            view={view}
                           />
                         ))}
 

@@ -24,6 +24,11 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { generateGuideText, generateRawText } from "@/lib/oauth/log-formatters";
+import { getOAuthReceivedStepForRequest } from "@/lib/oauth/step-pairing";
+import {
+  splitHttpEntriesForDisplay,
+  type HttpEntryView,
+} from "@/lib/http-entry-views";
 
 interface OAuthFlowLoggerProps {
   oauthFlowState: OAuthFlowState;
@@ -72,12 +77,32 @@ export function OAuthFlowLogger({
   const [activeTab, setActiveTab] = useState<"guide" | "raw">("guide");
   const [copySuccess, setCopySuccess] = useState(false);
 
+  const currentStepIndex = getStepIndex(oauthFlowState.currentStep);
+
+  // Flow-level HTTP+SSE detection: the deprecated-transport 4xx suppression
+  // must keep working when the split renders the 4xx response on a different
+  // card than the transport info log.
+  const hasDeprecatedTransportFlow = useMemo(
+    () =>
+      (oauthFlowState.infoLogs || []).some(
+        (log) =>
+          log.label?.includes("HTTP+SSE Transport Detected") ||
+          log.id === "http-sse-detected",
+      ),
+    [oauthFlowState.infoLogs],
+  );
+
   const groups = useMemo(() => {
     type StepEntry =
       | { type: "info"; log: NonNullable<OAuthFlowState["infoLogs"]>[number] }
       | {
           type: "http";
           entry: NonNullable<OAuthFlowState["httpHistory"]>[number];
+          /** Which half of the exchange this item renders (see
+           * splitHttpEntriesForDisplay); the entry itself is unmodified. */
+          view: HttpEntryView;
+          /** Display timestamp: response items sort at arrival time. */
+          timestamp: number;
         };
 
     const map = new Map<
@@ -108,18 +133,34 @@ export function OAuthFlowLogger({
         group.firstTimestamp = Math.min(group.firstTimestamp, log.timestamp);
       });
 
-    (oauthFlowState.httpHistory || []).forEach((entry) => {
-      const group = ensureGroup(entry.step);
-      group.entries.push({ type: "http", entry });
-      group.firstTimestamp = Math.min(group.firstTimestamp, entry.timestamp);
+    // Each exchange's request half renders under its request step and the
+    // response half under the paired received step once reached; failed or
+    // unpaired exchanges stay whole on their own card.
+    splitHttpEntriesForDisplay<
+      OAuthFlowStep,
+      NonNullable<OAuthFlowState["httpHistory"]>[number]
+    >({
+      entries: oauthFlowState.httpHistory || [],
+      pairedReceivedStep: getOAuthReceivedStepForRequest,
+      getStepIndex,
+      reachedIndex: currentStepIndex,
+    }).forEach((item) => {
+      const group = ensureGroup(item.step);
+      group.entries.push({
+        type: "http",
+        entry: item.entry,
+        view: item.view,
+        timestamp: item.timestamp,
+      });
+      group.firstTimestamp = Math.min(group.firstTimestamp, item.timestamp);
     });
 
     const ordered = Array.from(map.values());
 
     ordered.forEach((group) => {
       group.entries.sort((a, b) => {
-        const timeA = a.type === "info" ? a.log.timestamp : a.entry.timestamp;
-        const timeB = b.type === "info" ? b.log.timestamp : b.entry.timestamp;
+        const timeA = a.type === "info" ? a.log.timestamp : a.timestamp;
+        const timeB = b.type === "info" ? b.log.timestamp : b.timestamp;
         return timeA - timeB;
       });
     });
@@ -131,9 +172,12 @@ export function OAuthFlowLogger({
     });
 
     return ordered;
-  }, [oauthFlowState.infoLogs, oauthFlowState.httpHistory, deletedInfoLogs]);
-
-  const currentStepIndex = getStepIndex(oauthFlowState.currentStep);
+  }, [
+    oauthFlowState.infoLogs,
+    oauthFlowState.httpHistory,
+    deletedInfoLogs,
+    currentStepIndex,
+  ]);
   const focusStep = activeStep ?? oauthFlowState.currentStep;
   const formatTimestamp = (timestamp: number) =>
     new Date(timestamp).toLocaleTimeString();
@@ -492,8 +536,12 @@ export function OAuthFlowLogger({
                   const errorInfoCount = infoEntries.filter(
                     ({ log }) => log.level === "error",
                   ).length;
-                  const httpErrorCount = httpEntries.filter(({ entry }) => {
+                  const httpErrorCount = httpEntries.filter((item) => {
+                    const { entry } = item;
                     if (entry.error) return true;
+                    // A request-view item's response (and its status) renders
+                    // under the paired received card — count it there.
+                    if (item.view === "request") return false;
                     const status = entry.response?.status;
                     // Don't treat 401 on initial request as error
                     if (
@@ -506,7 +554,7 @@ export function OAuthFlowLogger({
                     // (the 4xx triggers the GET fallback for backwards compatibility)
                     if (
                       entry.step === "authenticated_mcp_request" &&
-                      hasDeprecatedTransport &&
+                      hasDeprecatedTransportFlow &&
                       status &&
                       status >= 400 &&
                       status < 500
@@ -522,10 +570,11 @@ export function OAuthFlowLogger({
                       .error?.message ||
                     httpEntries.find(({ entry }) => entry.error)?.entry.error
                       ?.message ||
-                    httpEntries.find(({ entry }) => {
-                      const status = entry.response?.status;
+                    httpEntries.find((item) => {
+                      if (item.view === "request") return false;
+                      const status = item.entry.response?.status;
                       if (
-                        entry.step === "request_without_token" &&
+                        item.entry.step === "request_without_token" &&
                         status === 401
                       ) {
                         return false;
@@ -533,7 +582,7 @@ export function OAuthFlowLogger({
                       return (
                         typeof status === "number" &&
                         status >= 400 &&
-                        !!entry.response?.statusText
+                        !!item.entry.response?.statusText
                       );
                     })?.entry.response?.statusText;
                   const statusInfo = getStatusIcon(group.step);
@@ -699,9 +748,9 @@ export function OAuthFlowLogger({
                             ))}
 
                             {/* HTTP requests */}
-                            {httpEntries.map(({ entry }) => (
+                            {httpEntries.map(({ entry, view }) => (
                               <HTTPHistoryEntry
-                                key={`http-${entry.timestamp}`}
+                                key={`http-${entry.timestamp}-${view}`}
                                 method={entry.request.method}
                                 url={entry.request.url}
                                 status={entry.response?.status}
@@ -713,6 +762,7 @@ export function OAuthFlowLogger({
                                 responseBody={entry.response?.body}
                                 error={entry.error}
                                 step={entry.step}
+                                view={view}
                               />
                             ))}
 

@@ -132,6 +132,89 @@ describe("generateXAAFlowText", () => {
     expect(copied).toContain("scope=read");
   });
 
+  it("prints the request under the request step and the response under the received step once reached", () => {
+    const copied = generateXAAFlowText(
+      createInitialXAAFlowState({
+        currentStep: "received_access_token",
+        httpHistory: [
+          {
+            step: "jwt_bearer_request",
+            timestamp: 1,
+            duration: 40,
+            request: {
+              method: "POST",
+              url: "https://auth.example.com/token",
+              headers: { "Content-Type": "application/json" },
+              body: { scope: "mcp.access" },
+            },
+            response: {
+              status: 200,
+              statusText: "OK",
+              headers: { "content-type": "application/json" },
+              body: { token_type: "Bearer" },
+            },
+          },
+        ],
+      }),
+      {}
+    );
+
+    const requestHeader = copied.indexOf("[jwt_bearer_request]");
+    // lastIndexOf: the request section's pointer line also names the received
+    // step; the section HEADER is the later occurrence.
+    const receivedHeader = copied.lastIndexOf("[received_access_token]");
+    expect(requestHeader).toBeGreaterThan(-1);
+    expect(receivedHeader).toBeGreaterThan(requestHeader);
+
+    const requestSection = copied.slice(requestHeader, receivedHeader);
+    const receivedSection = copied.slice(receivedHeader);
+    // Request half: request fields + a pointer, no status/response fields.
+    expect(requestSection).toContain("Request Body:");
+    expect(requestSection).toContain(
+      "Response: recorded under [received_access_token]"
+    );
+    expect(requestSection).not.toContain("Status: 200");
+    expect(requestSection).not.toContain("Response Body:");
+    // Received half: status/duration/response fields, no request fields.
+    expect(receivedSection).toContain("Response to POST");
+    expect(receivedSection).toContain("Status: 200 OK");
+    expect(receivedSection).toContain("Duration: 40ms");
+    expect(receivedSection).toContain("Response Body:");
+    expect(receivedSection).not.toContain("Request Body:");
+  });
+
+  it("keeps the exchange whole under the request step while parked there", () => {
+    const copied = generateXAAFlowText(
+      createInitialXAAFlowState({
+        currentStep: "jwt_bearer_request",
+        httpHistory: [
+          {
+            step: "jwt_bearer_request",
+            timestamp: 1,
+            request: {
+              method: "POST",
+              url: "https://auth.example.com/token",
+              headers: {},
+            },
+            response: {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: { token_type: "Bearer" },
+            },
+          },
+        ],
+      }),
+      {}
+    );
+
+    // Not reached received_access_token: nothing is deferred or hidden.
+    expect(copied).not.toContain("[received_access_token]");
+    expect(copied).toContain("Status: 200 OK");
+    expect(copied).toContain("Response Body:");
+    expect(copied).not.toContain("Response: recorded under");
+  });
+
   it("redacts failed requests duplicated into info logs and error text", () => {
     const copied = generateXAAFlowText(
       createInitialXAAFlowState({

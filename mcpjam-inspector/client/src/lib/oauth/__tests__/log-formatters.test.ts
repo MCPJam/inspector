@@ -120,4 +120,68 @@ describe("OAuth copy log formatters", () => {
     expect(httpEntry.request.url).toContain("url-user-secret");
     expect(httpEntry.response.body).toContain("response-access-secret");
   });
+
+  it("prints split request/response halves under their own step sections", () => {
+    // The logger splits a reached exchange into a request item on the request
+    // step and a response item on the paired received step; the guide text
+    // must mirror that placement.
+    const httpEntry = {
+      step: "token_request" as OAuthFlowStep,
+      timestamp: 10,
+      duration: 25,
+      request: {
+        method: "POST",
+        url: "https://auth.example.com/token",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "grant_type=authorization_code",
+      },
+      response: {
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token_type: "Bearer" }),
+      },
+    } as any;
+    const state = {
+      currentStep: "received_access_token",
+      infoLogs: [],
+      httpHistory: [httpEntry],
+    } as unknown as OAuthFlowState;
+
+    const guide = generateGuideText(state, [
+      {
+        step: "token_request" as OAuthFlowStep,
+        entries: [
+          { type: "http", entry: httpEntry, view: "request", timestamp: 10 },
+        ],
+        firstTimestamp: 10,
+      },
+      {
+        step: "received_access_token" as OAuthFlowStep,
+        entries: [
+          { type: "http", entry: httpEntry, view: "response", timestamp: 35 },
+        ],
+        firstTimestamp: 35,
+      },
+    ]);
+
+    const requestHeader = guide.indexOf("Exchange Authorization Code");
+    const receivedHeader = guide.indexOf("Tokens Received");
+    expect(requestHeader).toBeGreaterThan(-1);
+    expect(receivedHeader).toBeGreaterThan(requestHeader);
+
+    const requestSection = guide.slice(requestHeader, receivedHeader);
+    const receivedSection = guide.slice(receivedHeader);
+    expect(requestSection).toContain("Request Body:");
+    expect(requestSection).toContain(
+      "Response: recorded under [received_access_token]",
+    );
+    expect(requestSection).not.toContain("Status: 200");
+    expect(requestSection).not.toContain("Response Body:");
+    expect(receivedSection).toContain("Response to POST");
+    expect(receivedSection).toContain("Status: 200 OK");
+    expect(receivedSection).toContain("Duration: 25ms");
+    expect(receivedSection).toContain("Response Body:");
+    expect(receivedSection).not.toContain("Request Body:");
+  });
 });
