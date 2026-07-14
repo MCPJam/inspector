@@ -410,6 +410,41 @@ With `--format json`, a single machine-readable startup object (public URL, serv
 
 ---
 
+## `xaa` commands
+
+### `xaa run`
+
+Self-issue an ID-JAG, redeem it at the target authorization server (RFC 7523), and call the MCP server with the resulting access token.
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--url <url>` | Yes | | Target MCP server URL (the protected resource) |
+| `--issuer-base-url <url>` | Yes | | Origin the local mock IdP issues from; the AS must be able to fetch its JWKS from here |
+| `--sub <subject>` | Yes | | Simulated end-user subject identifier |
+| `--client-id <id>` | No | | OAuth client the ID-JAG is issued for. Required for `preregistered` (the default); rejected for `dcr`/`cimd` (the identity is derived) |
+| `--registration <method>` | No | `preregistered` | Client-registration strategy: `preregistered`, `dcr`, or `cimd` |
+| `--client-metadata-url <url>` | No | | CIMD only: the Client ID Metadata Document URL to present as the `client_id`. Defaults to the hosted XAA debugger document |
+| `--authz-server-issuer <issuer>` | No | | Target authorization-server issuer. When set, protected-resource metadata discovery is skipped |
+| `--token-endpoint <url>` | No | | Authorization-server token endpoint. When set, AS-metadata discovery is skipped. Rejected for `dcr`/`cimd` |
+| `--email <email>` | No | | Simulated end-user email claim |
+| `--client-secret <secret>` | No | | OAuth client secret presented at redemption. Rejected for `dcr`/`cimd` |
+| `--token-endpoint-auth-method <method>` | No | Inferred from metadata | `client_secret_basic`, `client_secret_post`, or `none`. Rejected for `dcr`/`cimd` |
+| `--assertion-format <format>` | No | `oidc` | Identity assertion format: `oidc` (ID token) or `saml` (SAML 2.0 assertion) |
+| `--scopes <scopes>` | No | | Space-separated scope string |
+| `--https-only` | No | off | Reject non-HTTPS / private targets (default: allow `http`/`localhost` for local dev) |
+
+**Registration strategies**
+
+| Strategy | `--client-id` | `--client-secret` | `--token-endpoint` | Description |
+|----------|:-------------:|:-----------------:|:------------------:|-------------|
+| `preregistered` (default) | Required | Optional | Allowed | Use a pre-registered client identity |
+| `dcr` | Rejected | Rejected | Rejected | RFC 7591 dynamic registration — the RAS mints the `client_id`. A diagnostic that simulates the IdP→RAS mapping; may leave a registration behind each run |
+| `cimd` | Rejected | Rejected | Rejected | Client ID Metadata Document — public-client variant; interoperability only, not a recommended production posture |
+
+`--authz-server-issuer` is allowed with all three strategies.
+
+---
+
 ## `mcp` command
 
 ### `mcp`
