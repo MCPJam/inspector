@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Check, Pencil, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -83,6 +83,10 @@ function PersonForm({
   const [draft, setDraft] = useState<PersonDraft>(initial);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Per-instance field IDs: the add and edit forms can be mounted at the same
+  // time (add popover opened over an open edit popover), and shared static IDs
+  // would let one form's label focus the other form's input.
+  const fieldId = useId();
 
   const canSave =
     draft.name.trim().length > 0 &&
@@ -147,22 +151,22 @@ function PersonForm({
         authorization server decides what this subject can access.
       </p>
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="xaa-person-name" className="text-xs">
+        <Label htmlFor={`${fieldId}-name`} className="text-xs">
           Name
         </Label>
         <Input
-          id="xaa-person-name"
+          id={`${fieldId}-name`}
           value={draft.name}
           placeholder="Test admin"
           onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
         />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="xaa-person-subject" className="text-xs">
+        <Label htmlFor={`${fieldId}-subject`} className="text-xs">
           Subject (<code className="font-mono">sub</code> claim)
         </Label>
         <Input
-          id="xaa-person-subject"
+          id={`${fieldId}-subject`}
           value={draft.subject}
           placeholder="test-user-1"
           className="font-mono"
@@ -170,11 +174,11 @@ function PersonForm({
         />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="xaa-person-email" className="text-xs">
+        <Label htmlFor={`${fieldId}-email`} className="text-xs">
           Email
         </Label>
         <Input
-          id="xaa-person-email"
+          id={`${fieldId}-email`}
           value={draft.email}
           placeholder="test-user-1@example.test"
           className="font-mono"
