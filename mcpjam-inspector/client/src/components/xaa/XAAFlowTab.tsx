@@ -233,6 +233,17 @@ export function XAAFlowTab({
     setScorecardHasResults(true);
     scorecardPanelRef.current?.resize(50);
   }, []);
+  const handleScorecardExpandedChange = useCallback(
+    (expanded: boolean, hasResults: boolean) => {
+      if (expanded && hasResults) {
+        expandScorecardForResults();
+        return;
+      }
+      setScorecardHasResults(false);
+      setCompactScorecardContentHeight(null);
+    },
+    [expandScorecardForResults]
+  );
   const updateCompactScorecardContentHeight = useCallback((height: number) => {
     if (!height) return;
     setCompactScorecardContentHeight((current) =>
@@ -1035,6 +1046,7 @@ export function XAAFlowTab({
               unavailableReason={scorecard.unavailableReason}
               onResultsReady={expandScorecardForResults}
               onTargetChange={collapseScorecard}
+              onExpandedChange={handleScorecardExpandedChange}
               onCompactContentHeightChange={updateCompactScorecardContentHeight}
             />
           ) : undefined

@@ -14,6 +14,7 @@ import { Card } from "@mcpjam/design-system/card";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
   NEGATIVE_TEST_MODE_DETAILS,
+  isPolicyDependentNegativeTestMode,
   type NegativeTestMode,
 } from "@/shared/xaa.js";
 import {
@@ -36,6 +37,8 @@ interface NegativeTestScorecardProps {
   onResultsReady?: () => void;
   /** Lets the parent return the panel to its compact starting size for a new target. */
   onTargetChange?: () => void;
+  /** Keeps the resizable panel in sync when the card is collapsed or expanded. */
+  onExpandedChange?: (expanded: boolean, hasResults: boolean) => void;
   /** Reports the compact card's actual height so its panel can fit its content. */
   onCompactContentHeightChange?: (height: number) => void;
 }
@@ -65,6 +68,15 @@ function StatusPill({ row }: { row: NegativeTestCase }) {
     );
   }
 
+  if (row.verdict === "policy") {
+    const outcomeLabel = row.outcome === "accepted" ? "Accepted" : "Rejected";
+    return (
+      <span className="shrink-0 text-[11px] font-medium text-amber-700 dark:text-amber-400">
+        {outcomeLabel} — policy-dependent{httpSuffix}
+      </span>
+    );
+  }
+
   return (
     <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
       {row.outcome === "timeout" ? "Timed out" : "Inconclusive"}
@@ -78,11 +90,13 @@ function VerdictRow({ row }: { row: NegativeTestCase }) {
       ? { Icon: CheckCircle2, className: "text-green-600 dark:text-green-400" }
       : row.verdict === "fail"
       ? { Icon: ShieldAlert, className: "text-red-500" }
+      : row.verdict === "policy"
+      ? { Icon: HelpCircle, className: "text-amber-600 dark:text-amber-400" }
       : { Icon: HelpCircle, className: "text-muted-foreground" };
 
-  // A correct server rejects every broken assertion, so the "what this checks"
-  // copy is the right explanation on a pass; a fail or timeout has its own
-  // server-supplied detail.
+  // Strict passes use the shared "what this checks" copy. Failures and
+  // transport errors prefer their server-supplied detail; policy probes retain
+  // the neutral shared explanation regardless of acceptance or rejection.
   const description =
     NEGATIVE_TEST_MODE_DETAILS[row.mode as NegativeTestMode]?.description;
   const body = row.verdict === "pass" ? description : row.detail || description;
@@ -131,6 +145,7 @@ export function NegativeTestScorecard({
   unavailableReason,
   onResultsReady,
   onTargetChange,
+  onExpandedChange,
   onCompactContentHeightChange,
 }: NegativeTestScorecardProps) {
   const [expanded, setExpanded] = useState(true);
@@ -181,9 +196,18 @@ export function NegativeTestScorecard({
       ? run.result.results.filter((r) => r.verdict === "pass").length
       : 0;
   const hasResults = run.status === "done";
+  const policyCount =
+    run.status === "done"
+      ? run.result.results.filter((r) =>
+          isPolicyDependentNegativeTestMode(r.mode as NegativeTestMode)
+        ).length
+      : 0;
+  const strictCheckCount =
+    run.status === "done" ? run.result.results.length - policyCount : 0;
+  const fillPanel = hasResults && expanded;
 
   useLayoutEffect(() => {
-    if (hasResults || !onCompactContentHeightChange) return;
+    if (fillPanel || !onCompactContentHeightChange) return;
     const element = cardContainerRef.current;
     if (!element) return;
 
@@ -196,18 +220,24 @@ export function NegativeTestScorecard({
     const observer = new ResizeObserver(reportHeight);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [hasResults, onCompactContentHeightChange]);
+  }, [fillPanel, onCompactContentHeightChange]);
+
+  const handleExpandedToggle = () => {
+    const nextExpanded = !expanded;
+    setExpanded(nextExpanded);
+    onExpandedChange?.(nextExpanded, hasResults);
+  };
 
   return (
-    <div ref={cardContainerRef} className={hasResults ? "h-full" : undefined}>
+    <div ref={cardContainerRef} className={fillPanel ? "h-full" : undefined}>
       <Card
         className={`mx-3 mt-1 mb-3 gap-0 p-0 ${
-          hasResults ? "flex h-[calc(100%-1rem)] flex-col overflow-hidden" : ""
+          fillPanel ? "flex h-[calc(100%-1rem)] flex-col overflow-hidden" : ""
         }`}
       >
         <button
           type="button"
-          onClick={() => setExpanded((value) => !value)}
+          onClick={handleExpandedToggle}
           aria-expanded={expanded}
           className="flex w-full items-center gap-2 px-4 py-3 text-left"
         >
@@ -217,8 +247,7 @@ export function NegativeTestScorecard({
               Negative-test scorecard
             </span>
             <p className="truncate text-xs text-muted-foreground">
-              Fire deliberately-broken assertions and verify your auth server
-              rejects them.
+              Test invalid assertions and inspect policy-dependent behavior.
             </p>
           </div>
           {expanded ? (
@@ -297,8 +326,13 @@ export function NegativeTestScorecard({
                 {run.status === "done" && (
                   <>
                     <p className="text-xs text-muted-foreground">
-                      {passedCount} of {run.result.results.length} broken
-                      assertions correctly rejected.
+                      {passedCount} of {strictCheckCount} strict rejection
+                      checks passed.
+                      {policyCount > 0
+                        ? ` ${policyCount} policy ${
+                            policyCount === 1 ? "probe" : "probes"
+                          } reported separately.`
+                        : ""}
                     </p>
                     <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
                       {run.result.results.map((row) => (

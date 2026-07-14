@@ -668,7 +668,8 @@ describe("POST /negative-tests", () => {
       failures: number;
     };
     expect(body.results).toHaveLength(11);
-    expect(body.failures).toBe(11);
+    expect(body.failures).toBe(9);
+    expect(body.results.filter((r) => r.verdict === "policy")).toHaveLength(2);
     const expired = body.results.find((r) => r.mode === "expired");
     expect(expired?.verdict).toBe("fail");
 
@@ -703,7 +704,8 @@ describe("POST /negative-tests", () => {
       failures: number;
     };
     expect(body.failures).toBe(0);
-    expect(body.results.every((r) => r.verdict === "pass")).toBe(true);
+    expect(body.results.filter((r) => r.verdict === "pass")).toHaveLength(9);
+    expect(body.results.filter((r) => r.verdict === "policy")).toHaveLength(2);
   });
 
   it("yields partial results when a case times out (one slow case doesn't sink the run)", async () => {

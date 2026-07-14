@@ -191,18 +191,20 @@ public signing keys.
   />
 </Frame>
 
-The **Negative-test scorecard** sends deliberately invalid ID-JAGs to your
-authorization server and checks that it refuses to issue an access token for
-each one. Run a successful flow first to unlock it.
+The **Negative-test scorecard** sends invalid ID-JAGs to your authorization
+server and checks that it refuses the assertions that the ID-JAG profile
+requires it to reject. It also reports two policy-dependent probes separately.
+Run a successful flow first to unlock it.
 
 Click **Run negative tests** to send intentionally broken ID-JAGs to the
 authorization server's token endpoint. The MCP server is not called during
 these probes.
 
-A test passes when the authorization server rejects the broken assertion. It
-fails when the authorization server issues an access token for one.
+A strict rejection check passes when the authorization server rejects the
+broken assertion. It fails when the authorization server issues an access token
+for one.
 
-The scorecard checks these 11 cases:
+The scorecard runs these nine strict rejection checks:
 
 - Bad Signature
 - Wrong Audience
@@ -213,10 +215,19 @@ The scorecard checks these 11 cases:
 - Resource Mismatch
 - Client ID Mismatch
 - Unknown `kid`
+
+It also reports these policy probes without treating acceptance or rejection as
+a security verdict:
+
 - Unknown Subject
 - Scope Denial
 
-These are targeted security checks, not a full conformance test.
+An authorization server may resolve or JIT-provision an unknown subject. It may
+also reject a scope request or issue a token containing only an allowed subset.
+Inspect these rows against your deployment's intended subject-resolution and
+authorization policy.
+
+These are targeted security and policy checks, not a full conformance test.
 
 ## The XAA Flow
 

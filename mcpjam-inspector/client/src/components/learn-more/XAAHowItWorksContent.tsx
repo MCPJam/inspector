@@ -1,4 +1,4 @@
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, HelpCircle } from "lucide-react";
 
 const registrationMethods = [
   {
@@ -28,7 +28,7 @@ const claims = [
   ["scope", "The requested permissions"],
 ];
 
-const negativeTests = [
+const strictNegativeTests = [
   "Bad Signature",
   "Wrong Audience",
   "Expired",
@@ -38,9 +38,9 @@ const negativeTests = [
   "Resource Mismatch",
   "Client ID Mismatch",
   "Unknown kid",
-  "Unknown Subject",
-  "Scope Denial",
 ];
+
+const policyProbes = ["Unknown Subject", "Scope Denial"];
 
 function GuideImage({
   src,
@@ -294,24 +294,43 @@ export function XAAHowItWorksContent() {
             <SectionHeading
               number="4"
               title="Run negative tests"
-              description="The scorecard sends deliberately invalid ID-JAGs to the authorization server and checks that it refuses to issue an access token for each one."
+              description="The scorecard checks that the authorization server rejects structurally invalid ID-JAGs and reports policy-dependent behavior separately."
             />
             <p className="text-sm leading-6 text-muted-foreground">
               Run a successful flow first, then select{" "}
-              <strong>Run negative tests</strong>. A test passes when the
-              authorization server rejects the broken assertion. The MCP server
-              is not called during these checks.
+              <strong>Run negative tests</strong>. A strict check passes when
+              the authorization server rejects the broken assertion. The MCP
+              server is not called during these checks.
             </p>
             <div className="mt-6 grid gap-x-6 gap-y-3 sm:grid-cols-2">
-              {negativeTests.map((test) => (
+              {strictNegativeTests.map((test) => (
                 <div key={test} className="flex items-center gap-2 text-sm">
                   <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
                   <span>{test}</span>
                 </div>
               ))}
             </div>
+            <div className="mt-6 border-t pt-5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Policy probes
+              </p>
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                Unknown subjects may be resolved or JIT-provisioned, and scope
+                requests may be narrowed. Compare these observations with your
+                deployment policy.
+              </p>
+              <div className="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+                {policyProbes.map((test) => (
+                  <div key={test} className="flex items-center gap-2 text-sm">
+                    <HelpCircle className="h-4 w-4 shrink-0 text-amber-600" />
+                    <span>{test}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
             <p className="mt-6 text-xs text-muted-foreground">
-              These are targeted security checks, not a full conformance test.
+              These are targeted security and policy checks, not a full
+              conformance test.
             </p>
           </div>
         </div>

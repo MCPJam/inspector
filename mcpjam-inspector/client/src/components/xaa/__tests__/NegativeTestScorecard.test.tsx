@@ -50,6 +50,7 @@ describe("NegativeTestScorecard", () => {
 
   it("runs immediately when unlocked and renders per-case verdicts", async () => {
     const onResultsReady = vi.fn();
+    const onExpandedChange = vi.fn();
     runMock.mockResolvedValue({
       failures: 1,
       results: [
@@ -75,6 +76,14 @@ describe("NegativeTestScorecard", () => {
             expected: "https://auth.example.com",
           },
         },
+        {
+          mode: "unknown_sub",
+          label: "Unknown Subject",
+          expectedFailure: "Observe the subject-resolution policy",
+          outcome: "accepted",
+          verdict: "policy",
+          status: 200,
+        },
       ],
     });
 
@@ -84,6 +93,7 @@ describe("NegativeTestScorecard", () => {
         input={INPUT}
         unlocked
         onResultsReady={onResultsReady}
+        onExpandedChange={onExpandedChange}
       />
     );
 
@@ -101,15 +111,39 @@ describe("NegativeTestScorecard", () => {
     expect(
       screen.getByTestId("xaa-negtest-row-wrong_audience")
     ).toHaveAttribute("data-verdict", "pass");
+    expect(screen.getByTestId("xaa-negtest-row-unknown_sub")).toHaveAttribute(
+      "data-verdict",
+      "policy"
+    );
     // Outcome-based copy: a pass reads as a result, not an instruction.
     expect(screen.getByText(/rejected as expected/i)).toBeInTheDocument();
     expect(screen.getByText(/accepted — security risk/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/accepted — policy-dependent/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/1 of 2 strict rejection checks passed/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/1 policy probe reported separately/i)
+    ).toBeInTheDocument();
     // Expected-vs-actual diff for the tampered claim.
     expect(
       screen.getByText(/https:\/\/wrong-audience\.example\.com/)
     ).toBeInTheDocument();
     expect(runMock).toHaveBeenCalledWith(INPUT);
     expect(onResultsReady).toHaveBeenCalledTimes(1);
+
+    const scorecardToggle = screen.getByRole("button", {
+      name: /negative-test scorecard/i,
+    });
+    await user.click(scorecardToggle);
+    expect(onExpandedChange).toHaveBeenLastCalledWith(false, true);
+    expect(screen.queryByTestId("xaa-negtest-row-expired")).toBeNull();
+
+    await user.click(scorecardToggle);
+    expect(onExpandedChange).toHaveBeenLastCalledWith(true, true);
+    expect(screen.getByTestId("xaa-negtest-row-expired")).toBeInTheDocument();
   });
 
   it("unlocks via the owner checkbox for the half-built-AS case", async () => {

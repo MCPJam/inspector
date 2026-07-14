@@ -60,7 +60,11 @@
           {
             "group": "MCP Apps",
             "icon": "layout-dashboard",
-            "pages": ["inspector/playground", "inspector/evals"]
+            "pages": [
+              "inspector/playground",
+              "inspector/evals",
+              "inspector/host-templates"
+            ]
           },
           {
             "group": "Authentication",
@@ -202,6 +206,10 @@
       "destination": "/inspector/playground"
     },
     { "source": "/inspector/test-cases", "destination": "/inspector/evals" },
+    {
+      "source": "/inspector/xaa-test-idp",
+      "destination": "/inspector/xaa-debugger"
+    },
     {
       "source": "/sdk/reference/test-agent",
       "destination": "/sdk/reference/host-runner"
