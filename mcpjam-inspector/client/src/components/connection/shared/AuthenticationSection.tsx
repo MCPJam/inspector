@@ -76,6 +76,12 @@ interface AuthenticationSectionProps {
   onXaaEmailChange?: (value: string) => void;
   /** Signed-in user's email — shown as the default for the simulated identity. */
   signedInEmail?: string;
+  /**
+   * True when Auto would select XAA for this server (an IdP mode is chosen
+   * and a client id is stored — same rule as the server's xaaConfigured).
+   * Drives the helper copy under the select.
+   */
+  autoSelectsXaa?: boolean;
 }
 
 const PROTOCOL_OPTIONS: Array<{
@@ -131,6 +137,7 @@ export function AuthenticationSection({
   xaaEmail = "",
   onXaaEmailChange,
   signedInEmail,
+  autoSelectsXaa = false,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
   const [revealedClientSecret, setRevealedClientSecret] = useState<
@@ -149,9 +156,11 @@ export function AuthenticationSection({
   const [isBearerTokenVisible, setIsBearerTokenVisible] = useState(false);
 
   const xaaFlagEnabled = useFeatureFlagEnabled("xaa");
-  // Keep the option visible if a server is already configured with XAA, even
-  // when the flag is off, so the trigger doesn't render blank for it.
-  const showXaaOption = xaaFlagEnabled === true || authType === "xaa";
+  // Keep the options visible if a server is already configured with XAA or
+  // Auto, even when the flag is off, so the trigger doesn't render blank for
+  // it.
+  const showXaaOption =
+    xaaFlagEnabled === true || authType === "xaa" || authType === "auto";
 
   const canRevealClientSecret =
     hasStoredClientSecret &&
@@ -314,25 +323,41 @@ export function AuthenticationSection({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="none">No Authentication</SelectItem>
-              <SelectItem value="bearer">Bearer Token</SelectItem>
-              <SelectItem value="oauth">OAuth</SelectItem>
+              <SelectItem value="none" description="Connect without credentials">
+                No Authentication
+              </SelectItem>
+              <SelectItem
+                value="bearer"
+                description="Send a static token you provide"
+              >
+                Bearer Token
+              </SelectItem>
+              <SelectItem value="oauth" description="Interactive browser sign-in">
+                OAuth
+              </SelectItem>
               {showXaaOption && (
-                <SelectItem value="xaa">Cross-App Access (XAA)</SelectItem>
+                <SelectItem
+                  value="xaa"
+                  description="Server-side token exchange via your IdP"
+                >
+                  Cross-App Access (XAA)
+                </SelectItem>
               )}
               {showXaaOption && (
-                <SelectItem value="auto">
-                  Automatic (XAA when configured, else OAuth)
+                <SelectItem
+                  value="auto"
+                  description="Uses Cross-App Access when configured, otherwise OAuth"
+                >
+                  Auto
                 </SelectItem>
               )}
             </SelectContent>
           </Select>
           {authType === "auto" && (
             <p className="text-xs text-muted-foreground">
-              Selects Cross-App Access when this server has an IdP mode and a
-              stored client ID, and OAuth otherwise. The selection happens
-              before connecting — a failed XAA mint surfaces the error rather
-              than retrying as OAuth.
+              {autoSelectsXaa
+                ? "Cross-App Access is configured — connecting mints a cross-app token."
+                : "Auto will use OAuth."}
             </p>
           )}
         </div>

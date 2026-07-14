@@ -99,8 +99,18 @@ function SelectLabel({
 function SelectItem({
   className,
   children,
+  description,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Item>) {
+}: React.ComponentProps<typeof SelectPrimitive.Item> & {
+  /**
+   * Optional muted second line rendered in the dropdown only. It lives
+   * outside `ItemText` (wrapped in a div so it isn't a direct span child the
+   * `*:[span]:last:*` utilities would restyle), because the closed trigger's
+   * `SelectValue` mirrors the `ItemText` subtree — only the label may go in
+   * there.
+   */
+  description?: string;
+}) {
   return (
     <SelectPrimitive.Item
       data-slot="select-item"
@@ -115,7 +125,19 @@ function SelectItem({
           <CheckIcon className="size-4" />
         </SelectPrimitive.ItemIndicator>
       </span>
-      <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      {description != null ? (
+        <div className="flex min-w-0 flex-col items-start gap-0.5">
+          <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+          <span
+            data-slot="select-item-description"
+            className="text-muted-foreground text-xs"
+          >
+            {description}
+          </span>
+        </div>
+      ) : (
+        <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      )}
     </SelectPrimitive.Item>
   );
 }

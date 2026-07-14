@@ -142,6 +142,72 @@ describe("AuthenticationSection", () => {
     expect(screen.getByText("Cross-App Access (XAA)")).toBeInTheDocument();
   });
 
+  const autoProps = {
+    serverUrl: "https://example.com/mcp",
+    authType: "auto" as const,
+    onAuthTypeChange: vi.fn(),
+    showAuthSettings: false,
+    bearerToken: "",
+    onBearerTokenChange: vi.fn(),
+    oauthScopesInput: "",
+    onOauthScopesChange: vi.fn(),
+    oauthProtocolMode: "2025-11-25" as const,
+    onOauthProtocolModeChange: vi.fn(),
+    registrationMode: "auto" as const,
+    onOauthRegistrationModeChange: vi.fn(),
+    useCustomClientId: false,
+    onUseCustomClientIdChange: vi.fn(),
+    clientId: "",
+    onClientIdChange: vi.fn(),
+    clientSecret: "",
+    onClientSecretChange: vi.fn(),
+    clientIdError: null,
+    clientSecretError: null,
+  };
+
+  it("shows only the Auto label in the closed trigger; the description only in the open menu", async () => {
+    xaaFlagValue = true;
+    render(<AuthenticationSection {...autoProps} />);
+
+    const trigger = screen.getByRole("combobox");
+    expect(trigger).toHaveTextContent("Auto");
+    expect(
+      screen.queryByText(
+        "Uses Cross-App Access when configured, otherwise OAuth",
+      ),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(trigger);
+    expect(
+      screen.getByText("Uses Cross-App Access when configured, otherwise OAuth"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the Auto option visible for a server saved as auto, even when the flag is off", () => {
+    xaaFlagValue = false;
+    render(<AuthenticationSection {...autoProps} />);
+
+    expect(screen.getByRole("combobox")).toHaveTextContent("Auto");
+  });
+
+  it("explains Auto per-server: OAuth when XAA is not configured", () => {
+    xaaFlagValue = true;
+    render(<AuthenticationSection {...autoProps} autoSelectsXaa={false} />);
+
+    expect(screen.getByText("Auto will use OAuth.")).toBeInTheDocument();
+  });
+
+  it("explains Auto per-server: XAA when configured", () => {
+    xaaFlagValue = true;
+    render(<AuthenticationSection {...autoProps} autoSelectsXaa={true} />);
+
+    expect(
+      screen.getByText(
+        "Cross-App Access is configured — connecting mints a cross-app token.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("does not show the OAuth plan explainer for a typical automatic OAuth setup", () => {
     render(
       <AuthenticationSection
