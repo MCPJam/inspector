@@ -176,6 +176,63 @@ describe("registrationMode round-trip", () => {
   });
 });
 
+describe("xaaIdentityAssertionFormat round-trip", () => {
+  it("round-trips a known format through deserialize", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "s1",
+        enabled: true,
+        useXaa: true,
+        url: "https://example.test/mcp",
+        xaaIdentityAssertionFormat: "saml",
+      },
+    ]);
+    expect(servers.s1.xaaIdentityAssertionFormat).toBe("saml");
+  });
+
+  it("leaves the field absent when the wire omits it (legacy rows = oidc default)", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "s1",
+        enabled: true,
+        useXaa: true,
+        url: "https://example.test/mcp",
+      },
+    ]);
+    expect(servers.s1.xaaIdentityAssertionFormat).toBeUndefined();
+  });
+
+  it("drops an unknown persisted format so the debugger falls back to oidc", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "s1",
+        enabled: true,
+        useXaa: true,
+        url: "https://example.test/mcp",
+        xaaIdentityAssertionFormat: "totally-bogus",
+      },
+    ]);
+    expect(servers.s1.xaaIdentityAssertionFormat).toBeUndefined();
+  });
+
+  it("serializes a known format for persistence", () => {
+    const server: Record<string, ServerWithName> = {
+      s1: {
+        name: "s1",
+        enabled: true,
+        useXaa: true,
+        retryCount: 0,
+        lastConnectionTime: new Date(),
+        connectionStatus: "disconnected",
+        config: { url: new URL("https://example.test/mcp") },
+        xaaIdentityAssertionFormat: "saml",
+      } as unknown as ServerWithName,
+    };
+    const out = serializeServersForPersistence(server);
+    expect((out.s1 as any).xaaIdentityAssertionFormat).toBe("saml");
+  });
+});
+
 describe("serversHaveChanged redacted secrets", () => {
   it("marks visible bearer authorization headers as bearer-token metadata", () => {
     const servers = deserializeServersFromConvex([

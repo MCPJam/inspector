@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getXAAPhaseNumber,
+  getXAAStepInfo,
   XAA_PHASE_ORDER,
   XAA_PHASES,
   XAA_STEP_METADATA,
@@ -58,6 +59,59 @@ describe("XAA phase metadata", () => {
         m.includes("Identity Assertion JWT Authorization Grant")
       )
     ).toBe(true);
+  });
+});
+
+describe("identity assertion format overrides", () => {
+  const overriddenSteps = [
+    "user_authentication",
+    "received_identity_assertion",
+    "token_exchange_request",
+  ] as const;
+
+  it("returns the base metadata when no format is passed (back-compat)", () => {
+    for (const step of XAA_STEP_ORDER) {
+      expect(getXAAStepInfo(step)).toEqual(XAA_STEP_METADATA[step]);
+    }
+  });
+
+  it("returns the base metadata for the oidc format", () => {
+    for (const step of XAA_STEP_ORDER) {
+      expect(getXAAStepInfo(step, "oidc")).toEqual(XAA_STEP_METADATA[step]);
+    }
+  });
+
+  it("overrides only the three identity-leg steps for saml", () => {
+    for (const step of XAA_STEP_ORDER) {
+      const info = getXAAStepInfo(step, "saml");
+      if ((overriddenSteps as readonly string[]).includes(step)) {
+        expect(info.title).not.toBe(XAA_STEP_METADATA[step].title);
+        expect(info.summary).not.toBe(XAA_STEP_METADATA[step].summary);
+        // Structure is shared: phase + teachable moments come from the base.
+        expect(info.phase).toBe(XAA_STEP_METADATA[step].phase);
+        expect(info.teachableMoments).toEqual(
+          XAA_STEP_METADATA[step].teachableMoments
+        );
+      } else {
+        expect(info).toEqual(XAA_STEP_METADATA[step]);
+      }
+    }
+  });
+
+  it("names SAML in the saml override titles/summaries", () => {
+    for (const step of overriddenSteps) {
+      const info = getXAAStepInfo(step, "saml");
+      expect(`${info.title} ${info.summary}`).toMatch(/SAML/);
+    }
+  });
+
+  it("keeps the sso and token_exchange phase copy format-neutral", () => {
+    for (const phase of ["sso", "token_exchange"] as const) {
+      // The phase headers render once regardless of format, so they must not
+      // hard-code either assertion format in the title.
+      expect(XAA_PHASES[phase].title).not.toMatch(/ID token|SAML/);
+      expect(XAA_PHASES[phase].title).toContain("identity assertion");
+    }
   });
 });
 

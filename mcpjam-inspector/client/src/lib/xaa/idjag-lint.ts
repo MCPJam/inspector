@@ -21,7 +21,8 @@ export interface IdJagLintVerdict {
     | "jti"
     | "iat"
     | "exp"
-    | "subject_resolution";
+    | "subject_resolution"
+    | "sub_id";
   claim: string;
   status: IdJagLintStatus;
   detail: string;
@@ -65,6 +66,10 @@ const CITATIONS = {
   subjectResolution: {
     spec: "ID-JAG draft",
     section: "subject resolution (email / aud_sub RECOMMENDED)",
+  },
+  subId: {
+    spec: "ID-JAG draft",
+    section: "§3.2.2 sub_id (structured subject identifier)",
   },
 } as const satisfies Record<string, IdJagLintCitation>;
 
@@ -412,6 +417,38 @@ export function lintIdJag(
           actual: "(absent)",
         }
   );
+
+  // sub_id — the OPTIONAL structured subject identifier (draft §3.2.2) minted
+  // for a SAML-resolving resource authorization server. Emitted ONLY when the
+  // claim is present: absence is the norm for OIDC-side ID-JAGs and must not
+  // add a row (or a warn/fail) to their lint summaries.
+  if (p.sub_id !== undefined) {
+    const record =
+      p.sub_id && typeof p.sub_id === "object" && !Array.isArray(p.sub_id)
+        ? (p.sub_id as Record<string, unknown>)
+        : undefined;
+    const summary = record
+      ? (
+          [
+            ["format", record.format],
+            ["issuer", record.issuer],
+            ["sp_name_qualifier", record.sp_name_qualifier],
+          ] as const
+        )
+          .filter(([, value]) => isNonEmptyString(value))
+          .map(([key, value]) => `${key}: ${value}`)
+          .join(", ")
+      : "";
+    verdicts.push({
+      id: "sub_id",
+      claim: "sub_id",
+      status: "pass",
+      detail:
+        "A structured subject identifier is present, so a SAML-resolving authorization server can map the user by NameID instead of the IdP-local sub.",
+      citation: CITATIONS.subId,
+      actual: summary || show(p.sub_id),
+    });
+  }
 
   return verdicts;
 }

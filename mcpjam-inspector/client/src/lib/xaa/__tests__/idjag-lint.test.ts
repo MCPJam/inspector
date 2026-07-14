@@ -296,6 +296,49 @@ describe("lintIdJag", () => {
     });
   });
 
+  describe("sub_id (structured subject identifier, draft §3.2.2)", () => {
+    it("emits NO sub_id row when the claim is absent (OIDC baseline)", () => {
+      // Zero regression: an OIDC ID-JAG's verdict list and warn/fail summary
+      // must be untouched by the sub_id lint.
+      const verdicts = lintIdJag(VALID_HEADER, VALID_PAYLOAD, CONTEXT);
+      expect(verdicts.some((v) => v.id === "sub_id")).toBe(false);
+      expect(verdicts).toHaveLength(10);
+      expect(verdicts.every((v) => v.status === "pass")).toBe(true);
+    });
+
+    it("emits a pass row summarizing format/issuer/sp_name_qualifier when present", () => {
+      const verdict = verdictFor(
+        VALID_HEADER,
+        {
+          ...VALID_PAYLOAD,
+          sub_id: {
+            format: "saml-nameid",
+            issuer: "https://idp.example.com",
+            nameid: "user-12345",
+            sp_name_qualifier: "https://as.example.com",
+            nameid_format:
+              "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+          },
+        },
+        "sub_id"
+      );
+      expect(verdict.status).toBe("pass");
+      expect(verdict.actual).toBe(
+        "format: saml-nameid, issuer: https://idp.example.com, sp_name_qualifier: https://as.example.com"
+      );
+    });
+
+    it("still renders a pass row for a non-object sub_id without throwing", () => {
+      const verdict = verdictFor(
+        VALID_HEADER,
+        { ...VALID_PAYLOAD, sub_id: "opaque" },
+        "sub_id"
+      );
+      expect(verdict.status).toBe("pass");
+      expect(verdict.actual).toBe("opaque");
+    });
+  });
+
   it("handles null header and payload without throwing", () => {
     const verdicts = lintIdJag(null, null, { nowSeconds: NOW });
     expect(verdicts).toHaveLength(10);

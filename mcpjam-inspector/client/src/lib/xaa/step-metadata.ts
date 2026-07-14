@@ -1,4 +1,5 @@
 import type { XAAFlowStep } from "./types";
+import type { IdentityAssertionFormat } from "@/shared/xaa.js";
 
 /**
  * Phases group the debugger's fine-grained machine steps onto the four
@@ -41,17 +42,21 @@ export const XAA_PHASES: Record<XAAPhaseKey, XAAPhaseInfo> = {
     blurb:
       "Setup that runs before XAA proper. The Agent asks the MCP Server which Authorization Server protects it, then looks up where that server hands out tokens. The XAA spec assumes the Agent already knows this, so it's numbered Phase 0 — and skipped entirely when you've pre-configured the Authorization Server. The Authorization Server's issuer found here is reused later so the grant is addressed to the right server. (Uses the standard OAuth discovery specs, RFC 9728 and 8414.)",
   },
+  // The sso/token_exchange copy is format-NEUTRAL: the identity assertion may
+  // be an OIDC ID token or a SAML assertion (per-server preset), and phase
+  // headers render once regardless of format. Format-specific wording lives
+  // in the per-step SAML overrides below.
   sso: {
-    title: "Sign in and get an ID token",
+    title: "Sign in and get an identity assertion",
     specStep: 1,
     blurb:
-      "The user logs in at their IdP — the identity provider, i.e. the company login — and the Agent comes away with an ID token: proof of who the user is. This happens once per session and isn't tied to any MCP server yet. In this debugger MCPJam plays the IdP, so the login is simulated.",
+      "The user logs in at their IdP — the identity provider, i.e. the company login — and the Agent comes away with an identity assertion (an OIDC ID token or a SAML assertion): proof of who the user is. This happens once per session and isn't tied to any MCP server yet. In this debugger MCPJam plays the IdP, so the login is simulated.",
   },
   token_exchange: {
-    title: "Exchange the ID token for an ID-JAG",
+    title: "Exchange the identity assertion for an ID-JAG",
     specStep: 2,
     blurb:
-      "The Agent hands the ID token back to the IdP and gets an ID-JAG in return — a short-lived grant that means “this user, for this one MCP server.” The Agent tells the IdP which Authorization Server the grant is for (the one found in Phase 0). The ID token itself never travels any further. (On the wire this is an RFC 8693 token exchange.)",
+      "The Agent hands the identity assertion back to the IdP and gets an ID-JAG in return — a short-lived grant that means “this user, for this one MCP server.” The Agent tells the IdP which Authorization Server the grant is for (the one found in Phase 0). The identity assertion itself never travels any further. (On the wire this is an RFC 8693 token exchange.)",
   },
   jwt_bearer: {
     title: "Exchange the ID-JAG for an access token",
@@ -271,13 +276,45 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
   },
 };
 
-export function getXAAStepInfo(step: XAAFlowStep): XAAStepInfo {
-  return (
-    XAA_STEP_METADATA[step] ?? {
-      title: step,
-      summary: "No additional information available for this step.",
+// SAML overrides for the identity-leg steps (input axis, D6). Only titles and
+// summaries change — phase membership and teachable moments are shared, so a
+// SAML run keeps the same structure with format-accurate wording. OIDC (the
+// default) renders the base metadata unchanged.
+const XAA_SAML_STEP_OVERRIDES: Partial<
+  Record<XAAFlowStep, Pick<XAAStepInfo, "title" | "summary">>
+> = {
+  user_authentication: {
+    title: "Mock SAML SSO at MCPJam IdP",
+    summary:
+      "MCPJam signs the user in at its identity provider via SP-initiated SAML SSO (mocked).",
+  },
+  received_identity_assertion: {
+    title: "SAML assertion issued by MCPJam IdP",
+    summary:
+      "MCPJam's identity provider gives the Agent a signed SAML 2.0 assertion.",
+  },
+  token_exchange_request: {
+    title: "Exchange the SAML Assertion for an ID-JAG",
+    summary:
+      "The Agent trades the SAML assertion back to the IdP for an ID-JAG — a grant scoped to one MCP Server. On the happy path this is a standard RFC 8693 form POST to the IdP's /token endpoint (subject_token_type urn:ietf:params:oauth:token-type:saml2); a test mode instead uses MCPJam's mint endpoint to forge a deliberately broken grant.",
+  },
+};
+
+export function getXAAStepInfo(
+  step: XAAFlowStep,
+  format?: IdentityAssertionFormat
+): XAAStepInfo {
+  const base = XAA_STEP_METADATA[step] ?? {
+    title: step,
+    summary: "No additional information available for this step.",
+  };
+  if (format === "saml") {
+    const override = XAA_SAML_STEP_OVERRIDES[step];
+    if (override) {
+      return { ...base, ...override };
     }
-  );
+  }
+  return base;
 }
 
 export function getXAAStepIndex(step: XAAFlowStep): number {
