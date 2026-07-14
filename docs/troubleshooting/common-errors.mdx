@@ -100,9 +100,9 @@ If you're seeing **401 Unauthorized** errors when trying to connect to your serv
 
 **Solution:**
 
-1. Change your authentication type to **OAuth 2.0** in the server configuration
-2. Go through the OAuth authorization flow to obtain credentials
-3. Use the OAuth Debugger to troubleshoot any issues with the OAuth process
+- **If you're using Auto (the default):** MCPJam will prompt "Continue with OAuth?" when it receives a 401. Accept the prompt to start the OAuth flow.
+- **If you're using No Authentication:** Change your authentication type to **Auto** or **OAuth 2.0** in the server configuration and go through the OAuth authorization flow.
+- Use the OAuth Debugger to troubleshoot any issues with the OAuth process.
 
 <Info>
   The OAuth Debugger helps you step through each part of the authorization
