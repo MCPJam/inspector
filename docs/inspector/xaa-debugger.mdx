@@ -22,11 +22,36 @@ To begin debugging XAA flows:
 
 1. **Navigate to the XAA Debugger** - Click the XAA Flow tab in MCPJam Inspector
 2. **Configure Target** - Provide your MCP server URL and authorization server details
-3. **Run Mock Authentication** - Complete the synthetic identity provider flow to obtain an ID token
+3. **Run Mock Authentication** - Complete the synthetic identity provider flow to obtain an identity assertion
 4. **Review Compatibility** - After authorization server discovery, check the green/amber/red banner for capability warnings
 5. **Exchange Tokens** - The debugger will attempt the ID-JAG (Identity JSON Assertion Grant) exchange and surface any configuration issues
 
 The debugger guides you through each step of the XAA flow with real-time feedback and vendor-specific recommendations.
+
+## Identity Assertion Format
+
+The **Configure Server to Test** modal includes an **Identity assertion** select that controls which type of identity assertion MCPJam's test IdP mints for that server. The setting is persisted per server.
+
+| Option | What the IdP mints | Effect on the flow |
+| --- | --- | --- |
+| **OIDC ID token** (default) | An OIDC ID token | Standard flow; the token exchange presents `subject_token_type: urn:ietf:params:oauth:token-type:id_token` |
+| **SAML assertion** | A signed SAML 2.0 assertion | The token exchange presents `subject_token_type: urn:ietf:params:oauth:token-type:saml2`; the ID-JAG carries a `saml-nameid` subject identifier (`sub_id`) |
+
+Changing the preset resets the current run, the same way changing the registration strategy or negative-test mode does.
+
+### SAML sequence diagram labels
+
+When **SAML assertion** is selected, the three identity-leg steps in the sequence diagram use SAML-specific labels:
+
+- **Mock SAML SSO** (instead of "Simulate sign-in at MCPJam IdP")
+- **SAML assertion issued** — details show `Type: SAML 2.0 assertion (base64)` and the `NameID` when present
+- **Token exchange** description references the SAML assertion and shows the `subject_token_type` detail
+
+OIDC runs are unaffected; their labels are identical to the pre-SAML diagram.
+
+### ID-JAG `sub_id` lint
+
+The ID-JAG inspector adds a **`sub_id`** lint row only when the `sub_id` claim is present in the ID-JAG. For SAML runs this claim carries a `saml-nameid` structured subject identifier. The row passes when the claim is well-formed (`format: saml-nameid` with non-empty `issuer` and `nameid`) and fails otherwise. OIDC ID-JAGs without a `sub_id` claim are unaffected — no row is added to their lint summary.
 
 ## Authorization Server Compatibility
 
