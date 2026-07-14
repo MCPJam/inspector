@@ -192,6 +192,22 @@ describe("AuthenticationSection", () => {
     expect(screen.getByRole("combobox")).toHaveTextContent("Auto");
   });
 
+  it("offers Auto to everyone with an XAA-free description when the flag is off", async () => {
+    xaaFlagValue = false;
+    render(<AuthenticationSection {...autoProps} authType="none" />);
+
+    await userEvent.click(screen.getByRole("combobox"));
+    expect(screen.getByText("Auto")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Connects without credentials, then OAuth if the server requires it",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Cross-App Access (XAA)"),
+    ).not.toBeInTheDocument();
+  });
+
   it("explains Auto per-server: discover when XAA is not configured", () => {
     xaaFlagValue = true;
     render(<AuthenticationSection {...autoProps} autoSelectsXaa={false} />);

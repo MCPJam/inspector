@@ -865,6 +865,28 @@ describe("useServerForm", () => {
     });
   });
 
+  it("defaults new servers to Auto and emits it on save", () => {
+    const { result } = renderHook(() => useServerForm());
+    expect(result.current.authType).toBe("auto");
+
+    act(() => {
+      result.current.setName("brand-new");
+      result.current.setUrl("https://example.com/mcp");
+    });
+    expect(result.current.buildFormData()).toMatchObject({
+      authMethod: "auto",
+      useOAuth: true,
+      useXaa: false,
+    });
+
+    // resetForm restores the Auto default, not None.
+    act(() => {
+      result.current.setAuthType("bearer");
+      result.current.resetForm();
+    });
+    expect(result.current.authType).toBe("auto");
+  });
+
   it("sends clearXaaConfig only when explicitly moving off XAA", async () => {
     const xaaServer = {
       name: "was-xaa",
