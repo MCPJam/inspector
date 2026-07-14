@@ -125,6 +125,37 @@ describe("XAASetupAppsSection", () => {
     await waitFor(() => expect(removeMock).toHaveBeenCalledWith("app_1"));
   });
 
+  it("contains a failed delete (no unhandled rejection; dialog stays open)", async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onRejection);
+    try {
+      removeMock.mockRejectedValueOnce(new Error("boom"));
+      const user = userEvent.setup();
+      render(<XAASetupAppsSection organizationId={ORG_ID} canManage />);
+
+      await user.click(
+        screen.getByRole("button", { name: /delete files api/i }),
+      );
+      await user.click(
+        await screen.findByRole("button", { name: /^delete$/i }),
+      );
+      await waitFor(() => expect(removeMock).toHaveBeenCalledWith("app_1"));
+
+      // Failure keeps the confirm dialog open for retry/cancel (the hook
+      // surfaces the message inline via its `error` state).
+      expect(
+        screen.getByRole("button", { name: /^delete$/i }),
+      ).toBeInTheDocument();
+
+      // Drain the task queue so an escaped rejection would have been reported.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(rejections).toHaveLength(0);
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+  });
+
   it("locks register/edit/delete for non-admins but keeps the debugger link live", async () => {
     const user = userEvent.setup();
     render(
