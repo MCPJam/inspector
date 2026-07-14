@@ -382,11 +382,13 @@ interface AttemptContext {
   dcrCacheTargetKey: string;
 }
 
-/** A Map-backed DCR credential cache plus a counter of how many registrations
- * (cache writes) actually happened, used to derive the `reused` diagnostic. */
+/** A Map-backed DCR credential cache plus a registration counter (for the
+ * `reused` diagnostic) and the set of minted secrets (to scrub any reflected in
+ * an RAS error body out of the result — the secret otherwise never enters it). */
 function createDcrCredentialCache(): {
   cache: XaaDcrCredentialCache;
   registrations: () => number;
+  secrets: () => string[];
 } {
   const store = new Map<string, XaaEphemeralDcrCredentials>();
   let registrations = 0;
@@ -402,7 +404,30 @@ function createDcrCredentialCache(): {
       },
     },
     registrations: () => registrations,
+    secrets: () =>
+      [...store.values()]
+        .map((c) => c.clientSecret)
+        .filter((s): s is string => typeof s === "string" && s.length > 0),
   };
+}
+
+/** Deep-replace every occurrence of any `secrets` string with "[REDACTED]". */
+function scrubSecrets(value: unknown, secrets: string[]): unknown {
+  if (secrets.length === 0) return value;
+  if (typeof value === "string") {
+    let out = value;
+    for (const secret of secrets) {
+      if (out.includes(secret)) out = out.split(secret).join("[REDACTED]");
+    }
+    return out;
+  }
+  if (Array.isArray(value)) return value.map((v) => scrubSecrets(v, secrets));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, scrubSecrets(v, secrets)]),
+    );
+  }
+  return value;
 }
 
 async function runSharedAttempt(
@@ -539,6 +564,12 @@ export async function runXaaFlow(
     };
   };
 
+  // Scrub any DCR-minted secret an RAS may have reflected into a response/error
+  // body, so the returned result stays secret-free (the secret is never stored
+  // in flow state, so the caller's key-based redactor can't catch it).
+  const finalize = (result: XaaFlowResult): XaaFlowResult =>
+    scrubSecrets(result, dcr.secrets()) as XaaFlowResult;
+
   // The dynamic strategies need authorization-server metadata discovery to find
   // the registration endpoint (DCR) or the client_id_metadata_document_supported
   // advertisement (CIMD). A pinned tokenEndpoint skips that discovery, so reject
@@ -649,7 +680,7 @@ export async function runXaaFlow(
         });
       }
 
-      return {
+      return finalize({
         completed: state.currentStep === "complete",
         issuer,
         registration: registration(state),
@@ -665,7 +696,7 @@ export async function runXaaFlow(
         ...(mcp ? { mcp } : {}),
         steps,
         ...(projectFlowError(state) ? { error: projectFlowError(state) } : {}),
-      };
+      });
     }
 
     progress("Establishing a valid ID-JAG redemption baseline…");
@@ -685,7 +716,7 @@ export async function runXaaFlow(
     const baselineSteps = projectSteps(baselineState, "baseline:");
 
     if (!baselineAccepted) {
-      return {
+      return finalize({
         completed: false,
         issuer,
         registration: registration(baselineState),
@@ -711,7 +742,7 @@ export async function runXaaFlow(
         error:
           projectFlowError(baselineState) ??
           "The valid baseline was not accepted, so the negative probe cannot be scored.",
-      };
+      });
     }
 
     attempts += 1;
@@ -726,7 +757,7 @@ export async function runXaaFlow(
       ...projectSteps(probeState, "probe:"),
     ];
 
-    return {
+    return finalize({
       completed: outcome === "rejected",
       issuer,
       registration: registration(probeState),
@@ -760,14 +791,14 @@ export async function runXaaFlow(
                 "The negative probe did not produce a conclusive 4xx rejection.",
             }
           : {}),
-    };
+    });
   } catch (error) {
-    return {
+    return finalize({
       completed: false,
       issuer,
       registration: registration(undefined),
       steps: publicationStep,
       error: error instanceof Error ? error.message : String(error),
-    };
+    });
   }
 }

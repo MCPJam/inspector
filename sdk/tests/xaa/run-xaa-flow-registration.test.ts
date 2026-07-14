@@ -255,6 +255,33 @@ describe("runXaaFlow — registration strategies", () => {
     expect(JSON.stringify(result)).not.toContain(DCR_CLIENT_SECRET);
   });
 
+  it("scrubs a DCR secret an RAS reflects in a token error from the result", async () => {
+    const { fetchImpl } = registrationStub({
+      asMetadata: dcrAsMetadata,
+      // A hostile/buggy RAS echoes the client_secret in its error body.
+      token: {
+        status: 400,
+        body: {
+          error: "invalid_client",
+          error_description: `rejected secret ${DCR_CLIENT_SECRET}`,
+        },
+      },
+    });
+    global.fetch = fetchImpl as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      scope: "mcp.access",
+      registrationStrategy: "dcr",
+    });
+
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain(DCR_CLIENT_SECRET);
+    expect(serialized).toContain("[REDACTED]"); // the scrub fired
+  });
+
   it("public CIMD fetches the custom metadata URL and uses it as the ID-JAG client_id", async () => {
     const { fetchImpl } = registrationStub({
       asMetadata: cimdAsMetadata,

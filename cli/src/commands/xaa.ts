@@ -137,15 +137,21 @@ export function registerXaaCommands(program: Command): void {
  * IdP↔RAS client_id mapping and leaks a registration per run (no RFC 7592
  * cleanup); public-client CIMD is interop-only, not a recommended posture.
  */
-function printRegistrationNotes(result: XaaFlowResult, quiet?: boolean): void {
+export function printRegistrationNotes(
+  result: XaaFlowResult,
+  quiet?: boolean,
+): void {
   if (quiet) return;
   const reg = result.registration;
   if (!reg) return;
   if (reg.strategy === "dcr" && reg.clientId) {
+    // The client_id is RAS-provided; strip control chars so a hostile RAS can't
+    // inject ANSI/newline sequences to spoof or rewrite the terminal note.
+    const safeClientId = reg.clientId.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
     process.stderr.write(
       `Note: DCR is a RAS diagnostic — the CLI supplies the IdP→RAS client_id ` +
         `mapping itself (simulated IdP), so a real enterprise IdP would still ` +
-        `need to be told the RAS-minted client_id ("${reg.clientId}"). Each run ` +
+        `need to be told the RAS-minted client_id ("${safeClientId}"). Each run ` +
         `may leave another registration behind (no RFC 7592 cleanup).\n`,
     );
   }

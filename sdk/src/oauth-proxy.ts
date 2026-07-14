@@ -60,31 +60,80 @@ function isDisallowedIpv4(ip: string): boolean {
   return false;
 }
 
-function isDisallowedIpv6(ip: string): boolean {
-  const addr = ip.split("%")[0]; // strip zone id
-  if (addr === "::" || addr === "::1") return true; // unspecified, loopback
-  const head = addr.startsWith("::") ? "0" : (addr.split(":")[0] || "0");
-  const h0 = parseInt(head, 16) || 0;
-  if (h0 >= 0xfc00 && h0 <= 0xfdff) return true; // fc00::/7 unique-local
-  if (h0 >= 0xfe80 && h0 <= 0xfebf) return true; // fe80::/10 link-local
-  if ((h0 & 0xff00) === 0xff00) return true; // ff00::/8 multicast
-  const hextets = addr.split(":");
-  if (hextets[0] === "2001" && (hextets[1] === "db8" || hextets[1] === "0db8"))
-    return true; // 2001:db8::/32 documentation
-  if (hextets[0] === "100" && hextets[1] === "") return true; // 100::/64 discard
+/** Expand any IPv6 text form to exactly 8 hextets, folding a trailing dotted
+ * IPv4 tail into two hextets. Returns null for anything unparseable. */
+function ipv6ToHextets(input: string): number[] | null {
+  let s = input.trim().toLowerCase().split("%")[0];
+  if (s.startsWith("[") && s.endsWith("]")) s = s.slice(1, -1);
+  // Fold a trailing dotted IPv4 (…::a.b.c.d, incl. ::ffff:a.b.c.d) to hextets.
+  const dotted = s.match(/^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (dotted) {
+    const o = [dotted[2], dotted[3], dotted[4], dotted[5]].map((x) =>
+      parseInt(x, 10),
+    );
+    if (o.some((n) => n < 0 || n > 255)) return null;
+    s = `${dotted[1]}${((o[0] << 8) | o[1]).toString(16)}:${(
+      (o[2] << 8) |
+      o[3]
+    ).toString(16)}`;
+  }
+  const parseGroups = (part: string): number[] | null => {
+    if (part === "") return [];
+    const out: number[] = [];
+    for (const h of part.split(":")) {
+      if (!/^[0-9a-f]{1,4}$/.test(h)) return null;
+      out.push(parseInt(h, 16));
+    }
+    return out;
+  };
+  const halves = s.split("::");
+  if (halves.length > 2) return null;
+  if (halves.length === 2) {
+    const left = parseGroups(halves[0]);
+    const right = parseGroups(halves[1]);
+    if (!left || !right) return null;
+    const missing = 8 - left.length - right.length;
+    if (missing < 1) return null; // "::" must stand for at least one group
+    return [...left, ...Array(missing).fill(0), ...right];
+  }
+  const only = parseGroups(s);
+  return only && only.length === 8 ? only : null;
+}
+
+function isDisallowedEmbeddedIpv4(h6: number, h7: number): boolean {
+  return isDisallowedIpv4(
+    `${h6 >> 8}.${h6 & 0xff}.${h7 >> 8}.${h7 & 0xff}`,
+  );
+}
+
+function isDisallowedIpv6(input: string): boolean {
+  const h = ipv6ToHextets(input);
+  if (!h) return true; // unparseable → reject
+  const topZero = h.slice(0, 6).every((x) => x === 0);
+  if (topZero && h[6] === 0 && (h[7] === 0 || h[7] === 1)) return true; // :: , ::1
+  const b0 = h[0] >> 8;
+  if ((b0 & 0xfe) === 0xfc) return true; // fc00::/7 unique-local
+  if (h[0] >= 0xfe80 && h[0] <= 0xfebf) return true; // fe80::/10 link-local
+  if (b0 === 0xff) return true; // ff00::/8 multicast
+  if (h[0] === 0x2001 && h[1] === 0x0db8) return true; // 2001:db8::/32 docs
+  if (h[0] === 0x0100 && h[1] === 0 && h[2] === 0 && h[3] === 0) return true; // 100::/64
+  // IPv4-mapped (::ffff:0:0/96) and deprecated IPv4-compatible (::/96): the
+  // embedded IPv4 decides — this closes the ::ffff:7f00:1 hex-literal bypass.
+  if (h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0) {
+    if (h[5] === 0xffff || h[5] === 0)
+      return isDisallowedEmbeddedIpv4(h[6], h[7]);
+  }
   return false;
 }
 
 /**
  * RFC 6890 special-use / non-public-unicast check for a numeric IP (IPv4, IPv6,
- * or IPv4-mapped IPv6). Returns true for addresses an outbound SSRF-sensitive
- * fetch must refuse. A bare hostname (not an IP literal) returns false — the
- * caller resolves it first.
+ * or IPv4-mapped IPv6 in any text form). Returns true for addresses an outbound
+ * SSRF-sensitive fetch must refuse. A bare hostname (not an IP literal) returns
+ * false — the caller resolves it first.
  */
 export function isDisallowedIpAddress(ip: string): boolean {
   const addr = ip.replace(/^\[|\]$/g, "").trim().toLowerCase();
-  const mapped = addr.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/); // IPv4-mapped IPv6
-  if (mapped) return isDisallowedIpv4(mapped[1]);
   if (/^\d+\.\d+\.\d+\.\d+$/.test(addr)) return isDisallowedIpv4(addr);
   if (addr.includes(":")) return isDisallowedIpv6(addr);
   return false;
@@ -297,6 +346,10 @@ export async function fetchPinnedPublicDocument(
     });
   };
 
+  // A TOTAL deadline covering connect + response read (not an idle-socket
+  // timeout that incoming bytes reset): a slow-loris server cannot hold the flow
+  // open indefinitely. Aborting destroys the request and ends the body read.
+  const deadline = AbortSignal.timeout(timeoutMs);
   return await new Promise<OAuthProxyResponse>((resolve, reject) => {
     const request = https.request(
       url,
@@ -305,6 +358,7 @@ export async function fetchPinnedPublicDocument(
         headers: { "User-Agent": "MCP-Inspector/1.0", ...(opts.headers ?? {}) },
         lookup: pinningLookup,
         servername: url.hostname,
+        signal: deadline,
       },
       (res) => {
         const status = res.statusCode ?? 0;
@@ -346,12 +400,16 @@ export async function fetchPinnedPublicDocument(
         res.on("error", reject);
       },
     );
-    request.setTimeout(timeoutMs, () => {
-      request.destroy(
-        new OAuthProxyError(400, "The client metadata document request timed out"),
+    request.on("error", (err) => {
+      reject(
+        deadline.aborted
+          ? new OAuthProxyError(
+              400,
+              `The client metadata document request exceeded the ${timeoutMs}ms deadline`,
+            )
+          : err,
       );
     });
-    request.on("error", reject);
     request.end();
   });
 }

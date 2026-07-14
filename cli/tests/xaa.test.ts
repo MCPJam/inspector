@@ -4,6 +4,7 @@ import {
   buildXaaConfig,
   parseAssertionFormat,
   parseRegistration,
+  printRegistrationNotes,
   redactXaaResult,
 } from "../src/commands/xaa.js";
 import { CliError } from "../src/lib/output.js";
@@ -387,4 +388,32 @@ test("buildXaaConfig requires a secret for confidential client auth", () => {
     (error: unknown) =>
       error instanceof CliError && /requires --client-secret/.test(error.message),
   );
+});
+
+test("printRegistrationNotes strips control chars from a hostile RAS client_id", () => {
+  const original = process.stderr.write.bind(process.stderr);
+  let captured = "";
+  (process.stderr as unknown as { write: (s: string) => boolean }).write = (
+    s: string,
+  ) => {
+    captured += s;
+    return true;
+  };
+  try {
+    printRegistrationNotes({
+      completed: false,
+      issuer: "https://issuer.example.com/api/mcp/xaa",
+      registration: {
+        strategy: "dcr",
+        clientId: "evil\u001b[2Kspoof\nSECOND",
+        reused: false,
+        warnings: [],
+      },
+      steps: [],
+    } as unknown as XaaFlowResult);
+  } finally {
+    (process.stderr as unknown as { write: typeof original }).write = original;
+  }
+  assert.ok(!captured.includes("\u001b"), "escape sequence must be stripped");
+  assert.match(captured, /"evil\[2KspoofSECOND"/);
 });

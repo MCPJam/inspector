@@ -161,8 +161,14 @@ describe("isDisallowedIpAddress (RFC 6890 special-use)", () => {
     "fe80::1",
     "ff02::1",
     "2001:db8::1",
-    "::ffff:127.0.0.1", // IPv4-mapped loopback
+    "::ffff:127.0.0.1", // IPv4-mapped loopback (dotted)
     "::ffff:10.0.0.1",
+    "::ffff:7f00:1", // IPv4-mapped loopback (HEX form — the P0 bypass)
+    "::ffff:7f00:0001",
+    "[::ffff:7f00:1]", // bracketed literal
+    "::7f00:1", // deprecated IPv4-compatible loopback
+    "100:0:0:0:0:0:0:1", // 100::/64 discard, fully expanded
+    "fe80:0:0:0:0:0:0:1", // link-local expanded
   ];
   const allowed = [
     "8.8.8.8",
