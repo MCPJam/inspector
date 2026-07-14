@@ -101,4 +101,47 @@ describe("buildJwtBearerRequest", () => {
       })
     ).toThrow(/none.*client_id|client_id/i);
   });
+
+  describe("private_key_jwt (confidential CIMD)", () => {
+    it("carries the signed assertion + assertion type, keeps client_id, drops the secret", () => {
+      const request = buildJwtBearerRequest({
+        ...args,
+        tokenEndpointAuthMethod: "private_key_jwt",
+        clientAssertion: "signed.client.assertion",
+      });
+
+      expect(request.headers).toEqual({});
+      expect(request.body.client_id).toBe(args.clientId);
+      expect(request.body.client_secret).toBeUndefined();
+      expect(request.body.client_assertion).toBe("signed.client.assertion");
+      expect(request.body.client_assertion_type).toBe(
+        "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+      );
+      // The ID-JAG itself is still the grant assertion.
+      expect(request.body.assertion).toBe(args.assertion);
+      expect(request.body.grant_type).toBe(
+        "urn:ietf:params:oauth:grant-type:jwt-bearer"
+      );
+    });
+
+    it("requires a client_id", () => {
+      expect(() =>
+        buildJwtBearerRequest({
+          assertion: "a",
+          tokenEndpointAuthMethod: "private_key_jwt",
+          clientAssertion: "signed",
+        })
+      ).toThrow(/private_key_jwt/);
+    });
+
+    it("requires a signed client_assertion", () => {
+      expect(() =>
+        buildJwtBearerRequest({
+          assertion: "a",
+          clientId: "https://app.mcpjam.com/.well-known/oauth/xaa-cimd/key",
+          tokenEndpointAuthMethod: "private_key_jwt",
+        })
+      ).toThrow(/private_key_jwt|client_assertion/);
+    });
+  });
 });

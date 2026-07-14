@@ -6,8 +6,36 @@
  * escaping, and other distinguishable spellings are distinct client
  * identities. The validated original string is returned unchanged.
  */
+/** RFC 8252 loopback hosts (for the gated local-dev CIMD carve-out). */
+export function isLoopbackHost(hostname: string): boolean {
+  const h = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return (
+    h === "localhost" ||
+    h.endsWith(".localhost") ||
+    // RFC 6890: the entire 127.0.0.0/8 block is loopback, not just 127.0.0.1.
+    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h) ||
+    h === "::1"
+  );
+}
+
+/**
+ * True only for an `http://` URL whose host is an RFC 8252 loopback address —
+ * the single shape the gated local-dev CIMD carve-out permits. Callers use this
+ * to scope the carve-out to the URL actually being fetched, so a loopback opt-in
+ * never relaxes the private-host / DNS-rebinding guard for a public URL.
+ */
+export function isLoopbackClientMetadataUrl(url: string): boolean {
+  try {
+    const { protocol, hostname } = new URL(url);
+    return protocol === "http:" && isLoopbackHost(hostname);
+  } catch {
+    return false;
+  }
+}
+
 export function validateClientIdMetadataUrl(
-  clientIdMetadataUrl: string
+  clientIdMetadataUrl: string,
+  options: { allowLoopback?: boolean } = {}
 ): string {
   let parsedUrl: URL;
   try {
@@ -16,9 +44,24 @@ export function validateClientIdMetadataUrl(
     throw new Error("Client ID metadata URL must be a valid absolute URL");
   }
 
-  if (parsedUrl.protocol !== "https:" || !parsedUrl.hostname) {
+  // Standards require HTTPS. `allowLoopback` (an explicit, local-dev-only opt-in)
+  // additionally permits http:// to a loopback host so a locally-run reflector
+  // can be exercised end-to-end; it never affects public/remote URLs.
+  const loopbackHttp =
+    options.allowLoopback === true &&
+    parsedUrl.protocol === "http:" &&
+    isLoopbackHost(parsedUrl.hostname);
+
+  if (!loopbackHttp && (parsedUrl.protocol !== "https:" || !parsedUrl.hostname)) {
     throw new Error("Client ID metadata URL must be an absolute HTTPS URL");
   }
+
+  // The raw structural checks below strip a fixed scheme prefix, so pick the one
+  // that matches the accepted scheme. Under the loopback carve-out that is
+  // `http://`; otherwise `https://`. This keeps the userinfo / empty-authority /
+  // dot-segment guards active for loopback URLs too (e.g. `http://@localhost/x`
+  // or `http:///localhost/x` must still be rejected).
+  const schemePrefix = loopbackHttp ? /^http:\/\//i : /^https:\/\//i;
 
   // The Client Identifier URL is compared by simple string equality and we
   // return it unchanged, so a spelling WHATWG would transport-normalize makes
@@ -30,9 +73,11 @@ export function validateClientIdMetadataUrl(
   //    `https:/…` and backslash scheme `https:\…`). The scheme is matched
   //    case-insensitively — RFC 3986 schemes are case-insensitive and the case
   //    doesn't change which host fetch contacts, so `HTTPS://` is allowed.
-  if (!/^https:\/\//i.test(clientIdMetadataUrl)) {
+  if (!schemePrefix.test(clientIdMetadataUrl)) {
     throw new Error(
-      "Client ID metadata URL must use the https:// scheme (with two slashes)"
+      loopbackHttp
+        ? "Client ID metadata URL must use the http:// scheme (with two slashes)"
+        : "Client ID metadata URL must use the https:// scheme (with two slashes)"
     );
   }
   //  - ASCII controls (0x00–0x1F), space (0x20), DEL (0x7F), and backslashes:
@@ -58,7 +103,7 @@ export function validateClientIdMetadataUrl(
   // guarantee an `https://` prefix (any case) with no backslashes, so a plain
   // split is sufficient here.
   const rawWithoutQuery = clientIdMetadataUrl.split(/[?#]/, 1)[0];
-  const afterScheme = rawWithoutQuery.replace(/^https:\/\//i, "");
+  const afterScheme = rawWithoutQuery.replace(schemePrefix, "");
   const slashIndex = afterScheme.indexOf("/");
   const rawAuthority =
     slashIndex === -1 ? afterScheme : afterScheme.slice(0, slashIndex);
