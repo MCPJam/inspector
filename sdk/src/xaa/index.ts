@@ -7,7 +7,15 @@ export {
   NEGATIVE_TEST_MODES,
   DEFAULT_NEGATIVE_TEST_MODE,
   isNegativeTestMode,
+  IDENTITY_ASSERTION_FORMATS,
+  DEFAULT_IDENTITY_ASSERTION_FORMAT,
+  normalizeIdentityAssertionFormat,
+  SUBJECT_IDENTIFIER_FORMATS,
+  DEFAULT_SUBJECT_IDENTIFIER_FORMAT,
+  normalizeSubjectIdentifierFormat,
   type NegativeTestMode,
+  type IdentityAssertionFormat,
+  type SubjectIdentifierFormat,
 } from "./constants.js";
 export {
   REGISTRATION_STRATEGIES,
@@ -21,7 +29,10 @@ export {
   type RegistrationMode,
   type AuthMethod,
 } from "../registration.js";
-export { NEGATIVE_TEST_MODE_DETAILS } from "./negative-test-modes.js";
+export {
+  NEGATIVE_TEST_MODE_DETAILS,
+  isPolicyDependentNegativeTestMode,
+} from "./negative-test-modes.js";
 export {
   initXAAIdpKeyPair,
   getXAAIssuerUrl,
@@ -44,12 +55,33 @@ export {
   XAA_CODE_JWT_TYP,
   XAA_ACCESS_TOKEN_TYP,
   XAA_RAS_CLIENT_ID_CLAIM,
+  type IdJagSubjectId,
   type IssueIdJagParams,
   type IssueMockIdTokenParams,
   type IssueAuthorizationCodeParams,
   type IssueAccessTokenParams,
   type XaaTokenExchangeSubject,
 } from "./mint/signer.js";
+export {
+  issueMockSamlAssertion,
+  verifyMockSamlAssertion,
+  decodeSamlAssertionSubjectUnsafe,
+  SAML_NAMEID_FORMAT_PERSISTENT,
+  type IssueMockSamlAssertionParams,
+  type IssuedMockSamlAssertion,
+  type SamlAssertionSubject,
+  type UnsafeSamlAssertionSubject,
+  type VerifiedSamlAssertionSubject,
+  type VerifyMockSamlAssertionExpectations,
+} from "./mint/saml.js";
+export {
+  handleXaaAuthenticate,
+  handleXaaJsonTokenExchange,
+  handleXaaTokenExchangeGrant,
+  type XaaAuthenticateParams,
+  type XaaJsonTokenExchangeParams,
+  type XaaMintHandlerResult,
+} from "./mint/handlers.js";
 export {
   buildJwtBearerBody,
   buildJwtBearerRequest,

@@ -3,6 +3,7 @@ import {
   getXaaDebugClientMetadata,
   ID_JAG_TOKEN_TYPE,
   ID_TOKEN_TOKEN_TYPE,
+  SAML2_TOKEN_TYPE,
   TOKEN_EXCHANGE_GRANT,
   XAA_DEBUG_IDP_CLIENT_ID,
   XAA_DEBUG_CLIENT_ID_METADATA_URL,
@@ -446,9 +447,12 @@ export function createXAAStateMachine(
     mintPathPrefix = "",
     issuerMode,
     organizationId,
+    issuerKind,
     specTokenEndpointAvailable = true,
     requestExecutor,
     negativeTestMode,
+    identityAssertionFormat,
+    subjectIdentifierFormat,
     userId,
     email,
     clientId,
@@ -461,6 +465,7 @@ export function createXAAStateMachine(
     registrationStrategy: requestedRegistrationStrategy = "preregistered",
     dcrCredentialCache,
     dcrCacheTargetKey,
+    clientIdMetadataUrl,
   } = config;
 
   // registrationId / serverId runs skip AS discovery entirely, so the dynamic
@@ -476,7 +481,13 @@ export function createXAAStateMachine(
   // routers ignore them.
   const hostedIssuerBodyExtras =
     issuerMode === "hosted"
-      ? { issuerMode, ...(organizationId ? { organizationId } : {}) }
+      ? {
+          issuerMode,
+          ...(organizationId ? { organizationId } : {}),
+          ...(issuerKind === "anonymous"
+            ? { issuerKind: "anonymous" as const }
+            : {}),
+        }
       : {};
 
   const state: Partial<XAAFlowState> = initialState ?? {};
@@ -488,6 +499,10 @@ export function createXAAStateMachine(
       resourceUrl: state.resourceUrl || serverUrl,
       issuerBaseUrl: state.issuerBaseUrl || issuerBaseUrl,
       negativeTestMode: state.negativeTestMode || negativeTestMode,
+      identityAssertionFormat:
+        state.identityAssertionFormat || identityAssertionFormat,
+      subjectIdentifierFormat:
+        state.subjectIdentifierFormat || subjectIdentifierFormat,
       userId: state.userId || userId,
       email: state.email || email,
       clientId: state.clientId || clientId,
@@ -1310,7 +1325,7 @@ export function createXAAStateMachine(
     let documentUrl: string;
     try {
       documentUrl = validateClientIdMetadataUrl(
-        XAA_DEBUG_CLIENT_ID_METADATA_URL
+        clientIdMetadataUrl ?? XAA_DEBUG_CLIENT_ID_METADATA_URL
       );
     } catch (error) {
       machine.updateState({
@@ -1338,11 +1353,18 @@ export function createXAAStateMachine(
     let result: XAARequestResult;
     try {
       result = await runRequest("fetch_client_metadata_document", request, () =>
-        requestExecutor.externalRequest(documentUrl, {
-          method: "GET",
-          headers: request.headers,
-          redirect: "manual",
-        })
+        requestExecutor.externalRequest(
+          documentUrl,
+          {
+            method: "GET",
+            headers: request.headers,
+            redirect: "manual",
+          },
+          // The CIMD document URL is caller-influenced; enforce the private-host
+          // / DNS guard at fetch time (not just any upstream one-shot check) to
+          // close the DNS-rebinding window regardless of the httpsOnly default.
+          { enforcePublicHost: true }
+        )
       );
     } catch {
       // runRequest already recorded the failure and set the error; the step
@@ -1427,7 +1449,7 @@ export function createXAAStateMachine(
         {
           code: "public_client",
           message:
-            "CIMD without a key-based auth method is inherently a public client: anyone can present this URL as their client_id. Findings show the RAS accepted the URL identity, not that client authentication was exercised.",
+            "Public-client CIMD (token_endpoint_auth_method \"none\"): interoperability is exercised, but the security posture is NOT recommended — ID-JAG draft-04 §9.1 recommends confidential clients. Anyone can present this URL as their client_id; findings show the RAS accepted the URL identity, not proof of client authentication. Use private_key_jwt (confidential CIMD) for a production posture.",
         },
       ],
       error: undefined,
@@ -1455,6 +1477,9 @@ export function createXAAStateMachine(
     // rather than silently reviving the stale snapshot value.
     const activeUserId = userId ?? state.userId;
     const activeEmail = email ?? state.email;
+    // Sticky state value (like negativeTestMode): authoritative once the
+    // machine is initialized; changing it requires a flow reset.
+    const assertionFormat = state.identityAssertionFormat;
     const request = {
       method: "POST",
       url: `${mintPathPrefix}/authenticate`,
@@ -1466,6 +1491,7 @@ export function createXAAStateMachine(
         email: activeEmail,
         audience: XAA_DEBUG_IDP_CLIENT_ID,
         resourceClientId: state.clientId,
+        assertionFormat,
         ...hostedIssuerBodyExtras,
       },
     };
@@ -1489,6 +1515,59 @@ export function createXAAStateMachine(
       }
 
       const body = asRecord(result.body, "Authentication response");
+
+      if (assertionFormat === "saml") {
+        // Hard requirements, mirroring the id_token check: an issuer that
+        // ignored the requested format (e.g. an older hosted issuer) minted
+        // an OIDC token instead — fail loudly, never adopt the wrong format.
+        if (typeof body.assertion !== "string") {
+          throw new Error(
+            "Authentication response did not include an `assertion`. The issuer may not support SAML assertions yet."
+          );
+        }
+        const subject = body.subject as Record<string, unknown> | undefined;
+        if (
+          !subject ||
+          typeof subject !== "object" ||
+          typeof subject.issuer !== "string" ||
+          typeof subject.nameid !== "string"
+        ) {
+          throw new Error(
+            "Authentication response did not include the SAML `subject` metadata."
+          );
+        }
+
+        machine.updateState({
+          currentStep: "received_identity_assertion",
+          identityAssertion: body.assertion,
+          identityAssertionSubject: {
+            issuer: subject.issuer,
+            nameid: subject.nameid,
+            ...(typeof subject.nameidFormat === "string"
+              ? { nameidFormat: subject.nameidFormat }
+              : {}),
+            ...(typeof subject.spNameQualifier === "string"
+              ? { spNameQualifier: subject.spNameQualifier }
+              : {}),
+          },
+          error: undefined,
+        });
+
+        pushInfo(
+          "received_identity_assertion",
+          "xaa-identity-assertion",
+          "SAML assertion issued",
+          {
+            userId: activeUserId,
+            email: activeEmail,
+            nameid: subject.nameid,
+            nameid_format: subject.nameidFormat,
+            sp_name_qualifier: subject.spNameQualifier,
+          }
+        );
+        return;
+      }
+
       if (typeof body.id_token !== "string") {
         throw new Error(
           "Authentication response did not include an `id_token`."
@@ -1550,20 +1629,45 @@ export function createXAAStateMachine(
 
     const useSpecEndpoint =
       state.negativeTestMode === "valid" && specTokenEndpointAvailable;
+    // Sticky state values (like negativeTestMode). Input and output axes are
+    // independent: a SAML assertion may mint a plain-`sub` ID-JAG and an OIDC
+    // ID token may mint a saml-nameid `sub_id` one.
+    const assertionFormat = state.identityAssertionFormat;
+    const subjectIdFormat = state.subjectIdentifierFormat;
 
     try {
+      // The JSON fallback mints from an UNSIGNED assertion parse. That is fine
+      // for OIDC (the ID token is a JWT we verify) and for negative tamper
+      // modes, but a valid SAML run must never skip signature verification —
+      // require the strict RFC 8693 token endpoint rather than silently
+      // minting an ID-JAG from an unverified SAML assertion.
+      if (
+        assertionFormat === "saml" &&
+        state.negativeTestMode === "valid" &&
+        !useSpecEndpoint
+      ) {
+        throw new Error(
+          "SAML identity assertions require the authorization server's RFC 8693 token endpoint for signed-assertion verification, but it is not available. Use an OIDC assertion or an authorization server that advertises the token endpoint.",
+        );
+      }
       if (useSpecEndpoint) {
         const params: Record<string, string> = {
           grant_type: TOKEN_EXCHANGE_GRANT,
           requested_token_type: ID_JAG_TOKEN_TYPE,
           subject_token: state.identityAssertion,
-          subject_token_type: ID_TOKEN_TOKEN_TYPE,
+          subject_token_type:
+            assertionFormat === "saml" ? SAML2_TOKEN_TYPE : ID_TOKEN_TOKEN_TYPE,
           client_id: XAA_DEBUG_IDP_CLIENT_ID,
           audience: state.authzServerIssuer,
           ...(state.resourceUrl || state.serverUrl
             ? { resource: state.resourceUrl || state.serverUrl }
             : {}),
           ...(state.scope ? { scope: state.scope } : {}),
+          // Mock-extension output-axis request; omitted for oauth-sub so a
+          // valid OIDC exchange stays byte-identical to the pre-SAML wire.
+          ...(subjectIdFormat === "saml-nameid"
+            ? { subject_id_format: subjectIdFormat }
+            : {}),
         };
         const request = {
           method: "POST",
@@ -1579,6 +1683,9 @@ export function createXAAStateMachine(
                 "x-mcpjam-issuer-mode": "hosted",
                 ...(organizationId
                   ? { "x-mcpjam-organization-id": organizationId }
+                  : {}),
+                ...(issuerKind === "anonymous"
+                  ? { "x-mcpjam-issuer-kind": "anonymous" }
                   : {}),
               }
             : {};
@@ -1654,6 +1761,8 @@ export function createXAAStateMachine(
           clientId: state.clientId,
           scope: state.scope,
           negativeTestMode: state.negativeTestMode,
+          assertionFormat,
+          subjectIdFormat,
           ...hostedIssuerBodyExtras,
         },
       };
@@ -2173,6 +2282,10 @@ export function createXAAStateMachine(
         resourceUrl: currentState().serverUrl || serverUrl,
         issuerBaseUrl: currentState().issuerBaseUrl || issuerBaseUrl,
         negativeTestMode: currentState().negativeTestMode || negativeTestMode,
+        identityAssertionFormat:
+          currentState().identityAssertionFormat || identityAssertionFormat,
+        subjectIdentifierFormat:
+          currentState().subjectIdentifierFormat || subjectIdentifierFormat,
         userId: currentState().userId || userId,
         email: currentState().email || email,
         clientId: currentState().clientId || clientId,

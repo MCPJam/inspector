@@ -119,6 +119,95 @@ describe("xaa-idjag-signer", () => {
     expect(decodeJwt(result.token).payload).not.toHaveProperty("resource");
   });
 
+  it("spreads a saml-nameid subjectId into the sub_id claim", () => {
+    const result = issueIdJag({
+      issuer: "https://issuer.example/api/web/xaa",
+      subject: "user-12345",
+      audience: "https://auth.example.com",
+      clientId: "mcpjam-debugger",
+      subjectId: {
+        format: "saml-nameid",
+        issuer: "https://issuer.example/api/web/xaa",
+        nameid: "user-12345",
+        sp_name_qualifier: "https://auth.example.com",
+        nameid_format: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+      },
+    });
+
+    expect(decodeJwt(result.token).payload.sub_id).toEqual({
+      format: "saml-nameid",
+      issuer: "https://issuer.example/api/web/xaa",
+      nameid: "user-12345",
+      sp_name_qualifier: "https://auth.example.com",
+      nameid_format: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+    });
+    expect(verifyWithPublishedKey(result.token)).toBe(true);
+  });
+
+  it("omits sub_id when no subjectId is requested", () => {
+    const result = issueIdJag({
+      issuer: "https://issuer.example/api/web/xaa",
+      subject: "user-12345",
+      audience: "https://auth.example.com",
+      clientId: "mcpjam-debugger",
+    });
+    expect(decodeJwt(result.token).payload).not.toHaveProperty("sub_id");
+  });
+
+  it("unknown_sub tampers EVERY subject-resolution hint: sub, sub_id.nameid, and email", () => {
+    // If any hint survives intact, a SAML-/email-resolving RAS may correctly
+    // accept the original user and the negative probe scores wrong.
+    const result = issueNegativeIdJag(
+      {
+        issuer: "https://issuer.example/api/web/xaa",
+        subject: "user-12345",
+        email: "demo.user@example.com",
+        audience: "https://auth.example.com",
+        clientId: "mcpjam-debugger",
+        subjectId: {
+          format: "saml-nameid",
+          issuer: "https://issuer.example/api/web/xaa",
+          nameid: "user-12345",
+          sp_name_qualifier: "https://auth.example.com",
+        },
+      },
+      "unknown_sub"
+    );
+
+    const payload = decodeJwt(result.token).payload;
+    expect(payload.sub).toBe("unknown-user-00000");
+    expect(payload.sub_id.nameid).toBe("unknown-user-00000");
+    expect(payload.sub_id.nameid).not.toBe("user-12345");
+    expect(payload.email).not.toBe("demo.user@example.com");
+    // The rest of sub_id survives so the claim still looks structurally valid.
+    expect(payload.sub_id.format).toBe("saml-nameid");
+    expect(payload.sub_id.sp_name_qualifier).toBe("https://auth.example.com");
+  });
+
+  it("missing_claims removes EVERY subject-resolution hint: sub, sub_id, and email", () => {
+    const result = issueNegativeIdJag(
+      {
+        issuer: "https://issuer.example/api/web/xaa",
+        subject: "user-12345",
+        email: "demo.user@example.com",
+        audience: "https://auth.example.com",
+        clientId: "mcpjam-debugger",
+        subjectId: {
+          format: "saml-nameid",
+          issuer: "https://issuer.example/api/web/xaa",
+          nameid: "user-12345",
+        },
+      },
+      "missing_claims"
+    );
+
+    const payload = decodeJwt(result.token).payload;
+    expect(payload).not.toHaveProperty("sub");
+    expect(payload).not.toHaveProperty("jti");
+    expect(payload).not.toHaveProperty("sub_id");
+    expect(payload).not.toHaveProperty("email");
+  });
+
   it("issues a mock ID token with the published signing key", () => {
     const result = issueMockIdToken({
       issuer: "https://issuer.example/api/web/xaa",

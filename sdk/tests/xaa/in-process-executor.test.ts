@@ -59,6 +59,33 @@ describe("createInProcessXaaExecutor internal routes", () => {
     expect(claims.email).toBe("u@example.com");
   });
 
+  it("/authenticate returns the rich server-parity body", async () => {
+    const exec = createInProcessXaaExecutor({ issuerBaseUrl: ISSUER_BASE });
+    const result = await exec.internalRequest(
+      "/authenticate",
+      post({ userId: "user-1", email: "u@example.com" })
+    );
+    expect(result.status).toBe(200);
+    const body = result.body as Record<string, unknown>;
+    expect(body.token_type).toBe("Bearer");
+    expect(body.expires_in).toBeGreaterThan(0);
+    expect(body.user).toEqual({ sub: "user-1", email: "u@example.com" });
+  });
+
+  it("/authenticate applies the server's demo-identity defaults", async () => {
+    const exec = createInProcessXaaExecutor({ issuerBaseUrl: ISSUER_BASE });
+    const result = await exec.internalRequest("/authenticate", post({}));
+    expect(result.status).toBe(200);
+    const body = result.body as Record<string, unknown>;
+    expect(body.user).toEqual({
+      sub: "user-12345",
+      email: "demo.user@example.com",
+    });
+    const claims = decodeJWT(body.id_token as string)!;
+    expect(claims.sub).toBe("user-12345");
+    expect(claims.email).toBe("demo.user@example.com");
+  });
+
   it("/token-exchange decodes the assertion and mints an ID-JAG", async () => {
     const exec = createInProcessXaaExecutor({ issuerBaseUrl: ISSUER_BASE });
     const issuer = getXAAIssuerUrl(ISSUER_BASE);
@@ -87,6 +114,31 @@ describe("createInProcessXaaExecutor internal routes", () => {
     expect(claims.resource).toBe(RESOURCE);
     expect(claims.client_id).toBe("client-1");
     expect(claims.email).toBe("u@example.com");
+  });
+
+  it("/token-exchange returns the rich server-parity body", async () => {
+    const exec = createInProcessXaaExecutor({ issuerBaseUrl: ISSUER_BASE });
+    const issuer = getXAAIssuerUrl(ISSUER_BASE);
+    const { token: idToken } = issueMockIdToken({
+      issuer,
+      subject: "user-1",
+      email: "u@example.com",
+    });
+    const result = await exec.internalRequest(
+      "/token-exchange",
+      post({
+        identityAssertion: idToken,
+        audience: AS_ISSUER,
+        clientId: "client-1",
+        negativeTestMode: "wrong_audience",
+      })
+    );
+    expect(result.status).toBe(200);
+    const body = result.body as Record<string, unknown>;
+    expect(body.token_type).toBe("N_A");
+    expect(body.issued_token_type).toBe(ID_JAG_TOKEN_TYPE);
+    expect(body.expires_in).toBeGreaterThan(0);
+    expect(body.negative_test_mode).toBe("wrong_audience");
   });
 
   it("/token handles the RFC 8693 form grant", async () => {
@@ -345,5 +397,23 @@ describe("createInProcessXaaExecutor internal routes", () => {
     expect(result.error).toBeUndefined();
     expect(result.completed).toBe(true);
     expect(state.accessToken).toBe("at-1");
+  });
+});
+
+describe("createInProcessXaaExecutor externalRequest SSRF guard", () => {
+  it("enforcePublicHost blocks a private host at fetch time even when httpsOnly is false", async () => {
+    const exec = createInProcessXaaExecutor({
+      issuerBaseUrl: ISSUER_BASE,
+      httpsOnly: false,
+    });
+    // The private-host / DNS guard fires before any network call, closing the
+    // DNS-rebinding window for the caller-influenced CIMD document fetch.
+    await expect(
+      exec.externalRequest(
+        "https://127.0.0.1/xaa-metadata.json",
+        { method: "GET", redirect: "manual" },
+        { enforcePublicHost: true }
+      )
+    ).rejects.toThrow(/private|reserved/i);
   });
 });
