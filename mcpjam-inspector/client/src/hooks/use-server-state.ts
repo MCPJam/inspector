@@ -51,6 +51,7 @@ import {
 } from "@/lib/hosted-oauth-callback";
 import { HOSTED_MODE } from "@/lib/config";
 import { isPrivateNetworkUrl } from "@/lib/oauth/private-address";
+import { resolveXaaIdentitySaveFields } from "@/lib/xaa/identity";
 import { validateServerFormData } from "@/lib/server-form-validation";
 import {
   injectHostedServerMapping,
@@ -2795,15 +2796,15 @@ export function useServerState({
           formData.xaaAllowPathScopedIssuer ??
           existingServerForSave?.xaaAllowPathScopedIssuer,
         useXaa: formData.useXaa ?? false,
-        authServerMode: formData.useXaa
-          ? formData.authServerMode ?? "mcpjam"
-          : existingServerForSave?.authServerMode,
-        xaaSubject: formData.useXaa
-          ? formData.xaaSubject
-          : existingServerForSave?.xaaSubject,
-        xaaEmail: formData.useXaa
-          ? formData.xaaEmail
-          : existingServerForSave?.xaaEmail,
+        // Shared atomic identity-pair semantics (omitted pair preserves the
+        // stored values, explicit "" pair clears) + authServerMode default.
+        ...resolveXaaIdentitySaveFields({
+          useXaa: formData.useXaa === true,
+          formAuthServerMode: formData.authServerMode,
+          formSubject: formData.xaaSubject,
+          formEmail: formData.xaaEmail,
+          existing: existingServerForSave,
+        }),
         // Unified fields: preserve any saved value when a save that omits
         // them comes through, rather than erasing it.
         registrationMode:
@@ -3215,15 +3216,15 @@ export function useServerState({
           formData.xaaAllowPathScopedIssuer ??
           existingServer?.xaaAllowPathScopedIssuer,
         useXaa: formData.useXaa ?? false,
-        authServerMode: formData.useXaa
-          ? formData.authServerMode ?? "mcpjam"
-          : existingServer?.authServerMode,
-        xaaSubject: formData.useXaa
-          ? formData.xaaSubject
-          : existingServer?.xaaSubject,
-        xaaEmail: formData.useXaa
-          ? formData.xaaEmail
-          : existingServer?.xaaEmail,
+        // Shared atomic identity-pair semantics (omitted pair preserves the
+        // stored values, explicit "" pair clears) + authServerMode default.
+        ...resolveXaaIdentitySaveFields({
+          useXaa: formData.useXaa === true,
+          formAuthServerMode: formData.authServerMode,
+          formSubject: formData.xaaSubject,
+          formEmail: formData.xaaEmail,
+          existing: existingServer,
+        }),
         // Unified fields: preserve any saved value when a save that omits
         // them comes through, rather than erasing it.
         registrationMode:
@@ -4758,15 +4759,16 @@ export function useServerState({
             formData.xaaAllowPathScopedIssuer ??
             originalServer?.xaaAllowPathScopedIssuer,
           useXaa: formData.useXaa ?? false,
-          authServerMode: formData.useXaa
-            ? formData.authServerMode ?? "mcpjam"
-            : originalServer?.authServerMode,
-          xaaSubject: formData.useXaa
-            ? formData.xaaSubject
-            : originalServer?.xaaSubject,
-          xaaEmail: formData.useXaa
-            ? formData.xaaEmail
-            : originalServer?.xaaEmail,
+          // Shared atomic identity-pair semantics (omitted pair preserves
+          // the stored values, explicit "" pair clears) + authServerMode
+          // default.
+          ...resolveXaaIdentitySaveFields({
+            useXaa: formData.useXaa === true,
+            formAuthServerMode: formData.authServerMode,
+            formSubject: formData.xaaSubject,
+            formEmail: formData.xaaEmail,
+            existing: originalServer,
+          }),
           // Unified fields: preserve any saved value when a save that omits
           // them comes through, rather than erasing it.
           registrationMode:

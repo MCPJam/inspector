@@ -1331,6 +1331,7 @@ export function XAAFlowRoute() {
     appState,
     displayServerConfigs,
     activeOrganizationId,
+    activeProject,
     convexProjectId,
     setSelectedServer,
     saveServerConfigWithoutConnecting,
@@ -1355,6 +1356,7 @@ export function XAAFlowRoute() {
         selectedServerName={appState.selectedServer}
         organizationId={activeOrganizationId ?? null}
         projectId={convexProjectId ?? null}
+        projectXaaTestDefaults={activeProject?.xaaTestDefaults ?? null}
         onSelectServer={setSelectedServer}
         onSaveServerConfig={saveServerConfigWithoutConnecting}
         openServerModalSignal={xaaServerModalNonce}

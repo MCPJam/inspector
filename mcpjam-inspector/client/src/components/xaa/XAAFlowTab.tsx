@@ -188,6 +188,12 @@ interface XAAFlowTabProps {
   /** Active Convex project id — resolves the selected server's id + project
    * for server-side secret resolution. */
   projectId?: string | null;
+  /** The active project's admin-controlled XAA test-identity default —
+   * precedence slot between the per-server override and the run-settings
+   * fallback, and the override-field placeholders in the Configure modal. */
+  projectXaaTestDefaults?: {
+    defaultIdentity: { subject: string; email: string };
+  } | null;
   // Shared server-bar callbacks (mirror the OAuth Debugger).
   onSelectServer?: (serverName: string) => void;
   onSaveServerConfig?: (formData: ServerFormData) => void | Promise<void>;
@@ -204,6 +210,7 @@ export function XAAFlowTab({
   selectedServerName,
   organizationId,
   projectId,
+  projectXaaTestDefaults = null,
   onSelectServer,
   onSaveServerConfig,
   openServerModalSignal,
@@ -308,6 +315,7 @@ export function XAAFlowTab({
     runSettings,
     selectedPerson,
     projectId: projectId ?? null,
+    projectDefault: projectXaaTestDefaults?.defaultIdentity ?? null,
   });
   const runInput = target.runInput;
   const { targetKey, isTestable } = target;
@@ -1051,16 +1059,27 @@ export function XAAFlowTab({
       : "Couldn't resolve this server's saved secret. Re-save it in Configure Server to Test so its secret syncs to this project."
     : null;
 
+  // A partial legacy identity override can't resolve an atomic identity —
+  // block the run with the same actionable error Connect surfaces.
+  const identityBlockedReason = target.identityError
+    ? `${target.identityError} in Configure Server to Test.`
+    : null;
+
   const continueDisabled =
     !isTestable ||
     secretBlocked ||
+    Boolean(target.identityError) ||
     flowState.isBusy ||
     isRunningAll ||
     flowState.currentStep === "complete" ||
     Boolean(flowState.negativeProbe);
 
   const runAllDisabled =
-    !isTestable || secretBlocked || flowState.isBusy || isRunningAll;
+    !isTestable ||
+    secretBlocked ||
+    Boolean(target.identityError) ||
+    flowState.isBusy ||
+    isRunningAll;
 
   // A server is selected but can't be XAA-tested (STDIO / non-OAuth).
   const showNotTestable =
@@ -1130,6 +1149,15 @@ export function XAAFlowTab({
             <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-destructive" />
           )}
           <span>{secretBlockedReason}</span>
+        </div>
+      ) : null}
+      {identityBlockedReason ? (
+        <div
+          className="flex items-center gap-2 border-b border-border bg-muted/30 px-4 py-1.5 text-xs text-muted-foreground"
+          role="status"
+        >
+          <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-destructive" />
+          <span>{identityBlockedReason}</span>
         </div>
       ) : null}
       <div className="flex-1 overflow-hidden">
@@ -1244,7 +1272,9 @@ export function XAAFlowTab({
         onOpenChange={setIsServerModalOpen}
         server={selectedServer}
         existingServerNames={Object.keys(serverConfigs)}
-        signedInEmail={signedInUser?.email}
+        projectDefaultIdentity={
+          projectXaaTestDefaults?.defaultIdentity ?? null
+        }
         projectId={target.barServerProjectId}
         hostedServerId={target.barServerId}
         onSave={async ({ formData }) => {

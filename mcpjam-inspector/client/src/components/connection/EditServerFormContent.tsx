@@ -7,7 +7,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { useAuth } from "@workos-inc/authkit-react";
 import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSettingsSection";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
@@ -33,6 +32,8 @@ interface EditServerFormContentProps {
   onMcpProtocolVersionOverrideChange?: (
     mode: McpProtocolVersion | undefined
   ) => void;
+  /** Project default XAA test identity — shown as override placeholders. */
+  projectXaaDefaultIdentity?: { subject: string; email: string } | null;
 }
 
 export function EditServerFormContent({
@@ -42,8 +43,8 @@ export function EditServerFormContent({
   hostedServerId = null,
   mcpProtocolVersionOverride,
   onMcpProtocolVersionOverrideChange,
+  projectXaaDefaultIdentity = null,
 }: EditServerFormContentProps) {
-  const { user: signedInUser } = useAuth();
   const hostedUrlPlaceholder = "https://example.com/mcp";
   const [revealingEnv, setRevealingEnv] = useState(false);
   const [revealingHeaders, setRevealingHeaders] = useState(false);
@@ -278,7 +279,7 @@ export function EditServerFormContent({
             onXaaSubjectChange={formState.setXaaSubject}
             xaaEmail={formState.xaaEmail}
             onXaaEmailChange={formState.setXaaEmail}
-            signedInEmail={signedInUser?.email}
+            projectDefaultIdentity={projectXaaDefaultIdentity}
           />
         </div>
       )}

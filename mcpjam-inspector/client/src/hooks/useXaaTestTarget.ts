@@ -3,6 +3,10 @@ import { useConvexAuth } from "convex/react";
 import type { HttpServerConfig } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { XaaResourceApp } from "@/lib/xaa/types";
+import {
+  resolveXaaTestIdentity,
+  type XaaIdentityPair,
+} from "@/lib/xaa/identity";
 import type { NegativeTestMode } from "@/shared/xaa.js";
 import { useProjectServers } from "./useProjects";
 
@@ -56,6 +60,11 @@ export interface XaaTestTarget {
   /** false for STDIO / non-OAuth / blank-URL servers. */
   isTestable: boolean;
   notTestableReason?: string;
+  /** Set when the identity could not be resolved atomically (a partial
+   * legacy per-server override). The run must be blocked with this
+   * actionable error — the same one Connect surfaces — rather than mixing
+   * identity sources. */
+  identityError?: string;
 }
 
 const NOT_TESTABLE_REASON =
@@ -97,24 +106,43 @@ interface UseXaaTestTargetParams {
   selectedPerson: { _id: string; subject: string; email: string } | null;
   /** Active Convex project id, for resolving the server's id + project. */
   projectId: string | null;
+  /** The active project's admin-controlled `xaaTestDefaults.defaultIdentity`
+   * (atomic pair), threaded from the owning page. Sits between the
+   * per-server override and the run-settings fallback in precedence. */
+  projectDefault?: XaaIdentityPair | null;
 }
 
-/** Identity precedence: person (atomic) → per-server override → run-settings
- * default. The server override keeps its existing per-field trimmed-non-empty
- * semantics; a person replaces both fields wholesale (email is required at
- * the backend, so it is never empty here). */
-function resolveIdentity(
+/** Identity precedence (all ATOMIC pairs — never one source's subject with
+ * another's email): person → complete per-server override → project default
+ * → run-settings fallback. A PARTIAL server override resolves to an error
+ * that must block the run (same actionable message as Connect). */
+function resolveIdentityForRun(
   selectedPerson: { subject: string; email: string } | null,
   server: ServerWithName | undefined,
+  projectDefault: XaaIdentityPair | null | undefined,
   fallbackUserId: string,
   fallbackEmail: string,
-): { userId: string; email: string } {
-  if (selectedPerson?.subject?.trim()) {
-    return { userId: selectedPerson.subject, email: selectedPerson.email };
+): { userId: string; email: string; identityError?: string } {
+  const resolution = resolveXaaTestIdentity({
+    selectedPerson,
+    serverOverride: server
+      ? { subject: server.xaaSubject, email: server.xaaEmail }
+      : null,
+    projectDefault,
+    runFallback: { subject: fallbackUserId, email: fallbackEmail },
+  });
+  if (!resolution.ok) {
+    // Keep the run input coherent (fallback identity) but carry the error —
+    // the consumer must gate the run on it.
+    return {
+      userId: fallbackUserId,
+      email: fallbackEmail,
+      identityError: resolution.error,
+    };
   }
   return {
-    userId: server?.xaaSubject?.trim() ? server.xaaSubject : fallbackUserId,
-    email: server?.xaaEmail?.trim() ? server.xaaEmail : fallbackEmail,
+    userId: resolution.identity.subject,
+    email: resolution.identity.email,
   };
 }
 
@@ -131,6 +159,7 @@ export function useXaaTestTarget({
   runSettings,
   selectedPerson,
   projectId,
+  projectDefault = null,
 }: UseXaaTestTargetParams): XaaTestTarget {
   const { isAuthenticated } = useConvexAuth();
   const { servers: remoteServers, isLoading: serversLoading } =
@@ -176,7 +205,15 @@ export function useXaaTestTarget({
     };
 
     if (selectedRegistration) {
-      const identity = resolveIdentity(selectedPerson, undefined, userId, email);
+      // A registration target has no per-server override, so the chain is
+      // person → project default → run fallback (never an identity error).
+      const identity = resolveIdentityForRun(
+        selectedPerson,
+        undefined,
+        projectDefault,
+        userId,
+        email,
+      );
       return {
         ...barServerContext,
         targetSource: "registration",
@@ -235,10 +272,17 @@ export function useXaaTestTarget({
     // id resolves, the run is blocked rather than silently sent without it.
     const usesServerSideSecret = hasClientSecret;
     const secretUnavailable = hasClientSecret && !remoteServerId;
-    // A selected "Run as" person wins atomically; otherwise the per-server
-    // simulated identity (synced with the /servers Connect page) is the source
-    // of truth, falling back to the global run-settings default.
-    const identity = resolveIdentity(selectedPerson, server, userId, email);
+    // A selected "Run as" person wins atomically; otherwise the complete
+    // per-server override (synced with the /servers Connect page), then the
+    // project default, then the global run-settings fallback. A PARTIAL
+    // legacy override surfaces identityError and the run must be blocked.
+    const identity = resolveIdentityForRun(
+      selectedPerson,
+      server,
+      projectDefault,
+      userId,
+      email,
+    );
 
     return {
       ...barServerContext,
@@ -263,6 +307,9 @@ export function useXaaTestTarget({
       secretUnavailable,
       serversLoading,
       isTestable: true,
+      ...(identity.identityError
+        ? { identityError: identity.identityError }
+        : {}),
     };
   }, [
     serversLoading,
@@ -281,5 +328,6 @@ export function useXaaTestTarget({
     projectId,
     runSettings,
     selectedPerson,
+    projectDefault,
   ]);
 }

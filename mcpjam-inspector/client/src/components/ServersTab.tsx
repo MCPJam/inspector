@@ -1856,6 +1856,9 @@ export function ServersTab({
           handleConnectServer(formData);
         }}
         projectClientConfig={selectedProject?.clientConfig}
+        projectXaaDefaultIdentity={
+          selectedProject?.xaaTestDefaults?.defaultIdentity ?? null
+        }
       />
 
       {/* JSON Import Modal */}
@@ -1886,6 +1889,9 @@ export function ServersTab({
           // source attribution.
           hostDefaultMcpProtocolVersion={
             previewedHost?.config?.mcpProfile?.mcpProtocolVersion
+          }
+          projectXaaDefaultIdentity={
+            selectedProject?.xaaTestDefaults?.defaultIdentity ?? null
           }
         />
       )}

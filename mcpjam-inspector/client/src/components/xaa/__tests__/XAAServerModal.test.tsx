@@ -228,7 +228,7 @@ describe("XAAServerModal", () => {
     expect(screen.getByLabelText("Email")).toHaveValue("alice@example.com");
   });
 
-  it("persists the per-server simulated identity in the saved form data", async () => {
+  it("persists an edited complete identity pair in the saved form data", async () => {
     const user = userEvent.setup();
     const { onSave } = renderModal();
 
@@ -240,10 +240,104 @@ describe("XAAServerModal", () => {
     await user.type(screen.getByLabelText(/Client ID/), "staging-client");
     await expandAdvanced(user);
     await user.type(screen.getByLabelText("Subject (sub)"), "bob");
+    await user.type(screen.getByLabelText("Email"), "bob@example.com");
     await user.click(screen.getByRole("button", { name: "Save configuration" }));
 
     const { formData } = onSave.mock.calls[0][0];
     expect(formData.xaaSubject).toBe("bob");
+    expect(formData.xaaEmail).toBe("bob@example.com");
+  });
+
+  it("omits the identity pair on an untouched save — never force-defaults to the signed-in email", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderModal();
+
+    await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://staging.mcp.example.com",
+    );
+    await user.type(screen.getByLabelText(/Client ID/), "staging-client");
+    await user.click(screen.getByRole("button", { name: "Save configuration" }));
+
+    const { formData } = onSave.mock.calls[0][0];
+    // BOTH keys omitted: the save path preserves stored values and no
+    // signed-in-email (or any other) default is injected.
+    expect("xaaSubject" in formData).toBe(false);
+    expect("xaaEmail" in formData).toBe(false);
+  });
+
+  it("round-trips a stored identity override atomically and clears it with two empty fields", async () => {
+    const user = userEvent.setup();
+    const server = {
+      name: "prod-mcp",
+      config: { url: "https://prod.mcp.example.com/mcp" },
+      useXaa: true,
+      oauthFlowProfile: {
+        serverUrl: "https://prod.mcp.example.com/mcp",
+        clientId: "prod-client",
+        clientSecret: "",
+        scopes: "",
+        customHeaders: [],
+      },
+      xaaSubject: "alice",
+      xaaEmail: "alice@example.com",
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+    } as unknown as ServerWithName;
+
+    const { onSave } = renderModal({ server });
+
+    // Untouched pair → omitted (round-trip preserves the stored values).
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+    let { formData } = onSave.mock.calls[0][0];
+    expect("xaaSubject" in formData).toBe(false);
+    expect("xaaEmail" in formData).toBe(false);
+
+    // Explicit clear of BOTH fields → both emitted as "" so the backend
+    // normalizes the pair away.
+    onSave.mockClear();
+    await expandAdvanced(user);
+    await user.clear(screen.getByLabelText("Subject (sub)"));
+    await user.clear(screen.getByLabelText("Email"));
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+    ({ formData } = onSave.mock.calls[0][0]);
+    expect(formData.xaaSubject).toBe("");
+    expect(formData.xaaEmail).toBe("");
+  });
+
+  it("blocks save on a partial identity pair with an actionable error", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderModal();
+
+    await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://staging.mcp.example.com",
+    );
+    await user.type(screen.getByLabelText(/Client ID/), "staging-client");
+    await expandAdvanced(user);
+    await user.type(screen.getByLabelText("Subject (sub)"), "bob");
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /complete or clear the server identity override/i,
+    );
+
+    // Completing the pair unblocks the save.
+    await user.type(screen.getByLabelText("Email"), "bob@example.com");
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+    expect(onSave).toHaveBeenCalledTimes(1);
   });
 
   it("requires a Client ID for the pre-registered strategy", async () => {
