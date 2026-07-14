@@ -756,7 +756,11 @@ describe("POST /negative-tests", () => {
         expect(Boolean(headers.Authorization)).toBe(expectAuthorization);
         expect(form.has("client_secret")).toBe(expectSecretInBody);
         if (expectAuthorization) {
-          expect(headers.Authorization).toMatch(/^Basic /);
+          expect(headers.Authorization).toBe(
+            `Basic ${Buffer.from("dynamic-client:dynamic-secret").toString(
+              "base64"
+            )}`
+          );
           expect(form.has("client_id")).toBe(false);
         } else {
           expect(form.get("client_id")).toBe("dynamic-client");
@@ -983,6 +987,34 @@ describe("hosted-issuer forwarding on the local router", () => {
     // No org → reject rather than silently mint under the forgeable unscoped
     // issuer; never calls upstream.
     expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not forward confidential DCR secrets to the hosted issuer", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = buildApp();
+    const response = await app.request("/api/mcp/xaa/negative-tests", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer workos-token",
+      },
+      body: JSON.stringify({
+        audience: "https://auth.example.com",
+        resource: "https://mcp.example.com",
+        tokenEndpoint: "https://auth.example.com/token",
+        clientId: "dynamic-client",
+        clientSecret: "dynamic-secret",
+        tokenEndpointAuthMethod: "client_secret_post",
+        issuerMode: "hosted",
+        organizationId: "org_123",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).message).toMatch(/confidential DCR/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

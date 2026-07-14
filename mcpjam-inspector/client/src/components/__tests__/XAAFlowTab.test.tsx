@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { XAAFlowTab } from "../xaa/XAAFlowTab";
 import type { XaaTestTarget } from "@/hooks/useXaaTestTarget";
+import { buildXaaDcrCredentialCacheKey } from "@/lib/xaa/types";
 
 const captureMock = vi.fn();
 vi.mock("@/lib/analytics", () => ({
@@ -358,6 +359,38 @@ describe("XAAFlowTab", () => {
     );
   });
 
+  it("resets a completed flow when its server configuration changes", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />
+    );
+
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
+        "Flow Complete"
+      )
+    );
+
+    currentTarget = makeTarget({
+      runInput: {
+        ...makeTarget().runInput,
+        scope: "new-scope",
+        serverUrl: "https://new.mcp.example.com",
+      },
+    });
+    rerender(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
+
+    await user.click(screen.getByRole("button", { name: /reset flow/i }));
+    expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
+      "Start"
+    );
+    expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+      "data-unlocked",
+      "false"
+    );
+  });
+
   it("unlocks the scorecard per target — a green run on one leaves another locked", async () => {
     const user = userEvent.setup();
     const { rerender } = render(
@@ -620,9 +653,10 @@ describe("XAAFlowTab", () => {
       );
 
       const registrationEndpoint = "https://auth.example.com/register";
-      const cacheKey = [currentTarget.targetKey, registrationEndpoint, ""]
-        .map(encodeURIComponent)
-        .join("::");
+      const cacheKey = buildXaaDcrCredentialCacheKey({
+        targetKey: currentTarget.targetKey,
+        registrationEndpoint,
+      });
       capturedMachineConfig.dcrCredentialCache.set(cacheKey, {
         clientId: "dynamic-client",
         clientSecret: "session-only-secret",
@@ -741,9 +775,13 @@ describe("XAAFlowTab", () => {
 
       await waitFor(() =>
         expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
-          "data-has-input",
-          "false"
+          "data-unavailable-reason",
+          expect.stringMatching(/expired/i)
         )
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-has-input",
+        "false"
       );
       expect(
         screen

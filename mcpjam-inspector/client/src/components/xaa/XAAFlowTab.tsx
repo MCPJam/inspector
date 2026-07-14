@@ -112,6 +112,25 @@ function buildFlowStateFromInput(
   });
 }
 
+function buildXaaFlowConfigurationKey(
+  input: XAAFlowInput,
+  usesServerSideSecret: boolean
+): string {
+  return [
+    input.serverUrl.trim(),
+    input.authzServerIssuer.trim(),
+    input.clientId.trim(),
+    input.scope.trim(),
+    // Never include the secret itself. Presence is enough for the key; a
+    // replacement is handled by the successful server-config save signal.
+    usesServerSideSecret || Boolean(input.clientSecret.trim())
+      ? "confidential"
+      : "public",
+  ]
+    .map(encodeURIComponent)
+    .join("|");
+}
+
 interface XAAFlowTabProps {
   serverConfigs: Record<string, ServerWithName>;
   selectedServerName: string;
@@ -328,6 +347,10 @@ export function XAAFlowTab({
   });
   const runInput = target.runInput;
   const { targetKey, isTestable } = target;
+  const flowConfigurationKey = buildXaaFlowConfigurationKey(
+    runInput,
+    target.usesServerSideSecret
+  );
 
   // ── Registration strategy (Client↔Resource-AS leg) ──────────────────
   // Persisted per-server and chosen in the "Configure Server to Test" modal;
@@ -399,6 +422,8 @@ export function XAAFlowTab({
       effectiveAssertionFormat
     )
   );
+  const [configurationSaveVersion, setConfigurationSaveVersion] =
+    useState(0);
 
   // Unlocks and scorecard results belong to the exact client identity the
   // completed run exercised. Dynamic client ids come from the flow, not the
@@ -413,6 +438,8 @@ export function XAAFlowTab({
     organizationId ?? "",
     flowState.registrationStrategy,
     scorecardClientId,
+    flowConfigurationKey,
+    configurationSaveVersion,
   ].join("|");
 
   // The machine reads state through this ref (lazy getState). Keep it in
@@ -564,6 +591,13 @@ export function XAAFlowTab({
             "This session's dynamic client secret has expired. Register another client to run negative tests.",
         };
       }
+      if (hostedIssuerOptIn && credentials.clientSecret) {
+        return {
+          input: null,
+          unavailableReason:
+            "Negative tests for confidential DCR clients are unavailable when using the hosted issuer.",
+        };
+      }
       if (!audience || !resource) return { input: null };
 
       const input: NegativeTestsInput = {
@@ -697,6 +731,8 @@ export function XAAFlowTab({
   // the resolved target or the global mode changes. Guarded by value-compared
   // refs; confirms via AlertDialog before discarding a busy or completed run.
   const lastAppliedTargetKey = useRef<string | null>(null);
+  const lastAppliedFlowConfigurationKey = useRef<string | null>(null);
+  const lastAppliedConfigurationSaveVersion = useRef(0);
   const lastNegativeTestMode = useRef(runSettings.negativeTestMode);
   const lastAssertionFormat = useRef<IdentityAssertionFormat>(
     effectiveAssertionFormat
@@ -714,6 +750,8 @@ export function XAAFlowTab({
   });
   const [pendingReset, setPendingReset] = useState<{
     targetKey: string;
+    flowConfigurationKey: string;
+    configurationSaveVersion: number;
     negativeTestMode: NegativeTestMode;
     registrationStrategy: RegistrationStrategy;
     identityAssertionFormat: IdentityAssertionFormat;
@@ -772,11 +810,33 @@ export function XAAFlowTab({
   const applyTargetReset = useCallback(
     (
       nextTargetKey: string,
+      nextFlowConfigurationKey: string,
+      nextConfigurationSaveVersion: number,
       nextMode: NegativeTestMode,
       nextStrategy: RegistrationStrategy,
       nextAssertionFormat: IdentityAssertionFormat
     ) => {
+      const previousTargetKey = lastAppliedTargetKey.current;
       lastAppliedTargetKey.current = nextTargetKey;
+      const configurationChanged =
+        previousTargetKey === nextTargetKey &&
+        ((lastAppliedFlowConfigurationKey.current !== null &&
+          lastAppliedFlowConfigurationKey.current !==
+            nextFlowConfigurationKey) ||
+          lastAppliedConfigurationSaveVersion.current !==
+            nextConfigurationSaveVersion);
+      if (configurationChanged) {
+        const targetPrefix = `${encodeURIComponent(nextTargetKey)}::`;
+        for (const key of Array.from(dcrCredentialCacheRef.current.keys())) {
+          if (key.startsWith(targetPrefix)) {
+            dcrCredentialCacheRef.current.delete(key);
+          }
+        }
+        dcrDuplicateRiskRef.current.delete(nextTargetKey);
+      }
+      lastAppliedFlowConfigurationKey.current = nextFlowConfigurationKey;
+      lastAppliedConfigurationSaveVersion.current =
+        nextConfigurationSaveVersion;
       lastNegativeTestMode.current = nextMode;
       lastRegistrationStrategy.current = nextStrategy;
       lastAssertionFormat.current = nextAssertionFormat;
@@ -789,8 +849,12 @@ export function XAAFlowTab({
     const nextMode = runSettings.negativeTestMode;
     const nextStrategy = effectiveStrategy;
     const nextAssertionFormat = effectiveAssertionFormat;
+    const nextConfigurationSaveVersion = configurationSaveVersion;
     if (
       lastAppliedTargetKey.current === targetKey &&
+      lastAppliedFlowConfigurationKey.current === flowConfigurationKey &&
+      lastAppliedConfigurationSaveVersion.current ===
+        nextConfigurationSaveVersion &&
       lastNegativeTestMode.current === nextMode &&
       lastRegistrationStrategy.current === nextStrategy &&
       lastAssertionFormat.current === nextAssertionFormat
@@ -805,15 +869,26 @@ export function XAAFlowTab({
     if (needsConfirm) {
       setPendingReset({
         targetKey,
+        flowConfigurationKey,
+        configurationSaveVersion: nextConfigurationSaveVersion,
         negativeTestMode: nextMode,
         registrationStrategy: nextStrategy,
         identityAssertionFormat: nextAssertionFormat,
       });
       return;
     }
-    applyTargetReset(targetKey, nextMode, nextStrategy, nextAssertionFormat);
+    applyTargetReset(
+      targetKey,
+      flowConfigurationKey,
+      nextConfigurationSaveVersion,
+      nextMode,
+      nextStrategy,
+      nextAssertionFormat
+    );
   }, [
     targetKey,
+    flowConfigurationKey,
+    configurationSaveVersion,
     runSettings.negativeTestMode,
     effectiveStrategy,
     effectiveAssertionFormat,
@@ -1255,6 +1330,7 @@ export function XAAFlowTab({
           // values) if the save rejects. Selection only follows a save that
           // didn't throw.
           await onSaveServerConfig?.(formData);
+          setConfigurationSaveVersion((version) => version + 1);
           onSelectServer?.(formData.name);
           // A bar server overrides any selected registration.
           setSelectedRegistrationId(null);
@@ -1272,6 +1348,10 @@ export function XAAFlowTab({
             // rebuilds from it — nothing is pinned to the discarded run.
             if (pendingReset) {
               lastAppliedTargetKey.current = pendingReset.targetKey;
+              lastAppliedFlowConfigurationKey.current =
+                pendingReset.flowConfigurationKey;
+              lastAppliedConfigurationSaveVersion.current =
+                pendingReset.configurationSaveVersion;
               lastNegativeTestMode.current = pendingReset.negativeTestMode;
               lastRegistrationStrategy.current =
                 pendingReset.registrationStrategy;
@@ -1284,10 +1364,10 @@ export function XAAFlowTab({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Switch target?</AlertDialogTitle>
+            <AlertDialogTitle>Reset flow?</AlertDialogTitle>
             <AlertDialogDescription>
-              The current run will be discarded and the flow reset for the new
-              target.
+              The current run will be discarded and rebuilt with the new
+              configuration.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1297,6 +1377,8 @@ export function XAAFlowTab({
                 if (pendingReset) {
                   applyTargetReset(
                     pendingReset.targetKey,
+                    pendingReset.flowConfigurationKey,
+                    pendingReset.configurationSaveVersion,
                     pendingReset.negativeTestMode,
                     pendingReset.registrationStrategy,
                     pendingReset.identityAssertionFormat
@@ -1305,7 +1387,7 @@ export function XAAFlowTab({
                 setPendingReset(null);
               }}
             >
-              Switch and reset
+              Reset flow
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
