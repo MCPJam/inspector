@@ -20,13 +20,6 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
 }));
 
-// Managed-capable gating reads the xaa-registration flag for the bar-server
-// register prompt. Enabled by default; tests flip it via flagState.
-let registrationFlagState = true;
-vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: () => registrationFlagState,
-}));
-
 // Controllable org list — drives the admin derivation (owner/admin/creator).
 let organizationsState: Array<{
   _id: string;
@@ -370,7 +363,6 @@ describe("XAAFlowTab", () => {
     personSelectionState = {};
     orgPersonSelectionState = {};
     issuerModeState = "local";
-    registrationFlagState = true;
     organizationsState = [];
     orgPeopleState = { people: [], isLoading: false, isAuthenticated: false };
     peopleState = { people: undefined, isLoading: false, isAvailable: false };

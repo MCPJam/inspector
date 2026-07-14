@@ -10,7 +10,6 @@ import {
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { track } from "@/lib/analytics";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -404,7 +403,6 @@ export function XAAFlowTab({
   // ── Registration selection (hosted) ────────────────────────────────
   const { resourceApps, isAuthenticated: registrationApiAvailable } =
     useXaaResourceApps(organizationId ?? null);
-  const registrationFlagEnabled = useFeatureFlagEnabled("xaa-registration");
   const [selectedRegistrationId, setSelectedRegistrationId] = useState<
     string | null
   >(null);
@@ -606,8 +604,7 @@ export function XAAFlowTab({
   const orgPolicyAvailable =
     Boolean(organizationId) &&
     (HOSTED_MODE || hostedIssuerOptIn) &&
-    registrationApiAvailable &&
-    registrationFlagEnabled === true;
+    registrationApiAvailable;
   const showBarServerRegisterPrompt =
     orgPolicyAvailable &&
     target.targetSource === "bar_server" &&
