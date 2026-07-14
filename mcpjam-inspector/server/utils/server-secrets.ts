@@ -428,9 +428,17 @@ export async function evaluateXaaIssuerPolicy(args: {
       Array.isArray(decision.grantedScopes) &&
       decision.grantedScopes.every((s: unknown) => typeof s === "string")
     ) {
+      // Downscope-only invariant, enforced client-side too: whatever the
+      // evaluator says, this path can only preserve or narrow the request —
+      // a malformed/compromised policy response must never broaden the mint
+      // beyond what the client asked for.
+      const requested = new Set(args.requestedScopes);
+      const grantedScopes = (decision.grantedScopes as string[]).filter(
+        (scope) => requested.has(scope)
+      );
       return {
         outcome: "granted",
-        grantedScopes: decision.grantedScopes,
+        grantedScopes,
         ...(typeof decision.connectionId === "string"
           ? { connectionId: decision.connectionId }
           : {}),

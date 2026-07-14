@@ -1136,6 +1136,29 @@ describe("managed policy enforcement on the org-scoped issuer", () => {
       });
     });
 
+    it("echoes an explicit empty scope on a zero-scope grant (spec form)", async () => {
+      // A grant stripped to nothing must be visible: scope "" is echoed and
+      // the minted ID-JAG carries no scope claim — never the requested one.
+      const evaluator = grantedEvaluator([]);
+      const app = buildOrgApp(evaluator);
+      const subjectToken = await mintSubjectToken(app);
+
+      const response = await app.request("/api/web/xaa/o/org_123/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: "Bearer user-token",
+          ...MANAGED_HEADERS,
+        },
+        body: grantForm(subjectToken),
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.scope).toBe("");
+      expect(decodeJwtPayload(body.access_token).scope).toBeUndefined();
+    });
+
     it("maps a spec-form denial onto the same OAuth error shape", async () => {
       const evaluator = vi.fn(async () => ({
         outcome: "denied" as const,
@@ -1249,6 +1272,51 @@ describe("managed policy enforcement on the org-scoped issuer", () => {
       const body = await response.json();
       expect(body.token_type).toBe("Bearer");
       expect(decodeJwtPayload(body.id_token).sub).toBe("alice-123");
+      expect(evaluator).not.toHaveBeenCalled();
+    });
+
+    it("authorization_code ignores malformed managed-policy headers (context resolves lazily on the exchange branch)", async () => {
+      const evaluator = grantedEvaluator(["read:tools"]);
+      const app = buildOrgApp(evaluator);
+
+      const confirm = await app.request(
+        "/api/web/xaa/o/org_123/authorize/confirm",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: "client-1",
+            redirect_uri: "https://rp.example.com/callback",
+            response_type: "code",
+            subject: "alice-123",
+            email: "alice@example.com",
+          }).toString(),
+        }
+      );
+      expect(confirm.status).toBe(302);
+      const code = new URL(
+        confirm.headers.get("location")!
+      ).searchParams.get("code")!;
+
+      // Declared-but-unusable context: policy mode with no identity/app ids
+      // would 400 the token-exchange grant — but an authorization_code call
+      // carrying the same junk headers must be entirely unaffected.
+      const response = await app.request("/api/web/xaa/o/org_123/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "x-mcpjam-policy-mode": "managed",
+        },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: "https://rp.example.com/callback",
+          client_id: "client-1",
+        }).toString(),
+      });
+
+      expect(response.status).toBe(200);
+      expect((await response.json()).token_type).toBe("Bearer");
       expect(evaluator).not.toHaveBeenCalled();
     });
   });
