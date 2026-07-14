@@ -347,3 +347,21 @@ describe("createInProcessXaaExecutor internal routes", () => {
     expect(state.accessToken).toBe("at-1");
   });
 });
+
+describe("createInProcessXaaExecutor externalRequest SSRF guard", () => {
+  it("enforcePublicHost blocks a private host at fetch time even when httpsOnly is false", async () => {
+    const exec = createInProcessXaaExecutor({
+      issuerBaseUrl: ISSUER_BASE,
+      httpsOnly: false,
+    });
+    // The private-host / DNS guard fires before any network call, closing the
+    // DNS-rebinding window for the caller-influenced CIMD document fetch.
+    await expect(
+      exec.externalRequest(
+        "https://127.0.0.1/xaa-metadata.json",
+        { method: "GET", redirect: "manual" },
+        { enforcePublicHost: true }
+      )
+    ).rejects.toThrow(/private|reserved/i);
+  });
+});

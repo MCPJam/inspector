@@ -24,6 +24,7 @@ import { buildJwtBearerRequest } from "./mint/jwt-bearer.js";
 import { decodeJWT } from "../oauth/state-machines/shared/jwt.js";
 import { DEFAULT_NEGATIVE_TEST_MODE, isNegativeTestMode } from "./constants.js";
 import type {
+  XAAExternalRequestOptions,
   XAARequestExecutor,
   XAARequestResult,
 } from "./state-machines/types.js";
@@ -300,7 +301,8 @@ export function createInProcessXaaExecutor(
 
   const externalRequest = async (
     url: string,
-    init?: RequestInit
+    init?: RequestInit,
+    options?: XAAExternalRequestOptions
   ): Promise<XAARequestResult> => {
     // Preserve the caller's redirect intent (CIMD's document preflight sends
     // `redirect: "manual"` and MUST NOT follow redirects) and normalize the
@@ -311,12 +313,16 @@ export function createInProcessXaaExecutor(
         : init?.redirect === "follow"
         ? "follow"
         : undefined;
+    // `enforcePublicHost` runs the private-host/DNS guard at fetch time even when
+    // the executor default is `httpsOnly: false` (local dev fetches the
+    // http://localhost RS). This is what closes the DNS-rebinding window for the
+    // caller-influenced CIMD document fetch without blocking the loopback RS.
     const response = await executeDebugOAuthProxy({
       url,
       method: (init?.method ?? "GET").toUpperCase(),
       headers: normalizeHeaders(init?.headers),
       body: init?.body ?? undefined,
-      httpsOnly,
+      httpsOnly: httpsOnly || options?.enforcePublicHost === true,
       ...(redirect ? { redirect } : {}),
       timeoutMs,
     });

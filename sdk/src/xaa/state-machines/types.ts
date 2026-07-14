@@ -208,6 +208,14 @@ export interface XAARequestResult {
   ok: boolean;
 }
 
+export interface XAAExternalRequestOptions {
+  /** Enforce the private-host / DNS-resolution SSRF guard for this request at
+   * fetch time, regardless of the executor's `httpsOnly` default. Used for the
+   * caller-influenced CIMD document fetch, which must always target a public
+   * host — closing the DNS-rebinding window a one-time upstream check leaves. */
+  enforcePublicHost?: boolean;
+}
+
 export interface XAARequestExecutor {
   internalRequest: (
     path: string,
@@ -215,7 +223,8 @@ export interface XAARequestExecutor {
   ) => Promise<XAARequestResult>;
   externalRequest: (
     url: string,
-    init?: RequestInit
+    init?: RequestInit,
+    options?: XAAExternalRequestOptions
   ) => Promise<XAARequestResult>;
 }
 

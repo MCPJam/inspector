@@ -1339,11 +1339,18 @@ export function createXAAStateMachine(
     let result: XAARequestResult;
     try {
       result = await runRequest("fetch_client_metadata_document", request, () =>
-        requestExecutor.externalRequest(documentUrl, {
-          method: "GET",
-          headers: request.headers,
-          redirect: "manual",
-        })
+        requestExecutor.externalRequest(
+          documentUrl,
+          {
+            method: "GET",
+            headers: request.headers,
+            redirect: "manual",
+          },
+          // The CIMD document URL is caller-influenced; enforce the private-host
+          // / DNS guard at fetch time (not just any upstream one-shot check) to
+          // close the DNS-rebinding window regardless of the httpsOnly default.
+          { enforcePublicHost: true }
+        )
       );
     } catch {
       // runRequest already recorded the failure and set the error; the step
