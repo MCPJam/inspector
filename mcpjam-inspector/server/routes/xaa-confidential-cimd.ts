@@ -59,7 +59,15 @@ export function registerXaaConfidentialCimdRoute(app: Hono) {
         }),
       },
       200,
-      { ...CORS_HEADERS, "Cache-Control": "public, max-age=3600" },
+      {
+        ...CORS_HEADERS,
+        "Cache-Control": "public, max-age=3600",
+        // client_id is derived from the forwarded host/proto, so the cached
+        // body varies by them: without Vary a shared/CDN cache could serve one
+        // request's client_id to a different host and fail the RAS's
+        // `doc.client_id === fetched URL` equality check.
+        Vary: "X-Forwarded-Host, X-Forwarded-Proto",
+      },
     );
   });
 

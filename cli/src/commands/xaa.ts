@@ -4,6 +4,7 @@ import {
   buildConfidentialCimdUrl,
   getXaaClientJwks,
   initXaaClientKeyPair,
+  isLoopbackHost,
   normalizeIdentityAssertionFormat,
   normalizeRegistrationStrategy,
   runXaaFlow,
@@ -316,6 +317,15 @@ export function buildXaaConfig(
         "--cimd-metadata-origin is only valid with --client-auth private-key-jwt.",
       );
     }
+    // It must be a bare origin: buildConfidentialCimdUrl concatenates the raw
+    // string with the reflector path, so a trailing path/query/fragment would
+    // produce a client_id that never resolves to the reflector route.
+    const parsed = new URL(cimdMetadataOrigin);
+    if (parsed.pathname !== "/" || parsed.search || parsed.hash) {
+      throw usageError(
+        "--cimd-metadata-origin must be a bare origin (scheme + host[:port]) with no path, query, or fragment.",
+      );
+    }
   }
 
   const authzServerIssuer = options.authzServerIssuer?.trim() || undefined;
@@ -400,14 +410,9 @@ export function parseRegistration(value: string): RegistrationStrategy {
 function isLoopbackHttpOrigin(origin: string): boolean {
   try {
     const { protocol, hostname } = new URL(origin);
-    const h = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    return (
-      protocol === "http:" &&
-      (h === "localhost" ||
-        h.endsWith(".localhost") ||
-        h === "127.0.0.1" ||
-        h === "::1")
-    );
+    // Reuse the SDK's RFC 6890 loopback check (covers all of 127.0.0.0/8) so the
+    // CLI carve-out and the SDK fetch-time guard never disagree on what counts.
+    return protocol === "http:" && isLoopbackHost(hostname);
   } catch {
     return false;
   }
@@ -424,18 +429,23 @@ export function resolveConfidentialCimd(
   quiet?: boolean,
 ): void {
   if (config.clientAuth !== "private_key_jwt") return;
-  initXaaClientKeyPair();
   const origin = config.cimdMetadataOrigin ?? XAA_CONFIDENTIAL_CIMD_ORIGIN;
+  const loopback = isLoopbackHttpOrigin(origin);
+
+  // Validate the origin/policy conflict BEFORE touching key material, so an
+  // invocation destined to fail never generates or persists a client key.
+  if (loopback && config.httpsOnly) {
+    throw usageError(
+      "--cimd-metadata-origin is an http loopback URL, but --https-only is set. Use an HTTPS origin, or drop --https-only for local dev.",
+    );
+  }
+
+  initXaaClientKeyPair();
   config.clientIdMetadataUrl = buildConfidentialCimdUrl(
     getXaaClientJwks().keys[0],
     origin,
   );
-  if (isLoopbackHttpOrigin(origin)) {
-    if (config.httpsOnly) {
-      throw usageError(
-        "--cimd-metadata-origin is an http loopback URL, but --https-only is set. Use an HTTPS origin, or drop --https-only for local dev.",
-      );
-    }
+  if (loopback) {
     config.allowLoopbackClientMetadata = true;
     if (!quiet) {
       process.stderr.write(

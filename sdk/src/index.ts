@@ -319,7 +319,11 @@ export type {
   DynamicClientRegistrationCredentials,
   DynamicClientRegistrationOutcome,
 } from "./oauth/state-machines/shared/dynamic-client-registration.js";
-export { validateClientIdMetadataUrl } from "./oauth/state-machines/shared/client-id-metadata.js";
+export {
+  validateClientIdMetadataUrl,
+  isLoopbackHost,
+  isLoopbackClientMetadataUrl,
+} from "./oauth/state-machines/shared/client-id-metadata.js";
 export {
   decodeJWT,
   decodeJWTParts,

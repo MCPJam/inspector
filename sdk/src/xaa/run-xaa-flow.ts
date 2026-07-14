@@ -29,6 +29,7 @@ import {
   type XaaCapabilityEvidence,
 } from "./mcp-init.js";
 import { createInProcessXaaExecutor } from "./in-process-executor.js";
+import { isLoopbackClientMetadataUrl } from "../oauth/state-machines/shared/client-id-metadata.js";
 import { createXAAStateMachine } from "./state-machines/state-machine.js";
 import { runXaaStateMachine } from "./state-machines/runner.js";
 import {
@@ -384,23 +385,6 @@ interface AttemptContext {
   allowLoopbackClientMetadata?: boolean;
   dcrCredentialCache: XaaDcrCredentialCache;
   dcrCacheTargetKey: string;
-}
-
-/** RFC 8252 loopback host check (for the gated local-dev CIMD carve-out). */
-function isLoopbackClientMetadataUrl(url: string): boolean {
-  try {
-    const { protocol, hostname } = new URL(url);
-    const h = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    return (
-      protocol === "http:" &&
-      (h === "localhost" ||
-        h.endsWith(".localhost") ||
-        h === "127.0.0.1" ||
-        h === "::1")
-    );
-  } catch {
-    return false;
-  }
 }
 
 /** A Map-backed DCR credential cache plus a registration counter (for the

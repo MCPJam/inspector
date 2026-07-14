@@ -4,13 +4,7 @@ import {
   createPublicKey,
   type KeyObject,
 } from "crypto";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import os from "os";
 import path from "path";
 
@@ -62,12 +56,22 @@ function setKeyPair(nextPrivate: KeyObject, nextPublic: KeyObject): void {
   publicKey = nextPublic;
 }
 
+/** The client key MUST be EC P-256 so it maps to the ES256 JWKS/assertion the
+ * RAS validates; an RSA/Ed25519/other-curve key would silently break redemption. */
+function isP256PrivateKey(key: KeyObject): boolean {
+  return (
+    key.asymmetricKeyType === "ec" &&
+    key.asymmetricKeyDetails?.namedCurve === "prime256v1"
+  );
+}
+
 function loadSecretKeyPair(): boolean {
   const raw = process.env.XAA_CLIENT_PRIVATE_KEY;
   if (!raw || raw.trim() === "") return false;
   try {
     const pem = normalizePrivateKeyPem(raw);
     const nextPrivate = createPrivateKey(pem);
+    if (!isP256PrivateKey(nextPrivate)) return false;
     setKeyPair(nextPrivate, createPublicKey(nextPrivate));
     return true;
   } catch {
@@ -76,12 +80,16 @@ function loadSecretKeyPair(): boolean {
 }
 
 function loadPersistedLocalKeyPair(): boolean {
-  const { privatePath, publicPath } = getKeyPaths();
-  if (!existsSync(privatePath) || !existsSync(publicPath)) return false;
+  const { privatePath } = getKeyPaths();
+  if (!existsSync(privatePath)) return false;
   try {
-    const privatePem = readFileSync(privatePath, "utf-8");
-    const publicPem = readFileSync(publicPath, "utf-8");
-    setKeyPair(createPrivateKey(privatePem), createPublicKey(publicPem));
+    const nextPrivate = createPrivateKey(readFileSync(privatePath, "utf-8"));
+    if (!isP256PrivateKey(nextPrivate)) return false;
+    // Derive the public key from the private key rather than trusting a separate
+    // public PEM: a corrupted/edited/backup-restored public file (or a partial
+    // read racing a concurrent first-run write) can never desync the published
+    // JWKS from the signing key.
+    setKeyPair(nextPrivate, createPublicKey(nextPrivate));
     return true;
   } catch {
     return false;
@@ -96,16 +104,14 @@ function createAndPersistLocalKeyPair(): void {
   const privatePem = pair.privateKey.export({ type: "pkcs8", format: "pem" });
   const publicPem = pair.publicKey.export({ type: "spki", format: "pem" });
 
-  writeFileSync(privatePath, privatePem);
+  // Create the private file 0600 at open time — not a best-effort chmod after
+  // the write — so a local user can't capture it during a permissive-umask
+  // window. The public PEM is written for human inspection only; load derives
+  // the public key from the private key, so the two can never mismatch.
+  writeFileSync(privatePath, privatePem, { mode: 0o600 });
   writeFileSync(publicPath, publicPem);
-  try {
-    chmodSync(privatePath, 0o600);
-    chmodSync(publicPath, 0o644);
-  } catch {
-    // Best effort for filesystems without chmod semantics.
-  }
 
-  setKeyPair(createPrivateKey(privatePem), createPublicKey(publicPem));
+  setKeyPair(pair.privateKey, pair.publicKey);
 }
 
 function generateEphemeralKeyPair(): void {

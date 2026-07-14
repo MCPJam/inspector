@@ -448,14 +448,40 @@ describe("validateClientIdMetadataUrl (CIMD draft-02)", () => {
       ).toThrow(/absolute HTTPS URL/i);
     });
 
-    it("keeps every other structural check for a loopback URL", () => {
-      // A userinfo component is still rejected under the carve-out.
-      expect(() =>
-        validateClientIdMetadataUrl("http://u@localhost:6274/doc", {
-          allowLoopback: true,
-        })
-      ).toThrow(/userinfo/i);
+    it("permits any 127.0.0.0/8 loopback address (RFC 6890), not just 127.0.0.1", () => {
+      const url = "http://127.0.0.2:6274/.well-known/oauth/xaa-cimd/key";
+      expect(validateClientIdMetadataUrl(url, { allowLoopback: true })).toBe(
+        url
+      );
     });
+
+    it.each([
+      // Non-empty userinfo (caught by parsed username).
+      ["http://u@localhost:6274/doc", "userinfo"],
+      // EMPTY userinfo — parsed username is "" (falsy), so this only fails if the
+      // raw-authority parser strips the http:// prefix correctly under the
+      // carve-out (the bug fix).
+      ["http://@localhost:6274/doc", "userinfo"],
+      // Triple-slash: WHATWG promotes the next token to the host; the raw
+      // authority is empty and must be rejected.
+      ["http:///localhost:6274/doc", "host"],
+      // Single-slash scheme is rejected for loopback too.
+      ["http:/localhost/doc", "scheme"],
+      ["http://localhost:6274/a/../doc", "dot path segments"],
+      ["http://localhost:6274/doc#frag", "fragment"],
+    ])(
+      "still applies structural checks to a loopback URL: %s",
+      (url, messageFragment) => {
+        expect(() =>
+          validateClientIdMetadataUrl(url, { allowLoopback: true })
+        ).toThrow(
+          new RegExp(
+            messageFragment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+            "i"
+          )
+        );
+      }
+    );
 
     it("accepts a plain https loopback URL without the opt-in", () => {
       const url = "https://localhost:6274/.well-known/oauth/xaa-cimd/key";

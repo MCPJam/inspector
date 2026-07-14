@@ -8,7 +8,10 @@ import {
   XAA_DEBUG_IDP_CLIENT_ID,
   XAA_DEBUG_CLIENT_ID_METADATA_URL,
 } from "../../oauth/client-identity.js";
-import { validateClientIdMetadataUrl } from "../../oauth/state-machines/shared/client-id-metadata.js";
+import {
+  isLoopbackClientMetadataUrl,
+  validateClientIdMetadataUrl,
+} from "../../oauth/state-machines/shared/client-id-metadata.js";
 import { executeDynamicClientRegistration } from "../../oauth/state-machines/shared/dynamic-client-registration.js";
 import type {
   InfoLogLevel,
@@ -1364,9 +1367,15 @@ export function createXAAStateMachine(
           },
           // The CIMD document URL is caller-influenced; enforce the private-host
           // / DNS guard at fetch time to close the DNS-rebinding window. The
-          // local-dev loopback opt-in (allowLoopbackClientMetadata) is the only
-          // thing that relaxes it, for a locally-run reflector.
-          { enforcePublicHost: allowLoopbackClientMetadata !== true }
+          // local-dev loopback opt-in relaxes it ONLY when the URL actually
+          // being fetched is an http loopback address — a public URL keeps the
+          // guard even with the opt-in set, so the flag can't widen SSRF scope.
+          {
+            enforcePublicHost: !(
+              allowLoopbackClientMetadata === true &&
+              isLoopbackClientMetadataUrl(documentUrl)
+            ),
+          }
         )
       );
     } catch {

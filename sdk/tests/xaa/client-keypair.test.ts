@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createPublicKey, createVerify, type JsonWebKey } from "crypto";
-import { mkdtempSync, rmSync } from "fs";
+import {
+  createPublicKey,
+  createVerify,
+  generateKeyPairSync,
+  type JsonWebKey,
+} from "crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import os from "os";
 import path from "path";
 import {
@@ -106,6 +111,31 @@ describe("xaa client keypair (confidential CIMD)", () => {
   it("throws when accessed before initialization", () => {
     expect(() => getXaaClientPrivateKey()).toThrow(/not initialized/);
     expect(() => getXaaClientJwks()).toThrow(/not initialized/);
+  });
+
+  it("ignores a non-P-256 XAA_CLIENT_PRIVATE_KEY and falls back to a generated key", () => {
+    // An RSA secret would yield an ES256 doc/assertion the RAS can't validate;
+    // the loader must reject it and generate a proper P-256 key instead.
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    process.env.XAA_CLIENT_PRIVATE_KEY = privateKey.export({
+      type: "pkcs8",
+      format: "pem",
+    }) as string;
+    initXaaClientKeyPair();
+    const jwk = getXaaClientJwks().keys[0];
+    expect(jwk.kty).toBe("EC");
+    expect(jwk.crv).toBe("P-256");
+  });
+
+  it("recovers when the persisted public PEM is corrupted (public derived from private)", () => {
+    initXaaClientKeyPair();
+    const expectedX = getXaaClientJwks().keys[0].x;
+    // Corrupt the standalone public PEM; a fresh load must still publish the key
+    // that matches the private signing key.
+    writeFileSync(path.join(tempDir, "xaa-client-public.pem"), "garbage");
+    resetXaaClientKeyPairForTests();
+    initXaaClientKeyPair();
+    expect(getXaaClientJwks().keys[0].x).toBe(expectedX);
   });
 });
 

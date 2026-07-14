@@ -506,6 +506,28 @@ test("buildXaaConfig rejects --cimd-metadata-origin without private-key-jwt", ()
   );
 });
 
+test("buildXaaConfig rejects a --cimd-metadata-origin that is not a bare origin", () => {
+  for (const origin of [
+    "http://localhost:6274/reflector",
+    "https://app.mcpjam.com/?x=1",
+    "https://app.mcpjam.com/#frag",
+  ]) {
+    assert.throws(
+      () =>
+        buildXaaConfig({
+          ...dynBase,
+          registration: "cimd",
+          clientAuth: "private_key_jwt",
+          cimdMetadataOrigin: origin,
+        }),
+      (error: unknown) =>
+        error instanceof CliError &&
+        /--cimd-metadata-origin must be a bare origin/.test(error.message),
+      `expected ${origin} to be rejected`
+    );
+  }
+});
+
 test("resolveConfidentialCimd computes the hosted reflector URL from the client key", () => {
   const keyDir = mkdtempSync(path.join(os.tmpdir(), "xaa-cli-cimd-"));
   const prevKeyDir = process.env.XAA_IDP_KEY_DIR;
