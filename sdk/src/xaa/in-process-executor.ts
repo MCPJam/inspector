@@ -6,7 +6,11 @@
 // This is the seam that lets the CLI drive the shared browser-safe state machine
 // without a running inspector server. Imports crypto/fs (mint) + node:dns
 // (proxy) — MUST stay out of the browser entry.
-import { executeDebugOAuthProxy, executeOAuthProxy } from "../oauth-proxy.js";
+import {
+  executeDebugOAuthProxy,
+  executeOAuthProxy,
+  fetchPinnedPublicDocument,
+} from "../oauth-proxy.js";
 import { TOKEN_EXCHANGE_GRANT } from "../oauth/client-identity.js";
 import { getXAAIssuerUrl, initXAAIdpKeyPair } from "./mint/keypair.js";
 import {
@@ -22,6 +26,7 @@ import {
   normalizeSubjectIdentifierFormat,
 } from "./constants.js";
 import type {
+  XAAExternalRequestOptions,
   XAARequestExecutor,
   XAARequestResult,
 } from "./state-machines/types.js";
@@ -279,7 +284,8 @@ export function createInProcessXaaExecutor(
 
   const externalRequest = async (
     url: string,
-    init?: RequestInit
+    init?: RequestInit,
+    options?: XAAExternalRequestOptions
   ): Promise<XAARequestResult> => {
     // Preserve the caller's redirect intent (CIMD's document preflight sends
     // `redirect: "manual"` and MUST NOT follow redirects) and normalize the
@@ -290,6 +296,24 @@ export function createInProcessXaaExecutor(
         : init?.redirect === "follow"
         ? "follow"
         : undefined;
+    // `enforcePublicHost` (the caller-influenced CIMD document fetch) uses the
+    // connection-pinned GET: resolve once, reject private/reserved (RFC 6890),
+    // and pin the validated IP into the socket so there is no second DNS
+    // resolution to rebind. This holds even with the executor's local-dev
+    // `httpsOnly: false` default, and never touches the loopback RS calls.
+    if (options?.enforcePublicHost === true) {
+      const pinned = await fetchPinnedPublicDocument(url, {
+        headers: normalizeHeaders(init?.headers),
+        timeoutMs,
+      });
+      return {
+        status: pinned.status,
+        statusText: pinned.statusText,
+        headers: pinned.headers,
+        body: pinned.body,
+        ok: pinned.status >= 200 && pinned.status < 300,
+      };
+    }
     const response = await executeDebugOAuthProxy({
       url,
       method: (init?.method ?? "GET").toUpperCase(),

@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   buildXaaConfig,
   parseAssertionFormat,
+  parseRegistration,
+  printRegistrationNotes,
   redactXaaResult,
 } from "../src/commands/xaa.js";
 import { CliError } from "../src/lib/output.js";
@@ -13,6 +15,13 @@ const base = {
   issuerBaseUrl: "https://issuer.example.com/api/mcp",
   sub: "user-1",
   clientId: "client-1",
+};
+
+// Dynamic-strategy runs derive their identity, so they carry no client-id.
+const dynBase = {
+  url: "https://mcp.example.com/mcp",
+  issuerBaseUrl: "https://issuer.example.com/api/mcp",
+  sub: "user-1",
 };
 
 test("buildXaaConfig maps the required fields", () => {
@@ -209,12 +218,154 @@ test("redactXaaResult masks the ID-JAG token and issued bearer tokens", () => {
   );
 });
 
-test("buildXaaConfig rejects a blank client id", () => {
+test("redactXaaResult preserves the secret-free registration diagnostics", () => {
+  const result = {
+    completed: true,
+    issuer: "https://issuer.example.com/api/mcp/xaa",
+    registration: {
+      strategy: "dcr",
+      clientId: "client_generated_123",
+      reused: false,
+      // `code` is a redacted key and the message mentions "Bearer grant" — both
+      // would be false-positive-scrubbed without the verbatim restore.
+      warnings: [
+        {
+          code: "token_exchange_grant_not_echoed",
+          message: "The registration echoed the JWT Bearer grant but not …",
+        },
+      ],
+    },
+    steps: [],
+  } as unknown as XaaFlowResult;
+
+  const redacted = redactXaaResult(result);
+
+  assert.equal(redacted.registration?.clientId, "client_generated_123");
+  assert.equal(
+    redacted.registration?.warnings[0].code,
+    "token_exchange_grant_not_echoed"
+  );
+  assert.match(redacted.registration?.warnings[0].message ?? "", /JWT Bearer grant/);
+});
+
+test("buildXaaConfig requires --client-id for the preregistered strategy", () => {
   assert.throws(
     () => buildXaaConfig({ ...base, clientId: "   " }),
     (error: unknown) =>
       error instanceof CliError &&
-      /--client-id must not be empty/.test(error.message)
+      /--client-id is required for the preregistered strategy/.test(error.message)
+  );
+});
+
+// --- registration strategies --------------------------------------------
+
+test("parseRegistration accepts the three strategies and rejects others", () => {
+  assert.equal(parseRegistration("preregistered"), "preregistered");
+  assert.equal(parseRegistration("dcr"), "dcr");
+  assert.equal(parseRegistration("cimd"), "cimd");
+  assert.throws(
+    () => parseRegistration("bogus"),
+    (error: unknown) =>
+      error instanceof CliError &&
+      /--registration must be preregistered, dcr, or cimd/.test(error.message)
+  );
+});
+
+test("buildXaaConfig leaves registrationStrategy unset for the default (preregistered)", () => {
+  const config = buildXaaConfig({ ...base });
+  assert.equal(config.registrationStrategy, undefined);
+});
+
+test("buildXaaConfig maps --registration dcr with no client identity", () => {
+  const config = buildXaaConfig({ ...dynBase, registration: "dcr" });
+  assert.equal(config.registrationStrategy, "dcr");
+  assert.equal(config.clientId, undefined);
+  assert.equal(config.clientSecret, undefined);
+});
+
+test("buildXaaConfig maps --registration cimd and --client-metadata-url", () => {
+  const config = buildXaaConfig({
+    ...dynBase,
+    registration: "cimd",
+    clientMetadataUrl: "https://client.example.com/meta.json",
+  });
+  assert.equal(config.registrationStrategy, "cimd");
+  assert.equal(config.clientIdMetadataUrl, "https://client.example.com/meta.json");
+  assert.equal(config.clientId, undefined);
+});
+
+test("buildXaaConfig allows --authz-server-issuer with dcr/cimd", () => {
+  const config = buildXaaConfig({
+    ...dynBase,
+    registration: "dcr",
+    authzServerIssuer: "https://auth.example.com",
+  });
+  assert.equal(config.registrationStrategy, "dcr");
+  assert.equal(config.authzServerIssuer, "https://auth.example.com");
+});
+
+test("buildXaaConfig rejects --client-id with a dynamic strategy", () => {
+  assert.throws(
+    () => buildXaaConfig({ ...base, registration: "dcr" }),
+    (error: unknown) =>
+      error instanceof CliError &&
+      /--client-id must not be set with --registration dcr/.test(error.message)
+  );
+});
+
+test("buildXaaConfig rejects --client-secret with a dynamic strategy", () => {
+  assert.throws(
+    () => buildXaaConfig({ ...dynBase, registration: "cimd", clientSecret: "s" }),
+    (error: unknown) =>
+      error instanceof CliError &&
+      /--client-secret must not be set with --registration cimd/.test(error.message)
+  );
+});
+
+test("buildXaaConfig rejects --token-endpoint-auth-method with a dynamic strategy", () => {
+  assert.throws(
+    () =>
+      buildXaaConfig({
+        ...dynBase,
+        registration: "dcr",
+        tokenEndpointAuthMethod: "client_secret_post",
+      }),
+    (error: unknown) =>
+      error instanceof CliError &&
+      /--token-endpoint-auth-method must not be set with --registration dcr/.test(
+        error.message
+      )
+  );
+});
+
+test("buildXaaConfig rejects --token-endpoint with a dynamic strategy", () => {
+  assert.throws(
+    () =>
+      buildXaaConfig({
+        ...dynBase,
+        registration: "dcr",
+        tokenEndpoint: "https://auth.example.com/oauth/token",
+      }),
+    (error: unknown) =>
+      error instanceof CliError &&
+      /--token-endpoint must not be set with --registration dcr/.test(
+        error.message
+      )
+  );
+});
+
+test("buildXaaConfig rejects --client-metadata-url without cimd", () => {
+  assert.throws(
+    () =>
+      buildXaaConfig({
+        ...base,
+        clientMetadataUrl: "https://client.example.com/meta.json",
+      }),
+    (error: unknown) =>
+      error instanceof CliError &&
+      /--client-metadata-url is only valid with --registration cimd/.test(
+        error.message
+      )
   );
 });
 
@@ -237,4 +388,32 @@ test("buildXaaConfig requires a secret for confidential client auth", () => {
     (error: unknown) =>
       error instanceof CliError && /requires --client-secret/.test(error.message),
   );
+});
+
+test("printRegistrationNotes strips control chars from a hostile RAS client_id", () => {
+  const original = process.stderr.write.bind(process.stderr);
+  let captured = "";
+  (process.stderr as unknown as { write: (s: string) => boolean }).write = (
+    s: string,
+  ) => {
+    captured += s;
+    return true;
+  };
+  try {
+    printRegistrationNotes({
+      completed: false,
+      issuer: "https://issuer.example.com/api/mcp/xaa",
+      registration: {
+        strategy: "dcr",
+        clientId: "evil\u001b[2Kspoof\nSECOND",
+        reused: false,
+        warnings: [],
+      },
+      steps: [],
+    } as unknown as XaaFlowResult);
+  } finally {
+    (process.stderr as unknown as { write: typeof original }).write = original;
+  }
+  assert.ok(!captured.includes("\u001b"), "escape sequence must be stripped");
+  assert.match(captured, /"evil\[2KspoofSECOND"/);
 });
