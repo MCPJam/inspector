@@ -6,8 +6,20 @@
  * escaping, and other distinguishable spellings are distinct client
  * identities. The validated original string is returned unchanged.
  */
+/** RFC 8252 loopback hosts (for the gated local-dev CIMD carve-out). */
+function isLoopbackHost(hostname: string): boolean {
+  const h = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return (
+    h === "localhost" ||
+    h.endsWith(".localhost") ||
+    h === "127.0.0.1" ||
+    h === "::1"
+  );
+}
+
 export function validateClientIdMetadataUrl(
-  clientIdMetadataUrl: string
+  clientIdMetadataUrl: string,
+  options: { allowLoopback?: boolean } = {}
 ): string {
   let parsedUrl: URL;
   try {
@@ -16,7 +28,15 @@ export function validateClientIdMetadataUrl(
     throw new Error("Client ID metadata URL must be a valid absolute URL");
   }
 
-  if (parsedUrl.protocol !== "https:" || !parsedUrl.hostname) {
+  // Standards require HTTPS. `allowLoopback` (an explicit, local-dev-only opt-in)
+  // additionally permits http:// to a loopback host so a locally-run reflector
+  // can be exercised end-to-end; it never affects public/remote URLs.
+  const loopbackHttp =
+    options.allowLoopback === true &&
+    parsedUrl.protocol === "http:" &&
+    isLoopbackHost(parsedUrl.hostname);
+
+  if (!loopbackHttp && (parsedUrl.protocol !== "https:" || !parsedUrl.hostname)) {
     throw new Error("Client ID metadata URL must be an absolute HTTPS URL");
   }
 
@@ -30,7 +50,7 @@ export function validateClientIdMetadataUrl(
   //    `https:/…` and backslash scheme `https:\…`). The scheme is matched
   //    case-insensitively — RFC 3986 schemes are case-insensitive and the case
   //    doesn't change which host fetch contacts, so `HTTPS://` is allowed.
-  if (!/^https:\/\//i.test(clientIdMetadataUrl)) {
+  if (!loopbackHttp && !/^https:\/\//i.test(clientIdMetadataUrl)) {
     throw new Error(
       "Client ID metadata URL must use the https:// scheme (with two slashes)"
     );

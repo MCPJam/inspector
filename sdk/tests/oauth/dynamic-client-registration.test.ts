@@ -420,6 +420,48 @@ describe("validateClientIdMetadataUrl (CIMD draft-02)", () => {
       new RegExp(messageFragment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")
     );
   });
+
+  describe("allowLoopback (gated local-dev carve-out for confidential CIMD)", () => {
+    it.each([
+      "http://localhost:6274/.well-known/oauth/xaa-cimd/key",
+      "http://127.0.0.1:6274/.well-known/oauth/xaa-cimd/key",
+      "http://[::1]:6274/.well-known/oauth/xaa-cimd/key",
+      "http://dev.localhost:6274/.well-known/oauth/xaa-cimd/key",
+    ])("permits http:// to a loopback host: %s", (url) => {
+      expect(validateClientIdMetadataUrl(url, { allowLoopback: true })).toBe(
+        url
+      );
+    });
+
+    it("still rejects http:// to a loopback host when the opt-in is absent", () => {
+      const url = "http://localhost:6274/.well-known/oauth/xaa-cimd/key";
+      expect(() => validateClientIdMetadataUrl(url)).toThrow(
+        /absolute HTTPS URL/i
+      );
+    });
+
+    it("does not relax https requirements for non-loopback hosts even when opted in", () => {
+      // The carve-out is loopback-only; a public http:// URL is still rejected.
+      const url = "http://example.com/.well-known/oauth/xaa-cimd/key";
+      expect(() =>
+        validateClientIdMetadataUrl(url, { allowLoopback: true })
+      ).toThrow(/absolute HTTPS URL/i);
+    });
+
+    it("keeps every other structural check for a loopback URL", () => {
+      // A userinfo component is still rejected under the carve-out.
+      expect(() =>
+        validateClientIdMetadataUrl("http://u@localhost:6274/doc", {
+          allowLoopback: true,
+        })
+      ).toThrow(/userinfo/i);
+    });
+
+    it("accepts a plain https loopback URL without the opt-in", () => {
+      const url = "https://localhost:6274/.well-known/oauth/xaa-cimd/key";
+      expect(validateClientIdMetadataUrl(url)).toBe(url);
+    });
+  });
 });
 
 describe("state machine DCR diagnostic surfaces", () => {

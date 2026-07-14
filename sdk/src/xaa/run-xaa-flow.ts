@@ -70,6 +70,9 @@ export interface XaaFlowConfig {
   /** CIMD only: the Client ID Metadata Document URL. Defaults to the hosted
    * XAA debugger document. */
   clientIdMetadataUrl?: string;
+  /** Local-dev-only opt-in: permit an http:// loopback CIMD document URL (a
+   * locally-run reflector). Never affects public/remote URLs. */
+  allowLoopbackClientMetadata?: boolean;
   negativeTestMode?: NegativeTestMode;
   /** Input axis: assertion format the mock IdP mints ("oidc" default). */
   identityAssertionFormat?: IdentityAssertionFormat;
@@ -378,8 +381,26 @@ function projectFlowError(state: XAAFlowState): string | undefined {
 interface AttemptContext {
   registrationStrategy: RegistrationStrategy;
   clientIdMetadataUrl?: string;
+  allowLoopbackClientMetadata?: boolean;
   dcrCredentialCache: XaaDcrCredentialCache;
   dcrCacheTargetKey: string;
+}
+
+/** RFC 8252 loopback host check (for the gated local-dev CIMD carve-out). */
+function isLoopbackClientMetadataUrl(url: string): boolean {
+  try {
+    const { protocol, hostname } = new URL(url);
+    const h = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    return (
+      protocol === "http:" &&
+      (h === "localhost" ||
+        h.endsWith(".localhost") ||
+        h === "127.0.0.1" ||
+        h === "::1")
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** A Map-backed DCR credential cache plus a registration counter (for the
@@ -501,6 +522,7 @@ async function runSharedAttempt(
     authzServerIssuer: config.authzServerIssuer,
     registrationStrategy: ctx.registrationStrategy,
     clientIdMetadataUrl: ctx.clientIdMetadataUrl,
+    allowLoopbackClientMetadata: ctx.allowLoopbackClientMetadata,
     dcrCredentialCache: ctx.dcrCredentialCache,
     dcrCacheTargetKey: ctx.dcrCacheTargetKey,
   });
@@ -529,6 +551,7 @@ export async function runXaaFlow(
   const ctx: AttemptContext = {
     registrationStrategy: strategy,
     clientIdMetadataUrl: config.clientIdMetadataUrl,
+    allowLoopbackClientMetadata: config.allowLoopbackClientMetadata,
     dcrCredentialCache: dcr.cache,
     dcrCacheTargetKey: config.serverUrl,
   };
@@ -599,7 +622,11 @@ export async function runXaaFlow(
   // the private-host/DNS-resolution path regardless of the local-dev `httpsOnly`
   // default, so an untrusted URL can't turn the preflight into a fetch of an
   // internal address. The hardcoded hosted default is trusted and skips this.
-  if (config.clientIdMetadataUrl) {
+  const skipCimdSsrfForLoopback =
+    config.allowLoopbackClientMetadata === true &&
+    !!config.clientIdMetadataUrl &&
+    isLoopbackClientMetadataUrl(config.clientIdMetadataUrl);
+  if (config.clientIdMetadataUrl && !skipCimdSsrfForLoopback) {
     try {
       await validateUrl(config.clientIdMetadataUrl, true);
     } catch (error) {

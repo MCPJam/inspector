@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   buildXaaConfig,
   parseAssertionFormat,
+  parseClientAuth,
   parseRegistration,
   printRegistrationNotes,
   redactXaaResult,
+  resolveConfidentialCimd,
 } from "../src/commands/xaa.js";
 import { CliError } from "../src/lib/output.js";
 import type { XaaFlowResult } from "@mcpjam/sdk";
@@ -416,4 +421,162 @@ test("printRegistrationNotes strips control chars from a hostile RAS client_id",
   }
   assert.ok(!captured.includes("\u001b"), "escape sequence must be stripped");
   assert.match(captured, /"evil\[2KspoofSECOND"/);
+});
+
+// --- confidential CIMD (--client-auth private-key-jwt) -------------------
+
+test("parseClientAuth accepts none and both private-key-jwt spellings", () => {
+  assert.equal(parseClientAuth("none"), "none");
+  assert.equal(parseClientAuth("private-key-jwt"), "private_key_jwt");
+  assert.equal(parseClientAuth("private_key_jwt"), "private_key_jwt");
+});
+
+test("parseClientAuth rejects an unknown method", () => {
+  assert.throws(
+    () => parseClientAuth("client_secret_basic"),
+    (error: unknown) =>
+      error instanceof CliError &&
+      /--client-auth must be none or private-key-jwt/.test(error.message)
+  );
+});
+
+test("buildXaaConfig maps --client-auth private-key-jwt with cimd", () => {
+  const config = buildXaaConfig({
+    ...dynBase,
+    registration: "cimd",
+    clientAuth: "private_key_jwt",
+  });
+  assert.equal(config.registrationStrategy, "cimd");
+  assert.equal(config.clientAuth, "private_key_jwt");
+  // The reflector URL is computed later, in resolveConfidentialCimd.
+  assert.equal(config.clientIdMetadataUrl, undefined);
+});
+
+test("buildXaaConfig omits clientAuth for the default (none)", () => {
+  const config = buildXaaConfig({ ...dynBase, registration: "cimd" });
+  assert.equal(config.clientAuth, undefined);
+});
+
+test("buildXaaConfig rejects --client-auth private-key-jwt without cimd", () => {
+  assert.throws(
+    () =>
+      buildXaaConfig({
+        ...dynBase,
+        registration: "dcr",
+        clientAuth: "private_key_jwt",
+      }),
+    (error: unknown) =>
+      error instanceof CliError &&
+      /--client-auth private-key-jwt is only valid with --registration cimd/.test(
+        error.message
+      )
+  );
+});
+
+test("buildXaaConfig rejects private-key-jwt combined with --client-metadata-url", () => {
+  assert.throws(
+    () =>
+      buildXaaConfig({
+        ...dynBase,
+        registration: "cimd",
+        clientAuth: "private_key_jwt",
+        clientMetadataUrl: "https://client.example.com/meta.json",
+      }),
+    (error: unknown) =>
+      error instanceof CliError &&
+      /--client-metadata-url cannot be combined with --client-auth private-key-jwt/.test(
+        error.message
+      )
+  );
+});
+
+test("buildXaaConfig rejects --cimd-metadata-origin without private-key-jwt", () => {
+  assert.throws(
+    () =>
+      buildXaaConfig({
+        ...dynBase,
+        registration: "cimd",
+        cimdMetadataOrigin: "http://localhost:6274",
+      }),
+    (error: unknown) =>
+      error instanceof CliError &&
+      /--cimd-metadata-origin is only valid with --client-auth private-key-jwt/.test(
+        error.message
+      )
+  );
+});
+
+test("resolveConfidentialCimd computes the hosted reflector URL from the client key", () => {
+  const keyDir = mkdtempSync(path.join(os.tmpdir(), "xaa-cli-cimd-"));
+  const prevKeyDir = process.env.XAA_IDP_KEY_DIR;
+  process.env.XAA_IDP_KEY_DIR = keyDir;
+  try {
+    const config = buildXaaConfig({
+      ...dynBase,
+      registration: "cimd",
+      clientAuth: "private_key_jwt",
+    });
+    resolveConfidentialCimd(config, true);
+    assert.match(
+      config.clientIdMetadataUrl ?? "",
+      /^https:\/\/app\.mcpjam\.com\/\.well-known\/oauth\/xaa-cimd\//
+    );
+    // A hosted HTTPS reflector never needs the loopback carve-out.
+    assert.equal(config.allowLoopbackClientMetadata, undefined);
+  } finally {
+    if (prevKeyDir === undefined) delete process.env.XAA_IDP_KEY_DIR;
+    else process.env.XAA_IDP_KEY_DIR = prevKeyDir;
+    rmSync(keyDir, { recursive: true, force: true });
+  }
+});
+
+test("resolveConfidentialCimd opts into the loopback carve-out for an http localhost origin", () => {
+  const keyDir = mkdtempSync(path.join(os.tmpdir(), "xaa-cli-cimd-"));
+  const prevKeyDir = process.env.XAA_IDP_KEY_DIR;
+  process.env.XAA_IDP_KEY_DIR = keyDir;
+  try {
+    const config = buildXaaConfig({
+      ...dynBase,
+      registration: "cimd",
+      clientAuth: "private_key_jwt",
+      cimdMetadataOrigin: "http://localhost:6274",
+    });
+    resolveConfidentialCimd(config, true);
+    assert.match(
+      config.clientIdMetadataUrl ?? "",
+      /^http:\/\/localhost:6274\/\.well-known\/oauth\/xaa-cimd\//
+    );
+    assert.equal(config.allowLoopbackClientMetadata, true);
+  } finally {
+    if (prevKeyDir === undefined) delete process.env.XAA_IDP_KEY_DIR;
+    else process.env.XAA_IDP_KEY_DIR = prevKeyDir;
+    rmSync(keyDir, { recursive: true, force: true });
+  }
+});
+
+test("resolveConfidentialCimd rejects an http loopback origin under --https-only", () => {
+  const keyDir = mkdtempSync(path.join(os.tmpdir(), "xaa-cli-cimd-"));
+  const prevKeyDir = process.env.XAA_IDP_KEY_DIR;
+  process.env.XAA_IDP_KEY_DIR = keyDir;
+  try {
+    const config = buildXaaConfig({
+      ...dynBase,
+      registration: "cimd",
+      clientAuth: "private_key_jwt",
+      cimdMetadataOrigin: "http://localhost:6274",
+      httpsOnly: true,
+    });
+    assert.throws(
+      () => resolveConfidentialCimd(config, true),
+      (error: unknown) =>
+        error instanceof CliError &&
+        /--cimd-metadata-origin is an http loopback URL, but --https-only is set/.test(
+          error.message
+        )
+    );
+  } finally {
+    if (prevKeyDir === undefined) delete process.env.XAA_IDP_KEY_DIR;
+    else process.env.XAA_IDP_KEY_DIR = prevKeyDir;
+    rmSync(keyDir, { recursive: true, force: true });
+  }
 });

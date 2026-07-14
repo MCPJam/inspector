@@ -18,6 +18,7 @@ import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
 import relayRoutes, { relayBodyLimit } from "./routes/relay.js";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata.js";
+import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd.js";
 import workosAuthkitRoutes from "./routes/workos-authkit.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
@@ -301,6 +302,7 @@ export async function createHonoApp() {
   // the static/SPA fallback. Mirror of the mount in server/index.ts — both
   // production entries must wire this up.
   registerXaaClientMetadataRoute(app);
+  registerXaaConfidentialCimdRoute(app);
 
   // Health check
   app.get("/health", (c) => {

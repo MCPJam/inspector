@@ -2199,6 +2199,58 @@ describe("cimd registration strategy", () => {
     expect(harness.getState().error).toContain("malformed");
   });
 
+  it("adopts a confidential (private_key_jwt) document and redeems with it, no public_client warning", async () => {
+    const harness = createDynamicHarness({
+      strategy: "cimd",
+      authzMetadataExtras: CIMD_SUPPORTED,
+      cimdResponse: {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        body: {
+          client_id: XAA_DEBUG_CLIENT_ID_METADATA_URL,
+          grant_types: [
+            "urn:ietf:params:oauth:grant-type:token-exchange",
+            "urn:ietf:params:oauth:grant-type:jwt-bearer",
+          ],
+          authorization_grant_profiles_supported: [
+            "urn:ietf:params:oauth:grant-profile:id-jag",
+          ],
+          token_endpoint_auth_method: "private_key_jwt",
+          jwks: {
+            keys: [
+              {
+                kty: "EC",
+                crv: "P-256",
+                x: "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+                y: "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0",
+                kid: "xaa-client-1",
+                alg: "ES256",
+                use: "sig",
+              },
+            ],
+          },
+        },
+      },
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("complete");
+    expect(state.clientId).toBe(XAA_DEBUG_CLIENT_ID_METADATA_URL);
+    expect(state.tokenEndpointAuthMethod).toBe("private_key_jwt");
+    // Confidential clients carry no public_client warning.
+    expect(
+      state.registrationWarnings?.some((w) => w.code === "public_client")
+    ).toBe(false);
+
+    // The method flows to the redemption request, keeping the URL identity and
+    // never a secret. The executor signs the client_assertion from the method.
+    const proxyBody = harness.proxyTokenBody();
+    expect(proxyBody.clientId).toBe(XAA_DEBUG_CLIENT_ID_METADATA_URL);
+    expect(proxyBody.clientSecret).toBeUndefined();
+    expect(proxyBody.tokenEndpointAuthMethod).toBe("private_key_jwt");
+  });
+
   const cimdDoc = {
     client_id: XAA_DEBUG_CLIENT_ID_METADATA_URL,
     grant_types: [
