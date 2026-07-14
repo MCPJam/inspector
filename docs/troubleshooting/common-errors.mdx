@@ -89,6 +89,7 @@ This response comes from **your MCP server**, not from MCPJam Inspector. The ser
 
 **If your server is failing to connect, first verify you've selected the correct authentication option:**
 
+- **Auto** (default) - Connects without credentials first; if the server returns 401, MCPJam prompts you to continue with OAuth. Use this when you're unsure what the server requires.
 - **No Authentication** - Use this for local or development servers that don't require authentication
 - **Bearer Token** - Use this if you already have an API token from the server
 - **OAuth 2.0** - Use this for servers that require OAuth authorization flow
