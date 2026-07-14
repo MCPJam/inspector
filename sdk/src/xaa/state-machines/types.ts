@@ -202,6 +202,26 @@ export interface XAAFlowState {
   /** Set after a DCR POST whose outcome left no reusable registration: a
    * retry may create a second remote client and needs explicit confirmation. */
   dcrRetryMayCreateDuplicate?: boolean;
+  /** Managed-IdP policy ruling for this run's ID-JAG mint. Set only when the
+   * run carried a managed context (config `policyMode` present) — legacy and
+   * unmanaged-context-free runs never fabricate policy state. Carries codes
+   * and scope strings only — never tokens. */
+  idpPolicy?: {
+    outcome: "granted" | "downscoped" | "denied";
+    /** Allowlisted OAuth error code from a policy denial (or evaluator
+     * outage). Anything else the issuer returns is dropped, not echoed. */
+    errorCode?:
+      | "access_denied"
+      | "invalid_target"
+      | "invalid_client"
+      | "invalid_scope"
+      | "temporarily_unavailable";
+    /** Short value-free reason enum from the issuer's `error_description`
+     * (truncated); e.g. `not_assigned`, `identity_suspended`. */
+    reasonCode?: string;
+    requestedScope?: string;
+    grantedScope?: string;
+  };
 }
 
 export interface XAARequestResult {
@@ -239,6 +259,17 @@ export interface BaseXAAStateMachineConfig {
    * request bodies so the local server forwards them to the hosted issuer. */
   issuerMode?: "local" | "hosted";
   organizationId?: string | null;
+  /** Managed-IdP policy context for org-registered resource-app runs. When
+   * set, the ID-JAG mint carries it (headers on the spec `/token` form, body
+   * fields on the legacy JSON mint) so the org-scoped issuer can enforce
+   * per-person policy. Keyed on PRESENCE, independent of `issuerMode` — a
+   * direct hosted run keeps `issuerMode` "local". Unset ⇒ legacy behavior,
+   * byte-identical mint requests. */
+  policyMode?: "managed" | "unmanaged";
+  /** The org synthetic person this managed run acts as. */
+  testIdentityId?: string;
+  /** The registered resource app the managed run targets. */
+  resourceAppId?: string;
   /** Whether the issuer accepts the RFC 8693 grant at `/token`. Hosted
    * unscoped issuers use the JSON mint fallback. Defaults to true. */
   specTokenEndpointAvailable?: boolean;
@@ -313,6 +344,7 @@ export const EMPTY_XAA_FLOW_STATE: XAAFlowState = {
   error: undefined,
   negativeProbe: undefined,
   compatibilityReport: undefined,
+  idpPolicy: undefined,
 };
 
 export function createInitialXAAFlowState(

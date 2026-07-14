@@ -50,6 +50,7 @@ import {
 } from "../../utils/server-secrets.js";
 import type {
   ServerClientSecretResult,
+  XaaIssuerPolicyDecision,
   XaaResourceAppSecretResult,
 } from "../../utils/server-secrets.js";
 import { logger } from "../../utils/logger.js";
@@ -380,6 +381,13 @@ const tokenExchangeSchema = z.object({
   clientId: z.string().trim().min(1),
   scope: z.string().trim().min(1).optional(),
   negativeTestMode: z.string().trim().optional(),
+  // Managed-IdP policy context (org-scoped mints only; the spec /token form
+  // carries the same context as x-mcpjam-* headers instead). Must be declared
+  // here — a non-strict zod object silently STRIPS unknown keys, so without
+  // these fields the context would never reach the handler.
+  policyMode: z.enum(["managed", "unmanaged"]).optional(),
+  testIdentityId: z.string().trim().min(1).optional(),
+  resourceAppId: z.string().trim().min(1).optional(),
 });
 
 const discoverAsSchema = z
@@ -400,6 +408,11 @@ const negativeTestsSchema = z
     audience: z.string().trim().min(1),
     resource: z.string().trim().min(1),
     subject: z.string().trim().min(1).optional(),
+    // The subject's email, required by the managed evaluator's exact
+    // claims-match (subject AND email — IDs alone are never trusted). Legacy
+    // unmanaged scorecards omit it; a managed call without it is denied
+    // identity_claims_mismatch (fail-closed).
+    email: z.string().trim().min(1).optional(),
     clientId: z.string().trim().min(1).optional(),
     scope: z.string().trim().min(1).optional(),
     tokenEndpoint: z.string().trim().min(1).optional(),
@@ -408,6 +421,13 @@ const negativeTestsSchema = z
     registrationId: z.string().trim().min(1).optional(),
     serverId: z.string().trim().min(1).optional(),
     projectId: z.string().trim().min(1).optional(),
+    // Managed-IdP policy context (org-scoped scorecards only). Declared
+    // explicitly because this non-strict zod object STRIPS unknown keys —
+    // without these fields the managed context would silently never reach the
+    // handler and enforcement would be skipped.
+    policyMode: z.enum(["managed", "unmanaged"]).optional(),
+    testIdentityId: z.string().trim().min(1).optional(),
+    resourceAppId: z.string().trim().min(1).optional(),
   })
   .refine(
     (data) => data.registrationId || data.serverId || data.tokenEndpoint,
@@ -557,6 +577,46 @@ const proxyTokenSchema = z
     }
   );
 
+// Managed-IdP policy context riding an org-scoped mint: which synthetic
+// person a run acts as, against which registered resource app, and whether
+// managed policy or the admin-only unmanaged bypass applies. Transport:
+// x-mcpjam-policy-mode / x-mcpjam-test-identity-id / x-mcpjam-resource-app-id
+// headers on the spec /token form; optional body fields (with header
+// fallback) on the legacy JSON endpoints.
+interface ManagedPolicyContext {
+  policyMode: "managed" | "unmanaged";
+  testIdentityId: string;
+  resourceAppId: string;
+}
+
+// Per-request policy gate over an ID-JAG mint. `allow` may narrow the scope
+// (grantedScope is the space-joined granted set, possibly ""); `deny` carries
+// the ready-to-send OAuth error Response.
+type MintPolicyGateResult =
+  | { kind: "allow"; grantedScope?: string }
+  | { kind: "deny"; response: Response };
+
+type MintPolicyGate = (mint: {
+  claims: { subject: string; email?: string };
+  audience: string;
+  resource?: string;
+  targetClientId?: string;
+  requestedScope?: string;
+}) => Promise<MintPolicyGateResult>;
+
+// Decision → OAuth token-endpoint error mapping (the same {error,
+// error_description} shape on every mint endpoint, so the client's
+// extractOauthErrorCode works unchanged).
+const POLICY_DENIAL_STATUS: Record<
+  Extract<XaaIssuerPolicyDecision, { outcome: "denied" }>["code"],
+  number
+> = {
+  access_denied: 403,
+  invalid_target: 400,
+  invalid_scope: 400,
+  invalid_client: 401,
+};
+
 interface CreateXaaRouterOptions {
   issuerBasePath: "/api/mcp" | "/api/web";
   httpsOnlyProxy: boolean;
@@ -588,6 +648,24 @@ interface CreateXaaRouterOptions {
     organizationId: string;
     bearerToken: string;
   }) => Promise<void>;
+  // Evaluates the managed-IdP policy for an org-scoped mint that carries a
+  // managed context, using the caller's bearer. Only meaningful alongside
+  // authorizeOrgIssuer (the org routes are where the context is read); the
+  // local router never sets either, so hosted-only enforcement falls out
+  // structurally. A managed-context mint on a router without this evaluator
+  // fails CLOSED (503), in both policy modes.
+  evaluateIssuerPolicy?: (args: {
+    bearerToken: string;
+    organizationId: string;
+    testIdentityId: string;
+    resourceAppId: string;
+    claims: { subject: string; email?: string };
+    audience: string;
+    resource?: string;
+    targetClientId?: string;
+    requestedScopes: string[];
+    policyMode: "managed" | "unmanaged";
+  }) => Promise<XaaIssuerPolicyDecision>;
   // LOCAL-only: when a mint request carries `issuerMode: "hosted"`, forward it
   // server-to-server to this hosted origin so the token is signed by the key
   // the hosted JWKS serves and carries a publicly discoverable `iss`. The
@@ -875,14 +953,28 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       );
     }
     const body = await c.req.text();
+    // The managed-policy context also rides x-mcpjam-* headers and is meant
+    // for the HOSTED issuer's mint gate — copy it into the explicit upstream
+    // header set (this relay forwards nothing implicitly, so without this the
+    // context would be dropped and enforcement silently skipped). The
+    // issuer-mode/organization-id opt-in headers stay consumed here.
+    const upstreamHeaders: Record<string, string> = {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: authHeader,
+    };
+    for (const name of [
+      "x-mcpjam-policy-mode",
+      "x-mcpjam-test-identity-id",
+      "x-mcpjam-resource-app-id",
+    ]) {
+      const value = c.req.header(name);
+      if (value) upstreamHeaders[name] = value;
+    }
     return relayToHostedIssuer(
       `${options.forwardHostedIssuer.origin}/api/web/xaa/o/${organizationId}/token`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Authorization: authHeader,
-        },
+        headers: upstreamHeaders,
         body,
       }
     );
@@ -926,6 +1018,106 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       });
     }
     return orgId;
+  };
+
+  // Managed-policy context for an org-scoped mint. Body fields win (the
+  // legacy JSON endpoints declare them in their schemas); the x-mcpjam-*
+  // headers are the fallback and the spec /token form's only transport.
+  // Returns null when no context was sent (legacy run — behavior must stay
+  // byte-identical), the context when complete, or a 400 Response when a
+  // request declared a policy mode but the context is unusable: a declared
+  // managed intent is never silently dropped.
+  const resolveManagedPolicyContext = (
+    c: Context,
+    bodyFields?: {
+      policyMode?: string;
+      testIdentityId?: string;
+      resourceAppId?: string;
+    }
+  ): ManagedPolicyContext | null | Response => {
+    const policyMode =
+      bodyFields?.policyMode ?? c.req.header("x-mcpjam-policy-mode");
+    if (policyMode === undefined) return null;
+    if (policyMode !== "managed" && policyMode !== "unmanaged") {
+      return oauthError(
+        400,
+        "invalid_request",
+        "policyMode must be managed or unmanaged"
+      );
+    }
+    const testIdentityId =
+      bodyFields?.testIdentityId ?? c.req.header("x-mcpjam-test-identity-id");
+    const resourceAppId =
+      bodyFields?.resourceAppId ?? c.req.header("x-mcpjam-resource-app-id");
+    if (!testIdentityId || !resourceAppId) {
+      return oauthError(
+        400,
+        "invalid_request",
+        "Managed policy minting requires testIdentityId and resourceAppId"
+      );
+    }
+    return { policyMode, testIdentityId, resourceAppId };
+  };
+
+  // Per-request policy gate over an org-scoped mint. Runs AFTER
+  // requireScopedOrg (which returns only the orgId), so the evaluator bearer
+  // is re-read from the request. Fail-closed in BOTH policy modes: without an
+  // evaluator ruling nothing mints — an outage must not open a member-wide
+  // unmanaged bypass. Denials map onto OAuth token-endpoint errors per the
+  // POLICY_DENIAL_STATUS table.
+  const buildMintPolicyGate = (
+    c: Context,
+    organizationId: string,
+    context: ManagedPolicyContext
+  ): MintPolicyGate => {
+    const authHeader = c.req.header("authorization");
+    const bearerToken = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice("Bearer ".length)
+      : undefined;
+    return async (mint) => {
+      const unavailable = (): MintPolicyGateResult => ({
+        kind: "deny",
+        response: oauthError(
+          503,
+          "temporarily_unavailable",
+          "The issuer policy service is unavailable"
+        ),
+      });
+      if (!options.evaluateIssuerPolicy || !bearerToken) {
+        return unavailable();
+      }
+      let decision: XaaIssuerPolicyDecision;
+      try {
+        decision = await options.evaluateIssuerPolicy({
+          bearerToken,
+          organizationId,
+          testIdentityId: context.testIdentityId,
+          resourceAppId: context.resourceAppId,
+          claims: mint.claims,
+          audience: mint.audience,
+          resource: mint.resource,
+          targetClientId: mint.targetClientId,
+          requestedScopes: mint.requestedScope
+            ? mint.requestedScope.split(/\s+/).filter(Boolean)
+            : [],
+          policyMode: context.policyMode,
+        });
+      } catch (error) {
+        logger.error("[XAA Issuer Policy] evaluation failed", error);
+        return unavailable();
+      }
+      if (decision.outcome === "denied") {
+        return {
+          kind: "deny",
+          response: oauthError(
+            POLICY_DENIAL_STATUS[decision.code],
+            decision.code,
+            decision.reasonCode
+          ),
+        };
+      }
+      return { kind: "allow", grantedScope: decision.grantedScopes.join(" ") };
+    };
   };
 
   const serveJwks = (c: Context) => {
@@ -1038,7 +1230,14 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     return handleAuthenticate(c, unscopedIssuer(c));
   });
 
-  const handleTokenExchange = async (c: Context, issuer: string) => {
+  const handleTokenExchange = async (
+    c: Context,
+    issuer: string,
+    // Org-scoped routes pass a gate factory; unscoped/legacy routes pass
+    // nothing and any policy fields in the body are ignored (like issuerMode
+    // on hosted routers).
+    policyGateForContext?: (context: ManagedPolicyContext) => MintPolicyGate
+  ) => {
     try {
       const body = await c.req.json();
       const parsed = parseRequest(tokenExchangeSchema, body);
@@ -1060,6 +1259,28 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           ? identityPayload.email
           : undefined;
 
+      // Policy gate BEFORE the negative-mode branch (policy-before-tamper):
+      // an allowed person's negative run mints on the granted scope; a denied
+      // person can't launder a mint through a negative mode.
+      let mintScope = parsed.scope;
+      let gated = false;
+      if (policyGateForContext) {
+        const contextOrError = resolveManagedPolicyContext(c, parsed);
+        if (contextOrError instanceof Response) return contextOrError;
+        if (contextOrError) {
+          const gateResult = await policyGateForContext(contextOrError)({
+            claims: { subject, email },
+            audience: parsed.audience,
+            resource: parsed.resource,
+            targetClientId: parsed.clientId,
+            requestedScope: parsed.scope,
+          });
+          if (gateResult.kind === "deny") return gateResult.response;
+          mintScope = gateResult.grantedScope || undefined;
+          gated = true;
+        }
+      }
+
       const issued =
         negativeTestMode === "valid"
           ? issueIdJag({
@@ -1069,7 +1290,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
               audience: parsed.audience,
               resource: parsed.resource,
               clientId: parsed.clientId,
-              scope: parsed.scope,
+              scope: mintScope,
             })
           : issueNegativeIdJag(
               {
@@ -1079,7 +1300,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
                 audience: parsed.audience,
                 resource: parsed.resource,
                 clientId: parsed.clientId,
-                scope: parsed.scope,
+                scope: mintScope,
               },
               negativeTestMode
             );
@@ -1094,6 +1315,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
             Math.floor((issued.expiresAt - Date.now()) / 1000)
           ),
           negative_test_mode: negativeTestMode,
+          // Additive: gated mints echo the GRANTED scope so the client can
+          // detect an IdP downscope. Ungated responses stay byte-identical.
+          ...(gated && mintScope ? { scope: mintScope } : {}),
         },
         200,
         TOKEN_NO_STORE_HEADERS
@@ -1399,7 +1623,12 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   // Negative-test scorecard: fire each deliberately-broken ID-JAG mode at the
   // user's authorization server and report whether the server correctly
   // rejected it (pass) or wrongly issued a token (fail — a real finding).
-  const handleNegativeTests = async (c: Context, issuer: string) => {
+  const handleNegativeTests = async (
+    c: Context,
+    issuer: string,
+    // Org-scoped route only; see handleTokenExchange.
+    policyGateForContext?: (context: ManagedPolicyContext) => MintPolicyGate
+  ) => {
     let parsed;
     try {
       parsed = parseRequest(negativeTestsSchema, await c.req.json());
@@ -1518,6 +1747,27 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
 
     const subject = parsed.subject || "user-12345";
 
+    // Managed policy is evaluated ONCE for the whole scorecard, before any
+    // case fires: a denied person gets the mapped OAuth error (403 for
+    // access_denied) instead of a scorecard, and a downscoped grant narrows
+    // the scope every broken assertion is minted with (policy-before-tamper).
+    let effectiveScope = parsed.scope;
+    if (policyGateForContext) {
+      const contextOrError = resolveManagedPolicyContext(c, parsed);
+      if (contextOrError instanceof Response) return contextOrError;
+      if (contextOrError) {
+        const gateResult = await policyGateForContext(contextOrError)({
+          claims: { subject, email: parsed.email },
+          audience: parsed.audience,
+          resource: parsed.resource,
+          targetClientId: clientId,
+          requestedScope: parsed.scope,
+        });
+        if (gateResult.kind === "deny") return gateResult.response;
+        effectiveScope = gateResult.grantedScope || undefined;
+      }
+    }
+
     const runCase = async (
       mode: NegativeTestMode
     ): Promise<NegativeCaseOutcome> => {
@@ -1533,7 +1783,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
             audience: parsed.audience,
             resource: parsed.resource,
             clientId: resolvedClientId,
-            scope: parsed.scope,
+            scope: effectiveScope,
           },
           mode
         );
@@ -1543,7 +1793,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           resource: parsed.resource,
           clientId: resolvedClientId,
           subject,
-          scope: parsed.scope,
+          scope: effectiveScope,
           issuer,
         });
       } catch (error) {
@@ -1563,7 +1813,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       form.set("assertion", token);
       if (clientId) form.set("client_id", clientId);
       if (clientSecret) form.set("client_secret", clientSecret);
-      if (parsed.scope) form.set("scope", parsed.scope);
+      if (effectiveScope) form.set("scope", effectiveScope);
       form.set("resource", parsed.resource);
 
       try {
@@ -1684,13 +1934,17 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     router.post("/o/:orgId/token-exchange", async (c) => {
       const orgIdOrError = await requireScopedOrg(c);
       if (orgIdOrError instanceof Response) return orgIdOrError;
-      return handleTokenExchange(c, scopedIssuer(c, orgIdOrError));
+      return handleTokenExchange(c, scopedIssuer(c, orgIdOrError), (context) =>
+        buildMintPolicyGate(c, orgIdOrError, context)
+      );
     });
 
     router.post("/o/:orgId/negative-tests", async (c) => {
       const orgIdOrError = await requireScopedOrg(c);
       if (orgIdOrError instanceof Response) return orgIdOrError;
-      return handleNegativeTests(c, scopedIssuer(c, orgIdOrError));
+      return handleNegativeTests(c, scopedIssuer(c, orgIdOrError), (context) =>
+        buildMintPolicyGate(c, orgIdOrError, context)
+      );
     });
   }
 
@@ -1886,10 +2140,13 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       );
     };
 
-    const handleTokenExchangeGrant = (
+    const handleTokenExchangeGrant = async (
       issuer: string,
-      form: Record<string, string>
-    ): Response => {
+      form: Record<string, string>,
+      // Managed-policy gate from the org route's x-mcpjam-* headers; null on
+      // legacy/unscoped requests (the form body stays spec-pure either way).
+      mintPolicyGate: MintPolicyGate | null
+    ): Promise<Response> => {
       if (form.requested_token_type !== ID_JAG_TOKEN_TYPE) {
         return oauthError(
           400,
@@ -1942,6 +2199,24 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           error instanceof Error ? error.message : "Invalid subject_token"
         );
       }
+
+      // Managed-policy gate between subject validation and issuance. On a
+      // grant the mint (and the echoed `scope`) uses the GRANTED scope — the
+      // RFC 8693 response `scope` is what was actually authorized. Ungated
+      // requests keep the legacy requested-scope echo byte-identically.
+      let mintScope = form.scope || undefined;
+      if (mintPolicyGate) {
+        const gateResult = await mintPolicyGate({
+          claims: { subject: subject.subject, email: subject.email },
+          audience: form.audience,
+          resource: form.resource || undefined,
+          targetClientId: subject.resourceClientId,
+          requestedScope: mintScope,
+        });
+        if (gateResult.kind === "deny") return gateResult.response;
+        mintScope = gateResult.grantedScope || undefined;
+      }
+
       const issued = issueIdJag({
         issuer,
         subject: subject.subject,
@@ -1949,7 +2224,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         audience: form.audience,
         resource: form.resource || undefined,
         clientId: subject.resourceClientId,
-        scope: form.scope || undefined,
+        scope: mintScope,
       });
 
       return Response.json(
@@ -1961,17 +2236,21 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
             0,
             Math.floor((issued.expiresAt - Date.now()) / 1000)
           ),
-          ...(form.scope ? { scope: form.scope } : {}),
+          ...(mintScope ? { scope: mintScope } : {}),
         },
         { headers: TOKEN_NO_STORE_HEADERS }
       );
     };
 
     // gateTokenExchange: null = allowed; a Response = OAuth-shaped rejection.
+    // mintPolicyGate: the org route's managed-policy gate (null elsewhere);
+    // it applies only to the token-exchange grant — the authorization_code
+    // branch is untouched.
     const handleToken = async (
       c: Context,
       issuer: string,
-      gateTokenExchange: () => Promise<Response | null>
+      gateTokenExchange: () => Promise<Response | null>,
+      mintPolicyGate: MintPolicyGate | null = null
     ): Promise<Response> => {
       // A relying party's token call is server-to-server (no Origin). Block a
       // cross-site browser POST so a third-party page can't chain the public
@@ -1997,7 +2276,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       if (form.grant_type === TOKEN_EXCHANGE_GRANT) {
         const rejection = await gateTokenExchange();
         if (rejection) return rejection;
-        return handleTokenExchangeGrant(issuer, form);
+        return handleTokenExchangeGrant(issuer, form, mintPolicyGate);
       }
       return oauthError(
         400,
@@ -2085,21 +2364,34 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       router.post("/o/:orgId/token", (c) => {
         const issuerOrError = scopedIssuerFromParam(c);
         if (issuerOrError instanceof Response) return issuerOrError;
-        return handleToken(c, issuerOrError, async () => {
-          const orgIdOrError = await requireScopedOrg(c);
-          if (!(orgIdOrError instanceof Response)) return null;
-          // Map the gate's JSON error shape onto OAuth token-endpoint errors.
-          const status = orgIdOrError.status;
-          return oauthError(
-            status,
-            status === 401
-              ? "invalid_client"
-              : status === 403
-              ? "access_denied"
-              : "invalid_request",
-            "Token exchange under an organization issuer requires an org member's bearer token"
-          );
-        });
+        // The spec form body stays pure, so the managed-policy context rides
+        // the x-mcpjam-* headers. The gate itself only runs on the
+        // token-exchange grant, after the org-membership gate below passes.
+        const contextOrError = resolveManagedPolicyContext(c);
+        if (contextOrError instanceof Response) return contextOrError;
+        const mintPolicyGate = contextOrError
+          ? buildMintPolicyGate(c, c.req.param("orgId"), contextOrError)
+          : null;
+        return handleToken(
+          c,
+          issuerOrError,
+          async () => {
+            const orgIdOrError = await requireScopedOrg(c);
+            if (!(orgIdOrError instanceof Response)) return null;
+            // Map the gate's JSON error shape onto OAuth token-endpoint errors.
+            const status = orgIdOrError.status;
+            return oauthError(
+              status,
+              status === 401
+                ? "invalid_client"
+                : status === 403
+                ? "access_denied"
+                : "invalid_request",
+              "Token exchange under an organization issuer requires an org member's bearer token"
+            );
+          },
+          mintPolicyGate
+        );
       });
       router.get("/o/:orgId/userinfo", (c) => {
         const issuerOrError = scopedIssuerFromParam(c);

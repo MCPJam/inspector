@@ -199,7 +199,11 @@ export function createInProcessXaaExecutor(
     // exactly as the server /token-exchange route does, then mints (applying
     // the negative-test tamper when requested). Like the server route, a
     // missing/malformed assertion or one without a subject is a 400 — never a
-    // silently minted empty-subject ID-JAG.
+    // silently minted empty-subject ID-JAG. Intentional divergence: the
+    // server's managed-policy-gated response additionally echoes a granted
+    // `scope` field, but the managed context (policyMode/testIdentityId/
+    // resourceAppId) never reaches this in-process CLI path, so no scope is
+    // echoed here.
     if (path.endsWith("/token-exchange")) {
       const assertion = nonEmptyString(body.identityAssertion);
       if (!assertion) {
