@@ -114,17 +114,18 @@ export function XAAHowItWorksContent() {
       </div>
 
       <section className="border-b py-10">
-        <SectionHeading
-          number="1"
-          title="Trust MCPJam's identity provider"
-          description="Before running the test, give your authorization server the MCPJam identity provider values it requires. You can copy all three from the XAA Flow header."
-        />
-
-        <GuideImage
-          src="/xaa-guide/xaa-flow-header.png"
-          alt="XAA Flow header with issuer, OpenID configuration, and JWKS URLs"
-          className="mx-auto max-w-sm"
-        />
+        <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(260px,360px)]">
+          <SectionHeading
+            number="1"
+            title="Trust MCPJam's identity provider"
+            description="Before running the test, give your authorization server the MCPJam identity provider values it requires. You can copy all three from the XAA Flow header."
+          />
+          <GuideImage
+            src="/xaa-guide/xaa-flow-header.png"
+            alt="XAA Flow header with issuer, OpenID configuration, and JWKS URLs"
+            className="mx-auto max-w-xs"
+          />
+        </div>
 
         <div className="mt-8 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div>
