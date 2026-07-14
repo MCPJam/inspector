@@ -1000,9 +1000,11 @@ export function XAAFlowTab({
   // here would let the next step reuse an assertion already minted for the
   // previous person. This also covers a persisted selection resolving after
   // the roster loads, and edits/deletes of the selected person. It never
-  // rebuilds mid-run (chips are disabled while busy; a roster change during a
-  // run defers to run end — the tracker stays stale so this re-fires when
-  // isBusy flips back).
+  // rebuilds mid-run: not while busy, and not while a step-through run is
+  // PAUSED between steps (isBusy=false but the flow is neither idle nor
+  // complete — rebuilding there would silently drop the in-progress state).
+  // A deferred change re-fires when the run finishes (the tracker stays
+  // stale until the guard passes).
   const personIdentityKey = selectedPerson
     ? `${selectedPerson._id}|${selectedPerson.subject}|${selectedPerson.email}`
     : null;
@@ -1010,9 +1012,17 @@ export function XAAFlowTab({
   useEffect(() => {
     if (lastAppliedPersonKey.current === personIdentityKey) return;
     if (flowStateRef.current.isBusy || isRunningAll) return;
+    const step = flowStateRef.current.currentStep;
+    if (step !== "idle" && step !== "complete") return;
     lastAppliedPersonKey.current = personIdentityKey;
     rebuildFlow();
-  }, [personIdentityKey, flowState.isBusy, isRunningAll, rebuildFlow]);
+  }, [
+    personIdentityKey,
+    flowState.isBusy,
+    flowState.currentStep,
+    isRunningAll,
+    rebuildFlow,
+  ]);
 
   useEffect(() => {
     track("xaa_tab_viewed", {
@@ -1186,7 +1196,10 @@ export function XAAFlowTab({
       if (!projectId) return;
       // Switching identities mid-run could reuse an assertion minted for the
       // previous person — the strip disables its chips; this is the backstop.
+      // Covers paused step-through runs too (isBusy=false, mid-flow).
       if (flowStateRef.current.isBusy || isRunningAll) return;
+      const step = flowStateRef.current.currentStep;
+      if (step !== "idle" && step !== "complete") return;
       setSelectedPersonId(projectId, personId);
     },
     [projectId, isRunningAll, setSelectedPersonId]
@@ -1264,7 +1277,15 @@ export function XAAFlowTab({
         projectId={projectId ?? null}
         selectedPersonId={selectedPersonId}
         onSelectPerson={handleSelectPerson}
-        disabled={flowState.isBusy || isRunningAll}
+        // Disabled while busy AND while a step-through run is paused between
+        // steps — a person change mid-run (switch, edit, delete) would drop
+        // the in-progress state or mutate the running identity.
+        disabled={
+          flowState.isBusy ||
+          isRunningAll ||
+          (flowState.currentStep !== "idle" &&
+            flowState.currentStep !== "complete")
+        }
         outcomeFor={outcomeForPerson}
       />
       <XAAResourceAppsSection
