@@ -1,7 +1,11 @@
 // Headless Cross-App Access (ID-JAG) flow driver. It self-issues an ID-JAG,
 // verifies that the configured issuer actually publishes the signing key,
 // redeems the assertion, and probes the protected MCP resource.
-import { executeOAuthProxy, fetchOAuthMetadata } from "../oauth-proxy.js";
+import {
+  executeOAuthProxy,
+  fetchOAuthMetadata,
+  validateUrl,
+} from "../oauth-proxy.js";
 import {
   getXAAIdpJwks,
   getXAAIssuerUrl,
@@ -394,24 +398,6 @@ function createDcrCredentialCache(): {
   };
 }
 
-function projectRegistration(
-  state: XAAFlowState | undefined,
-  strategy: RegistrationStrategy,
-  registrations: number,
-  attempts: number
-): NonNullable<XaaFlowResult["registration"]> {
-  const clientId = state?.clientId;
-  return {
-    strategy: state?.registrationStrategy ?? strategy,
-    ...(clientId ? { clientId } : {}),
-    // DCR reuse: fewer registrations than attempts means a later attempt reused
-    // an earlier attempt's cached client. Only DCR performs registrations.
-    reused:
-      strategy === "dcr" && registrations > 0 && attempts > registrations,
-    warnings: state?.registrationWarnings ?? [],
-  };
-}
-
 async function runSharedAttempt(
   config: XaaFlowConfig,
   mode: NegativeTestMode,
@@ -511,8 +497,83 @@ export async function runXaaFlow(
     dcrCacheTargetKey: config.serverUrl,
   };
   let attempts = 0;
-  const registration = (state: XAAFlowState | undefined) =>
-    projectRegistration(state, strategy, dcr.registrations(), attempts);
+  // Registration diagnostics accumulate across attempts: the negative probe
+  // reuses the baseline's cached DCR client, so its own state carries no
+  // clientId/warnings — retain them from whichever attempt registered.
+  let capturedClientId: string | undefined;
+  let capturedWarnings: XaaRegistrationWarning[] = [];
+  const captureRegistration = (state: XAAFlowState) => {
+    if (state.clientId) capturedClientId = state.clientId;
+    if (state.registrationWarnings && state.registrationWarnings.length > 0)
+      capturedWarnings = state.registrationWarnings;
+  };
+  const registration = (
+    state: XAAFlowState | undefined
+  ): NonNullable<XaaFlowResult["registration"]> => {
+    const clientId = capturedClientId ?? state?.clientId;
+    const warnings =
+      capturedWarnings.length > 0
+        ? capturedWarnings
+        : (state?.registrationWarnings ?? []);
+    return {
+      strategy: state?.registrationStrategy ?? strategy,
+      ...(clientId ? { clientId } : {}),
+      // DCR reuse: fewer registrations than attempts means a later attempt
+      // reused an earlier attempt's cached client. Only DCR registers.
+      reused:
+        strategy === "dcr" &&
+        dcr.registrations() > 0 &&
+        attempts > dcr.registrations(),
+      warnings,
+    };
+  };
+
+  // The dynamic strategies need authorization-server metadata discovery to find
+  // the registration endpoint (DCR) or the client_id_metadata_document_supported
+  // advertisement (CIMD). A pinned tokenEndpoint skips that discovery, so reject
+  // the combination here — not only in the CLI. (`authzServerIssuer` is fine: it
+  // only skips protected-resource discovery; AS metadata is still fetched.)
+  if (
+    (strategy === "dcr" || strategy === "cimd") &&
+    config.tokenEndpoint
+  ) {
+    return {
+      completed: false,
+      issuer,
+      registration: registration(undefined),
+      steps: [],
+      error:
+        `The ${strategy} registration strategy requires authorization-server ` +
+        `metadata discovery; remove tokenEndpoint, which skips the discovery ` +
+        `that provides the ${
+          strategy === "dcr"
+            ? "registration_endpoint"
+            : "client_id_metadata_document_supported flag"
+        }.`,
+    };
+  }
+
+  // Harden a caller-supplied CIMD metadata URL against SSRF: validate it through
+  // the private-host/DNS-resolution path regardless of the local-dev `httpsOnly`
+  // default, so an untrusted URL can't turn the preflight into a fetch of an
+  // internal address. The hardcoded hosted default is trusted and skips this.
+  if (config.clientIdMetadataUrl) {
+    try {
+      await validateUrl(config.clientIdMetadataUrl, true);
+    } catch (error) {
+      return {
+        completed: false,
+        issuer,
+        registration: registration(undefined),
+        steps: [],
+        error:
+          `The client metadata URL was rejected: ${
+            error instanceof Error ? error.message : String(error)
+          }. It must be an HTTPS URL that does not resolve to a private or ` +
+          `reserved address.`,
+      };
+    }
+  }
 
   try {
     progress("Verifying the configured issuer metadata and JWKS…");
@@ -543,6 +604,7 @@ export async function runXaaFlow(
     if (mode === "valid") {
       attempts += 1;
       const state = await runSharedAttempt(config, mode, ctx, false, progress);
+      captureRegistration(state);
       const capabilities = projectCapabilities(state, config);
       const idJag = projectIdJag(state, issuer);
       const redemption = projectRedemption(state);
@@ -604,6 +666,7 @@ export async function runXaaFlow(
       true,
       progress
     );
+    captureRegistration(baselineState);
     const baselineRedemption = projectRedemption(baselineState);
     const capabilities = projectCapabilities(baselineState, config);
     const baselineStatus = baselineRedemption?.status ?? 0;
@@ -642,6 +705,7 @@ export async function runXaaFlow(
 
     attempts += 1;
     const probeState = await runSharedAttempt(config, mode, ctx, false, progress);
+    captureRegistration(probeState);
     const redemption = projectRedemption(probeState);
     const idJag = projectIdJag(probeState, issuer);
     const outcome = probeState.negativeProbe?.outcome ?? "inconclusive";

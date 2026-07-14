@@ -204,6 +204,39 @@ describe("runXaaFlow — registration strategies", () => {
     expect(counts.registration).toBe(1);
     expect(result.registration?.reused).toBe(true);
     expect(result.registration?.clientId).toBe(DCR_CLIENT_ID);
+    // Warnings from the baseline registration must survive the probe's reuse
+    // (the probe state carries none because it did not re-register).
+    expect(result.registration?.warnings.length).toBeGreaterThan(0);
+  });
+
+  it("rejects a dynamic strategy combined with a pinned tokenEndpoint", async () => {
+    // No fetch stub needed: the guard returns before any network call.
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      registrationStrategy: "dcr",
+      tokenEndpoint: TOKEN_ENDPOINT,
+    });
+
+    expect(result.completed).toBe(false);
+    expect(result.error).toMatch(
+      /requires authorization-server metadata discovery/
+    );
+    expect(result.registration?.strategy).toBe("dcr");
+  });
+
+  it("rejects a caller-supplied CIMD URL that resolves to a private host (SSRF guard)", async () => {
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      registrationStrategy: "cimd",
+      clientIdMetadataUrl: "https://127.0.0.1/xaa-metadata.json",
+    });
+
+    expect(result.completed).toBe(false);
+    expect(result.error).toMatch(/private or reserved|Private\/reserved/i);
   });
 
   it("DCR never leaks the minted client_secret into the serialized result", async () => {
