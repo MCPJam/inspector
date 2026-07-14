@@ -125,6 +125,29 @@ The suite-level **system prompt** and **temperature** are runtime defaults: when
   If you have existing suites where test cases do not specify a system prompt, those cases will now run with the suite's system prompt applied. Cases that already set their own system prompt are unaffected.
 </Note>
 
+## CI tab
+
+The **CI** tab (when enabled for your project) shows only CI-active suites — suites created by the SDK or suites that CI has reported into at least once. Playground-only suites stay in the **Evaluate** tab. If a project has no CI evals yet, the CI tab shows a quickstart prompt.
+
+The commit rail in the CI tab groups runs by commit SHA and only includes CI (SDK-sourced) runs. Playground runs on mixed suites are excluded from the rail so they don't appear as spurious manual-commit groups.
+
+### Pass Rate vs Accuracy
+
+The metric label shown in run headers, the runs table, charts, and hero stats follows the **run's source**, not the suite's creation source:
+
+- **Pass Rate** — shown for runs submitted by the SDK (CI runs). Reflects per-case pass/fail.
+- **Accuracy** — shown for runs triggered manually from the UI, via the API, or on a schedule.
+
+On a mixed suite (one that has received both CI and playground runs), the label updates to match the most recent run. Legacy runs without a recorded source fall back to the suite's creation source.
+
+### CI-synced test cases
+
+Test cases written by a CI report carry a **CI** chip next to their name in the cases list. Opening such a case in the editor shows a notice: "Synced from CI — the next CI report may overwrite manual edits." Manual edits to these cases are preserved until the next CI ingest, which may overwrite them.
+
+### Suite deletion
+
+The delete button in the suite switcher is hidden for any suite that is CI-active — either created by the SDK or one that CI has reported into. This protects CI run history; the next CI report would recreate the suite anyway.
+
 ## Reading results
 
 ### Suite view
