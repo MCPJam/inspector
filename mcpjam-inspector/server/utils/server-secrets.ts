@@ -339,9 +339,11 @@ export async function fetchServerClientSecret(args: {
 /**
  * Membership gate for the org-scoped MCPJam XAA test issuer
  * (`/api/web/xaa/o/<orgId>`). Forwards the caller's bearer to Convex, which
- * resolves the identity and requires org membership (guests are always
- * rejected there). Throws a WebRouteError on any failure — minting under a
- * scoped issuer is fail-closed.
+ * resolves the identity and requires org membership. Guests are rejected for
+ * scoped-issuer minting (the /o/<orgId> trust story depends on excluding
+ * anonymous actors), even though they may reveal their own server /
+ * resource-app secrets. Throws a WebRouteError on any failure — minting under
+ * a scoped issuer is fail-closed.
  */
 export async function authorizeXaaOrgIssuer(args: {
   bearerToken: string;
