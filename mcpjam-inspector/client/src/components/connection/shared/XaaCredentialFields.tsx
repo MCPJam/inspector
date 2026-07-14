@@ -18,13 +18,6 @@ import {
   isCompleteIdentityPair,
 } from "@/lib/xaa/identity";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -50,6 +43,8 @@ export interface XaaCredentialFieldsProps {
    * the client identity is minted or supplied by a metadata URL.
    */
   clientIdRequired?: boolean;
+  /** Hide pre-registered client credentials for DCR/CIMD flows. */
+  showClientCredentials?: boolean;
   clientSecret: string;
   onClientSecretChange: (value: string) => void;
   hasStoredClientSecret?: boolean;
@@ -94,6 +89,7 @@ export function XaaCredentialFields({
   onClientIdChange,
   clientIdError,
   clientIdRequired = true,
+  showClientCredentials = true,
   clientSecret,
   onClientSecretChange,
   hasStoredClientSecret = false,
@@ -123,7 +119,7 @@ export function XaaCredentialFields({
   // the same endpoint (the secret lives in the same vault column).
   const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
   const [revealedContextKey, setRevealedContextKey] = useState<string | null>(
-    null,
+    null
   );
   const [isRevealedVisible, setIsRevealedVisible] = useState(false);
   const [isRevealing, setIsRevealing] = useState(false);
@@ -174,7 +170,7 @@ export function XaaCredentialFields({
       setRevealError(
         error instanceof Error
           ? error.message
-          : "Failed to reveal client secret",
+          : "Failed to reveal client secret"
       );
     } finally {
       setIsRevealing(false);
@@ -206,7 +202,7 @@ export function XaaCredentialFields({
   // once the user edits, track their replacement.
   const secretFieldValue = isReplacing
     ? clientSecret
-    : (visibleRevealedSecret ?? "");
+    : visibleRevealedSecret ?? "";
   const baseId = useId();
   const ids = {
     clientId: `${baseId}-client-id`,
@@ -232,229 +228,255 @@ export function XaaCredentialFields({
       {/* Identity provider — single option in v1; bring-your-own-IdP joins
           here later without a relabel. */}
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-foreground">
-          Identity provider
-        </label>
-        <Select value="mcpjam" disabled>
-          <SelectTrigger className="w-full h-10">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="mcpjam">
-              MCPJam test identity provider
-            </SelectItem>
-          </SelectContent>
-        </Select>
-        <p className="text-xs text-muted-foreground">
-          MCPJam signs the ID token and ID-JAG used in this test.
-        </p>
+        <div className="flex items-center gap-1.5">
+          <label className="block text-sm font-medium text-foreground">
+            Identity provider
+          </label>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label="Identity provider information"
+                className="flex items-center text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <Info className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent
+              variant="muted"
+              side="top"
+              className="max-w-[14rem]"
+            >
+              MCPJam signs the ID token and ID-JAG used in this test.
+            </TooltipContent>
+          </Tooltip>
+        </div>
+        <div
+          role="status"
+          aria-label="Identity provider"
+          className="flex h-10 w-full items-center rounded-md border border-input bg-muted/30 px-3 text-sm text-muted-foreground"
+        >
+          MCPJam test identity provider
+        </div>
       </div>
 
       {/* Authorization server credentials (resource AS, leg 3) */}
       <div className="space-y-3">
-        <div className="space-y-2">
-          <label
-            htmlFor={ids.clientId}
-            className="block text-sm font-medium text-foreground"
-          >
-            Client ID
-            {clientIdRequired && (
-              <span className="text-destructive" aria-hidden="true">
-                {" *"}
-              </span>
-            )}
-          </label>
-          <Input
-            id={ids.clientId}
-            value={clientId}
-            onChange={(e) => onClientIdChange(e.target.value)}
-            placeholder="Client ID registered with the server's authorization server"
-            aria-required={clientIdRequired}
-            spellCheck={false}
-            autoComplete="off"
-            data-1p-ignore
-            data-lpignore="true"
-            data-form-type="other"
-            className={`h-10 ${clientIdError ? "border-red-500" : ""}`}
-          />
-          {clientIdError && (
-            <p className="text-xs text-red-500">{clientIdError}</p>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-3">
-            <label
-              htmlFor={ids.clientSecret}
-              className="block text-sm font-medium text-foreground"
-            >
-              Client Secret (Optional)
-            </label>
-            <div className="flex items-center gap-1">
-              {canReveal && !visibleRevealedSecret && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 px-2 text-xs"
-                  onClick={() => void handleReveal()}
-                  disabled={isRevealing}
-                >
-                  {isRevealing ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    "Reveal"
-                  )}
-                </Button>
-              )}
-              {visibleRevealedSecret && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 px-2 text-xs"
-                  onClick={handleHideRevealed}
-                >
-                  Hide
-                </Button>
-              )}
-              {hasStoredClientSecret && !clearClientSecret && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 px-2 text-xs"
-                  onClick={onClearClientSecret}
-                >
-                  Clear
-                </Button>
-              )}
-              {hasStoredClientSecret && clearClientSecret && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 px-2 text-xs"
-                  onClick={onUndoClearClientSecret}
-                >
-                  Undo
-                </Button>
+        {showClientCredentials && (
+          <>
+            <div className="space-y-2">
+              <label
+                htmlFor={ids.clientId}
+                className="block text-sm font-medium text-foreground"
+              >
+                Client ID
+                {clientIdRequired && (
+                  <span className="text-destructive" aria-hidden="true">
+                    {" *"}
+                  </span>
+                )}
+              </label>
+              <Input
+                id={ids.clientId}
+                value={clientId}
+                onChange={(e) => onClientIdChange(e.target.value)}
+                placeholder="Client ID registered with the server's authorization server"
+                aria-required={clientIdRequired}
+                spellCheck={false}
+                autoComplete="off"
+                data-1p-ignore
+                data-lpignore="true"
+                data-form-type="other"
+                className={`h-10 ${clientIdError ? "border-red-500" : ""}`}
+              />
+              {clientIdError && (
+                <p className="text-xs text-red-500">{clientIdError}</p>
               )}
             </div>
-          </div>
-          {hasStoredClientSecret && clearClientSecret ? (
-            <p className="text-xs text-muted-foreground">
-              Saved client secret will be removed when you save.
-            </p>
-          ) : visibleRevealedSecret !== null ? (
-            <>
-              <div className="relative">
-                <Input
-                  id={ids.clientSecret}
-                  type={isRevealedVisible ? "text" : "password"}
-                  value={secretFieldValue}
-                  onChange={(e) => {
-                    if (!isReplacing) setIsReplacing(true);
-                    onClientSecretChange(e.target.value);
-                  }}
-                  placeholder="Enter a new value to replace."
-                  autoComplete="off"
-                  data-1p-ignore
-                  data-lpignore="true"
-                  data-form-type="other"
-                  className={`h-10 pr-16 font-mono ${clientSecretError ? "border-red-500" : ""}`}
-                />
-                <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <label
+                  htmlFor={ids.clientSecret}
+                  className="block text-sm font-medium text-foreground"
+                >
+                  Client Secret (Optional)
+                </label>
+                <div className="flex items-center gap-1">
+                  {canReveal && !visibleRevealedSecret && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-xs"
+                      onClick={() => void handleReveal()}
+                      disabled={isRevealing}
+                    >
+                      {isRevealing ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        "Reveal"
+                      )}
+                    </Button>
+                  )}
+                  {visibleRevealedSecret && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-xs"
+                      onClick={handleHideRevealed}
+                    >
+                      Hide
+                    </Button>
+                  )}
+                  {hasStoredClientSecret && !clearClientSecret && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-xs"
+                      onClick={onClearClientSecret}
+                    >
+                      Clear
+                    </Button>
+                  )}
+                  {hasStoredClientSecret && clearClientSecret && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-xs"
+                      onClick={onUndoClearClientSecret}
+                    >
+                      Undo
+                    </Button>
+                  )}
+                </div>
+              </div>
+              {hasStoredClientSecret && clearClientSecret ? (
+                <p className="text-xs text-muted-foreground">
+                  Saved client secret will be removed when you save.
+                </p>
+              ) : visibleRevealedSecret !== null ? (
+                <>
+                  <div className="relative">
+                    <Input
+                      id={ids.clientSecret}
+                      type={isRevealedVisible ? "text" : "password"}
+                      value={secretFieldValue}
+                      onChange={(e) => {
+                        if (!isReplacing) setIsReplacing(true);
+                        onClientSecretChange(e.target.value);
+                      }}
+                      placeholder="Enter a new value to replace."
+                      autoComplete="off"
+                      data-1p-ignore
+                      data-lpignore="true"
+                      data-form-type="other"
+                      className={`h-10 pr-16 font-mono ${
+                        clientSecretError ? "border-red-500" : ""
+                      }`}
+                    />
+                    <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+                      <button
+                        type="button"
+                        aria-label={
+                          isRevealedVisible
+                            ? "Hide client secret"
+                            : "Show client secret"
+                        }
+                        title={
+                          isRevealedVisible
+                            ? "Hide client secret"
+                            : "Show client secret"
+                        }
+                        onClick={() => setIsRevealedVisible((prev) => !prev)}
+                        className="p-1 text-muted-foreground/60 transition-colors hover:text-foreground cursor-pointer"
+                      >
+                        {isRevealedVisible ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Copy client secret"
+                        title="Copy client secret"
+                        onClick={() =>
+                          void handleCopyRevealed(secretFieldValue)
+                        }
+                        className="p-1 text-muted-foreground/50 transition-colors hover:text-foreground cursor-pointer"
+                      >
+                        {didCopy ? (
+                          <Check className="h-4 w-4 text-green-500" />
+                        ) : (
+                          <Copy className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  {!isReplacing && (
+                    <p className="text-xs text-muted-foreground">
+                      Editing this replaces the saved secret when you save.
+                    </p>
+                  )}
+                </>
+              ) : canReveal ? (
+                <p className="text-xs text-muted-foreground">
+                  A client secret is saved. Reveal it to view or replace it.
+                </p>
+              ) : (
+                <div className="relative">
+                  <Input
+                    id={ids.clientSecret}
+                    type={isSecretVisible ? "text" : "password"}
+                    value={clientSecret}
+                    onChange={(e) => onClientSecretChange(e.target.value)}
+                    placeholder={
+                      hasStoredClientSecret
+                        ? "Saved — enter a new value to replace"
+                        : "Client secret (for confidential clients)"
+                    }
+                    autoComplete="off"
+                    data-1p-ignore
+                    data-lpignore="true"
+                    data-form-type="other"
+                    className="h-10 pr-10"
+                  />
                   <button
                     type="button"
                     aria-label={
-                      isRevealedVisible
+                      isSecretVisible
                         ? "Hide client secret"
                         : "Show client secret"
                     }
                     title={
-                      isRevealedVisible
+                      isSecretVisible
                         ? "Hide client secret"
                         : "Show client secret"
                     }
-                    onClick={() => setIsRevealedVisible((prev) => !prev)}
-                    className="p-1 text-muted-foreground/60 transition-colors hover:text-foreground cursor-pointer"
+                    onClick={() => setIsSecretVisible((prev) => !prev)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground/60 transition-colors hover:text-foreground cursor-pointer"
                   >
-                    {isRevealedVisible ? (
+                    {isSecretVisible ? (
                       <EyeOff className="h-4 w-4" />
                     ) : (
                       <Eye className="h-4 w-4" />
                     )}
                   </button>
-                  <button
-                    type="button"
-                    aria-label="Copy client secret"
-                    title="Copy client secret"
-                    onClick={() => void handleCopyRevealed(secretFieldValue)}
-                    className="p-1 text-muted-foreground/50 transition-colors hover:text-foreground cursor-pointer"
-                  >
-                    {didCopy ? (
-                      <Check className="h-4 w-4 text-green-500" />
-                    ) : (
-                      <Copy className="h-4 w-4" />
-                    )}
-                  </button>
                 </div>
-              </div>
-              {!isReplacing && (
-                <p className="text-xs text-muted-foreground">
-                  Editing this replaces the saved secret when you save.
-                </p>
               )}
-            </>
-          ) : canReveal ? (
-            <p className="text-xs text-muted-foreground">
-              A client secret is saved. Reveal it to view or replace it.
-            </p>
-          ) : (
-            <div className="relative">
-              <Input
-                id={ids.clientSecret}
-                type={isSecretVisible ? "text" : "password"}
-                value={clientSecret}
-                onChange={(e) => onClientSecretChange(e.target.value)}
-                placeholder={
-                  hasStoredClientSecret
-                    ? "Saved — enter a new value to replace"
-                    : "Client secret (for confidential clients)"
-                }
-                autoComplete="off"
-                data-1p-ignore
-                data-lpignore="true"
-                data-form-type="other"
-                className="h-10 pr-10"
-              />
-              <button
-                type="button"
-                aria-label={
-                  isSecretVisible ? "Hide client secret" : "Show client secret"
-                }
-                title={
-                  isSecretVisible ? "Hide client secret" : "Show client secret"
-                }
-                onClick={() => setIsSecretVisible((prev) => !prev)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground/60 transition-colors hover:text-foreground cursor-pointer"
-              >
-                {isSecretVisible ? (
-                  <EyeOff className="h-4 w-4" />
-                ) : (
-                  <Eye className="h-4 w-4" />
-                )}
-              </button>
+              {clientSecretError && (
+                <p className="text-xs text-red-500">{clientSecretError}</p>
+              )}
+              {revealError && (
+                <p className="text-xs text-red-500">{revealError}</p>
+              )}
             </div>
-          )}
-          {clientSecretError && (
-            <p className="text-xs text-red-500">{clientSecretError}</p>
-          )}
-          {revealError && (
-            <p className="text-xs text-red-500">{revealError}</p>
-          )}
-        </div>
+          </>
+        )}
 
         <div className="space-y-2">
           <label
@@ -512,8 +534,9 @@ export function XaaCredentialFields({
                   </button>
                 </TooltipTrigger>
                 <TooltipContent variant="muted" side="top" className="max-w-xs">
-                  Leave blank to use the authorization server MCPJam finds
-                  during discovery.
+                  Leave blank to use the authorization server MCPJam discovers
+                  from the MCP server. Enter a URL to use a different
+                  authorization server instead.
                 </TooltipContent>
               </Tooltip>
             </div>
@@ -558,8 +581,17 @@ export function XaaCredentialFields({
                       Use only for compatibility testing when the discovered
                       authorization server URL and the metadata{" "}
                       <code className="font-mono">issuer</code> differ but
-                      belong to the same origin. RFC 8414 requires an exact
-                      match. Enabling this setting relaxes that check.
+                      belong to the same origin.{" "}
+                      <a
+                        href="https://www.rfc-editor.org/rfc/rfc8414"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline underline-offset-2 hover:text-foreground"
+                      >
+                        RFC 8414
+                      </a>{" "}
+                      requires an exact match. Enabling this setting relaxes
+                      that check.
                     </TooltipContent>
                   </Tooltip>
                 </div>

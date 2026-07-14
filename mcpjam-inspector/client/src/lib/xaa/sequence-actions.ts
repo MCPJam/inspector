@@ -1,6 +1,6 @@
 import type { Action } from "@/components/oauth/shared/types";
 import type { XAAFlowState } from "./types";
-import { NEGATIVE_TEST_MODE_DETAILS } from "@/shared/xaa.js";
+import { NEGATIVE_TEST_MODE_DETAILS, SAML2_TOKEN_TYPE } from "@/shared/xaa.js";
 
 const XAA_PROTOCOL = "RFC 8693 + RFC 7523";
 
@@ -16,6 +16,11 @@ function safePath(url?: string): string | undefined {
 }
 
 export function buildXAAActions(flowState: XAAFlowState): Action[] {
+  // Input axis (D6): the three identity-leg actions change wording for SAML
+  // runs so the diagram visibly reflects the assertion format. OIDC labels
+  // stay byte-identical to the pre-SAML diagram.
+  const isSaml = flowState.identityAssertionFormat === "saml";
+
   // Strategy-specific bootstrap exchanges. Included only for the selected
   // strategy so default (pre-registered) diagrams are unchanged.
   const registrationActions: Action[] =
@@ -134,8 +139,10 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
     ...registrationActions,
     {
       id: "user_authentication",
-      label: "Simulate sign-in at MCPJam IdP",
-      description: "MCPJam simulates the user signing in at its identity provider.",
+      label: isSaml ? "Mock SAML SSO" : "Simulate sign-in at MCPJam IdP",
+      description: isSaml
+        ? "MCPJam signs the user in at the IdP via SP-initiated SAML SSO (mocked)."
+        : "MCPJam simulates the user signing in at its identity provider.",
       from: "client",
       to: "testIdp",
       details: flowState.email
@@ -144,18 +151,38 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
     },
     {
       id: "received_identity_assertion",
-      label: "ID token issued by MCPJam IdP",
-      description: "MCPJam's identity provider gives the Agent an ID token.",
+      label: isSaml
+        ? "SAML assertion issued"
+        : "ID token issued by MCPJam IdP",
+      description: isSaml
+        ? "MCPJam's identity provider gives the Agent a signed SAML assertion."
+        : "MCPJam's identity provider gives the Agent an ID token.",
       from: "testIdp",
       to: "client",
       details: flowState.identityAssertion
-        ? [{ label: "Type", value: "OIDC ID token" }]
+        ? isSaml
+          ? [
+              { label: "Type", value: "SAML 2.0 assertion (base64)" },
+              // Structured subject metadata from the /authenticate response —
+              // rendered only when actually present, never a placeholder.
+              ...(flowState.identityAssertionSubject
+                ? [
+                    {
+                      label: "NameID",
+                      value: flowState.identityAssertionSubject.nameid,
+                    },
+                  ]
+                : []),
+            ]
+          : [{ label: "Type", value: "OIDC ID token" }]
         : undefined,
     },
     {
       id: "token_exchange_request",
       label: "Token exchange",
-      description: "The Agent trades the ID token to the IdP for an ID-JAG.",
+      description: isSaml
+        ? "The Agent trades the SAML assertion to the IdP for an ID-JAG."
+        : "The Agent trades the ID token to the IdP for an ID-JAG.",
       from: "client",
       to: "testIdp",
       details: [
@@ -163,6 +190,11 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
           label: "Mode",
           value: NEGATIVE_TEST_MODE_DETAILS[flowState.negativeTestMode].label,
         },
+        // Draft §4.3: a SAML run presents the assertion under the saml2
+        // subject_token_type. OIDC runs keep the original detail set.
+        ...(isSaml
+          ? [{ label: "subject_token_type", value: SAML2_TOKEN_TYPE }]
+          : []),
       ],
     },
     {

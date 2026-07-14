@@ -46,6 +46,14 @@ export default defineConfig({
     // Packages with dynamic requires
     "chalk",
     "supports-color",
+    // XML-DSig stack for the XAA SAML mock IdP (transitive via @mcpjam/sdk).
+    // These are CommonJS with dynamic `require()` calls, so bundling them into
+    // the ESM server output makes esbuild emit a throwing `__require` shim
+    // ("Dynamic require of \"util\" is not supported"). Keep them external so
+    // they're required from node_modules at runtime, like chalk/supports-color.
+    "xml-crypto",
+    "@xmldom/xmldom",
+    "xpath",
     // Headless-browser harness deps (eval browser-render): resolved at runtime,
     // never bundled. `playwright` is a direct dep (auto-external); `playwright-core`
     // is its transitive fallback (`await import("playwright-core")`) and must be

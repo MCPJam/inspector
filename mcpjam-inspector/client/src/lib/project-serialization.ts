@@ -3,7 +3,11 @@ import {
   normalizeOAuthProtocolVersion,
   normalizeOAuthRegistrationStrategy,
 } from "@/lib/oauth/profile";
-import { normalizeAuthMethod, normalizeRegistrationMode } from "@/shared/xaa.js";
+import {
+  normalizeAuthMethod,
+  normalizeIdentityAssertionFormat,
+  normalizeRegistrationMode,
+} from "@/shared/xaa.js";
 
 type SerializeOptions = {
   /**
@@ -75,6 +79,10 @@ function serializeServersInternal(
     }
     if (server.xaaEmail !== undefined) {
       serializedServer.xaaEmail = server.xaaEmail;
+    }
+    if (server.xaaIdentityAssertionFormat !== undefined) {
+      serializedServer.xaaIdentityAssertionFormat =
+        server.xaaIdentityAssertionFormat;
     }
     if (server.registrationMode !== undefined) {
       serializedServer.registrationMode = server.registrationMode;
@@ -273,6 +281,14 @@ export function deserializeServersFromConvex(
     }
     if (serverData.xaaEmail !== undefined) {
       server.xaaEmail = serverData.xaaEmail;
+    }
+    // Narrow the bare wire value to a known format; drop anything unknown so
+    // the debugger falls back to the OIDC default (normalize-or-clear).
+    const xaaIdentityAssertionFormat = normalizeIdentityAssertionFormat(
+      serverData.xaaIdentityAssertionFormat,
+    );
+    if (xaaIdentityAssertionFormat !== undefined) {
+      server.xaaIdentityAssertionFormat = xaaIdentityAssertionFormat;
     }
     // Narrow the bare wire value to a known mode; drop anything unknown so the
     // flows fall back to their defaults. Accepts the legacy per-flow keys
