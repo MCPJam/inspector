@@ -208,6 +208,53 @@ describe("NegativeTestScorecard", () => {
     );
   });
 
+  it("resets results when only the issuer kind changes (guest→signed-in promotion)", async () => {
+    runMock.mockResolvedValue({
+      failures: 1,
+      results: [
+        {
+          mode: "expired",
+          label: "Expired",
+          expectedFailure: "AS should reject expired",
+          outcome: "accepted",
+          verdict: "fail",
+          status: 200,
+          detail: "Issued a token for an expired assertion.",
+        },
+      ],
+    });
+
+    // Same org, same everything except the issuer kind flips /g/ → /o/. The
+    // minted `iss` differs, so a prior run's results must not linger.
+    const anonymousInput: NegativeTestsInput = {
+      ...INPUT,
+      organizationId: "org_1",
+      issuerKind: "anonymous",
+    };
+    const orgInput: NegativeTestsInput = {
+      ...INPUT,
+      organizationId: "org_1",
+      issuerKind: "org",
+    };
+
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <NegativeTestScorecard input={anonymousInput} unlocked />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: /run negative tests/i }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("xaa-negtest-row-expired")).toBeInTheDocument(),
+    );
+
+    rerender(<NegativeTestScorecard input={orgInput} unlocked />);
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("xaa-negtest-row-expired")).toBeNull(),
+    );
+  });
+
   it("surfaces a run error", async () => {
     runMock.mockRejectedValue(new Error("URL not allowed"));
 

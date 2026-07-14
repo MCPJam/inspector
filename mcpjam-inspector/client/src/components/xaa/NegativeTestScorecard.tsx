@@ -161,10 +161,13 @@ export function NegativeTestScorecard({
         input.registrationId ?? input.serverId ?? input.tokenEndpoint ?? "",
         input.audience,
         input.resource,
-        // Issuer mode + org change the minted `iss`, so they are part of the
-        // target identity: switching them must reset a prior run's results.
+        // Issuer mode, org, and kind all change the minted `iss`, so they are
+        // part of the target identity: switching any of them must reset a
+        // prior run's results (e.g. a guest→signed-in promotion keeps the org
+        // but flips the kind /g/→/o/).
         input.issuerMode ?? "local",
         input.organizationId ?? "",
+        input.issuerKind ?? "org",
       ].join("|")
     : "";
   useEffect(() => {
