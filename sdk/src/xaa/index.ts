@@ -51,6 +51,14 @@ export {
   type XaaTokenExchangeSubject,
 } from "./mint/signer.js";
 export {
+  handleXaaAuthenticate,
+  handleXaaJsonTokenExchange,
+  handleXaaTokenExchangeGrant,
+  type XaaAuthenticateParams,
+  type XaaJsonTokenExchangeParams,
+  type XaaMintHandlerResult,
+} from "./mint/handlers.js";
+export {
   buildJwtBearerBody,
   buildJwtBearerRequest,
   type XaaTokenEndpointAuthMethod,
