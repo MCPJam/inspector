@@ -868,6 +868,26 @@ describe("XAAFlowTab", () => {
       expect(setSelectedPersonIdMock).not.toHaveBeenCalled();
     });
 
+    it("ignores selection changes while a step-through run is PAUSED mid-flow", () => {
+      // A Continue-driven run parks between steps with isBusy=false but the
+      // flow neither idle nor complete — switching persons there would
+      // silently drop the in-progress state (coderabbit finding).
+      seedRoster(false);
+      currentTarget = makeTarget();
+      renderTab();
+
+      act(() => {
+        capturedMachineConfig.updateState({
+          isBusy: false,
+          currentStep: "token_exchange_request",
+        });
+      });
+      expect(capturedPeopleStripProps.disabled).toBe(true);
+      // Backstop for the programmatic seam too.
+      capturedPeopleStripProps.onSelectPerson(bob._id);
+      expect(setSelectedPersonIdMock).not.toHaveBeenCalled();
+    });
+
     it("records 'allowed' for the person the run started as", async () => {
       const user = userEvent.setup();
       seedRoster();

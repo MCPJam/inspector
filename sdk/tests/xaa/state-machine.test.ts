@@ -159,8 +159,9 @@ describe("createXAAStateMachine", () => {
               access_token: "access-token",
               token_type: "Bearer",
               expires_in: 300,
-              // The AS narrows the requested scope — the machine must retain
-              // what was actually granted, separate from the requested scope.
+              // The AS narrows the requested scope (read:tools write:tools →
+              // read:tools) — the machine must retain what was actually
+              // granted, from the token RESPONSE, not echo the request.
               scope: "read:tools",
             },
           },
@@ -181,7 +182,9 @@ describe("createXAAStateMachine", () => {
       clientId: "mcpjam-debugger",
       userId: "user-12345",
       email: "demo.user@example.com",
-      scope: "read:tools",
+      // Wider than the response's grant so the grantedScope assertion proves
+      // the value comes from the token response, not a request echo.
+      scope: "read:tools write:tools",
     });
 
     for (let index = 0; index < 7; index += 1) {
@@ -955,6 +958,42 @@ describe("createXAAStateMachine", () => {
       expect(proxyCall).toBeDefined();
       const proxyBody = JSON.parse(String((proxyCall![1] as RequestInit).body));
       expect(proxyBody.scope).toBe("read:tools");
+    });
+
+    it("preserves an explicit empty granted scope — redemption never falls back to the request", async () => {
+      const { machine, executor, getStateSnapshot } = buildManagedHarness({
+        configExtras: { ...MANAGED_CONFIG },
+        stateExtras: {
+          scope: "read:tools write:tools",
+          tokenEndpoint: "https://auth.example.com/oauth/token",
+        },
+        mintResult: (token) => ({
+          ...specTokenExchangeResult(token),
+          // Zero-scope grant: everything requested was stripped.
+          body: { ...specTokenExchangeResult(token).body, scope: "" },
+        }),
+        // The minted ID-JAG carries no scope claim.
+        idJagClaims: {},
+      });
+
+      await machine.proceedToNextStep();
+      // "" must survive into grantedScope — dropping it would make
+      // `grantedScope ?? state.scope` resurrect the stripped request.
+      expect(getStateSnapshot().idpPolicy).toEqual({
+        outcome: "downscoped",
+        requestedScope: "read:tools write:tools",
+        grantedScope: "",
+      });
+
+      await machine.proceedToNextStep(); // inspect (scopeless JAG, no issue)
+      await machine.proceedToNextStep(); // jwt-bearer redemption
+      const proxyCall = executor.internalRequest.mock.calls.find(
+        ([path]) => path === "/proxy/token"
+      );
+      expect(proxyCall).toBeDefined();
+      const proxyBody = JSON.parse(String((proxyCall![1] as RequestInit).body));
+      // The redemption must NOT request the original scopes the IdP removed.
+      expect(proxyBody.scope ?? "").not.toContain("read:tools");
     });
   });
 

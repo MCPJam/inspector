@@ -1245,7 +1245,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
             requestedScope: parsed.scope,
           });
           if (gateResult.kind === "deny") return gateResult.response;
-          mintScope = gateResult.grantedScope || undefined;
+          // Preserve an explicit "" — a grant of ZERO scopes must stay
+          // distinguishable from "no scope handling" downstream.
+          mintScope = gateResult.grantedScope;
           gated = true;
         }
       }
@@ -1256,7 +1258,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         audience: parsed.audience,
         resource: parsed.resource,
         clientId: parsed.clientId,
-        scope: mintScope,
+        // An empty grant mints a scopeless ID-JAG (same claim shape as no
+        // scope requested).
+        scope: mintScope || undefined,
         negativeTestMode,
         assertionFormat: parsed.assertionFormat,
         subjectIdFormat: parsed.subjectIdFormat,
@@ -1265,9 +1269,11 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       return c.json(
         {
           ...result.body,
-          // Additive: gated mints echo the GRANTED scope so the client can
-          // detect an IdP downscope. Ungated responses stay byte-identical.
-          ...(gated && mintScope ? { scope: mintScope } : {}),
+          // Additive: gated mints ALWAYS echo the GRANTED scope — including
+          // an explicit "" for a zero-scope grant, so callers can tell it
+          // apart from a legacy/ungated response. Ungated responses stay
+          // byte-identical.
+          ...(gated ? { scope: mintScope ?? "" } : {}),
         },
         result.status as ContentfulStatusCode,
         TOKEN_NO_STORE_HEADERS
@@ -2126,7 +2132,10 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           requestedScope: mintScope,
         });
         if (gateResult.kind === "deny") return gateResult.response;
-        mintScope = gateResult.grantedScope || undefined;
+        // Preserve an explicit "" (zero-scope grant): the mint half echoes
+        // the authorized scope verbatim, so a stripped-to-nothing grant is
+        // visible to the caller instead of masquerading as scopeless legacy.
+        mintScope = gateResult.grantedScope;
       }
       const result = mintXaaTokenExchangeGrant(
         issuer,
@@ -2148,7 +2157,10 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       c: Context,
       issuer: string,
       gateTokenExchange: () => Promise<Response | null>,
-      mintPolicyGate: MintPolicyGate | null = null
+      // Resolved LAZILY on the token-exchange branch only: a malformed
+      // managed-policy header set must 400 the exchange, never an
+      // authorization_code call that happens to carry junk x-mcpjam-* headers.
+      resolveMintPolicyGate: (() => MintPolicyGate | Response | null) | null = null
     ): Promise<Response> => {
       // A relying party's token call is server-to-server (no Origin). Block a
       // cross-site browser POST so a third-party page can't chain the public
@@ -2174,7 +2186,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       if (form.grant_type === TOKEN_EXCHANGE_GRANT) {
         const rejection = await gateTokenExchange();
         if (rejection) return rejection;
-        return handleTokenExchangeGrant(issuer, form, mintPolicyGate);
+        const gateOrError = resolveMintPolicyGate ? resolveMintPolicyGate() : null;
+        if (gateOrError instanceof Response) return gateOrError;
+        return handleTokenExchangeGrant(issuer, form, gateOrError);
       }
       return oauthError(
         400,
@@ -2263,13 +2277,16 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         const issuerOrError = scopedIssuerFromParam(c);
         if (issuerOrError instanceof Response) return issuerOrError;
         // The spec form body stays pure, so the managed-policy context rides
-        // the x-mcpjam-* headers. The gate itself only runs on the
-        // token-exchange grant, after the org-membership gate below passes.
-        const contextOrError = resolveManagedPolicyContext(c);
-        if (contextOrError instanceof Response) return contextOrError;
-        const mintPolicyGate = contextOrError
-          ? buildMintPolicyGate(c, c.req.param("orgId"), contextOrError)
-          : null;
+        // the x-mcpjam-* headers. Resolution is DEFERRED into handleToken's
+        // token-exchange branch so a malformed header set 400s only the
+        // exchange grant — authorization_code stays independent of it.
+        const resolveMintPolicyGate = (): MintPolicyGate | Response | null => {
+          const contextOrError = resolveManagedPolicyContext(c);
+          if (contextOrError instanceof Response) return contextOrError;
+          return contextOrError
+            ? buildMintPolicyGate(c, c.req.param("orgId"), contextOrError)
+            : null;
+        };
         return handleToken(
           c,
           issuerOrError,
@@ -2288,7 +2305,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
               "Token exchange under an organization issuer requires an org member's bearer token"
             );
           },
-          mintPolicyGate
+          resolveMintPolicyGate
         );
       });
       router.get("/o/:orgId/userinfo", (c) => {
