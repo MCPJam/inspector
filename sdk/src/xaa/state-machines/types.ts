@@ -298,6 +298,10 @@ export interface BaseXAAStateMachineConfig {
   testIdentityId?: string;
   /** The registered resource app the managed run targets. */
   resourceAppId?: string;
+  /** Scoped issuer flavor for hosted forwards: "org" (/o/<orgId>, signed-in
+   * members) or "anonymous" (/g/<personalOrgId>, the anonymous test issuer a
+   * RAS must explicitly allowlist). Defaults to "org". */
+  issuerKind?: "org" | "anonymous";
   /** Whether the issuer accepts the RFC 8693 grant at `/token`. Hosted
    * unscoped issuers use the JSON mint fallback. Defaults to true. */
   specTokenEndpointAvailable?: boolean;

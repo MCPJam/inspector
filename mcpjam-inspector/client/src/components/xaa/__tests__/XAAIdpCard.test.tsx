@@ -133,6 +133,70 @@ describe("XAAIdpCard", () => {
     expect(
       screen.getByText(/scoped to your organization/i)
     ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("anonymous-issuer-note")
+    ).not.toBeInTheDocument();
+  });
+
+  it("labels the anonymous test issuer (/g/) for hosted guest sessions", () => {
+    render(<XAAIdpCard organizationId="org_guest1" issuerKind="anonymous" />);
+
+    // The advertised issuer lives under the visibly separate /g/ namespace.
+    expect(
+      screen.getByRole("button", { name: /copy issuer url/i })
+    ).toHaveAttribute("title", `${issuer}/g/org_guest1`);
+    // The labeling states the trust contract: explicit allowlisting, not
+    // enterprise-managed authorization.
+    const note = screen.getByTestId("anonymous-issuer-note");
+    expect(note).toHaveTextContent(/anonymous test issuer/i);
+    expect(note).toHaveTextContent(/must explicitly allowlist/i);
+    expect(
+      screen.queryByText(/scoped to your organization/i)
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the /g/ issuer after async discovery resolves (does not fall back to /o/)", async () => {
+    // Capture the discovery URL the card fetches, and reply with a /g/ issuer.
+    // Before the fix, fetchXaaIdpUrls dropped issuerKind and fetched /o/,
+    // overwriting the initial /g/ display after resolution.
+    const requestedUrls: string[] = [];
+    const anonIssuer = `${issuer}/g/org_guest1`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        requestedUrls.push(String(input));
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              issuer: anonIssuer,
+              jwks_uri: `${anonIssuer}/.well-known/jwks.json`,
+            }),
+            { status: 200 }
+          )
+        );
+      })
+    );
+
+    render(<XAAIdpCard organizationId="org_guest1" issuerKind="anonymous" />);
+
+    // Discovery targets the /g/ well-known endpoint (issuerKind was threaded).
+    await waitFor(() => {
+      expect(
+        requestedUrls.some((url) =>
+          url.includes("/g/org_guest1/.well-known/openid-configuration")
+        )
+      ).toBe(true);
+    });
+    // None of the fetches hit the /o/ discovery endpoint.
+    expect(requestedUrls.some((url) => url.includes("/o/org_guest1"))).toBe(
+      false
+    );
+    // After resolution the copy field still advertises the /g/ issuer.
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /copy issuer url/i })
+      ).toHaveAttribute("title", anonIssuer);
+    });
   });
 
   it("shows the setup gear for org members and navigates to the setup center", async () => {
@@ -176,6 +240,61 @@ describe("XAAIdpCard (non-hosted mode)", () => {
 
     expect(
       screen.getByText(/Expose\s+MCPJam with a public tunnel/i)
+    ).toBeInTheDocument();
+  });
+
+  it("badges the hosted-issuer toggle for guest sessions (anonymous kind)", async () => {
+    vi.resetModules();
+    vi.doMock("@/lib/config", () => ({ HOSTED_MODE: false }));
+    vi.doMock("@/lib/clipboard", () => ({
+      copyToClipboard: async () => true,
+    }));
+    const { XAAIdpCard: LocalIdpCard } = await import("../XAAIdpCard");
+
+    render(
+      <LocalIdpCard
+        organizationId="org_guest1"
+        issuerMode="hosted"
+        onIssuerModeChange={() => {}}
+        canUseHostedIssuer
+        issuerKind="anonymous"
+      />
+    );
+
+    expect(screen.getByTestId("anonymous-issuer-badge")).toHaveTextContent(
+      /anonymous test issuer/i
+    );
+    expect(screen.getByText(/must explicitly allowlist/i)).toBeInTheDocument();
+    // The toggle itself stays usable for guests with an org.
+    expect(
+      screen.getByRole("switch", { name: /use hosted issuer/i })
+    ).toBeEnabled();
+  });
+
+  it("disables the toggle with the waiting reason when no organization resolved", async () => {
+    vi.resetModules();
+    vi.doMock("@/lib/config", () => ({ HOSTED_MODE: false }));
+    vi.doMock("@/lib/clipboard", () => ({
+      copyToClipboard: async () => true,
+    }));
+    const { XAAIdpCard: LocalIdpCard } = await import("../XAAIdpCard");
+
+    render(
+      <LocalIdpCard
+        organizationId={null}
+        issuerMode="local"
+        onIssuerModeChange={() => {}}
+        canUseHostedIssuer={false}
+        hostedIssuerDisabledReason="waiting for an organization — sign in or continue as guest to mint through the hosted issuer"
+        issuerKind="anonymous"
+      />
+    );
+
+    expect(
+      screen.getByRole("switch", { name: /use hosted issuer/i })
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/waiting for an organization/i)
     ).toBeInTheDocument();
   });
 });
