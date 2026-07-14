@@ -28,7 +28,15 @@ vi.mock("@ai-sdk/harness/agent", () => ({
 }));
 
 vi.mock("../registry.js", () => ({
-  buildBrokerDummyAuth: vi.fn(),
+  // Broker-only credential delivery (COMP-23): the turn builds dummy auth
+  // pointed at the broker proxy; there is no per-adapter resolveAuth anymore.
+  buildBrokerDummyAuth: vi.fn(() => ({
+    anthropic: {
+      apiKey: "",
+      authToken: "mcpjam-broker-dummy",
+      baseUrl: "https://broker.example",
+    },
+  })),
   getHarnessAdapter: vi.fn(() => ({
     id: "claude-code",
     displayName: "Claude Code",
@@ -36,7 +44,6 @@ vi.mock("../registry.js", () => ({
     supportsSkills: false,
     supportsSelectedMcpServers: false,
     supportsModel: vi.fn(() => true),
-    resolveAuth: vi.fn(async () => ({ gateway: { apiKey: "key" } })),
     createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
   })),
@@ -66,8 +73,9 @@ vi.mock("../reconcile-skill-dirs.js", () => ({
 }));
 
 vi.mock("../harness-session-state.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../harness-session-state.js")>();
+  const actual = await importOriginal<
+    typeof import("../harness-session-state.js")
+  >();
   return {
     ...actual,
     claimHarnessSessionState: vi.fn(async () => ({
@@ -133,6 +141,9 @@ function baseOptions(overrides: Record<string, unknown> = {}) {
 
 describe("runHarnessTurn empty output projection", () => {
   beforeEach(() => {
+    // Broker delivery is default-ON; pin it so the test doesn't depend on the
+    // default (the turn hard-fails without it since COMP-23).
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
     harnessState.streamParts = [];
     harnessState.finalText = "";
     harnessState.session.stop.mockClear();

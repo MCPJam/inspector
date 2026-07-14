@@ -51,13 +51,7 @@ import {
   startHarnessModelBroker,
   revokeHarnessModelBroker,
 } from "./harness-model-broker.js";
-
-/** Inspector-side gate for E2B header-broker credential delivery. Default OFF —
- *  until enabled, harness runs use the existing client-lease path unchanged, so
- *  this PR is safe to merge dark. Requires the backend broker routes + flags. */
-function harnessBrokerDeliveryEnabled(): boolean {
-  return process.env.MCPJAM_HARNESS_BROKER_DELIVERY === "true";
-}
+import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import {
   emitError,
   emitFinish,
@@ -559,32 +553,24 @@ export async function runHarnessTurn(
         );
       }
 
-      // 1. Resolve the model credential. CLIENT path: fetch the gateway key from
-      // Convex FIRST — fail-fast before resolveHarnessSandbox wakes the box, so a
-      // misconfigured turn never touches it. BROKER path: the lease is installed
-      // into E2B's egress transform AFTER the sandbox id is known (step 3b) and
-      // the CLI runs with dummy creds, so auth is deferred.
-      const useBroker = harnessBrokerDeliveryEnabled();
-      // Secure Guest Harness Enablement — a host-funded swarm guest must NEVER
-      // run via the client-lease path (that would return a raw model lease to
-      // the guest's inspector session). Broker delivery installs the lease into
-      // the E2B egress transform OUTSIDE the VM, so require it and fail closed
-      // when it's off for a swarm-scoped turn.
-      if (executionScope?.kind === "swarm" && !useBroker) {
+      // 1. Credential delivery gate. BROKER-ONLY (COMP-23): the lease is
+      // installed into E2B's egress transform AFTER the sandbox id is known
+      // (step 3b) and the CLI runs with dummy creds — the inspector never
+      // holds a model credential. The raw-key client path (resolveAuth →
+      // /web/harness/model-credential) was removed because it spent the
+      // system AI Gateway key with zero metering. With the kill switch off,
+      // EVERY scope fails closed here (guests were already broker-only —
+      // this now covers members too); the chat-v2 routes surface the same
+      // condition pre-stream via checkHarnessRuntimeAvailable.
+      if (!harnessBrokerDeliveryEnabled()) {
         throw new Error(
-          "Guest harness requires broker credential delivery " +
-            "(MCPJAM_HARNESS_BROKER_DELIVERY=true) — refusing to start a " +
-            "host-funded harness turn without it."
+          "Harness runs require broker credential delivery, but it is " +
+            "disabled on this server (MCPJAM_HARNESS_BROKER_DELIVERY=false). " +
+            "There is no fallback credential path — re-enable the broker to " +
+            "run harness turns."
         );
       }
-      let auth: HarnessAuth | undefined = useBroker
-        ? undefined
-        : await harnessAdapter.resolveAuth({
-            projectId,
-            modelId,
-            bearer: authHeader,
-            ...(abortSignal ? { signal: abortSignal } : {}),
-          });
+      let auth: HarnessAuth | undefined = undefined;
       tAuth = Date.now();
 
       // 2. Build the .mcp.json — always-proxy: ensure a per-server tunnel and
@@ -788,12 +774,13 @@ export async function runHarnessTurn(
       });
       tSandbox = Date.now();
 
-      // 3b. BROKER delivery: the sandbox id is now known, so have Convex mint the
-      // lease, lock the sandbox's egress to the proxy, and install the lease into
-      // E2B's egress transform — the inspector never sees the lease. Run the CLI
-      // with dummy creds pointed at the returned proxy. Fail-fast on install
-      // error (the box is awake but no real credential exists anywhere).
-      if (useBroker) {
+      // 3b. BROKER delivery (the only credential path): the sandbox id is now
+      // known, so have Convex mint the lease, lock the sandbox's egress to the
+      // proxy, and install the lease into E2B's egress transform — the
+      // inspector never sees the lease. Run the CLI with dummy creds pointed
+      // at the returned proxy. Fail-fast on install error (the box is awake
+      // but no real credential exists anywhere).
+      {
         // PRECOMPUTE the run id and record it (+ the computer) BEFORE the POST.
         // If the backend installs the E2B rule but the response is lost/aborted,
         // teardown can still revoke by this id (backend keys revoke on runId).
