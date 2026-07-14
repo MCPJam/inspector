@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 function renderModal(
-  props?: Partial<React.ComponentProps<typeof XAAServerModal>>,
+  props?: Partial<React.ComponentProps<typeof XAAServerModal>>
 ) {
   const onSave = vi.fn();
   const onOpenChange = vi.fn();
@@ -25,7 +25,7 @@ function renderModal(
       existingServerNames={[]}
       onSave={onSave}
       {...props}
-    />,
+    />
   );
   return { onSave, onOpenChange };
 }
@@ -45,18 +45,23 @@ describe("XAAServerModal", () => {
     await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
     await user.type(
       screen.getByLabelText(/Server URL/),
-      "https://staging.mcp.example.com",
+      "https://staging.mcp.example.com"
     );
     await user.type(screen.getByLabelText(/Client ID/), "staging-client");
     await user.type(screen.getByLabelText(/Client Secret/), "super-secret");
-    await user.type(screen.getByLabelText("Scopes"), "read:tools read:resources");
+    await user.type(
+      screen.getByLabelText("Scopes"),
+      "read:tools read:resources"
+    );
     await expandAdvanced(user);
     await user.type(
       screen.getByLabelText("Authorization Server Issuer"),
-      "https://auth.staging.example.com",
+      "https://auth.staging.example.com"
     );
 
-    await user.click(screen.getByRole("button", { name: "Save configuration" }));
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" })
+    );
 
     expect(onSave).toHaveBeenCalledTimes(1);
     const { formData } = onSave.mock.calls[0][0];
@@ -87,11 +92,13 @@ describe("XAAServerModal", () => {
     await user.type(screen.getByLabelText(/Server Name/), "beta-mcp");
     await user.type(
       screen.getByLabelText(/Server URL/),
-      "https://beta.mcp.example.com",
+      "https://beta.mcp.example.com"
     );
     await user.type(screen.getByLabelText(/Client ID/), "beta-client");
 
-    await user.click(screen.getByRole("button", { name: "Save configuration" }));
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" })
+    );
 
     expect(onSave).toHaveBeenCalledTimes(1);
     const { formData } = onSave.mock.calls[0][0];
@@ -124,20 +131,18 @@ describe("XAAServerModal", () => {
 
     expect(screen.getByLabelText(/Server Name/)).toHaveValue("prod-mcp");
     expect(screen.getByLabelText(/Server URL/)).toHaveValue(
-      "https://prod.mcp.example.com/mcp",
+      "https://prod.mcp.example.com/mcp"
     );
     expect(screen.getByLabelText(/Client ID/)).toHaveValue("prod-client");
     expect(screen.getByLabelText("Scopes")).toHaveValue("read write");
     await expandAdvanced(user);
     expect(screen.getByLabelText("Authorization Server Issuer")).toHaveValue(
-      "https://auth.prod.example.com",
+      "https://auth.prod.example.com"
     );
     // A saved secret shows the replace-style input plus a Clear control
     // (shared with the /servers Connect page), not masked placeholder text.
     expect(screen.getByLabelText(/Client Secret/)).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Clear" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
   });
 
   it("reveals a saved client secret using the hosted server context", async () => {
@@ -175,7 +180,7 @@ describe("XAAServerModal", () => {
       serverId: "server-456",
     });
     expect(screen.getByLabelText(/Client Secret/)).toHaveValue(
-      "stored-super-secret",
+      "stored-super-secret"
     );
   });
 
@@ -201,7 +206,9 @@ describe("XAAServerModal", () => {
     const { onSave } = renderModal({ server });
 
     await user.click(screen.getByRole("button", { name: "Clear" }));
-    await user.click(screen.getByRole("button", { name: "Save configuration" }));
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" })
+    );
 
     const { formData } = onSave.mock.calls[0][0];
     expect(formData.clearClientSecret).toBe(true);
@@ -235,12 +242,14 @@ describe("XAAServerModal", () => {
     await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
     await user.type(
       screen.getByLabelText(/Server URL/),
-      "https://staging.mcp.example.com",
+      "https://staging.mcp.example.com"
     );
     await user.type(screen.getByLabelText(/Client ID/), "staging-client");
     await expandAdvanced(user);
     await user.type(screen.getByLabelText("Subject (sub)"), "bob");
-    await user.click(screen.getByRole("button", { name: "Save configuration" }));
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" })
+    );
 
     const { formData } = onSave.mock.calls[0][0];
     expect(formData.xaaSubject).toBe("bob");
@@ -253,15 +262,17 @@ describe("XAAServerModal", () => {
     await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
     await user.type(
       screen.getByLabelText(/Server URL/),
-      "https://staging.mcp.example.com",
+      "https://staging.mcp.example.com"
     );
     // Leave Client ID blank; default strategy is pre-registered.
     await user.click(
-      screen.getByRole("button", { name: "Save configuration" }),
+      screen.getByRole("button", { name: "Save configuration" })
     );
 
     expect(onSave).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert")).toHaveTextContent(/client id is required/i);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /client id is required/i
+    );
   });
 
   it("allows a blank Client ID for a dynamic (DCR) strategy and emits the choice", async () => {
@@ -271,15 +282,18 @@ describe("XAAServerModal", () => {
     await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
     await user.type(
       screen.getByLabelText(/Server URL/),
-      "https://staging.mcp.example.com",
+      "https://staging.mcp.example.com"
     );
     // Switch to DCR: Client ID is no longer required.
     await user.click(screen.getByLabelText("Registration"));
     await user.click(
-      screen.getByRole("option", { name: /open dynamic registration/i }),
+      screen.getByRole("option", { name: /open dynamic registration/i })
     );
+    expect(screen.queryByLabelText(/Client ID/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Client Secret/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Scopes")).toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", { name: "Save configuration" }),
+      screen.getByRole("button", { name: "Save configuration" })
     );
 
     expect(onSave).toHaveBeenCalledTimes(1);
@@ -303,13 +317,37 @@ describe("XAAServerModal", () => {
 
     // The selector displays the persisted choice…
     expect(screen.getByLabelText("Registration")).toHaveTextContent(/CIMD/i);
+    expect(screen.queryByLabelText(/Client ID/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Client Secret/)).not.toBeInTheDocument();
     // …and an untouched save OMITS the field so the `?? existing` merge
     // preserves the stored value rather than re-writing it.
     await user.click(
-      screen.getByRole("button", { name: "Save configuration" }),
+      screen.getByRole("button", { name: "Save configuration" })
     );
     const { formData } = onSave.mock.calls[0][0];
     expect("registrationMode" in formData).toBe(false);
+  });
+
+  it("preserves credentials when switching away from and back to pre-registration", async () => {
+    const user = userEvent.setup();
+    renderModal();
+
+    await user.type(screen.getByLabelText(/Client ID/), "saved-client");
+    await user.type(screen.getByLabelText(/Client Secret/), "saved-secret");
+
+    await user.click(screen.getByLabelText("Registration"));
+    await user.click(
+      screen.getByRole("option", { name: /client metadata url/i })
+    );
+    expect(screen.queryByLabelText(/Client ID/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Client Secret/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByLabelText("Registration"));
+    await user.click(
+      screen.getByRole("option", { name: /pre-registered client/i })
+    );
+    expect(screen.getByLabelText(/Client ID/)).toHaveValue("saved-client");
+    expect(screen.getByLabelText(/Client Secret/)).toHaveValue("saved-secret");
   });
 
   it("preserves a stored 'auto' mode on an untouched save (auto-clobber guard)", async () => {
@@ -338,7 +376,7 @@ describe("XAAServerModal", () => {
     const { onSave } = renderModal({ server });
 
     await user.click(
-      screen.getByRole("button", { name: "Save configuration" }),
+      screen.getByRole("button", { name: "Save configuration" })
     );
     const { formData } = onSave.mock.calls[0][0];
     expect("registrationMode" in formData).toBe(false);
@@ -347,17 +385,21 @@ describe("XAAServerModal", () => {
     onSave.mockClear();
     await user.click(screen.getByLabelText("Registration"));
     await user.click(
-      screen.getByRole("option", { name: /open dynamic registration/i }),
+      screen.getByRole("option", { name: /open dynamic registration/i })
     );
     await user.click(
-      screen.getByRole("button", { name: "Save configuration" }),
+      screen.getByRole("button", { name: "Save configuration" })
     );
     expect(onSave.mock.calls[0][0].formData.registrationMode).toBe("dcr");
   });
 
-  it("rejects a duplicate name when creating a new server", async () => {
+  it("defaults the identity assertion preset to the OIDC ID token", async () => {
     const user = userEvent.setup();
-    const { onSave } = renderModal({ existingServerNames: ["staging-mcp"] });
+    const { onSave } = renderModal();
+
+    expect(screen.getByLabelText("Identity assertion")).toHaveTextContent(
+      /OIDC ID token/i,
+    );
 
     await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
     await user.type(
@@ -367,6 +409,78 @@ describe("XAAServerModal", () => {
     await user.type(screen.getByLabelText(/Client ID/), "staging-client");
     await user.click(
       screen.getByRole("button", { name: "Save configuration" }),
+    );
+
+    // Unlike registrationMode there is no shared "auto" to preserve, so the
+    // save always carries the displayed preset.
+    const { formData } = onSave.mock.calls[0][0];
+    expect(formData.xaaIdentityAssertionFormat).toBe("oidc");
+  });
+
+  it("persists the SAML identity assertion preset when selected", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderModal();
+
+    await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://staging.mcp.example.com",
+    );
+    await user.type(screen.getByLabelText(/Client ID/), "staging-client");
+    await user.click(screen.getByLabelText("Identity assertion"));
+    await user.click(screen.getByRole("option", { name: /SAML assertion/i }));
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+
+    const { formData } = onSave.mock.calls[0][0];
+    expect(formData.xaaIdentityAssertionFormat).toBe("saml");
+  });
+
+  it("prefills the persisted identity assertion preset when editing", async () => {
+    const user = userEvent.setup();
+    const server = {
+      name: "prod-mcp",
+      config: { url: "https://prod.mcp.example.com/mcp" },
+      useXaa: true,
+      xaaIdentityAssertionFormat: "saml",
+      oauthFlowProfile: {
+        serverUrl: "https://prod.mcp.example.com/mcp",
+        clientId: "prod-client",
+        clientSecret: "",
+        scopes: "",
+        customHeaders: [],
+      },
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+    } as unknown as ServerWithName;
+
+    const { onSave } = renderModal({ server });
+
+    expect(screen.getByLabelText("Identity assertion")).toHaveTextContent(
+      /SAML assertion/i,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+    const { formData } = onSave.mock.calls[0][0];
+    expect(formData.xaaIdentityAssertionFormat).toBe("saml");
+  });
+
+  it("rejects a duplicate name when creating a new server", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderModal({ existingServerNames: ["staging-mcp"] });
+
+    await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://staging.mcp.example.com"
+    );
+    await user.type(screen.getByLabelText(/Client ID/), "staging-client");
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" })
     );
 
     expect(onSave).not.toHaveBeenCalled();
@@ -385,46 +499,46 @@ describe("XAAServerModal", () => {
         onOpenChange={onOpenChange}
         existingServerNames={[]}
         onSave={onSave}
-      />,
+      />
     );
 
     await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
     await user.type(
       screen.getByLabelText(/Server URL/),
-      "https://staging.mcp.example.com",
+      "https://staging.mcp.example.com"
     );
     await user.type(screen.getByLabelText(/Client ID/), "staging-client");
     await user.type(screen.getByLabelText(/Client Secret/), "super-secret");
     await user.type(
       screen.getByLabelText("Scopes"),
-      "read:tools read:resources",
+      "read:tools read:resources"
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Save configuration" }),
+      screen.getByRole("button", { name: "Save configuration" })
     );
 
     expect(onSave).toHaveBeenCalledTimes(1);
     // The modal surfaces the rejection inline and never closes.
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /Hosted mode requires HTTPS server URLs/i,
+      /Hosted mode requires HTTPS server URLs/i
     );
 
     // Every entered value is still in the form, so there's nothing to re-type.
     expect(screen.getByLabelText(/Server Name/)).toHaveValue("staging-mcp");
     expect(screen.getByLabelText(/Server URL/)).toHaveValue(
-      "https://staging.mcp.example.com",
+      "https://staging.mcp.example.com"
     );
     expect(screen.getByLabelText(/Client ID/)).toHaveValue("staging-client");
     expect(screen.getByLabelText(/Client Secret/)).toHaveValue("super-secret");
     expect(screen.getByLabelText("Scopes")).toHaveValue(
-      "read:tools read:resources",
+      "read:tools read:resources"
     );
 
     // The submit button is interactive again for a retry.
     expect(
-      screen.getByRole("button", { name: "Save configuration" }),
+      screen.getByRole("button", { name: "Save configuration" })
     ).toBeEnabled();
   });
 });

@@ -1,14 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, Copy, Info, KeyRound } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@mcpjam/design-system/dialog";
 import { Switch } from "@mcpjam/design-system/switch";
+import { useLearnMore } from "@/hooks/use-learn-more";
+import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
 import { HOSTED_MODE } from "@/lib/config";
 import { copyToClipboard } from "@/lib/clipboard";
 import {
@@ -68,99 +62,27 @@ function CopyField({ label, value }: { label: string; value: string }) {
 }
 
 function SetupGuidance() {
+  const { expandedTabId, sourceRect, openExpandedModal, closeExpandedModal } =
+    useLearnMore();
+
   return (
-    <Dialog>
-      <DialogTrigger asChild>
-        <button
-          type="button"
-          className="inline-flex shrink-0 items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <Info className="h-3.5 w-3.5 text-muted-foreground" />
-          Before you run this test
-        </button>
-      </DialogTrigger>
-      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Before you run this test</DialogTitle>
-          <DialogDescription>
-            Configure your authorization server to accept MCPJam&apos;s ID-JAG
-            and exchange it for an access token.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-2">
-          <ol className="list-decimal space-y-2 pl-5 marker:font-medium marker:text-foreground">
-            <li>
-              <strong className="font-medium text-foreground">
-                Trust MCPJam&apos;s identity provider.
-              </strong>{" "}
-              Add either the Issuer URL or JWKS URL to your authorization
-              server so it can verify MCPJam&apos;s ID-JAGs.
-            </li>
-            <li>
-              <strong className="font-medium text-foreground">
-                Choose how MCPJam identifies the client.
-              </strong>{" "}
-              Use the option your authorization server supports:
-              <ul className="mt-1 list-[circle] space-y-1 pl-5 marker:text-muted-foreground">
-                <li>
-                  <strong>Pre-registration:</strong> Create a client for MCPJam
-                  in your authorization server, then enter the returned client
-                  ID in MCPJam.
-                </li>
-                <li>
-                  <strong>DCR:</strong> Let MCPJam create a client during the
-                  test through your registration endpoint.
-                </li>
-                <li>
-                  <strong>CIMD:</strong> Let MCPJam identify itself with its
-                  client metadata URL. Your authorization server must support
-                  CIMD.
-                </li>
-              </ul>
-            </li>
-            <li>
-              <strong className="font-medium text-foreground">
-                Check the exchange support.
-              </strong>{" "}
-              Your authorization server must accept an ID-JAG from an external
-              issuer and exchange it with the{" "}
-              <code className="font-mono">jwt-bearer</code> grant.
-            </li>
-          </ol>
-          <div className="flex items-start gap-2 border-l-2 border-amber-500 pl-3 pt-1">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-            <span>
-              Some authorization servers do not support this cross-app flow
-              yet.
-            </span>
-          </div>
-          <div className="space-y-1.5 pt-1">
-            <div className="font-medium text-foreground">
-              What your authorization server receives
-            </div>
-            <p>
-              MCPJam puts these values in the ID-JAG. Your authorization server
-              should verify that they match the expected authorization server,
-              MCP server, and client.
-            </p>
-            <ul className="list-disc space-y-1 pl-5 marker:text-muted-foreground">
-              <li>
-                <code className="font-mono">aud</code> → your authorization
-                server&apos;s issuer
-              </li>
-              <li>
-                <code className="font-mono">resource</code> → the MCP server&apos;s
-                resource identifier
-              </li>
-              <li>
-                <code className="font-mono">client_id</code> → MCPJam&apos;s
-                client identity
-              </li>
-            </ul>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+    <>
+      <button
+        type="button"
+        onClick={(e) =>
+          openExpandedModal("xaa-idp", e.currentTarget.getBoundingClientRect())
+        }
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <Info className="h-3.5 w-3.5" />
+        How it works
+      </button>
+      <LearnMoreExpandedPanel
+        tabId={expandedTabId}
+        sourceRect={sourceRect}
+        onClose={closeExpandedModal}
+      />
+    </>
   );
 }
 
@@ -181,16 +103,22 @@ export function XAAIdpCard({
   onIssuerModeChange,
   canUseHostedIssuer = false,
   hostedIssuerDisabledReason,
+  issuerKind = "org",
 }: {
   organizationId?: string | null;
   /** LOCAL builds only: which issuer mints this run's assertions. */
   issuerMode?: XaaIssuerMode;
   onIssuerModeChange?: (mode: XaaIssuerMode) => void;
-  /** Signed-in + active-org gate: a local guest bearer is signed with a local
-   * key the hosted issuer rejects, and the mint targets the org-scoped issuer. */
+  /** Active-org gate for the hosted-issuer toggle. */
   canUseHostedIssuer?: boolean;
-  /** Why the toggle is disabled (signed out vs no active org), for the hint. */
+  /** Why the toggle is disabled (no active org yet), for the hint. */
   hostedIssuerDisabledReason?: string;
+  /** Which scoped issuer flavor this session mints under: "org"
+   * (/o/<orgId>, signed-in members) or "anonymous" (/g/<personalOrgId>,
+   * guest sessions — the visibly separate anonymous test issuer a RAS must
+   * explicitly allowlist; NOT enterprise-managed-authorization
+   * conformance). */
+  issuerKind?: "org" | "anonymous";
 }) {
   const hostedIssuerOn =
     !HOSTED_MODE && issuerMode === "hosted" && canUseHostedIssuer;
@@ -200,7 +128,9 @@ export function XAAIdpCard({
   // With the hosted-issuer opt-in on, the URLs are constructed instead:
   // hosted CORS blocks a local browser from fetching the hosted discovery doc.
   const [urls, setUrls] = useState(() =>
-    hostedIssuerOn ? getHostedXaaIdpUrls(organizationId) : getXaaIdpUrls(organizationId),
+    hostedIssuerOn
+      ? getHostedXaaIdpUrls(organizationId, issuerKind)
+      : getXaaIdpUrls(organizationId, issuerKind)
   );
   const { issuerBaseUrl, openidConfigUrl, jwksUrl } = urls;
 
@@ -219,7 +149,7 @@ export function XAAIdpCard({
 
     if (hostedIssuerOn) {
       if (!wasFirstRender) {
-        setUrls(getHostedXaaIdpUrls(organizationId));
+        setUrls(getHostedXaaIdpUrls(organizationId, issuerKind));
       }
       return;
     }
@@ -227,18 +157,18 @@ export function XAAIdpCard({
     // Reset synchronously on any change (org switch or a hosted→local toggle)
     // so a stale hosted/prior-org URL never lingers before discovery resolves.
     if (!wasFirstRender) {
-      setUrls(getXaaIdpUrls(organizationId));
+      setUrls(getXaaIdpUrls(organizationId, issuerKind));
     }
-    void fetchXaaIdpUrls(controller.signal, organizationId).then(
+    void fetchXaaIdpUrls(controller.signal, organizationId, issuerKind).then(
       (serverUrls) => {
         if (controller.signal.aborted || !serverUrls) {
           return;
         }
         setUrls(serverUrls);
-      },
+      }
     );
     return () => controller.abort();
-  }, [organizationId, hostedIssuerOn]);
+  }, [organizationId, hostedIssuerOn, issuerKind]);
 
   const isOrgScoped = HOSTED_MODE && Boolean(organizationId);
 
@@ -278,6 +208,14 @@ export function XAAIdpCard({
               <span className="font-medium text-foreground">
                 Use hosted issuer (app.mcpjam.com)
               </span>
+              {issuerKind === "anonymous" && (
+                <span
+                  className="rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-600 dark:text-amber-400"
+                  data-testid="anonymous-issuer-badge"
+                >
+                  Anonymous test issuer
+                </span>
+              )}
               {!canUseHostedIssuer && hostedIssuerDisabledReason && (
                 <span>({hostedIssuerDisabledReason})</span>
               )}
@@ -290,9 +228,25 @@ export function XAAIdpCard({
                 ID tokens and ID-JAGs are minted by{" "}
                 <code className="font-mono">app.mcpjam.com</code>, so a cloud
                 authorization server can discover this issuer and fetch its
-                JWKS. No tunnel is needed. Token requests and MCP calls still run
-                from this machine; your authorization server must be reachable
-                over https.
+                JWKS. No tunnel is needed. Token requests and MCP calls still
+                run from this machine; your authorization server must be
+                reachable over https.
+                {issuerKind === "anonymous" && (
+                  <>
+                    {" "}
+                    This session mints under the <b>anonymous test issuer</b>{" "}
+                    (<code className="font-mono">/g/…</code>): its discovery
+                    document is marked{" "}
+                    <code className="font-mono">
+                      mcpjam:issuer_kind: anonymous-test
+                    </code>{" "}
+                    and an authorization server must explicitly allowlist it.
+                    Assertions prove control of an anonymous session — this is
+                    a testing convenience, not enterprise-managed
+                    authorization. Sign in to mint under a
+                    membership-gated organization issuer.
+                  </>
+                )}
               </span>
             </div>
           ) : (
@@ -300,9 +254,9 @@ export function XAAIdpCard({
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
               <span>
                 These are local URLs. Your authorization server can only fetch
-                them if it can reach this machine. A cloud-hosted Okta or
-                Auth0 tenant cannot reach{" "}
-                <code className="font-mono">localhost</code>.
+                them if it can reach this machine. A cloud-hosted Okta or Auth0
+                tenant cannot reach <code className="font-mono">localhost</code>
+                .
                 {onIssuerModeChange
                   ? " Flip on the hosted issuer above, or expose MCPJam with a public tunnel (e.g. ngrok)."
                   : " Expose MCPJam with a public tunnel (e.g. ngrok) first."}
@@ -312,12 +266,30 @@ export function XAAIdpCard({
         </div>
       )}
 
-      {isOrgScoped && (
-        <div className="mt-3 text-xs text-muted-foreground">
-          This issuer is scoped to your organization. Only its members can
-          mint assertions under it.
-        </div>
-      )}
+      {isOrgScoped &&
+        (issuerKind === "anonymous" ? (
+          <div
+            className="mt-3 text-xs text-muted-foreground"
+            data-testid="anonymous-issuer-note"
+          >
+            <span className="mr-1.5 rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-600 dark:text-amber-400">
+              Anonymous test issuer
+            </span>
+            This guest session mints under the anonymous test issuer (
+            <code className="font-mono">/g/…</code>). Its discovery document is
+            marked{" "}
+            <code className="font-mono">mcpjam:issuer_kind: anonymous-test</code>{" "}
+            and an authorization server must explicitly allowlist it —
+            assertions prove control of an anonymous session, not
+            enterprise-managed authorization. Sign in to mint under a
+            membership-gated organization issuer.
+          </div>
+        ) : (
+          <div className="mt-3 text-xs text-muted-foreground">
+            This issuer is scoped to your organization. Only its members can
+            mint assertions under it.
+          </div>
+        ))}
     </div>
   );
 }

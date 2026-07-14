@@ -111,20 +111,38 @@ export function createInspectorXAAStateMachine(
     // local server) so a cloud AS can discover the issuer. Ignored on hosted
     // builds — hosted IS the hosted issuer.
     issuerMode?: "local" | "hosted";
+    // Which scoped issuer flavor org-bearing runs use: "org" (/o/<orgId>,
+    // signed-in members) or "anonymous" (/g/<personalOrgId>, guest sessions;
+    // visibly separate + RAS must allowlist it). Defaults to "org".
+    issuerKind?: "org" | "anonymous";
   },
 ): XAAStateMachine {
-  const { issuerBaseUrl, organizationId, issuerMode, ...rest } = config;
+  const { issuerBaseUrl, organizationId, issuerMode, issuerKind, ...rest } =
+    config;
+  const resolvedIssuerKind = issuerKind ?? "org";
   const hostedIssuerOptIn = !HOSTED_MODE && issuerMode === "hosted";
-  const mintPathPrefix =
-    HOSTED_MODE && organizationId ? `/o/${organizationId}` : "";
+  const scopedSegment = organizationId
+    ? resolvedIssuerKind === "anonymous"
+      ? `/g/${organizationId}`
+      : `/o/${organizationId}`
+    : "";
+  const mintPathPrefix = HOSTED_MODE && organizationId ? scopedSegment : "";
   const defaultIssuerBaseUrl = hostedIssuerOptIn
-    ? getHostedXaaIdpUrls(organizationId).issuerBaseUrl
+    ? getHostedXaaIdpUrls(organizationId, resolvedIssuerKind).issuerBaseUrl
     : `${window.location.origin}${XAA_API_BASE}${mintPathPrefix}`;
   return createXAAStateMachine({
     ...rest,
     issuerBaseUrl: issuerBaseUrl ?? defaultIssuerBaseUrl,
     mintPathPrefix,
-    ...(hostedIssuerOptIn ? { issuerMode: "hosted", organizationId } : {}),
+    ...(hostedIssuerOptIn
+      ? {
+          issuerMode: "hosted",
+          organizationId,
+          ...(resolvedIssuerKind === "anonymous"
+            ? { issuerKind: "anonymous" as const }
+            : {}),
+        }
+      : {}),
     // Hosted guests (no org) can't reach the standards-track /token grant —
     // the unscoped hosted endpoint refuses it — so they keep the JSON mint.
     specTokenEndpointAvailable: !HOSTED_MODE || Boolean(organizationId),
