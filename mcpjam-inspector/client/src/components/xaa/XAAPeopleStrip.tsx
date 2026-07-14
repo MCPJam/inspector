@@ -417,21 +417,41 @@ export function XAAPeopleStrip({
                 type="button"
                 aria-label={`Edit ${person.name} in XAA setup`}
                 title="Org people are managed in the setup center"
-                onClick={openSetupPeople}
-                className="ml-0.5 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/chip:opacity-100"
+                aria-disabled={disabled || undefined}
+                // Same run-in-progress guard as chip switching: suspending or
+                // archiving the running identity in the setup center mid-run
+                // is the same back door the disabled chips close.
+                onClick={() => {
+                  if (disabled) return;
+                  openSetupPeople();
+                }}
+                className={`ml-0.5 rounded p-1 text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover/chip:opacity-100 ${
+                  disabled ? "cursor-not-allowed" : "hover:text-foreground"
+                }`}
               >
                 <Pencil className="size-3" />
               </button>
             ) : (
               <Popover
-                open={editingId === person._id}
-                onOpenChange={(open) => setEditingId(open ? person._id : null)}
+                // Same run-in-progress guard as chip switching: editing or
+                // deleting a person mid-run would mutate/deselect the running
+                // identity through the back door the disabled chips close.
+                open={!disabled && editingId === person._id}
+                onOpenChange={(open) => {
+                  if (disabled) return;
+                  setEditingId(open ? person._id : null);
+                }}
               >
                 <PopoverTrigger asChild>
                   <button
                     type="button"
                     aria-label={`Edit ${person.name}`}
-                    className="ml-0.5 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/chip:opacity-100"
+                    aria-disabled={disabled || undefined}
+                    className={`ml-0.5 rounded p-1 text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover/chip:opacity-100 ${
+                      disabled
+                        ? "cursor-not-allowed"
+                        : "hover:text-foreground"
+                    }`}
                   >
                     <Pencil className="size-3" />
                   </button>

@@ -331,7 +331,11 @@ function buildIdpPolicyOutcome(
   return {
     outcome: downscoped ? "downscoped" : "granted",
     ...(requestedScope ? { requestedScope } : {}),
-    ...(grantedScope ? { grantedScope } : {}),
+    // An explicit "" is a grant of ZERO scopes and must be preserved:
+    // dropping it would make `idpPolicy?.grantedScope ?? state.scope` fall
+    // back to the ORIGINAL request, so inspection and the jwt-bearer
+    // redemption would use scopes the IdP just stripped.
+    ...(grantedScope !== undefined ? { grantedScope } : {}),
   };
 }
 

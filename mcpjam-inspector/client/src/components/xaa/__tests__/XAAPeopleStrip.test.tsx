@@ -123,6 +123,15 @@ describe("XAAPeopleStrip", () => {
     expect(props.onSelectPerson).not.toHaveBeenCalled();
   });
 
+  it("blocks the edit popover while disabled — no mid-run edit/delete back door", async () => {
+    const user = userEvent.setup();
+    renderStrip({ disabled: true });
+    // The pencil is still rendered (discoverable) but opening is inert, so
+    // the running identity can't be mutated or deleted through the form.
+    await user.click(screen.getByRole("button", { name: /edit bob tables/i }));
+    expect(screen.queryByLabelText(/name/i)).not.toBeInTheDocument();
+  });
+
   it("renders outcome badges from outcomeFor", () => {
     renderStrip({
       outcomeFor: (id) =>

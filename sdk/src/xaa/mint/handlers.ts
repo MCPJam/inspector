@@ -440,7 +440,8 @@ export function mintXaaTokenExchangeGrant(
     audience: form.audience,
     resource: form.resource || undefined,
     clientId: subject.resourceClientId,
-    scope,
+    // An empty authorized scope mints a scopeless ID-JAG (no scope claim).
+    scope: scope || undefined,
     // Output axis, independent of the subject token's format. Never derived
     // from the subject token's own NameID/audience.
     ...(subjectIdFormat === "saml-nameid"
@@ -461,7 +462,11 @@ export function mintXaaTokenExchangeGrant(
       access_token: issued.token,
       token_type: "N_A",
       expires_in: expiresInSeconds(issued.expiresAt),
-      ...(scope ? { scope } : {}),
+      // Echo the authorized scope verbatim, INCLUDING an explicit "" for a
+      // policy grant of zero scopes — callers must be able to distinguish
+      // "everything stripped" from a legacy scopeless response. Absent
+      // (undefined) stays absent, byte-identical to the pre-gate wire.
+      ...(scope !== undefined ? { scope } : {}),
     },
   };
 }
