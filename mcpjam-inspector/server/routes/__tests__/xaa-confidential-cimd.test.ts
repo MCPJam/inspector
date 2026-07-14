@@ -79,20 +79,30 @@ describe("XAA confidential CIMD reflector route", () => {
     expect(JSON.stringify(document)).not.toContain("client_secret");
   });
 
-  it("strips any private/unknown fields an attacker encodes into the key", async () => {
-    // Encode a JWK carrying a private scalar `d` and a junk field.
+  it("rejects a key carrying a private `d` field with 400 (fails closed)", async () => {
+    // A well-formed public key plus a private scalar — hand-encoded, since the
+    // client-side builder refuses to serialize `d` at all.
     const jwk = samplePublicJwk();
-    const poisoned = { ...jwk, d: "AAAA", evil: "x" };
-    const path = new URL(
-      buildConfidentialCimdUrl(poisoned, "http://localhost"),
-    ).pathname;
-    const response = await buildApp().request(`http://localhost${path}`);
+    const encoded = Buffer.from(
+      JSON.stringify({ ...jwk, d: "AAAA" }),
+    ).toString("base64url");
+    const response = await buildApp().request(
+      `http://localhost${XAA_CONFIDENTIAL_CIMD_PATH_PREFIX}${encoded}`,
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it("ignores benign unknown members but still serves the public key", async () => {
+    const jwk = samplePublicJwk();
+    const encoded = Buffer.from(
+      JSON.stringify({ ...jwk, evil: "x" }),
+    ).toString("base64url");
+    const response = await buildApp().request(
+      `http://localhost${XAA_CONFIDENTIAL_CIMD_PATH_PREFIX}${encoded}`,
+    );
     expect(response.status).toBe(200);
     const document = await response.json();
-    // Only the sanitized public members survive.
     expect(document.jwks.keys[0].x).toBe(jwk.x);
-    expect(document.jwks.keys[0].d).toBeUndefined();
-    expect(document.jwks.keys[0].evil).toBeUndefined();
     expect(JSON.stringify(document)).not.toContain("evil");
   });
 
@@ -109,17 +119,23 @@ describe("XAA confidential CIMD reflector route", () => {
     const app = buildApp();
     const jwk = samplePublicJwk();
     const path = cimdPath(jwk);
-    const headers = { "x-forwarded-for": "203.0.113.9" };
+    // x-real-ip is a trusted header getClientIp honors (above x-forwarded-for).
+    const headers = { "x-real-ip": "203.0.113.9" };
     let sawLimit = false;
-    // The window budget is modest; well over it must eventually 429.
-    for (let i = 0; i < 200; i++) {
+    let okCount = 0;
+    // Well over the per-window budget must eventually 429.
+    for (let i = 0; i < 700; i++) {
       const r = await app.request(`http://localhost${path}`, { headers });
       if (r.status === 429) {
         sawLimit = true;
         break;
       }
+      okCount++;
     }
     expect(sawLimit).toBe(true);
+    // A generous budget is allowed through before the limit trips (shared-AS
+    // headroom), so this isn't tripping on a handful of requests.
+    expect(okCount).toBeGreaterThan(100);
   });
 
   it("honors proxy-forwarded host/proto when building client_id", async () => {

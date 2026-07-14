@@ -101,10 +101,35 @@ export const XAA_CONFIDENTIAL_CIMD_ORIGIN = "https://app.mcpjam.com";
 export const XAA_CONFIDENTIAL_CIMD_PATH_PREFIX =
   "/.well-known/oauth/xaa-cimd/";
 
+// Serialize ONLY canonical public members, and refuse a private JWK outright:
+// otherwise a `d` component would be embedded in the client_id URL (and thus in
+// logs and the echoed client_id) before the reflector ever strips it. The
+// private key must never leave the client.
+function canonicalPublicJwkForUrl(jwk: JsonWebKey): JsonWebKey {
+  if ((jwk as { d?: unknown }).d !== undefined) {
+    throw new Error(
+      "refusing to encode a private JWK into a client_id URL: pass only the " +
+        "public key (no `d` component)",
+    );
+  }
+  const { kty, crv, x, y, kid, alg, use } = jwk as JsonWebKey & {
+    kid?: string;
+  };
+  return {
+    kty,
+    crv,
+    x,
+    y,
+    ...(kid ? { kid } : {}),
+    ...(alg ? { alg } : {}),
+    ...(use ? { use } : {}),
+  } as JsonWebKey;
+}
+
 // Browser-safe base64url of an ASCII JSON string (btoa/atob are available in
 // Node 16+ and browsers; the encoded JWK is ASCII so latin1 is exact).
 function encodeJwkForUrl(jwk: JsonWebKey): string {
-  return btoa(JSON.stringify(jwk))
+  return btoa(JSON.stringify(canonicalPublicJwkForUrl(jwk)))
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
@@ -140,6 +165,9 @@ export function decodeConfidentialCimdKey(encoded: string): JsonWebKey | null {
     const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
     const parsed = JSON.parse(atob(padded)) as Record<string, unknown> | null;
     if (!parsed || typeof parsed !== "object") return null;
+    // A document request carrying a private key is anomalous — reject it (fail
+    // closed) rather than silently stripping and serving.
+    if (parsed.d !== undefined) return null;
     if (parsed.kty !== "EC" || parsed.crv !== "P-256") return null;
     const { x, y, kid } = parsed;
     if (typeof x !== "string" || !EC_P256_COORD.test(x)) return null;

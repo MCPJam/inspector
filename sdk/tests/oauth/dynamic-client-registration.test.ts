@@ -307,6 +307,13 @@ describe("confidential CIMD key encode/decode", () => {
       .pop() as string;
   }
 
+  // Raw base64url of an arbitrary object, bypassing buildConfidentialCimdUrl's
+  // guard — used to exercise what the reflector's decoder does with a hostile
+  // URL an attacker could craft by hand.
+  function rawEncode(obj: object): string {
+    return Buffer.from(JSON.stringify(obj)).toString("base64url");
+  }
+
   it("round-trips a valid P-256 public key into a canonical public JWK", () => {
     const jwk = publicJwk();
     const decoded = decodeConfidentialCimdKey(encodedKeyOf(jwk));
@@ -321,21 +328,43 @@ describe("confidential CIMD key encode/decode", () => {
     });
   });
 
-  it("strips a private scalar and unknown members", () => {
+  it("buildConfidentialCimdUrl refuses to encode a private JWK (never leak `d`)", () => {
+    const jwk = publicJwk();
+    expect(() =>
+      buildConfidentialCimdUrl({ ...jwk, d: "AAAA" } as JsonWebKey),
+    ).toThrow(/private JWK|`d`/);
+  });
+
+  it("buildConfidentialCimdUrl encodes only canonical public members", () => {
+    const jwk = publicJwk();
+    const encoded = encodedKeyOf({ ...jwk, kid: "xaa-client-1", evil: "1" });
+    const raw = JSON.parse(
+      Buffer.from(encoded, "base64url").toString("utf-8"),
+    ) as Record<string, unknown>;
+    expect(raw.evil).toBeUndefined();
+    expect(raw.kid).toBe("xaa-client-1");
+    expect(raw.d).toBeUndefined();
+  });
+
+  it("decoder rejects a hand-encoded private JWK (fails closed on `d`)", () => {
+    const jwk = publicJwk();
+    expect(decodeConfidentialCimdKey(rawEncode({ ...jwk, d: "AAAA" }))).toBeNull();
+  });
+
+  it("decoder strips unknown members and preserves a safe kid", () => {
     const jwk = publicJwk();
     const decoded = decodeConfidentialCimdKey(
-      encodedKeyOf({ ...jwk, d: "AAAA", kid: "xaa-client-1", evil: "1" }),
+      rawEncode({ ...jwk, kid: "xaa-client-1", evil: "1" }),
     ) as Record<string, unknown> | null;
     expect(decoded).not.toBeNull();
-    expect(decoded!.d).toBeUndefined();
     expect(decoded!.evil).toBeUndefined();
-    expect(decoded!.kid).toBe("xaa-client-1"); // safe kid preserved
+    expect(decoded!.kid).toBe("xaa-client-1");
   });
 
   it("drops an unsafe kid", () => {
     const jwk = publicJwk();
     const decoded = decodeConfidentialCimdKey(
-      encodedKeyOf({ ...jwk, kid: "bad kid\nwith junk" }),
+      rawEncode({ ...jwk, kid: "bad kid\nwith junk" }),
     ) as Record<string, unknown>;
     expect(decoded.kid).toBeUndefined();
   });

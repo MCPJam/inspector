@@ -5,6 +5,7 @@ import {
   getConfidentialCimdReflectorMetadata,
   XAA_CONFIDENTIAL_CIMD_PATH_PREFIX,
 } from "@mcpjam/sdk";
+import { getClientIp } from "../utils/client-ip.js";
 
 /**
  * Stateless confidential-CIMD reflector. The client encodes its PUBLIC key in
@@ -38,13 +39,18 @@ const CORS_HEADERS: Record<string, string> = {
 // A base64url EC P-256 JWK is well under 1 KB; cap the segment to reject abuse.
 const MAX_KEY_SEGMENT = 2048;
 
-// The reflector's key space is unbounded and anonymous. A small per-IP sliding
-// window caps abuse (cache-fill / amplification) without impeding a RAS that
-// fetches a handful of documents. In-memory is sufficient — the response is a
-// pure function of the URL, so a multi-instance deployment just gets a
-// proportionally higher aggregate limit.
-const RATE_LIMIT = 120;
+// The reflector's key space is unbounded and anonymous. A per-IP sliding window
+// caps single-IP enumeration (cache-fill / amplification). The limit is
+// deliberately generous: a legitimate shared authorization server behind one
+// egress IP may fetch many DISTINCT client documents in a burst, so 600/min
+// (10/s) leaves ample headroom while still bounding a lone abuser. In-memory is
+// sufficient — the response is a pure function of the URL, so a multi-instance
+// deployment just gets a proportionally higher aggregate limit.
+const RATE_LIMIT = 600;
 const RATE_WINDOW_MS = 60_000;
+// Hard cap on tracked IPs so IP churn (spoofed/rotated sources) can't grow the
+// map without bound; at the cap, a brand-new IP fails closed (429).
+const MAX_TRACKED_IPS = 10_000;
 const ipWindows = new Map<string, { count: number; windowStart: number }>();
 
 const rateCleanup = setInterval(() => {
@@ -59,23 +65,22 @@ export function resetXaaConfidentialCimdRateLimitForTests(): void {
   ipWindows.clear();
 }
 
-function clientIp(c: Context): string {
-  const fwd = c.req.header("x-forwarded-for");
-  if (fwd) return fwd.split(",")[0]!.trim();
-  return c.req.header("x-real-ip") ?? "unknown";
-}
-
-/** Returns true when the caller is over budget for the current window. */
+/** Returns true when the caller is over budget for the current window. Uses the
+ * trusted client-IP resolution (cf-connecting-ip / x-real-ip before the
+ * client-mutable x-forwarded-for) so the key can't be trivially spoofed. */
 function isRateLimited(c: Context): boolean {
-  const ip = clientIp(c);
+  const ip = getClientIp(c) ?? "unknown";
   const now = Date.now();
   const entry = ipWindows.get(ip);
-  if (!entry || now - entry.windowStart >= RATE_WINDOW_MS) {
-    ipWindows.set(ip, { count: 1, windowStart: now });
+  if (entry && now - entry.windowStart < RATE_WINDOW_MS) {
+    if (entry.count >= RATE_LIMIT) return true;
+    entry.count++;
     return false;
   }
-  if (entry.count >= RATE_LIMIT) return true;
-  entry.count++;
+  // New window for this IP. Bound the map: if it's full and this is a genuinely
+  // new key, fail closed rather than admit unbounded growth under IP churn.
+  if (!entry && ipWindows.size >= MAX_TRACKED_IPS) return true;
+  ipWindows.set(ip, { count: 1, windowStart: now });
   return false;
 }
 
