@@ -185,21 +185,23 @@ export function XAAFlowTab({
   const runSettings = useXaaRunSettings();
   const { user: signedInUser } = useAuth();
   // Local-only hosted-issuer opt-in: mints route through app.mcpjam.com so a
-  // cloud AS can discover the issuer. Requires a signed-in session AND an
-  // active org — the hosted mint targets the membership-gated org-scoped
-  // issuer (/o/<orgId>), and the server fails closed without one rather than
-  // downgrading to the forgeable unscoped issuer. (A local guest bearer is
-  // signed with a local key the hosted issuer rejects.)
-  const canUseHostedIssuer =
-    !HOSTED_MODE && Boolean(signedInUser) && Boolean(organizationId);
-  // Why the toggle is disabled — the two gates fail for different reasons and
-  // the hint must name the one the user can act on.
+  // cloud AS can discover the issuer. Requires an active org — signed-in
+  // users mint under the membership-gated org-scoped issuer (/o/<orgId>);
+  // guest sessions mint under the visibly separate ANONYMOUS TEST issuer
+  // (/g/<personalOrgId>), which a RAS must explicitly allowlist and which is
+  // NOT enterprise-managed-authorization conformance. The server fails
+  // closed without an org rather than downgrading to the forgeable unscoped
+  // issuer. (Dev-only caveat: a guest bearer signed by a locally-provisioned
+  // Convex key is rejected by the hosted issuer and surfaces as a 401 on the
+  // forward.)
+  const hostedIssuerKind: "org" | "anonymous" = signedInUser
+    ? "org"
+    : "anonymous";
+  const canUseHostedIssuer = !HOSTED_MODE && Boolean(organizationId);
   const hostedIssuerDisabledReason =
     HOSTED_MODE || canUseHostedIssuer
       ? undefined
-      : !signedInUser
-      ? "sign in to mint through the hosted issuer"
-      : "select an organization to mint through the hosted issuer";
+      : "waiting for an organization — sign in or continue as guest to mint through the hosted issuer";
   const hostedIssuerOptIn =
     canUseHostedIssuer && runSettings.issuerMode === "hosted";
   const target = useXaaTestTarget({
@@ -752,6 +754,7 @@ export function XAAFlowTab({
       issuerBaseUrl: hostedIssuerOptIn ? undefined : resolvedIssuerBaseUrl,
       organizationId,
       issuerMode: hostedIssuerOptIn ? "hosted" : "local",
+      issuerKind: hostedIssuerKind,
     });
   }, [
     runInput,
@@ -760,6 +763,7 @@ export function XAAFlowTab({
     resolvedIssuerBaseUrl,
     organizationId,
     hostedIssuerOptIn,
+    hostedIssuerKind,
     effectiveStrategy,
     effectiveAssertionFormat,
     runsDynamicRegistration,
@@ -865,6 +869,7 @@ export function XAAFlowTab({
         onIssuerModeChange={runSettings.setIssuerMode}
         canUseHostedIssuer={canUseHostedIssuer}
         hostedIssuerDisabledReason={hostedIssuerDisabledReason}
+        issuerKind={hostedIssuerKind}
       />
       <XAAResourceAppsSection
         organizationId={organizationId ?? null}

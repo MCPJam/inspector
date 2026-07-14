@@ -52,6 +52,10 @@ async function postToConvexAuthorized(args: {
   bearerToken: string;
   body: Record<string, unknown>;
   serviceName: string;
+  // Real end-user IP as seen by THIS server. Convex's own x-forwarded-for
+  // names the inspector server (the direct peer), so the guest per-IP quota
+  // would collapse into one bucket without this forward.
+  clientIp?: string | null;
 }): Promise<any> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -75,6 +79,7 @@ async function postToConvexAuthorized(args: {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${args.bearerToken}`,
+        ...(args.clientIp ? { "x-mcpjam-client-ip": args.clientIp } : {}),
       },
       body: JSON.stringify(args.body),
       signal: controller.signal,
@@ -260,12 +265,14 @@ export interface XaaResourceAppSecretResult {
 export async function fetchXaaResourceAppSecret(args: {
   bearerToken: string;
   registrationId: string;
+  clientIp?: string | null;
 }): Promise<XaaResourceAppSecretResult> {
   const body = await postToConvexAuthorized({
     path: "/web/xaa/resource-app/reveal-secret",
     bearerToken: args.bearerToken,
     body: { id: args.registrationId },
     serviceName: "secret-reveal service",
+    clientIp: args.clientIp,
   });
 
   if (typeof body.clientSecret !== "string") {
@@ -315,12 +322,14 @@ export async function fetchServerClientSecret(args: {
   bearerToken: string;
   serverId: string;
   projectId: string;
+  clientIp?: string | null;
 }): Promise<ServerClientSecretResult> {
   const body = await postToConvexAuthorized({
     path: "/web/xaa/server/reveal-secret",
     bearerToken: args.bearerToken,
     body: { serverId: args.serverId, projectId: args.projectId },
     serviceName: "secret-reveal service",
+    clientIp: args.clientIp,
   });
 
   return {
@@ -337,22 +346,33 @@ export async function fetchServerClientSecret(args: {
 }
 
 /**
- * Membership gate for the org-scoped MCPJam XAA test issuer
- * (`/api/web/xaa/o/<orgId>`). Forwards the caller's bearer to Convex, which
- * resolves the identity and requires org membership. Guests are rejected for
- * scoped-issuer minting (the /o/<orgId> trust story depends on excluding
- * anonymous actors), even though they may reveal their own server /
- * resource-app secrets. Throws a WebRouteError on any failure — minting under
- * a scoped issuer is fail-closed.
+ * Gate for the scoped MCPJam XAA test issuers. Forwards the caller's bearer
+ * to Convex, which resolves the identity and applies the flavor's rule:
+ *
+ * - issuerKind "org" (`/api/web/xaa/o/<orgId>`): org membership required;
+ *   guests are always rejected — the /o/ trust story depends on excluding
+ *   anonymous actors.
+ * - issuerKind "anonymous" (`/api/web/xaa/g/<orgId>`): the visibly separate
+ *   anonymous test issuer, bound to the caller's OWN personal org (guest
+ *   sessions included, subject to revocation + durable quotas backend-side).
+ *
+ * Throws a WebRouteError on any failure — minting under a scoped issuer is
+ * fail-closed.
  */
 export async function authorizeXaaOrgIssuer(args: {
   bearerToken: string;
   organizationId: string;
+  issuerKind?: "org" | "anonymous";
+  clientIp?: string | null;
 }): Promise<void> {
   await postToConvexAuthorized({
     path: "/web/xaa/issuer/authorize",
     bearerToken: args.bearerToken,
-    body: { organizationId: args.organizationId },
+    body: {
+      organizationId: args.organizationId,
+      issuerKind: args.issuerKind ?? "org",
+    },
     serviceName: "issuer-authorization service",
+    clientIp: args.clientIp,
   });
 }

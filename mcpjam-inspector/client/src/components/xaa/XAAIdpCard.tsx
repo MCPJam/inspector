@@ -181,16 +181,22 @@ export function XAAIdpCard({
   onIssuerModeChange,
   canUseHostedIssuer = false,
   hostedIssuerDisabledReason,
+  issuerKind = "org",
 }: {
   organizationId?: string | null;
   /** LOCAL builds only: which issuer mints this run's assertions. */
   issuerMode?: XaaIssuerMode;
   onIssuerModeChange?: (mode: XaaIssuerMode) => void;
-  /** Signed-in + active-org gate: a local guest bearer is signed with a local
-   * key the hosted issuer rejects, and the mint targets the org-scoped issuer. */
+  /** Active-org gate for the hosted-issuer toggle. */
   canUseHostedIssuer?: boolean;
-  /** Why the toggle is disabled (signed out vs no active org), for the hint. */
+  /** Why the toggle is disabled (no active org yet), for the hint. */
   hostedIssuerDisabledReason?: string;
+  /** Which scoped issuer flavor this session mints under: "org"
+   * (/o/<orgId>, signed-in members) or "anonymous" (/g/<personalOrgId>,
+   * guest sessions — the visibly separate anonymous test issuer a RAS must
+   * explicitly allowlist; NOT enterprise-managed-authorization
+   * conformance). */
+  issuerKind?: "org" | "anonymous";
 }) {
   const hostedIssuerOn =
     !HOSTED_MODE && issuerMode === "hosted" && canUseHostedIssuer;
@@ -200,7 +206,9 @@ export function XAAIdpCard({
   // With the hosted-issuer opt-in on, the URLs are constructed instead:
   // hosted CORS blocks a local browser from fetching the hosted discovery doc.
   const [urls, setUrls] = useState(() =>
-    hostedIssuerOn ? getHostedXaaIdpUrls(organizationId) : getXaaIdpUrls(organizationId),
+    hostedIssuerOn
+      ? getHostedXaaIdpUrls(organizationId, issuerKind)
+      : getXaaIdpUrls(organizationId, issuerKind),
   );
   const { issuerBaseUrl, openidConfigUrl, jwksUrl } = urls;
 
@@ -219,7 +227,7 @@ export function XAAIdpCard({
 
     if (hostedIssuerOn) {
       if (!wasFirstRender) {
-        setUrls(getHostedXaaIdpUrls(organizationId));
+        setUrls(getHostedXaaIdpUrls(organizationId, issuerKind));
       }
       return;
     }
@@ -227,7 +235,7 @@ export function XAAIdpCard({
     // Reset synchronously on any change (org switch or a hosted→local toggle)
     // so a stale hosted/prior-org URL never lingers before discovery resolves.
     if (!wasFirstRender) {
-      setUrls(getXaaIdpUrls(organizationId));
+      setUrls(getXaaIdpUrls(organizationId, issuerKind));
     }
     void fetchXaaIdpUrls(controller.signal, organizationId).then(
       (serverUrls) => {
@@ -238,7 +246,7 @@ export function XAAIdpCard({
       },
     );
     return () => controller.abort();
-  }, [organizationId, hostedIssuerOn]);
+  }, [organizationId, hostedIssuerOn, issuerKind]);
 
   const isOrgScoped = HOSTED_MODE && Boolean(organizationId);
 
@@ -278,6 +286,14 @@ export function XAAIdpCard({
               <span className="font-medium text-foreground">
                 Use hosted issuer (app.mcpjam.com)
               </span>
+              {issuerKind === "anonymous" && (
+                <span
+                  className="rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-600 dark:text-amber-400"
+                  data-testid="anonymous-issuer-badge"
+                >
+                  Anonymous test issuer
+                </span>
+              )}
               {!canUseHostedIssuer && hostedIssuerDisabledReason && (
                 <span>({hostedIssuerDisabledReason})</span>
               )}
@@ -293,6 +309,22 @@ export function XAAIdpCard({
                 JWKS. No tunnel is needed. Token requests and MCP calls still run
                 from this machine; your authorization server must be reachable
                 over https.
+                {issuerKind === "anonymous" && (
+                  <>
+                    {" "}
+                    This session mints under the <b>anonymous test issuer</b>{" "}
+                    (<code className="font-mono">/g/…</code>): its discovery
+                    document is marked{" "}
+                    <code className="font-mono">
+                      mcpjam:issuer_kind: anonymous-test
+                    </code>{" "}
+                    and an authorization server must explicitly allowlist it.
+                    Assertions prove control of an anonymous session — this is
+                    a testing convenience, not enterprise-managed
+                    authorization. Sign in to mint under a
+                    membership-gated organization issuer.
+                  </>
+                )}
               </span>
             </div>
           ) : (
@@ -312,12 +344,29 @@ export function XAAIdpCard({
         </div>
       )}
 
-      {isOrgScoped && (
-        <div className="mt-3 text-xs text-muted-foreground">
-          This issuer is scoped to your organization. Only its members can
-          mint assertions under it.
-        </div>
-      )}
+      {isOrgScoped &&
+        (issuerKind === "anonymous" ? (
+          <div
+            className="mt-3 text-xs text-muted-foreground"
+            data-testid="anonymous-issuer-note"
+          >
+            <span className="mr-1.5 rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-600 dark:text-amber-400">
+              Anonymous test issuer
+            </span>
+            This guest session mints under the anonymous test issuer (
+            <code className="font-mono">/g/…</code>). Its discovery document is
+            marked <code className="font-mono">mcpjam:issuer_kind:
+            anonymous-test</code> and an authorization server must explicitly
+            allowlist it — assertions prove control of an anonymous session,
+            not enterprise-managed authorization. Sign in to mint under a
+            membership-gated organization issuer.
+          </div>
+        ) : (
+          <div className="mt-3 text-xs text-muted-foreground">
+            This issuer is scoped to your organization. Only its members can
+            mint assertions under it.
+          </div>
+        ))}
     </div>
   );
 }

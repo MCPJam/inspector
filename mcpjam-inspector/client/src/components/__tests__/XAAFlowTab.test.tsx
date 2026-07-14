@@ -10,8 +10,10 @@ vi.mock("@/lib/analytics", () => ({
   track: (...args: unknown[]) => captureMock(...args),
 }));
 
+// Controllable signed-in state: null simulates a guest session.
+let authUser: { email: string } | null = { email: "tester@example.com" };
 vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => ({ user: { email: "tester@example.com" } }),
+  useAuth: () => ({ user: authUser }),
 }));
 
 vi.mock("../xaa/XAAIdpCard", () => ({
@@ -382,6 +384,33 @@ describe("XAAFlowTab", () => {
     expect(
       screen.getByText(/resolving this server's saved secret/i),
     ).toBeInTheDocument();
+  });
+
+  it("derives the org issuer kind for signed-in users and anonymous for guests", () => {
+    currentTarget = makeTarget({});
+
+    authUser = { email: "tester@example.com" };
+    const { unmount } = render(
+      <XAAFlowTab
+        serverConfigs={{}}
+        selectedServerName="staging"
+        organizationId="org_1"
+      />,
+    );
+    expect(capturedMachineConfig).toMatchObject({ issuerKind: "org" });
+    unmount();
+
+    capturedMachineConfig = null;
+    authUser = null; // guest session
+    render(
+      <XAAFlowTab
+        serverConfigs={{}}
+        selectedServerName="staging"
+        organizationId="org_1"
+      />,
+    );
+    expect(capturedMachineConfig).toMatchObject({ issuerKind: "anonymous" });
+    authUser = { email: "tester@example.com" };
   });
 
   it("passes serverId/projectId to the machine for a confidential server", () => {

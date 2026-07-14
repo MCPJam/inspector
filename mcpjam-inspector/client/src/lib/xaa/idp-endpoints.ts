@@ -20,8 +20,14 @@ function getIssuerBasePath(): string {
  */
 export function getOrgScopedIssuerSegment(
   organizationId?: string | null,
+  issuerKind: "org" | "anonymous" = "org",
 ): string {
-  return HOSTED_MODE && organizationId ? `/o/${organizationId}` : "";
+  if (!HOSTED_MODE || !organizationId) return "";
+  // "anonymous" = the /g/ anonymous test issuer (guest sessions, bound to
+  // the personal org; a RAS must explicitly allowlist it).
+  return issuerKind === "anonymous"
+    ? `/g/${organizationId}`
+    : `/o/${organizationId}`;
 }
 
 /**
@@ -45,10 +51,16 @@ const HOSTED_ISSUER_ORIGIN =
     "",
   ) || MCPJAM_HOSTED_APP_ORIGIN;
 
-export function getHostedXaaIdpUrls(organizationId?: string | null): XaaIdpUrls {
-  const issuerBaseUrl = `${HOSTED_ISSUER_ORIGIN}/api/web/xaa${
-    organizationId ? `/o/${organizationId}` : ""
-  }`;
+export function getHostedXaaIdpUrls(
+  organizationId?: string | null,
+  issuerKind: "org" | "anonymous" = "org",
+): XaaIdpUrls {
+  const segment = organizationId
+    ? issuerKind === "anonymous"
+      ? `/g/${organizationId}`
+      : `/o/${organizationId}`
+    : "";
+  const issuerBaseUrl = `${HOSTED_ISSUER_ORIGIN}/api/web/xaa${segment}`;
   return {
     issuerBaseUrl,
     openidConfigUrl: `${issuerBaseUrl}/.well-known/openid-configuration`,
@@ -64,9 +76,12 @@ export function getHostedXaaIdpUrls(organizationId?: string | null): XaaIdpUrls 
  * that actually mints the ID-JAG `iss`, so prefer `fetchXaaIdpUrls` when an
  * accurate value matters (registration, issuer-trust comparisons).
  */
-export function getXaaIdpUrls(organizationId?: string | null): XaaIdpUrls {
+export function getXaaIdpUrls(
+  organizationId?: string | null,
+  issuerKind: "org" | "anonymous" = "org",
+): XaaIdpUrls {
   const origin = typeof window === "undefined" ? "" : window.location.origin;
-  const issuerBaseUrl = `${origin}${getIssuerBasePath()}${getOrgScopedIssuerSegment(organizationId)}`;
+  const issuerBaseUrl = `${origin}${getIssuerBasePath()}${getOrgScopedIssuerSegment(organizationId, issuerKind)}`;
   return {
     issuerBaseUrl,
     openidConfigUrl: `${issuerBaseUrl}/.well-known/openid-configuration`,
