@@ -267,6 +267,9 @@ export interface BaseXAAStateMachineConfig {
   /** Stable key for the current target; combined with the discovered
    * registration endpoint to key the credential cache. */
   dcrCacheTargetKey?: string;
+  /** CIMD: the Client ID Metadata Document URL to present as the client_id.
+   * Defaults to the hosted XAA debugger document. Validated, never normalized. */
+  clientIdMetadataUrl?: string;
 }
 
 export interface XAAStateMachine {

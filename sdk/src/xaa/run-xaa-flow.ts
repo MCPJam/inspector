@@ -32,7 +32,11 @@ import {
 import {
   createInitialXAAFlowState,
   type XAAFlowState,
+  type XaaDcrCredentialCache,
+  type XaaEphemeralDcrCredentials,
+  type XaaRegistrationWarning,
 } from "./state-machines/types.js";
+import { type RegistrationStrategy } from "../registration.js";
 
 const ID_JAG_TYP = "oauth-id-jag+jwt";
 
@@ -49,10 +53,17 @@ export interface XaaFlowConfig {
   issuerBaseUrl: string;
   subject: string;
   email?: string;
-  clientId: string;
+  /** Pre-registered client id. Optional: DCR mints it, CIMD derives it from the
+   * metadata-document URL. Required only for the `preregistered` strategy. */
+  clientId?: string;
   clientSecret?: string;
   scope?: string;
   tokenEndpointAuthMethod?: XaaTokenEndpointAuthMethod;
+  /** Client-registration strategy. Defaults to `preregistered`. */
+  registrationStrategy?: RegistrationStrategy;
+  /** CIMD only: the Client ID Metadata Document URL. Defaults to the hosted
+   * XAA debugger document. */
+  clientIdMetadataUrl?: string;
   negativeTestMode?: NegativeTestMode;
   /** Per outbound request timeout in milliseconds. */
   timeoutMs?: number;
@@ -76,6 +87,17 @@ export interface XaaRedemptionResult {
 export interface XaaFlowResult {
   completed: boolean;
   issuer: string;
+  /** How the client identity was obtained. Secret-free: never carries the
+   * DCR-minted client_secret. `warnings` surfaces non-blocking findings such as
+   * the public-client CIMD warning. */
+  registration?: {
+    strategy: RegistrationStrategy;
+    clientId?: string;
+    /** A prior session registration was reused rather than minting a new one
+     * (e.g. the negative probe reused the baseline's DCR client). */
+    reused: boolean;
+    warnings: XaaRegistrationWarning[];
+  };
   authzServerIssuer?: string;
   tokenEndpoint?: string;
   authorizationServerCapabilities?: {
@@ -338,9 +360,62 @@ function projectFlowError(state: XAAFlowState): string | undefined {
   return state.error;
 }
 
+/** Registration wiring shared across every attempt of a single runXaaFlow call:
+ * one strategy, one CIMD URL, and ONE DCR credential cache so the negative
+ * baseline + probe reuse a single dynamic registration instead of minting one
+ * per attempt. Internal — never exposed on the public XaaFlowConfig. */
+interface AttemptContext {
+  registrationStrategy: RegistrationStrategy;
+  clientIdMetadataUrl?: string;
+  dcrCredentialCache: XaaDcrCredentialCache;
+  dcrCacheTargetKey: string;
+}
+
+/** A Map-backed DCR credential cache plus a counter of how many registrations
+ * (cache writes) actually happened, used to derive the `reused` diagnostic. */
+function createDcrCredentialCache(): {
+  cache: XaaDcrCredentialCache;
+  registrations: () => number;
+} {
+  const store = new Map<string, XaaEphemeralDcrCredentials>();
+  let registrations = 0;
+  return {
+    cache: {
+      get: (key) => store.get(key),
+      set: (key, value) => {
+        registrations += 1;
+        store.set(key, value);
+      },
+      delete: (key) => {
+        store.delete(key);
+      },
+    },
+    registrations: () => registrations,
+  };
+}
+
+function projectRegistration(
+  state: XAAFlowState | undefined,
+  strategy: RegistrationStrategy,
+  registrations: number,
+  attempts: number
+): NonNullable<XaaFlowResult["registration"]> {
+  const clientId = state?.clientId;
+  return {
+    strategy: state?.registrationStrategy ?? strategy,
+    ...(clientId ? { clientId } : {}),
+    // DCR reuse: fewer registrations than attempts means a later attempt reused
+    // an earlier attempt's cached client. Only DCR performs registrations.
+    reused:
+      strategy === "dcr" && registrations > 0 && attempts > registrations,
+    warnings: state?.registrationWarnings ?? [],
+  };
+}
+
 async function runSharedAttempt(
   config: XaaFlowConfig,
   mode: NegativeTestMode,
+  ctx: AttemptContext,
   stopAtAccessToken = false,
   progress?: (message: string) => void
 ): Promise<XAAFlowState> {
@@ -357,7 +432,7 @@ async function runSharedAttempt(
     email: config.email,
     scope: config.scope,
     negativeTestMode: mode,
-    registrationStrategy: "preregistered",
+    registrationStrategy: ctx.registrationStrategy,
   });
   const executor = createInProcessXaaExecutor({
     issuerBaseUrl: config.issuerBaseUrl,
@@ -402,7 +477,10 @@ async function runSharedAttempt(
     clientSecret: config.clientSecret,
     scope: config.scope,
     authzServerIssuer: config.authzServerIssuer,
-    registrationStrategy: "preregistered",
+    registrationStrategy: ctx.registrationStrategy,
+    clientIdMetadataUrl: ctx.clientIdMetadataUrl,
+    dcrCredentialCache: ctx.dcrCredentialCache,
+    dcrCacheTargetKey: ctx.dcrCacheTargetKey,
   });
 
   await runXaaStateMachine(
@@ -421,6 +499,21 @@ export async function runXaaFlow(
   const issuer = getXAAIssuerUrl(config.issuerBaseUrl);
   const publicationStep: XaaFlowStep[] = [];
 
+  // One registration context (and one DCR credential cache) for the whole run,
+  // so a negative baseline + probe reuse a single dynamic registration.
+  const strategy: RegistrationStrategy =
+    config.registrationStrategy ?? "preregistered";
+  const dcr = createDcrCredentialCache();
+  const ctx: AttemptContext = {
+    registrationStrategy: strategy,
+    clientIdMetadataUrl: config.clientIdMetadataUrl,
+    dcrCredentialCache: dcr.cache,
+    dcrCacheTargetKey: config.serverUrl,
+  };
+  let attempts = 0;
+  const registration = (state: XAAFlowState | undefined) =>
+    projectRegistration(state, strategy, dcr.registrations(), attempts);
+
   try {
     progress("Verifying the configured issuer metadata and JWKS…");
     initXAAIdpKeyPair();
@@ -438,6 +531,7 @@ export async function runXaaFlow(
       return {
         completed: false,
         issuer,
+        registration: registration(undefined),
         steps: publicationStep,
         error:
           "The configured issuer does not publish the local signing key; " +
@@ -447,7 +541,8 @@ export async function runXaaFlow(
 
     const mode = config.negativeTestMode ?? DEFAULT_NEGATIVE_TEST_MODE;
     if (mode === "valid") {
-      const state = await runSharedAttempt(config, mode, false, progress);
+      attempts += 1;
+      const state = await runSharedAttempt(config, mode, ctx, false, progress);
       const capabilities = projectCapabilities(state, config);
       const idJag = projectIdJag(state, issuer);
       const redemption = projectRedemption(state);
@@ -484,6 +579,7 @@ export async function runXaaFlow(
       return {
         completed: state.currentStep === "complete",
         issuer,
+        registration: registration(state),
         ...(state.authzServerIssuer
           ? { authzServerIssuer: state.authzServerIssuer }
           : {}),
@@ -500,9 +596,11 @@ export async function runXaaFlow(
     }
 
     progress("Establishing a valid ID-JAG redemption baseline…");
+    attempts += 1;
     const baselineState = await runSharedAttempt(
       config,
       "valid",
+      ctx,
       true,
       progress
     );
@@ -516,6 +614,7 @@ export async function runXaaFlow(
       return {
         completed: false,
         issuer,
+        registration: registration(baselineState),
         ...(baselineState.authzServerIssuer
           ? { authzServerIssuer: baselineState.authzServerIssuer }
           : {}),
@@ -541,7 +640,8 @@ export async function runXaaFlow(
       };
     }
 
-    const probeState = await runSharedAttempt(config, mode, false, progress);
+    attempts += 1;
+    const probeState = await runSharedAttempt(config, mode, ctx, false, progress);
     const redemption = projectRedemption(probeState);
     const idJag = projectIdJag(probeState, issuer);
     const outcome = probeState.negativeProbe?.outcome ?? "inconclusive";
@@ -554,6 +654,7 @@ export async function runXaaFlow(
     return {
       completed: outcome === "rejected",
       issuer,
+      registration: registration(probeState),
       ...(probeState.authzServerIssuer
         ? { authzServerIssuer: probeState.authzServerIssuer }
         : {}),
@@ -589,6 +690,7 @@ export async function runXaaFlow(
     return {
       completed: false,
       issuer,
+      registration: registration(undefined),
       steps: publicationStep,
       error: error instanceof Error ? error.message : String(error),
     };

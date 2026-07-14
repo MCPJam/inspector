@@ -461,6 +461,7 @@ export function createXAAStateMachine(
     registrationStrategy: requestedRegistrationStrategy = "preregistered",
     dcrCredentialCache,
     dcrCacheTargetKey,
+    clientIdMetadataUrl,
   } = config;
 
   // registrationId / serverId runs skip AS discovery entirely, so the dynamic
@@ -1310,7 +1311,7 @@ export function createXAAStateMachine(
     let documentUrl: string;
     try {
       documentUrl = validateClientIdMetadataUrl(
-        XAA_DEBUG_CLIENT_ID_METADATA_URL
+        clientIdMetadataUrl ?? XAA_DEBUG_CLIENT_ID_METADATA_URL
       );
     } catch (error) {
       machine.updateState({
