@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildXaaConfig, redactXaaResult } from "../src/commands/xaa.js";
+import {
+  buildXaaConfig,
+  parseAssertionFormat,
+  redactXaaResult,
+} from "../src/commands/xaa.js";
 import { CliError } from "../src/lib/output.js";
 import type { XaaFlowResult } from "@mcpjam/sdk";
 
@@ -69,6 +73,41 @@ test("buildXaaConfig trims whitespace and treats blank optionals as unset", () =
   assert.equal(config.subject, "user-1");
   assert.equal(config.email, undefined);
   assert.equal(config.scope, undefined);
+});
+
+test("parseAssertionFormat accepts the known formats", () => {
+  assert.equal(parseAssertionFormat("oidc"), "oidc");
+  assert.equal(parseAssertionFormat("saml"), "saml");
+});
+
+test("parseAssertionFormat rejects an unknown format", () => {
+  assert.throws(
+    () => parseAssertionFormat("wsfed"),
+    (error: unknown) =>
+      error instanceof CliError &&
+      /--assertion-format must be oidc or saml/.test(error.message)
+  );
+});
+
+test("buildXaaConfig leaves both identity axes unset by default (oidc preset)", () => {
+  const unset = buildXaaConfig({ ...base });
+  assert.equal(unset.identityAssertionFormat, undefined);
+  assert.equal(unset.subjectIdentifierFormat, undefined);
+  assert.equal("identityAssertionFormat" in unset, false);
+  assert.equal("subjectIdentifierFormat" in unset, false);
+
+  // Explicit --assertion-format oidc is identical to omitting the flag: the
+  // SDK's own defaults ("oidc" / "oauth-sub") apply.
+  const explicit = buildXaaConfig({ ...base, assertionFormat: "oidc" });
+  assert.equal("identityAssertionFormat" in explicit, false);
+  assert.equal("subjectIdentifierFormat" in explicit, false);
+});
+
+test("buildXaaConfig maps the saml preset onto both identity axes", () => {
+  const config = buildXaaConfig({ ...base, assertionFormat: "saml" });
+
+  assert.equal(config.identityAssertionFormat, "saml");
+  assert.equal(config.subjectIdentifierFormat, "saml-nameid");
 });
 
 test("buildXaaConfig rejects an invalid server URL", () => {
