@@ -465,6 +465,7 @@ export function createXAAStateMachine(
     registrationStrategy: requestedRegistrationStrategy = "preregistered",
     dcrCredentialCache,
     dcrCacheTargetKey,
+    clientIdMetadataUrl,
   } = config;
 
   // registrationId / serverId runs skip AS discovery entirely, so the dynamic
@@ -1324,7 +1325,7 @@ export function createXAAStateMachine(
     let documentUrl: string;
     try {
       documentUrl = validateClientIdMetadataUrl(
-        XAA_DEBUG_CLIENT_ID_METADATA_URL
+        clientIdMetadataUrl ?? XAA_DEBUG_CLIENT_ID_METADATA_URL
       );
     } catch (error) {
       machine.updateState({
@@ -1352,11 +1353,18 @@ export function createXAAStateMachine(
     let result: XAARequestResult;
     try {
       result = await runRequest("fetch_client_metadata_document", request, () =>
-        requestExecutor.externalRequest(documentUrl, {
-          method: "GET",
-          headers: request.headers,
-          redirect: "manual",
-        })
+        requestExecutor.externalRequest(
+          documentUrl,
+          {
+            method: "GET",
+            headers: request.headers,
+            redirect: "manual",
+          },
+          // The CIMD document URL is caller-influenced; enforce the private-host
+          // / DNS guard at fetch time (not just any upstream one-shot check) to
+          // close the DNS-rebinding window regardless of the httpsOnly default.
+          { enforcePublicHost: true }
+        )
       );
     } catch {
       // runRequest already recorded the failure and set the error; the step
@@ -1441,7 +1449,7 @@ export function createXAAStateMachine(
         {
           code: "public_client",
           message:
-            "CIMD without a key-based auth method is inherently a public client: anyone can present this URL as their client_id. Findings show the RAS accepted the URL identity, not that client authentication was exercised.",
+            "Public-client CIMD (token_endpoint_auth_method \"none\"): interoperability is exercised, but the security posture is NOT recommended — ID-JAG draft-04 §9.1 recommends confidential clients. Anyone can present this URL as their client_id; findings show the RAS accepted the URL identity, not proof of client authentication. Use private_key_jwt (confidential CIMD) for a production posture.",
         },
       ],
       error: undefined,

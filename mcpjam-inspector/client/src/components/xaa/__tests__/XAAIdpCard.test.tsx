@@ -55,14 +55,18 @@ describe("XAAIdpCard", () => {
     expect(await screen.findByText("Copied")).toBeInTheDocument();
   });
 
-  it("opens the setup guidance in a modal", async () => {
+  it("opens the setup guidance in a dialog", async () => {
     const user = userEvent.setup();
     render(<XAAIdpCard />);
 
-    await user.click(screen.getByRole("button", { name: /before you run this test/i }));
+    await user.click(screen.getByRole("button", { name: /how it works/i }));
 
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(screen.getByText(/MCPJam's client identity/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", {
+        name: /trust mcpjam's identity provider/i,
+      })
+    ).toBeInTheDocument();
   });
 
   // On mount the card reads the server's OpenID config to resolve the real
@@ -108,10 +112,7 @@ describe("XAAIdpCard", () => {
     ).toHaveAttribute("title", `${issuer}/o/org_a1B2`);
     expect(
       screen.getByRole("button", { name: /copy jwks url/i })
-    ).toHaveAttribute(
-      "title",
-      `${issuer}/o/org_a1B2/.well-known/jwks.json`
-    );
+    ).toHaveAttribute("title", `${issuer}/o/org_a1B2/.well-known/jwks.json`);
     expect(
       screen.getByText(/scoped to your organization/i)
     ).toBeInTheDocument();

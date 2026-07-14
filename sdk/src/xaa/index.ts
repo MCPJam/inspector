@@ -29,7 +29,10 @@ export {
   type RegistrationMode,
   type AuthMethod,
 } from "../registration.js";
-export { NEGATIVE_TEST_MODE_DETAILS } from "./negative-test-modes.js";
+export {
+  NEGATIVE_TEST_MODE_DETAILS,
+  isPolicyDependentNegativeTestMode,
+} from "./negative-test-modes.js";
 export {
   initXAAIdpKeyPair,
   getXAAIssuerUrl,

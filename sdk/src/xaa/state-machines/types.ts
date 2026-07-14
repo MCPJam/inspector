@@ -227,6 +227,14 @@ export interface XAARequestResult {
   ok: boolean;
 }
 
+export interface XAAExternalRequestOptions {
+  /** Enforce the private-host / DNS-resolution SSRF guard for this request at
+   * fetch time, regardless of the executor's `httpsOnly` default. Used for the
+   * caller-influenced CIMD document fetch, which must always target a public
+   * host — closing the DNS-rebinding window a one-time upstream check leaves. */
+  enforcePublicHost?: boolean;
+}
+
 export interface XAARequestExecutor {
   internalRequest: (
     path: string,
@@ -234,7 +242,8 @@ export interface XAARequestExecutor {
   ) => Promise<XAARequestResult>;
   externalRequest: (
     url: string,
-    init?: RequestInit
+    init?: RequestInit,
+    options?: XAAExternalRequestOptions
   ) => Promise<XAARequestResult>;
 }
 
@@ -294,6 +303,9 @@ export interface BaseXAAStateMachineConfig {
   /** Stable key for the current target; combined with the discovered
    * registration endpoint to key the credential cache. */
   dcrCacheTargetKey?: string;
+  /** CIMD: the Client ID Metadata Document URL to present as the client_id.
+   * Defaults to the hosted XAA debugger document. Validated, never normalized. */
+  clientIdMetadataUrl?: string;
 }
 
 export interface XAAStateMachine {

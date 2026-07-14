@@ -3,6 +3,10 @@ import {
   WebRouteError,
   parseErrorMessage,
 } from "../routes/web/errors.js";
+import { logger } from "./logger.js";
+
+// One-shot guard so a misconfigured deployment logs once, not per request.
+let warnedMissingServiceTokenForIp = false;
 
 export interface ServerSecretsResult {
   env: Record<string, string> | null;
@@ -78,6 +82,18 @@ async function postToConvexAuthorized(args: {
   // (INSPECTOR_SERVICE_TOKEN); the backend ignores an unauthenticated IP.
   const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
   const forwardIp = Boolean(args.clientIp && inspectorServiceToken);
+  // Surface the silent-degradation case: we resolved a client IP but can't
+  // authenticate it to the backend, so the per-IP guest quota collapses to a
+  // coarse bucket. In a real hosted deployment the token is always set (it
+  // gates the delegation flow too); warn once so a misconfiguration is visible
+  // rather than silently weakening the cap.
+  if (args.clientIp && !inspectorServiceToken && !warnedMissingServiceTokenForIp) {
+    warnedMissingServiceTokenForIp = true;
+    logger.warn(
+      "INSPECTOR_SERVICE_TOKEN unset: not forwarding client IP to Convex; " +
+        "the per-IP guest XAA quota will bucket coarsely until it is configured."
+    );
+  }
 
   let body: any = null;
   let response: Response;

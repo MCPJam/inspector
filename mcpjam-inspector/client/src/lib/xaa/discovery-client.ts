@@ -87,7 +87,7 @@ export interface NegativeTestCase {
   label: string;
   expectedFailure: string;
   outcome: "rejected" | "accepted" | "timeout" | "error";
-  verdict: "pass" | "fail" | "unknown";
+  verdict: "pass" | "fail" | "policy" | "unknown";
   status?: number;
   detail?: string;
   diff?: NegativeTestDiff;
