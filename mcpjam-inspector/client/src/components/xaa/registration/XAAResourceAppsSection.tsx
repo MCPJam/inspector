@@ -1,5 +1,4 @@
 import { useConvexAuth } from "convex/react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { KeyRound, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
@@ -74,8 +73,7 @@ export function XAAResourceAppsSection({
   selectedId,
   onSelect,
 }: XAAResourceAppsSectionProps) {
-  // Hooks run unconditionally; the flag/auth gates return null below.
-  const registrationEnabled = useFeatureFlagEnabled("xaa-registration");
+  // Hooks run unconditionally; the auth gate returns null below.
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const { resourceApps, isLoading, isAuthenticated, error, remove } =
     useXaaResourceApps(organizationId);
@@ -85,7 +83,7 @@ export function XAAResourceAppsSection({
 
   const crud = useRegistrationCrud(remove);
 
-  if (registrationEnabled !== true || !isAuthenticated) {
+  if (!isAuthenticated) {
     return null;
   }
 
