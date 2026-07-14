@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  executeLocalServerConnect,
   resolveLocalServerForConnect,
   toMCPServerConfig,
 } from "../local-server-resolver.js";
@@ -666,5 +667,150 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
       status: 429,
       code: "rate_limited",
     });
+  });
+});
+
+describe("executeLocalServerConnect — live 401 handling", () => {
+  beforeEach(() => {
+    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
+    }
+    vi.unstubAllGlobals();
+  });
+
+  function fakeExecutorContext(managerOverrides?: Record<string, unknown>) {
+    const headers: Record<string, string> = {};
+    const manager = {
+      disconnectServer: vi.fn().mockResolvedValue(undefined),
+      connectToServer: vi
+        .fn()
+        .mockRejectedValue(
+          Object.assign(new Error("HTTP 401 Unauthorized"), {
+            statusCode: 401,
+          })
+        ),
+      removeServer: vi.fn().mockResolvedValue(undefined),
+      ...managerOverrides,
+    };
+    const c = {
+      set: () => {},
+      get: () => undefined,
+      mcpClientManager: manager,
+      header: (key: string, value: string) => {
+        headers[key] = value;
+      },
+      json: (body: unknown, status?: number) => ({
+        body,
+        status: status ?? 200,
+      }),
+    } as any;
+    return { c, headers, manager };
+  }
+
+  function stubAuthorizeBatch(authMethod: "auto" | "none") {
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return new Response(
+          JSON.stringify({
+            results: {
+              "srv-live": {
+                ok: true,
+                role: "owner",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                serverConfig: {
+                  transportType: "http",
+                  url: "https://target.example.com/mcp",
+                  authMethod,
+                },
+                oauthAccessToken: null,
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.endsWith("/web/oauth/force-refresh")) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            code: "refresh_token_invalid",
+            message: "No hosted OAuth credential found.",
+          }),
+          { status: 401, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+  }
+
+  const params = {
+    serverId: "srv-live",
+    projectId: "proj-1",
+    serverDisplayName: "Live Server",
+    bearer: "bearer-xyz",
+  };
+
+  it("tags a discover 401 as oauthRequired with the X-MCP-Auth-Required header", async () => {
+    stubAuthorizeBatch("auto");
+    const { c, headers } = fakeExecutorContext();
+
+    const response: any = await executeLocalServerConnect(c, params, {
+      removeOnFailure: true,
+    });
+
+    expect(response.status).toBe(401);
+    expect(response.body).toMatchObject({
+      success: false,
+      oauthRequired: true,
+      serverId: "srv-live",
+      serverName: "Live Server",
+    });
+    expect(headers["X-MCP-Auth-Required"]).toBe("oauth");
+  });
+
+  it("returns 401 with a hint (no escalation tag) for an explicit-none server", async () => {
+    stubAuthorizeBatch("none");
+    const { c, headers } = fakeExecutorContext();
+
+    const response: any = await executeLocalServerConnect(c, params, {
+      removeOnFailure: true,
+    });
+
+    // Status parity with the hosted mapping (mapRuntimeError → 401), but no
+    // oauthRequired: the user chose No Authentication, nothing auto-escalates.
+    expect(response.status).toBe(401);
+    expect(response.body.oauthRequired).toBeUndefined();
+    expect(response.body.upstreamAuthRequired).toBe(true);
+    expect(response.body.error).toContain(
+      "Switch Authentication to Auto or OAuth"
+    );
+    // The header still suppresses authFetch's session/guest retries.
+    expect(headers["X-MCP-Auth-Required"]).toBe("oauth");
+  });
+
+  it("keeps non-401 connect failures on the generic 500 envelope", async () => {
+    stubAuthorizeBatch("auto");
+    const { c, headers } = fakeExecutorContext({
+      connectToServer: vi
+        .fn()
+        .mockRejectedValue(new Error("connect ECONNREFUSED 127.0.0.1:9999")),
+    });
+
+    const response: any = await executeLocalServerConnect(c, params, {
+      removeOnFailure: true,
+    });
+
+    expect(response.status).toBe(500);
+    expect(response.body.oauthRequired).toBeUndefined();
+    expect(headers["X-MCP-Auth-Required"]).toBeUndefined();
   });
 });

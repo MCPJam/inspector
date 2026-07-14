@@ -44,6 +44,11 @@ import {
 } from "@/lib/apis/hosted-oauth-import-tokens-api";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import {
+  autoOAuthEscalation,
+  confirmAutoOAuthEscalation,
+  type AutoEscalationIdentity,
+} from "@/lib/oauth/auto-oauth-escalation";
+import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
   resolveHostedOAuthReturnPath,
@@ -568,86 +573,6 @@ function connectFailureRequiresOAuth(
 ): boolean {
   if (result?.oauthRequired === true) return true;
   return requiresFreshOAuthAuthorization(result?.error);
-}
-
-/**
- * Auto servers that 401'd once and already ran a full user-confirmed OAuth
- * flow this session don't get re-prompted on the next 401 — repeated
- * escalation for the same server is a config problem to surface, not a loop
- * to run (spec: clients SHOULD limit step-up retries). sessionStorage, not
- * module state: the OAuth flow leaves the page via `window.location.assign`,
- * so anything in-memory is gone by the time the callback reconnects. Cleared
- * on successful connect.
- */
-const AUTO_OAUTH_ESCALATION_STORAGE_KEY = "mcp-auto-oauth-escalated";
-
-function readAutoEscalationSet(): Set<string> {
-  try {
-    const raw = sessionStorage.getItem(AUTO_OAUTH_ESCALATION_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return new Set(Array.isArray(parsed) ? parsed.filter(
-      (v): v is string => typeof v === "string"
-    ) : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function writeAutoEscalationSet(set: Set<string>): void {
-  try {
-    sessionStorage.setItem(
-      AUTO_OAUTH_ESCALATION_STORAGE_KEY,
-      JSON.stringify([...set])
-    );
-  } catch {
-    // Storage unavailable (private mode/quota) — degrade to re-prompting.
-  }
-}
-
-const autoOAuthEscalationAttempted = {
-  has: (serverName: string) => readAutoEscalationSet().has(serverName),
-  add: (serverName: string) => {
-    const set = readAutoEscalationSet();
-    set.add(serverName);
-    writeAutoEscalationSet(set);
-  },
-  delete: (serverName: string) => {
-    const set = readAutoEscalationSet();
-    if (set.delete(serverName)) writeAutoEscalationSet(set);
-  },
-};
-
-/**
- * Confirm-before-redirect for Auto's OAuth escalation: the user picked
- * "Auto", not "OAuth", so a surprise `window.location.assign` mid-connect
- * reads as a bug. Uses the app's persistent-toast pattern (same shape as the
- * connect-failure "Open XAA Debugger" action) rather than a blocking modal.
- */
-function confirmAutoOAuthEscalation(serverName: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const settle = (value: boolean) => {
-      if (!settled) {
-        settled = true;
-        resolve(value);
-      }
-    };
-    toast(`"${serverName}" requires authorization`, {
-      description:
-        "Continue with OAuth? You'll be redirected to the server's sign-in page.",
-      duration: Infinity,
-      action: {
-        label: "Continue with OAuth",
-        onClick: () => settle(true),
-      },
-      cancel: {
-        label: "Not now",
-        onClick: () => settle(false),
-      },
-      onDismiss: () => settle(false),
-      onAutoClose: () => settle(false),
-    });
-  });
 }
 
 export function shouldRetryOAuthConnectionFailure(
@@ -2980,6 +2905,14 @@ export function useServerState({
 
       try {
         if (formData.type === "http" && formData.useOAuth && formData.url) {
+          // Keyed by project + server id so identically named servers across
+          // projects don't share escalation state; name is the last-resort
+          // key for servers that haven't synced an id yet.
+          const escalationIdentity: AutoEscalationIdentity = {
+            projectId: appState.activeProjectId,
+            serverId: hostedServerId ?? null,
+            serverName: formData.name,
+          };
           const serverConfig = {
             url: formData.url,
             ...(formData.headers && Object.keys(formData.headers).length > 0
@@ -2995,7 +2928,7 @@ export function useServerState({
           );
           if (isStaleOp(formData.name, token)) return;
           if (storedCredentialResult.success) {
-            autoOAuthEscalationAttempted.delete(formData.name);
+            autoOAuthEscalation.markSucceeded(escalationIdentity);
             dispatch({
               type: "CONNECT_SUCCESS",
               name: formData.name,
@@ -3033,8 +2966,10 @@ export function useServerState({
             return;
           }
           // Auto escalation gate: the user picked Auto, not OAuth, so a 401
-          // asks before redirecting — once per session per server (a second
-          // 401 after a completed flow is a config problem, not a retry).
+          // asks before redirecting. A still-pending marker means a confirmed
+          // flow already ran and the server 401'd again — surface the config
+          // problem (and clear, so a later manual attempt re-prompts) instead
+          // of looping.
           if (formData.authMethod === "auto") {
             const failWithoutEscalation = (message: string) => {
               dispatch({
@@ -3045,7 +2980,8 @@ export function useServerState({
                   .normalized as any,
               });
             };
-            if (autoOAuthEscalationAttempted.has(formData.name)) {
+            if (autoOAuthEscalation.hasPendingAttempt(escalationIdentity)) {
+              autoOAuthEscalation.markFailed(escalationIdentity);
               const errorMessage = `Server "${formData.name}" still returns 401 after OAuth. Check the server's authorization configuration.`;
               failWithoutEscalation(errorMessage);
               toast.error(errorMessage);
@@ -3059,7 +2995,7 @@ export function useServerState({
               );
               return;
             }
-            autoOAuthEscalationAttempted.add(formData.name);
+            autoOAuthEscalation.markPending(escalationIdentity);
           }
           logger.info("Synced OAuth credentials require a fresh OAuth flow", {
             serverName: formData.name,
@@ -3131,6 +3067,7 @@ export function useServerState({
               );
               if (isStaleOp(formData.name, token)) return;
               if (connectionResult.success) {
+                autoOAuthEscalation.markSucceeded(escalationIdentity);
                 dispatch({
                   type: "CONNECT_SUCCESS",
                   name: formData.name,
@@ -3148,6 +3085,10 @@ export function useServerState({
                     })
                 );
               } else {
+                // Terminal in this page-session: OAuth completed but the
+                // connect failed. Clear the pending marker so a later manual
+                // attempt re-prompts instead of being muted all session.
+                autoOAuthEscalation.markFailed(escalationIdentity);
                 dispatch({
                   type: "CONNECT_FAILURE",
                   name: formData.name,
@@ -3160,6 +3101,9 @@ export function useServerState({
                 );
               }
             } else {
+              // Redirect pending — the marker stays PENDING on purpose; it's
+              // what survives the page navigation so the post-callback
+              // reconnect doesn't re-prompt.
               toast.success(
                 "OAuth flow initiated. You will be redirected to authorize access."
               );
@@ -3168,6 +3112,8 @@ export function useServerState({
           }
 
           if (isStaleOp(formData.name, token)) return;
+          // OAuth init failed before any redirect — nothing is pending.
+          autoOAuthEscalation.markFailed(escalationIdentity);
           dispatch({
             type: "CONNECT_FAILURE",
             name: formData.name,
@@ -4356,13 +4302,20 @@ export function useServerState({
         };
       }
 
-      // Auto's escalation gate for the reconnect path: same once-per-session
-      // + explicit-confirm rules as handleConnect. Returns null to proceed
-      // into the interactive flow, or the outcome to return immediately.
+      // Auto's escalation gate for the reconnect path: same confirm +
+      // pending/succeeded/failed lifecycle as handleConnect. Returns null to
+      // proceed into the interactive flow, or the outcome to return
+      // immediately. Keyed by project + server id so identically named
+      // servers across projects don't share state.
+      const escalationIdentity: AutoEscalationIdentity = {
+        projectId: appState.activeProjectId,
+        serverId: hostedProjectServerId ?? null,
+        serverName,
+      };
       let autoInteractiveConfirmed = false;
       const gateAutoEscalation = async (): Promise<
         | null
-        | { status: "failed" | "reauth"; error: string }
+        | { status: "failed" | "reauth" | "superseded"; error: string }
       > => {
         if (server.authMethod !== "auto") return null;
         const fail = (errorMessage: string, status: "failed" | "reauth") => {
@@ -4374,7 +4327,11 @@ export function useServerState({
           reportError(errorMessage);
           return { status, error: errorMessage };
         };
-        if (autoOAuthEscalationAttempted.has(serverName)) {
+        if (autoOAuthEscalation.hasPendingAttempt(escalationIdentity)) {
+          // A confirmed flow already ran this session and the server 401'd
+          // again — surface the config problem and clear, so a later manual
+          // attempt re-prompts instead of being muted all session.
+          autoOAuthEscalation.markFailed(escalationIdentity);
           return fail(
             `Server "${serverName}" still returns 401 after OAuth. Check the server's authorization configuration.`,
             "failed"
@@ -4390,13 +4347,21 @@ export function useServerState({
           );
         }
         const proceed = await confirmAutoOAuthEscalation(serverName);
+        // A newer op superseded this one while the prompt sat open — don't
+        // write ITS marker state (that would poison the newer attempt).
+        if (isStaleOp(serverName, token)) {
+          return {
+            status: "superseded",
+            error: "Reconnection superseded",
+          };
+        }
         if (!proceed) {
           return fail(
             `Server "${serverName}" requires authorization. Reconnect to sign in with OAuth.`,
             "failed"
           );
         }
-        autoOAuthEscalationAttempted.add(serverName);
+        autoOAuthEscalation.markPending(escalationIdentity);
         autoInteractiveConfirmed = true;
         return null;
       };
@@ -4418,7 +4383,7 @@ export function useServerState({
             };
           }
           if (result.success) {
-            autoOAuthEscalationAttempted.delete(serverName);
+            autoOAuthEscalation.markSucceeded(escalationIdentity);
             dispatch({
               type: "CONNECT_SUCCESS",
               name: serverName,
@@ -4564,6 +4529,10 @@ export function useServerState({
               error: authResult.error,
             };
           }
+          if (autoInteractiveConfirmed) {
+            // OAuth init failed before any redirect — nothing is pending.
+            autoOAuthEscalation.markFailed(escalationIdentity);
+          }
           dispatch({
             type: "CONNECT_FAILURE",
             name: serverName,
@@ -4592,7 +4561,7 @@ export function useServerState({
           };
         }
         if (result.success) {
-          autoOAuthEscalationAttempted.delete(serverName);
+          autoOAuthEscalation.markSucceeded(escalationIdentity);
           dispatch({
             type: "CONNECT_SUCCESS",
             name: serverName,
@@ -4606,6 +4575,12 @@ export function useServerState({
             logger.warn("Failed to fetch init info", { serverName, err })
           );
           return { status: "connected" };
+        }
+        if (autoInteractiveConfirmed) {
+          // Terminal in this page-session: OAuth completed but the connect
+          // failed. Clear the pending marker so a later manual attempt
+          // re-prompts instead of being muted all session.
+          autoOAuthEscalation.markFailed(escalationIdentity);
         }
         const errorMessage = result.error || "Reconnection failed";
         dispatch({
