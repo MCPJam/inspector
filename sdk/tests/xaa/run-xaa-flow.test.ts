@@ -1045,4 +1045,110 @@ describe("runXaaFlow", () => {
     expect(postedTo(CAPABLE_TOKEN)).toBe(true);
     expect(postedTo(PLAIN_TOKEN)).toBe(false);
   });
+
+  it("drives a full SAML run through the in-process executor (saml input + saml-nameid output)", async () => {
+    global.fetch = stubFetch({
+      token: {
+        status: 200,
+        body: {
+          access_token: "at-saml",
+          token_type: "Bearer",
+          expires_in: 300,
+        },
+      },
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      email: "u@example.com",
+      clientId: "client-1",
+      identityAssertionFormat: "saml",
+      subjectIdentifierFormat: "saml-nameid",
+    });
+
+    expect(result.completed).toBe(true);
+    expect(result.idJag?.verified).toBe(true);
+    expect(result.idJag?.claims).toMatchObject({
+      iss: ISSUER,
+      sub: "user-1",
+      aud: AS_ISSUER,
+      client_id: "client-1",
+      email: "u@example.com",
+    });
+    expect(result.idJag?.claims.sub_id).toEqual({
+      format: "saml-nameid",
+      issuer: ISSUER,
+      nameid: "user-1",
+      // The TARGET RAS entity ID — never the SAML assertion's own audience.
+      sp_name_qualifier: AS_ISSUER,
+      nameid_format: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+    });
+    expect(result.redemption?.tokenIssued).toBe(true);
+    expect(result.mcp?.ok).toBe(true);
+  });
+
+  it("keeps the two axes independent: SAML input with the default oauth-sub output mints no sub_id", async () => {
+    global.fetch = stubFetch({
+      token: {
+        status: 200,
+        body: { access_token: "at-saml", token_type: "Bearer" },
+      },
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+      identityAssertionFormat: "saml",
+    });
+
+    expect(result.completed).toBe(true);
+    expect(result.idJag?.claims.sub).toBe("user-1");
+    expect(result.idJag?.claims).not.toHaveProperty("sub_id");
+  });
+
+  it("scores a SAML negative probe and tampers every subject hint", async () => {
+    global.fetch = stubFetch({
+      tokenResponses: [
+        {
+          status: 200,
+          body: { access_token: "baseline-token", token_type: "Bearer" },
+        },
+        { status: 401, body: { error: "invalid_grant" } },
+      ],
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      email: "u@example.com",
+      clientId: "client-1",
+      negativeTestMode: "unknown_sub",
+      identityAssertionFormat: "saml",
+      subjectIdentifierFormat: "saml-nameid",
+    });
+
+    expect(result.negativeProbe).toMatchObject({
+      mode: "unknown_sub",
+      baselineAccepted: true,
+      outcome: "rejected",
+    });
+    expect(result.completed).toBe(true);
+    // The probe ID-JAG must not leak ANY resolvable subject hint.
+    expect(result.idJag?.claims.sub).toBe("unknown-user-00000");
+    expect(
+      (result.idJag?.claims.sub_id as Record<string, unknown>).nameid
+    ).toBe("unknown-user-00000");
+    expect(result.idJag?.claims.email).not.toBe("u@example.com");
+  });
 });

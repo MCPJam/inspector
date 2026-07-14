@@ -177,13 +177,19 @@ vi.mock("../xaa/XAAPeopleStrip", () => ({
 }));
 
 vi.mock("../ui/resizable", () => ({
-  ResizablePanelGroup: ({ children }: { children?: ReactNode }) => (
-    <div>{children}</div>
-  ),
+  ResizablePanelGroup: ({
+    children,
+    direction,
+  }: {
+    children?: ReactNode;
+    direction?: "horizontal" | "vertical";
+  }) => <div data-resizable-direction={direction}>{children}</div>,
   ResizablePanel: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
   ),
-  ResizableHandle: () => <div />,
+  ResizableHandle: ({ "aria-label": ariaLabel }: { "aria-label"?: string }) => (
+    <div role="separator" aria-label={ariaLabel} />
+  ),
 }));
 
 vi.mock("../xaa/XAASequenceDiagram", () => ({
@@ -249,14 +255,24 @@ vi.mock("../xaa/registration/XAAResourceAppsSection", () => ({
 let capturedScorecardInput: any = null;
 vi.mock("../xaa/NegativeTestScorecard", () => ({
   NegativeTestScorecard: ({
-    unlocked,
     input,
+    unlocked,
+    unavailableReason,
   }: {
+    input: { audience?: string } | null;
     unlocked: boolean;
-    input: unknown;
+    unavailableReason?: string;
   }) => {
     capturedScorecardInput = input;
-    return <div data-testid="xaa-scorecard" data-unlocked={String(unlocked)} />;
+    return (
+      <div
+        data-testid="xaa-scorecard"
+        data-unlocked={String(unlocked)}
+        data-has-input={String(input !== null)}
+        data-audience={input?.audience ?? ""}
+        data-unavailable-reason={unavailableReason ?? ""}
+      />
+    );
   },
 }));
 
@@ -264,8 +280,11 @@ const runAllMock = vi.fn();
 let capturedMachineConfig: any = null;
 let machineShouldComplete = true;
 // Extra fields the fake machine merges into the completed state (e.g. a
-// grantedScope for downscoping tests).
+// grantedScope for downscoping tests). `machineCompleteExtras` (People tests)
+// spreads AFTER completion so it can override; `machineCompletionUpdates`
+// (SAML tests) spreads BEFORE so completion fields win. Both default to {}.
 let machineCompleteExtras: Record<string, unknown> = {};
+let machineCompletionUpdates: Record<string, unknown> = {};
 // When set, runAll parks this failure state instead of completing.
 let machineFailure: Record<string, unknown> | null = null;
 vi.mock("@/lib/xaa/debug-state-machine-adapter", () => ({
@@ -281,6 +300,7 @@ vi.mock("@/lib/xaa/debug-state-machine-adapter", () => ({
           config.updateState({ isBusy: false, ...machineFailure });
         } else if (machineShouldComplete) {
           config.updateState({
+            ...machineCompletionUpdates,
             currentStep: "complete",
             isBusy: false,
             ...machineCompleteExtras,
@@ -322,6 +342,7 @@ describe("XAAFlowTab", () => {
     capturedServerModalProps = null;
     machineShouldComplete = true;
     machineCompleteExtras = {};
+    machineCompletionUpdates = {};
     machineFailure = null;
     resourceApps = [];
     localStorage.clear();
@@ -348,21 +369,34 @@ describe("XAAFlowTab", () => {
     currentTarget = makeTarget();
   });
 
+  it("places the negative-test scorecard behind a vertical resize handle", () => {
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
+
+    expect(
+      screen.getByRole("separator", {
+        name: /resize negative-test scorecard/i,
+      })
+    ).toBeInTheDocument();
+    expect(
+      screen
+        .getByTestId("xaa-scorecard")
+        .closest('[data-resizable-direction="vertical"]')
+    ).not.toBeNull();
+  });
+
   it("shows the not-testable state naming the server, with a configure CTA", () => {
     currentTarget = makeTarget({ isTestable: false });
 
-    render(
-      <XAAFlowTab serverConfigs={{}} selectedServerName="local-stdio" />,
-    );
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="local-stdio" />);
 
     expect(screen.getByText(/Not XAA-compatible/i)).toBeInTheDocument();
     // The card names the selected server and points at the config modal.
     expect(screen.getByText("local-stdio")).toBeInTheDocument();
     expect(
-      screen.getByText(/needs an HTTP URL and OAuth/i),
+      screen.getByText(/needs an HTTP URL and OAuth/i)
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /configure server to test/i }),
+      screen.getByRole("button", { name: /configure server to test/i })
     ).toBeInTheDocument();
     // No run controls (and no top-bar Run all) in the not-testable state.
     expect(screen.queryByTestId("logger-run-all")).not.toBeInTheDocument();
@@ -378,7 +412,7 @@ describe("XAAFlowTab", () => {
         serverConfigs={{}}
         selectedServerName="local-stdio"
         onSelectServer={onSelectServer}
-      />,
+      />
     );
 
     await user.click(screen.getByRole("button", { name: /back to start/i }));
@@ -391,11 +425,11 @@ describe("XAAFlowTab", () => {
       <XAAFlowTab
         serverConfigs={{ s1: {} as any, s2: {} as any }}
         selectedServerName="none"
-      />,
+      />
     );
 
     const viewed = captureMock.mock.calls.filter(
-      ([event]) => event === "xaa_tab_viewed",
+      ([event]) => event === "xaa_tab_viewed"
     );
     expect(viewed).toHaveLength(1);
     // 1 registration + 2 servers.
@@ -404,9 +438,7 @@ describe("XAAFlowTab", () => {
 
   it("Run all drives the machine and fires telemetry carrying target_source", async () => {
     const user = userEvent.setup();
-    render(
-      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
-    );
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
 
     await user.click(screen.getByRole("button", { name: /run all/i }));
 
@@ -416,14 +448,14 @@ describe("XAAFlowTab", () => {
       expect.objectContaining({
         mode: "local-profile",
         target_source: "bar_server",
-      }),
+      })
     );
   });
 
   it("a debounced identity reset can't wipe a run started within its window", async () => {
     const user = userEvent.setup();
     const { rerender } = render(
-      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
+      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />
     );
 
     // Edit the simulated identity — arms the 400ms debounced flow rebuild.
@@ -437,23 +469,23 @@ describe("XAAFlowTab", () => {
     await user.click(screen.getByRole("button", { name: /run all/i }));
     await waitFor(() => expect(runAllMock).toHaveBeenCalledTimes(1));
     expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
-      "Flow Complete",
+      "Flow Complete"
     );
 
     // Let the debounce elapse: the stale timer must skip (Run all already
     // applied this identity) rather than rebuild and wipe the completed run.
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
-      "Flow Complete",
+      "Flow Complete"
     );
   });
 
   it("retargets the run summary when the selected server changes", () => {
     const { rerender } = render(
-      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
+      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />
     );
     expect(screen.getByTestId("logger-server-url")).toHaveTextContent(
-      "https://staging.mcp.example.com",
+      "https://staging.mcp.example.com"
     );
 
     currentTarget = makeTarget({
@@ -466,14 +498,14 @@ describe("XAAFlowTab", () => {
     rerender(<XAAFlowTab serverConfigs={{}} selectedServerName="prod" />);
 
     expect(screen.getByTestId("logger-server-url")).toHaveTextContent(
-      "https://prod.mcp.example.com",
+      "https://prod.mcp.example.com"
     );
   });
 
   it("unlocks the scorecard per target — a green run on one leaves another locked", async () => {
     const user = userEvent.setup();
     const { rerender } = render(
-      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
+      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />
     );
 
     // A successful run unlocks staging's scorecard.
@@ -481,8 +513,8 @@ describe("XAAFlowTab", () => {
     await waitFor(() =>
       expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
         "data-unlocked",
-        "true",
-      ),
+        "true"
+      )
     );
 
     // Switching to a different server shows a locked scorecard — the green run
@@ -498,7 +530,47 @@ describe("XAAFlowTab", () => {
 
     expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
       "data-unlocked",
-      "false",
+      "false"
+    );
+  });
+
+  it("uses the discovered issuer for a confidential server whose AS metadata discovery was skipped", async () => {
+    const user = userEvent.setup();
+    currentTarget = makeTarget({
+      usesServerSideSecret: true,
+      serverId: "srv_1",
+      projectId: "proj_1",
+    });
+    machineCompletionUpdates = {
+      authzServerIssuer: "https://as.example.com",
+      resourceMetadata: {
+        resource: "https://staging.mcp.example.com",
+      },
+    };
+
+    render(
+      <XAAFlowTab
+        serverConfigs={{ staging: {} as any }}
+        selectedServerName="staging"
+        projectId="proj_1"
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-audience",
+        "https://as.example.com"
+      )
+    );
+    expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+      "data-has-input",
+      "true"
+    );
+    expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+      "data-unavailable-reason",
+      ""
     );
   });
 
@@ -511,11 +583,9 @@ describe("XAAFlowTab", () => {
     });
     render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
 
+    expect(screen.getByRole("button", { name: /run all/i })).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: /run all/i }),
-    ).toBeDisabled();
-    expect(
-      screen.getByText(/couldn't resolve this server's saved secret/i),
+      screen.getByText(/couldn't resolve this server's saved secret/i)
     ).toBeInTheDocument();
   });
 
@@ -528,7 +598,7 @@ describe("XAAFlowTab", () => {
     });
     render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
     expect(
-      screen.getByText(/resolving this server's saved secret/i),
+      screen.getByText(/resolving this server's saved secret/i)
     ).toBeInTheDocument();
   });
 
@@ -552,7 +622,7 @@ describe("XAAFlowTab", () => {
     render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
     expect(screen.queryByText("Configure Target")).not.toBeInTheDocument();
     expect(
-      screen.queryByText(/Configure XAA Debugger/i),
+      screen.queryByText(/Configure XAA Debugger/i)
     ).not.toBeInTheDocument();
   });
 
@@ -582,10 +652,10 @@ describe("XAAFlowTab", () => {
     await user.click(screen.getByTestId("select-registration"));
 
     expect(
-      screen.getByText(/Using registered app — overrides the bar selection/i),
+      screen.getByText(/Using registered app — overrides the bar selection/i)
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /use bar server/i }),
+      screen.getByRole("button", { name: /use bar server/i })
     ).toBeInTheDocument();
   });
 
@@ -604,7 +674,7 @@ describe("XAAFlowTab", () => {
       <XAAFlowTab
         serverConfigs={{ staging: {} as any }}
         selectedServerName="staging"
-      />,
+      />
     );
 
     expect(capturedServerModalProps).toMatchObject({
@@ -619,7 +689,7 @@ describe("XAAFlowTab", () => {
     await user.click(screen.getByRole("button", { name: /run all/i }));
 
     const started = captureMock.mock.calls.find(
-      ([event]) => event === "xaa_flow_started",
+      ([event]) => event === "xaa_flow_started"
     );
     expect(started?.[1].target_id).toMatch(/^[0-9a-f]{8}$/);
     expect(started?.[1].target_id).not.toContain("staging");
@@ -631,14 +701,14 @@ describe("XAAFlowTab", () => {
     // Success site: the run reaches complete (effect-driven event).
     machineShouldComplete = true;
     const { unmount } = render(
-      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
+      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />
     );
     await user.click(screen.getByRole("button", { name: /run all/i }));
     await waitFor(() =>
       expect(captureMock).toHaveBeenCalledWith(
         "xaa_flow_completed",
-        expect.objectContaining({ success: true, target_source: "bar_server" }),
-      ),
+        expect.objectContaining({ success: true, target_source: "bar_server" })
+      )
     );
     unmount();
 
@@ -653,8 +723,8 @@ describe("XAAFlowTab", () => {
         expect.objectContaining({
           success: false,
           target_source: "bar_server",
-        }),
-      ),
+        })
+      )
     );
   });
 
@@ -663,24 +733,24 @@ describe("XAAFlowTab", () => {
     // Configure Server modal and persisted on the server config. The flow reads
     // it from serverConfigs[selectedServerName].registrationMode.
     const withStrategy = (strategy: string) =>
-      ({ staging: { registrationMode: strategy } }) as any;
+      ({ staging: { registrationMode: strategy } } as any);
 
     it("threads a persisted dcr strategy to the machine, with the session cache", () => {
       render(
         <XAAFlowTab
           serverConfigs={withStrategy("dcr")}
           selectedServerName="staging"
-        />,
+        />
       );
 
       // No on-flow selector band any more.
       expect(
-        screen.queryByText(/client registration/i),
+        screen.queryByText(/client registration/i)
       ).not.toBeInTheDocument();
       expect(capturedMachineConfig.registrationStrategy).toBe("dcr");
       expect(capturedMachineConfig.dcrCredentialCache).toBeDefined();
       expect(capturedMachineConfig.dcrCacheTargetKey).toBe(
-        currentTarget.targetKey,
+        currentTarget.targetKey
       );
     });
 
@@ -689,7 +759,7 @@ describe("XAAFlowTab", () => {
         <XAAFlowTab
           serverConfigs={{ staging: {} as any }}
           selectedServerName="staging"
-        />,
+        />
       );
       expect(capturedMachineConfig.registrationStrategy).toBe("preregistered");
     });
@@ -708,7 +778,7 @@ describe("XAAFlowTab", () => {
           serverConfigs={withStrategy("dcr")}
           selectedServerName="staging"
           projectId="proj_1"
-        />,
+        />
       );
       expect(capturedMachineConfig.registrationStrategy).toBe("dcr");
       expect(capturedMachineConfig.serverId).toBeUndefined();
@@ -725,7 +795,7 @@ describe("XAAFlowTab", () => {
           serverConfigs={{ staging: {} as any }}
           selectedServerName="staging"
           projectId="proj_1"
-        />,
+        />
       );
       expect(capturedMachineConfig.registrationStrategy).toBe("preregistered");
       expect(capturedMachineConfig.serverId).toBe("srv_1");
@@ -737,15 +807,15 @@ describe("XAAFlowTab", () => {
         <XAAFlowTab
           serverConfigs={{ staging: {} as any }}
           selectedServerName="staging"
-        />,
+        />
       );
       // Drive the run to completion so a later strategy change must confirm.
       await user.click(screen.getByRole("button", { name: /run all/i }));
       await waitFor(() =>
         expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
           "data-unlocked",
-          "true",
-        ),
+          "true"
+        )
       );
 
       // Persisted strategy changes for the same target → confirm before reset.
@@ -753,25 +823,25 @@ describe("XAAFlowTab", () => {
         <XAAFlowTab
           serverConfigs={withStrategy("dcr")}
           selectedServerName="staging"
-        />,
+        />
       );
       await waitFor(() =>
         expect(
-          screen.getByRole("button", { name: /keep current run/i }),
-        ).toBeInTheDocument(),
+          screen.getByRole("button", { name: /keep current run/i })
+        ).toBeInTheDocument()
       );
 
       // Keep the current run, then start a FRESH run: the fresh-run path
       // (Run all → rebuildFlow) must use the newly persisted strategy, not a
       // stale pin. This is the exact path the stale-pin bug regressed.
       await user.click(
-        screen.getByRole("button", { name: /keep current run/i }),
+        screen.getByRole("button", { name: /keep current run/i })
       );
       // Start a fresh run. On the old pinned code this rebuilt with the stale
       // preregistered strategy; the machine driving Run all must be dcr.
       await user.click(screen.getByRole("button", { name: /run all/i }));
       await waitFor(() =>
-        expect(capturedMachineConfig.registrationStrategy).toBe("dcr"),
+        expect(capturedMachineConfig.registrationStrategy).toBe("dcr")
       );
     });
 
@@ -787,7 +857,7 @@ describe("XAAFlowTab", () => {
         <XAAFlowTab
           serverConfigs={withStrategy("dcr")}
           selectedServerName="staging"
-        />,
+        />
       );
       expect(capturedMachineConfig.registrationStrategy).toBe("preregistered");
     });
@@ -1484,4 +1554,3 @@ describe("XAAFlowTab", () => {
     });
   });
 });
-
