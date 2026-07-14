@@ -215,12 +215,13 @@ export function XAAFlowTab({
   const { targetKey, isTestable } = target;
 
   // The positive-run unlock must be specific to the exact issuer the run
-  // exercised: switching issuer mode (local↔hosted) or organization changes
-  // the minted `iss`, so a green run under one must NOT unlock negative tests
-  // under another. Key the gate on target + issuer mode + org.
+  // exercised: switching issuer mode (local↔hosted), organization, or issuer
+  // kind (org↔anonymous, e.g. guest→signed-in promotion) changes the minted
+  // `iss`, so a green run under one must NOT unlock negative tests under
+  // another. Key the gate on target + issuer mode + org + kind.
   const runGateKey = `${targetKey}|${
     hostedIssuerOptIn ? "hosted" : "local"
-  }|${organizationId ?? ""}`;
+  }|${organizationId ?? ""}|${hostedIssuerKind}`;
 
   // ── Registration strategy (Client↔Resource-AS leg) ──────────────────
   // Persisted per-server and chosen in the "Configure Server to Test" modal;
@@ -1023,6 +1024,9 @@ export function XAAFlowTab({
               ? {
                   ...scorecard.input,
                   organizationId: organizationId ?? null,
+                  // Guests mint under /g/; without issuerKind the negative-test
+                  // run would default to /o/ and 403 for a guest.
+                  issuerKind: hostedIssuerKind,
                   ...(hostedIssuerOptIn ? { issuerMode: "hosted" as const } : {}),
                 }
               : null

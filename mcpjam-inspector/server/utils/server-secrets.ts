@@ -54,7 +54,10 @@ async function postToConvexAuthorized(args: {
   serviceName: string;
   // Real end-user IP as seen by THIS server. Convex's own x-forwarded-for
   // names the inspector server (the direct peer), so the guest per-IP quota
-  // would collapse into one bucket without this forward.
+  // would collapse into one bucket without this forward. The backend only
+  // trusts x-mcpjam-client-ip when accompanied by a valid inspector service
+  // token, so we send that token alongside it — otherwise a direct caller
+  // could spoof the IP to evade the per-IP cap.
   clientIp?: string | null;
 }): Promise<any> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -71,6 +74,11 @@ async function postToConvexAuthorized(args: {
     CONVEX_POST_TIMEOUT_MS
   );
 
+  // Only forward the client IP when we can also prove Inspector provenance
+  // (INSPECTOR_SERVICE_TOKEN); the backend ignores an unauthenticated IP.
+  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const forwardIp = Boolean(args.clientIp && inspectorServiceToken);
+
   let body: any = null;
   let response: Response;
   try {
@@ -79,7 +87,12 @@ async function postToConvexAuthorized(args: {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${args.bearerToken}`,
-        ...(args.clientIp ? { "x-mcpjam-client-ip": args.clientIp } : {}),
+        ...(forwardIp
+          ? {
+              "x-mcpjam-client-ip": args.clientIp as string,
+              "x-inspector-service-token": inspectorServiceToken as string,
+            }
+          : {}),
       },
       body: JSON.stringify(args.body),
       signal: controller.signal,
