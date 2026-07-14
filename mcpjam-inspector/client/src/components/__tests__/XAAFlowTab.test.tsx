@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -51,15 +51,54 @@ let runSettingsState: {
   email: string;
   negativeTestMode: "valid" | "expired" | "wrong_audience" | "bad_signature";
 } = { userId: "u", email: "e@example.com", negativeTestMode: "valid" };
+let personSelectionState: Record<string, string> = {};
 const setIdentityMock = vi.fn();
 const setNegativeTestModeMock = vi.fn();
+const setSelectedPersonIdMock = vi.fn();
 vi.mock("@/hooks/useXaaRunSettings", () => ({
   useXaaRunSettings: () => ({
     ...runSettingsState,
+    issuerMode: "local",
+    selectedPersonIdByProject: personSelectionState,
     isDefaultIdentity: false,
     setIdentity: setIdentityMock,
     setNegativeTestMode: setNegativeTestModeMock,
+    setIssuerMode: vi.fn(),
+    setSelectedPersonId: setSelectedPersonIdMock,
   }),
+}));
+
+// Controllable "Run as" roster. The strip itself is mocked (tested in its own
+// suite) — tab tests assert the wiring: selection resolution, reset, and the
+// per-person outcome map exposed through outcomeFor.
+type TestPerson = {
+  _id: string;
+  name: string;
+  subject: string;
+  email: string;
+  createdAt: number;
+  updatedAt: number;
+};
+let peopleState: {
+  people: TestPerson[] | undefined;
+  isLoading: boolean;
+  isAvailable: boolean;
+} = { people: undefined, isLoading: false, isAvailable: false };
+vi.mock("@/hooks/useXaaPeople", () => ({
+  useXaaPeople: () => peopleState,
+  useXaaPeopleMutations: () => ({
+    create: vi.fn(),
+    update: vi.fn(),
+    remove: vi.fn(),
+  }),
+}));
+
+let capturedPeopleStripProps: any = null;
+vi.mock("../xaa/XAAPeopleStrip", () => ({
+  XAAPeopleStrip: (props: any) => {
+    capturedPeopleStripProps = props;
+    return <div data-testid="xaa-people-strip" />;
+  },
 }));
 
 vi.mock("../ui/resizable", () => ({
@@ -141,6 +180,11 @@ vi.mock("../xaa/NegativeTestScorecard", () => ({
 const runAllMock = vi.fn();
 let capturedMachineConfig: any = null;
 let machineShouldComplete = true;
+// Extra fields the fake machine merges into the completed state (e.g. a
+// grantedScope for downscoping tests).
+let machineCompleteExtras: Record<string, unknown> = {};
+// When set, runAll parks this failure state instead of completing.
+let machineFailure: Record<string, unknown> | null = null;
 vi.mock("@/lib/xaa/debug-state-machine-adapter", () => ({
   createInspectorXAAStateMachine: (config: any) => {
     capturedMachineConfig = config;
@@ -150,8 +194,14 @@ vi.mock("@/lib/xaa/debug-state-machine-adapter", () => ({
       // unlocks the scorecard); an unsuccessful one leaves it mid-flow.
       runAll: vi.fn(async () => {
         runAllMock();
-        if (machineShouldComplete) {
-          config.updateState({ currentStep: "complete", isBusy: false });
+        if (machineFailure) {
+          config.updateState({ isBusy: false, ...machineFailure });
+        } else if (machineShouldComplete) {
+          config.updateState({
+            currentStep: "complete",
+            isBusy: false,
+            ...machineCompleteExtras,
+          });
         }
       }),
     };
@@ -188,6 +238,8 @@ describe("XAAFlowTab", () => {
     capturedMachineConfig = null;
     capturedServerModalProps = null;
     machineShouldComplete = true;
+    machineCompleteExtras = {};
+    machineFailure = null;
     resourceApps = [];
     localStorage.clear();
     runSettingsState = {
@@ -195,8 +247,12 @@ describe("XAAFlowTab", () => {
       email: "e@example.com",
       negativeTestMode: "valid",
     };
+    personSelectionState = {};
+    peopleState = { people: undefined, isLoading: false, isAvailable: false };
+    capturedPeopleStripProps = null;
     setIdentityMock.mockClear();
     setNegativeTestModeMock.mockClear();
+    setSelectedPersonIdMock.mockClear();
     currentTarget = makeTarget();
   });
 
@@ -642,6 +698,257 @@ describe("XAAFlowTab", () => {
         />,
       );
       expect(capturedMachineConfig.registrationStrategy).toBe("preregistered");
+    });
+  });
+
+  describe("Run as people", () => {
+    const bob: TestPerson = {
+      _id: "person_bob",
+      name: "Bob Tables",
+      subject: "bob-001",
+      email: "bob@tables.test",
+      createdAt: 1,
+      updatedAt: 10,
+    };
+
+    function seedRoster(selected = true) {
+      peopleState = { people: [bob], isLoading: false, isAvailable: true };
+      if (selected) personSelectionState = { proj_1: bob._id };
+    }
+
+    /** Target whose runInput carries the person's identity (the real
+     * useXaaTestTarget is mocked wholesale, so tests set it themselves). */
+    function personTarget(extra: Record<string, unknown> = {}) {
+      return makeTarget({
+        runInput: {
+          ...makeTarget().runInput,
+          userId: bob.subject,
+          email: bob.email,
+          ...extra,
+        },
+      } as Partial<XaaTestTarget>);
+    }
+
+    function renderTab() {
+      return render(
+        <XAAFlowTab
+          serverConfigs={{}}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+    }
+
+    it("passes selection through and toggling calls the per-project setter", () => {
+      seedRoster();
+      currentTarget = personTarget();
+      renderTab();
+
+      expect(capturedPeopleStripProps.selectedPersonId).toBe(bob._id);
+      expect(capturedPeopleStripProps.disabled).toBe(false);
+      capturedPeopleStripProps.onSelectPerson(null);
+      expect(setSelectedPersonIdMock).toHaveBeenCalledWith("proj_1", null);
+    });
+
+    it("a person switch resets a completed flow immediately (no debounce)", async () => {
+      const user = userEvent.setup();
+      peopleState = { people: [bob], isLoading: false, isAvailable: true };
+      const { rerender } = renderTab();
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
+          "Flow Complete",
+        ),
+      );
+
+      // Select Bob: selection + the resolved runInput identity change together.
+      personSelectionState = { proj_1: bob._id };
+      currentTarget = personTarget();
+      rerender(
+        <XAAFlowTab
+          serverConfigs={{}}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+
+      // Synchronous reset — back to Start without waiting out the 400ms
+      // debounce that typed identity edits use.
+      expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
+        "Start",
+      );
+    });
+
+    it("ignores selection changes while the flow is busy", () => {
+      seedRoster(false);
+      currentTarget = makeTarget();
+      renderTab();
+
+      act(() => {
+        capturedMachineConfig.updateState({ isBusy: true });
+      });
+      expect(capturedPeopleStripProps.disabled).toBe(true);
+      // Backstop even if the strip's disabled state were bypassed.
+      capturedPeopleStripProps.onSelectPerson(bob._id);
+      expect(setSelectedPersonIdMock).not.toHaveBeenCalled();
+    });
+
+    it("records 'allowed' for the person the run started as", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      currentTarget = personTarget();
+      renderTab();
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(capturedPeopleStripProps.outcomeFor(bob._id)).toMatchObject({
+          status: "allowed",
+        }),
+      );
+    });
+
+    it("records 'downscoped' when the AS granted a narrower scope", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      currentTarget = personTarget({ scope: "tasks:read tasks:write" });
+      machineCompleteExtras = { grantedScope: "tasks:read" };
+      renderTab();
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(capturedPeopleStripProps.outcomeFor(bob._id)).toMatchObject({
+          status: "downscoped",
+        }),
+      );
+    });
+
+    it("records 'rejected' with the allowlisted code — never the raw error", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      currentTarget = personTarget();
+      machineFailure = {
+        currentStep: "jwt_bearer_request",
+        error:
+          "Authorization server returned 400 (invalid_grant: subject not provisioned; token=SECRET). Does the authorization server trust the synthetic issuer JWKS?",
+      };
+      renderTab();
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(capturedPeopleStripProps.outcomeFor(bob._id)).toMatchObject({
+          status: "rejected",
+          oauthErrorCode: "invalid_grant",
+          failedStep: "jwt_bearer_request",
+        }),
+      );
+      // The recorded outcome must never carry the raw error string (it can
+      // embed tokens) — only the allowlisted code and step enum.
+      const recorded = capturedPeopleStripProps.outcomeFor(bob._id);
+      expect(JSON.stringify(recorded)).not.toContain("SECRET");
+      expect(JSON.stringify(recorded)).not.toContain("provisioned");
+    });
+
+    it("records 'test_error' for a non-policy failure", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      currentTarget = personTarget();
+      machineFailure = {
+        currentStep: "discover_authz_metadata",
+        error: "fetch failed: network unreachable",
+      };
+      renderTab();
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(capturedPeopleStripProps.outcomeFor(bob._id)).toMatchObject({
+          status: "test_error",
+          failedStep: "discover_authz_metadata",
+        }),
+      );
+    });
+
+    it("records nothing for a negative-mode run", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      currentTarget = personTarget({ negativeTestMode: "expired" });
+      renderTab();
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() => expect(runAllMock).toHaveBeenCalledTimes(1));
+      expect(capturedPeopleStripProps.outcomeFor(bob._id)).toBeUndefined();
+    });
+
+    it("hides a recorded outcome when the target's material inputs change", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      currentTarget = personTarget();
+      const { rerender } = renderTab();
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(capturedPeopleStripProps.outcomeFor(bob._id)).toBeDefined(),
+      );
+
+      currentTarget = personTarget({
+        serverUrl: "https://other.mcp.example.com",
+      });
+      rerender(
+        <XAAFlowTab
+          serverConfigs={{}}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+      expect(capturedPeopleStripProps.outcomeFor(bob._id)).toBeUndefined();
+    });
+
+    it("hides a recorded outcome after the person is edited", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      currentTarget = personTarget();
+      const { rerender } = renderTab();
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(capturedPeopleStripProps.outcomeFor(bob._id)).toBeDefined(),
+      );
+
+      // Editing the person bumps updatedAt — the old result may no longer
+      // describe this subject.
+      peopleState = {
+        ...peopleState,
+        people: [{ ...bob, subject: "bob-999", updatedAt: 11 }],
+      };
+      rerender(
+        <XAAFlowTab
+          serverConfigs={{}}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+      expect(capturedPeopleStripProps.outcomeFor(bob._id)).toBeUndefined();
+    });
+
+    it("clears a stale stored selection only after the roster loads without it", () => {
+      peopleState = { people: [bob], isLoading: true, isAvailable: true };
+      personSelectionState = { proj_1: "person_ghost" };
+      currentTarget = makeTarget();
+      const { rerender } = renderTab();
+
+      // Still loading — must not clear (would wipe a valid selection on
+      // every mount).
+      expect(setSelectedPersonIdMock).not.toHaveBeenCalled();
+
+      peopleState = { people: [bob], isLoading: false, isAvailable: true };
+      rerender(
+        <XAAFlowTab
+          serverConfigs={{}}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+      expect(setSelectedPersonIdMock).toHaveBeenCalledWith("proj_1", null);
     });
   });
 });

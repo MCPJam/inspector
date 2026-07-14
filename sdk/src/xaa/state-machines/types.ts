@@ -163,6 +163,10 @@ export interface XAAFlowState {
   accessToken?: string;
   tokenType?: string;
   expiresIn?: number;
+  /** The `scope` the authorization server actually granted on the jwt-bearer
+   * token response, when it returned one. Distinct from `scope` (requested):
+   * a narrower grant is how a RAS downscopes a subject per its own policy. */
+  grantedScope?: string;
   lastRequest?: {
     method: string;
     url: string;
@@ -301,6 +305,7 @@ export const EMPTY_XAA_FLOW_STATE: XAAFlowState = {
   accessToken: undefined,
   tokenType: undefined,
   expiresIn: undefined,
+  grantedScope: undefined,
   lastRequest: undefined,
   lastResponse: undefined,
   httpHistory: [],

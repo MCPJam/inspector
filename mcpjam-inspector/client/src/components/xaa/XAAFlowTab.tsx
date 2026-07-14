@@ -22,10 +22,15 @@ import type { ServerWithName } from "@/hooks/use-app-state";
 import type { ServerFormData } from "@/shared/types.js";
 import { useXaaResourceApps } from "@/hooks/useXaaResourceApps";
 import { useXaaRunSettings } from "@/hooks/useXaaRunSettings";
+import { useXaaPeople } from "@/hooks/useXaaPeople";
 import {
   useXaaTestTarget,
   type XAAFlowInput,
 } from "@/hooks/useXaaTestTarget";
+import {
+  XAAPeopleStrip,
+  type XaaPersonOutcome,
+} from "./XAAPeopleStrip";
 import { XAASequenceDiagram } from "./XAASequenceDiagram";
 import { XAAFlowLogger } from "./XAAFlowLogger";
 import { XAAServerModal } from "./XAAServerModal";
@@ -43,6 +48,7 @@ import {
   type RegistrationStrategy,
   type XAAFlowState,
 } from "@/lib/xaa/types";
+import type { XAAFlowStep } from "@/lib/xaa/types";
 import { XAADcrReRegisterControl } from "./XAADcrReRegisterControl";
 import { createInspectorXAAStateMachine } from "@/lib/xaa/debug-state-machine-adapter";
 import { fetchXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
@@ -82,6 +88,97 @@ function buildFlowStateFromInput(
       ? { dcrRetryMayCreateDuplicate: true }
       : {}),
   });
+}
+
+// ── Per-person outcome recording (session-only) ─────────────────────────────
+
+/** A recorded outcome plus the context that scopes its validity: it renders
+ * only while the person is unedited (updatedAt) and the target's material
+ * inputs are unchanged (fingerprint). */
+interface RecordedPersonOutcome extends XaaPersonOutcome {
+  personUpdatedAt: number;
+  targetFingerprint: string;
+}
+
+/** Material run inputs whose change invalidates a recorded outcome — a result
+ * against one server/AS/client/scope says nothing about another. */
+function computeTargetFingerprint(input: XAAFlowInput): string {
+  return [
+    input.serverUrl,
+    input.authzServerIssuer,
+    input.clientId,
+    input.scope,
+  ].join("|");
+}
+
+/** RFC 6749/8693/8707 error codes we recognize. Only an allowlisted code is
+ * ever stored/rendered — never a raw error string, which can embed tokens. */
+const OAUTH_ERROR_CODES = [
+  "invalid_grant",
+  "access_denied",
+  "invalid_client",
+  "invalid_request",
+  "unauthorized_client",
+  "unsupported_grant_type",
+  "invalid_scope",
+  "invalid_target",
+] as const;
+
+function extractOauthErrorCode(
+  error: string | undefined,
+  lastResponse: XAAFlowState["lastResponse"]
+): string | undefined {
+  // Prefer the structured token response (`{error}` or the proxy envelope's
+  // `{body: {error}}`) over substring-matching the message.
+  const body = lastResponse?.body as Record<string, unknown> | undefined;
+  const candidates = [
+    body?.error,
+    (body?.body as Record<string, unknown> | undefined)?.error,
+  ];
+  for (const candidate of candidates) {
+    if (
+      typeof candidate === "string" &&
+      (OAUTH_ERROR_CODES as readonly string[]).includes(candidate)
+    ) {
+      return candidate;
+    }
+  }
+  if (typeof error === "string") {
+    return OAUTH_ERROR_CODES.find((code) => error.includes(code));
+  }
+  return undefined;
+}
+
+function parseScopeSet(value: string | undefined): Set<string> {
+  return new Set((value ?? "").split(/\s+/).filter(Boolean));
+}
+
+/** Per RFC 6749 §5.1 an omitted `scope` on the token response means "as
+ * requested" — only an explicitly narrower grant counts as downscoped. */
+function isDownscoped(
+  requested: string | undefined,
+  granted: string | undefined
+): boolean {
+  const requestedSet = parseScopeSet(requested);
+  if (requestedSet.size === 0 || granted === undefined) return false;
+  const grantedSet = parseScopeSet(granted);
+  for (const scope of requestedSet) {
+    if (!grantedSet.has(scope)) return true;
+  }
+  return false;
+}
+
+function sameOutcome(
+  a: RecordedPersonOutcome,
+  b: RecordedPersonOutcome
+): boolean {
+  return (
+    a.status === b.status &&
+    a.oauthErrorCode === b.oauthErrorCode &&
+    a.failedStep === b.failedStep &&
+    a.personUpdatedAt === b.personUpdatedAt &&
+    a.targetFingerprint === b.targetFingerprint
+  );
 }
 
 interface XAAFlowTabProps {
@@ -180,11 +277,36 @@ export function XAAFlowTab({
       : "select an organization to mint through the hosted issuer";
   const hostedIssuerOptIn =
     canUseHostedIssuer && runSettings.issuerMode === "hosted";
+  // ── "Run as" people (project-scoped synthetic test identities) ──────
+  const {
+    people,
+    isLoading: peopleLoading,
+    isAvailable: peopleAvailable,
+  } = useXaaPeople({ projectId: projectId ?? null });
+  const selectedPersonId = projectId
+    ? (runSettings.selectedPersonIdByProject[projectId] ?? null)
+    : null;
+  const selectedPerson = useMemo(
+    () => people?.find((p) => p._id === selectedPersonId) ?? null,
+    [people, selectedPersonId]
+  );
+  const { setSelectedPersonId } = runSettings;
+  // Tidy a stale selection (person deleted elsewhere) only once the roster
+  // has LOADED without it — clearing while loading would wipe a valid
+  // selection on every mount.
+  useEffect(() => {
+    if (!projectId || !selectedPersonId || peopleLoading || !people) return;
+    if (!people.some((p) => p._id === selectedPersonId)) {
+      setSelectedPersonId(projectId, null);
+    }
+  }, [projectId, selectedPersonId, peopleLoading, people, setSelectedPersonId]);
+
   const target = useXaaTestTarget({
     server: selectedServer,
     selectedServerName,
     selectedRegistration,
     runSettings,
+    selectedPerson,
     projectId: projectId ?? null,
   });
   const runInput = target.runInput;
@@ -288,8 +410,40 @@ export function XAAFlowTab({
     () => new Set()
   );
 
+  // In-memory per-person outcomes, keyed `${runGateKey}|${personId}` so
+  // hosted/local/org variants never cross-contaminate. Session-only by
+  // design (mirrors positiveRunTargets).
+  const [personOutcomes, setPersonOutcomes] = useState<
+    Map<string, RecordedPersonOutcome>
+  >(() => new Map());
+  const targetFingerprint = computeTargetFingerprint(runInput);
+  // The whole run context is captured atomically at run START — recording
+  // against live values at completion could attribute an old run to a newly
+  // selected person/target/mode.
+  const runContextRef = useRef<{
+    personId: string;
+    personUpdatedAt: number;
+    runGateKey: string;
+    negativeTestMode: NegativeTestMode;
+    targetFingerprint: string;
+  } | null>(null);
+  // The error branch below re-evaluates on every isBusy toggle (single-step
+  // runs park `error` with isBusy=false between steps) — record at most one
+  // error per run.
+  const errorRecordedRef = useRef(false);
+
   const fireFlowStarted = useCallback(() => {
     completedFired.current = false;
+    errorRecordedRef.current = false;
+    runContextRef.current = selectedPerson
+      ? {
+          personId: selectedPerson._id,
+          personUpdatedAt: selectedPerson.updatedAt,
+          runGateKey,
+          negativeTestMode: runInput.negativeTestMode,
+          targetFingerprint,
+        }
+      : null;
     track("xaa_flow_started", {
       location: "xaa_flow_tab",
       mode: runInput.mode,
@@ -302,8 +456,12 @@ export function XAAFlowTab({
     });
   }, [
     runInput.mode,
+    runInput.negativeTestMode,
     target.targetSource,
     targetKey,
+    runGateKey,
+    targetFingerprint,
+    selectedPerson,
     authServerModeForTelemetry,
     effectiveStrategy,
   ]);
@@ -335,6 +493,72 @@ export function XAAFlowTab({
       }
     }
   }, [flowState.currentStep, authServerModeForTelemetry, runGateKey]);
+
+  // Record the run's outcome for the person it STARTED as (captured context —
+  // never the currently-selected person/target). Only valid-mode runs count:
+  // a deliberately-broken negative run says nothing about a subject's access.
+  useEffect(() => {
+    const ctx = runContextRef.current;
+    if (!ctx || ctx.negativeTestMode !== "valid") return;
+
+    let outcome: RecordedPersonOutcome | null = null;
+    if (flowState.currentStep === "complete") {
+      // "Complete" does not prove full access — compare the requested scope
+      // against what the AS actually granted (draft-04 leaves scope decisions
+      // to the RAS).
+      outcome = {
+        status: isDownscoped(flowState.scope, flowState.grantedScope)
+          ? "downscoped"
+          : "allowed",
+        personUpdatedAt: ctx.personUpdatedAt,
+        targetFingerprint: ctx.targetFingerprint,
+      };
+    } else if (flowState.error && !flowState.isBusy) {
+      if (errorRecordedRef.current) return;
+      errorRecordedRef.current = true;
+      const failedStep: XAAFlowStep = flowState.currentStep;
+      const code = extractOauthErrorCode(
+        flowState.error,
+        flowState.lastResponse
+      );
+      // Only a policy-shaped refusal of the jwt-bearer redemption counts as
+      // "rejected" — anything else (discovery, network, invalid_client, an
+      // MCP 401) is a test problem, not your AS ruling on the subject. Even
+      // invalid_grant can be technical, so the code is displayed, not
+      // editorialized.
+      const isPolicyRejection =
+        failedStep === "jwt_bearer_request" &&
+        (code === "invalid_grant" || code === "access_denied");
+      outcome = {
+        status: isPolicyRejection ? "rejected" : "test_error",
+        ...(code ? { oauthErrorCode: code } : {}),
+        failedStep,
+        personUpdatedAt: ctx.personUpdatedAt,
+        targetFingerprint: ctx.targetFingerprint,
+      };
+    }
+    if (!outcome) return;
+
+    const key = `${ctx.runGateKey}|${ctx.personId}`;
+    const next = outcome;
+    // Last-write-wins: a person who failed and then succeeds after the user
+    // fixes their AS must flip. Skip the setState only when the value is
+    // identical (NOT when the key exists — that would freeze the first result).
+    setPersonOutcomes((current) => {
+      const existing = current.get(key);
+      if (existing && sameOutcome(existing, next)) return current;
+      const map = new Map(current);
+      map.set(key, next);
+      return map;
+    });
+  }, [
+    flowState.currentStep,
+    flowState.error,
+    flowState.isBusy,
+    flowState.scope,
+    flowState.grantedScope,
+    flowState.lastResponse,
+  ]);
 
   // ── Negative-test scorecard input ───────────────────────────────────
   const scorecard = useMemo((): {
@@ -462,14 +686,16 @@ export function XAAFlowTab({
   const lastRegistrationStrategy = useRef<RegistrationStrategy>(
     effectiveStrategy
   );
-  // The simulated identity the flow was last (re)built with. Tracked so an
-  // identity edit rebuilds the flow (clearing the already-minted ID token /
-  // ID-JAG that carry the old sub) — without that, advancing step-by-step
-  // keeps sending the stale subject. Seeded from the initial identity so no
-  // spurious reset fires on mount.
+  // The EFFECTIVE identity the flow was last (re)built with (person override,
+  // server override, or run-settings default — whatever runInput resolved).
+  // Tracked so an identity change rebuilds the flow (clearing the
+  // already-minted ID token / ID-JAG that carry the old sub) — without that,
+  // advancing step-by-step keeps sending the stale subject. Seeded from the
+  // initial runInput (which built the initial flow state) so no spurious
+  // reset fires on mount, including for servers with a stored xaaSubject.
   const lastAppliedIdentity = useRef({
-    userId: runSettings.userId,
-    email: runSettings.email,
+    userId: runInput.userId,
+    email: runInput.email,
   });
   const [pendingReset, setPendingReset] = useState<{
     targetKey: string;
@@ -563,14 +789,16 @@ export function XAAFlowTab({
   ]);
 
   // Identity edits rebuild the flow so the next run mints tokens for the new
-  // sub/email. Unlike target/mode (which change discretely), the identity
+  // sub/email. Unlike target/mode (which change discretely), typed identity
   // inputs fire on every keystroke, so the rebuild is debounced — typing
   // "john" resets once, not four times. No confirm dialog: editing the
   // identity is a deliberate "test as someone else", and the chips clearing is
-  // the feedback. The live-read in the auth step covers the debounce window.
+  // the feedback. Compared against the EFFECTIVE runInput identity (not raw
+  // run settings) so an already-applied person/server override never arms a
+  // spurious timer.
   useEffect(() => {
-    const nextUserId = runSettings.userId;
-    const nextEmail = runSettings.email;
+    const nextUserId = runInput.userId;
+    const nextEmail = runInput.email;
     if (
       lastAppliedIdentity.current.userId === nextUserId &&
       lastAppliedIdentity.current.email === nextEmail
@@ -578,10 +806,10 @@ export function XAAFlowTab({
       return;
     }
     const timer = setTimeout(() => {
-      // Another path (Run all, Reset, target switch) may have rebuilt the flow
-      // with this identity while the timer was pending. If so the tracker
-      // already matches — bail rather than wipe that fresh (possibly running)
-      // state a second time.
+      // Another path (Run all, Reset, target switch, person switch) may have
+      // rebuilt the flow with this identity while the timer was pending. If so
+      // the tracker already matches — bail rather than wipe that fresh
+      // (possibly running) state a second time.
       if (
         lastAppliedIdentity.current.userId === nextUserId &&
         lastAppliedIdentity.current.email === nextEmail
@@ -591,7 +819,25 @@ export function XAAFlowTab({
       rebuildFlow();
     }, 400);
     return () => clearTimeout(timer);
-  }, [runSettings.userId, runSettings.email, rebuildFlow]);
+  }, [runInput.userId, runInput.email, rebuildFlow]);
+
+  // A person switch is discrete and resets SYNCHRONOUSLY — a debounce window
+  // here would let the next step reuse an assertion already minted for the
+  // previous person. This also covers a persisted selection resolving after
+  // the roster loads, and edits/deletes of the selected person. It never
+  // rebuilds mid-run (chips are disabled while busy; a roster change during a
+  // run defers to run end — the tracker stays stale so this re-fires when
+  // isBusy flips back).
+  const personIdentityKey = selectedPerson
+    ? `${selectedPerson._id}|${selectedPerson.subject}|${selectedPerson.email}`
+    : null;
+  const lastAppliedPersonKey = useRef(personIdentityKey);
+  useEffect(() => {
+    if (lastAppliedPersonKey.current === personIdentityKey) return;
+    if (flowStateRef.current.isBusy || isRunningAll) return;
+    lastAppliedPersonKey.current = personIdentityKey;
+    rebuildFlow();
+  }, [personIdentityKey, flowState.isBusy, isRunningAll, rebuildFlow]);
 
   useEffect(() => {
     track("xaa_tab_viewed", {
@@ -752,6 +998,34 @@ export function XAAFlowTab({
     authServerModeForTelemetry,
   ]);
 
+  const handleSelectPerson = useCallback(
+    (personId: string | null) => {
+      if (!projectId) return;
+      // Switching identities mid-run could reuse an assertion minted for the
+      // previous person — the strip disables its chips; this is the backstop.
+      if (flowStateRef.current.isBusy || isRunningAll) return;
+      setSelectedPersonId(projectId, personId);
+    },
+    [projectId, isRunningAll, setSelectedPersonId]
+  );
+
+  const outcomeForPerson = useCallback(
+    (personId: string): XaaPersonOutcome | undefined => {
+      const record = personOutcomes.get(`${runGateKey}|${personId}`);
+      if (!record || record.targetFingerprint !== targetFingerprint) {
+        return undefined;
+      }
+      // An edited person invalidates their stale result — the subject/email
+      // that produced it may have changed.
+      const person = people?.find((p) => p._id === personId);
+      if (!person || person.updatedAt !== record.personUpdatedAt) {
+        return undefined;
+      }
+      return record;
+    },
+    [personOutcomes, runGateKey, targetFingerprint, people]
+  );
+
   const continueLabel = !isTestable
     ? "Configure Server to Test"
     : flowState.negativeProbe
@@ -800,6 +1074,16 @@ export function XAAFlowTab({
         onIssuerModeChange={runSettings.setIssuerMode}
         canUseHostedIssuer={canUseHostedIssuer}
         hostedIssuerDisabledReason={hostedIssuerDisabledReason}
+      />
+      <XAAPeopleStrip
+        people={people}
+        isLoading={peopleLoading}
+        isAvailable={peopleAvailable}
+        projectId={projectId ?? null}
+        selectedPersonId={selectedPersonId}
+        onSelectPerson={handleSelectPerson}
+        disabled={flowState.isBusy || isRunningAll}
+        outcomeFor={outcomeForPerson}
       />
       <XAAResourceAppsSection
         organizationId={organizationId ?? null}

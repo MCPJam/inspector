@@ -1938,6 +1938,10 @@ export function createXAAStateMachine(
             typeof tokenResponse.expires_in === "number"
               ? tokenResponse.expires_in
               : undefined,
+          grantedScope:
+            typeof tokenResponse.scope === "string"
+              ? tokenResponse.scope
+              : undefined,
           error: undefined,
           negativeProbe: { outcome: "accepted", status: upstreamStatus },
         });
@@ -1961,6 +1965,10 @@ export function createXAAStateMachine(
         expiresIn:
           typeof tokenResponse.expires_in === "number"
             ? tokenResponse.expires_in
+            : undefined,
+        grantedScope:
+          typeof tokenResponse.scope === "string"
+            ? tokenResponse.scope
             : undefined,
         error: undefined,
       });

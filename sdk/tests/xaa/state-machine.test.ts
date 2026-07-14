@@ -159,6 +159,9 @@ describe("createXAAStateMachine", () => {
               access_token: "access-token",
               token_type: "Bearer",
               expires_in: 300,
+              // The AS narrows the requested scope — the machine must retain
+              // what was actually granted, separate from the requested scope.
+              scope: "read:tools",
             },
           },
           ok: true,
@@ -187,6 +190,7 @@ describe("createXAAStateMachine", () => {
 
     expect(state.currentStep).toBe("complete");
     expect(state.accessToken).toBe("access-token");
+    expect(state.grantedScope).toBe("read:tools");
     expect(state.identityAssertion).toBe(idToken);
     expect(state.idJag).toBe(idJag);
     expect(state.idJagDecoded?.issues).toHaveLength(0);

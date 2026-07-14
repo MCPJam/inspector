@@ -90,8 +90,32 @@ interface UseXaaTestTargetParams {
     email: string;
     negativeTestMode: NegativeTestMode;
   };
+  /** The selected "Run as" test identity, already resolved against the fetched
+   * roster by the caller (null = no selection = today's behavior). A person is
+   * ATOMIC: both subject and email are used together — never one person's
+   * subject with a server's or the default's email. */
+  selectedPerson: { _id: string; subject: string; email: string } | null;
   /** Active Convex project id, for resolving the server's id + project. */
   projectId: string | null;
+}
+
+/** Identity precedence: person (atomic) → per-server override → run-settings
+ * default. The server override keeps its existing per-field trimmed-non-empty
+ * semantics; a person replaces both fields wholesale (email is required at
+ * the backend, so it is never empty here). */
+function resolveIdentity(
+  selectedPerson: { subject: string; email: string } | null,
+  server: ServerWithName | undefined,
+  fallbackUserId: string,
+  fallbackEmail: string,
+): { userId: string; email: string } {
+  if (selectedPerson?.subject?.trim()) {
+    return { userId: selectedPerson.subject, email: selectedPerson.email };
+  }
+  return {
+    userId: server?.xaaSubject?.trim() ? server.xaaSubject : fallbackUserId,
+    email: server?.xaaEmail?.trim() ? server.xaaEmail : fallbackEmail,
+  };
 }
 
 /**
@@ -105,6 +129,7 @@ export function useXaaTestTarget({
   selectedServerName,
   selectedRegistration,
   runSettings,
+  selectedPerson,
   projectId,
 }: UseXaaTestTargetParams): XaaTestTarget {
   const { isAuthenticated } = useConvexAuth();
@@ -151,6 +176,7 @@ export function useXaaTestTarget({
     };
 
     if (selectedRegistration) {
+      const identity = resolveIdentity(selectedPerson, undefined, userId, email);
       return {
         ...barServerContext,
         targetSource: "registration",
@@ -162,8 +188,8 @@ export function useXaaTestTarget({
           clientId: selectedRegistration.targetClientId ?? "",
           clientSecret: "",
           scope: (selectedRegistration.scopes ?? []).join(" "),
-          userId,
-          email,
+          userId: identity.userId,
+          email: identity.email,
           negativeTestMode,
         },
         targetKey: `registration:${selectedRegistration.id}`,
@@ -209,6 +235,10 @@ export function useXaaTestTarget({
     // id resolves, the run is blocked rather than silently sent without it.
     const usesServerSideSecret = hasClientSecret;
     const secretUnavailable = hasClientSecret && !remoteServerId;
+    // A selected "Run as" person wins atomically; otherwise the per-server
+    // simulated identity (synced with the /servers Connect page) is the source
+    // of truth, falling back to the global run-settings default.
+    const identity = resolveIdentity(selectedPerson, server, userId, email);
 
     return {
       ...barServerContext,
@@ -222,11 +252,8 @@ export function useXaaTestTarget({
         // the browser; public clients simply have none.
         clientSecret: "",
         scope,
-        // Per-server simulated identity is the source of truth (synced with the
-        // /servers Connect page); fall back to the global run-settings default
-        // when the server has no stored subject/email.
-        userId: server?.xaaSubject?.trim() ? server.xaaSubject : userId,
-        email: server?.xaaEmail?.trim() ? server.xaaEmail : email,
+        userId: identity.userId,
+        email: identity.email,
         negativeTestMode,
       },
       targetKey: `bar_server:${selectedServerName}`,
@@ -253,5 +280,6 @@ export function useXaaTestTarget({
     remoteProjectId,
     projectId,
     runSettings,
+    selectedPerson,
   ]);
 }
