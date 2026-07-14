@@ -427,27 +427,50 @@ export function lintIdJag(
       p.sub_id && typeof p.sub_id === "object" && !Array.isArray(p.sub_id)
         ? (p.sub_id as Record<string, unknown>)
         : undefined;
-    const summary = record
-      ? (
-          [
-            ["format", record.format],
-            ["issuer", record.issuer],
-            ["sp_name_qualifier", record.sp_name_qualifier],
-          ] as const
-        )
-          .filter(([, value]) => isNonEmptyString(value))
-          .map(([key, value]) => `${key}: ${value}`)
-          .join(", ")
-      : "";
-    verdicts.push({
-      id: "sub_id",
-      claim: "sub_id",
-      status: "pass",
-      detail:
-        "A structured subject identifier is present, so a SAML-resolving authorization server can map the user by NameID instead of the IdP-local sub.",
-      citation: CITATIONS.subId,
-      actual: summary || show(p.sub_id),
-    });
+    // draft §3.2.2: a saml-nameid subject id needs format "saml-nameid" with a
+    // non-empty issuer and nameid; the optional qualifiers, when present, must
+    // be strings. Anything else (null, a string, {}, wrong format, missing
+    // nameid) cannot be resolved by a SAML AS and is a real defect, not a pass.
+    const optionalStringOk = (value: unknown) =>
+      value === undefined || isNonEmptyString(value);
+    const valid =
+      record !== undefined &&
+      record.format === "saml-nameid" &&
+      isNonEmptyString(record.issuer) &&
+      isNonEmptyString(record.nameid) &&
+      optionalStringOk(record.sp_name_qualifier) &&
+      optionalStringOk(record.nameid_format);
+    if (valid) {
+      const summary = (
+        [
+          ["format", record!.format],
+          ["issuer", record!.issuer],
+          ["sp_name_qualifier", record!.sp_name_qualifier],
+        ] as const
+      )
+        .filter(([, value]) => isNonEmptyString(value))
+        .map(([key, value]) => `${key}: ${value}`)
+        .join(", ");
+      verdicts.push({
+        id: "sub_id",
+        claim: "sub_id",
+        status: "pass",
+        detail:
+          "A well-formed saml-nameid subject identifier is present, so a SAML-resolving authorization server can map the user by NameID instead of the IdP-local sub.",
+        citation: CITATIONS.subId,
+        actual: summary,
+      });
+    } else {
+      verdicts.push({
+        id: "sub_id",
+        claim: "sub_id",
+        status: "fail",
+        detail:
+          'sub_id is present but malformed: it must be an object with format "saml-nameid" and non-empty issuer and nameid (draft §3.2.2). A SAML-resolving authorization server cannot map the user from this value.',
+        citation: CITATIONS.subId,
+        actual: show(p.sub_id),
+      });
+    }
   }
 
   return verdicts;

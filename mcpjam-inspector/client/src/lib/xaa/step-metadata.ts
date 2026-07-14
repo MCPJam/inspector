@@ -276,22 +276,25 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
   },
 };
 
-// SAML overrides for the identity-leg steps (input axis, D6). Only titles and
-// summaries change — phase membership and teachable moments are shared, so a
-// SAML run keeps the same structure with format-accurate wording. OIDC (the
-// default) renders the base metadata unchanged.
+// SAML overrides for the identity-leg steps (input axis, D6). Titles,
+// summaries, and (where the base copy says "ID token") teachable moments are
+// overridden so a SAML run reads accurately; phase membership is shared. OIDC
+// (the default) renders the base metadata unchanged.
 const XAA_SAML_STEP_OVERRIDES: Partial<
-  Record<XAAFlowStep, Pick<XAAStepInfo, "title" | "summary">>
+  Record<XAAFlowStep, Pick<XAAStepInfo, "title" | "summary" | "teachableMoments">>
 > = {
   user_authentication: {
-    title: "Mock SAML SSO at MCPJam IdP",
+    title: "Simulate SAML sign-in at MCPJam IdP",
     summary:
-      "MCPJam signs the user in at its identity provider via SP-initiated SAML SSO (mocked).",
+      "MCPJam simulates the user signing in at its identity provider and issues a signed SAML assertion. This is a mock — there is no real SAML redirect, AuthnRequest, or ACS round-trip.",
   },
   received_identity_assertion: {
     title: "SAML assertion issued by MCPJam IdP",
     summary:
       "MCPJam's identity provider gives the Agent a signed SAML 2.0 assertion.",
+    teachableMoments: [
+      "The SAML assertion is only used to get the next token — it's never sent to the Authorization Server or the MCP Server.",
+    ],
   },
   token_exchange_request: {
     title: "Exchange the SAML Assertion for an ID-JAG",

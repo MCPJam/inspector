@@ -87,11 +87,17 @@ describe("identity assertion format overrides", () => {
       if ((overriddenSteps as readonly string[]).includes(step)) {
         expect(info.title).not.toBe(XAA_STEP_METADATA[step].title);
         expect(info.summary).not.toBe(XAA_STEP_METADATA[step].summary);
-        // Structure is shared: phase + teachable moments come from the base.
+        // Phase membership is shared; copy is format-accurate. No SAML-flow
+        // wording may say "ID token", and it must not claim a real SP-initiated
+        // SSO round-trip (the mock issues the assertion directly).
         expect(info.phase).toBe(XAA_STEP_METADATA[step].phase);
-        expect(info.teachableMoments).toEqual(
-          XAA_STEP_METADATA[step].teachableMoments
-        );
+        const copy = [
+          info.title,
+          info.summary,
+          ...(info.teachableMoments ?? []),
+        ].join(" ");
+        expect(copy).not.toMatch(/ID token/i);
+        expect(copy).not.toMatch(/SP-initiated/i);
       } else {
         expect(info).toEqual(XAA_STEP_METADATA[step]);
       }

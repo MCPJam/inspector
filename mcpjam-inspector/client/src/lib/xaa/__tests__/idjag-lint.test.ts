@@ -328,14 +328,38 @@ describe("lintIdJag", () => {
       );
     });
 
-    it("still renders a pass row for a non-object sub_id without throwing", () => {
+    it("fails a non-object sub_id (malformed, not resolvable) without throwing", () => {
       const verdict = verdictFor(
         VALID_HEADER,
         { ...VALID_PAYLOAD, sub_id: "opaque" },
         "sub_id"
       );
-      expect(verdict.status).toBe("pass");
+      expect(verdict.status).toBe("fail");
       expect(verdict.actual).toBe("opaque");
+    });
+
+    it("fails a malformed sub_id (null, empty object, wrong format, or missing nameid)", () => {
+      const malformed: unknown[] = [
+        null,
+        {},
+        { format: "oauth-sub", issuer: "i", nameid: "n" },
+        { format: "saml-nameid", issuer: "i" },
+        { format: "saml-nameid", nameid: "n" },
+        {
+          format: "saml-nameid",
+          issuer: "i",
+          nameid: "n",
+          sp_name_qualifier: 5,
+        },
+      ];
+      for (const sub_id of malformed) {
+        const verdict = verdictFor(
+          VALID_HEADER,
+          { ...VALID_PAYLOAD, sub_id },
+          "sub_id"
+        );
+        expect(verdict.status).toBe("fail");
+      }
     });
   });
 
