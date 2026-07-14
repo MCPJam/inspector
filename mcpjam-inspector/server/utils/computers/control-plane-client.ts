@@ -302,6 +302,30 @@ export async function recordTerminalSession(args: {
 }
 
 /**
+ * Bump the computer's `lastActiveAt` (service-token auth) so live terminal I/O
+ * counts as activity for the idle-hibernate sweep. Sent throttled (~once/min)
+ * from the terminal bridge on PTY I/O; best-effort — a dropped touch just risks
+ * an earlier idle hibernate, never a failed keystroke.
+ */
+export async function touchComputerActivity(args: {
+  computerId: string;
+}): Promise<void> {
+  const headers = authHeaders();
+  if (!headers) return;
+  const result = await postJson("/computers/terminal-sessions", headers, {
+    action: "touch",
+    computerId: args.computerId,
+  });
+  if (!result.ok) {
+    logger.warn("[computers] failed to touch computer activity", {
+      computerId: args.computerId,
+      status: result.status,
+      error: result.error,
+    });
+  }
+}
+
+/**
  * Reserve and poll until the computer is `ready` (provision-on-first-use and
  * wake-on-cold both converge here). Polling re-calls reserve — it's
  * idempotent, keeps `lastActiveAt` fresh so the idle sweep can't reclaim the
