@@ -918,7 +918,14 @@ export function parseLocalConnectRequestBody(
  * `{success: false, error, ...details}` and clients depend on that.
  */
 export function respondWithLocalRouteError(c: Context, error: WebRouteError) {
-  if (error.details?.oauthRequired === true) {
+  // Both tags mean "the UPSTREAM MCP server demands auth" — refreshing the
+  // inspector session or guest token can't change that outcome, so authFetch
+  // must skip its 401-retry round-trips. Only `oauthRequired` additionally
+  // drives client-side OAuth escalation.
+  if (
+    error.details?.oauthRequired === true ||
+    error.details?.upstreamAuthRequired === true
+  ) {
     c.header("X-MCP-Auth-Required", "oauth");
   }
   const normalized = error.normalized ?? describeError(error);
@@ -1064,14 +1071,25 @@ export async function executeLocalServerConnect(
         );
       }
       if (resolved.effectiveAuth === "none") {
-        return c.json(
-          {
-            success: false,
-            error: `Connection failed for server ${serverDisplayName}: the server requires authorization (HTTP 401). Switch Authentication to Auto or OAuth to sign in.`,
-            details: error instanceof Error ? error.message : "Unknown error",
-            normalized: describeError(error),
-          },
-          500
+        // Same honest 401 status as the hosted mapping — but tagged with
+        // upstreamAuthRequired instead of oauthRequired: the user explicitly
+        // chose No Authentication, so the client must not auto-escalate;
+        // the tag only suppresses authFetch's session/guest-token retries
+        // (which can't fix an upstream 401).
+        return respondWithLocalRouteError(
+          c,
+          new WebRouteError(
+            401,
+            ErrorCode.UNAUTHORIZED,
+            `Connection failed for server ${serverDisplayName}: the server requires authorization (HTTP 401). Switch Authentication to Auto or OAuth to sign in.`,
+            {
+              upstreamAuthRequired: true,
+              serverId,
+              serverName: serverDisplayName,
+              serverUrl,
+            },
+            describeError(error)
+          )
         );
       }
     }
