@@ -1621,6 +1621,20 @@ export function createXAAStateMachine(
     const subjectIdFormat = state.subjectIdentifierFormat;
 
     try {
+      // The JSON fallback mints from an UNSIGNED assertion parse. That is fine
+      // for OIDC (the ID token is a JWT we verify) and for negative tamper
+      // modes, but a valid SAML run must never skip signature verification —
+      // require the strict RFC 8693 token endpoint rather than silently
+      // minting an ID-JAG from an unverified SAML assertion.
+      if (
+        assertionFormat === "saml" &&
+        state.negativeTestMode === "valid" &&
+        !useSpecEndpoint
+      ) {
+        throw new Error(
+          "SAML identity assertions require the authorization server's RFC 8693 token endpoint for signed-assertion verification, but it is not available. Use an OIDC assertion or an authorization server that advertises the token endpoint.",
+        );
+      }
       if (useSpecEndpoint) {
         const params: Record<string, string> = {
           grant_type: TOKEN_EXCHANGE_GRANT,
