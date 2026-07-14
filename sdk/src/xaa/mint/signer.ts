@@ -31,6 +31,21 @@ export const XAA_RAS_CLIENT_ID_CLAIM = "https://mcpjam.com/xaa/ras_client_id";
 type JwtHeader = Record<string, unknown>;
 type JwtPayload = Record<string, unknown>;
 
+/**
+ * Draft §3.2.2 `sub_id` claim (Subject Identifier Formats, RFC 9493 style)
+ * for a SAML-resolving RAS. It derives from the NameID the IdP would issue
+ * for SSO TO THE TARGET RAS: `issuer` is the IdP's SAML entity ID (its issuer
+ * URL), `nameid` the stable per-user subject, `sp_name_qualifier` the target
+ * RAS's SP entity ID — never the subject token's own NameID/audience.
+ */
+export interface IdJagSubjectId {
+  format: "saml-nameid";
+  issuer: string;
+  nameid: string;
+  sp_name_qualifier?: string;
+  nameid_format?: string;
+}
+
 export interface IssueIdJagParams {
   issuer: string;
   subject: string;
@@ -44,6 +59,9 @@ export interface IssueIdJagParams {
    * the subject. Optional — omitted from the payload when absent.
    */
   email?: string;
+  /** Output-axis `sub_id` claim; minted whenever the run targets a
+   * SAML-resolving RAS, independent of the input assertion format. */
+  subjectId?: IdJagSubjectId;
 }
 
 export interface IssueMockIdTokenParams {
@@ -98,6 +116,7 @@ function createValidIdJagPayload(
     ...(params.resource ? { resource: params.resource } : {}),
     ...(params.scope ? { scope: params.scope } : {}),
     ...(params.email ? { email: params.email } : {}),
+    ...(params.subjectId ? { sub_id: { ...params.subjectId } } : {}),
   };
 }
 
@@ -164,8 +183,14 @@ export function issueNegativeIdJag(
       payload.exp = now - 60 * 60;
       break;
     case "missing_claims":
+      // Subject-hint audit: every subject-resolution hint must vanish
+      // together — a surviving sub_id.nameid or email would let a
+      // SAML-/email-resolving RAS correctly accept the original user and the
+      // probe would score wrong.
       delete payload.sub;
       delete payload.jti;
+      delete payload.sub_id;
+      delete payload.email;
       break;
     case "invalid_type_header":
       header.typ = "JWT";
@@ -182,9 +207,24 @@ export function issueNegativeIdJag(
     case "unknown_kid":
       header.kid = "nonexistent-key-id";
       break;
-    case "unknown_sub":
-      payload.sub = "unknown-user-00000";
+    case "unknown_sub": {
+      // Subject-hint audit: mutate EVERY subject-resolution hint in lockstep.
+      // Tampering only `sub` while a valid sub_id.nameid (or email) survives
+      // lets a SAML-resolving RAS resolve the original user via the intact
+      // hint — the probe would then mis-score a correct acceptance.
+      const unknownSubject = "unknown-user-00000";
+      payload.sub = unknownSubject;
+      if (payload.sub_id && typeof payload.sub_id === "object") {
+        payload.sub_id = {
+          ...(payload.sub_id as Record<string, unknown>),
+          nameid: unknownSubject,
+        };
+      }
+      if (payload.email !== undefined) {
+        payload.email = `${unknownSubject}@unknown.invalid`;
+      }
       break;
+    }
     case "scope_denial":
       payload.scope = "admin:superuser offline_access";
       break;

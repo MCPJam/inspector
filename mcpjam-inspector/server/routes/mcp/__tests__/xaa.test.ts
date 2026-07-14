@@ -13,9 +13,12 @@ import {
 } from "../../../services/session-token.js";
 import {
   initXAAIdpKeyPair,
+  issueMockSamlAssertion,
   resetXAAIdpKeyPairForTests,
+  SAML_NAMEID_FORMAT_PERSISTENT,
   XAA_DEBUG_IDP_CLIENT_ID,
 } from "@mcpjam/sdk";
+import { WebRouteError } from "../../web/errors.js";
 import xaa, { createXaaRouter } from "../xaa.js";
 
 function jsonResponse(
@@ -665,7 +668,8 @@ describe("POST /negative-tests", () => {
       failures: number;
     };
     expect(body.results).toHaveLength(11);
-    expect(body.failures).toBe(11);
+    expect(body.failures).toBe(9);
+    expect(body.results.filter((r) => r.verdict === "policy")).toHaveLength(2);
     const expired = body.results.find((r) => r.mode === "expired");
     expect(expired?.verdict).toBe("fail");
 
@@ -700,7 +704,8 @@ describe("POST /negative-tests", () => {
       failures: number;
     };
     expect(body.failures).toBe(0);
-    expect(body.results.every((r) => r.verdict === "pass")).toBe(true);
+    expect(body.results.filter((r) => r.verdict === "pass")).toHaveLength(9);
+    expect(body.results.filter((r) => r.verdict === "policy")).toHaveLength(2);
   });
 
   it("yields partial results when a case times out (one slow case doesn't sink the run)", async () => {
@@ -963,6 +968,44 @@ describe("hosted-issuer forwarding on the local router", () => {
 
     expect(response.status).toBe(429);
     expect((await response.json()).code).toBe("RATE_LIMITED");
+  });
+
+  it("forwards the SAML axis fields to the hosted issuer untouched", async () => {
+    // Version-skew guard: an old hosted deployment would strip the unknown
+    // keys and silently mint OIDC, so the local relay must never do so.
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ id_jag: "hosted-jag", token_type: "N_A" })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = buildApp();
+    const response = await app.request("/api/mcp/xaa/token-exchange", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer workos-token",
+      },
+      body: JSON.stringify({
+        identityAssertion: "a.b.c",
+        audience: "https://auth.example.com",
+        clientId: "mcpjam-debugger",
+        assertionFormat: "saml",
+        subjectIdFormat: "saml-nameid",
+        issuerMode: "hosted",
+        organizationId: "org_123",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit
+    ];
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      assertionFormat: "saml",
+      subjectIdFormat: "saml-nameid",
+    });
   });
 
   it("mints locally when issuerMode is absent, without touching fetch", async () => {
@@ -1744,5 +1787,314 @@ describe("mock OIDC IdP endpoints", () => {
     expect(doc.authorization_endpoint).toBe(`${ISSUER}/authorize`);
     expect(doc.userinfo_endpoint).toBe(`${ISSUER}/userinfo`);
     expect(doc.response_types_supported).toEqual(["code"]);
+  });
+
+  // The two SAML identity axes (draft-ietf-oauth-identity-assertion-authz-
+  // grant-04): the INPUT axis (a signed SAML assertion as the subject token,
+  // §4.3) and the OUTPUT axis (a saml-nameid `sub_id` in the ID-JAG, §3.2.2)
+  // are independent — these tests exercise each alone and mixed.
+  describe("SAML identity axes", () => {
+    const AUDIENCE = "https://as.example.com";
+
+    async function mintIdToken(): Promise<string> {
+      const response = await app.request(`${BASE}/authenticate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: "alice-123",
+          email: "alice@example.com",
+          audience: XAA_DEBUG_IDP_CLIENT_ID,
+          resourceClientId: "client-1",
+        }),
+      });
+      return (await response.json()).id_token;
+    }
+
+    it("mints a SAML assertion at /authenticate and keeps the OIDC response unchanged", async () => {
+      const samlResponse = await app.request(`${BASE}/authenticate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: "alice-123",
+          email: "alice@example.com",
+          assertionFormat: "saml",
+        }),
+      });
+
+      expect(samlResponse.status).toBe(200);
+      expect(samlResponse.headers.get("cache-control")).toBe("no-store");
+      const samlBody = await samlResponse.json();
+      expect(Object.keys(samlBody).sort()).toEqual([
+        "assertion",
+        "assertion_format",
+        "expires_in",
+        "subject",
+        "token_type",
+        "user",
+      ]);
+      expect(samlBody.assertion_format).toBe("saml");
+      // Structured subject metadata rides in the response so the browser
+      // never has to parse XML.
+      expect(samlBody.subject).toEqual({
+        issuer: ISSUER,
+        nameid: "alice-123",
+        nameidFormat: SAML_NAMEID_FORMAT_PERSISTENT,
+        spNameQualifier: XAA_DEBUG_IDP_CLIENT_ID,
+      });
+      expect(samlBody.user).toEqual({
+        sub: "alice-123",
+        email: "alice@example.com",
+      });
+      // Wire form is base64 XML, not a JWT.
+      const xml = Buffer.from(samlBody.assertion, "base64").toString("utf-8");
+      expect(xml).toContain("<saml:Assertion");
+
+      // The OIDC default is untouched (hosted forwarding depends on this
+      // shape staying byte-identical).
+      const oidcResponse = await app.request(`${BASE}/authenticate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: "alice-123",
+          email: "alice@example.com",
+        }),
+      });
+      const oidcBody = await oidcResponse.json();
+      expect(Object.keys(oidcBody).sort()).toEqual([
+        "expires_in",
+        "id_token",
+        "token_type",
+        "user",
+      ]);
+      expect(oidcBody.id_token).toEqual(expect.any(String));
+    });
+
+    it("rejects an unknown assertionFormat with the existing 400 shape", async () => {
+      const response = await app.request(`${BASE}/authenticate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assertionFormat: "wsfed" }),
+      });
+
+      expect(response.status).toBe(400);
+      expect((await response.json()).code).toBe("VALIDATION_ERROR");
+    });
+
+    it("exchanges a signed SAML assertion at /token (input axis, no sub_id without subject_id_format)", async () => {
+      const { assertionB64 } = issueMockSamlAssertion({
+        issuer: ISSUER,
+        subject: "alice-123",
+        email: "alice@example.com",
+        spEntityId: XAA_DEBUG_IDP_CLIENT_ID,
+        resourceClientId: "client-1",
+      });
+
+      const response = await postToken({
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+        subject_token: assertionB64,
+        subject_token_type: "urn:ietf:params:oauth:token-type:saml2",
+        client_id: XAA_DEBUG_IDP_CLIENT_ID,
+        audience: AUDIENCE,
+        resource: "https://rs.example.com",
+        scope: "chat.read",
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      const body = await response.json();
+      expect(body.issued_token_type).toBe(
+        "urn:ietf:params:oauth:token-type:id-jag"
+      );
+      const payload = decodeJwtPayload(body.access_token);
+      expect(payload).toMatchObject({
+        iss: ISSUER,
+        sub: "alice-123",
+        email: "alice@example.com",
+        aud: AUDIENCE,
+        resource: "https://rs.example.com",
+        client_id: "client-1",
+        scope: "chat.read",
+      });
+      // SAML INPUT does not imply saml-nameid OUTPUT: without the
+      // subject_id_format extension the ID-JAG carries no sub_id.
+      expect(payload).not.toHaveProperty("sub_id");
+    });
+
+    it("rejects a JWT presented as a saml2 subject token", async () => {
+      // A valid ID token mislabeled as a SAML assertion must fail the strict
+      // verify path, not silently fall back to JWT semantics.
+      const idToken = await mintIdToken();
+
+      const response = await postToken({
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+        subject_token: idToken,
+        subject_token_type: "urn:ietf:params:oauth:token-type:saml2",
+        client_id: XAA_DEBUG_IDP_CLIENT_ID,
+        audience: AUDIENCE,
+      });
+
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe("invalid_grant");
+    });
+
+    it("mints sub_id for an OIDC subject token when subject_id_format=saml-nameid (mixed axes)", async () => {
+      const idToken = await mintIdToken();
+
+      const response = await postToken({
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+        subject_token: idToken,
+        subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+        client_id: XAA_DEBUG_IDP_CLIENT_ID,
+        audience: AUDIENCE,
+        subject_id_format: "saml-nameid",
+      });
+
+      expect(response.status).toBe(200);
+      const payload = decodeJwtPayload((await response.json()).access_token);
+      expect(payload.sub).toBe("alice-123");
+      // Per §3.2.2 the sub_id derives from the NameID the IdP would issue for
+      // SSO to the TARGET RAS: sp_name_qualifier is the exchange's audience,
+      // never the subject token's own audience.
+      expect(payload.sub_id).toEqual({
+        format: "saml-nameid",
+        issuer: ISSUER,
+        nameid: "alice-123",
+        sp_name_qualifier: AUDIENCE,
+        nameid_format: SAML_NAMEID_FORMAT_PERSISTENT,
+      });
+    });
+
+    it("keeps the plain OIDC exchange unchanged (same body keys, no sub_id)", async () => {
+      const idToken = await mintIdToken();
+
+      const response = await postToken({
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+        subject_token: idToken,
+        subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+        client_id: XAA_DEBUG_IDP_CLIENT_ID,
+        audience: AUDIENCE,
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(Object.keys(body).sort()).toEqual([
+        "access_token",
+        "expires_in",
+        "issued_token_type",
+        "token_type",
+      ]);
+      expect(decodeJwtPayload(body.access_token)).not.toHaveProperty("sub_id");
+    });
+
+    it("rejects an unknown subject_id_format", async () => {
+      const idToken = await mintIdToken();
+
+      const response = await postToken({
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+        subject_token: idToken,
+        subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+        client_id: XAA_DEBUG_IDP_CLIENT_ID,
+        audience: AUDIENCE,
+        subject_id_format: "email",
+      });
+
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe("invalid_request");
+    });
+  });
+});
+
+describe("org-scoped /token with SAML subject tokens", () => {
+  const BASE = "http://127.0.0.1:6274/api/mcp/xaa";
+  const originalKeyDir = process.env.XAA_IDP_KEY_DIR;
+  let tempDir: string;
+  let app: Hono;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-saml-org-"));
+    process.env.XAA_IDP_KEY_DIR = tempDir;
+    resetXAAIdpKeyPairForTests();
+    initXAAIdpKeyPair();
+
+    app = new Hono();
+    app.route(
+      "/api/mcp/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/mcp",
+        httpsOnlyProxy: false,
+        authorizeOrgIssuer: async ({ bearerToken }) => {
+          if (bearerToken !== "member-token") {
+            throw new WebRouteError(403, "FORBIDDEN", "Not an org member");
+          }
+        },
+      })
+    );
+  });
+
+  afterEach(() => {
+    resetXAAIdpKeyPairForTests();
+    rmSync(tempDir, { recursive: true, force: true });
+    if (originalKeyDir === undefined) {
+      delete process.env.XAA_IDP_KEY_DIR;
+    } else {
+      process.env.XAA_IDP_KEY_DIR = originalKeyDir;
+    }
+  });
+
+  it("gates the saml2 grant behind org membership and mints under the scoped issuer", async () => {
+    const scopedIssuer = `${BASE}/o/org1`;
+    const { assertionB64 } = issueMockSamlAssertion({
+      issuer: scopedIssuer,
+      subject: "alice-123",
+      email: "alice@example.com",
+      spEntityId: XAA_DEBUG_IDP_CLIENT_ID,
+      resourceClientId: "client-1",
+    });
+    const form = new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+      subject_token: assertionB64,
+      subject_token_type: "urn:ietf:params:oauth:token-type:saml2",
+      client_id: XAA_DEBUG_IDP_CLIENT_ID,
+      audience: "https://as.example.com",
+    }).toString();
+    const postScopedToken = (headers: Record<string, string> = {}) =>
+      app.request(`${BASE}/o/org1/token`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          ...headers,
+        },
+        body: form,
+      });
+
+    // No bearer → OAuth-shaped 401; the SAML branch grants nothing extra.
+    const unauthenticated = await postScopedToken();
+    expect(unauthenticated.status).toBe(401);
+    expect((await unauthenticated.json()).error).toBe("invalid_client");
+
+    // Non-member bearer → 403 access_denied.
+    const nonMember = await postScopedToken({
+      Authorization: "Bearer other-token",
+    });
+    expect(nonMember.status).toBe(403);
+    expect((await nonMember.json()).error).toBe("access_denied");
+
+    // Member bearer → the exchange succeeds under the org-scoped issuer.
+    const member = await postScopedToken({
+      Authorization: "Bearer member-token",
+    });
+    expect(member.status).toBe(200);
+    const payload = decodeJwtPayload((await member.json()).access_token);
+    expect(payload).toMatchObject({
+      iss: scopedIssuer,
+      sub: "alice-123",
+      client_id: "client-1",
+    });
   });
 });

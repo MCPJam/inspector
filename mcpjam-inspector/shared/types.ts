@@ -1,7 +1,11 @@
 // Shared types between client and server
 import { HOSTED_MODEL_IDS } from "./hosted-model-ids.generated";
 
-import type { AuthMethod, RegistrationMode } from "./xaa";
+import type {
+  AuthMethod,
+  IdentityAssertionFormat,
+  RegistrationMode,
+} from "./xaa";
 
 // Legacy server config (keeping for compatibility)
 export interface ServerConfig {
@@ -796,6 +800,14 @@ export interface ServerFormData {
   xaaSubject?: string;
   /** Optional simulated-identity override (email) for the MCPJam test IdP. Blank = signed-in user. */
   xaaEmail?: string;
+  /**
+   * XAA-debugger-only preset for the identity assertion the MCPJam test IdP
+   * mints (draft-ietf-oauth-identity-assertion-authz-grant): "oidc" (default)
+   * mints an ID token; "saml" mints a signed SAML assertion AND asks for a
+   * saml-nameid `sub_id` on the ID-JAG. Persisted per-server; saves that omit
+   * it must preserve the stored value (the save-path `?? existing` merge).
+   */
+  xaaIdentityAssertionFormat?: IdentityAssertionFormat;
   /** Registry credential key for resolving OAuth client ID from env (e.g. "github") */
   oauthCredentialKey?: string;
   /** True for registry servers that use backend-managed preregistered OAuth credentials */
