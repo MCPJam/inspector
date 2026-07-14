@@ -30,6 +30,29 @@ Open the **XAA Flow** tab in MCPJam Inspector. At the top of the tab, expand the
 
 Once trust is established, run the flow from the XAA Flow tab. The sequence diagram shows each step — SSO, token exchange, JWT-bearer, and the authenticated MCP request — with every token decoded inline.
 
+## SAML identity axes
+
+The mock IdP supports two independent SAML axes from the identity-assertion authorization grant draft (draft-ietf-oauth-identity-assertion-authz-grant):
+
+**Input axis — SAML assertion as the subject token**
+
+Pass `assertionFormat: "saml"` to `/authenticate` to receive a signed SAML assertion instead of an OIDC ID token. The response includes:
+
+| Field | Description |
+| --- | --- |
+| `assertion` | Base64-encoded signed SAML XML assertion. |
+| `assertion_format` | `"saml"` |
+| `subject` | Structured metadata: `issuer`, `nameid`, `nameidFormat`, `spNameQualifier`. |
+| `user` | `{ sub, email }` — same as the OIDC response. |
+
+Submit that assertion to the RFC 8693 `/token` endpoint with `subject_token_type: "urn:ietf:params:oauth:token-type:saml2"`. The mock IdP verifies the XML signature before minting the ID-JAG.
+
+**Output axis — `saml-nameid` subject identifier in the ID-JAG**
+
+Pass `subject_id_format: "saml-nameid"` to the `/token` endpoint (RFC 8693) or `subjectIdFormat: "saml-nameid"` to the JSON `/token-exchange` endpoint to include a `sub_id` claim in the resulting ID-JAG. The `sub_id` carries the NameID the IdP would issue for SSO to the target resource server; its `sp_name_qualifier` is the exchange's `audience`, not the subject token's own audience.
+
+The two axes are independent — you can use an OIDC ID token as the subject token while requesting a `saml-nameid` output, or use a SAML assertion without requesting a `sub_id`.
+
 ## Vendor notes
 
 - **Okta** — Native JWT-bearer support. Register MCPJam's issuer URL as a trusted issuer; Okta discovers the keys from the OpenID configuration.
