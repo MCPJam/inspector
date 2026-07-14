@@ -93,6 +93,21 @@ If you enable OAuth and also add a custom `Authorization` header under **Advance
 
 When an OAuth error appears in the request log, a **Continue in OAuth Debugger** button is shown on hover for that log row. Clicking it switches the selected server to the one that produced the error and deep-links directly to the OAuth Debugger (`#oauth-flow`), so you can investigate the failure without manually locating the right server.
 
+## Auto authentication mode
+
+The **Auto** option in the authentication dropdown follows the MCP specification's discovery sequence:
+
+1. **Cross-App Access configured** — if the server has XAA (Cross-App Access) set up, Auto uses that flow. This is a hard selection; a failed XAA mint surfaces an error rather than falling back to OAuth.
+2. **Stored OAuth token** — if you have previously completed an OAuth flow for the server, Auto uses the stored token (with automatic refresh on expiry).
+3. **No stored token** — Auto connects without credentials first. Open servers that don't require authentication connect immediately with no OAuth prompt.
+4. **Server returns 401** — if the server responds with a 401 after an unauthenticated attempt, a toast notification asks whether you want to continue with OAuth. Confirming starts the interactive OAuth flow. If the server still returns 401 after a completed OAuth flow, Inspector surfaces a configuration error instead of looping.
+
+Use **Auto** when you're not sure whether a server requires authentication, or when you want a single setting that handles both open and OAuth-protected servers without manual switching.
+
+<Note>
+If you explicitly set authentication to **No Authentication** and the server returns 401, Inspector shows an error with a hint to switch to Auto or OAuth. It does not automatically escalate to OAuth when you have chosen No Authentication.
+</Note>
+
 ## Reconnecting OAuth servers
 
 The enable/connect toggle on a server card or detail modal reuses existing credentials only — it will not launch a new OAuth consent screen. If the existing tokens are expired or missing and a fresh consent flow is required, the toggle reports a re-authentication error instead of redirecting you to the authorization server.
