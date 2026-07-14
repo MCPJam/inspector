@@ -873,13 +873,20 @@ export async function createAuthorizedManager(
       const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
       const displayServerName = serverNamesById?.[serverId] ?? serverId;
       // One resolver decides the flow for every dispatch below: canonical
-      // authMethod wins ("auto" selects XAA when configured, OAuth
+      // authMethod wins ("auto" selects XAA when configured, "discover"
       // otherwise); legacy rows fall back to the boolean pair. Must match
       // the local resolver's dispatch (hosted/local/swarm parity).
       const effectiveAuth = resolveEffectiveAuthMethod(auth.serverConfig);
       const usesOAuthFlow = effectiveAuth === "oauth";
+      // "discover" (non-XAA auto) rides the OAuth rails only when a stored
+      // token exists; tokenless discover connects unauthenticated instead of
+      // failing pre-connect — a live 401 then surfaces from the connect
+      // itself (mapRuntimeError gives it a 401 status; only the interactive
+      // validate route tags it oauthRequired for client escalation).
+      const usesStoredTokenFlow =
+        usesOAuthFlow || (effectiveAuth === "discover" && !!oauthToken);
       const onUnauthorized =
-        usesOAuthFlow && auth.oauthAccessToken
+        usesStoredTokenFlow && auth.oauthAccessToken
           ? buildHostedOAuthUnauthorizedHandler({
               bearerToken,
               projectId,
@@ -892,23 +899,21 @@ export async function createAuthorizedManager(
             })
           : undefined;
 
-      if (usesOAuthFlow) {
-        if (auth.serverConfig.url) {
-          oauthServerUrls[serverId] = auth.serverConfig.url;
-        }
-        if (!oauthToken) {
-          throw new WebRouteError(
-            401,
-            ErrorCode.UNAUTHORIZED,
-            `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
-            {
-              oauthRequired: true,
-              serverId,
-              serverName: serverNamesById?.[serverId] ?? null,
-              serverUrl: auth.serverConfig.url,
-            }
-          );
-        }
+      if (usesStoredTokenFlow && auth.serverConfig.url) {
+        oauthServerUrls[serverId] = auth.serverConfig.url;
+      }
+      if (usesOAuthFlow && !oauthToken) {
+        throw new WebRouteError(
+          401,
+          ErrorCode.UNAUTHORIZED,
+          `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
+          {
+            oauthRequired: true,
+            serverId,
+            serverName: serverNamesById?.[serverId] ?? null,
+            serverUrl: auth.serverConfig.url,
+          }
+        );
       }
 
       // Cross-App Access: mint the resource access token server-side (MCPJam as
@@ -979,6 +984,30 @@ export async function createAuthorizedManager(
           }
           reMinted = true;
           return { accessToken: (await mintXaaAccessToken(mintArgs)).accessToken };
+        };
+      }
+
+      // Tokenless "discover" (non-XAA auto): connect unauthenticated, and if
+      // the target answers 401, convert it into the same tagged oauthRequired
+      // shape the pre-connect throw produces. The SDK invokes onUnauthorized
+      // exactly when a request 401s, which is the one moment we have both the
+      // per-server identity and proof the server actually demands auth —
+      // interactive clients escalate into the OAuth flow on this shape, and
+      // the non-interactive chat surfaces already render it as their
+      // "complete OAuth first" affordance.
+      if (effectiveAuth === "discover" && !connectToken) {
+        connectOnUnauthorized = async () => {
+          throw new WebRouteError(
+            401,
+            ErrorCode.UNAUTHORIZED,
+            `Server "${displayServerName}" requires authorization.`,
+            {
+              oauthRequired: true,
+              serverId,
+              serverName: serverNamesById?.[serverId] ?? null,
+              serverUrl: auth.serverConfig.url,
+            }
+          );
         };
       }
 
