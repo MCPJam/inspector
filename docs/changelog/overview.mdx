@@ -9,6 +9,16 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-06-26
+
+#### Added
+
+- **Compatibility destination** — a new Inspector page that evaluates your connected MCP server against a catalog of AI hosts (Claude, ChatGPT, Cursor, Copilot, Codex, and others). Shows conformance gates, per-host findings split into Apps and Server lanes, and live widget rendering. Accessible from the left sidebar when a server is connected.
+
+- **OTLP/OpenInference trace export** — export eval run traces as OTLP JSON from the run detail page. Compatible with Arize Phoenix, Datadog, and any OTLP-compatible observability backend. Supports exporting a single run or the whole project, with an opt-in to include content and artifacts.
+
+- **`@mcpjam/sdk/host-compat` subpackage** — the shared host-compatibility engine is now importable directly. Use `deriveServerRequirements`, `evaluateHostCompat`, `evaluateAllHosts`, `scanWidgetSource`, and `detectHostCompatBridgeFromMeta` to build your own compatibility checks in CI or custom tooling.
+
 ### Version 1.1.0
 
 #### Improved
