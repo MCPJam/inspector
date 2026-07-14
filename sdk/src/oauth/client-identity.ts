@@ -120,24 +120,69 @@ export function buildConfidentialCimdUrl(
   )}`;
 }
 
-/** Decode the URL-embedded public JWK (used by the reflector). Returns null on
- * anything that is not a well-formed JWK object. */
+// A P-256 affine coordinate is 32 bytes → 43 unpadded base64url chars.
+const EC_P256_COORD = /^[A-Za-z0-9_-]{43}$/;
+// A conservative kid: short, printable, no structural/JSON-breaking chars.
+const SAFE_KID = /^[A-Za-z0-9._-]{1,64}$/;
+
+/**
+ * Decode and STRICTLY validate the URL-embedded public JWK (used by the
+ * reflector). Returns a freshly reconstructed **public** EC P-256 JWK
+ * (`kty/crv/x/y` + `alg/use`, and `kid` only if safe) — never the raw parsed
+ * object. This rejects anything that is not an exact P-256 public key and,
+ * critically, drops any private field (`d`) or unknown members an attacker may
+ * have encoded, so the reflector can only ever publish a clean public key.
+ * Returns null on anything malformed.
+ */
 export function decodeConfidentialCimdKey(encoded: string): JsonWebKey | null {
   try {
     const b64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
     const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
-    const parsed = JSON.parse(atob(padded));
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      typeof (parsed as { kty?: unknown }).kty === "string"
-    ) {
-      return parsed as JsonWebKey;
-    }
-    return null;
+    const parsed = JSON.parse(atob(padded)) as Record<string, unknown> | null;
+    if (!parsed || typeof parsed !== "object") return null;
+    if (parsed.kty !== "EC" || parsed.crv !== "P-256") return null;
+    const { x, y, kid } = parsed;
+    if (typeof x !== "string" || !EC_P256_COORD.test(x)) return null;
+    if (typeof y !== "string" || !EC_P256_COORD.test(y)) return null;
+
+    const jwk: JsonWebKey & { kid?: string } = {
+      kty: "EC",
+      crv: "P-256",
+      x,
+      y,
+      alg: "ES256",
+      use: "sig",
+    };
+    if (typeof kid === "string" && SAFE_KID.test(kid)) jwk.kid = kid;
+    return jwk;
   } catch {
     return null;
   }
+}
+
+// The reflector serves documents for ANY key anyone encodes in the URL, so its
+// identity MUST be explicitly untrusted and unbranded: possession of the key
+// proves control of the client_id, NOT that MCPJam issued or vouches for it.
+// Branding a reflected document as the "MCPJam XAA Debugger" would let anyone
+// mint a document that impersonates MCPJam to a relying party.
+export const UNVERIFIED_CONFIDENTIAL_CIMD_CLIENT_NAME =
+  "Unverified XAA client (self-published key; not issued or endorsed by MCPJam)";
+
+/** Build the reflector's `private_key_jwt` document body for a decoded public
+ * key. Deliberately carries NO MCPJam branding (`client_uri`/`logo_uri`). */
+export function getConfidentialCimdReflectorMetadata(jwks: {
+  keys: JsonWebKey[];
+}): Partial<OAuthDynamicRegistrationMetadata> & {
+  jwks: { keys: JsonWebKey[] };
+} {
+  return {
+    client_name: UNVERIFIED_CONFIDENTIAL_CIMD_CLIENT_NAME,
+    authorization_grant_profiles_supported: [ID_JAG_GRANT_PROFILE],
+    grant_types: [TOKEN_EXCHANGE_GRANT, JWT_BEARER_GRANT],
+    token_endpoint_auth_method: "private_key_jwt",
+    jwks,
+    // No client_uri / logo_uri: the key holder is not MCPJam.
+  };
 }
 
 export type IdJagMetadataEvidence = "present" | "omitted" | "contradicted";

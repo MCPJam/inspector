@@ -1,14 +1,20 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { Hono } from "hono";
 import { generateKeyPairSync } from "node:crypto";
 import {
   buildConfidentialCimdUrl,
   evaluateIdJagClientMetadata,
+  UNVERIFIED_CONFIDENTIAL_CIMD_CLIENT_NAME,
   XAA_CONFIDENTIAL_CIMD_PATH_PREFIX,
 } from "@mcpjam/sdk";
-import { registerXaaConfidentialCimdRoute } from "../xaa-confidential-cimd";
+import {
+  registerXaaConfidentialCimdRoute,
+  resetXaaConfidentialCimdRateLimitForTests,
+} from "../xaa-confidential-cimd";
+
+beforeEach(() => resetXaaConfidentialCimdRateLimitForTests());
 
 // Contract tests for the stateless confidential-CIMD reflector. It decodes the
 // PUBLIC key from the URL and echoes it into a private_key_jwt Client ID
@@ -57,12 +63,63 @@ describe("XAA confidential CIMD reflector route", () => {
     expect(evaluation.tokenExchangeGrant).toBe("present");
     expect(evaluation.tokenEndpointAuthMethod).toBe("private_key_jwt");
 
-    // The public key is echoed verbatim; no secret ever appears.
+    // The reflected identity is EXPLICITLY UNTRUSTED and UNBRANDED — anyone can
+    // publish any key here, so it must not impersonate the MCPJam debugger.
+    expect(document.client_name).toBe(UNVERIFIED_CONFIDENTIAL_CIMD_CLIENT_NAME);
+    expect(document.logo_uri).toBeUndefined();
+    expect(document.client_uri).toBeUndefined();
+    expect(JSON.stringify(document)).not.toContain("mcpjam.com/mcp_jam");
+
+    // The public key is echoed; no secret/private field ever appears.
     expect(document.jwks.keys[0].x).toBe(jwk.x);
     expect(document.jwks.keys[0].y).toBe(jwk.y);
     expect(document.jwks.keys[0].crv).toBe("P-256");
+    expect(document.jwks.keys[0].d).toBeUndefined();
     expect(JSON.stringify(document)).not.toContain('"d"');
     expect(JSON.stringify(document)).not.toContain("client_secret");
+  });
+
+  it("strips any private/unknown fields an attacker encodes into the key", async () => {
+    // Encode a JWK carrying a private scalar `d` and a junk field.
+    const jwk = samplePublicJwk();
+    const poisoned = { ...jwk, d: "AAAA", evil: "x" };
+    const path = new URL(
+      buildConfidentialCimdUrl(poisoned, "http://localhost"),
+    ).pathname;
+    const response = await buildApp().request(`http://localhost${path}`);
+    expect(response.status).toBe(200);
+    const document = await response.json();
+    // Only the sanitized public members survive.
+    expect(document.jwks.keys[0].x).toBe(jwk.x);
+    expect(document.jwks.keys[0].d).toBeUndefined();
+    expect(document.jwks.keys[0].evil).toBeUndefined();
+    expect(JSON.stringify(document)).not.toContain("evil");
+  });
+
+  it("rejects a non-P-256 / malformed key coordinate with 400", async () => {
+    const bad = buildConfidentialCimdUrl(
+      { kty: "EC", crv: "P-384", x: "short", y: "short" } as never,
+      "http://localhost",
+    );
+    const response = await buildApp().request(bad);
+    expect(response.status).toBe(400);
+  });
+
+  it("rate-limits a single IP hammering the unbounded key space", async () => {
+    const app = buildApp();
+    const jwk = samplePublicJwk();
+    const path = cimdPath(jwk);
+    const headers = { "x-forwarded-for": "203.0.113.9" };
+    let sawLimit = false;
+    // The window budget is modest; well over it must eventually 429.
+    for (let i = 0; i < 200; i++) {
+      const r = await app.request(`http://localhost${path}`, { headers });
+      if (r.status === 429) {
+        sawLimit = true;
+        break;
+      }
+    }
+    expect(sawLimit).toBe(true);
   });
 
   it("honors proxy-forwarded host/proto when building client_id", async () => {

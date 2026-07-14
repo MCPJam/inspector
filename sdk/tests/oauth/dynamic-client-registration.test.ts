@@ -10,9 +10,12 @@ import { validateClientIdMetadataUrl } from "../../src/oauth/state-machines/shar
 import {
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   XAA_DEBUG_CLIENT_ID_METADATA_URL,
+  buildConfidentialCimdUrl,
+  decodeConfidentialCimdKey,
   evaluateIdJagClientMetadata,
   getXaaDebugClientMetadata,
 } from "../../src/oauth/client-identity.js";
+import { generateKeyPairSync, type JsonWebKey } from "crypto";
 import type { OAuthHttpRequest } from "../../src/oauth/state-machines/types.js";
 
 const REGISTRATION_ENDPOINT = "https://auth.example.com/register";
@@ -289,6 +292,65 @@ describe("executeDynamicClientRegistration", () => {
       httpHistory: history(),
     });
     expect(JSON.stringify(outcome)).not.toContain(SECRET);
+  });
+});
+
+describe("confidential CIMD key encode/decode", () => {
+  function publicJwk() {
+    const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    return publicKey.export({ format: "jwk" }) as JsonWebKey;
+  }
+
+  function encodedKeyOf(jwk: object): string {
+    return new URL(buildConfidentialCimdUrl(jwk as JsonWebKey, "https://h"))
+      .pathname.split("/")
+      .pop() as string;
+  }
+
+  it("round-trips a valid P-256 public key into a canonical public JWK", () => {
+    const jwk = publicJwk();
+    const decoded = decodeConfidentialCimdKey(encodedKeyOf(jwk));
+    expect(decoded).not.toBeNull();
+    expect(decoded).toMatchObject({
+      kty: "EC",
+      crv: "P-256",
+      x: jwk.x,
+      y: jwk.y,
+      alg: "ES256",
+      use: "sig",
+    });
+  });
+
+  it("strips a private scalar and unknown members", () => {
+    const jwk = publicJwk();
+    const decoded = decodeConfidentialCimdKey(
+      encodedKeyOf({ ...jwk, d: "AAAA", kid: "xaa-client-1", evil: "1" }),
+    ) as Record<string, unknown> | null;
+    expect(decoded).not.toBeNull();
+    expect(decoded!.d).toBeUndefined();
+    expect(decoded!.evil).toBeUndefined();
+    expect(decoded!.kid).toBe("xaa-client-1"); // safe kid preserved
+  });
+
+  it("drops an unsafe kid", () => {
+    const jwk = publicJwk();
+    const decoded = decodeConfidentialCimdKey(
+      encodedKeyOf({ ...jwk, kid: "bad kid\nwith junk" }),
+    ) as Record<string, unknown>;
+    expect(decoded.kid).toBeUndefined();
+  });
+
+  it.each([
+    ["not base64url json", "not-valid"],
+    ["wrong curve", encodedKeyOf({ kty: "EC", crv: "P-384", x: "a", y: "b" })],
+    [
+      "malformed coordinate length",
+      encodedKeyOf({ kty: "EC", crv: "P-256", x: "short", y: "short" }),
+    ],
+    ["non-EC kty", encodedKeyOf({ kty: "RSA", n: "abc", e: "AQAB" })],
+    ["missing y", encodedKeyOf({ kty: "EC", crv: "P-256", x: "a".repeat(43) })],
+  ])("rejects %s", (_label, encoded) => {
+    expect(decodeConfidentialCimdKey(encoded)).toBeNull();
   });
 });
 

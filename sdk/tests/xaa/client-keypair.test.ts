@@ -91,21 +91,25 @@ describe("xaa client keypair (confidential CIMD)", () => {
   });
 
   it("prefers the XAA_CLIENT_PRIVATE_KEY secret over the local file", () => {
-    // Seed a persisted local key, then override with a secret PEM.
+    // Seed a persisted local key (a DISTINCT identity from the secret below).
     initXaaClientKeyPair();
     const fileX = getXaaClientJwks().keys[0].x;
-    const secretPem = getXaaClientPrivateKey().export({
+    resetXaaClientKeyPairForTests();
+
+    // A genuinely different P-256 secret must take priority over the file.
+    const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const secretJwk = createPublicKey(privateKey).export({
+      format: "jwk",
+    }) as JsonWebKey;
+    process.env.XAA_CLIENT_PRIVATE_KEY = privateKey.export({
       type: "pkcs8",
       format: "pem",
     }) as string;
-    resetXaaClientKeyPairForTests();
-
-    // A *different* secret key must take priority.
-    // Reuse the same PEM here only to prove the secret path loads at all;
-    // identity is asserted by round-tripping the same material.
-    process.env.XAA_CLIENT_PRIVATE_KEY = secretPem;
     initXaaClientKeyPair();
-    expect(getXaaClientJwks().keys[0].x).toBe(fileX);
+
+    const publishedX = getXaaClientJwks().keys[0].x;
+    expect(publishedX).toBe(secretJwk.x);
+    expect(publishedX).not.toBe(fileX);
   });
 
   it("throws when accessed before initialization", () => {
@@ -113,18 +117,20 @@ describe("xaa client keypair (confidential CIMD)", () => {
     expect(() => getXaaClientJwks()).toThrow(/not initialized/);
   });
 
-  it("ignores a non-P-256 XAA_CLIENT_PRIVATE_KEY and falls back to a generated key", () => {
+  it("fails closed on a non-P-256 XAA_CLIENT_PRIVATE_KEY (no silent identity swap)", () => {
     // An RSA secret would yield an ES256 doc/assertion the RAS can't validate;
-    // the loader must reject it and generate a proper P-256 key instead.
+    // failing closed is safer than silently signing as a generated identity.
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
     process.env.XAA_CLIENT_PRIVATE_KEY = privateKey.export({
       type: "pkcs8",
       format: "pem",
     }) as string;
-    initXaaClientKeyPair();
-    const jwk = getXaaClientJwks().keys[0];
-    expect(jwk.kty).toBe("EC");
-    expect(jwk.crv).toBe("P-256");
+    expect(() => initXaaClientKeyPair()).toThrow(/EC P-256/);
+  });
+
+  it("fails closed on an unparseable XAA_CLIENT_PRIVATE_KEY", () => {
+    process.env.XAA_CLIENT_PRIVATE_KEY = "not-a-key";
+    expect(() => initXaaClientKeyPair()).toThrow(/could not be parsed/);
   });
 
   it("recovers when the persisted public PEM is corrupted (public derived from private)", () => {

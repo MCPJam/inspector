@@ -15,6 +15,12 @@ import path from "path";
 // accepts) is used deliberately: the public point is tiny, so it fits compactly
 // in the stateless reflector URL. Node-only (crypto/fs) — never import from the
 // browser entry.
+//
+// KEY ROTATION: the key IS the identity. The confidential client_id is the
+// reflector URL derived from this public key, so rotating the key (deleting
+// `xaa-client-private.pem`, or changing `XAA_CLIENT_PRIVATE_KEY`) yields a NEW
+// client_id. Any RAS-side allowlisting keyed on the old client_id must be
+// updated after a rotation.
 
 /** JWKS `kid` for the confidential-CIMD client key. */
 export const XAA_CLIENT_KID = "xaa-client-1";
@@ -65,18 +71,30 @@ function isP256PrivateKey(key: KeyObject): boolean {
   );
 }
 
-function loadSecretKeyPair(): boolean {
-  const raw = process.env.XAA_CLIENT_PRIVATE_KEY;
-  if (!raw || raw.trim() === "") return false;
+/**
+ * Load the explicitly-configured client key, failing CLOSED. When
+ * XAA_CLIENT_PRIVATE_KEY is set, the caller intends to sign as that exact
+ * identity; silently falling back to a generated key would change the client_id
+ * (the URL derived from the public key) and sign as a different, unexpected
+ * client. So an unparseable or non-P-256 secret throws rather than degrading.
+ */
+function loadSecretKeyPairOrThrow(raw: string): void {
+  let nextPrivate: KeyObject;
   try {
-    const pem = normalizePrivateKeyPem(raw);
-    const nextPrivate = createPrivateKey(pem);
-    if (!isP256PrivateKey(nextPrivate)) return false;
-    setKeyPair(nextPrivate, createPublicKey(nextPrivate));
-    return true;
+    nextPrivate = createPrivateKey(normalizePrivateKeyPem(raw));
   } catch {
-    return false;
+    throw new Error(
+      "XAA_CLIENT_PRIVATE_KEY is set but could not be parsed as a private key " +
+        "(expected a PEM, base64-of-PEM, or escaped-newline PEM).",
+    );
   }
+  if (!isP256PrivateKey(nextPrivate)) {
+    throw new Error(
+      "XAA_CLIENT_PRIVATE_KEY must be an EC P-256 private key (ES256); other " +
+        "key types cannot produce a valid confidential-CIMD client assertion.",
+    );
+  }
+  setKeyPair(nextPrivate, createPublicKey(nextPrivate));
 }
 
 function loadPersistedLocalKeyPair(): boolean {
@@ -129,7 +147,11 @@ function rebuildJwks(): void {
 
 export function initXaaClientKeyPair(): void {
   if (privateKey && publicKey && jwks) return;
-  if (!loadSecretKeyPair() && !loadPersistedLocalKeyPair()) {
+  const secret = process.env.XAA_CLIENT_PRIVATE_KEY;
+  if (secret && secret.trim() !== "") {
+    // Explicit key requested → fail closed (never substitute a generated one).
+    loadSecretKeyPairOrThrow(secret);
+  } else if (!loadPersistedLocalKeyPair()) {
     try {
       createAndPersistLocalKeyPair();
     } catch {

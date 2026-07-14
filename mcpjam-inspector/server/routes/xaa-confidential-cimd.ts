@@ -2,7 +2,7 @@ import type { Hono } from "hono";
 import type { Context } from "hono";
 import {
   decodeConfidentialCimdKey,
-  getXaaDebugClientMetadata,
+  getConfidentialCimdReflectorMetadata,
   XAA_CONFIDENTIAL_CIMD_PATH_PREFIX,
 } from "@mcpjam/sdk";
 
@@ -20,6 +20,13 @@ import {
  * here (unlike the sibling public doc's fixed identity): the URL contains the
  * key, so a spoofed host just produces a non-matching client_id and fails; only
  * the private-key holder can authenticate.
+ *
+ * IMPORTANT — the reflected identity is EXPLICITLY UNTRUSTED and UNBRANDED.
+ * Anyone can publish an arbitrary public key here, so the document must not
+ * carry MCPJam branding (name/logo/uri): possession proves control of the
+ * client_id, never that MCPJam issued or endorses the client. The decoder also
+ * strictly validates an exact public P-256 JWK and strips any private/unknown
+ * members, so the reflector can only ever serve a clean public key.
  */
 export const XAA_CONFIDENTIAL_CIMD_ROUTE = `${XAA_CONFIDENTIAL_CIMD_PATH_PREFIX}:key`;
 
@@ -30,6 +37,47 @@ const CORS_HEADERS: Record<string, string> = {
 
 // A base64url EC P-256 JWK is well under 1 KB; cap the segment to reject abuse.
 const MAX_KEY_SEGMENT = 2048;
+
+// The reflector's key space is unbounded and anonymous. A small per-IP sliding
+// window caps abuse (cache-fill / amplification) without impeding a RAS that
+// fetches a handful of documents. In-memory is sufficient — the response is a
+// pure function of the URL, so a multi-instance deployment just gets a
+// proportionally higher aggregate limit.
+const RATE_LIMIT = 120;
+const RATE_WINDOW_MS = 60_000;
+const ipWindows = new Map<string, { count: number; windowStart: number }>();
+
+const rateCleanup = setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of ipWindows) {
+    if (now - entry.windowStart > RATE_WINDOW_MS * 2) ipWindows.delete(ip);
+  }
+}, 5 * 60_000);
+rateCleanup.unref?.();
+
+export function resetXaaConfidentialCimdRateLimitForTests(): void {
+  ipWindows.clear();
+}
+
+function clientIp(c: Context): string {
+  const fwd = c.req.header("x-forwarded-for");
+  if (fwd) return fwd.split(",")[0]!.trim();
+  return c.req.header("x-real-ip") ?? "unknown";
+}
+
+/** Returns true when the caller is over budget for the current window. */
+function isRateLimited(c: Context): boolean {
+  const ip = clientIp(c);
+  const now = Date.now();
+  const entry = ipWindows.get(ip);
+  if (!entry || now - entry.windowStart >= RATE_WINDOW_MS) {
+    ipWindows.set(ip, { count: 1, windowStart: now });
+    return false;
+  }
+  if (entry.count >= RATE_LIMIT) return true;
+  entry.count++;
+  return false;
+}
 
 /** The public URL this request was served at (Cloudflare/Vercel-forwarded). */
 function requestClientId(c: Context): string {
@@ -42,6 +90,9 @@ function requestClientId(c: Context): string {
 
 export function registerXaaConfidentialCimdRoute(app: Hono) {
   app.get(XAA_CONFIDENTIAL_CIMD_ROUTE, (c) => {
+    if (isRateLimited(c)) {
+      return c.json({ error: "rate_limited" }, 429, CORS_HEADERS);
+    }
     const key = c.req.param("key");
     if (!key || key.length > MAX_KEY_SEGMENT) {
       return c.json({ error: "invalid_client_metadata_key" }, 400, CORS_HEADERS);
@@ -53,10 +104,7 @@ export function registerXaaConfidentialCimdRoute(app: Hono) {
     return c.json(
       {
         client_id: requestClientId(c),
-        ...getXaaDebugClientMetadata({
-          tokenEndpointAuthMethod: "private_key_jwt",
-          jwks: { keys: [jwk] },
-        }),
+        ...getConfidentialCimdReflectorMetadata({ keys: [jwk] }),
       },
       200,
       {

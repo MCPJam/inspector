@@ -298,6 +298,8 @@ export {
   XAA_CONFIDENTIAL_CIMD_PATH_PREFIX,
   buildConfidentialCimdUrl,
   decodeConfidentialCimdKey,
+  getConfidentialCimdReflectorMetadata,
+  UNVERIFIED_CONFIDENTIAL_CIMD_CLIENT_NAME,
   evaluateIdJagClientMetadata,
   getXaaDebugClientMetadata,
 } from "./oauth/client-identity.js";
