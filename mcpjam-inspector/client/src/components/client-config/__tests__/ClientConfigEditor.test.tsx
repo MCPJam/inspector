@@ -379,6 +379,25 @@ describe("ClientConfigEditor advanced protocol simulation (XAA extension)", () =
     fireEvent.click(getSimSwitch());
     expect(await hashOf(getCurrent())).toBe(baseline);
   });
+
+  it("disables the switch while the capabilities JSON draft is invalid", () => {
+    renderEditor({ clientCapabilities: { sampling: {} } });
+    expect(getSimSwitch()).not.toBeDisabled();
+
+    // The Client-capabilities editor only commits valid parses, so toggling
+    // while an unparseable draft is in flight would rebuild from the last
+    // valid value and silently discard the draft. Type invalid JSON into
+    // that textarea (the one whose serialized value carries `sampling`).
+    const capsTextarea = screen
+      .getAllByRole("textbox")
+      .find((el) =>
+        (el as HTMLTextAreaElement).value.includes("sampling"),
+      ) as HTMLTextAreaElement | undefined;
+    expect(capsTextarea).toBeDefined();
+    fireEvent.change(capsTextarea!, { target: { value: "{ not valid json" } });
+
+    expect(getSimSwitch()).toBeDisabled();
+  });
 });
 
 describe("ClientConfigEditor built-in tools section", () => {

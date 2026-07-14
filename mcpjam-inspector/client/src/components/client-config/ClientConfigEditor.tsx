@@ -493,6 +493,10 @@ export function ClientConfigEditor({
             <Switch
               id={`${reactId}-xaaExtensionSimulation`}
               checked={hasXaaExtensionSimulation(value.clientCapabilities)}
+              // Toggling rebuilds from the last-valid parsed capabilities, so
+              // block it while the JSON editor holds an unparseable draft —
+              // otherwise an accidental flip would silently discard that draft.
+              disabled={capsError != null}
               onCheckedChange={(checked) =>
                 update({
                   clientCapabilities: setXaaExtensionSimulation(
