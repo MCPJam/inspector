@@ -320,7 +320,7 @@ describe("shared XAA mint handler cores", () => {
     it("throws on a SAML assertion without a NameID", () => {
       const empty = Buffer.from(
         `<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" Version="2.0" ID="_x" IssueInstant="2026-01-01T00:00:00Z"><saml:Issuer>${ISSUER}</saml:Issuer></saml:Assertion>`
-      ).toString("base64");
+      ).toString("base64url");
       expect(() =>
         handleXaaJsonTokenExchange({
           issuer: ISSUER,
@@ -529,10 +529,10 @@ describe("shared XAA mint handler cores", () => {
 
     it("rejects a tampered SAML subject token with 400 invalid_grant", () => {
       const tampered = Buffer.from(
-        Buffer.from(mintSamlSubjectToken(), "base64")
+        Buffer.from(mintSamlSubjectToken(), "base64url")
           .toString("utf-8")
           .replace(">user-1<", ">admin<")
-      ).toString("base64");
+      ).toString("base64url");
       const result = handleXaaTokenExchangeGrant(ISSUER, {
         ...validSamlForm(),
         subject_token: tampered,
