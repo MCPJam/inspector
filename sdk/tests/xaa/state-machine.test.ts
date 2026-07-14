@@ -159,8 +159,9 @@ describe("createXAAStateMachine", () => {
               access_token: "access-token",
               token_type: "Bearer",
               expires_in: 300,
-              // The AS narrows the requested scope — the machine must retain
-              // what was actually granted, separate from the requested scope.
+              // The AS narrows the requested scope (read:tools write:tools →
+              // read:tools) — the machine must retain what was actually
+              // granted, from the token RESPONSE, not echo the request.
               scope: "read:tools",
             },
           },
@@ -181,7 +182,9 @@ describe("createXAAStateMachine", () => {
       clientId: "mcpjam-debugger",
       userId: "user-12345",
       email: "demo.user@example.com",
-      scope: "read:tools",
+      // Wider than the response's grant so the grantedScope assertion proves
+      // the value comes from the token response, not a request echo.
+      scope: "read:tools write:tools",
     });
 
     for (let index = 0; index < 7; index += 1) {
