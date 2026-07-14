@@ -15,7 +15,9 @@ import { verifyXaaJwt } from "./mint/signer.js";
 import type { XaaTokenEndpointAuthMethod } from "./mint/jwt-bearer.js";
 import {
   DEFAULT_NEGATIVE_TEST_MODE,
+  type IdentityAssertionFormat,
   type NegativeTestMode,
+  type SubjectIdentifierFormat,
 } from "./constants.js";
 import {
   buildIssuerPublicationCandidates,
@@ -69,6 +71,11 @@ export interface XaaFlowConfig {
    * XAA debugger document. */
   clientIdMetadataUrl?: string;
   negativeTestMode?: NegativeTestMode;
+  /** Input axis: assertion format the mock IdP mints ("oidc" default). */
+  identityAssertionFormat?: IdentityAssertionFormat;
+  /** Output axis: mint a saml-nameid `sub_id` into the ID-JAG when
+   * "saml-nameid" ("oauth-sub" default). Independent of the input axis. */
+  subjectIdentifierFormat?: SubjectIdentifierFormat;
   /** Per outbound request timeout in milliseconds. */
   timeoutMs?: number;
   /** Reject non-HTTPS / private targets. Default false for local development. */
@@ -418,6 +425,8 @@ async function runSharedAttempt(
     email: config.email,
     scope: config.scope,
     negativeTestMode: mode,
+    identityAssertionFormat: config.identityAssertionFormat,
+    subjectIdentifierFormat: config.subjectIdentifierFormat,
     registrationStrategy: ctx.registrationStrategy,
   });
   const executor = createInProcessXaaExecutor({
@@ -457,6 +466,8 @@ async function runSharedAttempt(
     issuerBaseUrl: config.issuerBaseUrl,
     requestExecutor: executor,
     negativeTestMode: mode,
+    identityAssertionFormat: config.identityAssertionFormat,
+    subjectIdentifierFormat: config.subjectIdentifierFormat,
     userId: config.subject,
     email: config.email,
     clientId: config.clientId,

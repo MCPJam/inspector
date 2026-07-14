@@ -142,6 +142,7 @@
     "@tanstack/react-virtual": "^3.13.12",
     "@workos-inc/authkit-react": "^0.12.0",
     "@workos-inc/node": "^10.2.0",
+    "@xmldom/xmldom": "^0.8.13",
     "@xterm/addon-clipboard": "^0.2.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
@@ -196,6 +197,8 @@
     "url-template": "^3.1.1",
     "use-stick-to-bottom": "^1.1.1",
     "ws": "^8.18.0",
+    "xml-crypto": "^6.1.2",
+    "xpath": "^0.0.34",
     "zod": "^4.1.12",
     "zustand": "^5.0.6"
   },

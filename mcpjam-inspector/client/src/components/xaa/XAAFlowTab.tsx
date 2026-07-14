@@ -34,8 +34,12 @@ import { XAAResourceAppsSection } from "./registration/XAAResourceAppsSection";
 import { NegativeTestScorecard } from "./NegativeTestScorecard";
 import type { NegativeTestsInput } from "@/lib/xaa/discovery-client";
 import {
+  DEFAULT_IDENTITY_ASSERTION_FORMAT,
+  normalizeIdentityAssertionFormat,
   normalizeRegistrationStrategy,
+  type IdentityAssertionFormat,
   type NegativeTestMode,
+  type SubjectIdentifierFormat,
 } from "@/shared/xaa.js";
 import {
   createInitialXAAFlowState,
@@ -57,13 +61,25 @@ const INITIAL_RESOURCE_PARAM =
     ? null
     : new URLSearchParams(window.location.search).get("resource");
 
+// The persisted per-server preset drives BOTH independent draft axes: the
+// input axis (which assertion the mock IdP mints, which subject_token_type
+// the exchange presents) and the output axis (whether the ID-JAG carries a
+// saml-nameid `sub_id`). The SDK keeps the axes separate for programmatic
+// mixing; the debugger UI intentionally sets them together.
+function subjectIdentifierFormatFor(
+  format: IdentityAssertionFormat
+): SubjectIdentifierFormat {
+  return format === "saml" ? "saml-nameid" : "oauth-sub";
+}
+
 function buildFlowStateFromInput(
   input: XAAFlowInput,
   registrationStrategy: RegistrationStrategy = "preregistered",
   // A prior ambiguous DCR POST may have created a remote client. This risk is
   // tracked per-target OUTSIDE flow state so an ordinary reset re-seeds it —
   // clearing it only through the confirmed "Register another client" path.
-  dcrRetryMayCreateDuplicate = false
+  dcrRetryMayCreateDuplicate = false,
+  identityAssertionFormat: IdentityAssertionFormat = DEFAULT_IDENTITY_ASSERTION_FORMAT
 ): XAAFlowState {
   return createInitialXAAFlowState({
     serverUrl: input.serverUrl || undefined,
@@ -78,6 +94,12 @@ function buildFlowStateFromInput(
     // every rebuild path must seed the currently-effective strategy — a
     // clean rebuild must not silently reset a selected DCR run.
     registrationStrategy,
+    // Sticky like negativeTestMode: seeded on every rebuild, changed only
+    // through the reset owner below.
+    identityAssertionFormat,
+    subjectIdentifierFormat: subjectIdentifierFormatFor(
+      identityAssertionFormat
+    ),
     ...(dcrRetryMayCreateDuplicate
       ? { dcrRetryMayCreateDuplicate: true }
       : {}),
@@ -222,6 +244,20 @@ export function XAAFlowTab({
   // pre-registered credentials (serverId-resolved secret) must be ignored.
   const runsDynamicRegistration = effectiveStrategy !== "preregistered";
 
+  // ── Identity assertion format (per-server preset) ────────────────────
+  // Chosen in the "Configure Server to Test" modal, persisted per-server.
+  // Applies to bar-server runs only — like the per-server simulated identity,
+  // it must not leak onto a selected resource-app registration, which stays
+  // on the OIDC default. Unknown persisted values fall back to the default.
+  const persistedAssertionFormat =
+    normalizeIdentityAssertionFormat(
+      selectedServer?.xaaIdentityAssertionFormat
+    ) ?? DEFAULT_IDENTITY_ASSERTION_FORMAT;
+  const effectiveAssertionFormat: IdentityAssertionFormat =
+    target.targetSource === "bar_server"
+      ? persistedAssertionFormat
+      : DEFAULT_IDENTITY_ASSERTION_FORMAT;
+
   // DCR-minted credentials, keyed by target + registration endpoint. A
   // useRef-backed Map so machine recreation neither loses nor re-exposes the
   // secret mid-run; never copied into React state, storage, telemetry, or a
@@ -250,7 +286,8 @@ export function XAAFlowTab({
     buildFlowStateFromInput(
       target.runInput,
       effectiveStrategy,
-      dcrDuplicateRiskRef.current.has(targetKey)
+      dcrDuplicateRiskRef.current.has(targetKey),
+      effectiveAssertionFormat
     )
   );
 
@@ -459,6 +496,9 @@ export function XAAFlowTab({
   // refs; confirms via AlertDialog before discarding a busy or completed run.
   const lastAppliedTargetKey = useRef<string | null>(null);
   const lastNegativeTestMode = useRef(runSettings.negativeTestMode);
+  const lastAssertionFormat = useRef<IdentityAssertionFormat>(
+    effectiveAssertionFormat
+  );
   const lastRegistrationStrategy = useRef<RegistrationStrategy>(
     effectiveStrategy
   );
@@ -475,6 +515,7 @@ export function XAAFlowTab({
     targetKey: string;
     negativeTestMode: NegativeTestMode;
     registrationStrategy: RegistrationStrategy;
+    identityAssertionFormat: IdentityAssertionFormat;
   } | null>(null);
 
   // Rebuild the flow from the current input and record the identity it was
@@ -483,7 +524,10 @@ export function XAAFlowTab({
   // applied the current identity — and skip a stale timer that would otherwise
   // wipe a freshly-started run.
   const rebuildFlow = useCallback(
-    (strategyOverride?: RegistrationStrategy) => {
+    (
+      strategyOverride?: RegistrationStrategy,
+      assertionFormatOverride?: IdentityAssertionFormat
+    ) => {
       lastAppliedIdentity.current = {
         userId: runInput.userId,
         email: runInput.email,
@@ -494,11 +538,18 @@ export function XAAFlowTab({
           strategyOverride ?? effectiveStrategy,
           // Re-seed the per-target duplicate-registration risk so an ordinary
           // reset can't drop the confirmation gate.
-          dcrDuplicateRiskRef.current.has(targetKey)
+          dcrDuplicateRiskRef.current.has(targetKey),
+          assertionFormatOverride ?? effectiveAssertionFormat
         )
       );
     },
-    [applyFlowState, runInput, effectiveStrategy, targetKey]
+    [
+      applyFlowState,
+      runInput,
+      effectiveStrategy,
+      effectiveAssertionFormat,
+      targetKey,
+    ]
   );
 
   // Mirror the machine's duplicate-registration risk into the target-scoped
@@ -521,12 +572,14 @@ export function XAAFlowTab({
     (
       nextTargetKey: string,
       nextMode: NegativeTestMode,
-      nextStrategy: RegistrationStrategy
+      nextStrategy: RegistrationStrategy,
+      nextAssertionFormat: IdentityAssertionFormat
     ) => {
       lastAppliedTargetKey.current = nextTargetKey;
       lastNegativeTestMode.current = nextMode;
       lastRegistrationStrategy.current = nextStrategy;
-      rebuildFlow(nextStrategy);
+      lastAssertionFormat.current = nextAssertionFormat;
+      rebuildFlow(nextStrategy, nextAssertionFormat);
     },
     [rebuildFlow]
   );
@@ -534,10 +587,12 @@ export function XAAFlowTab({
   useEffect(() => {
     const nextMode = runSettings.negativeTestMode;
     const nextStrategy = effectiveStrategy;
+    const nextAssertionFormat = effectiveAssertionFormat;
     if (
       lastAppliedTargetKey.current === targetKey &&
       lastNegativeTestMode.current === nextMode &&
-      lastRegistrationStrategy.current === nextStrategy
+      lastRegistrationStrategy.current === nextStrategy &&
+      lastAssertionFormat.current === nextAssertionFormat
     ) {
       return;
     }
@@ -551,14 +606,16 @@ export function XAAFlowTab({
         targetKey,
         negativeTestMode: nextMode,
         registrationStrategy: nextStrategy,
+        identityAssertionFormat: nextAssertionFormat,
       });
       return;
     }
-    applyTargetReset(targetKey, nextMode, nextStrategy);
+    applyTargetReset(targetKey, nextMode, nextStrategy, nextAssertionFormat);
   }, [
     targetKey,
     runSettings.negativeTestMode,
     effectiveStrategy,
+    effectiveAssertionFormat,
     applyTargetReset,
   ]);
 
@@ -671,6 +728,13 @@ export function XAAFlowTab({
       // for registrationId/serverId runs) plus the session credential cache
       // DCR runs mint into and redeem from.
       registrationStrategy: effectiveStrategy,
+      // Both draft axes, derived from the per-server preset (the machine
+      // prefers the sticky flow-state values seeded by the same preset; these
+      // config fallbacks keep a fresh machine consistent with them).
+      identityAssertionFormat: effectiveAssertionFormat,
+      subjectIdentifierFormat: subjectIdentifierFormatFor(
+        effectiveAssertionFormat
+      ),
       dcrCredentialCache,
       dcrCacheTargetKey: targetKey,
       // Confidential bar-server runs send only serverId/projectId; the server
@@ -697,6 +761,7 @@ export function XAAFlowTab({
     organizationId,
     hostedIssuerOptIn,
     effectiveStrategy,
+    effectiveAssertionFormat,
     runsDynamicRegistration,
     dcrCredentialCache,
     targetKey,
@@ -988,6 +1053,8 @@ export function XAAFlowTab({
               lastNegativeTestMode.current = pendingReset.negativeTestMode;
               lastRegistrationStrategy.current =
                 pendingReset.registrationStrategy;
+              lastAssertionFormat.current =
+                pendingReset.identityAssertionFormat;
             }
             setPendingReset(null);
           }
@@ -1009,7 +1076,8 @@ export function XAAFlowTab({
                   applyTargetReset(
                     pendingReset.targetKey,
                     pendingReset.negativeTestMode,
-                    pendingReset.registrationStrategy
+                    pendingReset.registrationStrategy,
+                    pendingReset.identityAssertionFormat
                   );
                 }
                 setPendingReset(null);

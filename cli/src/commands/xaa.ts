@@ -1,6 +1,9 @@
 import {
+  IDENTITY_ASSERTION_FORMATS,
+  normalizeIdentityAssertionFormat,
   normalizeRegistrationStrategy,
   runXaaFlow,
+  type IdentityAssertionFormat,
   type RegistrationStrategy,
   type XaaFlowConfig,
   type XaaFlowResult,
@@ -31,6 +34,7 @@ export interface XaaCommandOptions {
   email?: string;
   clientSecret?: string;
   tokenEndpointAuthMethod?: XaaTokenEndpointAuthMethod;
+  assertionFormat?: IdentityAssertionFormat;
   scopes?: string;
   httpsOnly?: boolean;
 }
@@ -80,6 +84,11 @@ export function registerXaaCommands(program: Command): void {
       "--token-endpoint-auth-method <method>",
       "Token endpoint client authentication: client_secret_basic, client_secret_post, or none (default: infer from metadata)",
       parseTokenEndpointAuthMethod,
+    )
+    .option(
+      "--assertion-format <format>",
+      "Identity assertion format the mock IdP mints: oidc (ID token, default) or saml (SAML 2.0 assertion)",
+      parseAssertionFormat,
     )
     .option("--scopes <scopes>", "Space-separated scope string")
     .option(
@@ -308,6 +317,18 @@ export function buildXaaConfig(
     ...(options.tokenEndpointAuthMethod
       ? { tokenEndpointAuthMethod: options.tokenEndpointAuthMethod }
       : {}),
+    // --assertion-format is a PRESET setting both identity axes together:
+    // "saml" mints a SAML 2.0 assertion AND a saml-nameid `sub_id` in the
+    // ID-JAG. "oidc" (the default) leaves both fields unset so the SDK's own
+    // defaults ("oidc" / "oauth-sub") apply, matching how the other optionals
+    // preserve undefined. Programmatic users can still mix the axes on
+    // XaaFlowConfig directly.
+    ...(options.assertionFormat === "saml"
+      ? {
+          identityAssertionFormat: "saml" as const,
+          subjectIdentifierFormat: "saml-nameid" as const,
+        }
+      : {}),
     ...(options.scopes?.trim() ? { scope: options.scopes.trim() } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     httpsOnly: options.httpsOnly ?? false,
@@ -336,6 +357,16 @@ function parseTokenEndpointAuthMethod(
   }
   throw usageError(
     "--token-endpoint-auth-method must be client_secret_basic, client_secret_post, or none.",
+  );
+}
+
+export function parseAssertionFormat(value: string): IdentityAssertionFormat {
+  const normalized = normalizeIdentityAssertionFormat(value);
+  if (normalized) {
+    return normalized;
+  }
+  throw usageError(
+    `--assertion-format must be ${IDENTITY_ASSERTION_FORMATS.join(" or ")}.`,
   );
 }
 

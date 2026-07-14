@@ -114,6 +114,7 @@ export {
   ID_JAG_GRANT_PROFILE,
   ID_JAG_TOKEN_TYPE,
   ID_TOKEN_TOKEN_TYPE,
+  SAML2_TOKEN_TYPE,
   JWT_BEARER_GRANT,
   MCPJAM_CLIENT_URI,
   MCPJAM_LOGO_URI,
@@ -198,8 +199,18 @@ export {
   NEGATIVE_TEST_MODES,
   DEFAULT_NEGATIVE_TEST_MODE,
   isNegativeTestMode,
+  IDENTITY_ASSERTION_FORMATS,
+  DEFAULT_IDENTITY_ASSERTION_FORMAT,
+  normalizeIdentityAssertionFormat,
+  SUBJECT_IDENTIFIER_FORMATS,
+  DEFAULT_SUBJECT_IDENTIFIER_FORMAT,
+  normalizeSubjectIdentifierFormat,
 } from "./xaa/constants.js";
-export type { NegativeTestMode } from "./xaa/constants.js";
+export type {
+  NegativeTestMode,
+  IdentityAssertionFormat,
+  SubjectIdentifierFormat,
+} from "./xaa/constants.js";
 // Shared client-registration vocabulary (single source of truth for OAuth
 // flows AND the XAA debugger's Client↔Resource-AS leg).
 export {
