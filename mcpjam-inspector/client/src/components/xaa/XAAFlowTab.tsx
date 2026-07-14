@@ -746,36 +746,64 @@ export function XAAFlowTab({
     effectiveStrategy
   );
 
-  // Fresh-registration generation: bumped whenever a NEW dynamic client
-  // identity is established (a DCR/CIMD run registering a fresh client, or
-  // the explicit "Register another client" action), so person outcomes
-  // recorded against the previous client identity stop rendering. The ref
-  // mirrors the state so the recording effect can stamp the CURRENT value —
-  // a run that itself registered a fresh client mid-flight attributes its
-  // result to the identity it actually used.
-  const [registrationGeneration, setRegistrationGeneration] = useState(0);
-  const registrationGenerationRef = useRef(0);
-  const bumpRegistrationGeneration = useCallback(() => {
-    registrationGenerationRef.current += 1;
-    setRegistrationGeneration(registrationGenerationRef.current);
+  // Fresh-registration generations, PER TARGET: bumped when a target
+  // establishes a NEW dynamic client identity (a DCR/CIMD run registering a
+  // fresh client, or the explicit "Register another client" action), so person
+  // outcomes recorded against that target's previous client identity stop
+  // rendering. Per-target so a re-registration on one target can never
+  // invalidate another target's badges. The ref mirrors the state so the
+  // recording effect can stamp the CURRENT value — a run that itself
+  // registered a fresh client mid-flight attributes its result to the
+  // identity it actually used.
+  const [registrationGenerationByTarget, setRegistrationGenerationByTarget] =
+    useState<ReadonlyMap<string, number>>(() => new Map());
+  const registrationGenerationByTargetRef = useRef(new Map<string, number>());
+  const bumpRegistrationGeneration = useCallback((key: string) => {
+    const next = (registrationGenerationByTargetRef.current.get(key) ?? 0) + 1;
+    registrationGenerationByTargetRef.current.set(key, next);
+    setRegistrationGenerationByTarget((current) => {
+      const map = new Map(current);
+      map.set(key, next);
+      return map;
+    });
   }, []);
-  // A dynamic (DCR/CIMD) run establishing a NEW client identity bumps the
-  // generation: the machine writes the freshly-registered clientId into flow
-  // state, while a reused session registration keeps the same clientId (no
-  // bump — prior results still describe that client). Declared BEFORE the
-  // recording effect below: when the registration and the terminal state land
-  // in one commit, the ref must already carry the new generation when the
-  // outcome is stamped.
-  const lastDynamicClientIdRef = useRef<string | undefined>(undefined);
+  const registrationGeneration =
+    registrationGenerationByTarget.get(targetKey) ?? 0;
+  // Owned by the single target-reset owner below (the key it last rebuilt the
+  // flow for). Declared up here because the generation effect must attribute
+  // dynamic clientIds to the target the CURRENT flow state was built for —
+  // on a target switch, effects re-run with the NEW targetKey while flowState
+  // still holds the OLD target's flow.
+  const lastAppliedTargetKey = useRef<string | null>(null);
+  // The last dynamic clientId each target established. A dynamic (DCR/CIMD)
+  // run establishing a NEW client identity bumps that target's generation:
+  // the machine writes the freshly-registered clientId into flow state, while
+  // a reused session registration re-writes the SAME clientId (no bump —
+  // prior results still describe that client), and an ordinary reset re-seeds
+  // the CONFIGURED clientId, which is not a dynamic identity at all (no
+  // bump). Declared BEFORE the recording effect below: when the registration
+  // and the terminal state land in one commit, the ref must already carry the
+  // new generation when the outcome is stamped.
+  const lastDynamicClientIdByTargetRef = useRef(new Map<string, string>());
   useEffect(() => {
     if (flowState.registrationStrategy === "preregistered") return;
     const clientId = flowState.clientId;
-    if (!clientId || lastDynamicClientIdRef.current === clientId) return;
-    lastDynamicClientIdRef.current = clientId;
-    bumpRegistrationGeneration();
+    // Only a machine-established identity counts — a rebuild re-seeding the
+    // configured clientId must not read as a fresh registration.
+    if (!clientId || clientId === runInput.clientId) return;
+    // Attribute to the target the flow was actually built for (see the
+    // lastAppliedTargetKey comment above — flowState can lag a target switch).
+    if (lastAppliedTargetKey.current !== targetKey) return;
+    if (lastDynamicClientIdByTargetRef.current.get(targetKey) === clientId) {
+      return;
+    }
+    lastDynamicClientIdByTargetRef.current.set(targetKey, clientId);
+    bumpRegistrationGeneration(targetKey);
   }, [
     flowState.clientId,
     flowState.registrationStrategy,
+    runInput.clientId,
+    targetKey,
     bumpRegistrationGeneration,
   ]);
   // The whole run context is captured atomically at run START — recording
@@ -784,6 +812,9 @@ export function XAAFlowTab({
   const runContextRef = useRef<{
     personId: string;
     personUpdatedAt: number;
+    /** The run's target — the per-target generation is read against it at
+     * recording time (never the currently-selected target). */
+    targetKey: string;
     runGateKey: string;
     negativeTestMode: NegativeTestMode;
     targetFingerprint: string;
@@ -800,6 +831,7 @@ export function XAAFlowTab({
       ? {
           personId: selectedPerson._id,
           personUpdatedAt: selectedPerson.updatedAt,
+          targetKey,
           runGateKey,
           negativeTestMode: runInput.negativeTestMode,
           targetFingerprint,
@@ -871,7 +903,8 @@ export function XAAFlowTab({
       personUpdatedAt: ctx.personUpdatedAt,
       targetFingerprint: ctx.targetFingerprint,
       registrationStrategy: flowState.registrationStrategy,
-      registrationGeneration: registrationGenerationRef.current,
+      registrationGeneration:
+        registrationGenerationByTargetRef.current.get(ctx.targetKey) ?? 0,
     };
     if (flowState.currentStep === "complete") {
       // "Complete" does not prove full access — either stage may have
@@ -1109,16 +1142,24 @@ export function XAAFlowTab({
   ]);
 
   // ── Single target-reset owner ──────────────────────────────────────
-  // One effect keyed on (targetKey, negativeTestMode) rebuilds the flow when
-  // the resolved target or the global mode changes. Guarded by value-compared
-  // refs; confirms via AlertDialog before discarding a busy or completed run.
-  const lastAppliedTargetKey = useRef<string | null>(null);
+  // One effect keyed on (targetKey, negativeTestMode, registrationStrategy,
+  // identityAssertionFormat, policyMode) rebuilds the flow when the resolved
+  // target or a run-defining mode changes. Guarded by value-compared refs;
+  // confirms via AlertDialog before discarding a busy or completed run.
+  // (lastAppliedTargetKey is declared with the registration-generation
+  // tracking above, which needs it earlier.)
   const lastNegativeTestMode = useRef(runSettings.negativeTestMode);
   const lastAssertionFormat = useRef<IdentityAssertionFormat>(
     effectiveAssertionFormat
   );
   const lastRegistrationStrategy =
     useRef<RegistrationStrategy>(effectiveStrategy);
+  // Managed↔unmanaged (and ↔no-policy) switches rebuild too: intermediate
+  // artifacts minted under the previous policy mode (an already-minted
+  // ID-JAG) must never be redeemed while the UI claims the new mode.
+  const lastPolicyMode = useRef<"managed" | "unmanaged" | undefined>(
+    policyMode
+  );
   // The EFFECTIVE identity the flow was last (re)built with (person override,
   // server override, or run-settings default — whatever runInput resolved).
   // Tracked so an identity change rebuilds the flow (clearing the
@@ -1135,6 +1176,7 @@ export function XAAFlowTab({
     negativeTestMode: NegativeTestMode;
     registrationStrategy: RegistrationStrategy;
     identityAssertionFormat: IdentityAssertionFormat;
+    policyMode: "managed" | "unmanaged" | undefined;
   } | null>(null);
 
   // Rebuild the flow from the current input and record the identity it was
@@ -1192,12 +1234,14 @@ export function XAAFlowTab({
       nextTargetKey: string,
       nextMode: NegativeTestMode,
       nextStrategy: RegistrationStrategy,
-      nextAssertionFormat: IdentityAssertionFormat
+      nextAssertionFormat: IdentityAssertionFormat,
+      nextPolicyMode: "managed" | "unmanaged" | undefined
     ) => {
       lastAppliedTargetKey.current = nextTargetKey;
       lastNegativeTestMode.current = nextMode;
       lastRegistrationStrategy.current = nextStrategy;
       lastAssertionFormat.current = nextAssertionFormat;
+      lastPolicyMode.current = nextPolicyMode;
       rebuildFlow(nextStrategy, nextAssertionFormat);
     },
     [rebuildFlow]
@@ -1207,11 +1251,13 @@ export function XAAFlowTab({
     const nextMode = runSettings.negativeTestMode;
     const nextStrategy = effectiveStrategy;
     const nextAssertionFormat = effectiveAssertionFormat;
+    const nextPolicyMode = policyMode;
     if (
       lastAppliedTargetKey.current === targetKey &&
       lastNegativeTestMode.current === nextMode &&
       lastRegistrationStrategy.current === nextStrategy &&
-      lastAssertionFormat.current === nextAssertionFormat
+      lastAssertionFormat.current === nextAssertionFormat &&
+      lastPolicyMode.current === nextPolicyMode
     ) {
       return;
     }
@@ -1226,15 +1272,23 @@ export function XAAFlowTab({
         negativeTestMode: nextMode,
         registrationStrategy: nextStrategy,
         identityAssertionFormat: nextAssertionFormat,
+        policyMode: nextPolicyMode,
       });
       return;
     }
-    applyTargetReset(targetKey, nextMode, nextStrategy, nextAssertionFormat);
+    applyTargetReset(
+      targetKey,
+      nextMode,
+      nextStrategy,
+      nextAssertionFormat,
+      nextPolicyMode
+    );
   }, [
     targetKey,
     runSettings.negativeTestMode,
     effectiveStrategy,
     effectiveAssertionFormat,
+    policyMode,
     applyTargetReset,
   ]);
 
@@ -1333,8 +1387,9 @@ export function XAAFlowTab({
     // gate — the user has acknowledged a second remote client may be created.
     dcrDuplicateRiskRef.current.delete(targetKey);
     // A new client identity is about to be established: person outcomes
-    // recorded against the previous registration must stop rendering.
-    bumpRegistrationGeneration();
+    // recorded against this target's previous registration must stop
+    // rendering (other targets' registrations are untouched).
+    bumpRegistrationGeneration(targetKey);
     rebuildFlow();
   }, [targetKey, rebuildFlow, bumpRegistrationGeneration]);
 
@@ -1656,7 +1711,11 @@ export function XAAFlowTab({
           </span>
           {isOrgAdmin ? (
             // Session-only UX toggle; the issuer independently enforces the
-            // admin check server-side, so this can never GRANT a bypass.
+            // admin check server-side, so this can never GRANT a bypass. A
+            // change reroutes through the single target-reset owner
+            // (policyMode is part of its key), so artifacts minted under the
+            // previous mode — an already-minted ID-JAG — are never sent while
+            // the banner claims the new one.
             <label className="flex shrink-0 cursor-pointer items-center gap-1.5">
               <input
                 type="checkbox"
@@ -1899,6 +1958,7 @@ export function XAAFlowTab({
                 pendingReset.registrationStrategy;
               lastAssertionFormat.current =
                 pendingReset.identityAssertionFormat;
+              lastPolicyMode.current = pendingReset.policyMode;
             }
             setPendingReset(null);
           }
@@ -1921,7 +1981,8 @@ export function XAAFlowTab({
                     pendingReset.targetKey,
                     pendingReset.negativeTestMode,
                     pendingReset.registrationStrategy,
-                    pendingReset.identityAssertionFormat
+                    pendingReset.identityAssertionFormat,
+                    pendingReset.policyMode
                   );
                 }
                 setPendingReset(null);

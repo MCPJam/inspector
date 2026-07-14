@@ -206,9 +206,11 @@ vi.mock("../xaa/XAAFlowLogger", () => ({
       continueLabel: string;
       continueDisabled?: boolean;
       runAllDisabled?: boolean;
+      resetDisabled?: boolean;
       isRunningAll?: boolean;
       onContinue?: () => void;
       onRunAll?: () => void;
+      onReset?: () => void;
     };
   }) => (
     <div data-testid="xaa-flow-logger">
@@ -216,6 +218,14 @@ vi.mock("../xaa/XAAFlowLogger", () => ({
         {summary.serverUrl || "No target configured"}
       </span>
       <span data-testid="logger-continue-label">{actions.continueLabel}</span>
+      <button
+        type="button"
+        data-testid="logger-reset"
+        disabled={actions.resetDisabled || !actions.onReset}
+        onClick={() => actions.onReset?.()}
+      >
+        Reset
+      </button>
       <button
         type="button"
         data-testid="logger-run-all"
@@ -1157,6 +1167,101 @@ describe("XAAFlowTab", () => {
       expect(capturedPeopleStripProps.outcomeFor(bob._id)).toBeUndefined();
     });
 
+    it("keeps a dynamic outcome across an ordinary reset that reuses the cached registration", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      currentTarget = personTarget();
+      machineCompleteExtras = { clientId: "dyn-client-1" };
+      render(
+        <XAAFlowTab
+          serverConfigs={{ staging: { registrationMode: "dcr" } } as any}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(capturedPeopleStripProps.outcomeFor(bob._id)).toMatchObject({
+          status: "allowed",
+        }),
+      );
+
+      // An ordinary reset re-seeds the CONFIGURED clientId; the session cache
+      // still holds the registration, so no new client identity is
+      // established and the badge must survive the reset.
+      await user.click(screen.getByTestId("logger-reset"));
+      expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
+        "Start",
+      );
+      expect(capturedPeopleStripProps.outcomeFor(bob._id)).toMatchObject({
+        status: "allowed",
+      });
+    });
+
+    it("a re-registration on one target leaves another target's dynamic badge intact (per-target generation)", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      const dcrConfigs = {
+        staging: { registrationMode: "dcr" },
+        prod: { registrationMode: "dcr" },
+      } as any;
+      currentTarget = personTarget();
+      machineCompleteExtras = { clientId: "dyn-client-1" };
+      const { rerender } = render(
+        <XAAFlowTab
+          serverConfigs={dcrConfigs}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(capturedPeopleStripProps.outcomeFor(bob._id)).toMatchObject({
+          status: "allowed",
+        }),
+      );
+
+      // Switch to a different DCR target (confirming away the completed run)…
+      currentTarget = makeTarget({
+        targetKey: "bar_server:prod",
+        runInput: {
+          ...personTarget().runInput,
+          serverUrl: "https://prod.mcp.example.com",
+        },
+      });
+      rerender(
+        <XAAFlowTab
+          serverConfigs={dcrConfigs}
+          selectedServerName="prod"
+          projectId="proj_1"
+        />,
+      );
+      await user.click(
+        await screen.findByRole("button", { name: /switch and reset/i }),
+      );
+      // …where a run establishes a NEW dynamic client identity.
+      act(() => {
+        capturedMachineConfig.updateState({ clientId: "dyn-client-2" });
+      });
+
+      // Back on the first target, the recorded outcome still describes the
+      // client that produced it — the other target's registration must not
+      // invalidate it.
+      currentTarget = personTarget();
+      rerender(
+        <XAAFlowTab
+          serverConfigs={dcrConfigs}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+      expect(capturedPeopleStripProps.outcomeFor(bob._id)).toMatchObject({
+        status: "allowed",
+      });
+    });
+
     it("clears a stale stored selection only after the roster loads without it", () => {
       peopleState = { people: [bob], isLoading: true, isAvailable: true };
       personSelectionState = { proj_1: "person_ghost" };
@@ -1306,6 +1411,47 @@ describe("XAAFlowTab", () => {
         screen.queryByRole("checkbox", { name: /bypass org policy/i }),
       ).not.toBeInTheDocument();
       expect(capturedTargetParams.policyMode).toBe("managed");
+    });
+
+    it("toggling the bypass after a completed run resets through the confirm path — no artifact minted under the previous mode survives", async () => {
+      const user = userEvent.setup();
+      seedManagedOrg();
+      orgPersonSelectionState = { org_1: alice._id };
+      currentTarget = managedTarget();
+      await renderManagedTab(user);
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
+          "Flow Complete",
+        ),
+      );
+
+      // Flipping the policy mode goes through the single target-reset owner:
+      // the completed run holds artifacts (an already-minted ID-JAG) produced
+      // under managed policy, so the switch must confirm first…
+      await user.click(
+        screen.getByRole("checkbox", { name: /bypass org policy/i }),
+      );
+      await user.click(
+        await screen.findByRole("button", { name: /switch and reset/i }),
+      );
+      // …and confirming rebuilds the flow from idle, so the next step can't
+      // send anything minted under the previous mode.
+      expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
+        "Start",
+      );
+
+      // Toggling back with the flow idle rebuilds immediately — no dialog.
+      await user.click(
+        screen.getByRole("checkbox", { name: /bypass org policy/i }),
+      );
+      expect(
+        screen.queryByRole("button", { name: /switch and reset/i }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
+        "Start",
+      );
     });
 
     it("switches the strip to the org roster and routes selection to the org map", async () => {
