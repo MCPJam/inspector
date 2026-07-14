@@ -176,7 +176,9 @@ export function issueMockSamlAssertion(
 
   return {
     assertionXml: signedXml,
-    assertionB64: Buffer.from(signedXml, "utf-8").toString("base64"),
+    // RFC 8693 §3 + RFC 7522 §2.1: the saml2 token is base64url without
+    // padding, not standard base64 (a conformant peer may reject +, /, =).
+    assertionB64: Buffer.from(signedXml, "utf-8").toString("base64url"),
     subject: {
       issuer: params.issuer,
       nameid: params.subject,
@@ -211,14 +213,20 @@ export interface VerifiedSamlAssertionSubject {
  * parsing, and reject any DTD/entity machinery outright. */
 function decodeGuardedAssertionXml(assertionB64: string): string {
   if (typeof assertionB64 !== "string" || assertionB64.length === 0) {
-    throw new Error("SAML assertion must be a non-empty base64 string");
+    throw new Error("SAML assertion must be a non-empty base64url string");
   }
   // The base64 form is ~4/3 the XML size; capping it first keeps oversized
   // input from ever being decoded.
   if (assertionB64.length > (MAX_SAML_ASSERTION_BYTES * 4) / 3 + 4) {
     throw new Error("SAML assertion exceeds the maximum accepted size");
   }
-  const xml = Buffer.from(assertionB64, "base64").toString("utf-8");
+  // RFC 8693 §3 saml2 tokens are base64url without padding; reject the
+  // standard-base64 alphabet (+, /, =) explicitly rather than relying on a
+  // lenient decoder to silently accept it.
+  if (!/^[A-Za-z0-9_-]+$/.test(assertionB64)) {
+    throw new Error("SAML assertion must be base64url-encoded without padding");
+  }
+  const xml = Buffer.from(assertionB64, "base64url").toString("utf-8");
   if (Buffer.byteLength(xml, "utf-8") > MAX_SAML_ASSERTION_BYTES) {
     throw new Error("SAML assertion exceeds the maximum accepted size");
   }
@@ -254,8 +262,11 @@ function selectElements(
   localName: string,
   namespaceUri: string
 ): Element[] {
+  // `.//` scopes the search to descendants of contextNode. A leading `//`
+  // is document-rooted regardless of contextNode, which would let the lenient
+  // decoder pull an <Issuer>/<NameID> from a sibling of the assertion.
   return xpath.select(
-    `//*[local-name(.)='${localName}' and namespace-uri(.)='${namespaceUri}']`,
+    `.//*[local-name(.)='${localName}' and namespace-uri(.)='${namespaceUri}']`,
     contextNode
   ) as Element[];
 }
@@ -386,6 +397,18 @@ export function verifyMockSamlAssertion(
   const assertionId = attr(assertionElement, "ID");
   if (!assertionId) {
     throw new Error("SAML assertion is missing its ID attribute");
+  }
+  // The Assertion must be the document root and the Signature its direct
+  // child (a genuine enveloped signature). Without this a valid signature
+  // relocated into a <Wrapper> sibling still references the Assertion by ID
+  // and verifies — the classic XML signature-wrapping attack.
+  if (assertionElement !== doc.documentElement) {
+    throw new Error("SAML Assertion must be the document root");
+  }
+  if (signatureElement.parentNode !== assertionElement) {
+    throw new Error(
+      "SAML signature must be an enveloped direct child of the Assertion"
+    );
   }
 
   // Step 3 — algorithm allowlist before any signature math.

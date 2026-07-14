@@ -27,9 +27,9 @@ const SHA1_DIGEST = "http://www.w3.org/2000/09/xmldsig#sha1";
 const EXC_C14N = "http://www.w3.org/2001/10/xml-exc-c14n#";
 const ENVELOPED = "http://www.w3.org/2000/09/xmldsig#enveloped-signature";
 
-const b64 = (xml: string) => Buffer.from(xml, "utf-8").toString("base64");
+const b64 = (xml: string) => Buffer.from(xml, "utf-8").toString("base64url");
 const fromB64 = (value: string) =>
-  Buffer.from(value, "base64").toString("utf-8");
+  Buffer.from(value, "base64url").toString("utf-8");
 
 function mint(
   overrides: Partial<Parameters<typeof issueMockSamlAssertion>[0]> = {}
@@ -316,6 +316,31 @@ describe("mock SAML assertion mint + hardened verification", () => {
     expect(() => mint({ subject: "user\u0000one" })).toThrow(
       /not permitted in XML 1\.0/i
     );
+  });
+
+  it("mints base64url without padding and rejects the standard-base64 alphabet", () => {
+    const issued = mint();
+    expect(issued.assertionB64).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(() => verify(issued.assertionB64 + "=")).toThrow(/base64url/i);
+    expect(() => verify("abcd+efg")).toThrow(/base64url/i);
+  });
+
+  it("rejects a signature-wrapping wrapper (Assertion is not the document root)", () => {
+    const signed = signRawAssertion(rawAssertionXml({}).xml);
+    const wrapped = `<Wrapper xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">${signed}</Wrapper>`;
+    expect(() => verify(b64(wrapped))).toThrow(/document root/i);
+  });
+
+  it("lenient decoder ignores an Issuer that sits outside the assertion", () => {
+    const xml =
+      `<Wrapper xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">` +
+      `<saml:Assertion Version="2.0" ID="_a"><saml:Subject>` +
+      `<saml:NameID>user-x</saml:NameID></saml:Subject></saml:Assertion>` +
+      `<saml:Issuer>attacker</saml:Issuer>` +
+      `</Wrapper>`;
+    const result = decodeSamlAssertionSubjectUnsafe(b64(xml));
+    expect(result.nameid).toBe("user-x");
+    expect(result.issuer).toBeUndefined();
   });
 
   it("rejects a missing RAS-client-id attribute", () => {
