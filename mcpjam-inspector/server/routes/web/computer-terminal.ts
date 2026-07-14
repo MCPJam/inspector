@@ -47,6 +47,7 @@ import {
   getComputerSandboxInfo,
   isComputersDataPlaneConfigured,
   recordTerminalSession,
+  touchComputerActivity,
 } from "../../utils/computers/control-plane-client.js";
 import { logger } from "../../utils/logger.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
@@ -59,6 +60,13 @@ import { classifyError } from "../../utils/error-classify.js";
 const PTY_TIMEOUT_MS = 60 * 60 * 1000;
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
+
+// Throttle for the activity touch sent back to the control plane on PTY I/O.
+// Bumps the computer's `lastActiveAt` so the 30-min idle sweep treats an
+// interactive terminal (raw PTY bytes, not discrete `bash` commands) as active
+// and doesn't reap it mid-use. One touch per minute is ample against a 30-min
+// cutoff and keeps this off the hot path of every keystroke/output chunk.
+const ACTIVITY_TOUCH_THROTTLE_MS = 60 * 1000;
 
 // Close codes (4xxx = application-defined).
 const CLOSE_UNAUTHORIZED = 4401;
@@ -148,6 +156,16 @@ export function createComputerTerminalWsHandler(
     let pty: CommandHandle | null = null;
     let sandbox: Sandbox | null = null;
     let closed = false;
+    // Throttle gate for the activity touch (see ACTIVITY_TOUCH_THROTTLE_MS).
+    let lastActivityTouchAt = 0;
+    const maybeTouchActivity = () => {
+      if (!computerId) return;
+      const now = Date.now();
+      if (now - lastActivityTouchAt < ACTIVITY_TOUCH_THROTTLE_MS) return;
+      lastActivityTouchAt = now;
+      // Fire-and-forget: a failed touch only risks an earlier idle hibernate.
+      void touchComputerActivity({ computerId });
+    };
 
     return {
       onOpen: (_evt, ws) => {
@@ -177,6 +195,9 @@ export function createComputerTerminalWsHandler(
                 timeoutMs: PTY_TIMEOUT_MS,
                 onData: (data) => {
                   if (closed) return;
+                  // PTY output = the box is doing work the user is watching
+                  // (e.g. a long build); keep it alive against the idle sweep.
+                  maybeTouchActivity();
                   // Copy into a standalone ArrayBuffer: WSContext.send is typed
                   // for Uint8Array<ArrayBuffer>, while the SDK hands us a view
                   // over ArrayBufferLike.
@@ -258,6 +279,8 @@ export function createComputerTerminalWsHandler(
         // Binary frames are stdin.
         const bytes = toUint8Array(data);
         if (bytes && pty && sandbox) {
+          // Keystrokes are true user activity — refresh the idle timer.
+          maybeTouchActivity();
           void sandbox.pty.sendInput(pty.pid, bytes).catch(() => {});
         }
       },
