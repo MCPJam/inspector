@@ -662,4 +662,83 @@ describe("OAuth state machine regressions", () => {
       expect(state.lastRequest?.body?.resource).toBe(SERVER_URL);
     },
   );
+
+  // The debugger honors a PRM resource that strict clients (Quick OAuth, the
+  // official MCP SDK) would reject, so it must surface a warning when the
+  // advertised identifier fails the strict origin/path-prefix validation.
+  const seedResourceMetadataFetch = () => ({
+    ...EMPTY_OAUTH_FLOW_STATE,
+    currentStep: "request_resource_metadata" as const,
+    serverUrl: SERVER_URL,
+    httpHistory: [],
+    infoLogs: [],
+  });
+
+  const prmExecutor = (resource: string) =>
+    jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: { "content-type": "application/json" },
+      body: {
+        resource,
+        authorization_servers: ["https://auth.example.com"],
+      },
+    });
+
+  const runResourceMetadataStep = async (
+    protocolVersion: OAuthProtocolVersion,
+    resource: string,
+  ) => {
+    let state: any = seedResourceMetadataFetch();
+
+    const machine = createOAuthStateMachine({
+      protocolVersion,
+      registrationStrategy: "preregistered" as any,
+      state,
+      getState: () => state,
+      updateState: (updates) => {
+        state = { ...state, ...updates };
+      },
+      serverUrl: SERVER_URL,
+      serverName: "Test Server",
+      redirectUrl: REDIRECT_URI,
+      requestExecutor: prmExecutor(resource),
+    });
+
+    await machine.proceedToNextStep(); // fetch protected resource metadata
+
+    return state;
+  };
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "warns when the PRM resource fails strict validation in %s",
+    async (protocolVersion) => {
+      const state = await runResourceMetadataStep(
+        protocolVersion,
+        RESOURCE_URN,
+      );
+
+      expect(state.resourceMetadata?.resource).toBe(RESOURCE_URN);
+      const warning = state.infoLogs?.find(
+        (log: any) => log.id === "resource-identifier-mismatch",
+      );
+      expect(warning).toBeDefined();
+      expect(warning.level).toBe("warning");
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "does not warn when the PRM resource matches the server URL in %s",
+    async (protocolVersion) => {
+      const state = await runResourceMetadataStep(protocolVersion, SERVER_URL);
+
+      expect(state.resourceMetadata?.resource).toBe(SERVER_URL);
+      expect(
+        state.infoLogs?.find(
+          (log: any) => log.id === "resource-identifier-mismatch",
+        ),
+      ).toBeUndefined();
+    },
+  );
 });

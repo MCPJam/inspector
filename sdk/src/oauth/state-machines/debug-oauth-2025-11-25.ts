@@ -37,6 +37,7 @@ import {
 import {
   buildResourceMetadataUrl,
   canonicalizeResourceUrl,
+  resourceMatchesServerUrl,
 } from "./shared/urls.js";
 import {
   buildInitializeRequestBody,
@@ -967,7 +968,7 @@ export const createDebugOAuthStateMachine = (
                 resourceMetadata.authorization_servers?.[0] || serverUrl;
 
               // Add info log for Authorization Servers
-              const infoLogs = addInfoLog(
+              let infoLogs = addInfoLog(
                 state,
                 "received_resource_metadata",
                 "authorization-servers",
@@ -978,6 +979,27 @@ export const createDebugOAuthStateMachine = (
                     resourceMetadata.authorization_servers,
                 }
               );
+
+              if (
+                resourceMetadata.resource &&
+                !resourceMatchesServerUrl(
+                  resourceMetadata.resource,
+                  state.serverUrl
+                )
+              ) {
+                infoLogs = addInfoLog(
+                  { ...state, infoLogs },
+                  "received_resource_metadata",
+                  "resource-identifier-mismatch",
+                  "Resource identifier mismatch",
+                  {
+                    "Advertised resource": resourceMetadata.resource,
+                    "Server URL": state.serverUrl,
+                    Note: "The debugger will send the advertised resource as-is (RFC 8707), but strict MCP clients — including MCPJam's Quick OAuth and the official MCP SDK — validate it against the server URL (RFC 9728 §3.3) and will refuse to connect.",
+                  },
+                  { level: "warning" }
+                );
+              }
 
               updateState({
                 currentStep: "received_resource_metadata",
