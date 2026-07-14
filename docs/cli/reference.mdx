@@ -91,12 +91,21 @@ No additional flags.
 
 ### `tools list`
 
-Uses shared connection flags.
+Uses shared connection flags, plus:
+
+| Flag | Description |
+|------|-------------|
+| `--host <id>` | Connect as this host (e.g. `claude`, `chatgpt`, `cursor`) — sends its `clientInfo`, `clientCapabilities`, and protocol version in `initialize`, and hides app-only tools its model can't see. Mutually exclusive with `--client-capabilities`. |
+| `--cursor <cursor>` | Pagination cursor |
+| `--model-id <model>` | Model ID used for token counting |
+
+When `--host` is set, the output includes a `host` field and a `toolsDroppedVisibility` count. Hosts that opt out of visibility filtering (e.g. `cursor`) keep all tools.
 
 ### `tools call`
 
 | Flag | Description |
 |------|-------------|
+| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`, and rejects app-only tools the host's model can't call. Mutually exclusive with `--client-capabilities`. |
 | `--tool-name <name>` | Name of the tool to call |
 | `--name <name>` | Legacy alias for `--tool-name` |
 | `--tool-args <json>` | Tool arguments as inline JSON, `@path`, or `-` for stdin |
@@ -171,12 +180,18 @@ Treat the tool result and the Inspector render as separate outcomes. An exit cod
 
 ### `resources list`
 
-Uses shared connection flags.
+Uses shared connection flags, plus:
+
+| Flag | Description |
+|------|-------------|
+| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
+| `--cursor <cursor>` | Pagination cursor |
 
 ### `resources read`
 
 | Flag | Description |
 |------|-------------|
+| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
 | `--resource-uri <uri>` | URI of the resource to read |
 | `--uri <uri>` | Legacy alias for `--resource-uri` |
 
@@ -184,7 +199,12 @@ Plus shared connection flags.
 
 ### `resources templates`
 
-Uses shared connection flags.
+Uses shared connection flags, plus:
+
+| Flag | Description |
+|------|-------------|
+| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
+| `--cursor <cursor>` | Pagination cursor |
 
 ---
 
@@ -192,12 +212,18 @@ Uses shared connection flags.
 
 ### `prompts list`
 
-Uses shared connection flags.
+Uses shared connection flags, plus:
+
+| Flag | Description |
+|------|-------------|
+| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
+| `--cursor <cursor>` | Pagination cursor |
 
 ### `prompts get`
 
 | Flag | Description |
 |------|-------------|
+| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
 | `--prompt-name <name>` | Name of the prompt |
 | `--name <name>` | Legacy alias for `--prompt-name` |
 | `--prompt-args <json>` | Prompt arguments as inline JSON, `@path`, or `-` for stdin |
