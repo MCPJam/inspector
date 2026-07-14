@@ -34,7 +34,10 @@ import {
   generateRandomString,
   generateCodeChallenge,
 } from "./shared/pkce.js";
-import { buildResourceMetadataUrl } from "./shared/urls.js";
+import {
+  buildResourceMetadataUrl,
+  resourceMatchesServerUrl,
+} from "./shared/urls.js";
 import {
   buildInitializeRequestBody,
   resolveInitializeProtocolVersion,
@@ -436,6 +439,19 @@ export const createDebugOAuthStateMachine = (
 
   // Helper to get current state (use getState if provided, otherwise use initial state)
   const getCurrentState = () => (getState ? getState() : initialState);
+
+  // Per RFC 8707 and the MCP Authorization spec, the OAuth `resource` indicator
+  // must use the identifier advertised in the server's Protected Resource
+  // Metadata when one was discovered. That identifier may be any URI (including
+  // a URN) and is not required to equal the MCP endpoint URL, so the client must
+  // not overwrite it with the server URL. Only fall back to the server URL when
+  // no PRM `resource` is available. Resolving through a single helper also keeps
+  // the authorization request and the token request resource values identical —
+  // some authorization servers reject a mismatch between the two.
+  const resolveResourceParameter = (): string | undefined => {
+    const current = getCurrentState();
+    return current.resourceMetadata?.resource ?? current.serverUrl;
+  };
 
   const executeRequest = (url: string, options: RequestInit = {}) =>
     requestExecutor({
@@ -851,7 +867,7 @@ export const createDebugOAuthStateMachine = (
                 resourceMetadata.authorization_servers?.[0] || serverUrl;
 
               // Add info log for Authorization Servers
-              const infoLogs = addInfoLog(
+              let infoLogs = addInfoLog(
                 state,
                 "received_resource_metadata",
                 "authorization-servers",
@@ -862,6 +878,27 @@ export const createDebugOAuthStateMachine = (
                     resourceMetadata.authorization_servers,
                 },
               );
+
+              if (
+                resourceMetadata.resource &&
+                !resourceMatchesServerUrl(
+                  resourceMetadata.resource,
+                  state.serverUrl,
+                )
+              ) {
+                infoLogs = addInfoLog(
+                  { ...state, infoLogs },
+                  "received_resource_metadata",
+                  "resource-identifier-mismatch",
+                  "Resource identifier mismatch",
+                  {
+                    "Advertised resource": resourceMetadata.resource,
+                    "Server URL": state.serverUrl,
+                    Note: "The debugger will send the advertised resource as-is (RFC 8707), but strict MCP clients — including MCPJam's Quick OAuth and the official MCP SDK — validate it against the server URL (RFC 9728 §3.3) and will refuse to connect.",
+                  },
+                  { level: "warning" },
+                );
+              }
 
               updateState({
                 currentStep: "received_resource_metadata",
@@ -1352,7 +1389,7 @@ export const createDebugOAuthStateMachine = (
               {
                 code_challenge: codeChallenge,
                 method: "S256",
-                resource: state.serverUrl || "Unknown",
+                resource: resolveResourceParameter() || "Unknown",
               },
             );
 
@@ -1388,8 +1425,9 @@ export const createDebugOAuthStateMachine = (
             );
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
-            if (state.serverUrl) {
-              authUrl.searchParams.set("resource", state.serverUrl);
+            const authResourceParam = resolveResourceParameter();
+            if (authResourceParam) {
+              authUrl.searchParams.set("resource", authResourceParam);
             }
 
             const requestedScopeValue = resolveRequestedScopeValue({
@@ -1474,8 +1512,9 @@ export const createDebugOAuthStateMachine = (
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
             }
 
-            if (state.serverUrl) {
-              tokenRequestBodyObj.resource = state.serverUrl;
+            const tokenBodyResourceParam = resolveResourceParameter();
+            if (tokenBodyResourceParam) {
+              tokenRequestBodyObj.resource = tokenBodyResourceParam;
             }
 
             const tokenRequest = {
@@ -1544,8 +1583,9 @@ export const createDebugOAuthStateMachine = (
               });
 
               // Add resource parameter if available
-              if (state.serverUrl) {
-                tokenRequestBody.set("resource", state.serverUrl);
+              const tokenResourceParam = resolveResourceParameter();
+              if (tokenResourceParam) {
+                tokenRequestBody.set("resource", tokenResourceParam);
               }
 
               // Make the token request via backend proxy. The client-auth
