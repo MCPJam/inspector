@@ -73,7 +73,19 @@ export interface IssuedMockSamlAssertion {
 }
 
 /** Escape a user-controlled string for use in XML text or attribute values. */
+// Code points outside this set are illegal in XML 1.0 (the `u` flag makes
+// astral characters match \u{10000}-\u{10FFFF} rather than tripping on their
+// surrogate halves). Control characters other than tab/LF/CR, noncharacters,
+// and lone surrogates all fall through and must be rejected before minting.
+const XML10_INVALID_RE =
+  /[^\u0009\u000A\u000D\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/u;
+
 function escapeXml(value: string): string {
+  if (XML10_INVALID_RE.test(value)) {
+    throw new Error(
+      "SAML assertion value contains characters not permitted in XML 1.0",
+    );
+  }
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -260,6 +272,31 @@ function selectExactlyOne(
     );
   }
   return nodes[0];
+}
+
+// Direct element children only (never the descendant-or-self axis that
+// `selectElements`'s `//` XPath walks). SAML audience semantics are defined
+// over the immediate AudienceRestriction/Audience structure, so a descendant
+// match would let an <Audience> nested elsewhere satisfy the check.
+function directChildElements(
+  parent: Element,
+  localName: string,
+  namespaceUri: string,
+): Element[] {
+  const out: Element[] = [];
+  const kids = parent.childNodes;
+  for (let i = 0; i < kids.length; i++) {
+    const node = kids.item(i) as Element | null;
+    if (
+      node &&
+      node.nodeType === 1 &&
+      node.localName === localName &&
+      node.namespaceURI === namespaceUri
+    ) {
+      out.push(node);
+    }
+  }
+  return out;
 }
 
 function attr(element: Element, name: string): string | undefined {
@@ -464,12 +501,23 @@ export function verifyMockSamlAssertion(
     throw new Error("SAML assertion has expired");
   }
 
-  const audiences = selectElements(
+  // Multiple <AudienceRestriction> elements are ANDed: the relying party must
+  // appear in every one. Within a single restriction, its direct <Audience>
+  // children are ORed. Require at least one restriction so an assertion with
+  // none is rejected rather than trivially satisfied.
+  const audienceRestrictions = directChildElements(
     conditions,
-    "Audience",
+    "AudienceRestriction",
     SAML_ASSERTION_NS
-  ).map(text);
-  if (!audiences.includes(expected.audience)) {
+  );
+  const satisfiesEveryRestriction =
+    audienceRestrictions.length > 0 &&
+    audienceRestrictions.every((restriction) =>
+      directChildElements(restriction, "Audience", SAML_ASSERTION_NS)
+        .map(text)
+        .includes(expected.audience)
+    );
+  if (!satisfiesEveryRestriction) {
     throw new Error(
       "SAML assertion AudienceRestriction does not include the client's SP entity ID"
     );
@@ -488,6 +536,14 @@ export function verifyMockSamlAssertion(
     "SubjectConfirmationData",
     SAML_ASSERTION_NS
   );
+  const confirmationNotBefore = attr(confirmationData, "NotBefore");
+  if (
+    confirmationNotBefore &&
+    now + skewMs <
+      parseInstant(confirmationNotBefore, "SubjectConfirmationData NotBefore")
+  ) {
+    throw new Error("SAML assertion bearer confirmation is not yet valid");
+  }
   const confirmationNotOnOrAfter = attr(confirmationData, "NotOnOrAfter");
   if (
     !confirmationNotOnOrAfter ||
