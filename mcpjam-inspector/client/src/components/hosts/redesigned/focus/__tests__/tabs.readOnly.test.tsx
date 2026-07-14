@@ -144,6 +144,35 @@ describe("Client editor tabs — readOnly prop wiring", () => {
     expect(fieldset).not.toBeDisabled();
   });
 
+  it("ProtocolTab readOnly disables the EMA advertise switch", () => {
+    render(
+      <ProtocolTab
+        draft={emptyHostConfigInputV2()}
+        onDraftChange={vi.fn()}
+        attention={[]}
+        readOnly
+      />
+    );
+    const emaSwitch = screen.getByRole("switch", {
+      name: /advertise ema support by default/i,
+    });
+    expect(emaSwitch).toBeDisabled();
+  });
+
+  it("ProtocolTab without readOnly leaves the EMA switch enabled", () => {
+    render(
+      <ProtocolTab
+        draft={emptyHostConfigInputV2()}
+        onDraftChange={vi.fn()}
+        attention={[]}
+      />
+    );
+    const emaSwitch = screen.getByRole("switch", {
+      name: /advertise ema support by default/i,
+    });
+    expect(emaSwitch).not.toBeDisabled();
+  });
+
   it("ProtocolTab accepts the readOnly prop without throwing", () => {
     // ProtocolTab gates Select via `disabled` and forces JsonEditor to
     // `mode="view"` + `readOnly={true}`. Direct interaction with the

@@ -18,6 +18,7 @@ import {
   MCP_UI_EXTENSION_ID,
   MCP_UI_RESOURCE_MIME_TYPE,
 } from "../../mcp-client-manager/capabilities.js";
+import { XAA_MCP_EXTENSION } from "../../xaa/mcp-init.js";
 import {
   MCPJAM_FONT_CSS,
   MCPJAM_PLATFORM,
@@ -401,6 +402,21 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         logging: {},
         updateModelContext: { text: {}, image: {} },
         message: { text: {} },
+      };
+      // Advertise MCP Enterprise-Managed Authorization support. The MCPJam
+      // persona is the inspector's own client, which implements the full
+      // XAA path (SSO assertion → ID-JAG → RAS token redemption), so the
+      // declaration is honest here. Real-host templates deliberately stay
+      // silent until those hosts ship support — the connect surfaces still
+      // merge the extension at connect time for XAA-configured servers
+      // regardless of the stored baseline. Spread keeps the SDK-default
+      // MCP UI extension intact.
+      base.clientCapabilities = {
+        ...base.clientCapabilities,
+        extensions: {
+          ...(base.clientCapabilities.extensions as Record<string, unknown>),
+          [XAA_MCP_EXTENSION]: {},
+        },
       };
       // Per-resource hostContext for MCPJam's own house chrome. Style
       // variables come straight from the design-system tokens that

@@ -146,6 +146,7 @@ describe("server-target /proxy/token", () => {
       serverId: "srv_1",
       projectId: "proj_1",
       bearerToken: "user-token",
+      clientIp: null,
     });
 
     // The token POST went to the server-discovered endpoint, never the
@@ -591,6 +592,7 @@ describe("server-target /negative-tests", () => {
       serverId: "srv_1",
       projectId: "proj_1",
       bearerToken: "user-token",
+      clientIp: null,
     });
 
     expect(tokenPosts.length).toBeGreaterThan(0);

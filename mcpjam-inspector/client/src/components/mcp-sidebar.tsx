@@ -88,6 +88,8 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
   disabled?: boolean;
   disabledTooltip?: string;
+  /** Optional pill shown next to the label, e.g. "New" */
+  badge?: string;
   /** Only show this item when the named feature flag is enabled */
   featureFlag?: string;
   /** Hide this item when the named feature flag is enabled */
@@ -280,6 +282,7 @@ const navigationSections: NavSection[] = [
         title: "XAA Debugger",
         url: "/xaa-flow",
         icon: ShieldCheck,
+        badge: "New",
         featureFlag: "xaa",
       },
     ],
@@ -395,7 +398,7 @@ const hostedNavigationSections =
  */
 export function resolveHostedSkillsNav(
   sections: NavSection[],
-  enabled: boolean,
+  enabled: boolean
 ): NavSection[] {
   return sections
     .map((section) => ({
