@@ -46,6 +46,7 @@ type ResolveServerSecretFn = (args: {
   serverId: string;
   projectId: string;
   bearerToken: string;
+  clientIp?: string | null;
 }) => Promise<ServerClientSecretResult>;
 
 // RFC 9728: ask the resource (the MCP server URL) which authorization server
@@ -227,6 +228,7 @@ export async function resolveServerTarget(deps: {
   serverId: string;
   projectId?: string;
   bearerToken: string;
+  clientIp?: string | null;
 }): Promise<ResolvedServerTarget> {
   if (!deps.resolveServerSecret) {
     throw new WebRouteError(
@@ -247,6 +249,7 @@ export async function resolveServerTarget(deps: {
     serverId: deps.serverId,
     projectId: deps.projectId,
     bearerToken: deps.bearerToken,
+    clientIp: deps.clientIp,
   });
 
   if (!resolved.xaaAuthzIssuer && !resolved.serverUrl) {
