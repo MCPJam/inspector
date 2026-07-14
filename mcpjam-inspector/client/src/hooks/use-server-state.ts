@@ -1608,6 +1608,9 @@ export function useServerState({
         ...(serverEntry.xaaEmail !== undefined
           ? { xaaEmail: serverEntry.xaaEmail }
           : {}),
+        ...(serverEntry.xaaIdentityAssertionFormat !== undefined
+          ? { xaaIdentityAssertionFormat: serverEntry.xaaIdentityAssertionFormat }
+          : {}),
         ...(serverEntry.registrationMode !== undefined
           ? { registrationMode: serverEntry.registrationMode }
           : {}),
@@ -2806,6 +2809,9 @@ export function useServerState({
           : existingServerForSave?.xaaEmail,
         // Unified fields: preserve any saved value when a save that omits
         // them comes through, rather than erasing it.
+        xaaIdentityAssertionFormat:
+          formData.xaaIdentityAssertionFormat ??
+          existingServerForSave?.xaaIdentityAssertionFormat,
         registrationMode:
           formData.registrationMode ??
           existingServerForSave?.registrationMode,
@@ -3226,6 +3232,9 @@ export function useServerState({
           : existingServer?.xaaEmail,
         // Unified fields: preserve any saved value when a save that omits
         // them comes through, rather than erasing it.
+        xaaIdentityAssertionFormat:
+          formData.xaaIdentityAssertionFormat ??
+          existingServer?.xaaIdentityAssertionFormat,
         registrationMode:
           formData.registrationMode ??
           existingServer?.registrationMode,
@@ -4769,6 +4778,9 @@ export function useServerState({
             : originalServer?.xaaEmail,
           // Unified fields: preserve any saved value when a save that omits
           // them comes through, rather than erasing it.
+          xaaIdentityAssertionFormat:
+            formData.xaaIdentityAssertionFormat ??
+            originalServer?.xaaIdentityAssertionFormat,
           registrationMode:
             formData.registrationMode ??
             originalServer?.registrationMode,

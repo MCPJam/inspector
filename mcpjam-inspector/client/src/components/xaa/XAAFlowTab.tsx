@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+  type ReactNode,
+} from "react";
+import type { ImperativePanelHandle } from "react-resizable-panels";
 import { useAuth } from "@workos-inc/authkit-react";
 import { track } from "@/lib/analytics";
 import { Loader2, ShieldAlert } from "lucide-react";
@@ -39,8 +48,12 @@ import { XAAResourceAppsSection } from "./registration/XAAResourceAppsSection";
 import { NegativeTestScorecard } from "./NegativeTestScorecard";
 import type { NegativeTestsInput } from "@/lib/xaa/discovery-client";
 import {
+  DEFAULT_IDENTITY_ASSERTION_FORMAT,
+  normalizeIdentityAssertionFormat,
   normalizeRegistrationStrategy,
+  type IdentityAssertionFormat,
   type NegativeTestMode,
+  type SubjectIdentifierFormat,
 } from "@/shared/xaa.js";
 import {
   createInitialXAAFlowState,
@@ -63,13 +76,25 @@ const INITIAL_RESOURCE_PARAM =
     ? null
     : new URLSearchParams(window.location.search).get("resource");
 
+// The persisted per-server preset drives BOTH independent draft axes: the
+// input axis (which assertion the mock IdP mints, which subject_token_type
+// the exchange presents) and the output axis (whether the ID-JAG carries a
+// saml-nameid `sub_id`). The SDK keeps the axes separate for programmatic
+// mixing; the debugger UI intentionally sets them together.
+function subjectIdentifierFormatFor(
+  format: IdentityAssertionFormat
+): SubjectIdentifierFormat {
+  return format === "saml" ? "saml-nameid" : "oauth-sub";
+}
+
 function buildFlowStateFromInput(
   input: XAAFlowInput,
   registrationStrategy: RegistrationStrategy = "preregistered",
   // A prior ambiguous DCR POST may have created a remote client. This risk is
   // tracked per-target OUTSIDE flow state so an ordinary reset re-seeds it —
   // clearing it only through the confirmed "Register another client" path.
-  dcrRetryMayCreateDuplicate = false
+  dcrRetryMayCreateDuplicate = false,
+  identityAssertionFormat: IdentityAssertionFormat = DEFAULT_IDENTITY_ASSERTION_FORMAT
 ): XAAFlowState {
   return createInitialXAAFlowState({
     serverUrl: input.serverUrl || undefined,
@@ -84,9 +109,13 @@ function buildFlowStateFromInput(
     // every rebuild path must seed the currently-effective strategy — a
     // clean rebuild must not silently reset a selected DCR run.
     registrationStrategy,
-    ...(dcrRetryMayCreateDuplicate
-      ? { dcrRetryMayCreateDuplicate: true }
-      : {}),
+    // Sticky like negativeTestMode: seeded on every rebuild, changed only
+    // through the reset owner below.
+    identityAssertionFormat,
+    subjectIdentifierFormat: subjectIdentifierFormatFor(
+      identityAssertionFormat
+    ),
+    ...(dcrRetryMayCreateDuplicate ? { dcrRetryMayCreateDuplicate: true } : {}),
   });
 }
 
@@ -199,6 +228,88 @@ interface XAAFlowTabProps {
   openServerModalSignal?: number;
 }
 
+function XAAWorkspaceLayout({
+  children,
+  scorecard,
+  scorecardPanelRef,
+  compactScorecardContentHeight,
+  scorecardHasResults,
+}: {
+  children: ReactNode;
+  scorecard?: ReactNode;
+  scorecardPanelRef?: RefObject<ImperativePanelHandle | null>;
+  compactScorecardContentHeight?: number | null;
+  scorecardHasResults?: boolean;
+}) {
+  const layoutRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (
+      scorecardHasResults ||
+      !compactScorecardContentHeight ||
+      !scorecardPanelRef?.current
+    ) {
+      return;
+    }
+    const resizeToContent = () => {
+      const height = layoutRef.current?.getBoundingClientRect().height;
+      if (!height) return;
+
+      // Card margins + the resize handle need a little room beyond the card's
+      // measured content height. Keep the panel within its declared bounds.
+      const size = Math.min(
+        90,
+        Math.max(5, ((compactScorecardContentHeight + 20) / height) * 100)
+      );
+      scorecardPanelRef.current?.resize(size);
+    };
+    resizeToContent();
+
+    // A compact card needs a smaller percentage on taller screens. Recompute
+    // when the workspace changes height instead of retaining the old slice.
+    if (typeof ResizeObserver === "undefined" || !layoutRef.current) return;
+    const observer = new ResizeObserver(resizeToContent);
+    observer.observe(layoutRef.current);
+    return () => observer.disconnect();
+  }, [compactScorecardContentHeight, scorecardHasResults, scorecardPanelRef]);
+
+  return (
+    <div ref={layoutRef} className="min-h-0 flex-1">
+      <ResizablePanelGroup direction="vertical" className="h-full">
+        <ResizablePanel
+          id="xaa-workspace"
+          order={1}
+          defaultSize={scorecard ? 92 : 100}
+          minSize={5}
+          className="min-h-0 overflow-hidden"
+        >
+          {children}
+        </ResizablePanel>
+
+        {scorecard && (
+          <>
+            <ResizableHandle
+              withHandle
+              aria-label="Resize negative-test scorecard"
+            />
+            <ResizablePanel
+              id="xaa-negative-test-scorecard"
+              order={2}
+              defaultSize={8}
+              minSize={5}
+              maxSize={90}
+              className="min-h-0 overflow-hidden"
+              ref={scorecardPanelRef}
+            >
+              {scorecard}
+            </ResizablePanel>
+          </>
+        )}
+      </ResizablePanelGroup>
+    </div>
+  );
+}
+
 export function XAAFlowTab({
   serverConfigs,
   selectedServerName,
@@ -210,6 +321,35 @@ export function XAAFlowTab({
 }: XAAFlowTabProps) {
   const [isServerModalOpen, setIsServerModalOpen] = useState(false);
   const [isRunningAll, setIsRunningAll] = useState(false);
+  const [scorecardHasResults, setScorecardHasResults] = useState(false);
+  const [compactScorecardContentHeight, setCompactScorecardContentHeight] =
+    useState<number | null>(null);
+  const scorecardPanelRef = useRef<ImperativePanelHandle>(null);
+  const collapseScorecard = useCallback(() => {
+    setScorecardHasResults(false);
+    setCompactScorecardContentHeight(null);
+  }, []);
+  const expandScorecardForResults = useCallback(() => {
+    setScorecardHasResults(true);
+    scorecardPanelRef.current?.resize(50);
+  }, []);
+  const handleScorecardExpandedChange = useCallback(
+    (expanded: boolean, hasResults: boolean) => {
+      if (expanded && hasResults) {
+        expandScorecardForResults();
+        return;
+      }
+      setScorecardHasResults(false);
+      setCompactScorecardContentHeight(null);
+    },
+    [expandScorecardForResults]
+  );
+  const updateCompactScorecardContentHeight = useCallback((height: number) => {
+    if (!height) return;
+    setCompactScorecardContentHeight((current) =>
+      current !== null && Math.abs(current - height) < 1 ? current : height
+    );
+  }, []);
 
   // Open the modal when the shell bumps the signal (header "Add Server"). Skip
   // the initial value so it doesn't pop open on mount.
@@ -316,9 +456,9 @@ export function XAAFlowTab({
   // exercised: switching issuer mode (local↔hosted) or organization changes
   // the minted `iss`, so a green run under one must NOT unlock negative tests
   // under another. Key the gate on target + issuer mode + org.
-  const runGateKey = `${targetKey}|${
-    hostedIssuerOptIn ? "hosted" : "local"
-  }|${organizationId ?? ""}`;
+  const runGateKey = `${targetKey}|${hostedIssuerOptIn ? "hosted" : "local"}|${
+    organizationId ?? ""
+  }`;
 
   // ── Registration strategy (Client↔Resource-AS leg) ──────────────────
   // Persisted per-server and chosen in the "Configure Server to Test" modal;
@@ -343,6 +483,20 @@ export function XAAFlowTab({
   // When the run establishes its own dynamic client identity, any stored
   // pre-registered credentials (serverId-resolved secret) must be ignored.
   const runsDynamicRegistration = effectiveStrategy !== "preregistered";
+
+  // ── Identity assertion format (per-server preset) ────────────────────
+  // Chosen in the "Configure Server to Test" modal, persisted per-server.
+  // Applies to bar-server runs only — like the per-server simulated identity,
+  // it must not leak onto a selected resource-app registration, which stays
+  // on the OIDC default. Unknown persisted values fall back to the default.
+  const persistedAssertionFormat =
+    normalizeIdentityAssertionFormat(
+      selectedServer?.xaaIdentityAssertionFormat
+    ) ?? DEFAULT_IDENTITY_ASSERTION_FORMAT;
+  const effectiveAssertionFormat: IdentityAssertionFormat =
+    target.targetSource === "bar_server"
+      ? persistedAssertionFormat
+      : DEFAULT_IDENTITY_ASSERTION_FORMAT;
 
   // DCR-minted credentials, keyed by target + registration endpoint. A
   // useRef-backed Map so machine recreation neither loses nor re-exposes the
@@ -372,7 +526,8 @@ export function XAAFlowTab({
     buildFlowStateFromInput(
       target.runInput,
       effectiveStrategy,
-      dcrDuplicateRiskRef.current.has(targetKey)
+      dcrDuplicateRiskRef.current.has(targetKey),
+      effectiveAssertionFormat
     )
   );
 
@@ -567,6 +722,7 @@ export function XAAFlowTab({
   } => {
     const audience =
       flowState.authzMetadata?.issuer ||
+      flowState.authzServerIssuer ||
       runInput.authzServerIssuer ||
       selectedRegistration?.issuer ||
       "";
@@ -683,9 +839,11 @@ export function XAAFlowTab({
   // refs; confirms via AlertDialog before discarding a busy or completed run.
   const lastAppliedTargetKey = useRef<string | null>(null);
   const lastNegativeTestMode = useRef(runSettings.negativeTestMode);
-  const lastRegistrationStrategy = useRef<RegistrationStrategy>(
-    effectiveStrategy
+  const lastAssertionFormat = useRef<IdentityAssertionFormat>(
+    effectiveAssertionFormat
   );
+  const lastRegistrationStrategy =
+    useRef<RegistrationStrategy>(effectiveStrategy);
   // The EFFECTIVE identity the flow was last (re)built with (person override,
   // server override, or run-settings default — whatever runInput resolved).
   // Tracked so an identity change rebuilds the flow (clearing the
@@ -701,6 +859,7 @@ export function XAAFlowTab({
     targetKey: string;
     negativeTestMode: NegativeTestMode;
     registrationStrategy: RegistrationStrategy;
+    identityAssertionFormat: IdentityAssertionFormat;
   } | null>(null);
 
   // Rebuild the flow from the current input and record the identity it was
@@ -709,7 +868,10 @@ export function XAAFlowTab({
   // applied the current identity — and skip a stale timer that would otherwise
   // wipe a freshly-started run.
   const rebuildFlow = useCallback(
-    (strategyOverride?: RegistrationStrategy) => {
+    (
+      strategyOverride?: RegistrationStrategy,
+      assertionFormatOverride?: IdentityAssertionFormat
+    ) => {
       lastAppliedIdentity.current = {
         userId: runInput.userId,
         email: runInput.email,
@@ -720,11 +882,18 @@ export function XAAFlowTab({
           strategyOverride ?? effectiveStrategy,
           // Re-seed the per-target duplicate-registration risk so an ordinary
           // reset can't drop the confirmation gate.
-          dcrDuplicateRiskRef.current.has(targetKey)
+          dcrDuplicateRiskRef.current.has(targetKey),
+          assertionFormatOverride ?? effectiveAssertionFormat
         )
       );
     },
-    [applyFlowState, runInput, effectiveStrategy, targetKey]
+    [
+      applyFlowState,
+      runInput,
+      effectiveStrategy,
+      effectiveAssertionFormat,
+      targetKey,
+    ]
   );
 
   // Mirror the machine's duplicate-registration risk into the target-scoped
@@ -747,12 +916,14 @@ export function XAAFlowTab({
     (
       nextTargetKey: string,
       nextMode: NegativeTestMode,
-      nextStrategy: RegistrationStrategy
+      nextStrategy: RegistrationStrategy,
+      nextAssertionFormat: IdentityAssertionFormat
     ) => {
       lastAppliedTargetKey.current = nextTargetKey;
       lastNegativeTestMode.current = nextMode;
       lastRegistrationStrategy.current = nextStrategy;
-      rebuildFlow(nextStrategy);
+      lastAssertionFormat.current = nextAssertionFormat;
+      rebuildFlow(nextStrategy, nextAssertionFormat);
     },
     [rebuildFlow]
   );
@@ -760,10 +931,12 @@ export function XAAFlowTab({
   useEffect(() => {
     const nextMode = runSettings.negativeTestMode;
     const nextStrategy = effectiveStrategy;
+    const nextAssertionFormat = effectiveAssertionFormat;
     if (
       lastAppliedTargetKey.current === targetKey &&
       lastNegativeTestMode.current === nextMode &&
-      lastRegistrationStrategy.current === nextStrategy
+      lastRegistrationStrategy.current === nextStrategy &&
+      lastAssertionFormat.current === nextAssertionFormat
     ) {
       return;
     }
@@ -777,14 +950,16 @@ export function XAAFlowTab({
         targetKey,
         negativeTestMode: nextMode,
         registrationStrategy: nextStrategy,
+        identityAssertionFormat: nextAssertionFormat,
       });
       return;
     }
-    applyTargetReset(targetKey, nextMode, nextStrategy);
+    applyTargetReset(targetKey, nextMode, nextStrategy, nextAssertionFormat);
   }, [
     targetKey,
     runSettings.negativeTestMode,
     effectiveStrategy,
+    effectiveAssertionFormat,
     applyTargetReset,
   ]);
 
@@ -917,6 +1092,13 @@ export function XAAFlowTab({
       // for registrationId/serverId runs) plus the session credential cache
       // DCR runs mint into and redeem from.
       registrationStrategy: effectiveStrategy,
+      // Both draft axes, derived from the per-server preset (the machine
+      // prefers the sticky flow-state values seeded by the same preset; these
+      // config fallbacks keep a fresh machine consistent with them).
+      identityAssertionFormat: effectiveAssertionFormat,
+      subjectIdentifierFormat: subjectIdentifierFormatFor(
+        effectiveAssertionFormat
+      ),
       dcrCredentialCache,
       dcrCacheTargetKey: targetKey,
       // Confidential bar-server runs send only serverId/projectId; the server
@@ -943,6 +1125,7 @@ export function XAAFlowTab({
     organizationId,
     hostedIssuerOptIn,
     effectiveStrategy,
+    effectiveAssertionFormat,
     runsDynamicRegistration,
     dcrCredentialCache,
     targetKey,
@@ -1063,8 +1246,7 @@ export function XAAFlowTab({
     !isTestable || secretBlocked || flowState.isBusy || isRunningAll;
 
   // A server is selected but can't be XAA-tested (STDIO / non-OAuth).
-  const showNotTestable =
-    target.targetSource === "bar_server" && !isTestable;
+  const showNotTestable = target.targetSource === "bar_server" && !isTestable;
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -1132,7 +1314,34 @@ export function XAAFlowTab({
           <span>{secretBlockedReason}</span>
         </div>
       ) : null}
-      <div className="flex-1 overflow-hidden">
+      <XAAWorkspaceLayout
+        scorecard={
+          isTestable ? (
+            <NegativeTestScorecard
+              input={
+                scorecard.input
+                  ? {
+                      ...scorecard.input,
+                      organizationId: organizationId ?? null,
+                      ...(hostedIssuerOptIn
+                        ? { issuerMode: "hosted" as const }
+                        : {}),
+                    }
+                  : null
+              }
+              unlocked={positiveRunTargets.has(runGateKey)}
+              unavailableReason={scorecard.unavailableReason}
+              onResultsReady={expandScorecardForResults}
+              onTargetChange={collapseScorecard}
+              onExpandedChange={handleScorecardExpandedChange}
+              onCompactContentHeightChange={updateCompactScorecardContentHeight}
+            />
+          ) : undefined
+        }
+        scorecardPanelRef={scorecardPanelRef}
+        compactScorecardContentHeight={compactScorecardContentHeight}
+        scorecardHasResults={scorecardHasResults}
+      >
         {showNotTestable ? (
           <div className="flex h-full items-center justify-center p-6">
             <div className="max-w-md rounded-lg border border-border bg-background p-8 text-center shadow-lg">
@@ -1221,23 +1430,7 @@ export function XAAFlowTab({
             onConfigure={() => setIsServerModalOpen(true)}
           />
         )}
-      </div>
-
-      {isTestable && (
-        <NegativeTestScorecard
-          input={
-            scorecard.input
-              ? {
-                  ...scorecard.input,
-                  organizationId: organizationId ?? null,
-                  ...(hostedIssuerOptIn ? { issuerMode: "hosted" as const } : {}),
-                }
-              : null
-          }
-          unlocked={positiveRunTargets.has(runGateKey)}
-          unavailableReason={scorecard.unavailableReason}
-        />
-      )}
+      </XAAWorkspaceLayout>
 
       <XAAServerModal
         open={isServerModalOpen}
@@ -1272,6 +1465,8 @@ export function XAAFlowTab({
               lastNegativeTestMode.current = pendingReset.negativeTestMode;
               lastRegistrationStrategy.current =
                 pendingReset.registrationStrategy;
+              lastAssertionFormat.current =
+                pendingReset.identityAssertionFormat;
             }
             setPendingReset(null);
           }
@@ -1293,7 +1488,8 @@ export function XAAFlowTab({
                   applyTargetReset(
                     pendingReset.targetKey,
                     pendingReset.negativeTestMode,
-                    pendingReset.registrationStrategy
+                    pendingReset.registrationStrategy,
+                    pendingReset.identityAssertionFormat
                   );
                 }
                 setPendingReset(null);
