@@ -705,13 +705,20 @@ export function XAAFlowTab({
     // new org's `iss` against the old issuer and report a spurious mismatch.
     // With it cleared, the machine falls back to the correct current-org guess.
     setResolvedIssuerBaseUrl(undefined);
-    void fetchXaaIdpUrls(controller.signal, organizationId).then((urls) => {
+    // Thread issuerKind so a hosted guest discovers its /g/ (anonymous) issuer
+    // rather than /o/ — otherwise the ID-JAG inspection would lint the
+    // /g/-minted `iss` against the wrong /o/ issuer and report a mismatch.
+    void fetchXaaIdpUrls(
+      controller.signal,
+      organizationId,
+      hostedIssuerKind,
+    ).then((urls) => {
       if (urls && !controller.signal.aborted) {
         setResolvedIssuerBaseUrl(urls.issuerBaseUrl);
       }
     });
     return () => controller.abort();
-  }, [organizationId]);
+  }, [organizationId, hostedIssuerKind]);
 
   const xaaStateMachine = useMemo(() => {
     return createInspectorXAAStateMachine({

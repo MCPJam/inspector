@@ -53,6 +53,7 @@ import type {
   XaaResourceAppSecretResult,
 } from "../../utils/server-secrets.js";
 import { logger } from "../../utils/logger.js";
+import { getClientIp as getTrustedClientIp } from "../../utils/client-ip.js";
 import { CORS_ORIGINS, MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 
 const HEALTH_CHECK_TIMEOUT_MS = 10_000;
@@ -152,16 +153,14 @@ function checkOidcIpCap(ip: string): boolean {
   return true;
 }
 
-// The client IP for rate limiting, or null when there is no proxy in front
-// (local desktop): a no-proxy deployment has no public DoS surface, and
-// bucketing every local request under one key would self-DoS legitimate
-// bursts (test loops, batch mints).
-function getClientIp(c: {
-  req: { header: (name: string) => string | undefined };
-}): string | null {
-  const forwarded = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
-  return forwarded || null;
-}
+// The client IP for rate limiting / the backend's per-IP guest quota. Uses the
+// shared trusted-edge resolver (cf-connecting-ip → x-real-ip → x-forwarded-for
+// → socket) rather than trusting the raw first x-forwarded-for hop, which a
+// caller can spoof to rotate past a per-IP cap. Returns null when there is no
+// proxy in front (local desktop): a no-proxy deployment has no public DoS
+// surface, and bucketing every local request under one key would self-DoS
+// legitimate bursts (test loops, batch mints).
+const getClientIp = getTrustedClientIp;
 
 // Reject cross-site browser POSTs to the state-changing OIDC endpoints. A
 // legitimate caller is either our own interstitial form (same-origin Origin)

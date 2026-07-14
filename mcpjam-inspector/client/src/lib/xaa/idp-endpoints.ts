@@ -100,8 +100,9 @@ export function getXaaIdpUrls(
 export async function fetchXaaIdpUrls(
   signal?: AbortSignal,
   organizationId?: string | null,
+  issuerKind: "org" | "anonymous" = "org",
 ): Promise<XaaIdpUrls | null> {
-  const { openidConfigUrl } = getXaaIdpUrls(organizationId);
+  const { openidConfigUrl } = getXaaIdpUrls(organizationId, issuerKind);
   try {
     const response = await fetch(openidConfigUrl, { signal });
     if (!response.ok) {

@@ -400,6 +400,9 @@ describe("anonymous test issuer routes (/g/)", () => {
     const discoveryResponse = await app.request(
       `https://app.mcpjam.com/api/web/xaa/o/${ORG_ID}/.well-known/openid-configuration`,
     );
+    // Guard the status so a non-200 error body (which also lacks the marker)
+    // can't silently satisfy the toBeUndefined assertion.
+    expect(discoveryResponse.status).toBe(200);
     const body = await discoveryResponse.json();
     expect(body["mcpjam:issuer_kind"]).toBeUndefined();
   });

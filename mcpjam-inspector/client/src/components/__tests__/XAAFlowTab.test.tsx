@@ -190,6 +190,10 @@ describe("XAAFlowTab", () => {
     capturedMachineConfig = null;
     capturedServerModalProps = null;
     machineShouldComplete = true;
+    // Reset like every other module-level mutable: the issuer-kind test flips
+    // authUser to null (guest), and a mid-test failure must not leak that into
+    // later tests.
+    authUser = { email: "tester@example.com" };
     resourceApps = [];
     localStorage.clear();
     runSettingsState = {

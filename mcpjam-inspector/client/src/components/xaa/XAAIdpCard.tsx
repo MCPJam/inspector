@@ -237,7 +237,7 @@ export function XAAIdpCard({
     if (!wasFirstRender) {
       setUrls(getXaaIdpUrls(organizationId, issuerKind));
     }
-    void fetchXaaIdpUrls(controller.signal, organizationId).then(
+    void fetchXaaIdpUrls(controller.signal, organizationId, issuerKind).then(
       (serverUrls) => {
         if (controller.signal.aborted || !serverUrls) {
           return;
