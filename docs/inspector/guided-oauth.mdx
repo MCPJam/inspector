@@ -85,6 +85,18 @@ When you configure a pre-registered OAuth client with a client secret, the secre
 In hosted mode, client secrets are stored in a secure vault and are never written to your browser's local storage. In local mode, the secret is stored in your browser's local storage alongside the rest of your server configuration.
 </Note>
 
+### Resource identifier and mismatch warning
+
+For protocol versions 06-18 and 11-25, the debugger fetches the server's Protected Resource Metadata (PRM) before starting the authorization flow. The `resource` parameter sent to both `/authorize` and `/token` is taken directly from the `resource` field in that metadata — including URN-style identifiers — and falls back to the server URL only when no PRM resource is present. Both requests always send the same value.
+
+If the advertised resource identifier fails the strict origin/path-prefix check that MCPJam's Quick OAuth path and the official MCP SDK apply (RFC 9728 §3.3), the debugger logs a **warning** during the PRM discovery step:
+
+> **Resource identifier mismatch** — The debugger will send the advertised resource as-is (RFC 8707), but strict MCP clients — including MCPJam's Quick OAuth and the official MCP SDK — validate it against the server URL (RFC 9728 §3.3) and will refuse to connect.
+
+The debugger still completes the flow so you can inspect the full exchange. If you see this warning, the authorization flow may succeed in the debugger but fail when a real client connects. Check that your server's PRM `resource` field shares the same origin and is a path prefix of the MCP endpoint URL.
+
+The 03-26 protocol version does not fetch PRM and is unaffected by this check.
+
 ### Authorization header conflict warning
 
 If you enable OAuth and also add a custom `Authorization` header under **Advanced settings**, a warning appears. OAuth automatically sets the `Authorization` header when exchanging tokens, which may override or conflict with your custom value. Remove the custom header or switch to a different authentication method to avoid unexpected behavior.
