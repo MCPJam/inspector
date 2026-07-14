@@ -380,6 +380,12 @@ export function XAASetupPeopleSection({
                               <Pause className="h-3.5 w-3.5" />
                             )}
                           </LockedIconButton>
+                          <LockedIconButton
+                            label={`Archive ${person.name}`}
+                            reason={LOCKED_REASON}
+                          >
+                            <Archive className="h-3.5 w-3.5" />
+                          </LockedIconButton>
                         </>
                       )}
                     </div>

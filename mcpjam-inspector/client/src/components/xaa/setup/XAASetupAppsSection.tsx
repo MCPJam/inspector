@@ -1,24 +1,19 @@
-import { useState } from "react";
 import { KeyRound, Loader2, Pencil, Play, Plus, Trash2 } from "lucide-react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@mcpjam/design-system/alert-dialog";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { Card } from "@mcpjam/design-system/card";
 import { LockedIconButton } from "@/components/xaa/registration/XAAResourceAppsSection";
+import {
+  RegistrationDeleteDialog,
+  useRegistrationCrud,
+} from "@/components/xaa/registration/registration-crud";
 import { XAARegistrationWizard } from "@/components/xaa/registration/XAARegistrationWizard";
 import { useXaaResourceApps } from "@/hooks/useXaaResourceApps";
 import { useXaaManagedConnections } from "@/hooks/useXaaManagedConnections";
 import { openXaaAppInDebugger } from "@/lib/app-navigation";
-import type { XaaManagedConnection, XaaResourceApp } from "@/lib/xaa/types";
+import type { XaaManagedConnection } from "@/lib/xaa/types";
+
+const LOCKED_REASON = "Only organization admins can manage apps.";
 
 function ConnectionStatusBadge({
   connection,
@@ -54,8 +49,10 @@ function ConnectionStatusBadge({
 
 /**
  * Registered resource apps with their MCPJam Agent connection status.
- * Registration CRUD reuses the debugger's wizard; the connection itself is
- * managed in the Access section — the badge here is a read-only summary.
+ * Registration CRUD shares the debugger's wizard and create/edit/delete flow
+ * (registration-crud.tsx, also used by XAAResourceAppsSection); the
+ * connection itself is managed in the Access section — the badge here is a
+ * read-only summary.
  */
 export function XAASetupAppsSection({
   organizationId,
@@ -67,34 +64,7 @@ export function XAASetupAppsSection({
   const { resourceApps, isLoading, error, remove } =
     useXaaResourceApps(organizationId);
   const { connectionByAppId } = useXaaManagedConnections(organizationId);
-
-  const [wizardOpen, setWizardOpen] = useState(false);
-  const [editing, setEditing] = useState<XaaResourceApp | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<XaaResourceApp | null>(
-    null,
-  );
-  const [isDeleting, setIsDeleting] = useState(false);
-
-  const openCreate = () => {
-    setEditing(null);
-    setWizardOpen(true);
-  };
-
-  const openEdit = (app: XaaResourceApp) => {
-    setEditing(app);
-    setWizardOpen(true);
-  };
-
-  const confirmDelete = async () => {
-    if (!pendingDelete) return;
-    setIsDeleting(true);
-    try {
-      await remove(pendingDelete.id);
-      setPendingDelete(null);
-    } finally {
-      setIsDeleting(false);
-    }
-  };
+  const crud = useRegistrationCrud(remove);
 
   return (
     <Card className="gap-0 p-0">
@@ -106,12 +76,17 @@ export function XAASetupAppsSection({
           </p>
         </div>
         {canManage ? (
-          <Button type="button" size="sm" variant="outline" onClick={openCreate}>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={crud.openCreate}
+          >
             <Plus className="mr-1 h-3.5 w-3.5" />
             Register
           </Button>
         ) : (
-          <LockedIconButton label="Register resource app">
+          <LockedIconButton label="Register resource app" reason={LOCKED_REASON}>
             <Plus className="mr-1 h-3.5 w-3.5" />
             Register
           </LockedIconButton>
@@ -188,7 +163,7 @@ export function XAASetupAppsSection({
                           variant="ghost"
                           size="sm"
                           aria-label={`Edit ${app.name}`}
-                          onClick={() => openEdit(app)}
+                          onClick={() => crud.openEdit(app)}
                         >
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
@@ -197,17 +172,23 @@ export function XAASetupAppsSection({
                           variant="ghost"
                           size="sm"
                           aria-label={`Delete ${app.name}`}
-                          onClick={() => setPendingDelete(app)}
+                          onClick={() => crud.setPendingDelete(app)}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </>
                     ) : (
                       <>
-                        <LockedIconButton label={`Edit ${app.name}`}>
+                        <LockedIconButton
+                          label={`Edit ${app.name}`}
+                          reason={LOCKED_REASON}
+                        >
                           <Pencil className="h-3.5 w-3.5" />
                         </LockedIconButton>
-                        <LockedIconButton label={`Delete ${app.name}`}>
+                        <LockedIconButton
+                          label={`Delete ${app.name}`}
+                          reason={LOCKED_REASON}
+                        >
                           <Trash2 className="h-3.5 w-3.5" />
                         </LockedIconButton>
                       </>
@@ -221,41 +202,22 @@ export function XAASetupAppsSection({
       </div>
 
       <XAARegistrationWizard
-        open={wizardOpen}
-        onOpenChange={setWizardOpen}
+        open={crud.wizardOpen}
+        onOpenChange={crud.setWizardOpen}
         organizationId={organizationId}
-        editing={editing}
+        editing={crud.editing}
       />
 
-      <AlertDialog
-        open={pendingDelete !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingDelete(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete {pendingDelete?.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              The registration and its stored credentials are removed, along
-              with the Agent&apos;s connection and assignments for this app.
-              Flow history is unaffected.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(event) => {
-                event.preventDefault();
-                void confirmDelete();
-              }}
-              disabled={isDeleting}
-            >
-              {isDeleting ? "Deleting…" : "Delete"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <RegistrationDeleteDialog
+        crud={crud}
+        description={
+          <>
+            The registration and its stored credentials are removed, along
+            with the Agent&apos;s connection and assignments for this app.
+            Flow history is unaffected.
+          </>
+        }
+      />
     </Card>
   );
 }

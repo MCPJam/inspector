@@ -261,6 +261,7 @@ describe("XAASetupPeopleSection", () => {
       /import from project/i,
       /edit alice chen/i,
       /suspend alice chen/i,
+      /archive alice chen/i,
     ]) {
       const button = screen.getByRole("button", { name });
       expect(button).toHaveAttribute("aria-disabled", "true");
@@ -269,5 +270,7 @@ describe("XAASetupPeopleSection", () => {
     expect(mutationCalls).toHaveLength(0);
     // Locked clicks must not open the add/edit popovers either.
     expect(screen.queryByLabelText(/subject/i)).not.toBeInTheDocument();
+    // ...nor the archive confirmation dialog.
+    expect(screen.queryByRole("button", { name: /^archive$/i })).toBeNull();
   });
 });

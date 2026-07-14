@@ -135,6 +135,7 @@ function AppAccessPanel({
   app,
   connection,
   people,
+  peopleLoading,
   canManage,
   onUpsertConnection,
   onUpsertAssignment,
@@ -143,6 +144,8 @@ function AppAccessPanel({
   app: XaaResourceApp;
   connection: XaaManagedConnection | undefined;
   people: RemoteOrgXaaPerson[];
+  /** Roster still resolving — don't claim "everyone is assigned" yet. */
+  peopleLoading: boolean;
   canManage: boolean;
   onUpsertConnection: (input: {
     resourceAppId: string;
@@ -387,7 +390,12 @@ function AppAccessPanel({
                         </Button>
                       </PopoverTrigger>
                       <PopoverContent align="start" className="w-64 p-2">
-                        {unassignedPeople.length === 0 ? (
+                        {peopleLoading ? (
+                          <p className="flex items-center gap-2 px-1 py-0.5 text-xs text-muted-foreground">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            Loading people…
+                          </p>
+                        ) : unassignedPeople.length === 0 ? (
                           <p className="px-1 py-0.5 text-xs text-muted-foreground">
                             Everyone is already assigned.
                           </p>
@@ -565,7 +573,7 @@ export function XAASetupAccessSection({
     error: connectionsError,
     upsertConnection,
   } = useXaaManagedConnections(organizationId);
-  const { people } = useOrgXaaPeople(organizationId);
+  const { people, isLoading: peopleLoading } = useOrgXaaPeople(organizationId);
   const {
     error: assignmentsError,
     upsertAssignment,
@@ -576,6 +584,7 @@ export function XAASetupAccessSection({
   const {
     events,
     isLoading: auditLoading,
+    error: auditError,
     refresh: refreshAudit,
   } = useOrganizationAudit({
     organizationId,
@@ -623,6 +632,7 @@ export function XAASetupAccessSection({
               app={app}
               connection={connectionByAppId.get(app.id)}
               people={people}
+              peopleLoading={peopleLoading}
               canManage={canManage}
               onUpsertConnection={upsertConnection}
               onUpsertAssignment={upsertAssignment}
@@ -661,6 +671,11 @@ export function XAASetupAccessSection({
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   Loading decisions…
                 </div>
+              ) : auditError ? (
+                // A failed audit query is not an empty log — say so.
+                <p className="py-1 text-[11px] text-destructive">
+                  Couldn&apos;t load policy decisions: {auditError.message}
+                </p>
               ) : policyEvents.length === 0 ? (
                 <p className="py-1 text-[11px] text-muted-foreground">
                   No policy decisions recorded yet.

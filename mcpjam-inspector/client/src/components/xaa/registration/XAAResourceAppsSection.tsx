@@ -1,17 +1,6 @@
-import { useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { KeyRound, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@mcpjam/design-system/alert-dialog";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { Card } from "@mcpjam/design-system/card";
@@ -24,6 +13,10 @@ import { cn } from "@/lib/utils";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { useXaaResourceApps } from "@/hooks/useXaaResourceApps";
 import type { XaaResourceApp } from "@/lib/xaa/types";
+import {
+  RegistrationDeleteDialog,
+  useRegistrationCrud,
+} from "./registration-crud";
 import { XAARegistrationWizard } from "./XAARegistrationWizard";
 
 const LOCKED_REASON = "Only organization admins can manage registrations.";
@@ -84,18 +77,13 @@ export function XAAResourceAppsSection({
   // Hooks run unconditionally; the flag/auth gates return null below.
   const registrationEnabled = useFeatureFlagEnabled("xaa-registration");
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
-  const { resourceApps, isLoading, isAuthenticated, remove } =
+  const { resourceApps, isLoading, isAuthenticated, error, remove } =
     useXaaResourceApps(organizationId);
   const { sortedOrganizations } = useOrganizationQueries({
     isAuthenticated: isConvexAuthenticated,
   });
 
-  const [wizardOpen, setWizardOpen] = useState(false);
-  const [editing, setEditing] = useState<XaaResourceApp | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<XaaResourceApp | null>(
-    null,
-  );
-  const [isDeleting, setIsDeleting] = useState(false);
+  const crud = useRegistrationCrud(remove);
 
   if (registrationEnabled !== true || !isAuthenticated) {
     return null;
@@ -106,27 +94,6 @@ export function XAAResourceAppsSection({
     activeOrg?.myRole === "owner" ||
     activeOrg?.myRole === "admin" ||
     activeOrg?.isCreator === true;
-
-  const openCreate = () => {
-    setEditing(null);
-    setWizardOpen(true);
-  };
-
-  const openEdit = (app: XaaResourceApp) => {
-    setEditing(app);
-    setWizardOpen(true);
-  };
-
-  const confirmDelete = async () => {
-    if (!pendingDelete) return;
-    setIsDeleting(true);
-    try {
-      await remove(pendingDelete.id);
-      setPendingDelete(null);
-    } finally {
-      setIsDeleting(false);
-    }
-  };
 
   return (
     <Card className="mx-3 mt-2 mb-1 gap-0 p-0">
@@ -142,7 +109,7 @@ export function XAAResourceAppsSection({
             type="button"
             size="sm"
             variant="outline"
-            onClick={openCreate}
+            onClick={crud.openCreate}
           >
             <Plus className="mr-1 h-3.5 w-3.5" />
             Register
@@ -156,6 +123,9 @@ export function XAAResourceAppsSection({
       </div>
 
       <div className="px-4 pb-3">
+        {error ? (
+          <p className="pb-2 text-xs text-destructive">{error}</p>
+        ) : null}
         {isLoading ? (
           <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -237,7 +207,7 @@ export function XAAResourceAppsSection({
                           aria-label={`Edit ${app.name}`}
                           onClick={(event) => {
                             event.stopPropagation();
-                            openEdit(app);
+                            crud.openEdit(app);
                           }}
                           onKeyDown={(event) => event.stopPropagation()}
                         >
@@ -250,7 +220,7 @@ export function XAAResourceAppsSection({
                           aria-label={`Delete ${app.name}`}
                           onClick={(event) => {
                             event.stopPropagation();
-                            setPendingDelete(app);
+                            crud.setPendingDelete(app);
                           }}
                           onKeyDown={(event) => event.stopPropagation()}
                         >
@@ -276,40 +246,16 @@ export function XAAResourceAppsSection({
       </div>
 
       <XAARegistrationWizard
-        open={wizardOpen}
-        onOpenChange={setWizardOpen}
+        open={crud.wizardOpen}
+        onOpenChange={crud.setWizardOpen}
         organizationId={organizationId}
-        editing={editing}
+        editing={crud.editing}
       />
 
-      <AlertDialog
-        open={pendingDelete !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingDelete(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete {pendingDelete?.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              The registration and its stored credentials are removed. Flow
-              history is unaffected.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(event) => {
-                event.preventDefault();
-                void confirmDelete();
-              }}
-              disabled={isDeleting}
-            >
-              {isDeleting ? "Deleting…" : "Delete"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <RegistrationDeleteDialog
+        crud={crud}
+        description="The registration and its stored credentials are removed. Flow history is unaffected."
+      />
     </Card>
   );
 }

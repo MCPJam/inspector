@@ -25,11 +25,12 @@ vi.mock("convex/react", () => ({
 
 const refreshMock = vi.fn(async () => undefined);
 let auditEvents: Array<Record<string, unknown>> = [];
+let auditError: Error | null = null;
 vi.mock("@/hooks/useOrganizationAudit", () => ({
   useOrganizationAudit: () => ({
     events: auditEvents,
     isLoading: false,
-    error: null,
+    error: auditError,
     refresh: refreshMock,
   }),
 }));
@@ -110,6 +111,7 @@ describe("XAASetupAccessSection", () => {
     mutationCalls.length = 0;
     refreshMock.mockClear();
     auditEvents = [];
+    auditError = null;
     seed();
   });
 
@@ -213,6 +215,20 @@ describe("XAASetupAccessSection", () => {
     ).toHaveAttribute("aria-pressed", "false");
   });
 
+  it("shows a loading row in the assign popover while the roster resolves", async () => {
+    // People query still in flight — the popover must not claim everyone is
+    // already assigned.
+    queryResults["xaaTestIdentities:list"] = undefined;
+    const user = userEvent.setup();
+    render(<XAASetupAccessSection organizationId={ORG_ID} canManage />);
+
+    await expandApp(user);
+    await user.click(screen.getByRole("button", { name: /assign person/i }));
+
+    expect(await screen.findByText(/loading people…/i)).toBeInTheDocument();
+    expect(screen.queryByText(/everyone is already assigned/i)).toBeNull();
+  });
+
   it("assigns an unassigned person with scopeMode all", async () => {
     const user = userEvent.setup();
     render(<XAASetupAccessSection organizationId={ORG_ID} canManage />);
@@ -285,6 +301,25 @@ describe("XAASetupAccessSection", () => {
     expect(screen.getByText("not_assigned")).toBeInTheDocument();
     // Non-policy audit rows never render here.
     expect(screen.queryByText(/member\.added/)).toBeNull();
+  });
+
+  it("surfaces an audit query failure instead of the empty state", async () => {
+    auditError = new Error("Not authorized");
+    const user = userEvent.setup();
+    render(<XAASetupAccessSection organizationId={ORG_ID} canManage />);
+
+    await user.click(
+      screen.getByRole("button", { name: /recent policy decisions/i }),
+    );
+
+    expect(
+      await screen.findByText(
+        /couldn't load policy decisions: not authorized/i,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/no policy decisions recorded yet/i),
+    ).toBeNull();
   });
 
   it("is inert for non-admins", async () => {
