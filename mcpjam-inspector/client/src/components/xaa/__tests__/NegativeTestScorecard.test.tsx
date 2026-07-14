@@ -15,19 +15,12 @@ const INPUT: NegativeTestsInput = {
   registrationId: "app_1",
 };
 
-async function expand(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(
-    screen.getByRole("button", { name: /negative-test scorecard/i })
-  );
-}
-
 describe("NegativeTestScorecard", () => {
   beforeEach(() => {
     runMock.mockReset();
   });
 
-  it("shows the unavailable reason when there is no auth-server target", async () => {
-    const user = userEvent.setup();
+  it("starts expanded and shows the unavailable reason when there is no auth-server target", () => {
     render(
       <NegativeTestScorecard
         input={null}
@@ -35,7 +28,6 @@ describe("NegativeTestScorecard", () => {
         unavailableReason="MCPJam test auth server has nothing to test."
       />
     );
-    await expand(user);
 
     expect(
       screen.getByText("MCPJam test auth server has nothing to test.")
@@ -45,10 +37,8 @@ describe("NegativeTestScorecard", () => {
     ).toBeNull();
   });
 
-  it("locks the run button until a positive run unlocks it", async () => {
-    const user = userEvent.setup();
+  it("locks the run button until a positive run unlocks it", () => {
     render(<NegativeTestScorecard input={INPUT} unlocked={false} />);
-    await expand(user);
 
     expect(
       screen.getByRole("button", { name: /run negative tests/i })
@@ -59,6 +49,7 @@ describe("NegativeTestScorecard", () => {
   });
 
   it("runs immediately when unlocked and renders per-case verdicts", async () => {
+    const onResultsReady = vi.fn();
     runMock.mockResolvedValue({
       failures: 1,
       results: [
@@ -88,8 +79,13 @@ describe("NegativeTestScorecard", () => {
     });
 
     const user = userEvent.setup();
-    render(<NegativeTestScorecard input={INPUT} unlocked />);
-    await expand(user);
+    render(
+      <NegativeTestScorecard
+        input={INPUT}
+        unlocked
+        onResultsReady={onResultsReady}
+      />
+    );
 
     await user.click(
       screen.getByRole("button", { name: /run negative tests/i })
@@ -113,6 +109,7 @@ describe("NegativeTestScorecard", () => {
       screen.getByText(/https:\/\/wrong-audience\.example\.com/)
     ).toBeInTheDocument();
     expect(runMock).toHaveBeenCalledWith(INPUT);
+    expect(onResultsReady).toHaveBeenCalledTimes(1);
   });
 
   it("unlocks via the owner checkbox for the half-built-AS case", async () => {
@@ -120,7 +117,6 @@ describe("NegativeTestScorecard", () => {
 
     const user = userEvent.setup();
     render(<NegativeTestScorecard input={INPUT} unlocked={false} />);
-    await expand(user);
 
     // The run button stays disabled until the owner toggle is checked.
     expect(
@@ -155,15 +151,14 @@ describe("NegativeTestScorecard", () => {
 
     const user = userEvent.setup();
     const { rerender } = render(
-      <NegativeTestScorecard input={INPUT} unlocked />,
+      <NegativeTestScorecard input={INPUT} unlocked />
     );
-    await expand(user);
     await user.click(
-      screen.getByRole("button", { name: /run negative tests/i }),
+      screen.getByRole("button", { name: /run negative tests/i })
     );
 
     await waitFor(() =>
-      expect(screen.getByTestId("xaa-negtest-row-expired")).toBeInTheDocument(),
+      expect(screen.getByTestId("xaa-negtest-row-expired")).toBeInTheDocument()
     );
 
     rerender(
@@ -171,11 +166,11 @@ describe("NegativeTestScorecard", () => {
         input={null}
         unlocked={false}
         unavailableReason="Run the flow first so the token endpoint is discovered."
-      />,
+      />
     );
 
     await waitFor(() =>
-      expect(screen.queryByTestId("xaa-negtest-row-expired")).toBeNull(),
+      expect(screen.queryByTestId("xaa-negtest-row-expired")).toBeNull()
     );
   });
 
@@ -184,7 +179,6 @@ describe("NegativeTestScorecard", () => {
 
     const user = userEvent.setup();
     render(<NegativeTestScorecard input={INPUT} unlocked />);
-    await expand(user);
     await user.click(
       screen.getByRole("button", { name: /run negative tests/i })
     );

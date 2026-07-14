@@ -28,10 +28,7 @@ import {
   type IdentityAssertionFormat,
   type RegistrationStrategy,
 } from "@/shared/xaa.js";
-import {
-  XAA_STRATEGY_HINTS,
-  XAA_STRATEGY_OPTIONS,
-} from "@/lib/registration-strategy";
+import { XAA_STRATEGY_OPTIONS } from "@/lib/registration-strategy";
 import { deriveOAuthProfileFromServer } from "../oauth/utils";
 import { XaaCredentialFields } from "../connection/shared/XaaCredentialFields";
 
@@ -46,13 +43,11 @@ const IDENTITY_ASSERTION_FORMAT_LABELS: Record<
   saml: "SAML assertion",
 };
 
-const IDENTITY_ASSERTION_FORMAT_HINTS: Record<
-  IdentityAssertionFormat,
-  string
-> = {
-  oidc: "The MCPJam IdP mints an OIDC ID token as the identity assertion.",
-  saml: "The MCPJam IdP mints a signed SAML 2.0 assertion; the ID-JAG carries a saml-nameid subject identifier.",
-};
+const IDENTITY_ASSERTION_FORMAT_HINTS: Record<IdentityAssertionFormat, string> =
+  {
+    oidc: "The MCPJam IdP mints an OIDC ID token as the identity assertion.",
+    saml: "The MCPJam IdP mints a signed SAML 2.0 assertion; the ID-JAG carries a saml-nameid subject identifier.",
+  };
 
 interface XAAServerModalProps {
   open: boolean;
@@ -83,10 +78,7 @@ export function XAAServerModal({
   projectId,
   hostedServerId,
 }: XAAServerModalProps) {
-  const derived = useMemo(
-    () => deriveOAuthProfileFromServer(server),
-    [server],
-  );
+  const derived = useMemo(() => deriveOAuthProfileFromServer(server), [server]);
   const hasSavedSecret = Boolean(server?.hasClientSecret);
   const isEditing = Boolean(server);
 
@@ -132,12 +124,12 @@ export function XAAServerModal({
     setServerUrl(derived.serverUrl ?? "");
     setRegistrationStrategy(
       normalizeRegistrationStrategy(server?.registrationMode) ??
-        DEFAULT_REGISTRATION_STRATEGY,
+        DEFAULT_REGISTRATION_STRATEGY
     );
     setRegistrationStrategyDirty(false);
     setIdentityAssertionFormat(
       normalizeIdentityAssertionFormat(server?.xaaIdentityAssertionFormat) ??
-        DEFAULT_IDENTITY_ASSERTION_FORMAT,
+        DEFAULT_IDENTITY_ASSERTION_FORMAT
     );
     setClientId(derived.clientId ?? "");
     // Scopes can be stored comma- or space-separated upstream; normalize to
@@ -267,7 +259,7 @@ export function XAAServerModal({
       setError(
         saveError instanceof Error
           ? saveError.message
-          : "Couldn't save this server. Your changes were kept — try again.",
+          : "Couldn't save this server. Your changes were kept — try again."
       );
     } finally {
       setSaving(false);
@@ -333,9 +325,6 @@ export function XAAServerModal({
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
-                {XAA_STRATEGY_HINTS[registrationStrategy]}
-              </p>
             </div>
 
             {/* Identity assertion format (input axis). A per-server preset the
@@ -370,6 +359,7 @@ export function XAAServerModal({
               clientId={clientId}
               onClientIdChange={setClientId}
               clientIdRequired={registrationStrategy === "preregistered"}
+              showClientCredentials={registrationStrategy === "preregistered"}
               clientSecret={clientSecret}
               onClientSecretChange={(value) => {
                 setClientSecret(value);

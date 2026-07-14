@@ -60,28 +60,17 @@
           {
             "group": "MCP Apps",
             "icon": "layout-dashboard",
-            "pages": [
-              "inspector/playground",
-              "inspector/evals",
-              "inspector/host-templates"
-            ]
+            "pages": ["inspector/playground", "inspector/evals"]
           },
           {
-            "group": "Auth & Conformance",
+            "group": "Authentication",
             "icon": "shield-check",
-            "pages": [
-              "inspector/guided-oauth",
-              "inspector/xaa-debugger",
-              "inspector/xaa-test-idp"
-            ]
+            "pages": ["inspector/guided-oauth", "inspector/xaa-debugger"]
           },
           {
             "group": "Primitives",
             "icon": "puzzle",
-            "pages": [
-              "inspector/tools-prompts-resources",
-              "inspector/skills"
-            ]
+            "pages": ["inspector/tools-prompts-resources", "inspector/skills"]
           },
           {
             "group": "Computer",
@@ -208,9 +197,15 @@
   "redirects": [
     { "source": "/inspector/workspaces", "destination": "/inspector/projects" },
     { "source": "/inspector/chat", "destination": "/inspector/playground" },
-    { "source": "/inspector/app-builder", "destination": "/inspector/playground" },
+    {
+      "source": "/inspector/app-builder",
+      "destination": "/inspector/playground"
+    },
     { "source": "/inspector/test-cases", "destination": "/inspector/evals" },
-    { "source": "/sdk/reference/test-agent", "destination": "/sdk/reference/host-runner" }
+    {
+      "source": "/sdk/reference/test-agent",
+      "destination": "/sdk/reference/host-runner"
+    }
   ],
   "navbar": {
     "links": [
