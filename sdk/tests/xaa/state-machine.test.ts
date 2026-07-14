@@ -10,7 +10,9 @@ import {
   createXAAStateMachine,
 } from "../../src/xaa/state-machines/state-machine.js";
 import {
+  buildXaaDcrCredentialCacheKey,
   createInitialXAAFlowState,
+  isXaaDcrClientSecretExpired,
   type XaaEphemeralDcrCredentials,
   type XAAFlowState,
 } from "../../src/xaa/state-machines/types.js";
@@ -1349,10 +1351,46 @@ describe("createXAAStateMachine", () => {
 const DCR_SECRET = "dcr-minted-secret-value-123";
 const REGISTRATION_ENDPOINT = "https://auth.example.com/oauth/register";
 
-// Mirrors dcrCacheKeyFor: encodeURIComponent each component, join with "::".
-// Harness target key is "target-1".
 const dcrCacheKey = (endpoint: string, scope: string) =>
-  ["target-1", endpoint, scope].map(encodeURIComponent).join("::");
+  buildXaaDcrCredentialCacheKey({
+    targetKey: "target-1",
+    registrationEndpoint: endpoint,
+    scope,
+  });
+
+describe("DCR credential cache helpers", () => {
+  it("keys credentials by target, endpoint, and scope without delimiter collisions", () => {
+    expect(
+      buildXaaDcrCredentialCacheKey({
+        targetKey: "target::one",
+        registrationEndpoint: REGISTRATION_ENDPOINT,
+        scope: "read::tools",
+      })
+    ).toBe(
+      ["target::one", REGISTRATION_ENDPOINT, "read::tools"]
+        .map(encodeURIComponent)
+        .join("::")
+    );
+  });
+
+  it("expires only finite confidential-client secrets", () => {
+    expect(
+      isXaaDcrClientSecretExpired(
+        { clientSecret: "secret", clientSecretExpiresAt: 99 },
+        100
+      )
+    ).toBe(true);
+    expect(
+      isXaaDcrClientSecretExpired(
+        { clientSecret: "secret", clientSecretExpiresAt: 0 },
+        100
+      )
+    ).toBe(false);
+    expect(
+      isXaaDcrClientSecretExpired({ clientSecretExpiresAt: 99 }, 100)
+    ).toBe(false);
+  });
+});
 
 interface DynamicHarnessOptions {
   strategy: "dcr" | "cimd";

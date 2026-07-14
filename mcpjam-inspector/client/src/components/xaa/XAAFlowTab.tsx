@@ -48,7 +48,9 @@ import {
   type SubjectIdentifierFormat,
 } from "@/shared/xaa.js";
 import {
+  buildXaaDcrCredentialCacheKey,
   createInitialXAAFlowState,
+  isXaaDcrClientSecretExpired,
   type XaaEphemeralDcrCredentials,
   type RegistrationStrategy,
   type XAAFlowState,
@@ -327,14 +329,6 @@ export function XAAFlowTab({
   const runInput = target.runInput;
   const { targetKey, isTestable } = target;
 
-  // The positive-run unlock must be specific to the exact issuer the run
-  // exercised: switching issuer mode (local↔hosted) or organization changes
-  // the minted `iss`, so a green run under one must NOT unlock negative tests
-  // under another. Key the gate on target + issuer mode + org.
-  const runGateKey = `${targetKey}|${hostedIssuerOptIn ? "hosted" : "local"}|${
-    organizationId ?? ""
-  }`;
-
   // ── Registration strategy (Client↔Resource-AS leg) ──────────────────
   // Persisted per-server and chosen in the "Configure Server to Test" modal;
   // the modal is the source of truth (no on-flow selector). The DCR credential
@@ -406,6 +400,21 @@ export function XAAFlowTab({
     )
   );
 
+  // Unlocks and scorecard results belong to the exact client identity the
+  // completed run exercised. Dynamic client ids come from the flow, not the
+  // saved server configuration, and can change after re-registration.
+  const scorecardClientId =
+    flowState.registrationStrategy === "preregistered"
+      ? runInput.clientId
+      : flowState.clientId ?? "";
+  const runGateKey = [
+    targetKey,
+    hostedIssuerOptIn ? "hosted" : "local",
+    organizationId ?? "",
+    flowState.registrationStrategy,
+    scorecardClientId,
+  ].join("|");
+
   // The machine reads state through this ref (lazy getState). Keep it in
   // sync *synchronously* with every write so a run that resets and then
   // immediately advances never observes a stale snapshot.
@@ -471,26 +480,21 @@ export function XAAFlowTab({
         // The strategy the completed run actually used (state-authoritative).
         registration_strategy: flowStateRef.current.registrationStrategy,
       });
-      // A green run proves the user holds valid client credentials the AS
-      // issued — that authorizes broken-token testing against it. Only unlock
-      // for pre-registered runs though: a dcr/cimd run's negative tests would
-      // fire with the configured (often absent) client, not the identity the
-      // run established, so the scorecard stays disabled for those (see the
-      // scorecard memo) and must not be unlocked here either.
-      if (flowStateRef.current.registrationStrategy === "preregistered") {
-        setPositiveRunTargets((current) => {
-          if (current.has(runGateKey)) return current;
-          const next = new Set(current);
-          next.add(runGateKey);
-          return next;
-        });
-      }
+      // A green run proves these exact credentials can redeem an ID-JAG, which
+      // authorizes the scorecard to send deliberately broken assertions.
+      setPositiveRunTargets((current) => {
+        if (current.has(runGateKey)) return current;
+        const next = new Set(current);
+        next.add(runGateKey);
+        return next;
+      });
     }
   }, [flowState.currentStep, authServerModeForTelemetry, runGateKey]);
 
   // ── Negative-test scorecard input ───────────────────────────────────
   const scorecard = useMemo((): {
     input: NegativeTestsInput | null;
+    resolveInput?: () => NegativeTestsInput;
     unavailableReason?: string;
   } => {
     const audience =
@@ -502,19 +506,100 @@ export function XAAFlowTab({
     const resource =
       flowState.resourceMetadata?.resource || runInput.serverUrl || "";
 
-    // The scorecard fires broken tokens using the run's CONFIGURED client
-    // (runInput.clientId), not the identity a dcr/cimd run established. For a
-    // dynamic run those don't match — often the config client_id is empty —
-    // so results would be about the wrong (or no) client and could read as an
-    // all-green pass that proves nothing. Disable it rather than mislead.
-    if (
-      flowState.registrationStrategy === "dcr" ||
-      flowState.registrationStrategy === "cimd"
-    ) {
+    if (flowState.registrationStrategy === "cimd") {
+      if (!flowState.tokenEndpoint || !flowState.clientId) {
+        return {
+          input: null,
+          unavailableReason:
+            "Run client identity resolution first so the CIMD client and token endpoint are known.",
+        };
+      }
+      if (!audience || !resource) return { input: null };
+
       return {
-        input: null,
-        unavailableReason:
-          "Negative tests run against the pre-registered client credentials, not the client this DCR/CIMD run established — so they can't be trusted here. Switch to the pre-registered strategy to exercise the scorecard.",
+        input: {
+          tokenEndpoint: flowState.tokenEndpoint,
+          audience,
+          resource,
+          subject: runInput.userId || undefined,
+          clientId: flowState.clientId,
+          tokenEndpointAuthMethod: "none",
+          scope: runInput.scope || undefined,
+        },
+      };
+    }
+
+    if (flowState.registrationStrategy === "dcr") {
+      const registrationEndpoint =
+        flowState.authzMetadata?.registration_endpoint;
+      if (
+        !flowState.tokenEndpoint ||
+        !flowState.clientId ||
+        !registrationEndpoint
+      ) {
+        return {
+          input: null,
+          unavailableReason:
+            "Run dynamic client registration first so the client credentials and token endpoint are known.",
+        };
+      }
+
+      const cacheKey = buildXaaDcrCredentialCacheKey({
+        targetKey,
+        registrationEndpoint,
+        scope: flowState.scope,
+      });
+      const credentials = dcrCredentialCacheRef.current.get(cacheKey);
+      if (!credentials || credentials.clientId !== flowState.clientId) {
+        return {
+          input: null,
+          unavailableReason:
+            "This session's dynamic registration credentials are no longer available. Register another client to run negative tests.",
+        };
+      }
+      if (isXaaDcrClientSecretExpired(credentials)) {
+        return {
+          input: null,
+          unavailableReason:
+            "This session's dynamic client secret has expired. Register another client to run negative tests.",
+        };
+      }
+      if (!audience || !resource) return { input: null };
+
+      const input: NegativeTestsInput = {
+        tokenEndpoint: flowState.tokenEndpoint,
+        audience,
+        resource,
+        subject: runInput.userId || undefined,
+        clientId: flowState.clientId,
+        tokenEndpointAuthMethod: credentials.tokenEndpointAuthMethod,
+        scope: runInput.scope || undefined,
+      };
+
+      return {
+        input,
+        // Re-read immediately before the request. A secret may expire or the
+        // cache may be cleared after render; never retain it in React state.
+        resolveInput: () => {
+          const current = dcrCredentialCacheRef.current.get(cacheKey);
+          if (!current || current.clientId !== input.clientId) {
+            throw new Error(
+              "This session's dynamic registration credentials are no longer available. Register another client and rerun the flow."
+            );
+          }
+          if (isXaaDcrClientSecretExpired(current)) {
+            throw new Error(
+              "This session's dynamic client secret has expired. Register another client and rerun the flow."
+            );
+          }
+          return {
+            ...input,
+            tokenEndpointAuthMethod: current.tokenEndpointAuthMethod,
+            ...(current.clientSecret
+              ? { clientSecret: current.clientSecret }
+              : {}),
+          };
+        },
       };
     }
 
@@ -603,6 +688,7 @@ export function XAAFlowTab({
     runInput,
     selectedRegistration,
     target,
+    targetKey,
     runsDynamicRegistration,
   ]);
 
@@ -1041,6 +1127,17 @@ export function XAAFlowTab({
                         : {}),
                     }
                   : null
+              }
+              resolveInput={
+                scorecard.resolveInput
+                  ? () => ({
+                      ...scorecard.resolveInput!(),
+                      organizationId: organizationId ?? null,
+                      ...(hostedIssuerOptIn
+                        ? { issuerMode: "hosted" as const }
+                        : {}),
+                    })
+                  : undefined
               }
               unlocked={positiveRunTargets.has(runGateKey)}
               unavailableReason={scorecard.unavailableReason}

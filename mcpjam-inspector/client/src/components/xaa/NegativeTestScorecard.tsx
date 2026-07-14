@@ -29,6 +29,9 @@ interface NegativeTestScorecardProps {
    * external auth server to test (MCPJam-issuer-only, or the token endpoint
    * isn't known yet). */
   input: NegativeTestsInput | null;
+  /** Resolve session-only credentials immediately before the request. The
+   * returned secret is never retained in component state or rendered props. */
+  resolveInput?: () => NegativeTestsInput;
   /** A successful positive run has completed for this target this session. */
   unlocked: boolean;
   /** Why `input` is null — shown when the scorecard can't run at all. */
@@ -141,6 +144,7 @@ function VerdictRow({ row }: { row: NegativeTestCase }) {
 
 export function NegativeTestScorecard({
   input,
+  resolveInput,
   unlocked,
   unavailableReason,
   onResultsReady,
@@ -161,6 +165,8 @@ export function NegativeTestScorecard({
         input.registrationId ?? input.serverId ?? input.tokenEndpoint ?? "",
         input.audience,
         input.resource,
+        input.clientId ?? "",
+        input.tokenEndpointAuthMethod ?? "",
         // Issuer mode + org change the minted `iss`, so they are part of the
         // target identity: switching them must reset a prior run's results.
         input.issuerMode ?? "local",
@@ -179,7 +185,7 @@ export function NegativeTestScorecard({
     if (!input) return;
     setRun({ status: "loading" });
     try {
-      const result = await runNegativeTests(input);
+      const result = await runNegativeTests(resolveInput?.() ?? input);
       setRun({ status: "done", result });
       onResultsReady?.();
     } catch (error) {

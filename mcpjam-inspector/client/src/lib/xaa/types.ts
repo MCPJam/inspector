@@ -23,7 +23,9 @@ export type {
 } from "@mcpjam/sdk/browser";
 export {
   EMPTY_XAA_FLOW_STATE,
+  buildXaaDcrCredentialCacheKey,
   createInitialXAAFlowState,
+  isXaaDcrClientSecretExpired,
 } from "@mcpjam/sdk/browser";
 
 // ---------------------------------------------------------------------------

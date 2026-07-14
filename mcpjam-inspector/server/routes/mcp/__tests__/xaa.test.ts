@@ -708,6 +708,120 @@ describe("POST /negative-tests", () => {
     expect(body.results.filter((r) => r.verdict === "policy")).toHaveLength(2);
   });
 
+  it.each([
+    {
+      method: "client_secret_post" as const,
+      expectAuthorization: false,
+      expectSecretInBody: true,
+    },
+    {
+      method: "client_secret_basic" as const,
+      expectAuthorization: true,
+      expectSecretInBody: false,
+    },
+  ])(
+    "uses $method for dynamically registered confidential clients",
+    async ({ method, expectAuthorization, expectSecretInBody }) => {
+      const fetchMock = vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: "invalid_grant" }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const response = await buildApp().request("/api/web/xaa/negative-tests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...INLINE_BODY,
+          clientId: "dynamic-client",
+          clientSecret: "dynamic-secret",
+          tokenEndpointAuthMethod: method,
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const responseBody = (await response.json()) as {
+        results: Array<{ verdict: string }>;
+      };
+      expect(responseBody.results.some((row) => row.verdict === "pass")).toBe(
+        true
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(11);
+      for (const [, init] of fetchMock.mock.calls) {
+        const headers = init?.headers as Record<string, string>;
+        const form = new URLSearchParams(String(init?.body));
+        expect(Boolean(headers.Authorization)).toBe(expectAuthorization);
+        expect(form.has("client_secret")).toBe(expectSecretInBody);
+        if (expectAuthorization) {
+          expect(headers.Authorization).toMatch(/^Basic /);
+          expect(form.has("client_id")).toBe(false);
+        } else {
+          expect(form.get("client_id")).toBe("dynamic-client");
+          expect(form.get("client_secret")).toBe("dynamic-secret");
+        }
+      }
+    }
+  );
+
+  it("uses a CIMD URL as a public client without sending a secret", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const clientId =
+      "https://app.mcpjam.com/.well-known/oauth/xaa-client-metadata.json";
+    const response = await buildApp().request("/api/web/xaa/negative-tests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...INLINE_BODY,
+        clientId,
+        tokenEndpointAuthMethod: "none",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const responseBody = (await response.json()) as {
+      results: Array<{ verdict: string }>;
+    };
+    expect(responseBody.results.some((row) => row.verdict === "pass")).toBe(
+      true
+    );
+    for (const [, init] of fetchMock.mock.calls) {
+      const headers = init?.headers as Record<string, string>;
+      const form = new URLSearchParams(String(init?.body));
+      expect(headers.Authorization).toBeUndefined();
+      expect(form.get("client_id")).toBe(clientId);
+      expect(form.has("client_secret")).toBe(false);
+    }
+  });
+
+  it("rejects an explicit confidential auth method without a secret", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await buildApp().request("/api/web/xaa/negative-tests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...INLINE_BODY,
+        clientId: "dynamic-client",
+        tokenEndpointAuthMethod: "client_secret_post",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("yields partial results when a case times out (one slow case doesn't sink the run)", async () => {
     let call = 0;
     const fetchMock = vi.fn(async () => {

@@ -138,24 +138,22 @@ vi.mock("../xaa/registration/XAAResourceAppsSection", () => ({
   ),
 }));
 
+let capturedScorecardProps: any = null;
 vi.mock("../xaa/NegativeTestScorecard", () => ({
-  NegativeTestScorecard: ({
-    input,
-    unlocked,
-    unavailableReason,
-  }: {
-    input: { audience?: string } | null;
-    unlocked: boolean;
-    unavailableReason?: string;
-  }) => (
-    <div
-      data-testid="xaa-scorecard"
-      data-unlocked={String(unlocked)}
-      data-has-input={String(input !== null)}
-      data-audience={input?.audience ?? ""}
-      data-unavailable-reason={unavailableReason ?? ""}
-    />
-  ),
+  NegativeTestScorecard: (props: any) => {
+    capturedScorecardProps = props;
+    return (
+      <div
+        data-testid="xaa-scorecard"
+        data-unlocked={String(props.unlocked)}
+        data-has-input={String(props.input !== null)}
+        data-audience={props.input?.audience ?? ""}
+        data-client-id={props.input?.clientId ?? ""}
+        data-auth-method={props.input?.tokenEndpointAuthMethod ?? ""}
+        data-unavailable-reason={props.unavailableReason ?? ""}
+      />
+    );
+  },
 }));
 
 const runAllMock = vi.fn();
@@ -212,6 +210,7 @@ describe("XAAFlowTab", () => {
     runAllMock.mockClear();
     capturedMachineConfig = null;
     capturedServerModalProps = null;
+    capturedScorecardProps = null;
     machineShouldComplete = true;
     machineCompletionUpdates = {};
     resourceApps = [];
@@ -609,6 +608,149 @@ describe("XAAFlowTab", () => {
       expect(capturedMachineConfig.dcrCacheTargetKey).toBe(
         currentTarget.targetKey
       );
+    });
+
+    it("unlocks DCR negative tests with the dynamically registered credentials", async () => {
+      const user = userEvent.setup();
+      render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />
+      );
+
+      const registrationEndpoint = "https://auth.example.com/register";
+      const cacheKey = [currentTarget.targetKey, registrationEndpoint, ""]
+        .map(encodeURIComponent)
+        .join("::");
+      capturedMachineConfig.dcrCredentialCache.set(cacheKey, {
+        clientId: "dynamic-client",
+        clientSecret: "session-only-secret",
+        clientSecretExpiresAt: 0,
+        tokenEndpointAuthMethod: "client_secret_basic",
+        registrationEndpoint,
+      });
+      machineCompletionUpdates = {
+        registrationStrategy: "dcr",
+        clientId: "dynamic-client",
+        tokenEndpoint: "https://auth.example.com/token",
+        tokenEndpointAuthMethod: "client_secret_basic",
+        authzMetadata: {
+          issuer: "https://auth.example.com",
+          registration_endpoint: registrationEndpoint,
+        },
+        resourceMetadata: { resource: "https://staging.mcp.example.com" },
+      };
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+          "data-unlocked",
+          "true"
+        )
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-client-id",
+        "dynamic-client"
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-auth-method",
+        "client_secret_basic"
+      );
+      expect(capturedScorecardProps.input.clientSecret).toBeUndefined();
+      expect(capturedScorecardProps.resolveInput()).toEqual(
+        expect.objectContaining({
+          clientId: "dynamic-client",
+          clientSecret: "session-only-secret",
+          tokenEndpointAuthMethod: "client_secret_basic",
+        })
+      );
+    });
+
+    it("unlocks CIMD negative tests with the metadata URL public client", async () => {
+      const user = userEvent.setup();
+      render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("cimd")}
+          selectedServerName="staging"
+        />
+      );
+      const clientId =
+        "https://app.mcpjam.com/.well-known/oauth/xaa-client-metadata.json";
+      machineCompletionUpdates = {
+        registrationStrategy: "cimd",
+        clientId,
+        tokenEndpoint: "https://auth.example.com/token",
+        tokenEndpointAuthMethod: "none",
+        authzMetadata: { issuer: "https://auth.example.com" },
+        resourceMetadata: { resource: "https://staging.mcp.example.com" },
+      };
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+          "data-unlocked",
+          "true"
+        )
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-client-id",
+        clientId
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-auth-method",
+        "none"
+      );
+      expect(capturedScorecardProps.resolveInput).toBeUndefined();
+    });
+
+    it("keeps an expired DCR credential unavailable without registering again", async () => {
+      const user = userEvent.setup();
+      render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />
+      );
+
+      const registrationEndpoint = "https://auth.example.com/register";
+      const cacheKey = [currentTarget.targetKey, registrationEndpoint, ""]
+        .map(encodeURIComponent)
+        .join("::");
+      capturedMachineConfig.dcrCredentialCache.set(cacheKey, {
+        clientId: "expired-client",
+        clientSecret: "expired-secret",
+        clientSecretExpiresAt: Math.floor(Date.now() / 1000) - 1,
+        tokenEndpointAuthMethod: "client_secret_post",
+        registrationEndpoint,
+      });
+      machineCompletionUpdates = {
+        registrationStrategy: "dcr",
+        clientId: "expired-client",
+        tokenEndpoint: "https://auth.example.com/token",
+        authzMetadata: {
+          issuer: "https://auth.example.com",
+          registration_endpoint: registrationEndpoint,
+        },
+        resourceMetadata: { resource: "https://staging.mcp.example.com" },
+      };
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+          "data-has-input",
+          "false"
+        )
+      );
+      expect(
+        screen
+          .getByTestId("xaa-scorecard")
+          .getAttribute("data-unavailable-reason")
+      ).toMatch(/expired/i);
+      expect(runAllMock).toHaveBeenCalledTimes(1);
     });
 
     it("defaults to preregistered when nothing is persisted", () => {

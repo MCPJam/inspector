@@ -195,6 +195,9 @@ The **Negative-test scorecard** sends invalid ID-JAGs to your authorization
 server and checks that it refuses the assertions that the ID-JAG profile
 requires it to reject. It also reports two policy-dependent probes separately.
 Run a successful flow first to unlock it.
+The scorecard reuses the client identity resolved by that flow, whether it was
+pre-registered, dynamically registered with DCR, or represented by MCPJam's
+CIMD metadata URL.
 
 Click **Run negative tests** to send intentionally broken ID-JAGs to the
 authorization server's token endpoint. The MCP server is not called during
