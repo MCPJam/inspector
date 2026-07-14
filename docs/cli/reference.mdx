@@ -410,6 +410,31 @@ With `--format json`, a single machine-readable startup object (public URL, serv
 
 ---
 
+## `xaa` commands
+
+### `xaa run`
+
+Self-issue an ID-JAG, redeem it at the target authorization server (RFC 7523), and call the MCP server with the resulting access token.
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--url <url>` | Yes | | Target MCP server URL (the protected resource) |
+| `--issuer-base-url <url>` | Yes | | Origin the local mock IdP issues from (the AS must be able to fetch its JWKS from here to validate the ID-JAG) |
+| `--sub <subject>` | Yes | | Simulated end-user subject identifier |
+| `--client-id <id>` | Yes | | OAuth client the ID-JAG is issued for; also presented at redemption |
+| `--authz-server-issuer <issuer>` | No | | Target authorization-server issuer. When set, protected-resource metadata discovery is skipped |
+| `--token-endpoint <url>` | No | | Authorization-server token endpoint. When set, AS-metadata discovery is skipped |
+| `--email <email>` | No | | Simulated end-user email claim |
+| `--client-secret <secret>` | No | | OAuth client secret presented at redemption |
+| `--token-endpoint-auth-method <method>` | No | Inferred from metadata | Token endpoint client authentication: `client_secret_basic`, `client_secret_post`, or `none` |
+| `--assertion-format <format>` | No | `oidc` | Identity assertion format the mock IdP mints: `oidc` (ID token) or `saml` (SAML 2.0 assertion) |
+| `--scopes <scopes>` | No | | Space-separated scope string |
+| `--https-only` | No | off | Reject non-HTTPS / private targets |
+
+`--assertion-format saml` is a preset that sets both identity axes: it mints a SAML 2.0 assertion and uses a `saml-nameid` subject identifier in the ID-JAG. `--assertion-format oidc` (the default) leaves both axes unset so the SDK's own defaults apply.
+
+---
+
 ## `mcp` command
 
 ### `mcp`
