@@ -125,7 +125,7 @@ function SelectItem({
           <CheckIcon className="size-4" />
         </SelectPrimitive.ItemIndicator>
       </span>
-      {description != null ? (
+      {description ? (
         <div className="flex min-w-0 flex-col items-start gap-0.5">
           <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
           <span
