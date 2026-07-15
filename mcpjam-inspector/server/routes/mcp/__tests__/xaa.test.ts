@@ -914,6 +914,645 @@ describe("org-scoped issuer paths on the local router", () => {
   });
 });
 
+describe("managed policy enforcement on the org-scoped issuer", () => {
+  const originalKeyDir = process.env.XAA_IDP_KEY_DIR;
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-policy-"));
+    process.env.XAA_IDP_KEY_DIR = tempDir;
+    resetXAAIdpKeyPairForTests();
+    initXAAIdpKeyPair();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetXAAIdpKeyPairForTests();
+    rmSync(tempDir, { recursive: true, force: true });
+    if (originalKeyDir === undefined) {
+      delete process.env.XAA_IDP_KEY_DIR;
+    } else {
+      process.env.XAA_IDP_KEY_DIR = originalKeyDir;
+    }
+  });
+
+  type Evaluator = Parameters<typeof createXaaRouter>[0]["evaluateIssuerPolicy"];
+
+  function buildOrgApp(evaluator?: Evaluator) {
+    const app = new Hono();
+    app.route(
+      "/api/web/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/web",
+        httpsOnlyProxy: false,
+        authorizeOrgIssuer: async () => {},
+        evaluateIssuerPolicy: evaluator,
+      })
+    );
+    return app;
+  }
+
+  const JSON_AUTH_HEADERS = {
+    "Content-Type": "application/json",
+    Authorization: "Bearer user-token",
+  };
+
+  const MANAGED_BODY_FIELDS = {
+    policyMode: "managed",
+    testIdentityId: "xti_alice",
+    resourceAppId: "xra_1",
+  };
+
+  function makeAssertion(sub: string, email?: string): string {
+    const part = (value: Record<string, unknown>) =>
+      Buffer.from(JSON.stringify(value)).toString("base64url");
+    return [
+      part({ alg: "none", typ: "JWT" }),
+      part({ sub, ...(email ? { email } : {}) }),
+      "signature",
+    ].join(".");
+  }
+
+  function grantedEvaluator(scopes: string[]) {
+    return vi.fn(async () => ({
+      outcome: "granted" as const,
+      grantedScopes: scopes,
+      connectionId: "conn_1",
+      assignmentId: "asgn_1",
+    }));
+  }
+
+  describe("legacy JSON /o/:orgId/token-exchange", () => {
+    const EXCHANGE_BODY = {
+      identityAssertion: makeAssertion("alice-123", "alice@example.com"),
+      audience: "https://as.example.com",
+      resource: "https://rs.example.com",
+      clientId: "client-1",
+      scope: "read:tools write:tools",
+    };
+
+    it("mints on the granted scope and echoes it when the evaluator downscopes", async () => {
+      const evaluator = grantedEvaluator(["read:tools"]);
+      const app = buildOrgApp(evaluator);
+
+      const response = await app.request(
+        "/api/web/xaa/o/org_123/token-exchange",
+        {
+          method: "POST",
+          headers: JSON_AUTH_HEADERS,
+          body: JSON.stringify({ ...EXCHANGE_BODY, ...MANAGED_BODY_FIELDS }),
+        }
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      // NEW additive field: the granted (narrowed) scope is echoed.
+      expect(body.scope).toBe("read:tools");
+      expect(decodeJwtPayload(body.id_jag).scope).toBe("read:tools");
+
+      expect(evaluator).toHaveBeenCalledTimes(1);
+      expect(evaluator).toHaveBeenCalledWith({
+        bearerToken: "user-token",
+        organizationId: "org_123",
+        testIdentityId: "xti_alice",
+        resourceAppId: "xra_1",
+        claims: { subject: "alice-123", email: "alice@example.com" },
+        audience: "https://as.example.com",
+        resource: "https://rs.example.com",
+        targetClientId: "client-1",
+        requestedScopes: ["read:tools", "write:tools"],
+        policyMode: "managed",
+      });
+    });
+
+    it("maps each denial code onto the contract's OAuth status", async () => {
+      const cases = [
+        ["access_denied", 403],
+        ["invalid_target", 400],
+        ["invalid_scope", 400],
+        ["invalid_client", 401],
+      ] as const;
+
+      for (const [code, status] of cases) {
+        const evaluator = vi.fn(async () => ({
+          outcome: "denied" as const,
+          code,
+          reasonCode: "reason_x",
+        }));
+        const app = buildOrgApp(evaluator);
+
+        const response = await app.request(
+          "/api/web/xaa/o/org_123/token-exchange",
+          {
+            method: "POST",
+            headers: JSON_AUTH_HEADERS,
+            body: JSON.stringify({ ...EXCHANGE_BODY, ...MANAGED_BODY_FIELDS }),
+          }
+        );
+
+        expect(response.status).toBe(status);
+        const body = await response.json();
+        // The client's extractOauthErrorCode reads this exact shape.
+        expect(body).toMatchObject({
+          error: code,
+          error_description: "reason_x",
+        });
+        expect(body.id_jag).toBeUndefined();
+      }
+    });
+
+    it("fails closed with 503 on an evaluator failure — in BOTH policy modes", async () => {
+      for (const policyMode of ["managed", "unmanaged"] as const) {
+        const evaluator = vi.fn(async () => {
+          throw new Error("convex unreachable");
+        });
+        const app = buildOrgApp(evaluator);
+
+        const response = await app.request(
+          "/api/web/xaa/o/org_123/token-exchange",
+          {
+            method: "POST",
+            headers: JSON_AUTH_HEADERS,
+            body: JSON.stringify({
+              ...EXCHANGE_BODY,
+              ...MANAGED_BODY_FIELDS,
+              policyMode,
+            }),
+          }
+        );
+
+        expect(response.status).toBe(503);
+        expect((await response.json()).error).toBe("temporarily_unavailable");
+      }
+    });
+
+    it("fails closed with 503 when a managed context arrives but no evaluator is wired", async () => {
+      const app = buildOrgApp(undefined);
+
+      const response = await app.request(
+        "/api/web/xaa/o/org_123/token-exchange",
+        {
+          method: "POST",
+          headers: JSON_AUTH_HEADERS,
+          body: JSON.stringify({ ...EXCHANGE_BODY, ...MANAGED_BODY_FIELDS }),
+        }
+      );
+
+      expect(response.status).toBe(503);
+      expect((await response.json()).error).toBe("temporarily_unavailable");
+    });
+
+    it("rejects an incomplete managed context instead of silently dropping it", async () => {
+      const evaluator = grantedEvaluator(["read:tools"]);
+      const app = buildOrgApp(evaluator);
+
+      const response = await app.request(
+        "/api/web/xaa/o/org_123/token-exchange",
+        {
+          method: "POST",
+          headers: JSON_AUTH_HEADERS,
+          body: JSON.stringify({
+            ...EXCHANGE_BODY,
+            policyMode: "managed",
+            // testIdentityId / resourceAppId missing
+          }),
+        }
+      );
+
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe("invalid_request");
+      expect(evaluator).not.toHaveBeenCalled();
+    });
+
+    it("keeps legacy requests byte-identical: no managed context ⇒ no evaluator, no scope echo", async () => {
+      const evaluator = grantedEvaluator(["read:tools"]);
+      const app = buildOrgApp(evaluator);
+
+      const response = await app.request(
+        "/api/web/xaa/o/org_123/token-exchange",
+        {
+          method: "POST",
+          headers: JSON_AUTH_HEADERS,
+          body: JSON.stringify(EXCHANGE_BODY),
+        }
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(evaluator).not.toHaveBeenCalled();
+      // The legacy response gains no scope field…
+      expect(body).not.toHaveProperty("scope");
+      // …and the mint still carries the requested scope.
+      expect(decodeJwtPayload(body.id_jag).scope).toBe(
+        "read:tools write:tools"
+      );
+    });
+
+    it("denies a negative-mode mint BEFORE the tamper (no laundering a mint through a negative mode)", async () => {
+      const evaluator = vi.fn(async () => ({
+        outcome: "denied" as const,
+        code: "access_denied" as const,
+        reasonCode: "not_assigned",
+      }));
+      const app = buildOrgApp(evaluator);
+
+      const response = await app.request(
+        "/api/web/xaa/o/org_123/token-exchange",
+        {
+          method: "POST",
+          headers: JSON_AUTH_HEADERS,
+          body: JSON.stringify({
+            ...EXCHANGE_BODY,
+            ...MANAGED_BODY_FIELDS,
+            negativeTestMode: "wrong_audience",
+          }),
+        }
+      );
+
+      expect(response.status).toBe(403);
+      expect((await response.json()).error).toBe("access_denied");
+    });
+  });
+
+  describe("spec-form /o/:orgId/token", () => {
+    const MANAGED_HEADERS = {
+      "x-mcpjam-policy-mode": "managed",
+      "x-mcpjam-test-identity-id": "xti_alice",
+      "x-mcpjam-resource-app-id": "xra_1",
+    };
+
+    async function mintSubjectToken(app: Hono): Promise<string> {
+      const response = await app.request(
+        "/api/web/xaa/o/org_123/authenticate",
+        {
+          method: "POST",
+          headers: JSON_AUTH_HEADERS,
+          body: JSON.stringify({
+            userId: "alice-123",
+            email: "alice@example.com",
+            audience: XAA_DEBUG_IDP_CLIENT_ID,
+            resourceClientId: "client-1",
+          }),
+        }
+      );
+      expect(response.status).toBe(200);
+      return (await response.json()).id_token;
+    }
+
+    function grantForm(subjectToken: string): string {
+      return new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+        subject_token: subjectToken,
+        subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+        client_id: XAA_DEBUG_IDP_CLIENT_ID,
+        audience: "https://as.example.com",
+        resource: "https://rs.example.com",
+        scope: "read:tools write:tools",
+      }).toString();
+    }
+
+    it("reads the managed context from headers, mints and echoes the granted scope", async () => {
+      const evaluator = grantedEvaluator(["read:tools"]);
+      const app = buildOrgApp(evaluator);
+      const subjectToken = await mintSubjectToken(app);
+
+      const response = await app.request("/api/web/xaa/o/org_123/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: "Bearer user-token",
+          ...MANAGED_HEADERS,
+        },
+        body: grantForm(subjectToken),
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      // RFC 8693 correctness: the response scope is what was GRANTED.
+      expect(body.scope).toBe("read:tools");
+      expect(decodeJwtPayload(body.access_token)).toMatchObject({
+        sub: "alice-123",
+        client_id: "client-1",
+        scope: "read:tools",
+      });
+
+      expect(evaluator).toHaveBeenCalledTimes(1);
+      expect(evaluator).toHaveBeenCalledWith({
+        bearerToken: "user-token",
+        organizationId: "org_123",
+        testIdentityId: "xti_alice",
+        resourceAppId: "xra_1",
+        claims: { subject: "alice-123", email: "alice@example.com" },
+        audience: "https://as.example.com",
+        resource: "https://rs.example.com",
+        // The ID-JAG's client identity (from the subject token), not the
+        // mock-IdP debugger client_id in the form.
+        targetClientId: "client-1",
+        requestedScopes: ["read:tools", "write:tools"],
+        policyMode: "managed",
+      });
+    });
+
+    it("echoes an explicit empty scope on a zero-scope grant (spec form)", async () => {
+      // A grant stripped to nothing must be visible: scope "" is echoed and
+      // the minted ID-JAG carries no scope claim — never the requested one.
+      const evaluator = grantedEvaluator([]);
+      const app = buildOrgApp(evaluator);
+      const subjectToken = await mintSubjectToken(app);
+
+      const response = await app.request("/api/web/xaa/o/org_123/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: "Bearer user-token",
+          ...MANAGED_HEADERS,
+        },
+        body: grantForm(subjectToken),
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.scope).toBe("");
+      expect(decodeJwtPayload(body.access_token).scope).toBeUndefined();
+    });
+
+    it("maps a spec-form denial onto the same OAuth error shape", async () => {
+      const evaluator = vi.fn(async () => ({
+        outcome: "denied" as const,
+        code: "access_denied" as const,
+        reasonCode: "identity_suspended",
+      }));
+      const app = buildOrgApp(evaluator);
+      const subjectToken = await mintSubjectToken(app);
+
+      const response = await app.request("/api/web/xaa/o/org_123/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: "Bearer user-token",
+          ...MANAGED_HEADERS,
+        },
+        body: grantForm(subjectToken),
+      });
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({
+        error: "access_denied",
+        error_description: "identity_suspended",
+      });
+    });
+
+    it("fails the spec form closed with 503 on evaluator failure in both modes", async () => {
+      for (const policyMode of ["managed", "unmanaged"] as const) {
+        const evaluator = vi.fn(async () => {
+          throw new Error("convex unreachable");
+        });
+        const app = buildOrgApp(evaluator);
+        const subjectToken = await mintSubjectToken(app);
+
+        const response = await app.request("/api/web/xaa/o/org_123/token", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Authorization: "Bearer user-token",
+            ...MANAGED_HEADERS,
+            "x-mcpjam-policy-mode": policyMode,
+          },
+          body: grantForm(subjectToken),
+        });
+
+        expect(response.status).toBe(503);
+        expect((await response.json()).error).toBe("temporarily_unavailable");
+      }
+    });
+
+    it("serves an ungated exchange unchanged (requested scope echoed, evaluator untouched)", async () => {
+      const evaluator = grantedEvaluator(["read:tools"]);
+      const app = buildOrgApp(evaluator);
+      const subjectToken = await mintSubjectToken(app);
+
+      const response = await app.request("/api/web/xaa/o/org_123/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: "Bearer user-token",
+        },
+        body: grantForm(subjectToken),
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.scope).toBe("read:tools write:tools");
+      expect(decodeJwtPayload(body.access_token).scope).toBe(
+        "read:tools write:tools"
+      );
+      expect(evaluator).not.toHaveBeenCalled();
+    });
+
+    it("leaves the authorization_code branch of the shared /token dispatch untouched", async () => {
+      const evaluator = grantedEvaluator(["read:tools"]);
+      const app = buildOrgApp(evaluator);
+
+      // Front-channel confirm mints a code under the scoped issuer (public,
+      // no bearer required).
+      const confirm = await app.request(
+        "/api/web/xaa/o/org_123/authorize/confirm",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: "client-1",
+            redirect_uri: "https://rp.example.com/callback",
+            response_type: "code",
+            subject: "alice-123",
+            email: "alice@example.com",
+          }).toString(),
+        }
+      );
+      expect(confirm.status).toBe(302);
+      const code = new URL(
+        confirm.headers.get("location")!
+      ).searchParams.get("code")!;
+
+      const response = await app.request("/api/web/xaa/o/org_123/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: "https://rp.example.com/callback",
+          client_id: "client-1",
+        }).toString(),
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.token_type).toBe("Bearer");
+      expect(decodeJwtPayload(body.id_token).sub).toBe("alice-123");
+      expect(evaluator).not.toHaveBeenCalled();
+    });
+
+    it("authorization_code ignores malformed managed-policy headers (context resolves lazily on the exchange branch)", async () => {
+      const evaluator = grantedEvaluator(["read:tools"]);
+      const app = buildOrgApp(evaluator);
+
+      const confirm = await app.request(
+        "/api/web/xaa/o/org_123/authorize/confirm",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: "client-1",
+            redirect_uri: "https://rp.example.com/callback",
+            response_type: "code",
+            subject: "alice-123",
+            email: "alice@example.com",
+          }).toString(),
+        }
+      );
+      expect(confirm.status).toBe(302);
+      const code = new URL(
+        confirm.headers.get("location")!
+      ).searchParams.get("code")!;
+
+      // Declared-but-unusable context: policy mode with no identity/app ids
+      // would 400 the token-exchange grant — but an authorization_code call
+      // carrying the same junk headers must be entirely unaffected.
+      const response = await app.request("/api/web/xaa/o/org_123/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "x-mcpjam-policy-mode": "managed",
+        },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: "https://rp.example.com/callback",
+          client_id: "client-1",
+        }).toString(),
+      });
+
+      expect(response.status).toBe(200);
+      expect((await response.json()).token_type).toBe("Bearer");
+      expect(evaluator).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("bulk /o/:orgId/negative-tests", () => {
+    const NEGATIVE_BODY = {
+      audience: "https://as.example.com",
+      resource: "https://rs.example.com",
+      subject: "alice-123",
+      email: "alice@example.com",
+      clientId: "client-1",
+      scope: "read:tools write:tools",
+      tokenEndpoint: "https://negtest-as.example.com/oauth/token",
+    };
+
+    it("evaluates the policy ONCE and runs every case on the granted scope", async () => {
+      const evaluator = grantedEvaluator(["read:tools"]);
+      const fetchMock = vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: "invalid_grant" }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildOrgApp(evaluator);
+      const response = await app.request(
+        "/api/web/xaa/o/org_123/negative-tests",
+        {
+          method: "POST",
+          headers: JSON_AUTH_HEADERS,
+          body: JSON.stringify({ ...NEGATIVE_BODY, ...MANAGED_BODY_FIELDS }),
+        }
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        results: Array<{ verdict: string }>;
+      };
+      expect(body.results).toHaveLength(11);
+      // One policy decision covers the whole scorecard.
+      expect(evaluator).toHaveBeenCalledTimes(1);
+      // The subject's email rides along: the managed evaluator's exact
+      // claims-match needs subject AND email (IDs alone are never trusted).
+      expect(evaluator.mock.calls[0][0]).toMatchObject({
+        claims: { subject: "alice-123", email: "alice@example.com" },
+      });
+      // Every fired case asked the AS for the GRANTED scope, not the request.
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+      for (const call of fetchMock.mock.calls) {
+        const form = new URLSearchParams(
+          String((call as unknown as [string, RequestInit])[1].body)
+        );
+        expect(form.get("scope")).toBe("read:tools");
+      }
+    });
+
+    it("blocks the scorecard with the mapped policy error on deny, before any case fires", async () => {
+      const evaluator = vi.fn(async () => ({
+        outcome: "denied" as const,
+        code: "access_denied" as const,
+        reasonCode: "not_assigned",
+      }));
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildOrgApp(evaluator);
+      const response = await app.request(
+        "/api/web/xaa/o/org_123/negative-tests",
+        {
+          method: "POST",
+          headers: JSON_AUTH_HEADERS,
+          body: JSON.stringify({ ...NEGATIVE_BODY, ...MANAGED_BODY_FIELDS }),
+        }
+      );
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({
+        error: "access_denied",
+        error_description: "not_assigned",
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("runs a legacy scorecard untouched when no managed context rides the request", async () => {
+      const evaluator = grantedEvaluator(["read:tools"]);
+      const fetchMock = vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: "invalid_grant" }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildOrgApp(evaluator);
+      const response = await app.request(
+        "/api/web/xaa/o/org_123/negative-tests",
+        {
+          method: "POST",
+          headers: JSON_AUTH_HEADERS,
+          body: JSON.stringify(NEGATIVE_BODY),
+        }
+      );
+
+      expect(response.status).toBe(200);
+      expect(evaluator).not.toHaveBeenCalled();
+      for (const call of fetchMock.mock.calls) {
+        const form = new URLSearchParams(
+          String((call as unknown as [string, RequestInit])[1].body)
+        );
+        expect(form.get("scope")).toBe("read:tools write:tools");
+      }
+    });
+  });
+});
+
 describe("hosted-issuer forwarding on the local router", () => {
   const HOSTED_ORIGIN = "https://app.example.com";
 
@@ -1345,6 +1984,51 @@ describe("hosted-issuer forwarding on the local router", () => {
           name.toLowerCase().startsWith("x-mcpjam-")
         )
       ).toBe(false);
+    });
+
+    it("forwards the three managed-policy headers to the hosted issuer while consuming the opt-in headers", async () => {
+      const fetchMock = vi.fn(async () =>
+        jsonResponse({
+          issued_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+          access_token: "hosted-jag",
+          token_type: "N_A",
+          expires_in: 300,
+        })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: "Bearer workos-token",
+          "x-mcpjam-issuer-mode": "hosted",
+          "x-mcpjam-organization-id": "org_123",
+          "x-mcpjam-policy-mode": "managed",
+          "x-mcpjam-test-identity-id": "xti_alice",
+          "x-mcpjam-resource-app-id": "xra_1",
+        },
+        body: GRANT_FORM,
+      });
+
+      expect(response.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [, init] = fetchMock.mock.calls[0] as unknown as [
+        string,
+        RequestInit
+      ];
+      const headers = init.headers as Record<string, string>;
+      // The managed-policy context is FOR the hosted issuer's mint gate — it
+      // must survive the relay's explicit header set.
+      expect(headers["x-mcpjam-policy-mode"]).toBe("managed");
+      expect(headers["x-mcpjam-test-identity-id"]).toBe("xti_alice");
+      expect(headers["x-mcpjam-resource-app-id"]).toBe("xra_1");
+      // The local-forwarding opt-in headers stay consumed here.
+      expect(headers["x-mcpjam-issuer-mode"]).toBeUndefined();
+      expect(headers["x-mcpjam-organization-id"]).toBeUndefined();
+      // The spec form body still crosses untouched.
+      expect(String(init.body)).toBe(GRANT_FORM);
     });
 
     it("relays to the /g/ hosted /token when the anonymous issuer kind header is set", async () => {

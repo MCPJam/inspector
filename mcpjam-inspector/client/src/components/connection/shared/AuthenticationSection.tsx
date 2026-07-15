@@ -74,14 +74,14 @@ interface AuthenticationSectionProps {
   onXaaSubjectChange?: (value: string) => void;
   xaaEmail?: string;
   onXaaEmailChange?: (value: string) => void;
-  /** Signed-in user's email — shown as the default for the simulated identity. */
-  signedInEmail?: string;
   /**
    * True when Auto would select XAA for this server (an IdP mode is chosen
    * and a client id is stored — same rule as the server's xaaConfigured).
    * Drives the helper copy under the select.
    */
   autoSelectsXaa?: boolean;
+  /** Project default test identity — shown as the override placeholders. */
+  projectDefaultIdentity?: { subject: string; email: string } | null;
 }
 
 const PROTOCOL_OPTIONS: Array<{
@@ -136,8 +136,8 @@ export function AuthenticationSection({
   onXaaSubjectChange,
   xaaEmail = "",
   onXaaEmailChange,
-  signedInEmail,
   autoSelectsXaa = false,
+  projectDefaultIdentity = null,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
   const [revealedClientSecret, setRevealedClientSecret] = useState<
@@ -323,43 +323,20 @@ export function AuthenticationSection({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem
-                value="auto"
-                description={
-                  showXaaOption
-                    ? "Cross-App Access when configured — otherwise connects without credentials, then OAuth if required"
-                    : "Connects without credentials, then OAuth if the server requires it"
-                }
-              >
-                Auto
-              </SelectItem>
-              <SelectItem value="none" description="Connect without credentials">
-                No Authentication
-              </SelectItem>
-              <SelectItem
-                value="bearer"
-                description="Send a static token you provide"
-              >
-                Bearer Token
-              </SelectItem>
-              <SelectItem value="oauth" description="Interactive browser sign-in">
-                OAuth
-              </SelectItem>
+              <SelectItem value="auto">Auto</SelectItem>
+              <SelectItem value="none">No Authentication</SelectItem>
+              <SelectItem value="bearer">Bearer Token</SelectItem>
+              <SelectItem value="oauth">OAuth</SelectItem>
               {showXaaOption && (
-                <SelectItem
-                  value="xaa"
-                  description="Server-side token exchange via your IdP"
-                >
-                  Cross-App Access (XAA)
-                </SelectItem>
+                <SelectItem value="xaa">Cross-App Access (XAA)</SelectItem>
               )}
             </SelectContent>
           </Select>
           {authType === "auto" && (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground/80">
               {autoSelectsXaa
-                ? "Cross-App Access is configured — connecting mints a cross-app token."
-                : "Connects without credentials first; if the server requires authorization, you'll be prompted to continue with OAuth."}
+                ? "Uses Cross-App Access for this server."
+                : "Anonymous first, then OAuth if required."}
             </p>
           )}
         </div>
@@ -771,7 +748,7 @@ export function AuthenticationSection({
               onXaaSubjectChange={(v) => onXaaSubjectChange?.(v)}
               xaaEmail={xaaEmail}
               onXaaEmailChange={(v) => onXaaEmailChange?.(v)}
-              signedInEmail={signedInEmail}
+              projectDefaultIdentity={projectDefaultIdentity}
               projectId={projectId}
               hostedServerId={hostedServerId}
             />

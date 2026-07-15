@@ -167,11 +167,17 @@ export function NegativeTestScorecard({
         input.resource,
         input.clientId ?? "",
         input.tokenEndpointAuthMethod ?? "",
+        input.scope ?? "",
         // Client auth and issuer identity both affect the request under test,
         // so switching either must reset a prior run's results.
         input.issuerMode ?? "local",
         input.organizationId ?? "",
         input.issuerKind ?? "org",
+        // Managed-policy context: managed and unmanaged runs go through
+        // different evaluators, and a managed ruling is per person — completed
+        // rows from one mode/person must not survive a switch to the other.
+        input.policyMode ?? "",
+        input.testIdentityId ?? "",
       ].join("|")
     : "";
   useEffect(() => {

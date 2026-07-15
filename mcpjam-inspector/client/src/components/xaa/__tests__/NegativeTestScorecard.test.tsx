@@ -260,6 +260,127 @@ describe("NegativeTestScorecard", () => {
     );
   });
 
+  it("clears results and the owner override when only scope changes", async () => {
+    runMock.mockResolvedValue({
+      failures: 0,
+      results: [
+        {
+          mode: "expired",
+          label: "Expired",
+          expectedFailure: "AS should reject expired",
+          outcome: "rejected",
+          verdict: "pass",
+          status: 400,
+        },
+      ],
+    });
+
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <NegativeTestScorecard
+        input={{ ...INPUT, scope: "mcp.read" }}
+        unlocked={false}
+      />
+    );
+    await user.click(screen.getByRole("checkbox"));
+    await user.click(
+      screen.getByRole("button", { name: /run negative tests/i })
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("xaa-negtest-row-expired")).toBeInTheDocument()
+    );
+
+    rerender(
+      <NegativeTestScorecard
+        input={{ ...INPUT, scope: "mcp.write" }}
+        unlocked={false}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("xaa-negtest-row-expired")).toBeNull();
+      expect(screen.getByRole("checkbox")).not.toBeChecked();
+      expect(
+        screen.getByRole("button", { name: /run negative tests/i })
+      ).toBeDisabled();
+    });
+  });
+
+  it("clears completed rows when the policy mode or person changes for the same endpoint", async () => {
+    runMock.mockResolvedValue({
+      failures: 0,
+      results: [
+        {
+          mode: "expired",
+          label: "Expired",
+          expectedFailure: "AS should reject expired",
+          outcome: "rejected",
+          verdict: "pass",
+          status: 400,
+        },
+      ],
+    });
+
+    const managedInput: NegativeTestsInput = {
+      ...INPUT,
+      policyMode: "managed",
+      testIdentityId: "xperson_alice",
+      resourceAppId: "app_1",
+    };
+    const onTargetChange = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <NegativeTestScorecard
+        input={managedInput}
+        unlocked
+        onTargetChange={onTargetChange}
+      />
+    );
+    await user.click(
+      screen.getByRole("button", { name: /run negative tests/i })
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("xaa-negtest-row-expired")).toBeInTheDocument()
+    );
+    onTargetChange.mockClear();
+
+    // A different person is a different evaluator subject — prior rows say
+    // nothing about them.
+    rerender(
+      <NegativeTestScorecard
+        input={{ ...managedInput, testIdentityId: "xperson_sam" }}
+        unlocked
+        onTargetChange={onTargetChange}
+      />
+    );
+    await waitFor(() =>
+      expect(screen.queryByTestId("xaa-negtest-row-expired")).toBeNull()
+    );
+    expect(onTargetChange).toHaveBeenCalled();
+
+    await user.click(
+      screen.getByRole("button", { name: /run negative tests/i })
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("xaa-negtest-row-expired")).toBeInTheDocument()
+    );
+    onTargetChange.mockClear();
+
+    // Managed → unmanaged: a different evaluator ruled on the prior rows, so
+    // they must not survive the policy-mode switch.
+    rerender(
+      <NegativeTestScorecard
+        input={{ ...INPUT, policyMode: "unmanaged", resourceAppId: "app_1" }}
+        unlocked
+        onTargetChange={onTargetChange}
+      />
+    );
+    await waitFor(() =>
+      expect(screen.queryByTestId("xaa-negtest-row-expired")).toBeNull()
+    );
+    expect(onTargetChange).toHaveBeenCalled();
+  });
+
   it("resets results when only the issuer kind changes (guest→signed-in promotion)", async () => {
     runMock.mockResolvedValue({
       failures: 1,
