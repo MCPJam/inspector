@@ -36,6 +36,7 @@ The Playground is the main workspace for developing against your MCP servers. It
 - **Sessions rail** — Resume, archive, and search past conversations from the left rail.
 - **Skills and prompts** — Type `/` to inject skills or MCP prompts directly into the chat.
 - **Edit tool input/output live** — Click **Edit** on any tool-result card to tweak the input or output JSON and watch the widget re-render instantly; **Run** re-executes the tool with your edited input.
+- **Voice input** — Click the mic button in the chat input to record your voice; the audio is transcribed and the text is inserted into the composer.
 
 ## Getting Started
 
@@ -320,6 +321,9 @@ Edit the system prompt the model sees before your messages, and adjust the tempe
 
 **Tool Approval**
 When on, pauses the model before each tool call so you can approve or deny it manually.
+
+**Voice input**
+Click the mic button (right side of the input) to record your voice. The audio is transcribed using Whisper and the resulting text is appended to whatever you've already typed in the composer. Recording stops automatically after 3 minutes. The mic is disabled when your daily voice budget is exhausted; a warning appears in the composer when the remaining budget is low. While a recording is in progress, pressing Enter does not submit the draft — use the stop button (arrow-up) to finish recording first, or the ✕ button to cancel without transcribing.
 
 **Context meter** (right side of the input)
 Open it to inspect the token breakdown for the current conversation — input, output, system prompt, and MCP tools usage.
