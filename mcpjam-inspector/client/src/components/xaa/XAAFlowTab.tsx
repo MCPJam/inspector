@@ -259,10 +259,12 @@ interface XAAFlowTabProps {
   } | null;
   // Shared server-bar callbacks (mirror the OAuth Debugger).
   onSelectServer?: (serverName: string) => void;
+  // Resolves false when the save failed (the hook toasts the reason), so
+  // callers can keep the modal open instead of treating every call as saved.
   onSaveServerConfig?: (
     formData: ServerFormData,
     options?: { originalServerName?: string }
-  ) => void | Promise<void>;
+  ) => void | boolean | Promise<void | boolean>;
   /**
    * Bumped by the shell when the header "Add Server" button is clicked while
    * this tab is active, so the Configure-Server-to-Test modal opens instead of
@@ -1903,12 +1905,16 @@ export function XAAFlowTab({
         hostedServerId={target.barServerId}
         onSave={async ({ formData }) => {
           // Await so the modal can keep itself open (and preserve the entered
-          // values) if the save rejects. Selection only follows a save that
-          // didn't throw.
-          await onSaveServerConfig?.(formData, {
+          // values) if the save fails. The hook reports failure by resolving
+          // false (it toasts the reason), not by throwing, so rethrow here —
+          // otherwise selection follows a server that was never written.
+          const saved = await onSaveServerConfig?.(formData, {
             originalServerName:
               serverModalMode === "add" ? undefined : selectedServer?.name,
           });
+          if (saved === false) {
+            throw new Error("Could not save the server. Please try again.");
+          }
           setConfigurationSaveVersion((version) => version + 1);
           onSelectServer?.(formData.name);
         }}

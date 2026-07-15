@@ -2853,6 +2853,44 @@ describe("syncServerToConvex name-collision recovery", () => {
     );
   });
 
+  it("keeps the original server when a rename's sync fails", async () => {
+    // The old row used to be removed before the write, so a failed sync left
+    // the rename with neither row and nothing to retry from.
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const dispatch = vi.fn();
+
+    mockCreateServerIfMissing.mockRejectedValue(new Error("network down"));
+
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      activeProjectServersFlat: undefined,
+    });
+
+    let saved: boolean | void;
+    await act(async () => {
+      saved = await result.current.saveServerConfigWithoutConnecting(
+        {
+          name: "demo-server-renamed",
+          type: "http",
+          url: "https://example.com/mcp",
+        },
+        { originalServerName: "demo-server" }
+      );
+    });
+
+    expect(saved).toBe(false);
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "REMOVE_SERVER", name: "demo-server" })
+    );
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "UPSERT_SERVER" })
+    );
+  });
+
   it("rejects a rename onto another server's name", async () => {
     const appState = createAppState();
     appState.projects.default.servers["taken-name"] = {

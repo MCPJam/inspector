@@ -90,10 +90,12 @@ interface OAuthFlowTabProps {
   hasHeaderServers?: boolean;
   areServersHydrated?: boolean;
   onSelectServer: (serverName: string) => void;
+  // Resolves false when the save failed (the hook toasts the reason), so
+  // callers can keep the modal open instead of treating every call as saved.
   onSaveServerConfig?: (
     formData: ServerFormData,
     options?: { oauthProfile?: OAuthTestProfile; originalServerName?: string },
-  ) => void;
+  ) => void | boolean | Promise<void | boolean>;
   onConnectWithTokens?: (
     serverName: string,
     tokens: OAuthTokensFromFlow,
@@ -686,12 +688,19 @@ export const OAuthFlowTab = ({
         onOpenChange={setIsProfileModalOpen}
         server={profileModalMode === "add" ? undefined : activeServer}
         existingServerNames={Object.keys(serverConfigs)}
-        onSave={({ formData, profile: savedProfile }) => {
-          onSaveServerConfig?.(formData, {
+        onSave={async ({ formData, profile: savedProfile }) => {
+          // Await and check the result: a failed save must not close the modal,
+          // reset the flow, or move the selection onto a server that was never
+          // written. The hook already toasted the reason, so throw a generic
+          // message for the modal's inline error.
+          const saved = await onSaveServerConfig?.(formData, {
             oauthProfile: savedProfile,
             originalServerName:
               profileModalMode === "add" ? undefined : activeServer?.name,
           });
+          if (saved === false) {
+            throw new Error("Could not save the server. Please try again.");
+          }
           setPendingServerSelection(formData.name);
           resetOAuthFlow(formData.url);
         }}
