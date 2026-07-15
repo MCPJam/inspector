@@ -262,6 +262,7 @@ function sameOutcome(
 interface XAAFlowTabProps {
   serverConfigs: Record<string, ServerWithName>;
   selectedServerName: string;
+  hasHeaderServers?: boolean;
   organizationId?: string | null;
   /** Active Convex project id — resolves the selected server's id + project
    * for server-side secret resolution. */
@@ -368,6 +369,7 @@ function XAAWorkspaceLayout({
 export function XAAFlowTab({
   serverConfigs,
   selectedServerName,
+  hasHeaderServers = false,
   organizationId,
   projectId,
   projectXaaTestDefaults = null,
@@ -2105,6 +2107,7 @@ export function XAAFlowTab({
           <XAASequenceDiagram
             flowState={flowState}
             hasProfile={false}
+            showConfigurePrompt={!hasHeaderServers}
             onConfigure={() => setIsServerModalOpen(true)}
           />
         )}

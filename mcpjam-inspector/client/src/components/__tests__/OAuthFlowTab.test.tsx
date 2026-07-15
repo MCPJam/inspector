@@ -21,8 +21,12 @@ vi.mock("@/lib/oauth/debug-state-machine-adapter", () => ({
   createInspectorOAuthStateMachine: vi.fn(),
 }));
 
+const captureOAuthSequenceProps = vi.hoisted(() => vi.fn());
 vi.mock("@/components/oauth/OAuthSequenceDiagram", () => ({
-  OAuthSequenceDiagram: () => <div data-testid="oauth-sequence-diagram" />,
+  OAuthSequenceDiagram: (props: unknown) => {
+    captureOAuthSequenceProps(props);
+    return <div data-testid="oauth-sequence-diagram" />;
+  },
 }));
 
 vi.mock("@/components/oauth/OAuthAuthorizationModal", () => ({
@@ -78,6 +82,21 @@ describe("OAuthFlowTab", () => {
       },
       ...overrides,
     } as ServerWithName);
+
+  it("suppresses the configure prompt when the header has a server", () => {
+    render(
+      <OAuthFlowTab
+        serverConfigs={{}}
+        selectedServerName="none"
+        hasHeaderServers
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    expect(captureOAuthSequenceProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({ showConfigurePrompt: false }),
+    );
+  });
 
   it("does not select the first HTTP server when opened with a non-HTTP selection", async () => {
     const onSelectServer = vi.fn();

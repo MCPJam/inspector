@@ -188,8 +188,12 @@ vi.mock("../ui/resizable", () => ({
   ),
 }));
 
+const captureXaaSequenceProps = vi.hoisted(() => vi.fn());
 vi.mock("../xaa/XAASequenceDiagram", () => ({
-  XAASequenceDiagram: () => <div data-testid="xaa-sequence-diagram" />,
+  XAASequenceDiagram: (props: unknown) => {
+    captureXaaSequenceProps(props);
+    return <div data-testid="xaa-sequence-diagram" />;
+  },
 }));
 
 vi.mock("../xaa/XAAFlowLogger", () => ({
@@ -373,6 +377,26 @@ describe("XAAFlowTab", () => {
     setSelectedPersonIdMock.mockClear();
     setSelectedOrgPersonIdMock.mockClear();
     currentTarget = makeTarget();
+  });
+
+  it("suppresses the configure prompt when the header has a server", () => {
+    currentTarget = makeTarget({
+      targetSource: "none",
+      targetKey: "none",
+      isTestable: false,
+    });
+
+    render(
+      <XAAFlowTab
+        serverConfigs={{}}
+        selectedServerName="none"
+        hasHeaderServers
+      />,
+    );
+
+    expect(captureXaaSequenceProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({ showConfigurePrompt: false }),
+    );
   });
 
   it("places the negative-test scorecard behind a vertical resize handle", () => {

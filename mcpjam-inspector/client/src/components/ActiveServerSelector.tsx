@@ -5,8 +5,11 @@ import { AddServerModal } from "./connection/AddServerModal";
 import { ServerFormData } from "@/shared/types.js";
 import { Check, ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
 import { track } from "@/lib/analytics";
-import { hasOAuthConfig } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
+import {
+  isOAuthDebuggerHeaderServer,
+  isXaaDebuggerHeaderServer,
+} from "@/lib/debugger-header-servers";
 
 const HOSTED_HTTPS_REQUIRED_HINT =
   "Hosted mode requires HTTPS server URLs. Edit this server to use https://.";
@@ -131,31 +134,13 @@ export function ActiveServerSelector({
   const hasNoServersWithViews =
     showOnlyServersWithViews && (serversWithViews?.size ?? 0) === 0;
 
-  // Helper function to check if a server uses OAuth
-  const isOAuthServer = (server: ServerWithName): boolean => {
-    const isHttpServer = "url" in server.config;
-    if (!isHttpServer) return false;
-    if (server.useOAuth === false) return false;
-
-    // Check if server is configured for OAuth, has OAuth state, or is mid-flow.
-    return !!(
-      server.useOAuth === true ||
-      server.oauthTokens ||
-      hasOAuthConfig(server.name) ||
-      server.connectionStatus === "oauth-flow"
-    );
-  };
-
-  const isXaaServer = (server: ServerWithName): boolean =>
-    "url" in server.config && server.useXaa === true;
-
   const servers = Object.entries(serverConfigs).filter(([name, server]) => {
     // View-only dismissals from this header (OAuth / XAA debugger x button).
     if (hiddenServers?.has(name)) return false;
     if (
       showOnlyOAuthServers &&
-      !isOAuthServer(server) &&
-      !(includeXaaServers && isXaaServer(server))
+      !isOAuthDebuggerHeaderServer(server) &&
+      !(includeXaaServers && isXaaDebuggerHeaderServer(server))
     )
       return false;
     if (showOnlyServersWithViews && !serversWithViews?.has(name)) return false;

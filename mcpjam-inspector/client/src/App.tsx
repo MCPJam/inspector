@@ -96,6 +96,7 @@ import {
   useHiddenHeaderServers,
   type HeaderSurface,
 } from "./hooks/useHiddenHeaderServers";
+import { hasDebuggerHeaderServers } from "./lib/debugger-header-servers";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
@@ -1269,6 +1270,7 @@ export function OAuthFlowRoute() {
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
     oauthServerModalNonce,
+    oauthDebuggerHasHeaderServers,
   } = useAppRouteContext();
 
   return (
@@ -1320,6 +1322,7 @@ export function OAuthFlowRoute() {
       <OAuthFlowTab
         serverConfigs={displayServerConfigs}
         selectedServerName={appState.selectedServer}
+        hasHeaderServers={oauthDebuggerHasHeaderServers}
         onSelectServer={setSelectedServer}
         onSaveServerConfig={saveServerConfigWithoutConnecting}
         onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
@@ -1341,6 +1344,7 @@ export function XAAFlowRoute() {
     setSelectedServer,
     saveServerConfigWithoutConnecting,
     xaaServerModalNonce,
+    xaaDebuggerHasHeaderServers,
   } = useAppRouteContext();
   if (xaaEnabled !== true) return null;
 
@@ -1359,6 +1363,7 @@ export function XAAFlowRoute() {
         // runner saw a confidential server as a public client with no issuer.
         serverConfigs={displayServerConfigs}
         selectedServerName={appState.selectedServer}
+        hasHeaderServers={xaaDebuggerHasHeaderServers}
         organizationId={activeOrganizationId ?? null}
         projectId={convexProjectId ?? null}
         projectXaaTestDefaults={activeProject?.xaaTestDefaults ?? null}
@@ -3308,6 +3313,16 @@ export default function App() {
     (activeTab === "xaa-flow" && xaaEnabled === true) ||
     activeTab === "chat";
 
+  const oauthDebuggerHasHeaderServers = hasDebuggerHeaderServers({
+    serverConfigs: projectServers,
+    hiddenServers: hiddenHeaderServers,
+  });
+  const xaaDebuggerHasHeaderServers = hasDebuggerHeaderServers({
+    serverConfigs: projectServers,
+    hiddenServers: hiddenHeaderServers,
+    includeXaaServers: true,
+  });
+
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
       ? {
@@ -3503,6 +3518,8 @@ export default function App() {
     upgradePlanForActiveTab,
     workOsUser,
     xaaEnabled,
+    oauthDebuggerHasHeaderServers,
+    xaaDebuggerHasHeaderServers,
     xaaServerModalNonce,
     oauthServerModalNonce,
   };

@@ -87,6 +87,7 @@ const isHttpServer = (server?: ServerWithName) =>
 interface OAuthFlowTabProps {
   serverConfigs: Record<string, ServerWithName>;
   selectedServerName: string;
+  hasHeaderServers?: boolean;
   onSelectServer: (serverName: string) => void;
   onSaveServerConfig?: (
     formData: ServerFormData,
@@ -113,6 +114,7 @@ interface OAuthFlowTabProps {
 export const OAuthFlowTab = ({
   serverConfigs,
   selectedServerName,
+  hasHeaderServers = false,
   onSelectServer,
   onSaveServerConfig,
   onConnectWithTokens,
@@ -642,6 +644,7 @@ export const OAuthFlowTab = ({
             protocolVersion={protocolVersion}
             focusedStep={focusedStep}
             hasProfile={false}
+            showConfigurePrompt={!hasHeaderServers}
             onConfigure={() => setIsProfileModalOpen(true)}
           />
         )}
