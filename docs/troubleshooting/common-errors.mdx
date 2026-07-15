@@ -42,7 +42,7 @@ Most "failed to connect" / `fetch failed` / `ECONNREFUSED` / `MCP error -32000: 
 
 4. **Right auth setting?**
 
-   For local development servers, pick **No Authentication**. If you get `401`, see [Getting 401 Unauthorized errors](#getting-401-unauthorized-errors) below.
+   New servers default to **Auto**, which connects without credentials and escalates to OAuth on 401. For local development servers that have no auth, pick **No Authentication** to skip the escalation prompt. If you get `401`, see [Getting 401 Unauthorized errors](#getting-401-unauthorized-errors) below.
 
 5. **Did the server actually finish booting before the handshake?**
 
@@ -89,6 +89,7 @@ This response comes from **your MCP server**, not from MCPJam Inspector. The ser
 
 **If your server is failing to connect, first verify you've selected the correct authentication option:**
 
+- **Auto** (default) - Connects without credentials first; if the server returns 401, MCPJam prompts you to continue with OAuth. Use this when you're unsure what the server requires.
 - **No Authentication** - Use this for local or development servers that don't require authentication
 - **Bearer Token** - Use this if you already have an API token from the server
 - **OAuth 2.0** - Use this for servers that require OAuth authorization flow
@@ -99,9 +100,9 @@ If you're seeing **401 Unauthorized** errors when trying to connect to your serv
 
 **Solution:**
 
-1. Change your authentication type to **OAuth 2.0** in the server configuration
-2. Go through the OAuth authorization flow to obtain credentials
-3. Use the OAuth Debugger to troubleshoot any issues with the OAuth process
+- **If you're using Auto (the default):** MCPJam will prompt "Continue with OAuth?" when it receives a 401. Accept the prompt to start the OAuth flow.
+- **If you're using No Authentication:** Change your authentication type to **Auto** or **OAuth 2.0** in the server configuration and go through the OAuth authorization flow.
+- Use the OAuth Debugger to troubleshoot any issues with the OAuth process.
 
 <Info>
   The OAuth Debugger helps you step through each part of the authorization
