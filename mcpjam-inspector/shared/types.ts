@@ -1,7 +1,12 @@
 // Shared types between client and server
 import { HOSTED_MODEL_IDS } from "./hosted-model-ids.generated";
 
-import type { RegistrationStrategy } from "./xaa";
+import type {
+  AuthMethod,
+  IdentityAssertionFormat,
+  RegistrationMode,
+  XaaClientAuthMethod,
+} from "./xaa";
 
 // Legacy server config (keeping for compatibility)
 export interface ServerConfig {
@@ -712,18 +717,24 @@ export type ServerFormOAuthProtocolMode =
   | "2025-06-18"
   | "2025-11-25";
 
-export type ServerFormOAuthRegistrationMode =
-  | "auto"
-  | "cimd"
-  | "dcr"
-  | "preregistered";
+/**
+ * @deprecated Use {@link RegistrationMode} (re-exported from shared/xaa) — the
+ * unified client-registration vocabulary shared by the OAuth flows and the
+ * XAA debugger. Structurally identical; kept as an alias for older imports.
+ */
+export type ServerFormOAuthRegistrationMode = RegistrationMode;
 
 /**
  * The auth type a server-form row is configured with. "xaa" (Cross-App Access)
  * is a distinct flow from "oauth": the inspector server mints the access token
  * server-side via token-exchange rather than running a browser OAuth flow.
+ * "auto" resolves at connect time: XAA when the server is XAA-configured
+ * (IdP mode + stored client id) — a hard selection, never a fallback after a
+ * failed mint — and otherwise "discover": use a stored OAuth token when one
+ * exists, else connect unauthenticated and escalate to interactive OAuth only
+ * when the server answers 401 (the MCP spec's canonical discovery sequence).
  */
-export type ServerFormAuthType = "oauth" | "bearer" | "none" | "xaa";
+export type ServerFormAuthType = "auto" | "oauth" | "bearer" | "none" | "xaa";
 
 export interface ServerFormData {
   name: string;
@@ -739,8 +750,31 @@ export interface ServerFormData {
   };
   clientCapabilities?: Record<string, unknown>;
   useOAuth?: boolean;
+  /**
+   * Canonical auth method (Convex `authMethod` column). The useOAuth/useXaa
+   * booleans are its derived compat mirrors — the backend re-derives them on
+   * every write. "auto" selects XAA when the server is XAA-configured, and
+   * otherwise "discover" (stored token if present, else unauthenticated with
+   * OAuth escalation on 401) — see server/utils/effective-auth.ts.
+   */
+  authMethod?: AuthMethod;
+  /**
+   * Reset boundary: when true the backend nulls the sticky XAA identity
+   * config (authServerMode, xaaSubject, xaaEmail). Sent when a modal save
+   * explicitly moves the server's auth type off XAA; plain saves preserve.
+   */
+  clearXaaConfig?: boolean;
   oauthProtocolMode?: ServerFormOAuthProtocolMode;
-  oauthRegistrationMode?: ServerFormOAuthRegistrationMode;
+  /**
+   * Unified client-registration mode (Client↔AS leg) shared by the OAuth
+   * flows and the XAA debugger: how this server's client establishes its
+   * identity at the authorization server. "auto" resolves to a concrete
+   * strategy at flow time (OAuth: resolveAuthorizationPlan; XAA debugger:
+   * falls back to preregistered). Persisted per-server (Convex
+   * `registrationMode` column). Replaces `oauthRegistrationMode` and the
+   * XAA-only `xaaRegistrationStrategy`.
+   */
+  registrationMode?: RegistrationMode;
   oauthScopes?: string[];
   clientId?: string;
   clientSecret?: string;
@@ -771,12 +805,20 @@ export interface ServerFormData {
   /** Optional simulated-identity override (email) for the MCPJam test IdP. Blank = signed-in user. */
   xaaEmail?: string;
   /**
-   * XAA Debugger registration strategy (Client↔Resource-AS leg): how the run
-   * establishes its client identity at the target authorization server. Chosen
-   * in the "Configure Server to Test" modal. Debugger-only — the Connect page
-   * never sets it, so merges must preserve an existing value.
+   * XAA-debugger-only preset for the identity assertion the MCPJam test IdP
+   * mints (draft-ietf-oauth-identity-assertion-authz-grant): "oidc" (default)
+   * mints an ID token; "saml" mints a signed SAML assertion AND asks for a
+   * saml-nameid `sub_id` on the ID-JAG. Persisted per-server; saves that omit
+   * it must preserve the stored value (the save-path `?? existing` merge).
    */
-  xaaRegistrationStrategy?: RegistrationStrategy;
+  xaaIdentityAssertionFormat?: IdentityAssertionFormat;
+  /**
+   * XAA-debugger-only CIMD client authentication ("none" public default |
+   * "private_key_jwt" confidential). Persisted per-server; only meaningful when
+   * registrationMode resolves to "cimd". Saves that omit it preserve the stored
+   * value (the save-path `?? existing` merge).
+   */
+  xaaClientAuth?: XaaClientAuthMethod;
   /** Registry credential key for resolving OAuth client ID from env (e.g. "github") */
   oauthCredentialKey?: string;
   /** True for registry servers that use backend-managed preregistered OAuth credentials */

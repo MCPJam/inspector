@@ -18,12 +18,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { resolveAuthorizationPlan } from "@mcpjam/sdk/browser";
+import {
+  readXaaEnterprisePolicy,
+  resolveAuthorizationPlan,
+} from "@mcpjam/sdk/browser";
+import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
+import type { RegistrationMode } from "@/shared/xaa.js";
 import type {
   ServerFormAuthType,
   ServerFormOAuthProtocolMode,
-  ServerFormOAuthRegistrationMode,
 } from "@/shared/types.js";
+import { REGISTRATION_MODE_OPTIONS } from "@/lib/registration-strategy";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 import { XaaCredentialFields } from "./XaaCredentialFields";
 
@@ -44,9 +49,9 @@ interface AuthenticationSectionProps {
   onOauthScopesChange: (value: string) => void;
   oauthProtocolMode: ServerFormOAuthProtocolMode;
   onOauthProtocolModeChange: (value: ServerFormOAuthProtocolMode) => void;
-  oauthRegistrationMode: ServerFormOAuthRegistrationMode;
+  registrationMode: RegistrationMode;
   onOauthRegistrationModeChange: (
-    value: ServerFormOAuthRegistrationMode,
+    value: RegistrationMode,
   ) => void;
   useCustomClientId: boolean;
   onUseCustomClientIdChange: (value: boolean) => void;
@@ -73,8 +78,14 @@ interface AuthenticationSectionProps {
   onXaaSubjectChange?: (value: string) => void;
   xaaEmail?: string;
   onXaaEmailChange?: (value: string) => void;
-  /** Signed-in user's email — shown as the default for the simulated identity. */
-  signedInEmail?: string;
+  /**
+   * True when Auto would select XAA for this server (an IdP mode is chosen
+   * and a client id is stored — same rule as the server's xaaConfigured).
+   * Drives the helper copy under the select.
+   */
+  autoSelectsXaa?: boolean;
+  /** Project default test identity — shown as the override placeholders. */
+  projectDefaultIdentity?: { subject: string; email: string } | null;
 }
 
 const PROTOCOL_OPTIONS: Array<{
@@ -86,15 +97,9 @@ const PROTOCOL_OPTIONS: Array<{
   { value: "2025-03-26", label: "2025-03-26 (Legacy)" },
 ];
 
-const REGISTRATION_OPTIONS: Array<{
-  value: ServerFormOAuthRegistrationMode;
-  label: string;
-}> = [
-  { value: "auto", label: "Automatic" },
-  { value: "preregistered", label: "Preregistration (Client Credentials)" },
-  { value: "cimd", label: "Client ID Metadata Documents (CIMD)" },
-  { value: "dcr", label: "Dynamic Client Registration (DCR)" },
-];
+// Options come from the shared registration-vocabulary label module, so the
+// Connect page and the XAA debugger stay keyed on the same union.
+const REGISTRATION_OPTIONS = REGISTRATION_MODE_OPTIONS;
 
 export function AuthenticationSection({
   serverUrl,
@@ -111,7 +116,7 @@ export function AuthenticationSection({
   onOauthScopesChange,
   oauthProtocolMode,
   onOauthProtocolModeChange,
-  oauthRegistrationMode,
+  registrationMode,
   onOauthRegistrationModeChange,
   useCustomClientId,
   onUseCustomClientIdChange,
@@ -135,9 +140,18 @@ export function AuthenticationSection({
   onXaaSubjectChange,
   xaaEmail = "",
   onXaaEmailChange,
-  signedInEmail,
+  autoSelectsXaa = false,
+  projectDefaultIdentity = null,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
+  // Active host's enterprise-managed authorization policy (ProtocolTab
+  // Switch → mcpProfile.extensions). When on, Auto routes this server
+  // through XAA regardless of per-server configuration and an explicit
+  // method here overrides — the helper copy under the select says which.
+  // `invalid` renders as off here; the connect path surfaces the config
+  // error, this component only shapes helper text.
+  const hostPolicyEnterpriseManaged =
+    readXaaEnterprisePolicy(useActiveMcpProfile()).kind === "on";
   const [revealedClientSecret, setRevealedClientSecret] = useState<
     string | null
   >(null);
@@ -154,8 +168,10 @@ export function AuthenticationSection({
   const [isBearerTokenVisible, setIsBearerTokenVisible] = useState(false);
 
   const xaaFlagEnabled = useFeatureFlagEnabled("xaa");
-  // Keep the option visible if a server is already configured with XAA, even
-  // when the flag is off, so the trigger doesn't render blank for it.
+  // Keep the XAA option visible if a server is already configured with it,
+  // even when the flag is off, so the trigger doesn't render blank for it.
+  // Auto is un-gated: its discover behavior (no auth first, OAuth on 401) is
+  // for everyone — only the XAA leg and its mention stay behind the flag.
   const showXaaOption = xaaFlagEnabled === true || authType === "xaa";
 
   const canRevealClientSecret =
@@ -266,15 +282,15 @@ export function AuthenticationSection({
     ? clientSecret
     : (visibleRevealedClientSecret ?? "");
   const showClientCredentials =
-    oauthRegistrationMode === "preregistered" || useCustomClientId;
+    registrationMode === "preregistered" || useCustomClientId;
   const effectiveOauthProtocolMode =
     oauthProtocolMode === "auto" ? "2025-11-25" : oauthProtocolMode;
   const oauthPlan =
-    authType === "oauth"
+    authType === "oauth" || authType === "auto"
       ? resolveAuthorizationPlan({
           serverUrl,
           protocolMode: effectiveOauthProtocolMode,
-          registrationMode: oauthRegistrationMode,
+          registrationMode: registrationMode,
           clientId: showClientCredentials ? clientId : undefined,
           clientSecret: showClientCredentials ? clientSecret : undefined,
           hasClientSecret: showClientCredentials
@@ -289,7 +305,7 @@ export function AuthenticationSection({
       ? (oauthPlan.blockerDetails ?? []).filter(
           (blocker) =>
             !(
-              oauthRegistrationMode === "preregistered" &&
+              registrationMode === "preregistered" &&
               clientId.trim() === "" &&
               blocker.code === "PREREGISTERED_MISSING_CLIENT_ID"
             ),
@@ -309,7 +325,7 @@ export function AuthenticationSection({
           <Select
             value={authType}
             onValueChange={(value: ServerFormAuthType) => {
-              if (value !== "oauth") {
+              if (value !== "oauth" && value !== "auto") {
                 setShowAdvancedOAuth(false);
               }
               onAuthTypeChange(value);
@@ -319,6 +335,7 @@ export function AuthenticationSection({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="auto">Auto</SelectItem>
               <SelectItem value="none">No Authentication</SelectItem>
               <SelectItem value="bearer">Bearer Token</SelectItem>
               <SelectItem value="oauth">OAuth</SelectItem>
@@ -327,6 +344,23 @@ export function AuthenticationSection({
               )}
             </SelectContent>
           </Select>
+          {authType === "auto" && (
+            <p className="text-xs text-muted-foreground/80">
+              {hostPolicyEnterpriseManaged
+                ? autoSelectsXaa
+                  ? "Host policy: enterprise-managed — uses Cross-App Access for this server."
+                  : "Host policy: enterprise-managed — fails to connect until an XAA client registration is added or an explicit method overrides."
+                : autoSelectsXaa
+                  ? "Uses Cross-App Access for this server."
+                  : "Anonymous first, then OAuth if required."}
+            </p>
+          )}
+          {hostPolicyEnterpriseManaged && authType !== "auto" && (
+            <p className="text-xs text-muted-foreground/80">
+              Overrides the host&apos;s enterprise-managed authorization
+              policy.
+            </p>
+          )}
         </div>
 
         {/* Bearer Token Settings */}
@@ -396,7 +430,7 @@ export function AuthenticationSection({
         )}
 
         {/* OAuth Settings */}
-        {showAuthSettings && authType === "oauth" && (
+        {showAuthSettings && (authType === "oauth" || authType === "auto") && (
           <div className="border-t border-border bg-muted/30">
             {oauthPlan && showOauthPlanBanner && (
               <div className="px-3 py-3 space-y-2 border-b border-border bg-background/60">
@@ -459,9 +493,9 @@ export function AuthenticationSection({
                       Registration Strategy
                     </label>
                     <Select
-                      value={oauthRegistrationMode}
+                      value={registrationMode}
                       onValueChange={(
-                        value: ServerFormOAuthRegistrationMode,
+                        value: RegistrationMode,
                       ) => {
                         onOauthRegistrationModeChange(value);
                         onUseCustomClientIdChange(
@@ -480,7 +514,7 @@ export function AuthenticationSection({
                         ))}
                       </SelectContent>
                     </Select>
-                    {oauthRegistrationMode === "cimd" &&
+                    {registrationMode === "cimd" &&
                       oauthPlan?.clientIdMetadataUrl && (
                         <p className="text-xs text-muted-foreground break-all">
                           SDK client metadata URL:{" "}
@@ -512,7 +546,7 @@ export function AuthenticationSection({
                     <div className="space-y-2">
                       <label className="block text-sm font-medium text-foreground">
                         Client ID
-                        {oauthRegistrationMode === "preregistered" ? (
+                        {registrationMode === "preregistered" ? (
                           <span className="text-destructive" aria-hidden="true">
                             {" *"}
                           </span>
@@ -523,7 +557,7 @@ export function AuthenticationSection({
                         onChange={(e) => onClientIdChange(e.target.value)}
                         placeholder="Your OAuth Client ID"
                         aria-required={
-                          oauthRegistrationMode === "preregistered"
+                          registrationMode === "preregistered"
                             ? true
                             : undefined
                         }
@@ -736,7 +770,7 @@ export function AuthenticationSection({
               onXaaSubjectChange={(v) => onXaaSubjectChange?.(v)}
               xaaEmail={xaaEmail}
               onXaaEmailChange={(v) => onXaaEmailChange?.(v)}
-              signedInEmail={signedInEmail}
+              projectDefaultIdentity={projectDefaultIdentity}
               projectId={projectId}
               hostedServerId={hostedServerId}
             />

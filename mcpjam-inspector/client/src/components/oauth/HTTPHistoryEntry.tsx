@@ -13,6 +13,7 @@ import {
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
 import type { LogErrorDetails } from "@mcpjam/sdk/browser";
+import type { HttpEntryView } from "@/lib/http-entry-views";
 
 interface HTTPHistoryEntryProps {
   method: string;
@@ -27,6 +28,14 @@ interface HTTPHistoryEntryProps {
   error?: LogErrorDetails;
   step?: string;
   defaultOpen?: boolean;
+  /**
+   * Which half of the exchange this card presents. "full" (default) is the
+   * classic combined view. "request" renders only the request side — with a
+   * muted "response → next step" hint when the response exists but is
+   * presented under the paired received-step card. "response" renders the
+   * status line and response side; method/url remain in the card header only.
+   */
+  view?: HttpEntryView;
 }
 
 export function HTTPHistoryEntry({
@@ -42,8 +51,11 @@ export function HTTPHistoryEntry({
   error,
   step,
   defaultOpen = false,
+  view = "full",
 }: HTTPHistoryEntryProps) {
   const [isExpanded, setIsExpanded] = useState(defaultOpen);
+  const showRequestSections = view !== "response";
+  const showResponseSections = view !== "request";
 
   // Determine status color
   const getStatusColor = (statusCode?: number) => {
@@ -66,17 +78,28 @@ export function HTTPHistoryEntry({
 
   const statusColor = getStatusColor(status);
   const isPending = status === undefined && !error;
+  // In the request-only view the response is rendered under the paired
+  // received-step card, so status is shown (and styled) there instead.
+  const deferredResponse = view === "request" && status !== undefined;
   const isExpectedAuthChallenge =
     step === "request_without_token" && status === 401;
   const hasError =
-    Boolean(error) || (!!status && status >= 400 && !isExpectedAuthChallenge);
+    view === "request"
+      ? Boolean(error)
+      : Boolean(error) ||
+        (!!status && status >= 400 && !isExpectedAuthChallenge);
   const errorMessage = useMemo(() => {
     if (error?.message) return error.message;
-    if (status && status >= 400 && !isExpectedAuthChallenge) {
+    if (
+      view !== "request" &&
+      status &&
+      status >= 400 &&
+      !isExpectedAuthChallenge
+    ) {
       return statusText || `HTTP ${status}`;
     }
     return undefined;
-  }, [error?.message, status, statusText, isExpectedAuthChallenge]);
+  }, [error?.message, status, statusText, isExpectedAuthChallenge, view]);
 
   return (
     <Collapsible
@@ -109,7 +132,11 @@ export function HTTPHistoryEntry({
             <span className="text-xs font-mono text-muted-foreground truncate">
               {url}
             </span>
-            {isPending ? (
+            {deferredResponse ? (
+              <span className="text-xs text-muted-foreground flex-shrink-0">
+                response → next step
+              </span>
+            ) : isPending ? (
               <span className="text-xs text-yellow-600 dark:text-yellow-400 flex-shrink-0">
                 pending...
               </span>
@@ -151,32 +178,35 @@ export function HTTPHistoryEntry({
                 <span>{errorMessage}</span>
               </div>
             )}
-            {/* URL */}
-            <div>
-              <div className="text-xs font-medium text-muted-foreground mb-1">
-                URL
-              </div>
-              <ScrollableJsonView
-                value={{ url }}
-                containerClassName="rounded-sm bg-background/60 p-2 max-h-[200px]"
-              />
-            </div>
-
-            {/* Request Headers */}
-            {requestHeaders && Object.keys(requestHeaders).length > 0 && (
+            {showRequestSections && (
               <div>
                 <div className="text-xs font-medium text-muted-foreground mb-1">
-                  Request Headers
+                  Request URL
                 </div>
                 <ScrollableJsonView
-                  value={requestHeaders}
+                  value={{ url }}
                   containerClassName="rounded-sm bg-background/60 p-2 max-h-[200px]"
                 />
               </div>
             )}
 
+            {/* Request Headers */}
+            {showRequestSections &&
+              requestHeaders &&
+              Object.keys(requestHeaders).length > 0 && (
+                <div>
+                  <div className="text-xs font-medium text-muted-foreground mb-1">
+                    Request Headers
+                  </div>
+                  <ScrollableJsonView
+                    value={requestHeaders}
+                    containerClassName="rounded-sm bg-background/60 p-2 max-h-[200px]"
+                  />
+                </div>
+              )}
+
             {/* Request Body */}
-            {requestBody && (
+            {showRequestSections && requestBody && (
               <div>
                 <div className="text-xs font-medium text-muted-foreground mb-1">
                   Request Body
@@ -189,20 +219,22 @@ export function HTTPHistoryEntry({
             )}
 
             {/* Response Headers */}
-            {responseHeaders && Object.keys(responseHeaders).length > 0 && (
-              <div>
-                <div className="text-xs font-medium text-muted-foreground mb-1">
-                  Response Headers
+            {showResponseSections &&
+              responseHeaders &&
+              Object.keys(responseHeaders).length > 0 && (
+                <div>
+                  <div className="text-xs font-medium text-muted-foreground mb-1">
+                    Response Headers
+                  </div>
+                  <ScrollableJsonView
+                    value={responseHeaders}
+                    containerClassName="rounded-sm bg-background/60 p-2 max-h-[200px]"
+                  />
                 </div>
-                <ScrollableJsonView
-                  value={responseHeaders}
-                  containerClassName="rounded-sm bg-background/60 p-2 max-h-[200px]"
-                />
-              </div>
-            )}
+              )}
 
             {/* Response Body */}
-            {responseBody && (
+            {showResponseSections && responseBody && (
               <div>
                 <div className="text-xs font-medium text-muted-foreground mb-1">
                   Response Body
@@ -214,11 +246,17 @@ export function HTTPHistoryEntry({
               </div>
             )}
 
-            {/* Pending state message */}
-            {isPending && (
+            {/* Deferred / pending state message */}
+            {deferredResponse ? (
               <div className="text-xs text-muted-foreground italic">
-                Waiting for response...
+                Response shown on the next step.
               </div>
+            ) : (
+              isPending && (
+                <div className="text-xs text-muted-foreground italic">
+                  Waiting for response...
+                </div>
+              )
             )}
           </div>
         </div>

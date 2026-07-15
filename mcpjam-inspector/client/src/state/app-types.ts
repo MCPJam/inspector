@@ -1,6 +1,11 @@
 import type { MCPServerConfig, NormalizedError } from "@mcpjam/sdk/browser";
 import { OauthTokens } from "@/shared/types.js";
-import type { RegistrationStrategy } from "@/shared/xaa.js";
+import type {
+  AuthMethod,
+  IdentityAssertionFormat,
+  RegistrationMode,
+  XaaClientAuthMethod,
+} from "@/shared/xaa.js";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import type {
   ProjectClientConfig,
@@ -86,8 +91,27 @@ export interface ServerWithName {
   /** Optional simulated-identity overrides for the MCPJam test IdP. Blank = signed-in user. */
   xaaSubject?: string;
   xaaEmail?: string;
-  /** XAA Debugger registration strategy (Client↔Resource-AS leg). Debugger-only. */
-  xaaRegistrationStrategy?: RegistrationStrategy;
+  /**
+   * XAA-debugger-only preset for the identity assertion the MCPJam test IdP
+   * mints ("oidc" default | "saml"). Persisted per-server; merges preserve.
+   */
+  xaaIdentityAssertionFormat?: IdentityAssertionFormat;
+  /**
+   * Unified client-registration mode (Client↔AS leg) shared by the OAuth
+   * flows and the XAA debugger. Persisted per-server; may be "auto".
+   */
+  registrationMode?: RegistrationMode;
+  /**
+   * XAA-debugger-only CIMD client-authentication method ("none" public default
+   * | "private_key_jwt" confidential). Persisted per-server; only meaningful
+   * when registrationMode resolves to "cimd".
+   */
+  xaaClientAuth?: XaaClientAuthMethod;
+  /**
+   * Canonical auth method (useOAuth/useXaa are its derived compat mirrors).
+   * "auto" selects XAA when the server is XAA-configured, OAuth otherwise.
+   */
+  authMethod?: AuthMethod;
 }
 
 export interface Project {
@@ -112,6 +136,18 @@ export interface Project {
   sharedProjectId?: string;
   organizationId?: string;
   visibility?: ProjectVisibility;
+  /**
+   * Project-level default synthetic identity for the MCPJam test IdP,
+   * applied when an authenticated member connects an XAA server without a
+   * complete per-server override. Admin-controlled, atomic (both members or
+   * neither) and Convex-backed only — local-only projects never persist it.
+   * In update payloads `null` means "explicitly clear"; stored rows carry
+   * the object or nothing. This is NOT enterprise SSO / BYO-IdP
+   * configuration.
+   */
+  xaaTestDefaults?: {
+    defaultIdentity: { subject: string; email: string };
+  } | null;
 }
 
 /**

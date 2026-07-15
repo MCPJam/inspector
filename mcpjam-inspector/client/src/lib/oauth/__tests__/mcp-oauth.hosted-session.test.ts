@@ -264,7 +264,7 @@ describe("mcp-oauth hosted callback sessions", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain(
-      "Rejected cross-origin OAuth resource indicator"
+      "Rejected OAuth resource indicator"
     );
     expect(authFetchMock).not.toHaveBeenCalledWith(
       "https://test.convex.site/web/oauth/complete",
@@ -289,7 +289,7 @@ describe("mcp-oauth hosted callback sessions", () => {
           },
           {
             step: "token_request",
-            title: "Exchange Authorization Code",
+            title: "Request Tokens with Authorization Code",
             status: "pending",
             startedAt: 3,
           },
@@ -405,7 +405,7 @@ describe("mcp-oauth hosted callback sessions", () => {
           },
           {
             step: "token_request",
-            title: "Exchange Authorization Code",
+            title: "Request Tokens with Authorization Code",
             status: "error",
             startedAt: 3,
             completedAt: 4,

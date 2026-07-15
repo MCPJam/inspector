@@ -118,6 +118,17 @@ export function useDeleteComputer(): (args: {
 }
 
 /**
+ * Manually hibernate the caller's `ready` computer (non-destructive; state is
+ * preserved and the box auto-resumes on next use). Returns `{ hibernated:false }`
+ * when there's no live machine to pause.
+ */
+export function useHibernateComputer(): (args: {
+  projectId: string;
+}) => Promise<{ hibernated: boolean }> {
+  return useMutation("projectComputers:hibernateComputerNow" as never) as never;
+}
+
+/**
  * Mint a short-lived (~60s) terminal token authorizing a WebSocket to the
  * inspector server's terminal bridge. An ACTION (needs crypto.subtle).
  */

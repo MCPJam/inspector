@@ -102,6 +102,10 @@ vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
 }));
 
+vi.mock("@/hooks/use-hosted-model-catalog", () => ({
+  useHostedModelCatalog: () => ({ hostedCatalog: [], status: "fallback" }),
+}));
+
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   buildAvailableModels: vi.fn(() => mockModelState.availableModels),
   buildAvailableModelsFromOrgConfig: vi.fn((orgConfig: any) => {
@@ -170,6 +174,7 @@ vi.mock("@/lib/session-token", () => ({
 
 vi.mock("@/lib/guest-session", () => ({
   getGuestBearerToken: (...args: unknown[]) => mockGetGuestBearerToken(...args),
+  getCachedGuestSession: vi.fn(() => null),
 }));
 
 vi.mock("@/hooks/useSharedChatWidgetCapture", () => ({

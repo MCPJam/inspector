@@ -177,6 +177,13 @@ export async function executeClaimedRun(
 
     // Empty caller context = plain-JWT caller (locked by caller-context
     // contract test); the delegated JWT is the principal.
+    //
+    // NO xaaIssuer/xaaPolicy here: the worker has no request Context to
+    // derive the issuer from, and the scheduled-suite selection carries no
+    // host-persona input, so there is no enterprise policy to enforce. A
+    // per-server XAA (`useXaa`) server in a scheduled suite fails closed in
+    // the manager builder ("Missing XAA issuer") — the pre-existing behavior
+    // on this surface. Lifting it needs an env-derived public issuer URL.
     const authorized = await createAuthorizedManager(
       {},
       bearer,

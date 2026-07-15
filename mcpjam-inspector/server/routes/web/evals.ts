@@ -18,6 +18,13 @@ import {
 } from "./auth.js";
 import { assertBearerToken, ErrorCode, WebRouteError } from "./errors.js";
 import {
+  parseXaaPolicyValue,
+  xaaPolicyFromMcpProfile,
+} from "../../utils/effective-auth.js";
+import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
+import { resolveXaaIssuer } from "../../services/xaa-mint.js";
+import { HOSTED_MODE } from "../../config.js";
+import {
   GenerateNegativeTestsRequestSchema,
   GenerateTestsRequestSchema,
   RunEvalsRequestSchema,
@@ -183,6 +190,29 @@ evals.post("/stream-test-case", async (c) => {
   const serverIds = body.serverIds;
   const oauthTokens = body.oauthTokens;
 
+  // Enterprise-managed authorization policy: chatbox-scoped eval authoring
+  // is share-token-reachable, so read the SERVER-side chatbox host config
+  // (fail closed); otherwise honor a strictly-validated body value (member
+  // eval calls own their session, same trust class as clientCapabilities).
+  const evalChatboxId = body.chatboxId as string | undefined;
+  let xaaPolicy;
+  if (evalChatboxId) {
+    const runtime = await fetchChatboxRuntimeConfig({
+      chatboxId: evalChatboxId,
+      bearer: bearerToken,
+    });
+    if (!runtime.ok) {
+      throw new WebRouteError(
+        runtime.status >= 500 ? 502 : runtime.status,
+        ErrorCode.INTERNAL_ERROR,
+        `Couldn't load this chatbox's settings, so the test run was stopped to avoid connecting with the wrong authorization policy. ${runtime.error}`,
+      );
+    }
+    xaaPolicy = xaaPolicyFromMcpProfile(runtime.config.mcpProfile);
+  } else {
+    xaaPolicy = parseXaaPolicyValue(rawBody.xaaPolicy);
+  }
+
   const { manager } = await createAuthorizedManager(
     callerContextFromHono(c),
     bearerToken,
@@ -196,9 +226,11 @@ evals.post("/stream-test-case", async (c) => {
         | "project_member"
         | "chat_v2"
         | undefined,
-      chatboxId: body.chatboxId as string | undefined,
+      chatboxId: evalChatboxId,
       accessVersion: body.accessVersion as number | undefined,
       serverNames: body.serverNames,
+      xaaPolicy,
+      xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
     },
   );
 

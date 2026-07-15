@@ -10,6 +10,7 @@ import {
   createAuthorizedManager,
   callerContextFromHono,
 } from "./auth.js";
+import { xaaPolicyFromMcpProfile } from "../../utils/effective-auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { WEB_STREAM_TIMEOUT_MS, HOSTED_MODE } from "../../config.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
@@ -315,6 +316,12 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
                 // XAA servers fail closed without the issuer; resolved above
                 // from the live request Context.
                 xaaIssuer,
+                // Enterprise-managed policy from the PINNED host snapshot
+                // (server-side, mcpProfile copied verbatim at run-create) —
+                // the run reproduces the snapshot's policy, and an invalid
+                // stored policy fails the host's sessions as a config error
+                // rather than silently un-enforcing.
+                xaaPolicy: xaaPolicyFromMcpProfile(host.mcpProfile),
                 ...(connection.initializePins
                   ? { initializePins: connection.initializePins }
                   : {}),

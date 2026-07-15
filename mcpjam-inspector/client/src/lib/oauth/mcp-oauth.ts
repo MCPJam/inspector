@@ -4,8 +4,10 @@
 
 import {
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
+  canonicalizeResourceUrl,
   discoverAuthorizationServerMetadata,
   discoverOAuthServerInfo,
+  evaluateResourceIndicator,
   exchangeAuthorization,
   fetchToken,
   getBrowserDebugDynamicRegistrationMetadata,
@@ -13,7 +15,6 @@ import {
   projectOAuthTraceSnapshot,
   resolveAuthorizationPlan,
   runOAuthStateMachine,
-  selectResourceURL,
 } from "@mcpjam/sdk/browser";
 import type {
   AuthorizationDiscoverySnapshot,
@@ -1564,23 +1565,6 @@ function waitForMs(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-function canonicalizeOAuthResourceUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    parsed.protocol = parsed.protocol.toLowerCase();
-    parsed.hostname = parsed.hostname.toLowerCase();
-    parsed.hash = "";
-
-    if (parsed.pathname !== "/" && parsed.pathname.endsWith("/")) {
-      parsed.pathname = parsed.pathname.slice(0, -1);
-    }
-
-    return parsed.toString();
-  } catch {
-    return url;
-  }
-}
-
 function readOAuthResourceFromAuthorizationUrl(
   authorizationUrl?: string
 ): string | undefined {
@@ -1597,45 +1581,6 @@ function readOAuthResourceFromAuthorizationUrl(
   }
 }
 
-/**
- * Restrict acceptance of an MCP-server-advertised `resource` indicator (from
- * the protected-resource-metadata document) to the same origin as the server
- * URL. PRM is fetched from the server itself; honoring an arbitrary
- * cross-origin resource value would let a compromised server steer tokens to
- * a different audience than what the client is actually talking to.
- */
-function isOAuthResourceIndicatorAllowed(input: {
-  serverUrl: string;
-  resource: string;
-}): boolean {
-  try {
-    const requested = new URL(input.serverUrl);
-    const resource = new URL(input.resource);
-    return requested.origin === resource.origin;
-  } catch {
-    return false;
-  }
-}
-
-function assertOAuthResourceIndicatorAllowed(input: {
-  serverUrl: string;
-  resource: string;
-  source: string;
-}): void {
-  if (
-    isOAuthResourceIndicatorAllowed({
-      serverUrl: input.serverUrl,
-      resource: input.resource,
-    })
-  ) {
-    return;
-  }
-
-  throw new Error(
-    `Rejected cross-origin OAuth resource indicator from ${input.source}.`
-  );
-}
-
 function readOAuthResourceFromMetadata(
   resourceMetadata?: { resource?: unknown } | null
 ): string | undefined {
@@ -1646,46 +1591,71 @@ function readOAuthResourceFromMetadata(
   return resource || undefined;
 }
 
+const RESOURCE_INDICATOR_SOURCE_LABELS: Record<string, string> = {
+  prm: "protected resource metadata",
+  authorization: "authorization URL",
+};
+
+/**
+ * Resolve the RFC 8707 resource indicator through the SDK's shared policy
+ * (`evaluateResourceIndicator`) so Quick OAuth sends the exact value the
+ * debugger, oauth-login, and conformance surfaces send.
+ *
+ * Quick OAuth is a connect surface, so server-supplied candidates (PRM, a
+ * previously built authorization URL) are rejected when they are invalid or
+ * cross-origin — honoring an arbitrary origin would let a compromised server
+ * steer tokens to a different audience. Same-origin values that merely fail
+ * the official SDK's path-prefix binding stay accepted (real servers like
+ * Asana advertise them; `strictClientCompatible` reports the gap). A
+ * caller-configured override stays trusted (it is user-, not
+ * server-supplied) and is only canonicalized, matching historical behavior.
+ */
 function resolveOAuthResourceUrl(input: {
   serverUrl: string;
   authorizationUrl?: string;
   configuredResourceUrl?: string;
   resourceMetadata?: { resource?: unknown } | null;
 }): string {
-  // Prefer the resource indicator advertised by the MCP server's
-  // protected-resource-metadata document — this is the canonical audience the
-  // RS expects in `aud`. Fall back to caller-configured / serverUrl only when
-  // PRM doesn't supply one.
-  const advertisedResource = readOAuthResourceFromMetadata(
-    input.resourceMetadata
-  );
-  if (advertisedResource) {
-    assertOAuthResourceIndicatorAllowed({
-      serverUrl: input.serverUrl,
-      resource: advertisedResource,
-      source: "protected resource metadata",
-    });
-    return canonicalizeOAuthResourceUrl(advertisedResource);
+  const prmResource = readOAuthResourceFromMetadata(input.resourceMetadata);
+
+  // A PRM document that exists but omits its REQUIRED `resource` (RFC 9728
+  // §2) is broken metadata — silently falling through to another candidate
+  // would connect against metadata every other connect surface rejects.
+  if (input.resourceMetadata && !prmResource) {
+    throw new Error(
+      'Rejected OAuth resource indicator from protected resource metadata: the document is missing its required "resource" identifier (RFC 9728 §2).'
+    );
   }
 
-  const requestedFromAuth = readOAuthResourceFromAuthorizationUrl(
-    input.authorizationUrl
-  );
-  if (requestedFromAuth) {
-    assertOAuthResourceIndicatorAllowed({
-      serverUrl: input.serverUrl,
-      resource: requestedFromAuth,
-      source: "authorization URL",
-    });
-    return canonicalizeOAuthResourceUrl(requestedFromAuth);
+  const decision = evaluateResourceIndicator({
+    serverUrl: input.serverUrl,
+    prmResource,
+    authorizationUrlResource: readOAuthResourceFromAuthorizationUrl(
+      input.authorizationUrl
+    ),
+    configuredResource: input.configuredResourceUrl,
+  });
+
+  if (decision.status === "valid") {
+    // Server-advertised values (prm/authorization) are echoed verbatim — the
+    // AS compares against what was advertised. User-typed configured
+    // overrides (and the server fallback) are canonicalized, matching
+    // historical behavior for stored variants like a trailing slash.
+    return decision.source === "configured"
+      ? canonicalizeResourceUrl(decision.value)
+      : decision.value;
   }
 
-  const configured = input.configuredResourceUrl?.trim();
-  if (configured) {
-    return canonicalizeOAuthResourceUrl(configured);
+  const sourceLabel = RESOURCE_INDICATOR_SOURCE_LABELS[decision.source];
+  if (sourceLabel) {
+    throw new Error(
+      `Rejected OAuth resource indicator from ${sourceLabel}: ${
+        decision.reason ?? "failed validation against the server URL"
+      }`
+    );
   }
 
-  return canonicalizeOAuthResourceUrl(input.serverUrl);
+  return canonicalizeResourceUrl(decision.value);
 }
 
 /**
@@ -3292,25 +3262,17 @@ export async function handleOAuthCallback(
     });
     emitTrace(callbackTrace);
     // Resource URL comes from the server's discovery document — treat it as
-    // untrusted input and validate it matches the originally configured server
-    // URL before embedding it in the authorization request.
-    const resource = await selectResourceURL(
-      serverUrl,
-      provider,
-      discoveryState.resourceMetadata
-    );
+    // untrusted input; resolveOAuthResourceUrl rejects invalid/cross-origin
+    // values. Resolving ONCE here keeps the token-exchange wire value, the
+    // stored resourceUrl, and the original authorization request identical.
     const oauthResourceUrl = resolveOAuthResourceUrl({
       serverUrl,
-      configuredResourceUrl:
-        typeof resource === "string"
-          ? resource
-          : resource instanceof URL
-          ? resource.toString()
-          : oauthConfig.resourceUrl,
+      configuredResourceUrl: oauthConfig.resourceUrl,
       resourceMetadata: discoveryState.resourceMetadata as
         | { resource?: unknown }
         | undefined,
     });
+    const resource = oauthResourceUrl;
     startOAuthTraceStep(callbackTrace, "token_request", {
       message: "Exchanging authorization code for OAuth tokens.",
     });
@@ -3538,11 +3500,19 @@ export async function refreshOAuthTokens(
       message: "Authorization server metadata is ready.",
     });
     emitTrace();
-    const resource = await selectResourceURL(
-      serverUrl,
-      provider,
-      discoveryState.resourceMetadata
-    );
+    // RFC 8707: the refresh request must carry the same resource as the
+    // original grant. Replay the stored value from the initial exchange when
+    // present; otherwise resolve through the same shared policy the initial
+    // flow used (selectResourceURL would re-derive — and strictly reject —
+    // values the initial flow legitimately accepted).
+    const resource =
+      oauthConfig.resourceUrl?.trim() ||
+      resolveOAuthResourceUrl({
+        serverUrl,
+        resourceMetadata: discoveryState.resourceMetadata as
+          | { resource?: unknown }
+          | undefined,
+      });
     startOAuthTraceStep(trace, "token_request", {
       message: "Refreshing tokens with the stored refresh token.",
     });

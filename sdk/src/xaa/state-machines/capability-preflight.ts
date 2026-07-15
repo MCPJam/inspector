@@ -2,7 +2,8 @@ import {
   ID_JAG_GRANT_PROFILE,
   JWT_BEARER_GRANT,
 } from "../../oauth/client-identity.js";
-import type { XAAFlowState } from "./types.js";
+import type { XAAFlowState, XaaTokenEndpointAuthMethod } from "./types.js";
+import type { XaaCapabilityEvidence } from "../mcp-init.js";
 
 // Re-exported for existing consumers; the URN itself now has a single source
 // of truth in the SDK.
@@ -106,12 +107,12 @@ const VENDOR_NOTES: Partial<Record<XAAVendor, XAAVendorHint>> = {
 };
 
 export function analyzeAsCompatibility(
-  authzMetadata: XAAFlowState["authzMetadata"],
+  authzMetadata: XAAFlowState["authzMetadata"]
 ): XAACompatibilityReport | null {
   if (!authzMetadata) return null;
 
   const grantTypesAdvertised = Array.isArray(
-    authzMetadata.grant_types_supported,
+    authzMetadata.grant_types_supported
   );
   const grantTypes = grantTypesAdvertised
     ? (authzMetadata.grant_types_supported as string[])
@@ -249,4 +250,63 @@ export function analyzeAsCompatibility(
     vendor,
     vendorHint,
   };
+}
+
+/** Tri-state advertisement evidence for a single capability URN in AS
+ * metadata: an absent array is `unknown` (the server didn't say), a present
+ * array is `advertised`/`not_advertised` by membership. */
+function capabilityEvidence(
+  value: unknown,
+  expected: string
+): XaaCapabilityEvidence {
+  if (value === undefined || value === null) return "unknown";
+  return Array.isArray(value) && value.includes(expected)
+    ? "advertised"
+    : "not_advertised";
+}
+
+/** Flat ID-JAG-profile / jwt-bearer-grant advertisement evidence derived from
+ * authorization-server metadata. Single source shared by the engine and the
+ * CLI's result projection so the two never drift. */
+export function deriveCapabilityEvidence(
+  authzMetadata: XAAFlowState["authzMetadata"]
+): {
+  idJagProfile: XaaCapabilityEvidence;
+  jwtBearerGrant: XaaCapabilityEvidence;
+} {
+  return {
+    idJagProfile: capabilityEvidence(
+      authzMetadata?.authorization_grant_profiles_supported,
+      ID_JAG_GRANT_PROFILE
+    ),
+    jwtBearerGrant: capabilityEvidence(
+      authzMetadata?.grant_types_supported,
+      JWT_BEARER_GRANT
+    ),
+  };
+}
+
+/** Select the token-endpoint client-auth method for the jwt-bearer redemption.
+ * Precedence: an explicit choice wins; with no client secret the client is
+ * public (`none`); otherwise prefer the advertised method
+ * (basic → post → none); when metadata is absent, default to
+ * `client_secret_post`. Single source shared by the engine (pre-registered
+ * discovery) and the CLI result projection. */
+export function selectTokenEndpointAuthMethod(
+  explicit: XaaTokenEndpointAuthMethod | undefined,
+  clientSecret: string | undefined,
+  advertised: unknown
+): XaaTokenEndpointAuthMethod {
+  if (explicit) return explicit;
+  if (!clientSecret) return "none";
+  if (Array.isArray(advertised)) {
+    if (advertised.includes("client_secret_basic")) {
+      return "client_secret_basic";
+    }
+    if (advertised.includes("client_secret_post")) {
+      return "client_secret_post";
+    }
+    if (advertised.includes("none")) return "none";
+  }
+  return "client_secret_post";
 }

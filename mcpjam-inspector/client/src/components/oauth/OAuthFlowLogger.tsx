@@ -2,7 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AlertDescription } from "@mcpjam/design-system/alert";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@mcpjam/design-system/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@mcpjam/design-system/tabs";
 import { HTTPHistoryEntry } from "@/components/oauth/HTTPHistoryEntry";
 import { InfoLogEntry } from "@/components/oauth/InfoLogEntry";
 import {
@@ -19,11 +24,18 @@ import {
   ChevronRight,
   CheckCircle2,
   Circle,
+  Copy,
   AlertTriangle,
   Pencil,
   RotateCcw,
 } from "lucide-react";
 import { generateGuideText, generateRawText } from "@/lib/oauth/log-formatters";
+import { copyToClipboard } from "@/lib/clipboard";
+import { getOAuthReceivedStepForRequest } from "@/lib/oauth/step-pairing";
+import {
+  splitHttpEntriesForDisplay,
+  type HttpEntryView,
+} from "@/lib/http-entry-views";
 
 interface OAuthFlowLoggerProps {
   oauthFlowState: OAuthFlowState;
@@ -71,6 +83,26 @@ export function OAuthFlowLogger({
   const [deletedInfoLogs] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<"guide" | "raw">("guide");
   const [copySuccess, setCopySuccess] = useState(false);
+  const [copiedStep, setCopiedStep] = useState<OAuthFlowStep | null>(null);
+  const [copyStepError, setCopyStepError] = useState<OAuthFlowStep | null>(
+    null
+  );
+  const copyStepTimerRef = useRef<number | null>(null);
+
+  const currentStepIndex = getStepIndex(oauthFlowState.currentStep);
+
+  // Flow-level HTTP+SSE detection: the deprecated-transport 4xx suppression
+  // must keep working when the split renders the 4xx response on a different
+  // card than the transport info log.
+  const hasDeprecatedTransportFlow = useMemo(
+    () =>
+      (oauthFlowState.infoLogs || []).some(
+        (log) =>
+          log.label?.includes("HTTP+SSE Transport Detected") ||
+          log.id === "http-sse-detected"
+      ),
+    [oauthFlowState.infoLogs]
+  );
 
   const groups = useMemo(() => {
     type StepEntry =
@@ -78,6 +110,11 @@ export function OAuthFlowLogger({
       | {
           type: "http";
           entry: NonNullable<OAuthFlowState["httpHistory"]>[number];
+          /** Which half of the exchange this item renders (see
+           * splitHttpEntriesForDisplay); the entry itself is unmodified. */
+          view: HttpEntryView;
+          /** Display timestamp: response items sort at arrival time. */
+          timestamp: number;
         };
 
     const map = new Map<
@@ -108,18 +145,33 @@ export function OAuthFlowLogger({
         group.firstTimestamp = Math.min(group.firstTimestamp, log.timestamp);
       });
 
-    (oauthFlowState.httpHistory || []).forEach((entry) => {
-      const group = ensureGroup(entry.step);
-      group.entries.push({ type: "http", entry });
-      group.firstTimestamp = Math.min(group.firstTimestamp, entry.timestamp);
+    // Each completed exchange's request half renders under its request step
+    // and the response half under the paired received step immediately; the
+    // received card can still be the next step. Failed or unpaired exchanges
+    // stay whole on their own card.
+    splitHttpEntriesForDisplay<
+      OAuthFlowStep,
+      NonNullable<OAuthFlowState["httpHistory"]>[number]
+    >({
+      entries: oauthFlowState.httpHistory || [],
+      pairedReceivedStep: getOAuthReceivedStepForRequest,
+    }).forEach((item) => {
+      const group = ensureGroup(item.step);
+      group.entries.push({
+        type: "http",
+        entry: item.entry,
+        view: item.view,
+        timestamp: item.timestamp,
+      });
+      group.firstTimestamp = Math.min(group.firstTimestamp, item.timestamp);
     });
 
     const ordered = Array.from(map.values());
 
     ordered.forEach((group) => {
       group.entries.sort((a, b) => {
-        const timeA = a.type === "info" ? a.log.timestamp : a.entry.timestamp;
-        const timeB = b.type === "info" ? b.log.timestamp : b.entry.timestamp;
+        const timeA = a.type === "info" ? a.log.timestamp : a.timestamp;
+        const timeB = b.type === "info" ? b.log.timestamp : b.timestamp;
         return timeA - timeB;
       });
     });
@@ -131,9 +183,12 @@ export function OAuthFlowLogger({
     });
 
     return ordered;
-  }, [oauthFlowState.infoLogs, oauthFlowState.httpHistory, deletedInfoLogs]);
-
-  const currentStepIndex = getStepIndex(oauthFlowState.currentStep);
+  }, [
+    oauthFlowState.infoLogs,
+    oauthFlowState.httpHistory,
+    deletedInfoLogs,
+    currentStepIndex,
+  ]);
   const focusStep = activeStep ?? oauthFlowState.currentStep;
   const formatTimestamp = (timestamp: number) =>
     new Date(timestamp).toLocaleTimeString();
@@ -142,7 +197,7 @@ export function OAuthFlowLogger({
       groups.reduce((sum, group) => {
         return sum + group.entries.length;
       }, 0),
-    [groups],
+    [groups]
   );
 
   const timelineEntries = useMemo(() => {
@@ -157,6 +212,8 @@ export function OAuthFlowLogger({
           type: "http";
           timestamp: number;
           entry: NonNullable<OAuthFlowState["httpHistory"]>[number];
+          step: OAuthFlowStep;
+          view: HttpEntryView;
           key: string;
         };
 
@@ -173,12 +230,20 @@ export function OAuthFlowLogger({
         });
       });
 
-    (oauthFlowState.httpHistory || []).forEach((entry, index) => {
+    splitHttpEntriesForDisplay<
+      OAuthFlowStep,
+      NonNullable<OAuthFlowState["httpHistory"]>[number]
+    >({
+      entries: oauthFlowState.httpHistory || [],
+      pairedReceivedStep: getOAuthReceivedStepForRequest,
+    }).forEach((item, index) => {
       items.push({
         type: "http",
-        timestamp: entry.timestamp,
-        entry,
-        key: `http-${entry.timestamp}-${index}`,
+        timestamp: item.timestamp,
+        entry: item.entry,
+        step: item.step,
+        view: item.view,
+        key: `http-${item.entry.timestamp}-${item.step}-${item.view}-${index}`,
       });
     });
 
@@ -203,7 +268,7 @@ export function OAuthFlowLogger({
 
   // Track which steps are expanded (auto-expand current step)
   const [expandedSteps, setExpandedSteps] = useState<Set<OAuthFlowStep>>(
-    new Set(),
+    new Set()
   );
 
   // Auto-expand current step
@@ -270,6 +335,41 @@ export function OAuthFlowLogger({
       console.error("Failed to copy logs:", err);
     }
   };
+
+  const handleCopyStep = async (step: OAuthFlowStep) => {
+    setCopyStepError(null);
+    if (copyStepTimerRef.current !== null) {
+      window.clearTimeout(copyStepTimerRef.current);
+      copyStepTimerRef.current = null;
+    }
+
+    const text =
+      activeTab === "guide"
+        ? generateGuideText(oauthFlowState, groups, { step })
+        : generateRawText(oauthFlowState, timelineEntries, { step });
+
+    const success = await copyToClipboard(text);
+    if (!success) {
+      setCopiedStep(null);
+      setCopyStepError(step);
+      return;
+    }
+
+    setCopyStepError(null);
+    setCopiedStep(step);
+    copyStepTimerRef.current = window.setTimeout(() => {
+      setCopiedStep(null);
+      copyStepTimerRef.current = null;
+    }, 2000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (copyStepTimerRef.current !== null) {
+        window.clearTimeout(copyStepTimerRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div className="h-full border-l border-border flex flex-col">
@@ -475,10 +575,19 @@ export function OAuthFlowLogger({
                   const isLastStep = groupIndex === groups.length - 1;
 
                   const infoEntries = group.entries.filter(
-                    (entry) => entry.type === "info",
+                    (entry) => entry.type === "info"
+                  );
+                  // The raw authorization-metadata response is authoritative.
+                  // CIMD support is the one derived conclusion (including the
+                  // omitted-field default), so place that note after the response.
+                  const derivedResponseInfoEntries = infoEntries.filter(
+                    ({ log }) => log.id === "cimd-support"
+                  );
+                  const regularInfoEntries = infoEntries.filter(
+                    ({ log }) => log.id !== "cimd-support"
                   );
                   const httpEntries = group.entries.filter(
-                    (entry) => entry.type === "http",
+                    (entry) => entry.type === "http"
                   );
                   const totalEntries = infoEntries.length + httpEntries.length;
 
@@ -486,14 +595,18 @@ export function OAuthFlowLogger({
                   const hasDeprecatedTransport = infoEntries.some(
                     ({ log }) =>
                       log.label?.includes("HTTP+SSE Transport Detected") ||
-                      log.id === "http-sse-detected",
+                      log.id === "http-sse-detected"
                   );
 
                   const errorInfoCount = infoEntries.filter(
-                    ({ log }) => log.level === "error",
+                    ({ log }) => log.level === "error"
                   ).length;
-                  const httpErrorCount = httpEntries.filter(({ entry }) => {
+                  const httpErrorCount = httpEntries.filter((item) => {
+                    const { entry } = item;
                     if (entry.error) return true;
+                    // A request-view item's response (and its status) renders
+                    // under the paired received card — count it there.
+                    if (item.view === "request") return false;
                     const status = entry.response?.status;
                     // Don't treat 401 on initial request as error
                     if (
@@ -506,7 +619,7 @@ export function OAuthFlowLogger({
                     // (the 4xx triggers the GET fallback for backwards compatibility)
                     if (
                       entry.step === "authenticated_mcp_request" &&
-                      hasDeprecatedTransport &&
+                      hasDeprecatedTransportFlow &&
                       status &&
                       status >= 400 &&
                       status < 500
@@ -522,10 +635,11 @@ export function OAuthFlowLogger({
                       .error?.message ||
                     httpEntries.find(({ entry }) => entry.error)?.entry.error
                       ?.message ||
-                    httpEntries.find(({ entry }) => {
-                      const status = entry.response?.status;
+                    httpEntries.find((item) => {
+                      if (item.view === "request") return false;
+                      const status = item.entry.response?.status;
                       if (
-                        entry.step === "request_without_token" &&
+                        item.entry.step === "request_without_token" &&
                         status === 401
                       ) {
                         return false;
@@ -533,7 +647,7 @@ export function OAuthFlowLogger({
                       return (
                         typeof status === "number" &&
                         status >= 400 &&
-                        !!entry.response?.statusText
+                        !!item.entry.response?.statusText
                       );
                     })?.entry.response?.statusText;
                   const statusInfo = getStatusIcon(group.step);
@@ -553,15 +667,24 @@ export function OAuthFlowLogger({
                           hasError
                             ? "border-red-400 ring-1 ring-red-400/20 shadow-md"
                             : hasDeprecatedTransport
-                              ? "border-yellow-400 ring-1 ring-yellow-400/20 shadow-md"
-                              : isActive
-                                ? "border-blue-400 shadow-md ring-1 ring-blue-400/20"
-                                : "border-border shadow-sm hover:shadow-md",
+                            ? "border-yellow-400 ring-1 ring-yellow-400/20 shadow-md"
+                            : isActive
+                            ? "border-blue-400 shadow-md ring-1 ring-blue-400/20"
+                            : "border-border shadow-sm hover:shadow-md"
                         )}
                       >
                         {/* Step header - clickable */}
-                        <button
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          aria-expanded={isExpanded}
                           onClick={() => toggleStep(group.step)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              toggleStep(group.step);
+                            }
+                          }}
                           className="w-full px-4 py-3 flex items-start gap-3 hover:bg-muted/30 transition-colors rounded-t-lg cursor-pointer"
                         >
                           {/* Status icon */}
@@ -633,6 +756,24 @@ export function OAuthFlowLogger({
                               </Button>
                             )}
 
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleCopyStep(group.step);
+                              }}
+                              className="h-7 px-2 text-xs"
+                            >
+                              <Copy className="h-3 w-3 mr-1" />
+                              {copyStepError === group.step
+                                ? "Copy failed"
+                                : copiedStep === group.step
+                                ? "Copied!"
+                                : "Copy step"}
+                            </Button>
+
                             {/* Expand/collapse chevron */}
                             {isExpanded ? (
                               <ChevronDown className="h-4 w-4 text-muted-foreground" />
@@ -640,7 +781,7 @@ export function OAuthFlowLogger({
                               <ChevronRight className="h-4 w-4 text-muted-foreground" />
                             )}
                           </div>
-                        </button>
+                        </div>
 
                         {/* Collapsible content */}
                         {isExpanded && (
@@ -687,7 +828,7 @@ export function OAuthFlowLogger({
                             )}
 
                             {/* Info logs */}
-                            {infoEntries.map(({ log }) => (
+                            {regularInfoEntries.map(({ log }) => (
                               <InfoLogEntry
                                 key={log.id}
                                 label={log.label}
@@ -699,9 +840,9 @@ export function OAuthFlowLogger({
                             ))}
 
                             {/* HTTP requests */}
-                            {httpEntries.map(({ entry }) => (
+                            {httpEntries.map(({ entry, view }) => (
                               <HTTPHistoryEntry
-                                key={`http-${entry.timestamp}`}
+                                key={`http-${entry.timestamp}-${view}`}
                                 method={entry.request.method}
                                 url={entry.request.url}
                                 status={entry.response?.status}
@@ -713,6 +854,18 @@ export function OAuthFlowLogger({
                                 responseBody={entry.response?.body}
                                 error={entry.error}
                                 step={entry.step}
+                                view={view}
+                              />
+                            ))}
+
+                            {derivedResponseInfoEntries.map(({ log }) => (
+                              <InfoLogEntry
+                                key={log.id}
+                                label={log.label}
+                                timestamp={log.timestamp}
+                                data={log.data}
+                                level={log.level ?? "info"}
+                                error={log.error}
                               />
                             ))}
 
@@ -750,8 +903,8 @@ export function OAuthFlowLogger({
                       level === "error"
                         ? "destructive"
                         : level === "warning"
-                          ? "outline"
-                          : "secondary";
+                        ? "outline"
+                        : "secondary";
 
                     return (
                       <div key={entry.key} className="space-y-1">
@@ -764,6 +917,20 @@ export function OAuthFlowLogger({
                           >
                             {level}
                           </Badge>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void handleCopyStep(log.step)}
+                            className="ml-auto h-7 px-2 text-xs"
+                          >
+                            <Copy className="h-3 w-3 mr-1" />
+                            {copyStepError === log.step
+                              ? "Copy failed"
+                              : copiedStep === log.step
+                              ? "Copied!"
+                              : "Copy step"}
+                          </Button>
                         </div>
                         <InfoLogEntry
                           label={log.label}
@@ -777,6 +944,8 @@ export function OAuthFlowLogger({
                   }
 
                   const httpEntry: HttpHistoryEntry = entry.entry;
+                  const view = entry.view;
+                  const displayStep = entry.step ?? httpEntry.step;
                   const status = httpEntry.response?.status;
                   const isExpectedAuthChallenge =
                     httpEntry.step === "request_without_token" &&
@@ -787,15 +956,21 @@ export function OAuthFlowLogger({
                       status >= 400 &&
                       !isExpectedAuthChallenge);
                   const statusLabel =
-                    status !== undefined
-                      ? `${status}${httpEntry.response?.statusText ? ` ${httpEntry.response?.statusText}` : ""}`
+                    view === "request" && status !== undefined
+                      ? "request sent"
+                      : status !== undefined
+                      ? `${status}${
+                          httpEntry.response?.statusText
+                            ? ` ${httpEntry.response?.statusText}`
+                            : ""
+                        }`
                       : "pending";
 
                   return (
                     <div key={entry.key} className="space-y-1">
                       <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                        <span className="font-mono">{httpEntry.step}</span>
-                        <span>{formatTimestamp(httpEntry.timestamp)}</span>
+                        <span className="font-mono">{displayStep}</span>
+                        <span>{formatTimestamp(entry.timestamp)}</span>
                         <Badge
                           variant="outline"
                           className="font-mono uppercase"
@@ -808,6 +983,20 @@ export function OAuthFlowLogger({
                         >
                           {statusLabel}
                         </Badge>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void handleCopyStep(displayStep)}
+                          className="ml-auto h-7 px-2 text-xs"
+                        >
+                          <Copy className="h-3 w-3 mr-1" />
+                          {copyStepError === displayStep
+                            ? "Copy failed"
+                            : copiedStep === displayStep
+                            ? "Copied!"
+                            : "Copy step"}
+                        </Button>
                       </div>
                       <HTTPHistoryEntry
                         method={httpEntry.request.method}
@@ -821,6 +1010,7 @@ export function OAuthFlowLogger({
                         responseBody={httpEntry.response?.body}
                         error={httpEntry.error}
                         step={httpEntry.step}
+                        view={view}
                       />
                     </div>
                   );

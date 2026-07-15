@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
+  Copy,
   Loader2,
   Pencil,
   Play,
@@ -28,6 +29,7 @@ import { InfoLogEntry } from "@/components/oauth/InfoLogEntry";
 import { IdJagInspector } from "./IdJagInspector";
 import {
   getXAAPhaseNumber,
+  getXAAReceivedStepForRequest,
   getXAAStepInfo,
   getXAAStepIndex,
   XAA_PHASE_ORDER,
@@ -36,6 +38,12 @@ import {
   type XAAPhaseKey,
 } from "@/lib/xaa/step-metadata";
 import type { XAAFlowState, XAAFlowStep } from "@/lib/xaa/types";
+import { generateXAAFlowText } from "@/lib/xaa/log-formatters";
+import {
+  splitHttpEntriesForDisplay,
+  type HttpEntryDisplayItem,
+} from "@/lib/http-entry-views";
+import { copyToClipboard } from "@/lib/clipboard";
 import {
   getXAAErrorGuidance,
   latestErroredHttpEntry,
@@ -399,12 +407,20 @@ export function XAAFlowLogger({
   const [expandedSteps, setExpandedSteps] = useState<Set<XAAFlowStep>>(
     new Set()
   );
+  const [copySuccess, setCopySuccess] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const [copiedStep, setCopiedStep] = useState<XAAFlowStep | null>(null);
+  const [copyStepError, setCopyStepError] = useState<XAAFlowStep | null>(null);
+  const copyResetTimerRef = useRef<number | null>(null);
+  const copyStepTimerRef = useRef<number | null>(null);
 
   const stepRefs = useRef(new Map<XAAFlowStep, HTMLDivElement | null>());
 
   useEffect(() => {
     setExpandedSteps(new Set([flowState.currentStep]));
   }, [flowState.currentStep]);
+
+  const currentStepIndex = getXAAStepIndex(flowState.currentStep);
 
   // Bring the focused step (e.g. clicked in the run rail or the diagram) into
   // view and open it, so focusing actually navigates to that step's card.
@@ -422,12 +438,17 @@ export function XAAFlowLogger({
   }, [activeStep]);
 
   const groups = useMemo(() => {
+    type XAAHttpEntry = NonNullable<XAAFlowState["httpHistory"]>[number];
     const steps = new Map<
       XAAFlowStep,
       {
         step: XAAFlowStep;
         infoEntries: NonNullable<XAAFlowState["infoLogs"]>;
+        /** Raw entries tagged with this step — feeds error guidance and the
+         * phase-skip check, which read the unsplit data. */
         httpEntries: NonNullable<XAAFlowState["httpHistory"]>;
+        /** What this card renders: the request half or paired response half. */
+        displayItems: HttpEntryDisplayItem<XAAFlowStep, XAAHttpEntry>[];
       }
     >();
 
@@ -437,6 +458,7 @@ export function XAAFlowLogger({
           step,
           infoEntries: [],
           httpEntries: [],
+          displayItems: [],
         });
       }
 
@@ -451,10 +473,27 @@ export function XAAFlowLogger({
       ensureGroup(entry.step as XAAFlowStep).httpEntries.push(entry);
     });
 
-    return Array.from(steps.values()).sort(
-      (a, b) => getXAAStepIndex(a.step) - getXAAStepIndex(b.step)
-    );
-  }, [flowState.httpHistory, flowState.infoLogs]);
+    splitHttpEntriesForDisplay<XAAFlowStep, XAAHttpEntry>({
+      entries: flowState.httpHistory || [],
+      pairedReceivedStep: getXAAReceivedStepForRequest,
+      keepCompletedExchangeWhole: (entry) =>
+        entry.step === flowState.currentStep &&
+        Boolean(flowState.error || flowState.negativeProbe),
+    }).forEach((item) => {
+      ensureGroup(item.step).displayItems.push(item);
+    });
+
+    return Array.from(steps.values())
+      .filter((group) => getXAAStepIndex(group.step) <= currentStepIndex)
+      .sort((a, b) => getXAAStepIndex(a.step) - getXAAStepIndex(b.step));
+  }, [
+    flowState.httpHistory,
+    flowState.infoLogs,
+    flowState.currentStep,
+    flowState.error,
+    flowState.negativeProbe,
+    currentStepIndex,
+  ]);
 
   // Bucket consecutive step groups by phase so each phase renders one header.
   const phasedGroups = useMemo(() => {
@@ -474,7 +513,68 @@ export function XAAFlowLogger({
     return sections;
   }, [groups]);
 
-  const currentStepIndex = getXAAStepIndex(flowState.currentStep);
+  const handleCopyFlow = async () => {
+    setCopyError(null);
+    setCopySuccess(false);
+    if (copyResetTimerRef.current !== null) {
+      window.clearTimeout(copyResetTimerRef.current);
+      copyResetTimerRef.current = null;
+    }
+
+    try {
+      const success = await copyToClipboard(
+        generateXAAFlowText(flowState, summary)
+      );
+      if (!success) {
+        setCopyError("Copy failed");
+        return;
+      }
+      setCopySuccess(true);
+    } catch {
+      setCopyError("Copy failed");
+      return;
+    }
+
+    copyResetTimerRef.current = window.setTimeout(() => {
+      setCopySuccess(false);
+      copyResetTimerRef.current = null;
+    }, 2000);
+  };
+
+  const handleCopyStep = async (step: XAAFlowStep) => {
+    setCopyStepError(null);
+    if (copyStepTimerRef.current !== null) {
+      window.clearTimeout(copyStepTimerRef.current);
+      copyStepTimerRef.current = null;
+    }
+
+    const success = await copyToClipboard(
+      generateXAAFlowText(flowState, summary, { step })
+    );
+    if (!success) {
+      setCopiedStep(null);
+      setCopyStepError(step);
+      return;
+    }
+
+    setCopyStepError(null);
+    setCopiedStep(step);
+    copyStepTimerRef.current = window.setTimeout(() => {
+      setCopiedStep(null);
+      copyStepTimerRef.current = null;
+    }, 2000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimerRef.current !== null) {
+        window.clearTimeout(copyResetTimerRef.current);
+      }
+      if (copyStepTimerRef.current !== null) {
+        window.clearTimeout(copyStepTimerRef.current);
+      }
+    };
+  }, []);
 
   const toggleStep = (step: XAAFlowStep) => {
     setExpandedSteps((previous) => {
@@ -622,8 +722,8 @@ export function XAAFlowLogger({
           <>
             <PhaseRail currentStep={flowState.currentStep} />
 
-            {(summary.clientId || summary.scope) && (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
                 {summary.clientId && (
                   <div className="flex min-w-0 items-center gap-1.5">
                     <span className="shrink-0 text-muted-foreground">
@@ -645,7 +745,16 @@ export function XAAFlowLogger({
                   </div>
                 )}
               </div>
-            )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleCopyFlow()}
+                className="h-8 shrink-0"
+                title={copyError ?? undefined}
+              >
+                {copyError ?? (copySuccess ? "Copied!" : "Copy")}
+              </Button>
+            </div>
           </>
         )}
       </div>
@@ -723,6 +832,7 @@ export function XAAFlowLogger({
             decoded={flowState.idJagDecoded}
             negativeTestMode={flowState.negativeTestMode}
             lintContext={{
+              expectedIssuer: flowState.issuerBaseUrl,
               expectedAudience:
                 flowState.authzMetadata?.issuer || flowState.authzServerIssuer,
               expectedResource:
@@ -794,12 +904,19 @@ export function XAAFlowLogger({
                 />
               )}
               {section.groups.map((group, indexInPhase) => {
-                const stepInfo = getXAAStepInfo(group.step);
+                const stepInfo = getXAAStepInfo(
+                  group.step,
+                  flowState.identityAssertionFormat
+                );
                 const status = getStatus(group.step);
                 const StatusIcon = status.icon;
                 const entryCount =
-                  group.infoEntries.length + group.httpEntries.length;
-                const hasError = group.httpEntries.some((entry) => entry.error);
+                  group.infoEntries.length + group.displayItems.length;
+                // Errored exchanges always render whole ("full") on the request
+                // card, so error attribution is unchanged by the split.
+                const hasError = group.displayItems.some(
+                  (item) => item.entry.error
+                );
                 const stepLabel = section.phase
                   ? `${getXAAPhaseNumber(section.phase)}.${indexInPhase + 1} ${
                       stepInfo.title
@@ -814,8 +931,17 @@ export function XAAFlowLogger({
                     }}
                     className="bg-background border border-border rounded-lg shadow-sm"
                   >
-                    <button
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={expandedSteps.has(group.step)}
                       onClick={() => toggleStep(group.step)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          toggleStep(group.step);
+                        }
+                      }}
                       className="w-full px-4 py-3 flex items-start gap-3 text-left hover:bg-muted/40 rounded-t-lg"
                     >
                       <div className="flex-shrink-0 mt-0.5">
@@ -850,7 +976,24 @@ export function XAAFlowLogger({
                           {stepInfo.summary}
                         </p>
                       </div>
-                    </button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleCopyStep(group.step);
+                        }}
+                        className="h-7 shrink-0 px-2 text-xs"
+                      >
+                        <Copy className="mr-1 h-3 w-3" />
+                        {copyStepError === group.step
+                          ? "Copy failed"
+                          : copiedStep === group.step
+                          ? "Copied!"
+                          : "Copy step"}
+                      </Button>
+                    </div>
 
                     {expandedSteps.has(group.step) && (
                       <div className="border-t bg-muted/20 p-4 space-y-3">
@@ -888,9 +1031,9 @@ export function XAAFlowLogger({
                           />
                         ))}
 
-                        {group.httpEntries.map((entry) => (
+                        {group.displayItems.map(({ entry, view }) => (
                           <HTTPHistoryEntry
-                            key={`${entry.timestamp}-${entry.request.url}`}
+                            key={`${entry.timestamp}-${entry.request.url}-${view}`}
                             method={entry.request.method}
                             url={entry.request.url}
                             status={entry.response?.status}
@@ -902,9 +1045,9 @@ export function XAAFlowLogger({
                             responseBody={entry.response?.body}
                             error={entry.error}
                             step={entry.step}
+                            view={view}
                           />
                         ))}
-
                       </div>
                     )}
                   </div>

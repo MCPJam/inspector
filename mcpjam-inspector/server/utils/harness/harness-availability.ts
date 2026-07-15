@@ -38,9 +38,33 @@ export function checkHarnessRuntimeAvailable(args: {
    *  model the runtime can't actually run (e.g. a non-gpt-5 model on Codex) is
    *  rejected instead of silently falling back to the runtime's default. */
   modelId: string;
+  /**
+   * Whether the host's enterprise-managed authorization policy is on. The
+   * harness reaches MCP servers through the signed-proxy route
+   * (`routes/web/harness-mcp.ts`), whose Convex-minted token carries only
+   * `{projectId, serverId}` — no host — so that route CANNOT resolve or
+   * enforce the policy, and an unregistered `auto` server would silently
+   * take the discover/OAuth path instead of failing closed. Rather than let
+   * a harness turn bypass enforcement, reject the combination here. Lifting
+   * this requires threading the policy through the harness proxy token
+   * claims (a hand-mirrored Convex↔inspector contract — separate PR).
+   */
+  xaaEnterprisePolicyOn?: boolean;
 }): HarnessAvailability {
   const adapter = getHarnessAdapter(args.harnessId);
   const name = adapter.displayName;
+
+  if (args.xaaEnterprisePolicyOn) {
+    return {
+      ok: false,
+      reason:
+        `the ${name} harness can't run on an enterprise-managed host yet — ` +
+        "the harness reaches MCP servers through a signed proxy that can't " +
+        "carry the host's authorization policy, so a turn could bypass it. " +
+        "Turn off enterprise-managed authorization on this host, or use the " +
+        "emulated engine",
+    };
+  }
 
   if (adapter.requiresComputer && !isComputersDataPlaneConfigured()) {
     return {

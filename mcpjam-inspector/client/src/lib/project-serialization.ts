@@ -3,7 +3,12 @@ import {
   normalizeOAuthProtocolVersion,
   normalizeOAuthRegistrationStrategy,
 } from "@/lib/oauth/profile";
-import { normalizeRegistrationStrategy } from "@/shared/xaa.js";
+import {
+  normalizeAuthMethod,
+  normalizeIdentityAssertionFormat,
+  normalizeRegistrationMode,
+  normalizeXaaClientAuth,
+} from "@/shared/xaa.js";
 
 type SerializeOptions = {
   /**
@@ -76,8 +81,18 @@ function serializeServersInternal(
     if (server.xaaEmail !== undefined) {
       serializedServer.xaaEmail = server.xaaEmail;
     }
-    if (server.xaaRegistrationStrategy !== undefined) {
-      serializedServer.xaaRegistrationStrategy = server.xaaRegistrationStrategy;
+    if (server.xaaIdentityAssertionFormat !== undefined) {
+      serializedServer.xaaIdentityAssertionFormat =
+        server.xaaIdentityAssertionFormat;
+    }
+    if (server.registrationMode !== undefined) {
+      serializedServer.registrationMode = server.registrationMode;
+    }
+    if (server.xaaClientAuth !== undefined) {
+      serializedServer.xaaClientAuth = server.xaaClientAuth;
+    }
+    if (server.authMethod !== undefined) {
+      serializedServer.authMethod = server.authMethod;
     }
 
     if (server.config) {
@@ -271,13 +286,35 @@ export function deserializeServersFromConvex(
     if (serverData.xaaEmail !== undefined) {
       server.xaaEmail = serverData.xaaEmail;
     }
-    // Narrow the bare wire string to a known strategy; drop anything unknown so
-    // the flow falls back to the safe preregistered default.
-    const xaaRegistrationStrategy = normalizeRegistrationStrategy(
-      serverData.xaaRegistrationStrategy,
+    // Narrow the bare wire value to a known format; drop anything unknown so
+    // the debugger falls back to the OIDC default (normalize-or-clear).
+    const xaaIdentityAssertionFormat = normalizeIdentityAssertionFormat(
+      serverData.xaaIdentityAssertionFormat,
     );
-    if (xaaRegistrationStrategy !== undefined) {
-      server.xaaRegistrationStrategy = xaaRegistrationStrategy;
+    if (xaaIdentityAssertionFormat !== undefined) {
+      server.xaaIdentityAssertionFormat = xaaIdentityAssertionFormat;
+    }
+    // Narrow the bare wire value to a known mode; drop anything unknown so the
+    // flows fall back to their defaults. Accepts the legacy per-flow keys
+    // (xaaRegistrationStrategy, oauthRegistrationMode) from old exports —
+    // canonical key wins when both are present.
+    const registrationMode = normalizeRegistrationMode(
+      serverData.registrationMode ??
+        serverData.xaaRegistrationStrategy ??
+        serverData.oauthRegistrationMode,
+    );
+    if (registrationMode !== undefined) {
+      server.registrationMode = registrationMode;
+    }
+    // Narrow the CIMD client-auth method; drop anything unknown so the debugger
+    // falls back to public CIMD.
+    const xaaClientAuth = normalizeXaaClientAuth(serverData.xaaClientAuth);
+    if (xaaClientAuth !== undefined) {
+      server.xaaClientAuth = xaaClientAuth;
+    }
+    const authMethod = normalizeAuthMethod(serverData.authMethod);
+    if (authMethod !== undefined) {
+      server.authMethod = authMethod;
     }
 
     // Handle oauthFlowProfile from legacy nested structure

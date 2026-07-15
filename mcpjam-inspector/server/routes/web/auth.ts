@@ -10,6 +10,7 @@ import type {
   HttpServerConfig,
   RpcLogger,
   UnauthorizedRefreshHandler,
+  XaaEnterprisePolicy,
 } from "@mcpjam/sdk";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
@@ -19,6 +20,14 @@ import {
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { setRequestLogContext } from "../../utils/request-logger.js";
 import { logger } from "../../utils/logger.js";
+import {
+  parseXaaPolicyValue,
+  resolveEffectiveAuthMethod,
+  withXaaExtensionCapability,
+  xaaPolicyFromMcpProfile,
+  xaaPolicyRequiresConfiguration,
+} from "../../utils/effective-auth.js";
+import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import {
   type InternalLogContext,
@@ -122,6 +131,15 @@ export const projectServerSchema = z.object({
   // and never reach the SDK's open-routing predicate. Absent means
   // "use SDK default (negotiates at request time)".
   mcpProtocolVersion: mcpProtocolVersionEnum.optional(),
+  // Host enterprise-managed authorization policy, resolved client-side from
+  // `hostConfig.mcpProfile.extensions`. Declared here (like the pins above)
+  // so the wire contract documents it, but VALIDATED by
+  // `parseXaaPolicyValue` from the pre-parse raw body in
+  // `createManualHostedConnection` — enforcement must never be silently
+  // stripped by a route schema that forgot to declare it (fail-open), and
+  // the strict gate 409s with the standard xaa_policy_invalid shape rather
+  // than a generic Zod 400.
+  xaaPolicy: z.unknown().optional(),
 });
 
 export const toolsListSchema = projectServerSchema.extend({
@@ -246,6 +264,19 @@ export type ConvexAuthorizeResponse = {
     oauthScopes?: string[];
     xaaSubject?: string;
     xaaEmail?: string;
+    // Backend-resolved identity failure: a LEGACY partial per-server
+    // override (one member stored) can't resolve an atomic identity, so the
+    // backend omits BOTH identity fields and sends this actionable,
+    // value-free message instead. The mint must fail with it — never
+    // silently fall back to the demo identity.
+    xaaIdentityError?: string;
+    // Which IdP mints the XAA assertion — on the wire from the backend
+    // projection; needed by the C2 effective-auth resolver's `auto` branch.
+    authServerMode?: "mcpjam" | "own";
+    // Unified canonical auth fields (the booleans above are their derived
+    // compat mirrors). Absent on legacy rows.
+    authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
+    registrationMode?: "auto" | "preregistered" | "cimd" | "dcr";
   };
   internalLogContext?: InternalLogContext;
 };
@@ -808,6 +839,19 @@ export async function createAuthorizedManager(
      * builder throws a 500 rather than connecting tokenless if it's missing.
      */
     xaaIssuer?: string;
+    /**
+     * The host's enterprise-managed authorization policy (validated `on`
+     * value). Read from the BACKEND-PROJECTED host config wherever a
+     * server-side host exists (chatbox turns, host-bound turns, swarm
+     * snapshots, eval host configs) — never trusted from a shareable
+     * request body, because dropping the policy on an unconfigured `auto`
+     * server would downgrade xaa→discover→OAuth. Under the policy every
+     * HTTP `auto` server resolves to XAA (unconfigured ones fail 409
+     * XAA_CONNECTION_NOT_CONFIGURED pre-mint), and the EMA extension is
+     * advertised on every server of the batch. Callers passing this MUST
+     * also pass `xaaIssuer`.
+     */
+    xaaPolicy?: XaaEnterprisePolicy;
   }
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
@@ -840,29 +884,123 @@ export async function createAuthorizedManager(
     }
   );
 
+  // PASS 1 — validate the WHOLE batch before any server does side-effecting
+  // work. The mint pass below runs concurrently (Promise.all), so a check
+  // living inside it only fails *its own* server: a sibling's XAA mint (a
+  // real token issued at the resource AS) would already be in flight by the
+  // time this one rejects. Every purely-synchronous configuration verdict
+  // therefore belongs here, so "fails before any side effects" holds for the
+  // batch, not just per server.
+  // Resolved once here and reused by PASS 2, so the two passes provably agree
+  // on each server's flow (a re-resolution could drift if the predicate ever
+  // gains an input one pass forgets to thread).
+  const effectiveAuthByServerId = new Map<string, EffectiveAuthMethod>();
+  for (const serverId of uniqueServerIds) {
+    const auth = batch.results[serverId];
+    if (!auth) {
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        `Authorization response is missing result for server "${serverId}"`
+      );
+    }
+    if (!auth.ok) {
+      throw new WebRouteError(auth.status, auth.code as ErrorCode, auth.message);
+    }
+    const displayServerName = serverNamesById?.[serverId] ?? serverId;
+    const effectiveAuth = resolveEffectiveAuthMethod(
+      auth.serverConfig,
+      options?.xaaPolicy
+    );
+    effectiveAuthByServerId.set(serverId, effectiveAuth);
+    const isHttp = auth.serverConfig.transportType === "http";
+
+    // Enterprise policy, unconfigured `auto` server: never silently downgrade
+    // to the discover ladder. "Not configured" (no stored client registration
+    // at the resource authorization server), NOT "not enrolled" — enrollment
+    // verdicts belong to the future issuer-policy evaluator.
+    if (
+      isHttp &&
+      xaaPolicyRequiresConfiguration(auth.serverConfig, options?.xaaPolicy)
+    ) {
+      throw new WebRouteError(
+        409,
+        ErrorCode.XAA_CONNECTION_NOT_CONFIGURED,
+        `Server "${displayServerName}" has no XAA client registration configured. This host requires enterprise-managed authorization — add the server's client registration in its auth settings, or set an explicit auth method to override the host policy.`,
+        {
+          serverId,
+          serverName: serverNamesById?.[serverId] ?? null,
+          reason: "xaa_connection_not_configured",
+        }
+      );
+    }
+
+    // Backend-resolved identity failure (legacy partial per-server override):
+    // a distinct configuration error, surfaced before any mint AND before the
+    // issuer guard — eval routes omit `xaaIssuer`, so checking that first
+    // would mask this actionable 400 behind the caller-contract 500. Gated on
+    // the same XAA selection the mint pass uses. No silent fallback to the
+    // demo identity, no silent XAA→OAuth fallback.
+    if (isHttp && effectiveAuth === "xaa" && auth.serverConfig.xaaIdentityError) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        auth.serverConfig.xaaIdentityError,
+        { serverId, serverName: displayServerName }
+      );
+    }
+
+    // Explicit-OAuth server with no stored token: also a synchronous verdict,
+    // so it belongs here — leaving it in the concurrent pass let a configured
+    // XAA sibling start minting a real token while this one rejected.
+    if (
+      effectiveAuth === "oauth" &&
+      !(auth.oauthAccessToken ?? oauthTokens?.[serverId])
+    ) {
+      throw new WebRouteError(
+        401,
+        ErrorCode.UNAUTHORIZED,
+        `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
+        {
+          oauthRequired: true,
+          serverId,
+          serverName: serverNamesById?.[serverId] ?? null,
+          serverUrl: auth.serverConfig.url,
+        }
+      );
+    }
+  }
+
+  // PASS 2 — connect/mint concurrently. Every server reaching this point has
+  // already cleared the batch-wide validation above.
   const configEntries = await Promise.all(
     uniqueServerIds.map(async (serverId) => {
-      const auth = batch.results[serverId];
-      if (!auth) {
-        throw new WebRouteError(
-          500,
-          ErrorCode.INTERNAL_ERROR,
-          `Authorization response is missing result for server "${serverId}"`
-        );
-      }
-
-      if (!auth.ok) {
-        throw new WebRouteError(
-          auth.status,
-          auth.code as ErrorCode,
-          auth.message
-        );
-      }
+      // Non-null: PASS 1 threw for a missing or failed authorize result.
+      const auth = batch.results[serverId] as Extract<
+        (typeof batch.results)[string],
+        { ok: true }
+      >;
 
       const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
       const displayServerName = serverNamesById?.[serverId] ?? serverId;
+      // Resolved in PASS 1 (canonical authMethod wins; "auto" selects XAA
+      // when configured or when the host policy forces it, "discover"
+      // otherwise; legacy rows fall back to the boolean pair). Reused rather
+      // than re-resolved so both passes agree by construction. Must match the
+      // local resolver's dispatch (hosted/local/swarm parity).
+      const effectiveAuth = effectiveAuthByServerId.get(
+        serverId
+      ) as EffectiveAuthMethod;
+      const usesOAuthFlow = effectiveAuth === "oauth";
+      // "discover" (non-XAA auto) rides the OAuth rails only when a stored
+      // token exists; tokenless discover connects unauthenticated instead of
+      // failing pre-connect — a live 401 then surfaces from the connect
+      // itself (mapRuntimeError gives it a 401 status; only the interactive
+      // validate route tags it oauthRequired for client escalation).
+      const usesStoredTokenFlow =
+        usesOAuthFlow || (effectiveAuth === "discover" && !!oauthToken);
       const onUnauthorized =
-        auth.serverConfig.useOAuth && auth.oauthAccessToken
+        usesStoredTokenFlow && auth.oauthAccessToken
           ? buildHostedOAuthUnauthorizedHandler({
               bearerToken,
               projectId,
@@ -875,39 +1013,39 @@ export async function createAuthorizedManager(
             })
           : undefined;
 
-      if (auth.serverConfig.useOAuth) {
-        if (auth.serverConfig.url) {
-          oauthServerUrls[serverId] = auth.serverConfig.url;
-        }
-        if (!oauthToken) {
-          throw new WebRouteError(
-            401,
-            ErrorCode.UNAUTHORIZED,
-            `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
-            {
-              oauthRequired: true,
-              serverId,
-              serverName: serverNamesById?.[serverId] ?? null,
-              serverUrl: auth.serverConfig.url,
-            }
-          );
-        }
+      if (usesStoredTokenFlow && auth.serverConfig.url) {
+        oauthServerUrls[serverId] = auth.serverConfig.url;
       }
+      // (An explicit-OAuth server with no stored token is rejected batch-wide
+      // in PASS 1 — before any sibling can mint.)
 
       // Cross-App Access: mint the resource access token server-side (MCPJam as
       // the test IdP) and inject it through the same `oauthAccessToken` channel
-      // that sets the Bearer header. Strictly gated on `useXaa === true &&
-      // useOAuth !== true` so it can never collide with the OAuth branch above.
-      // The XAA token always overrides whatever the authorize batch returned: a
-      // server converted from OAuth still has a stored OAuth token, and reusing
-      // it would inject the wrong credential.
+      // that sets the Bearer header. The effective method is a hard selection
+      // (auto picked XAA because the server is XAA-configured, or the row says
+      // xaa) — it can never collide with the OAuth branch above. The XAA token
+      // always overrides whatever the authorize batch returned: a server
+      // converted from OAuth still has a stored OAuth token, and reusing it
+      // would inject the wrong credential.
       let connectToken = oauthToken;
       let connectOnUnauthorized = onUnauthorized;
       const useXaa =
-        auth.serverConfig.transportType === "http" &&
-        auth.serverConfig.useXaa === true &&
-        auth.serverConfig.useOAuth !== true;
+        auth.serverConfig.transportType === "http" && effectiveAuth === "xaa";
       if (useXaa) {
+        // XAA connect runs on stored pre-registered credentials only; a
+        // dynamic registrationMode (dcr/cimd) applies to the debugger and
+        // OAuth flows.
+        if (
+          auth.serverConfig.registrationMode === "dcr" ||
+          auth.serverConfig.registrationMode === "cimd"
+        ) {
+          logger.info(
+            "[XAA connect] registrationMode is dynamic; connect uses stored pre-registered credentials — the mode applies to the debugger and OAuth flows only",
+            { serverId, registrationMode: auth.serverConfig.registrationMode }
+          );
+        }
+        // (`xaaIdentityError` is validated batch-wide in PASS 1 — before any
+        // sibling server can mint.)
         if (!options?.xaaIssuer) {
           // Caller-contract violation: a `useXaa` server reached a manager
           // builder that didn't thread the issuer (only callers holding the
@@ -951,6 +1089,30 @@ export async function createAuthorizedManager(
           }
           reMinted = true;
           return { accessToken: (await mintXaaAccessToken(mintArgs)).accessToken };
+        };
+      }
+
+      // Tokenless "discover" (non-XAA auto): connect unauthenticated, and if
+      // the target answers 401, convert it into the same tagged oauthRequired
+      // shape the pre-connect throw produces. The SDK invokes onUnauthorized
+      // exactly when a request 401s, which is the one moment we have both the
+      // per-server identity and proof the server actually demands auth —
+      // interactive clients escalate into the OAuth flow on this shape, and
+      // the non-interactive chat surfaces already render it as their
+      // "complete OAuth first" affordance.
+      if (effectiveAuth === "discover" && !connectToken) {
+        connectOnUnauthorized = async () => {
+          throw new WebRouteError(
+            401,
+            ErrorCode.UNAUTHORIZED,
+            `Server "${displayServerName}" requires authorization.`,
+            {
+              oauthRequired: true,
+              serverId,
+              serverName: serverNamesById?.[serverId] ?? null,
+              serverUrl: auth.serverConfig.url,
+            }
+          );
         };
       }
 
@@ -1007,13 +1169,25 @@ export async function createAuthorizedManager(
             }
           : auth;
 
+      // Spec (MCP enterprise-managed authorization): a client whose access is
+      // enterprise-managed MUST advertise the extension in initialize. Merged
+      // — never overwriting — into the caller-configured capabilities.
+      // Advertised when the connection actually uses XAA (the backstop) or
+      // whenever the host's enterprise policy is on — declare-support is
+      // host-wide, including on servers whose explicit auth method overrides
+      // the policy.
+      const perServerCapabilities =
+        useXaa || options?.xaaPolicy != null
+          ? withXaaExtensionCapability(clientCapabilities)
+          : clientCapabilities;
+
       return [
         serverId,
         toHttpConfig(
           authForConfig,
           effectiveTimeoutMs,
           connectToken,
-          clientCapabilities,
+          perServerCapabilities,
           connectOnUnauthorized,
           effectiveInitializePins
         ),
@@ -1304,6 +1478,34 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
   const { initializePins, mcpProtocolVersionsByServerId } =
     extractMcpInitializeOptions(raw);
 
+  // Enterprise-managed authorization policy. Chatbox-scoped connections are
+  // share-token-reachable, so the policy is read from the SERVER-side
+  // chatbox host config (fail closed on fetch failure — connecting with an
+  // unknown policy could downgrade an unconfigured auto server onto the
+  // discover/OAuth ladder). All other manual connections are the caller's
+  // own session; the strictly-validated body value is self-tampering only.
+  let xaaPolicy: XaaEnterprisePolicy | undefined;
+  if (chatboxId) {
+    const runtime = await fetchChatboxRuntimeConfig({
+      chatboxId,
+      bearer: bearerToken,
+    });
+    if (!runtime.ok) {
+      throw new WebRouteError(
+        runtime.status >= 500 ? 502 : runtime.status,
+        ErrorCode.INTERNAL_ERROR,
+        `Couldn't load this chatbox's settings, so the connection was stopped to avoid running with the wrong authorization policy. ${runtime.error}`
+      );
+    }
+    xaaPolicy = xaaPolicyFromMcpProfile(runtime.config.mcpProfile);
+  } else {
+    // Read from the PRE-PARSE raw body, not the schema-parsed `raw`: most
+    // route schemas are stripping z.objects, and a schema that forgot to
+    // declare xaaPolicy would silently drop enforcement (fail-open). The
+    // strict gate below still 409s on anything malformed.
+    xaaPolicy = parseXaaPolicyValue(rawBody.xaaPolicy);
+  }
+
   const { manager } = await createAuthorizedManager(
     callerContextFromHono(c),
     bearerToken,
@@ -1321,6 +1523,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       serverNames,
       initializePins,
       mcpProtocolVersionsByServerId,
+      xaaPolicy,
       // Resolve the XAA issuer here (we hold the request `Context`) so the
       // manager builder can mint Cross-App Access tokens for `useXaa` servers.
       xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),

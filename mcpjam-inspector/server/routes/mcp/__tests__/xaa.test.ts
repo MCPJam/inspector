@@ -11,7 +11,18 @@ import {
   generateSessionToken,
   getSessionToken,
 } from "../../../services/session-token.js";
-import { initXAAIdpKeyPair, resetXAAIdpKeyPairForTests } from "@mcpjam/sdk";
+import {
+  decodeConfidentialCimdKey,
+  getLocalConfidentialCimdProvider,
+  getXaaClientJwks,
+  initXAAIdpKeyPair,
+  issueMockSamlAssertion,
+  resetXAAIdpKeyPairForTests,
+  resetXaaClientKeyPairForTests,
+  SAML_NAMEID_FORMAT_PERSISTENT,
+  XAA_DEBUG_IDP_CLIENT_ID,
+} from "@mcpjam/sdk";
+import { WebRouteError } from "../../web/errors.js";
 import xaa, { createXaaRouter } from "../xaa.js";
 
 function jsonResponse(
@@ -153,6 +164,12 @@ describe("mcp xaa routes", () => {
 
     expect(tokenExchangeResponse.status).toBe(200);
     const tokenExchangeBody = await tokenExchangeResponse.json();
+    // The minted token is an ID-JAG, and the response must say so (the
+    // generic `…token-type:jwt` URN would teach debugger users the wrong
+    // constant).
+    expect(tokenExchangeBody.issued_token_type).toBe(
+      "urn:ietf:params:oauth:token-type:id-jag"
+    );
     const payload = decodeJwtPayload(tokenExchangeBody.id_jag);
     expect(payload.aud).toBe("https://wrong-audience.example.com");
     // The ID token's email rides into the ID-JAG (spec RECOMMENDED) so the
@@ -406,176 +423,6 @@ describe("hosted xaa outbound guards", () => {
   });
 });
 
-describe("registration-backed /proxy/token", () => {
-  const originalKeyDir = process.env.XAA_IDP_KEY_DIR;
-  let tempDir: string;
-
-  beforeEach(() => {
-    tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-reg-proxy-"));
-    process.env.XAA_IDP_KEY_DIR = tempDir;
-    resetXAAIdpKeyPairForTests();
-    initXAAIdpKeyPair();
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    resetXAAIdpKeyPairForTests();
-    rmSync(tempDir, { recursive: true, force: true });
-    if (originalKeyDir === undefined) {
-      delete process.env.XAA_IDP_KEY_DIR;
-    } else {
-      process.env.XAA_IDP_KEY_DIR = originalKeyDir;
-    }
-  });
-
-  function buildApp(options: {
-    resolver?: (args: {
-      registrationId: string;
-      bearerToken: string;
-    }) => Promise<{
-      clientSecret: string;
-      tokenEndpoint: string | null;
-      targetClientId: string | null;
-      scopes: string[] | null;
-    }>;
-  }) {
-    const app = new Hono();
-    app.route(
-      "/api/web/xaa",
-      createXaaRouter({
-        issuerBasePath: "/api/web",
-        httpsOnlyProxy: false,
-        resolveRegistrationSecret: options.resolver,
-      })
-    );
-    return app;
-  }
-
-  it("rejects registrationId on an instance without a secret resolver", async () => {
-    const app = buildApp({});
-
-    const response = await app.request("/api/web/xaa/proxy/token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer user-token",
-      },
-      body: JSON.stringify({
-        registrationId: "app_1",
-        assertion: "aaa.bbb.ccc",
-      }),
-    });
-
-    expect(response.status).toBe(400);
-    const body = (await response.json()) as { message?: string };
-    expect(body.message).toContain("not available");
-  });
-
-  it("requires a bearer token before resolving the secret", async () => {
-    const resolver = vi.fn();
-    const app = buildApp({ resolver });
-
-    const response = await app.request("/api/web/xaa/proxy/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        registrationId: "app_1",
-        assertion: "aaa.bbb.ccc",
-      }),
-    });
-
-    expect(response.status).toBe(401);
-    expect(resolver).not.toHaveBeenCalled();
-  });
-
-  it("forces the stored token endpoint and strips client-supplied endpoint/headers/secret", async () => {
-    const resolver = vi.fn(async () => ({
-      clientSecret: "stored-secret",
-      tokenEndpoint: "https://stored-as.example.com/oauth/token",
-      targetClientId: "stored-client-id",
-      scopes: null,
-    }));
-    const app = buildApp({ resolver });
-
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify({ access_token: "tok", token_type: "Bearer" }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        )
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const response = await app.request("/api/web/xaa/proxy/token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer user-token",
-      },
-      body: JSON.stringify({
-        registrationId: "app_1",
-        assertion: "aaa.bbb.ccc",
-        // A caller must not be able to redirect the stored secret or smuggle
-        // headers/credentials alongside it.
-        tokenEndpoint: "https://attacker.example.com/exfil",
-        headers: { "X-Evil": "1" },
-        clientSecret: "attacker-secret",
-        clientId: "attacker-client-id",
-        scope: "read:tools",
-        resource: "https://mcp.example.com",
-      }),
-    });
-
-    expect(response.status).toBe(200);
-    expect(resolver).toHaveBeenCalledWith({
-      registrationId: "app_1",
-      bearerToken: "user-token",
-    });
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [calledUrl, calledInit] = fetchMock.mock.calls[0] as unknown as [
-      string,
-      RequestInit
-    ];
-    expect(calledUrl).toBe("https://stored-as.example.com/oauth/token");
-
-    const headers = calledInit.headers as Record<string, string>;
-    expect(headers["X-Evil"]).toBeUndefined();
-
-    const form = new URLSearchParams(String(calledInit.body));
-    expect(form.get("client_secret")).toBe("stored-secret");
-    expect(form.get("client_id")).toBe("stored-client-id");
-    expect(form.get("assertion")).toBe("aaa.bbb.ccc");
-    expect(form.get("scope")).toBe("read:tools");
-  });
-
-  it("rejects a registration without a stored token endpoint", async () => {
-    const resolver = vi.fn(async () => ({
-      clientSecret: "stored-secret",
-      tokenEndpoint: null,
-      targetClientId: null,
-      scopes: null,
-    }));
-    const app = buildApp({ resolver });
-
-    const response = await app.request("/api/web/xaa/proxy/token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer user-token",
-      },
-      body: JSON.stringify({
-        registrationId: "app_1",
-        assertion: "aaa.bbb.ccc",
-      }),
-    });
-
-    expect(response.status).toBe(400);
-    const body = (await response.json()) as { message?: string };
-    expect(body.message).toContain("no stored token endpoint");
-  });
-});
-
 describe("POST /negative-tests", () => {
   const originalKeyDir = process.env.XAA_IDP_KEY_DIR;
   let tempDir: string;
@@ -598,24 +445,13 @@ describe("POST /negative-tests", () => {
     }
   });
 
-  function buildApp(
-    resolver?: (args: {
-      registrationId: string;
-      bearerToken: string;
-    }) => Promise<{
-      clientSecret: string;
-      tokenEndpoint: string | null;
-      targetClientId: string | null;
-      scopes: string[] | null;
-    }>
-  ) {
+  function buildApp() {
     const app = new Hono();
     app.route(
       "/api/web/xaa",
       createXaaRouter({
         issuerBasePath: "/api/web",
         httpsOnlyProxy: false,
-        resolveRegistrationSecret: resolver,
       })
     );
     return app;
@@ -655,7 +491,8 @@ describe("POST /negative-tests", () => {
       failures: number;
     };
     expect(body.results).toHaveLength(11);
-    expect(body.failures).toBe(11);
+    expect(body.failures).toBe(9);
+    expect(body.results.filter((r) => r.verdict === "policy")).toHaveLength(2);
     const expired = body.results.find((r) => r.mode === "expired");
     expect(expired?.verdict).toBe("fail");
 
@@ -690,7 +527,125 @@ describe("POST /negative-tests", () => {
       failures: number;
     };
     expect(body.failures).toBe(0);
-    expect(body.results.every((r) => r.verdict === "pass")).toBe(true);
+    expect(body.results.filter((r) => r.verdict === "pass")).toHaveLength(9);
+    expect(body.results.filter((r) => r.verdict === "policy")).toHaveLength(2);
+  });
+
+  it.each([
+    {
+      method: "client_secret_post" as const,
+      expectAuthorization: false,
+      expectSecretInBody: true,
+    },
+    {
+      method: "client_secret_basic" as const,
+      expectAuthorization: true,
+      expectSecretInBody: false,
+    },
+  ])(
+    "uses $method for dynamically registered confidential clients",
+    async ({ method, expectAuthorization, expectSecretInBody }) => {
+      const fetchMock = vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: "invalid_grant" }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const response = await buildApp().request("/api/web/xaa/negative-tests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...INLINE_BODY,
+          clientId: "dynamic-client",
+          clientSecret: "dynamic-secret",
+          tokenEndpointAuthMethod: method,
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const responseBody = (await response.json()) as {
+        results: Array<{ verdict: string }>;
+      };
+      expect(responseBody.results.some((row) => row.verdict === "pass")).toBe(
+        true
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(11);
+      for (const [, init] of fetchMock.mock.calls) {
+        const headers = init?.headers as Record<string, string>;
+        const form = new URLSearchParams(String(init?.body));
+        expect(Boolean(headers.Authorization)).toBe(expectAuthorization);
+        expect(form.has("client_secret")).toBe(expectSecretInBody);
+        if (expectAuthorization) {
+          expect(headers.Authorization).toBe(
+            `Basic ${Buffer.from("dynamic-client:dynamic-secret").toString(
+              "base64"
+            )}`
+          );
+          expect(form.has("client_id")).toBe(false);
+        } else {
+          expect(form.get("client_id")).toBe("dynamic-client");
+          expect(form.get("client_secret")).toBe("dynamic-secret");
+        }
+      }
+    }
+  );
+
+  it("uses a dynamically registered public client without sending a secret", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const clientId = "dynamic-public-client";
+    const response = await buildApp().request("/api/web/xaa/negative-tests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...INLINE_BODY,
+        clientId,
+        tokenEndpointAuthMethod: "none",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const responseBody = (await response.json()) as {
+      results: Array<{ verdict: string }>;
+    };
+    expect(responseBody.results.some((row) => row.verdict === "pass")).toBe(
+      true
+    );
+    for (const [, init] of fetchMock.mock.calls) {
+      const headers = init?.headers as Record<string, string>;
+      const form = new URLSearchParams(String(init?.body));
+      expect(headers.Authorization).toBeUndefined();
+      expect(form.get("client_id")).toBe(clientId);
+      expect(form.has("client_secret")).toBe(false);
+    }
+  });
+
+  it("rejects an explicit confidential auth method without a secret", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await buildApp().request("/api/web/xaa/negative-tests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...INLINE_BODY,
+        clientId: "dynamic-client",
+        tokenEndpointAuthMethod: "client_secret_post",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("yields partial results when a case times out (one slow case doesn't sink the run)", async () => {
@@ -728,32 +683,6 @@ describe("POST /negative-tests", () => {
     expect(body.results.some((r) => r.verdict === "pass")).toBe(true);
   });
 
-  it("rejects an mcpjam-issuer-only registration (no own auth server)", async () => {
-    const resolver = vi.fn(async () => ({
-      clientSecret: "x",
-      tokenEndpoint: null,
-      targetClientId: null,
-      scopes: null,
-    }));
-    const app = buildApp(resolver);
-
-    const response = await app.request("/api/web/xaa/negative-tests", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer user-token",
-      },
-      body: JSON.stringify({
-        audience: "https://auth.example.com",
-        resource: "https://mcp.example.com",
-        registrationId: "app_1",
-      }),
-    });
-
-    expect(response.status).toBe(400);
-    const body = (await response.json()) as { message?: string };
-    expect(body.message).toContain("its own auth server");
-  });
 });
 
 describe("org-scoped issuer paths on the local router", () => {
@@ -822,6 +751,8 @@ describe("hosted-issuer forwarding on the local router", () => {
     });
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("pragma")).toBe("no-cache");
     expect(await response.json()).toMatchObject({ id_token: "hosted-token" });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -833,6 +764,59 @@ describe("hosted-issuer forwarding on the local router", () => {
     // The opt-in fields are stripped before the upstream call.
     const forwarded = JSON.parse(String(init.body));
     expect(forwarded).toEqual({ userId: "user-12345" });
+  });
+
+  it("forwards issuerKind:anonymous mints to the /g/ hosted endpoint", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ id_token: "hosted-guest-token", token_type: "Bearer" })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = buildApp();
+    const response = await app.request("/api/mcp/xaa/authenticate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer guest-token",
+      },
+      body: JSON.stringify({
+        userId: "user-12345",
+        issuerMode: "hosted",
+        issuerKind: "anonymous",
+        organizationId: "org_guest1",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${HOSTED_ORIGIN}/api/web/xaa/g/org_guest1/authenticate`);
+    // issuerKind is stripped along with the other opt-in fields.
+    const forwarded = JSON.parse(String(init.body));
+    expect(forwarded).toEqual({ userId: "user-12345" });
+  });
+
+  it("rejects an unknown issuerKind instead of guessing a path", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = buildApp();
+    const response = await app.request("/api/mcp/xaa/authenticate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer guest-token",
+      },
+      body: JSON.stringify({
+        userId: "user-12345",
+        issuerMode: "hosted",
+        issuerKind: "sneaky",
+        organizationId: "org_guest1",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("fails closed (no unscoped fallback) when organizationId is missing", async () => {
@@ -852,6 +836,34 @@ describe("hosted-issuer forwarding on the local router", () => {
     // No org → reject rather than silently mint under the forgeable unscoped
     // issuer; never calls upstream.
     expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not forward confidential DCR secrets to the hosted issuer", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = buildApp();
+    const response = await app.request("/api/mcp/xaa/negative-tests", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer workos-token",
+      },
+      body: JSON.stringify({
+        audience: "https://auth.example.com",
+        resource: "https://mcp.example.com",
+        tokenEndpoint: "https://auth.example.com/token",
+        clientId: "dynamic-client",
+        clientSecret: "dynamic-secret",
+        tokenEndpointAuthMethod: "client_secret_post",
+        issuerMode: "hosted",
+        organizationId: "org_123",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).message).toMatch(/confidential DCR/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -953,6 +965,44 @@ describe("hosted-issuer forwarding on the local router", () => {
     expect((await response.json()).code).toBe("RATE_LIMITED");
   });
 
+  it("forwards the SAML axis fields to the hosted issuer untouched", async () => {
+    // Version-skew guard: an old hosted deployment would strip the unknown
+    // keys and silently mint OIDC, so the local relay must never do so.
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ id_jag: "hosted-jag", token_type: "N_A" })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = buildApp();
+    const response = await app.request("/api/mcp/xaa/token-exchange", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer workos-token",
+      },
+      body: JSON.stringify({
+        identityAssertion: "a.b.c",
+        audience: "https://auth.example.com",
+        clientId: "mcpjam-debugger",
+        assertionFormat: "saml",
+        subjectIdFormat: "saml-nameid",
+        issuerMode: "hosted",
+        organizationId: "org_123",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit
+    ];
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      assertionFormat: "saml",
+      subjectIdFormat: "saml-nameid",
+    });
+  });
+
   it("mints locally when issuerMode is absent, without touching fetch", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-fwd-local-"));
     const originalDir = process.env.XAA_IDP_KEY_DIR;
@@ -1032,6 +1082,226 @@ describe("hosted-issuer forwarding on the local router", () => {
         process.env.XAA_IDP_KEY_DIR = originalDir;
       }
     }
+  });
+
+  describe("standards-track /token forwarding", () => {
+    const GRANT_FORM = new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+      subject_token: "a.b.c",
+      subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+      client_id: "mcpjam-xaa-debugger",
+      audience: "https://auth.example.com",
+      resource: "https://mcp.example.com",
+    }).toString();
+
+    it("relays the form body verbatim to the scoped hosted /token, stripping the opt-in headers", async () => {
+      const fetchMock = vi.fn(async () =>
+        jsonResponse({
+          issued_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+          access_token: "hosted-jag",
+          token_type: "N_A",
+          expires_in: 300,
+        })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: "Bearer workos-token",
+          "x-mcpjam-issuer-mode": "hosted",
+          "x-mcpjam-organization-id": "org_123",
+        },
+        body: GRANT_FORM,
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        access_token: "hosted-jag",
+        issued_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0] as unknown as [
+        string,
+        RequestInit
+      ];
+      expect(url).toBe(`${HOSTED_ORIGIN}/api/web/xaa/o/org_123/token`);
+      // The spec form body crosses untouched; the transport opt-in headers
+      // never reach the hosted issuer.
+      expect(String(init.body)).toBe(GRANT_FORM);
+      const headers = init.headers as Record<string, string>;
+      expect(headers.Authorization).toBe("Bearer workos-token");
+      expect(headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
+      expect(
+        Object.keys(headers).some((name) =>
+          name.toLowerCase().startsWith("x-mcpjam-")
+        )
+      ).toBe(false);
+    });
+
+    it("relays to the /g/ hosted /token when the anonymous issuer kind header is set", async () => {
+      const fetchMock = vi.fn(async () =>
+        jsonResponse({
+          issued_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+          access_token: "hosted-anon-jag",
+          token_type: "N_A",
+          expires_in: 300,
+        })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: "Bearer guest-token",
+          "x-mcpjam-issuer-mode": "hosted",
+          "x-mcpjam-organization-id": "org_guest1",
+          "x-mcpjam-issuer-kind": "anonymous",
+        },
+        body: GRANT_FORM,
+      });
+
+      expect(response.status).toBe(200);
+      const [url] = fetchMock.mock.calls[0] as unknown as [string];
+      expect(url).toBe(`${HOSTED_ORIGIN}/api/web/xaa/g/org_guest1/token`);
+    });
+
+    it("rejects an unknown issuer-kind header instead of guessing a path", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: "Bearer guest-token",
+          "x-mcpjam-issuer-mode": "hosted",
+          "x-mcpjam-organization-id": "org_guest1",
+          "x-mcpjam-issuer-kind": "sneaky",
+        },
+        body: GRANT_FORM,
+      });
+
+      expect(response.status).toBe(400);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("relays an OAuth-shaped hosted error verbatim", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          jsonResponse(
+            {
+              error: "invalid_grant",
+              error_description: "subject token expired",
+            },
+            { status: 400 }
+          )
+        )
+      );
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: "Bearer workos-token",
+          "x-mcpjam-issuer-mode": "hosted",
+          "x-mcpjam-organization-id": "org_123",
+        },
+        body: GRANT_FORM,
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: "invalid_grant" });
+    });
+
+    it("fails closed on a missing or malformed org header, without calling upstream", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      for (const orgHeader of [undefined, "not/valid"]) {
+        const response = await app.request("/api/mcp/xaa/token", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Authorization: "Bearer workos-token",
+            "x-mcpjam-issuer-mode": "hosted",
+            ...(orgHeader ? { "x-mcpjam-organization-id": orgHeader } : {}),
+          },
+          body: GRANT_FORM,
+        });
+        expect(response.status).toBe(400);
+        expect((await response.json()).error).toBe("invalid_request");
+      }
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects the hosted opt-in without a bearer, without calling upstream", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "x-mcpjam-issuer-mode": "hosted",
+          "x-mcpjam-organization-id": "org_123",
+        },
+        body: GRANT_FORM,
+      });
+
+      expect(response.status).toBe(401);
+      expect((await response.json()).error).toBe("invalid_client");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects a cross-origin forward before relaying (CSRF guard, no upstream signing)", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Origin: "https://evil.example.com",
+          Authorization: "Bearer workos-token",
+          "x-mcpjam-issuer-mode": "hosted",
+          "x-mcpjam-organization-id": "org_123",
+        },
+        body: GRANT_FORM,
+      });
+
+      expect(response.status).toBe(403);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("serves /token locally when the opt-in header is absent, without touching fetch", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const app = buildApp();
+      const response = await app.request("/api/mcp/xaa/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "junk" }).toString(),
+      });
+
+      // handleToken ran locally (unsupported grant → OAuth 400), no relay.
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe("unsupported_grant_type");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -1285,23 +1555,28 @@ describe("mock OIDC IdP endpoints", () => {
       body: JSON.stringify({
         userId: "alice-123",
         email: "alice@example.com",
-        audience: "client-1",
+        audience: XAA_DEBUG_IDP_CLIENT_ID,
+        resourceClientId: "client-1",
       }),
     });
     const { id_token: subjectToken } = await authenticateResponse.json();
+    expect(authenticateResponse.headers.get("cache-control")).toBe("no-store");
+    expect(authenticateResponse.headers.get("pragma")).toBe("no-cache");
 
     const response = await postToken({
       grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
       requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
       subject_token: subjectToken,
       subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
-      client_id: "client-1",
+      client_id: XAA_DEBUG_IDP_CLIENT_ID,
       audience: "https://as.example.com",
       resource: "https://rs.example.com",
       scope: "chat.read",
     });
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("pragma")).toBe("no-cache");
     const body = await response.json();
     expect(body.issued_token_type).toBe(
       "urn:ietf:params:oauth:token-type:id-jag"
@@ -1317,8 +1592,21 @@ describe("mock OIDC IdP endpoints", () => {
       scope: "chat.read",
     });
 
-    // aud mismatch between the subject token and the presenting client.
-    const mismatch = await postToken({
+    const withoutResource = await postToken({
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+      subject_token: subjectToken,
+      subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+      client_id: XAA_DEBUG_IDP_CLIENT_ID,
+      audience: "https://as.example.com",
+    });
+    expect(withoutResource.status).toBe(200);
+    expect(
+      decodeJwtPayload((await withoutResource.json()).access_token)
+    ).not.toHaveProperty("resource");
+
+    // The request client identifies the IdP registration, not the RAS client.
+    const unknownIdpClient = await postToken({
       grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
       requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
       subject_token: subjectToken,
@@ -1327,8 +1615,8 @@ describe("mock OIDC IdP endpoints", () => {
       audience: "https://as.example.com",
       resource: "https://rs.example.com",
     });
-    expect(mismatch.status).toBe(400);
-    expect((await mismatch.json()).error).toBe("invalid_grant");
+    expect(unknownIdpClient.status).toBe(401);
+    expect((await unknownIdpClient.json()).error).toBe("invalid_client");
 
     // client_id is required.
     const missingClient = await postToken({
@@ -1445,6 +1733,37 @@ describe("mock OIDC IdP endpoints", () => {
     expect(response.status).toBe(403);
   });
 
+  it("allows a first-party allowlisted Origin on /token (dev-proxy Origin ≠ Host)", async () => {
+    const allowlistedApp = new Hono();
+    allowlistedApp.route(
+      "/api/mcp/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/mcp",
+        httpsOnlyProxy: false,
+        allowedBrowserOrigins: ["http://localhost:5173"],
+      })
+    );
+    const post = (origin: string) =>
+      allowlistedApp.request(`${BASE}/token`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Origin: origin,
+        },
+        body: new URLSearchParams({ grant_type: "junk" }).toString(),
+      });
+
+    // The allowlisted first-party origin passes the CSRF guard and reaches
+    // the grant dispatch (OAuth 400, not 403)…
+    const allowed = await post("http://localhost:5173");
+    expect(allowed.status).toBe(400);
+    expect((await allowed.json()).error).toBe("unsupported_grant_type");
+
+    // …while a foreign origin is still rejected outright.
+    const rejected = await post("https://evil.example.com");
+    expect(rejected.status).toBe(403);
+  });
+
   it("allows a same-origin confirm POST", async () => {
     const response = await app.request(`${BASE}/authorize/confirm`, {
       method: "POST",
@@ -1513,5 +1832,460 @@ describe("mock OIDC IdP endpoints", () => {
     expect(doc.authorization_endpoint).toBe(`${ISSUER}/authorize`);
     expect(doc.userinfo_endpoint).toBe(`${ISSUER}/userinfo`);
     expect(doc.response_types_supported).toEqual(["code"]);
+  });
+
+  // The two SAML identity axes (draft-ietf-oauth-identity-assertion-authz-
+  // grant-04): the INPUT axis (a signed SAML assertion as the subject token,
+  // §4.3) and the OUTPUT axis (a saml-nameid `sub_id` in the ID-JAG, §3.2.2)
+  // are independent — these tests exercise each alone and mixed.
+  describe("SAML identity axes", () => {
+    const AUDIENCE = "https://as.example.com";
+
+    async function mintIdToken(): Promise<string> {
+      const response = await app.request(`${BASE}/authenticate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: "alice-123",
+          email: "alice@example.com",
+          audience: XAA_DEBUG_IDP_CLIENT_ID,
+          resourceClientId: "client-1",
+        }),
+      });
+      return (await response.json()).id_token;
+    }
+
+    it("mints a SAML assertion at /authenticate and keeps the OIDC response unchanged", async () => {
+      const samlResponse = await app.request(`${BASE}/authenticate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: "alice-123",
+          email: "alice@example.com",
+          assertionFormat: "saml",
+        }),
+      });
+
+      expect(samlResponse.status).toBe(200);
+      expect(samlResponse.headers.get("cache-control")).toBe("no-store");
+      const samlBody = await samlResponse.json();
+      expect(Object.keys(samlBody).sort()).toEqual([
+        "assertion",
+        "assertion_format",
+        "expires_in",
+        "subject",
+        "token_type",
+        "user",
+      ]);
+      expect(samlBody.assertion_format).toBe("saml");
+      // Structured subject metadata rides in the response so the browser
+      // never has to parse XML.
+      expect(samlBody.subject).toEqual({
+        issuer: ISSUER,
+        nameid: "alice-123",
+        nameidFormat: SAML_NAMEID_FORMAT_PERSISTENT,
+        spNameQualifier: XAA_DEBUG_IDP_CLIENT_ID,
+      });
+      expect(samlBody.user).toEqual({
+        sub: "alice-123",
+        email: "alice@example.com",
+      });
+      // Wire form is base64 XML, not a JWT.
+      const xml = Buffer.from(samlBody.assertion, "base64").toString("utf-8");
+      expect(xml).toContain("<saml:Assertion");
+
+      // The OIDC default is untouched (hosted forwarding depends on this
+      // shape staying byte-identical).
+      const oidcResponse = await app.request(`${BASE}/authenticate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: "alice-123",
+          email: "alice@example.com",
+        }),
+      });
+      const oidcBody = await oidcResponse.json();
+      expect(Object.keys(oidcBody).sort()).toEqual([
+        "expires_in",
+        "id_token",
+        "token_type",
+        "user",
+      ]);
+      expect(oidcBody.id_token).toEqual(expect.any(String));
+    });
+
+    it("rejects an unknown assertionFormat with the existing 400 shape", async () => {
+      const response = await app.request(`${BASE}/authenticate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assertionFormat: "wsfed" }),
+      });
+
+      expect(response.status).toBe(400);
+      expect((await response.json()).code).toBe("VALIDATION_ERROR");
+    });
+
+    it("exchanges a signed SAML assertion at /token (input axis, no sub_id without subject_id_format)", async () => {
+      const { assertionB64 } = issueMockSamlAssertion({
+        issuer: ISSUER,
+        subject: "alice-123",
+        email: "alice@example.com",
+        spEntityId: XAA_DEBUG_IDP_CLIENT_ID,
+        resourceClientId: "client-1",
+      });
+
+      const response = await postToken({
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+        subject_token: assertionB64,
+        subject_token_type: "urn:ietf:params:oauth:token-type:saml2",
+        client_id: XAA_DEBUG_IDP_CLIENT_ID,
+        audience: AUDIENCE,
+        resource: "https://rs.example.com",
+        scope: "chat.read",
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      const body = await response.json();
+      expect(body.issued_token_type).toBe(
+        "urn:ietf:params:oauth:token-type:id-jag"
+      );
+      const payload = decodeJwtPayload(body.access_token);
+      expect(payload).toMatchObject({
+        iss: ISSUER,
+        sub: "alice-123",
+        email: "alice@example.com",
+        aud: AUDIENCE,
+        resource: "https://rs.example.com",
+        client_id: "client-1",
+        scope: "chat.read",
+      });
+      // SAML INPUT does not imply saml-nameid OUTPUT: without the
+      // subject_id_format extension the ID-JAG carries no sub_id.
+      expect(payload).not.toHaveProperty("sub_id");
+    });
+
+    it("rejects a JWT presented as a saml2 subject token", async () => {
+      // A valid ID token mislabeled as a SAML assertion must fail the strict
+      // verify path, not silently fall back to JWT semantics.
+      const idToken = await mintIdToken();
+
+      const response = await postToken({
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+        subject_token: idToken,
+        subject_token_type: "urn:ietf:params:oauth:token-type:saml2",
+        client_id: XAA_DEBUG_IDP_CLIENT_ID,
+        audience: AUDIENCE,
+      });
+
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe("invalid_grant");
+    });
+
+    it("mints sub_id for an OIDC subject token when subject_id_format=saml-nameid (mixed axes)", async () => {
+      const idToken = await mintIdToken();
+
+      const response = await postToken({
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+        subject_token: idToken,
+        subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+        client_id: XAA_DEBUG_IDP_CLIENT_ID,
+        audience: AUDIENCE,
+        subject_id_format: "saml-nameid",
+      });
+
+      expect(response.status).toBe(200);
+      const payload = decodeJwtPayload((await response.json()).access_token);
+      expect(payload.sub).toBe("alice-123");
+      // Per §3.2.2 the sub_id derives from the NameID the IdP would issue for
+      // SSO to the TARGET RAS: sp_name_qualifier is the exchange's audience,
+      // never the subject token's own audience.
+      expect(payload.sub_id).toEqual({
+        format: "saml-nameid",
+        issuer: ISSUER,
+        nameid: "alice-123",
+        sp_name_qualifier: AUDIENCE,
+        nameid_format: SAML_NAMEID_FORMAT_PERSISTENT,
+      });
+    });
+
+    it("keeps the plain OIDC exchange unchanged (same body keys, no sub_id)", async () => {
+      const idToken = await mintIdToken();
+
+      const response = await postToken({
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+        subject_token: idToken,
+        subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+        client_id: XAA_DEBUG_IDP_CLIENT_ID,
+        audience: AUDIENCE,
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(Object.keys(body).sort()).toEqual([
+        "access_token",
+        "expires_in",
+        "issued_token_type",
+        "token_type",
+      ]);
+      expect(decodeJwtPayload(body.access_token)).not.toHaveProperty("sub_id");
+    });
+
+    it("rejects an unknown subject_id_format", async () => {
+      const idToken = await mintIdToken();
+
+      const response = await postToken({
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+        subject_token: idToken,
+        subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+        client_id: XAA_DEBUG_IDP_CLIENT_ID,
+        audience: AUDIENCE,
+        subject_id_format: "email",
+      });
+
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe("invalid_request");
+    });
+  });
+});
+
+describe("org-scoped /token with SAML subject tokens", () => {
+  const BASE = "http://127.0.0.1:6274/api/mcp/xaa";
+  const originalKeyDir = process.env.XAA_IDP_KEY_DIR;
+  let tempDir: string;
+  let app: Hono;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-saml-org-"));
+    process.env.XAA_IDP_KEY_DIR = tempDir;
+    resetXAAIdpKeyPairForTests();
+    initXAAIdpKeyPair();
+
+    app = new Hono();
+    app.route(
+      "/api/mcp/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/mcp",
+        httpsOnlyProxy: false,
+        authorizeOrgIssuer: async ({ bearerToken }) => {
+          if (bearerToken !== "member-token") {
+            throw new WebRouteError(403, "FORBIDDEN", "Not an org member");
+          }
+        },
+      })
+    );
+  });
+
+  afterEach(() => {
+    resetXAAIdpKeyPairForTests();
+    rmSync(tempDir, { recursive: true, force: true });
+    if (originalKeyDir === undefined) {
+      delete process.env.XAA_IDP_KEY_DIR;
+    } else {
+      process.env.XAA_IDP_KEY_DIR = originalKeyDir;
+    }
+  });
+
+  it("gates the saml2 grant behind org membership and mints under the scoped issuer", async () => {
+    const scopedIssuer = `${BASE}/o/org1`;
+    const { assertionB64 } = issueMockSamlAssertion({
+      issuer: scopedIssuer,
+      subject: "alice-123",
+      email: "alice@example.com",
+      spEntityId: XAA_DEBUG_IDP_CLIENT_ID,
+      resourceClientId: "client-1",
+    });
+    const form = new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      requested_token_type: "urn:ietf:params:oauth:token-type:id-jag",
+      subject_token: assertionB64,
+      subject_token_type: "urn:ietf:params:oauth:token-type:saml2",
+      client_id: XAA_DEBUG_IDP_CLIENT_ID,
+      audience: "https://as.example.com",
+    }).toString();
+    const postScopedToken = (headers: Record<string, string> = {}) =>
+      app.request(`${BASE}/o/org1/token`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          ...headers,
+        },
+        body: form,
+      });
+
+    // No bearer → OAuth-shaped 401; the SAML branch grants nothing extra.
+    const unauthenticated = await postScopedToken();
+    expect(unauthenticated.status).toBe(401);
+    expect((await unauthenticated.json()).error).toBe("invalid_client");
+
+    // Non-member bearer → 403 access_denied.
+    const nonMember = await postScopedToken({
+      Authorization: "Bearer other-token",
+    });
+    expect(nonMember.status).toBe(403);
+    expect((await nonMember.json()).error).toBe("access_denied");
+
+    // Member bearer → the exchange succeeds under the org-scoped issuer.
+    const member = await postScopedToken({
+      Authorization: "Bearer member-token",
+    });
+    expect(member.status).toBe(200);
+    const payload = decodeJwtPayload((await member.json()).access_token);
+    expect(payload).toMatchObject({
+      iss: scopedIssuer,
+      sub: "alice-123",
+      client_id: "client-1",
+    });
+  });
+});
+
+describe("confidential CIMD (private_key_jwt) on the xaa router", () => {
+  const originalKeyDir = process.env.XAA_IDP_KEY_DIR;
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-conf-cimd-"));
+    process.env.XAA_IDP_KEY_DIR = tempDir;
+    resetXaaClientKeyPairForTests();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetXaaClientKeyPairForTests();
+    rmSync(tempDir, { recursive: true, force: true });
+    if (originalKeyDir === undefined) delete process.env.XAA_IDP_KEY_DIR;
+    else process.env.XAA_IDP_KEY_DIR = originalKeyDir;
+  });
+
+  function buildApp() {
+    const app = new Hono();
+    app.route(
+      "/api/mcp/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/mcp",
+        httpsOnlyProxy: false,
+        confidentialCimdProvider: getLocalConfidentialCimdProvider(),
+      })
+    );
+    return app;
+  }
+
+  it("does not expose or use a confidential client without an injected provider", async () => {
+    const app = new Hono();
+    app.route(
+      "/api/web/xaa",
+      createXaaRouter({ issuerBasePath: "/api/web", httpsOnlyProxy: true })
+    );
+
+    const capability = await app.request(
+      "https://app.example.com/api/web/xaa/confidential-cimd/client"
+    );
+    expect(capability.status).toBe(404);
+
+    const redemption = await app.request("/api/web/xaa/proxy/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tokenEndpoint: "https://as.example.com/oauth/token",
+        assertion: "the.id.jag",
+        clientId: "https://app.example.com/client.json",
+        tokenEndpointAuthMethod: "private_key_jwt",
+      }),
+    });
+    expect(redemption.status).toBe(400);
+    await expect(redemption.json()).resolves.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("not available"),
+    });
+  });
+
+  it("GET /confidential-cimd/client publishes this server's client key", async () => {
+    const app = buildApp();
+    const response = await app.request(
+      "http://localhost/api/mcp/xaa/confidential-cimd/client"
+    );
+    expect(response.status).toBe(200);
+    // The URL encodes the current server key; a cached response could pair a
+    // rotated key's assertion with a stale client_id.
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const { clientIdMetadataUrl } = (await response.json()) as {
+      clientIdMetadataUrl: string;
+    };
+    expect(clientIdMetadataUrl).toContain(
+      "/.well-known/oauth/xaa-cimd/"
+    );
+    // The URL-embedded key must be exactly the server's published client key.
+    const encoded = new URL(clientIdMetadataUrl).pathname.split("/").pop()!;
+    const decoded = decodeConfidentialCimdKey(encoded);
+    expect(decoded?.x).toBe(getXaaClientJwks().keys[0].x);
+    expect(decoded?.y).toBe(getXaaClientJwks().keys[0].y);
+  });
+
+  it("/proxy/token signs a private_key_jwt assertion for the confidential client", async () => {
+    const app = buildApp();
+    const tokenEndpoint = "https://as.example.com/oauth/token";
+    const clientId =
+      "https://localhost/.well-known/oauth/xaa-cimd/AbC123";
+
+    let capturedBody: URLSearchParams | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const u = typeof input === "string" ? input : input.toString();
+        if (u === tokenEndpoint) {
+          capturedBody = new URLSearchParams(init?.body as string);
+          return jsonResponse({ access_token: "tok", token_type: "Bearer" });
+        }
+        return new Response("{}", { status: 404 });
+      })
+    );
+
+    const response = await app.request("/api/mcp/xaa/proxy/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tokenEndpoint,
+        assertion: "the.id.jag",
+        clientId,
+        tokenEndpointAuthMethod: "private_key_jwt",
+        scope: "mcp.access",
+      }),
+    });
+    expect(response.status).toBe(200);
+
+    // The confidential client-auth pair is on the wire; no secret leaks.
+    expect(capturedBody?.get("client_assertion_type")).toBe(
+      "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+    );
+    expect(capturedBody?.get("client_id")).toBe(clientId);
+    expect(capturedBody?.get("client_secret")).toBeNull();
+    const assertion = capturedBody?.get("client_assertion");
+    expect(assertion?.split(".")).toHaveLength(3);
+    // iss = sub = client_id, aud = token endpoint (what the RAS verifies).
+    const claims = decodeJwtPayload(assertion as string);
+    expect(claims.iss).toBe(clientId);
+    expect(claims.sub).toBe(clientId);
+    expect(claims.aud).toBe(tokenEndpoint);
+  });
+
+  it("/proxy/token rejects private_key_jwt without a client_id", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/mcp/xaa/proxy/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tokenEndpoint: "https://as.example.com/oauth/token",
+        assertion: "the.id.jag",
+        tokenEndpointAuthMethod: "private_key_jwt",
+      }),
+    });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { message?: string };
+    expect(body.message).toContain("requires a client id");
   });
 });

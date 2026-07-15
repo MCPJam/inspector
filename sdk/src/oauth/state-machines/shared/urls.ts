@@ -14,20 +14,3 @@ export function buildResourceMetadataUrl(serverUrl: string): string {
     url.origin,
   ).toString();
 }
-
-export function canonicalizeResourceUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    parsed.protocol = parsed.protocol.toLowerCase();
-    parsed.hostname = parsed.hostname.toLowerCase();
-    parsed.hash = "";
-
-    if (parsed.pathname !== "/" && parsed.pathname.endsWith("/")) {
-      parsed.pathname = parsed.pathname.slice(0, -1);
-    }
-
-    return parsed.toString();
-  } catch {
-    return url;
-  }
-}

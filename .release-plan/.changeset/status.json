@@ -3,23 +3,49 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/inspector",
+          "name": "@mcpjam/sdk",
           "type": "minor"
         }
       ],
-      "summary": "Release the latest Inspector updates.\n\n- Split the Chatbox (human) and Swarm (agent) surfaces so human chat sessions and agent-driven swarm runs no longer share one UI.\n- Add a mock OIDC IdP for XAA: authorization-code flow with PKCE, a standard `/token` endpoint, `userinfo`, and org-scoped issuers (`/api/web/xaa/o/<orgId>`), plus an opt-in hosted issuer for local debugger runs that skips tunneling.\n- Harden computers auth: drop HS256/three-var terminal-token compat in favor of RS256-only, JWKS-backed verification and service-token-only auth.\n- Fix local-only-MCP org BYOK to route through the existing `/stream/org` proxy instead of a lease.\n- Migrate funnel/revenue analytics events to the `track()` helper (tranche 1).",
-      "id": "release-rollup-2026-07-10"
+      "summary": "Add the XAA enterprise-managed authorization policy helpers: `readXaaEnterprisePolicy` (three-state: off / on / invalid), `withXaaEnterprisePolicy`, `withoutXaaEnterprisePolicy`, and the `XAA_ENTERPRISE_POLICY_EXTENSION` / `XAA_ENTERPRISE_POLICY_IDPS` constants. The policy is stored under `hostConfig.mcpProfile.extensions[\"com.mcpjam/enterprise-managed-auth\"]` and marks a host persona as enterprise-managed: every HTTP server connection resolves to XAA by default unless the server's explicit auth method overrides.",
+      "id": "xaa-enterprise-policy"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "XAA debugger polish: tighten the IdP bar and surface Run-as chip actions.\n\n- **IdP bar:** the issuer guidance that occupied a two-row block under the card now collapses into an info tooltip next to the hosted-issuer switch, so the assertion-format and hosted-issuer controls stay on the toolbar row. The hosted-issuer and local-URL explanations (including the anonymous test issuer caveat) are unchanged in substance — they moved from always-on prose into the tooltip, and the separate `anonymous-issuer-badge` chip is dropped now that the anonymous caveat reads inline in the hosted-issuer hint.\n- **Run-as chips:** edit and remove are always visible instead of appearing on hover, and each chip gains a dedicated remove button (previously deleting a person meant opening the edit popover first). The chip border/selection ring moved to the wrapper so the select, edit, and remove controls read as one pill. Removal deselects the person if they were selected and closes their edit popover.\n- The existing run-in-progress guard still covers every chip action, and now also covers a chip whose own removal is in flight.",
+      "id": "xaa-idp-bar-and-people-actions"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/inspector",
+      "name": "@mcpjam/sdk",
       "type": "minor",
-      "oldVersion": "2.24.0",
+      "oldVersion": "1.32.1",
       "changesets": [
-        "release-rollup-2026-07-10"
+        "xaa-enterprise-policy"
       ],
-      "newVersion": "2.25.0"
+      "newVersion": "1.33.0"
+    },
+    {
+      "name": "@mcpjam/inspector",
+      "type": "patch",
+      "oldVersion": "2.28.0",
+      "changesets": [
+        "xaa-idp-bar-and-people-actions"
+      ],
+      "newVersion": "2.28.1"
+    },
+    {
+      "name": "@mcpjam/mcp",
+      "type": "none",
+      "oldVersion": "0.0.1",
+      "changesets": [],
+      "newVersion": "0.0.1"
     }
   ]
 }

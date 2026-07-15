@@ -21,6 +21,8 @@ import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { createAuthorizedManager, callerContextFromHono } from "../web/auth.js";
+import { resolveXaaIssuer } from "../../services/xaa-mint.js";
+import { HOSTED_MODE } from "../../config.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   RunEvalsRequestSchema,
@@ -63,7 +65,6 @@ import { synthesizeServerBody } from "./adapter.js";
 import {
   getCanonicalModelId,
   hostedModelDefinitionsFromSnapshot,
-  isModelSupported,
   SUPPORTED_MODELS,
 } from "@/shared/types";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
@@ -425,7 +426,7 @@ export function assertInlineTestModelsValid(
     const canonical = getCanonicalModelId(test.model, test.provider);
     if (isHostedCatalogModel(canonical, test.provider)) continue;
     if (modelApiKeys?.[test.provider] ?? modelApiKeys?.[provider]) continue;
-    if (isModelSupported(canonical)) continue;
+    if (MODEL_LOOKUP.some((model) => String(model.id) === canonical)) continue;
 
     const hostedIds = MODEL_LOOKUP.filter(
       (m) =>
@@ -1401,7 +1402,13 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
       WEB_CALL_TIMEOUT_MS,
       undefined,
       undefined,
-      { serverNames }
+      {
+        serverNames,
+        // v1 eval API has no host-persona input — no enterprise policy to
+        // enforce; the issuer makes per-server XAA servers mint instead of
+        // failing with 'Missing XAA issuer'.
+        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+      }
     );
 
     let prepared: PreparedEvalRun;
@@ -1517,7 +1524,13 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
     WEB_CALL_TIMEOUT_MS,
     undefined,
     undefined,
-    { serverNames }
+    {
+        serverNames,
+        // v1 eval API has no host-persona input — no enterprise policy to
+        // enforce; the issuer makes per-server XAA servers mint instead of
+        // failing with 'Missing XAA issuer'.
+        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+      }
   );
 
   // Author-only is fully synchronous: the manager is only needed to resolve
@@ -2418,7 +2431,13 @@ evals.post(
       WEB_CALL_TIMEOUT_MS,
       undefined,
       undefined,
-      { serverNames }
+      {
+        serverNames,
+        // v1 eval API has no host-persona input — no enterprise policy to
+        // enforce; the issuer makes per-server XAA servers mint instead of
+        // failing with 'Missing XAA issuer'.
+        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+      }
     );
 
     // A caseMix only counts when it requests at least one case (a bucket > 0).
