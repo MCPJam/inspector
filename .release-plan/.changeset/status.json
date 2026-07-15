@@ -4,86 +4,41 @@
       "releases": [
         {
           "name": "@mcpjam/sdk",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Unify the OAuth resource-indicator policy: one shared evaluator, per-surface enforcement.\n\n- New `evaluateResourceIndicator` (`sdk/src/oauth/resource-policy.ts`, exported from `@mcpjam/sdk/browser`) resolves the RFC 8707 `resource` once — precedence PRM → authorization-URL → configured → server URL — returning `{value, source, status, strictClientCompatible, rfc9728Compliant, reason}`. Same-origin is the usability/security boundary; RFC 9728 compliance and the official MCP SDK's path-prefix binding are reported separately so real servers (e.g. Asana's `/sse` transport with a `/v2/mcp` PRM resource) stay connectable without being mislabeled as conformant.\n- The debug state machines resolve the decision once at PRM discovery, persist it as `OAuthFlowState.resourceIndicator`, and every request and sequence-diagram preview site reads that value. A new `resourceIndicatorEnforcement: \"warn\" | \"reject\" | \"reject-rfc9728\"` machine config makes enforcement per-surface: the debugger warns and continues; `mcpjam oauth login` rejects invalid/cross-origin metadata while retaining interoperability; the conformance runner additionally rejects RFC 9728-noncompliant metadata.\n- client_credentials grants (oauth-login, conformance runner) and the negative-check baselines now honor the PRM-advertised resource instead of always sending the canonical server URL.\n- The inspector's Quick OAuth resolves through the same evaluator (its private canonicalizer/validator/precedence copy is deleted); rejection messages now name the offending source and reason.\n- Advertised resource strings remain verbatim through strict SDK `auth()`, Quick OAuth callback exchange, storage, and refresh; the public `selectResourceURL()` helper keeps its existing `URL` return contract.\n- `ResolvedAuthorizationPlan` gains an optional `resourceIndicator` decision when discovery metadata is available; `canonicalResource` semantics are unchanged.",
-      "id": "oauth-resource-policy-unification"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        }
-      ],
-      "summary": "Fix `mcpjam xaa run --registration cimd` failing with `Invalid IP address: undefined` on Node 20+.\n\nThe SSRF-hardened CIMD document fetch (`fetchPinnedPublicDocument`) pins DNS through a custom `lookup` function, but always answered with a single address string. With `autoSelectFamily` (the Node ≥ 20 default) the socket invokes the lookup with `all: true` and requires an array of `{address, family}` entries, so every CIMD fetch — public and confidential (`--client-auth private-key-jwt`) — died before any request was sent. The lookup now honors `options.all`; every resolved address is still validated against the private/reserved-range blocklist in both callback shapes.",
-      "id": "xaa-cimd-pinned-lookup-fix"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/inspector",
           "type": "minor"
         }
       ],
-      "summary": "XAA debugger UI: exercise confidential CIMD (`private_key_jwt`) in the local inspector, not just the CLI. The \"Configure Server to Test\" dialog gains a **Client authentication** control (shown for the CIMD strategy when a local credential provider is available): **Public (none)** — the existing behavior — or **Confidential (private_key_jwt)**.\n\nWhen confidential is selected, the browser asks the local server for a reflector document URL that publishes its client public key (`GET /api/mcp/xaa/confidential-cimd/client`) and presents it as its `client_id`. The local server and CLI inject the **same SDK `ConfidentialCimdProvider`** and use the same `buildXaaJwtBearerRequest` engine to sign and construct the redemption request — the browser never holds a private key. The reflector publishes the matching public key, so an authorization server that requires a confidential client can accept the run.\n\n- **SDK (`@mcpjam/sdk`):** own the CIMD client-auth vocabulary, expose an injectable `ConfidentialCimdProvider`, and share the complete authenticated JWT-bearer request builder between CLI and UI server. `isLoopbackClientMetadataUrl` / `isLoopbackHost` are exposed from the browser-safe entry for the local-dev loopback carve-out.\n- **Server (`@mcpjam/inspector`):** the local `/proxy/token` accepts `tokenEndpointAuthMethod: \"private_key_jwt\"` and delegates to the injected SDK provider; new local `GET .../xaa/confidential-cimd/client` returns its reflector `clientIdMetadataUrl` (origin derived exactly like the reflector's echoed `client_id`, so they byte-match). The hosted router does not receive a provider and therefore owns no confidential-client key.\n- **Client (`@mcpjam/inspector`):** the new per-server `xaaClientAuth` field (persisted like `xaaIdentityAssertionFormat`); `XAAFlowTab` fetches the reflector URL and threads `clientIdMetadataUrl` + the loopback flag into the shared state machine, which adopts `private_key_jwt` from the fetched document. Outdated \"debugger doesn't exercise private_key_jwt\" guidance is corrected (it now applies only to DCR-assigned methods).",
-      "id": "xaa-confidential-cimd-ui"
+      "summary": "Add the XAA enterprise-managed authorization policy helpers: `readXaaEnterprisePolicy` (three-state: off / on / invalid), `withXaaEnterprisePolicy`, `withoutXaaEnterprisePolicy`, and the `XAA_ENTERPRISE_POLICY_EXTENSION` / `XAA_ENTERPRISE_POLICY_IDPS` constants. The policy is stored under `hostConfig.mcpProfile.extensions[\"com.mcpjam/enterprise-managed-auth\"]` and marks a host persona as enterprise-managed: every HTTP server connection resolves to XAA by default unless the server's explicit auth method overrides.",
+      "id": "xaa-enterprise-policy"
     },
     {
       "releases": [
         {
           "name": "@mcpjam/inspector",
-          "type": "minor"
+          "type": "patch"
         }
       ],
-      "summary": "Add an XAA debugger identity-assertion toggle for OIDC and SAML personas.\n\nThe debugger header now lets users switch the active identity assertion mode, reuses shared XAA server form parsing, and keeps persona/registration surfaces behind the XAA registration flag.",
-      "id": "xaa-identity-assertion-toggle"
+      "summary": "XAA debugger polish: tighten the IdP bar and surface Run-as chip actions.\n\n- **IdP bar:** the issuer guidance that occupied a two-row block under the card now collapses into an info tooltip next to the hosted-issuer switch, so the assertion-format and hosted-issuer controls stay on the toolbar row. The hosted-issuer and local-URL explanations (including the anonymous test issuer caveat) are unchanged in substance — they moved from always-on prose into the tooltip, and the separate `anonymous-issuer-badge` chip is dropped now that the anonymous caveat reads inline in the hosted-issuer hint.\n- **Run-as chips:** edit and remove are always visible instead of appearing on hover, and each chip gains a dedicated remove button (previously deleting a person meant opening the edit popover first). The chip border/selection ring moved to the wrapper so the select, edit, and remove controls read as one pill. Removal deselects the person if they were selected and closes their edit popover.\n- The existing run-in-progress guard still covers every chip action, and now also covers a chip whose own removal is in flight.",
+      "id": "xaa-idp-bar-and-people-actions"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/sdk",
-      "type": "patch",
-      "oldVersion": "1.32.0",
+      "type": "minor",
+      "oldVersion": "1.32.1",
       "changesets": [
-        "oauth-resource-policy-unification",
-        "xaa-cimd-pinned-lookup-fix",
-        "xaa-confidential-cimd-ui"
+        "xaa-enterprise-policy"
       ],
-      "newVersion": "1.32.1"
+      "newVersion": "1.33.0"
     },
     {
       "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "2.27.0",
-      "changesets": [
-        "oauth-resource-policy-unification",
-        "xaa-confidential-cimd-ui",
-        "xaa-identity-assertion-toggle"
-      ],
-      "newVersion": "2.28.0"
-    },
-    {
-      "name": "@mcpjam/cli",
       "type": "patch",
-      "oldVersion": "3.15.0",
+      "oldVersion": "2.28.0",
       "changesets": [
-        "xaa-cimd-pinned-lookup-fix"
+        "xaa-idp-bar-and-people-actions"
       ],
-      "newVersion": "3.15.1"
+      "newVersion": "2.28.1"
     },
     {
       "name": "@mcpjam/mcp",
