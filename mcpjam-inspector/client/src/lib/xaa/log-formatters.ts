@@ -188,7 +188,10 @@ export function generateXAAFlowText(
     sanitizeString(summary.scope || flowState.scope || "Not set")
   )}\n`;
   text += `Test mode: ${flowState.negativeTestMode}\n`;
-  text += `Current step: ${flowState.currentStep}\n`;
+  text += `Current step: ${
+    getXAAStepInfo(flowState.currentStep, flowState.identityAssertionFormat)
+      .title
+  }\n`;
   if (flowState.error) {
     text += `ERROR: ${stringify(sanitizeString(flowState.error))}\n`;
   }

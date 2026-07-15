@@ -3,6 +3,18 @@ import { generateXAAFlowText } from "../log-formatters";
 import { createInitialXAAFlowState } from "../types";
 
 describe("generateXAAFlowText", () => {
+  it("uses the user-facing current-step title instead of the internal step id", () => {
+    const copied = generateXAAFlowText(
+      createInitialXAAFlowState({ currentStep: "jwt_bearer_request" }),
+      {}
+    );
+
+    expect(copied).toContain(
+      "Current step: Exchange the ID-JAG for an Access Token"
+    );
+    expect(copied).not.toContain("Current step: jwt_bearer_request");
+  });
+
   it("redacts credentials from copied request and response data", () => {
     const copied = generateXAAFlowText(
       createInitialXAAFlowState({

@@ -2402,15 +2402,6 @@ export function createXAAStateMachine(
       currentStep: "received_access_token",
       error: undefined,
     });
-    pushInfo(
-      "received_access_token",
-      "xaa-access-token",
-      "Access token issued",
-      {
-        token_type: state.tokenType,
-        expires_in: state.expiresIn,
-      }
-    );
   };
 
   const callAuthenticatedMcp = async () => {

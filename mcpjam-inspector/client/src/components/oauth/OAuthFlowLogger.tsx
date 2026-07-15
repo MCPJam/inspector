@@ -577,6 +577,15 @@ export function OAuthFlowLogger({
                   const infoEntries = group.entries.filter(
                     (entry) => entry.type === "info"
                   );
+                  // The raw authorization-metadata response is authoritative.
+                  // CIMD support is the one derived conclusion (including the
+                  // omitted-field default), so place that note after the response.
+                  const derivedResponseInfoEntries = infoEntries.filter(
+                    ({ log }) => log.id === "cimd-support"
+                  );
+                  const regularInfoEntries = infoEntries.filter(
+                    ({ log }) => log.id !== "cimd-support"
+                  );
                   const httpEntries = group.entries.filter(
                     (entry) => entry.type === "http"
                   );
@@ -819,7 +828,7 @@ export function OAuthFlowLogger({
                             )}
 
                             {/* Info logs */}
-                            {infoEntries.map(({ log }) => (
+                            {regularInfoEntries.map(({ log }) => (
                               <InfoLogEntry
                                 key={log.id}
                                 label={log.label}
@@ -846,6 +855,17 @@ export function OAuthFlowLogger({
                                 error={entry.error}
                                 step={entry.step}
                                 view={view}
+                              />
+                            ))}
+
+                            {derivedResponseInfoEntries.map(({ log }) => (
+                              <InfoLogEntry
+                                key={log.id}
+                                label={log.label}
+                                timestamp={log.timestamp}
+                                data={log.data}
+                                level={log.level ?? "info"}
+                                error={log.error}
                               />
                             ))}
 
