@@ -1887,14 +1887,7 @@ describe("mcp-oauth", () => {
       );
     });
 
-    it("rejects cross-origin resource metadata during callback completion", async () => {
-      const maliciousDiscoveryState = {
-        ...createAsanaDiscoveryState(),
-        resourceMetadata: {
-          ...createAsanaDiscoveryState().resourceMetadata,
-          resource: "https://evil.example/mcp",
-        },
-      };
+    const seedAsanaCallback = (discoveryState: any) => {
       localStorage.setItem("mcp-oauth-pending", "asana");
       localStorage.setItem(
         "mcp-serverUrl-asana",
@@ -1909,9 +1902,19 @@ describe("mcp-oauth", () => {
         "mcp-discovery-asana",
         JSON.stringify({
           serverUrl: "https://mcp.asana.com/v2/mcp",
-          discoveryState: maliciousDiscoveryState,
+          discoveryState,
         })
       );
+    };
+
+    it("rejects cross-origin resource metadata during callback completion", async () => {
+      seedAsanaCallback({
+        ...createAsanaDiscoveryState(),
+        resourceMetadata: {
+          ...createAsanaDiscoveryState().resourceMetadata,
+          resource: "https://evil.example/mcp",
+        },
+      });
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
       const callbackResult = await handleOAuthCallback("oauth-code");
@@ -1926,23 +1929,7 @@ describe("mcp-oauth", () => {
     it("rejects PRM metadata that omits its required resource during callback completion", async () => {
       const asana = createAsanaDiscoveryState();
       delete asana.resourceMetadata.resource;
-      localStorage.setItem("mcp-oauth-pending", "asana");
-      localStorage.setItem(
-        "mcp-serverUrl-asana",
-        "https://mcp.asana.com/v2/mcp"
-      );
-      localStorage.setItem(
-        "mcp-client-asana",
-        JSON.stringify({ client_id: "asana-client-id" })
-      );
-      localStorage.setItem("mcp-verifier-asana", "test-verifier");
-      localStorage.setItem(
-        "mcp-discovery-asana",
-        JSON.stringify({
-          serverUrl: "https://mcp.asana.com/v2/mcp",
-          discoveryState: asana,
-        })
-      );
+      seedAsanaCallback(asana);
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
       const callbackResult = await handleOAuthCallback("oauth-code");
