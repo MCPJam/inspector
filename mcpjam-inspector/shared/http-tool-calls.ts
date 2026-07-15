@@ -171,7 +171,64 @@ type ExecuteToolCallOptionsBase = {
     uri: string;
     options?: { abortSignal?: AbortSignal };
   }) => Promise<unknown>;
+  /**
+   * Called when a tool call fails with `-32042 URLElicitationRequiredError`
+   * (MCP 2025-11-25): the server needs an out-of-band interaction (an OAuth
+   * connect, a payment, …) completed before it can serve this request.
+   *
+   * Display-only — the call already failed, so there is no JSON-RPC response
+   * owed and nothing to wait on. The hook lets an interactive surface show the
+   * URL(s) for consent; the tool is retried afterwards (by the model, from the
+   * hint in the error-text result, or manually by the user).
+   */
+  onUrlElicitationRequired?: (info: {
+    serverId?: string;
+    toolCallId: string;
+    elicitations: Array<{
+      url: string;
+      elicitationId: string;
+      message?: string;
+    }>;
+  }) => void;
 };
+
+/**
+ * MCP `URLElicitationRequiredError` (-32042).
+ *
+ * Detected STRUCTURALLY, never via `instanceof`: the error may cross package
+ * copies (the inspector and the SDK can resolve different upstream client
+ * instances), which makes prototype identity unreliable. The shape is the
+ * contract.
+ */
+const URL_ELICITATION_REQUIRED_CODE = -32042;
+
+function readUrlElicitations(
+  error: unknown,
+): Array<{ url: string; elicitationId: string; message?: string }> | null {
+  if (!error || typeof error !== "object") return null;
+  const candidate = error as { code?: unknown; data?: unknown };
+  if (candidate.code !== URL_ELICITATION_REQUIRED_CODE) return null;
+
+  const data = candidate.data as { elicitations?: unknown } | undefined;
+  if (!data || !Array.isArray(data.elicitations)) return null;
+
+  const parsed = data.elicitations.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const item = entry as Record<string, unknown>;
+    if (typeof item.url !== "string" || typeof item.elicitationId !== "string") {
+      return [];
+    }
+    return [
+      {
+        url: item.url,
+        elicitationId: item.elicitationId,
+        ...(typeof item.message === "string" ? { message: item.message } : {}),
+      },
+    ];
+  });
+
+  return parsed.length > 0 ? parsed : null;
+}
 
 type ExecuteToolCallOptions = ExecuteToolCallOptionsBase &
   (
@@ -483,9 +540,26 @@ export async function executeToolCallsFromMessages(
           if (isAbortError(error)) {
             throw error;
           }
+          // -32042: the server wants an out-of-band interaction first. Surface
+          // the URLs structurally to the UI and give the model an actionable
+          // retry hint instead of a raw protocol error it can't interpret.
+          const urlElicitations = readUrlElicitations(error);
+          if (urlElicitations) {
+            options.onUrlElicitationRequired?.({
+              // Recomputed, not captured: the `serverId` binding lives inside
+              // the try block and isn't in scope here.
+              serverId: extractServerId(content.toolName),
+              toolCallId: content.toolCallId,
+              elicitations: urlElicitations,
+            });
+          }
           const errorOutput: ToolResultPart = {
             type: "error-text",
-            value: error instanceof Error ? error.message : String(error),
+            value: urlElicitations
+              ? "This tool needs the user to complete an interaction at a URL first. The user has been shown the link and may complete it out of band. Retry this tool once they confirm they're done."
+              : error instanceof Error
+                ? error.message
+                : String(error),
           } as any;
           const errorToolResultMessage: ModelMessage = {
             role: "tool" as const,

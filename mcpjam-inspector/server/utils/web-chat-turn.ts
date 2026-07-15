@@ -68,6 +68,7 @@ import type { HarnessSessionCommitPayload } from "./harness/harness-session-stat
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
+import type { HostedElicitationBridge } from "./../routes/web/hosted-elicitation.js";
 import { bridgeHarnessRpcLogsToCollector } from "./../routes/web/hosted-rpc-logs.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getClientIp } from "./client-ip.js";
@@ -187,6 +188,13 @@ export interface WebChatTurnRuntime {
   abortSignal: AbortSignal | undefined;
   /** Hosted RPC log collector — attached to the stream writer. Optional. */
   rpcCollector?: RpcCollector;
+  /**
+   * Hosted elicitation bridge — attached to the stream writer alongside the
+   * RPC collector, and disposed on stream completion. Present only for
+   * interactive turns whose host declares the elicitation capability AND whose
+   * client speaks the hosted-elicitation handshake; see `chat-v2.ts`.
+   */
+  elicitationBridge?: HostedElicitationBridge;
   /** Hono context (needed for getClientIp fallback / future hooks). */
   c: Context;
 }
@@ -298,6 +306,11 @@ export async function streamWebChatTurn(
 
   const hostedChatSessionId = persist.chatSessionId;
   const cleanupStream = async () => {
+    // Withdraw pending elicitation rows BEFORE dropping the connections: once
+    // the stream is gone nobody can answer, and an abandoned row would stay
+    // answerable until its TTL. Disposal is best-effort and must never block
+    // the disconnect, so failures are swallowed inside the bridge.
+    await runtime.elicitationBridge?.dispose();
     await manager.disconnectAllServers();
   };
 
@@ -470,8 +483,10 @@ export async function streamWebChatTurn(
         requireToolApproval: persist.requireToolApproval,
         onConversationComplete,
         onStreamComplete: cleanupStream,
-        onStreamWriterReady: (writer) =>
-          runtime.rpcCollector?.attachStreamWriter(writer),
+        onStreamWriterReady: (writer) => {
+          runtime.rpcCollector?.attachStreamWriter(writer);
+          runtime.elicitationBridge?.attachStreamWriter(writer);
+        },
         abortSignal: runtime.abortSignal,
       });
     }
@@ -500,8 +515,10 @@ export async function streamWebChatTurn(
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       onConversationComplete,
       onStreamComplete: cleanupStream,
-      onStreamWriterReady: (writer) =>
-        runtime.rpcCollector?.attachStreamWriter(writer),
+      onStreamWriterReady: (writer) => {
+        runtime.rpcCollector?.attachStreamWriter(writer);
+        runtime.elicitationBridge?.attachStreamWriter(writer);
+      },
       abortSignal: runtime.abortSignal,
     });
   }
@@ -572,8 +589,19 @@ export async function streamWebChatTurn(
       stopHarnessRpcLogBridge = undefined;
       await cleanupStream();
     },
+    onUrlElicitationRequired: (info) =>
+      runtime.elicitationBridge?.emitUrlRequired({
+        serverId: info.serverId ?? "unknown",
+        toolCallId: info.toolCallId,
+        elicitations: info.elicitations,
+      }),
     onStreamWriterReady: (writer) => {
       runtime.rpcCollector?.attachStreamWriter(writer);
+      // NOTE: for HARNESS hosts this writer exists but elicitation still won't
+      // fire — harness MCP traffic goes through separate /api/web/harness-mcp
+      // requests, not this turn's manager, so the callback is never invoked.
+      // Attaching is harmless and keeps the three sites uniform.
+      runtime.elicitationBridge?.attachStreamWriter(writer);
       if (persist.harness && runtime.rpcCollector && !stopHarnessRpcLogBridge) {
         stopHarnessRpcLogBridge = bridgeHarnessRpcLogsToCollector(
           persist.selectedServerIds,
