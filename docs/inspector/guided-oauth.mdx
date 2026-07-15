@@ -73,6 +73,25 @@ The trace persists across page reloads so you can inspect a failed OAuth flow af
 
 OAuth trace steps also appear as filterable entries in the traffic log. Select **OAuth** from the **Source** filter in the log panel to isolate them. See [OAuth log entries](/inspector/tools-prompts-resources#oauth-log-entries) for details on the status indicators.
 
+## Bearer token authentication
+
+When you configure an HTTP server with a bearer token, the **Auth** tab shows a **Bearer Token Authentication** panel instead of the OAuth panel. The panel confirms that the server is using bearer auth and directs you to the server configuration to manage or rotate the token.
+
+The **Auth** tab also displays an **Authentication** label that reflects the current auth type for the selected server: **Bearer Token**, **OAuth**, **Process-based** (STDIO), or **No Authentication**.
+
+### Saved bearer tokens
+
+When a bearer token has been saved for a server, the token value is hidden in the edit form. The **Bearer Token** field shows the placeholder text **"Saved — enter a new value to replace"** to indicate that a token is stored without revealing it.
+
+- **Leave the field blank** to keep the existing saved token when you save other changes to the server.
+- **Enter a new value** to replace the saved token on the next save.
+
+In hosted mode, a **Reveal** button appears next to the **Bearer Token** label. Clicking it fetches and displays the stored token value so you can inspect or copy it. The revealed value is cleared when you close the panel or navigate away.
+
+<Note>
+Bearer tokens are stored securely and are never written to your browser's local storage in hosted mode. In local mode, the token is stored in your browser's local storage alongside the rest of your server configuration.
+</Note>
+
 ## Pre-registered client secrets
 
 When you configure a pre-registered OAuth client with a client secret, the secret is stored securely and never exposed in the UI after saving. The client secret field shows the following controls:
