@@ -73,6 +73,26 @@ describe("ChatboxShareSection", () => {
     ).toBeInTheDocument();
   });
 
+  it("hides guest execution unless link guest access is selected", () => {
+    const { rerender } = render(
+      <ChatboxShareSection chatbox={createChatbox()} projectName="Acme" />,
+    );
+
+    expect(screen.queryByText("Guest execution")).not.toBeInTheDocument();
+
+    rerender(
+      <ChatboxShareSection
+        chatbox={createChatbox({
+          allowGuestAccess: true,
+          mode: "anyone_with_link",
+        })}
+        projectName="Acme"
+      />,
+    );
+
+    expect(screen.getByText("Guest execution")).toBeInTheDocument();
+  });
+
   it("shows an Invited section when there are pending members", () => {
     const chatbox = createChatbox({
       members: [

@@ -1,18 +1,18 @@
 import { webPost, WebApiError } from "@/lib/apis/web/base";
 
-export interface FetchHostedOAuthClientSecretRequest {
+export interface FetchOAuthClientSecretRequest {
   projectId: string;
   serverId: string;
 }
 
-export interface HostedOAuthClientSecretResult {
+export interface OAuthClientSecretResult {
   clientSecret: string;
 }
 
-export async function fetchHostedOAuthClientSecret(
-  request: FetchHostedOAuthClientSecretRequest,
-): Promise<HostedOAuthClientSecretResult> {
-  const body = await webPost<FetchHostedOAuthClientSecretRequest, unknown>(
+export async function fetchOAuthClientSecret(
+  request: FetchOAuthClientSecretRequest,
+): Promise<OAuthClientSecretResult> {
+  const body = await webPost<FetchOAuthClientSecretRequest, unknown>(
     "/api/web/oauth/client-secret",
     request,
   );
@@ -32,3 +32,7 @@ export async function fetchHostedOAuthClientSecret(
 
   return { clientSecret: result.clientSecret };
 }
+
+export const fetchHostedOAuthClientSecret = fetchOAuthClientSecret;
+export type FetchHostedOAuthClientSecretRequest = FetchOAuthClientSecretRequest;
+export type HostedOAuthClientSecretResult = OAuthClientSecretResult;

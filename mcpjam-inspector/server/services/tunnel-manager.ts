@@ -5,6 +5,18 @@ import {
   unregisterTunnelDomain,
 } from "./tunnel-registry";
 
+/**
+ * A tunnel is bound to one path scope. `adapter-http` (default) fronts the
+ * desktop MCP adapter; `harness-web` fronts the hosted harness proxy route.
+ * Both can be live for the same server simultaneously, so the manager keys
+ * entries by `(scope, serverId)`.
+ */
+export type TunnelScope = "adapter-http" | "harness-web";
+
+function entryKey(scope: TunnelScope, serverId: string): string {
+  return `${scope}\x1f${serverId}`;
+}
+
 interface TunnelEntry {
   connection: RelayConnection;
   /** Public host ({slug}.tunnels.mcpjam.com) registered for isolation checks. */
@@ -36,9 +48,11 @@ class TunnelManager {
    */
   async createTunnel(
     serverId: string,
-    options: CreateTunnelOptions
+    options: CreateTunnelOptions,
+    scope: TunnelScope = "adapter-http"
   ): Promise<string> {
-    const existingTunnel = this.tunnels.get(serverId);
+    const key = entryKey(scope, serverId);
+    const existingTunnel = this.tunnels.get(key);
     if (existingTunnel) {
       return existingTunnel.baseUrl;
     }
@@ -61,15 +75,23 @@ class TunnelManager {
           earlyPermanentFailure = { reason, code };
           return;
         }
-        this.dropEntry(serverId, reason, code);
+        this.dropEntry(key, serverId, reason, code);
       },
     } satisfies RelayConnectionOptions);
 
     try {
       await connection.connect();
-      if (earlyPermanentFailure || connection.permanentFailure) {
+      // Snapshot with an `as` cast: the closure-assigned `let` is otherwise
+      // flow-narrowed to its `null` initializer (the assignment is invisible to
+      // TS), which makes the `||` truthy-branch collapse to `never`. The cast
+      // restores the real declared type.
+      const early = earlyPermanentFailure as {
+        reason: string;
+        code: number;
+      } | null;
+      if (early || connection.permanentFailure) {
         throw new Error(
-          earlyPermanentFailure?.reason ??
+          early?.reason ??
             connection.permanentFailure ??
             "Tunnel relay closed permanently before registration"
         );
@@ -98,7 +120,7 @@ class TunnelManager {
     }
 
     const baseUrl = `https://${host}`;
-    this.tunnels.set(serverId, {
+    this.tunnels.set(key, {
       connection,
       host,
       baseUrl,
@@ -107,10 +129,12 @@ class TunnelManager {
       secretVersion: options.secretVersion,
     });
     registered = true;
+    // Register the host for tunnel isolation + the session-token-leak guard
+    // (which must deny the session token on harness-web tunnel hosts too).
     registerTunnelDomain(host, serverId);
 
     logger.info(
-      `✓ Created tunnel (${serverId}): ${baseUrl} -> ${options.localAddr}`
+      `✓ Created tunnel [${scope}] (${serverId}): ${baseUrl} -> ${options.localAddr}`
     );
     return baseUrl;
   }
@@ -124,30 +148,41 @@ class TunnelManager {
    */
   async rotateTunnel(
     serverId: string,
-    options: CreateTunnelOptions
+    options: CreateTunnelOptions,
+    scope: TunnelScope = "adapter-http"
   ): Promise<string> {
-    await this.closeTunnel(serverId);
-    return this.createTunnel(serverId, options);
+    await this.closeTunnel(serverId, scope);
+    return this.createTunnel(serverId, options, scope);
   }
 
-  async closeTunnel(serverId: string): Promise<void> {
-    const entry = this.tunnels.get(serverId);
+  async closeTunnel(
+    serverId: string,
+    scope: TunnelScope = "adapter-http"
+  ): Promise<void> {
+    const key = entryKey(scope, serverId);
+    const entry = this.tunnels.get(key);
     if (!entry) {
       return;
     }
 
     entry.connection.close();
-    this.tunnels.delete(serverId);
+    this.tunnels.delete(key);
     unregisterTunnelDomain(entry.host);
-    logger.info(`✓ Closed tunnel (${serverId})`);
+    logger.info(`✓ Closed tunnel [${scope}] (${serverId})`);
   }
 
-  getServerTunnelUrl(serverId: string): string | null {
-    return this.tunnels.get(serverId)?.publicUrl ?? null;
+  getServerTunnelUrl(
+    serverId: string,
+    scope: TunnelScope = "adapter-http"
+  ): string | null {
+    return this.tunnels.get(entryKey(scope, serverId))?.publicUrl ?? null;
   }
 
-  getServerTunnelSlug(serverId: string): string | null {
-    return this.tunnels.get(serverId)?.slug ?? null;
+  getServerTunnelSlug(
+    serverId: string,
+    scope: TunnelScope = "adapter-http"
+  ): string | null {
+    return this.tunnels.get(entryKey(scope, serverId))?.slug ?? null;
   }
 
   hasTunnel(): boolean {
@@ -155,16 +190,23 @@ class TunnelManager {
   }
 
   async closeAll(): Promise<void> {
-    const serverIds = [...this.tunnels.keys()];
-    for (const serverId of serverIds) {
-      await this.closeTunnel(serverId);
+    const entries = [...this.tunnels.values()];
+    this.tunnels.clear();
+    for (const entry of entries) {
+      entry.connection.close();
+      unregisterTunnelDomain(entry.host);
     }
   }
 
-  private dropEntry(serverId: string, reason: string, code: number): void {
-    const entry = this.tunnels.get(serverId);
+  private dropEntry(
+    key: string,
+    serverId: string,
+    reason: string,
+    code: number
+  ): void {
+    const entry = this.tunnels.get(key);
     if (!entry) return;
-    this.tunnels.delete(serverId);
+    this.tunnels.delete(key);
     unregisterTunnelDomain(entry.host);
     logger.warn(`Tunnel (${serverId}) ended by relay [${code}]: ${reason}`);
   }

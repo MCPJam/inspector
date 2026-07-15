@@ -33,9 +33,17 @@ function safeHostname(url: string | undefined): string {
 oauth.post("/debug/proxy", async (c) => {
   let proxyUrl: string | undefined;
   try {
-    const { url, method, body, headers } = await c.req.json();
+    const { url, method, body, headers, redirect } = await c.req.json();
     proxyUrl = url;
-    const result = await executeDebugOAuthProxy({ url, method, body, headers });
+    const result = await executeDebugOAuthProxy({
+      url,
+      method,
+      body,
+      headers,
+      // Only the two fetch redirect modes we support; anything else is ignored
+      // so a crafted value cannot reach fetch().
+      ...(redirect === "manual" || redirect === "follow" ? { redirect } : {}),
+    });
     return c.json(result);
   } catch (error) {
     const targetUrlHost = safeHostname(proxyUrl);

@@ -14,13 +14,12 @@ import {
 } from "@/components/ui/resizable";
 import { ShareUsageThreadList } from "./ShareUsageThreadList";
 import { ShareUsageThreadDetail } from "./ShareUsageThreadDetail";
-import type { SharedChatSourceType } from "@/hooks/useSharedChatThreads";
 
 interface ShareUsageDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onBackToSettings: () => void;
-  sourceType: SharedChatSourceType;
+  sourceType: "chatbox";
   sourceId: string;
   title: string;
 }

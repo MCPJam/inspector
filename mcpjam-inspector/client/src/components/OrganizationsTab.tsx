@@ -32,7 +32,7 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   Card,
   CardContent,
@@ -253,6 +253,123 @@ function PendingSeatPaymentNotice({
   );
 }
 
+// Shared leave-organization logic used by both the access-restricted screen and
+// the settings danger zone, so removal rules and error handling stay in sync.
+function useLeaveOrganization(organization: Organization) {
+  const appNavigate = useAppNavigate();
+  const { user } = useAuth();
+  const { removeMember } = useOrganizationMutations();
+  const currentUserEmail = user?.email;
+
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+  const [isLeaving, setIsLeaving] = useState(false);
+
+  const handleLeave = async () => {
+    if (!currentUserEmail) return;
+
+    setIsLeaving(true);
+    try {
+      await removeMember({
+        organizationId: organization._id,
+        email: currentUserEmail,
+      });
+      toast.success("You have left the organization");
+      setLeaveConfirmOpen(false);
+      appNavigate("/servers");
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to leave organization");
+    } finally {
+      setIsLeaving(false);
+    }
+  };
+
+  return { leaveConfirmOpen, setLeaveConfirmOpen, isLeaving, handleLeave };
+}
+
+function LeaveOrganizationDialog({
+  organizationName,
+  open,
+  onOpenChange,
+  isLeaving,
+  onConfirm,
+}: {
+  organizationName: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  isLeaving: boolean;
+  onConfirm: () => void;
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Leave Organization?</AlertDialogTitle>
+          <AlertDialogDescription>
+            You will lose access to "{organizationName}". You'll need to be
+            re-invited to rejoin.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={isLeaving}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            // Keep the dialog open while the request is in flight; it closes
+            // on success (via handleLeave) or stays open to surface errors.
+            onClick={(event) => {
+              event.preventDefault();
+              void onConfirm();
+            }}
+            disabled={isLeaving}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          >
+            {isLeaving ? "Leaving..." : "Leave Organization"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function OrganizationAccessRestricted({
+  organization,
+}: {
+  organization: Organization;
+}) {
+  const appNavigate = useAppNavigate();
+  const { leaveConfirmOpen, setLeaveConfirmOpen, isLeaving, handleLeave } =
+    useLeaveOrganization(organization);
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full p-8">
+      <div className="text-center space-y-4 max-w-md">
+        <Building2 className="size-12 text-muted-foreground/50 mx-auto" />
+        <h2 className="text-2xl font-bold">Access restricted</h2>
+        <p className="text-muted-foreground">
+          You don't have permission to view organization settings. Contact an
+          admin or owner for access.
+        </p>
+        <div className="flex flex-col items-center gap-3">
+          <Button onClick={() => appNavigate("/servers")}>Go to Servers</Button>
+          <button
+            type="button"
+            onClick={() => setLeaveConfirmOpen(true)}
+            className="text-sm text-muted-foreground transition-colors hover:text-destructive"
+          >
+            Leave organization
+          </button>
+        </div>
+      </div>
+
+      <LeaveOrganizationDialog
+        organizationName={organization.name}
+        open={leaveConfirmOpen}
+        onOpenChange={setLeaveConfirmOpen}
+        isLeaving={isLeaving}
+        onConfirm={handleLeave}
+      />
+    </div>
+  );
+}
+
 export function OrganizationsTab({
   organizationId,
   section = "overview",
@@ -332,19 +449,7 @@ export function OrganizationsTab({
   const hasAccess = myRole === "owner" || myRole === "admin";
 
   if (!hasAccess) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full p-8">
-        <div className="text-center space-y-4 max-w-md">
-          <Building2 className="size-12 text-muted-foreground/50 mx-auto" />
-          <h2 className="text-2xl font-bold">Access restricted</h2>
-          <p className="text-muted-foreground">
-            You don't have permission to view organization settings. Contact an
-            admin or owner for access.
-          </p>
-          <Button onClick={() => appNavigate("/servers")}>Go to Servers</Button>
-        </div>
-      </div>
-    );
+    return <OrganizationAccessRestricted organization={organization} />;
   }
 
   return (
@@ -518,8 +623,8 @@ function OrganizationPage({
   // Delete/Leave state
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
-  const [isLeaving, setIsLeaving] = useState(false);
+  const { leaveConfirmOpen, setLeaveConfirmOpen, isLeaving, handleLeave } =
+    useLeaveOrganization(organization);
   const [
     scheduledBillingChangeConfirmOpen,
     setScheduledBillingChangeConfirmOpen,
@@ -763,25 +868,6 @@ function OrganizationPage({
       toast.error((error as Error).message || "Failed to delete organization");
     } finally {
       setIsDeleting(false);
-    }
-  };
-
-  const handleLeave = async () => {
-    if (!currentUserEmail) return;
-
-    setIsLeaving(true);
-    try {
-      await removeMember({
-        organizationId: organization._id,
-        email: currentUserEmail,
-      });
-      toast.success("You have left the organization");
-      setLeaveConfirmOpen(false);
-      appNavigate("/servers");
-    } catch (error) {
-      toast.error((error as Error).message || "Failed to leave organization");
-    } finally {
-      setIsLeaving(false);
     }
   };
 
@@ -1630,27 +1716,13 @@ function OrganizationPage({
       </AlertDialog>
 
       {/* Leave Confirmation */}
-      <AlertDialog open={leaveConfirmOpen} onOpenChange={setLeaveConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Leave Organization?</AlertDialogTitle>
-            <AlertDialogDescription>
-              You will lose access to "{organization.name}". You'll need to be
-              re-invited to rejoin.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleLeave}
-              disabled={isLeaving}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {isLeaving ? "Leaving..." : "Leave Organization"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <LeaveOrganizationDialog
+        organizationName={organization.name}
+        open={leaveConfirmOpen}
+        onOpenChange={setLeaveConfirmOpen}
+        isLeaving={isLeaving}
+        onConfirm={handleLeave}
+      />
     </div>
   );
 }

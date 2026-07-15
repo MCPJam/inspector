@@ -19,6 +19,14 @@ export default defineConfig({
     "@hono/node-server",
     "hono",
     "ai",
+    // The AI SDK *harness* packages bundle their own `ai@7-canary` (a regular
+    // dependency, so it installs nested and never collides with the server's
+    // top-level `ai@6`). Keep them external so they're required from
+    // node_modules at runtime — bundling them would make esbuild rewrite their
+    // internal `import "ai"` to the external (v6) `ai` above and break the v7
+    // harness.
+    "@ai-sdk/harness",
+    "@ai-sdk/harness-claude-code",
     "@ai-sdk/anthropic",
     "@ai-sdk/openai",
     "@ai-sdk/deepseek",
@@ -38,6 +46,14 @@ export default defineConfig({
     // Packages with dynamic requires
     "chalk",
     "supports-color",
+    // XML-DSig stack for the XAA SAML mock IdP (transitive via @mcpjam/sdk).
+    // These are CommonJS with dynamic `require()` calls, so bundling them into
+    // the ESM server output makes esbuild emit a throwing `__require` shim
+    // ("Dynamic require of \"util\" is not supported"). Keep them external so
+    // they're required from node_modules at runtime, like chalk/supports-color.
+    "xml-crypto",
+    "@xmldom/xmldom",
+    "xpath",
     // Headless-browser harness deps (eval browser-render): resolved at runtime,
     // never bundled. `playwright` is a direct dep (auto-external); `playwright-core`
     // is its transitive fallback (`await import("playwright-core")`) and must be
@@ -50,18 +66,25 @@ export default defineConfig({
     // Force bundling of problematic packages
     "exit-hook",
     "@mcpjam/sdk",
+    "@mcpjam/sdk/browser",
     "@mcpjam/sdk/operations",
     "@mcpjam/sdk/model-factory",
     "@mcpjam/sdk/matchers",
     "@mcpjam/sdk/predicates",
     "@mcpjam/sdk/host-config/internal",
+    "@mcpjam/sdk/host-config/templates",
     "@mcpjam/sdk/platform",
+    "@mcpjam/sdk/public-api",
+    "@mcpjam/sdk/host-compat",
   ],
   esbuildOptions(options) {
     options.platform = "node";
     options.mainFields = ["module", "main"];
     // Configure path aliases for local SDK build outputs, including subpaths.
     options.alias = {
+      // Specific subpaths BEFORE the bare alias — shared/xaa.ts re-exports XAA
+      // primitives from the browser entry, so the server bundle must resolve it.
+      "@mcpjam/sdk/browser": join(rootDir, "../sdk/dist/browser.js"),
       "@mcpjam/sdk": join(rootDir, "../sdk/dist/index.js"),
       "@mcpjam/sdk/operations": join(rootDir, "../sdk/dist/operations.js"),
       "@mcpjam/sdk/model-factory": join(rootDir, "../sdk/dist/model-factory.js"),
@@ -71,7 +94,19 @@ export default defineConfig({
         rootDir,
         "../sdk/dist/host-config/internal.js",
       ),
+      "@mcpjam/sdk/host-config/templates": join(
+        rootDir,
+        "../sdk/dist/host-config/templates/index.js",
+      ),
       "@mcpjam/sdk/platform": join(rootDir, "../sdk/dist/platform/index.js"),
+      "@mcpjam/sdk/public-api": join(
+        rootDir,
+        "../sdk/dist/public-api/index.js",
+      ),
+      "@mcpjam/sdk/host-compat": join(
+        rootDir,
+        "../sdk/dist/host-compat/index.js",
+      ),
     };
   },
 });

@@ -18,9 +18,24 @@ import {
 } from "./lib/electron-hosted-auth";
 import { useUnifiedConvexAuth } from "./lib/unified-convex-auth";
 import { getRuntimeConvexUrl } from "./lib/runtime-config";
-import { normalizeInitialLegacyHashBookmark } from "./lib/app-navigation";
+import {
+  isDebugOAuthCallbackPath,
+  normalizeInitialLegacyHashBookmark,
+} from "./lib/app-navigation";
+import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
+import {
+  getInitialThemeMode,
+  getInitialThemePreset,
+  updateThemeMode,
+  updateThemePreset,
+} from "./lib/theme-utils";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 import { DbUserReadyProvider } from "./contexts/db-user-ready-context";
+import {
+  clearLegacyWorkosRefreshTokenStorage,
+  resolveWorkosClientOptions,
+  resolveWorkosDevMode,
+} from "./lib/workos-authkit-config";
 
 // Initialize Sentry before React mounts
 initSentry();
@@ -82,22 +97,24 @@ if (isInIframe) {
       <IframeRouterError />
     </StrictMode>
   );
+} else if (isDebugOAuthCallbackPath(window.location.pathname)) {
+  // Throwaway popup: render without <AuthKitProvider>/Convex so it can't fire a
+  // WorkOS refresh that logs the opener window out. See isDebugOAuthCallbackPath.
+  // App's theme bootstrap doesn't run here, so apply the stored theme directly.
+  updateThemeMode(getInitialThemeMode());
+  updateThemePreset(getInitialThemePreset());
+  const root = createRoot(document.getElementById("root")!);
+  root.render(
+    <StrictMode>
+      <OAuthDebugCallback />
+    </StrictMode>
+  );
 } else {
   const buildConvexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
   const runtimeConvexUrl = getRuntimeConvexUrl();
   const convexUrl = runtimeConvexUrl || buildConvexUrl || "";
   const workosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as string;
-  const workosDevMode = (() => {
-    const explicit = import.meta.env.VITE_WORKOS_DEV_MODE as string | undefined;
-    if (explicit === "true") return true;
-    if (explicit === "false") return false;
-    if (import.meta.env.DEV) return true;
-    // Match SDK default: enable devMode on localhost so refresh tokens
-    // persist in localStorage across hard refreshes for local prod builds.
-    return (
-      location.hostname === "localhost" || location.hostname === "127.0.0.1"
-    );
-  })();
+  const workosDevMode = resolveWorkosDevMode(import.meta.env);
 
   // Compute redirect URI safely across environments
   const workosRedirectUri = (() => {
@@ -159,29 +176,13 @@ if (isInIframe) {
     );
   }
 
-  const workosClientOptions = (() => {
-    const envApiHostname = import.meta.env.VITE_WORKOS_API_HOSTNAME as
-      | string
-      | undefined;
-    if (envApiHostname) {
-      return { apiHostname: envApiHostname };
-    }
-
-    // Dev mode: proxy through Vite dev server to avoid CORS
-    if (typeof window === "undefined") return {};
-    const disableProxy =
-      (import.meta.env.VITE_WORKOS_DISABLE_LOCAL_PROXY as
-        | string
-        | undefined) === "true";
-    if (!import.meta.env.DEV || disableProxy) return {};
-    const { protocol, hostname, port } = window.location;
-    const parsedPort = port ? Number(port) : undefined;
-    return {
-      apiHostname: hostname,
-      https: protocol === "https:",
-      ...(parsedPort ? { port: parsedPort } : {}),
-    };
-  })();
+  const workosClientOptions = resolveWorkosClientOptions(
+    import.meta.env,
+    typeof window === "undefined" ? undefined : window.location
+  );
+  if (!workosDevMode) {
+    clearLegacyWorkosRefreshTokenStorage();
+  }
 
   const convex = new ConvexReactClient(convexUrl);
   normalizeInitialLegacyHashBookmark();
@@ -191,6 +192,11 @@ if (isInIframe) {
       clientId={workosClientId}
       redirectUri={workosRedirectUri}
       devMode={workosDevMode}
+      onRefresh={() => {
+        if (!workosDevMode) {
+          clearLegacyWorkosRefreshTokenStorage();
+        }
+      }}
       {...workosClientOptions}
     >
       <ConvexProviderWithAuthKit client={convex} useAuth={useUnifiedConvexAuth}>
@@ -204,6 +210,8 @@ if (isInIframe) {
   // Async bootstrap to initialize session token before rendering
   async function bootstrap() {
     const root = createRoot(document.getElementById("root")!);
+    const skipLocalSessionBootstrap =
+      import.meta.env.DEV && window.location.pathname.startsWith("/__e2e/");
 
     if (electronHostedAuthCallbackUrl) {
       root.render(
@@ -217,7 +225,7 @@ if (isInIframe) {
     }
 
     try {
-      if (!HOSTED_MODE) {
+      if (!HOSTED_MODE && !skipLocalSessionBootstrap) {
         // Initialize session token BEFORE rendering in local mode.
         await initializeSessionToken();
         console.log("[Auth] Session token initialized");

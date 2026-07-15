@@ -80,14 +80,68 @@ const app = new App({ name: "fixture-delayed", version: "1.0.0" });
 // Plain HTML with no guest SDK: paints text but never handshakes -> bridge_timeout.
 const STATIC_NO_BRIDGE_HTML = `<!doctype html><html><head><meta charset="utf-8"></head><body><p style="font-size:24px;padding:20px">Static content, no bridge handshake</p></body></html>`;
 
+// A guest exercising scripted interaction steps: a text input (by testId), a
+// "Save" button (by role+name) that reveals "Saved!" text and calls a server
+// tool. Drives the runScriptedStep selector + assertion paths.
+const SCRIPTED_GUEST_SRC = `
+import { App } from "@modelcontextprotocol/ext-apps";
+const app = new App({ name: "fixture-scripted", version: "1.0.0" });
+(async () => {
+  await app.connect();
+  const input = document.createElement("input");
+  input.setAttribute("data-testid", "name");
+  input.style.cssText = "display:block;font-size:18px;margin:20px";
+  document.body.appendChild(input);
+
+  const status = document.createElement("div");
+  status.id = "status";
+  status.style.cssText = "font-size:24px;padding:20px";
+  document.body.appendChild(status);
+
+  const btn = document.createElement("button");
+  btn.textContent = "Save";
+  btn.style.cssText = "font-size:18px;padding:10px;margin:20px";
+  btn.addEventListener("click", () => {
+    status.textContent = "Saved!";
+    app.callServerTool({ name: "persist", arguments: {} }).catch(() => {});
+  });
+  document.body.appendChild(btn);
+})();
+`;
+
+// A guest whose button sends a `ui/message` follow-up (the MCP Apps affordance
+// for a widget to add a user message to the chat). Drives the harness's
+// onSendFollowUp capture path.
+const FOLLOWUP_GUEST_SRC = `
+import { App } from "@modelcontextprotocol/ext-apps";
+const app = new App({ name: "fixture-followup", version: "1.0.0" });
+(async () => {
+  await app.connect();
+  const btn = document.createElement("button");
+  btn.textContent = "Show cart";
+  btn.style.cssText = "font-size:18px;padding:10px;margin:20px";
+  btn.addEventListener("click", () => {
+    app.sendMessage({
+      role: "user",
+      content: [{ type: "text", text: "Show my cart" }],
+    }).catch(() => {});
+  });
+  document.body.appendChild(btn);
+})();
+`;
+
 let buttonHtml = "";
 let blankHtml = "";
 let delayedHtml = "";
+let scriptedHtml = "";
+let followupHtml = "";
 
 beforeAll(async () => {
   buttonHtml = guestHtml(await bundleGuest(BUTTON_GUEST_SRC));
   blankHtml = guestHtml(await bundleGuest(BLANK_GUEST_SRC));
   delayedHtml = guestHtml(await bundleGuest(DELAYED_PAINT_GUEST_SRC));
+  scriptedHtml = guestHtml(await bundleGuest(SCRIPTED_GUEST_SRC));
+  followupHtml = guestHtml(await bundleGuest(FOLLOWUP_GUEST_SRC));
 }, 60_000);
 
 const harnesses: McpAppBrowserHarness[] = [];
@@ -157,6 +211,21 @@ describe("McpAppBrowserHarness — Chromium gating", () => {
   });
 });
 
+describe("McpAppBrowserHarness — collectVideo (fail-soft + idempotent)", () => {
+  it("returns null when the harness never launched, and stays a no-op", async () => {
+    const h = new McpAppBrowserHarness({
+      callTool: async () => ({ content: [] }),
+    });
+    harnesses.push(h);
+    // No render → no page/video → null, never throws.
+    expect(await h.collectVideo()).toBeNull();
+    // Memoized: a second call (and a later dispose) is a safe no-op.
+    expect(await h.collectVideo()).toBeNull();
+    await expect(h.dispose()).resolves.toBeUndefined();
+    expect(await h.collectVideo()).toBeNull();
+  });
+});
+
 describe.skipIf(!CHROMIUM_AVAILABLE)("McpAppBrowserHarness — render classification", () => {
   it("classifies a handshaking, painting widget as rendered", async () => {
     const h = makeHarness();
@@ -175,6 +244,30 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("McpAppBrowserHarness — render classifica
     // screenshot within the byte budget (256 KiB default).
     const bytes = Buffer.from(obs.screenshotBase64!, "base64").byteLength;
     expect(bytes).toBeLessThanOrEqual(256 * 1024);
+  }, 30_000);
+
+  it("records a .webm and collectVideo returns its non-empty bytes", async () => {
+    // The ONLY test that exercises the real Playwright close-then-read ordering
+    // in collectVideo (capture video ref → close context to flush → readFile).
+    const h = makeHarness();
+    const obs = await h.renderWidget({
+      toolCallId: "tc-vid",
+      toolName: "show_seats",
+      serverId: "s1",
+      html: buttonHtml,
+      resourceUri: "ui://widget/seats",
+    });
+    expect(obs.status).toBe("rendered");
+
+    const video = await h.collectVideo();
+    expect(video).not.toBeNull();
+    expect(video!.byteLength).toBeGreaterThan(0);
+    // WebM/Matroska EBML magic — proves a real, decodable container was flushed.
+    expect(Array.from(video!.subarray(0, 4))).toEqual([0x1a, 0x45, 0xdf, 0xa3]);
+
+    // Idempotent: a second call returns the cached bytes (context already closed).
+    const again = await h.collectVideo();
+    expect(again).toEqual(video);
   }, 30_000);
 
   it("classifies static HTML that never handshakes as bridge_timeout", async () => {
@@ -780,3 +873,113 @@ describe("pushBoundedDiagnostic", () => {
     expect(arr[0]).toBe("e0"); // earliest entries are the ones kept
   });
 });
+
+describe.skipIf(!CHROMIUM_AVAILABLE)(
+  "McpAppBrowserHarness — scripted interaction steps",
+  () => {
+    it("types by testId, clicks by role+name, and asserts widget state", async () => {
+      const h = makeHarness();
+      const render = await h.renderWidget({
+        toolCallId: "tc-scripted",
+        toolName: "show_form",
+        serverId: "forms",
+        html: scriptedHtml,
+        keepMounted: true,
+      });
+      expect(render.status).toBe("rendered");
+
+      // type into the input (selector inside the widget iframe)
+      const typed = await h.runScriptedStep({
+        toolCallId: "tc-scripted",
+        step: { kind: "type", target: { testId: "name" }, text: "Ada" },
+      });
+      expect(typed.ok).toBe(true);
+
+      // assert the input value round-tripped
+      const valOk = await h.runScriptedStep({
+        toolCallId: "tc-scripted",
+        step: {
+          kind: "assert",
+          assertion: { type: "inputValue", target: { testId: "name" }, equals: "Ada" },
+        },
+      });
+      expect(valOk.ok).toBe(true);
+
+      // click the Save button by ARIA role + accessible name
+      const clicked = await h.runScriptedStep({
+        toolCallId: "tc-scripted",
+        step: { kind: "click", target: { role: { role: "button", name: "Save" } } },
+      });
+      expect(clicked.ok).toBe(true);
+      // the click triggered a widget→host tool call
+      expect(clicked.widgetToolCalls.map((c) => c.name)).toContain("persist");
+
+      // text revealed by the click is now visible
+      const textOk = await h.runScriptedStep({
+        toolCallId: "tc-scripted",
+        step: { kind: "assert", assertion: { type: "textVisible", text: "Saved!" } },
+      });
+      expect(textOk.ok).toBe(true);
+
+      // widgetToolCalled checks the ACCUMULATED calls (the assert step itself
+      // triggers none) — pass the earlier click's calls as prior.
+      const calledOk = await h.runScriptedStep({
+        toolCallId: "tc-scripted",
+        step: { kind: "assert", assertion: { type: "widgetToolCalled", toolName: "persist" } },
+        priorWidgetToolCalls: clicked.widgetToolCalls,
+      });
+      expect(calledOk.ok).toBe(true);
+    }, 30_000);
+
+    it("fails an assertion on a missing element with a reason", async () => {
+      const h = makeHarness();
+      await h.renderWidget({
+        toolCallId: "tc-scripted-2",
+        toolName: "show_form",
+        serverId: "forms",
+        html: scriptedHtml,
+        keepMounted: true,
+      });
+      const result = await h.runScriptedStep({
+        toolCallId: "tc-scripted-2",
+        step: {
+          kind: "assert",
+          assertion: { type: "elementVisible", target: { testId: "does-not-exist" } },
+        },
+      });
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBeTruthy();
+    }, 30_000);
+
+    it("returns no_rendered_widget for an unmounted tool call", async () => {
+      const h = makeHarness();
+      const result = await h.runScriptedStep({
+        toolCallId: "nope",
+        step: { kind: "wait", ms: 10 },
+      });
+      expect(result.ok).toBe(false);
+      expect(result.note).toBe("no_rendered_widget");
+    });
+
+    it("captures a ui/message follow-up emitted by a clicked widget", async () => {
+      const h = makeHarness();
+      const render = await h.renderWidget({
+        toolCallId: "tc-followup",
+        toolName: "show_store",
+        serverId: "store",
+        html: followupHtml,
+        keepMounted: true,
+      });
+      expect(render.status).toBe("rendered");
+
+      const clicked = await h.runScriptedStep({
+        toolCallId: "tc-followup",
+        step: { kind: "click", target: { role: { role: "button", name: "Show cart" } } },
+      });
+      expect(clicked.ok).toBe(true);
+      // The widget's `ui/message` is captured (not silently dropped) so the
+      // runner can drive it as a new model turn.
+      expect(clicked.followUps).toContain("Show my cart");
+    }, 30_000);
+  }
+);

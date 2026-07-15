@@ -1,12 +1,23 @@
-import { useMemo } from "react";
-import { Settings2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Check, ChevronDown, Settings2 } from "lucide-react";
 import { useMutation } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
 import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
 import type { EvalServerAttachment } from "@/components/evals/types";
 import { useProjectServerAttachments } from "@/hooks/useViews";
+import { useHostList } from "@/hooks/useClients";
+import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
+import { track } from "@/lib/analytics";
+import { cn } from "@/lib/utils";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@mcpjam/design-system/dropdown-menu";
 
 /**
  * Publish-tab summary row that mirrors the evals suite header:
@@ -20,9 +31,10 @@ import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
  *     frozen snapshots, so copy and reference are equivalent). The
  *     selected attachment is derived by matching the chatbox's current
  *     server set against the project's named attachments.
- *   - host pill → navigates to Connect for editing identity (model,
- *     prompt, sandbox). Read-only here per the publish-page contract:
- *     identity edits belong on the Connect tab.
+ *   - host pill → switches the previewed host (chatboxes are 1:1 with
+ *     hosts). This is the chatbox/swarm host picker; the app-chrome
+ *     `HostOverlayBar` is hidden on these routes. Settings still deep-
+ *     links to Connect for identity edits.
  */
 type ChatboxPublishClientBarProps = {
   chatboxId: string;
@@ -41,7 +53,6 @@ export function ChatboxPublishClientBar({
   isAuthenticated,
   currentServerIds,
 }: ChatboxPublishClientBarProps) {
-  const navigate = useAppNavigate();
   const { serverAttachments } = useProjectServerAttachments({
     isAuthenticated,
     projectId,
@@ -80,7 +91,7 @@ export function ChatboxPublishClientBar({
         selectedServerIds: attachment.serverIds,
       });
       toast.success(
-        `Chatbox now connects to ${attachment.serverIds.length} server${attachment.serverIds.length === 1 ? "" : "s"} via "${attachment.name}".`,
+        `Swarm now connects to ${attachment.serverIds.length} server${attachment.serverIds.length === 1 ? "" : "s"} via "${attachment.name}".`,
       );
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -89,7 +100,6 @@ export function ChatboxPublishClientBar({
   };
 
   const serverCount = currentServerIds.length;
-  const logoSrc = resolveHostLogoByDisplayName(hostName);
   // A non-empty pick that matches no named attachment predates the picker
   // (legacy custom set from the old modal). Label it honestly instead of
   // pretending nothing is picked.
@@ -105,34 +115,164 @@ export function ChatboxPublishClientBar({
         value={matchedAttachmentId}
         onChange={(id, attachment) => void handleAttachmentChange(id, attachment)}
         emptyTriggerLabel={emptyTriggerLabel}
-        infoText="A server attachment is a named set of MCP servers this chatbox connects to. Reuse the same attachment across chatboxes and eval suites, or create one per scenario."
+        infoText="A server group is a named set of MCP servers this chatbox connects to."
         selectedDeleteHint="In use by this chatbox — pick another first"
       />
 
-      <button
-        type="button"
-        onClick={() => navigate(buildHostsPath(hostId))}
-        className="flex h-8 max-w-[280px] items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 text-xs font-medium text-foreground transition hover:bg-muted/70"
-        title="Edit this host's identity in Connect"
-      >
-        <span className="shrink-0 text-muted-foreground">Host</span>
-        {logoSrc ? (
-          <img
-            src={logoSrc}
-            alt=""
-            className="size-3.5 shrink-0 object-contain"
-          />
-        ) : (
-          <span
-            aria-hidden
-            className="size-3.5 shrink-0 rounded-full bg-muted"
-          />
-        )}
-        <span className="min-w-0 flex-1 truncate">{hostName}</span>
-        {/* The pill is the only "edit host" entry point on this page —
-            surface the affordance instead of relying on hover/title. */}
-        <Settings2 className="size-3.5 shrink-0 text-muted-foreground" />
-      </button>
+      <ChatboxHostPickerPill
+        projectId={projectId}
+        isAuthenticated={isAuthenticated}
+        hostId={hostId}
+        hostName={hostName}
+      />
     </div>
+  );
+}
+
+type ChatboxHostPickerPillProps = {
+  projectId: string;
+  isAuthenticated: boolean;
+  /** Currently displayed host id (from the parent chatbox binding). */
+  hostId: string;
+  hostName: string;
+  className?: string;
+};
+
+/**
+ * Compact host picker used on chatbox/swarm surfaces. Writes the shared
+ * previewed-host pointer so Publish / Sessions / Clusters all follow.
+ */
+export function ChatboxHostPickerPill({
+  projectId,
+  isAuthenticated,
+  hostId,
+  hostName,
+  className,
+}: ChatboxHostPickerPillProps) {
+  const navigate = useAppNavigate();
+  const [, setPreviewedHostId] = usePreviewedHostId(projectId);
+  const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const sortedHosts = useMemo(
+    () => [...hosts].sort((a, b) => a.name.localeCompare(b.name)),
+    [hosts],
+  );
+
+  // Only publishable clients can be SWITCHED TO from this bar — a standalone
+  // Journeys-owned host has no publish surface. Filtered for the dropdown
+  // options only; `sortedHosts` (unfiltered) still drives the
+  // pointer-validity effect below, so a currently-selected journeys host
+  // (the ChatboxesTab "managed by Swarms" notice) is NOT force-redirected
+  // away before the user can read the notice.
+  const publishableHosts = useMemo(
+    () => sortedHosts.filter((h) => h.ownerScope?.type !== "journeys"),
+    [sortedHosts],
+  );
+
+  // Keep the shared preview pointer honest when the bound host disappears
+  // (deleted elsewhere) or was never set — same role HostOverlayBar plays
+  // on other tabs. Recovery must land on a PUBLISHABLE host: picking
+  // `sortedHosts[0]` could select a Journeys-owned (standalone) host and
+  // bounce the user onto the "managed by Swarms" notice. When no publishable
+  // host exists, leave the pointer alone (the trigger below is disabled).
+  useEffect(() => {
+    if (isLoading || publishableHosts.length === 0) return;
+    // Validity is judged against ALL hosts — a currently-selected journeys
+    // host is a legitimate pointer (ChatboxesTab renders its notice); only a
+    // genuinely missing host triggers recovery.
+    const stillValid = sortedHosts.some((h) => h.hostId === hostId);
+    if (stillValid) return;
+    setPreviewedHostId(publishableHosts[0].hostId);
+  }, [isLoading, sortedHosts, publishableHosts, hostId, setPreviewedHostId]);
+
+  const logoSrc = resolveHostLogoByDisplayName(hostName);
+
+  const handleSelect = (nextHostId: string) => {
+    if (nextHostId === hostId) {
+      setMenuOpen(false);
+      return;
+    }
+    track("connect_host_overlay_swapped", {
+      location: "chatbox_publish_bar",
+      from: hostId,
+      to: nextHostId,
+      host_count: hosts.length,
+    });
+    setPreviewedHostId(nextHostId);
+    setMenuOpen(false);
+  };
+
+  return (
+    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+      <div
+        className={cn(
+          "flex h-8 max-w-[280px] items-center rounded-full border border-border/60 bg-muted/40 text-xs font-medium text-foreground",
+          className,
+        )}
+      >
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            disabled={isLoading || publishableHosts.length === 0}
+            className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-l-full px-2.5 transition hover:bg-muted/70 disabled:cursor-not-allowed disabled:opacity-50"
+            title="Switch client"
+            aria-label="Switch client"
+            data-testid="chatbox-host-picker"
+          >
+            <span className="shrink-0 text-muted-foreground">Client</span>
+            {logoSrc ? (
+              <img
+                src={logoSrc}
+                alt=""
+                className="size-3.5 shrink-0 object-contain"
+              />
+            ) : (
+              <span
+                aria-hidden
+                className="size-3.5 shrink-0 rounded-full bg-muted"
+              />
+            )}
+            <span className="min-w-0 flex-1 truncate text-left">{hostName}</span>
+            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+          </button>
+        </DropdownMenuTrigger>
+        <button
+          type="button"
+          onClick={() => navigate(buildHostsPath(hostId))}
+          className="inline-flex h-full shrink-0 items-center justify-center rounded-r-full border-l border-border/60 px-2 text-muted-foreground transition hover:bg-muted/70 hover:text-foreground"
+          title="Edit this client's identity in Connect"
+          aria-label="Edit client in Connect"
+          data-testid="chatbox-host-edit"
+        >
+          <Settings2 className="size-3.5" />
+        </button>
+      </div>
+      <DropdownMenuContent align="start" className="min-w-[12rem]">
+        {publishableHosts.map((host) => {
+          const selected = host.hostId === hostId;
+          return (
+            <DropdownMenuItem
+              key={host.hostId}
+              onSelect={() => handleSelect(host.hostId)}
+              data-testid={`chatbox-host-option-${host.hostId}`}
+            >
+              <span className="min-w-0 flex-1 truncate">{host.name}</span>
+              {selected ? (
+                <Check className="size-3.5 shrink-0 text-foreground" />
+              ) : null}
+            </DropdownMenuItem>
+          );
+        })}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onSelect={() => navigate(buildHostsPath(hostId))}
+          data-testid="chatbox-host-open-connect"
+        >
+          <Settings2 className="size-3.5" />
+          Edit in Connect
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

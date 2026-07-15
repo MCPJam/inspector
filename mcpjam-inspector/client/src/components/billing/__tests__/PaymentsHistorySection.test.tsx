@@ -7,21 +7,36 @@ import type {
   PaymentHistoryEntry,
   UsePaymentsHistoryResult,
 } from "@/hooks/usePaymentsHistory";
+import type {
+  InvoiceHistoryEntry,
+  UseInvoiceHistoryResult,
+} from "@/hooks/useInvoiceHistory";
 
 let hookState: UsePaymentsHistoryResult = {
   entries: undefined,
   isLoading: true,
   isAuthenticated: false,
 };
-
-const captureMock = vi.fn();
+let invoiceHookState: UseInvoiceHistoryResult = {
+  entries: [],
+  upcoming: null,
+  isLoading: false,
+  error: null,
+};
+const { trackMock } = vi.hoisted(() => ({ trackMock: vi.fn() }));
 
 vi.mock("@/hooks/usePaymentsHistory", () => ({
   usePaymentsHistory: () => hookState,
 }));
 
-vi.mock("posthog-js/react", () => ({
-  usePostHog: () => ({ capture: captureMock }),
+// Invoices come from a separate Stripe-backed hook; these tests cover the
+// top-up path, so stub it empty (its own behavior is exercised elsewhere).
+vi.mock("@/hooks/useInvoiceHistory", () => ({
+  useInvoiceHistory: () => invoiceHookState,
+}));
+
+vi.mock("@/lib/analytics", () => ({
+  track: trackMock,
 }));
 
 function makeEntry(
@@ -51,7 +66,13 @@ describe("PaymentsHistorySection", () => {
       isLoading: true,
       isAuthenticated: false,
     };
-    captureMock.mockReset();
+    invoiceHookState = {
+      entries: [],
+      upcoming: null,
+      isLoading: false,
+      error: null,
+    };
+    trackMock.mockReset();
   });
 
   describe("loading + empty states", () => {
@@ -75,6 +96,29 @@ describe("PaymentsHistorySection", () => {
       const empty = screen.getByTestId("payments-history-empty");
       expect(empty).toHaveTextContent(/No payments yet/);
       expect(within(empty).queryByRole("button")).not.toBeInTheDocument();
+    });
+
+    it("renders a failed-load state instead of the empty state when invoices fail", () => {
+      hookState = {
+        entries: [],
+        isLoading: false,
+        isAuthenticated: true,
+      };
+      invoiceHookState = {
+        entries: [],
+        upcoming: null,
+        isLoading: false,
+        error: "Stripe unavailable",
+      };
+
+      render(<PaymentsHistorySection organizationId="org-1" canViewInvoices />);
+
+      expect(screen.getByTestId("payments-history-error")).toHaveTextContent(
+        /Couldn't load recent charges/
+      );
+      expect(
+        screen.queryByTestId("payments-history-empty")
+      ).not.toBeInTheDocument();
     });
   });
 
@@ -137,7 +181,7 @@ describe("PaymentsHistorySection", () => {
       expect(screen.getAllByText(/Not available/)).toHaveLength(2);
       // Pending → "Processing"
       expect(screen.getAllByText(/Processing/)).toHaveLength(2);
-      // Failed → em-dash
+      // Failed -> placeholder
       expect(screen.getAllByText("—")).toHaveLength(2);
     });
 
@@ -159,11 +203,12 @@ describe("PaymentsHistorySection", () => {
       render(<PaymentsHistorySection organizationId="org-1" canViewHistory />);
       const link = screen.getAllByRole("link", { name: /View receipt/ })[0];
       await userEvent.click(link);
-      const call = captureMock.mock.calls.find(
+      const call = trackMock.mock.calls.find(
         (c) => c[0] === "credit_topup_receipt_opened"
       );
       expect(call).toBeDefined();
       const props = call?.[1] as Record<string, unknown>;
+      expect(props.location).toBe("billing_payments_history");
       expect(props).not.toHaveProperty("status");
       expect(props).not.toHaveProperty("receipt_url");
       expect(props).not.toHaveProperty("url");
@@ -172,11 +217,12 @@ describe("PaymentsHistorySection", () => {
 
     it("fires credit_topup_history_viewed once with bucketed entry_count", () => {
       render(<PaymentsHistorySection organizationId="org-1" canViewHistory />);
-      const calls = captureMock.mock.calls.filter(
+      const calls = trackMock.mock.calls.filter(
         (c) => c[0] === "credit_topup_history_viewed"
       );
       expect(calls).toHaveLength(1);
       const props = calls[0][1] as Record<string, unknown>;
+      expect(props.location).toBe("billing_payments_history");
       expect(props.entry_count_bucket).toBe("2-5");
       expect(props.has_failed).toBe(true);
       expect(props.has_pending).toBe(true);
@@ -189,7 +235,7 @@ describe("PaymentsHistorySection", () => {
         isAuthenticated: true,
       };
       render(<PaymentsHistorySection organizationId="org-1" canViewHistory />);
-      const calls = captureMock.mock.calls.filter(
+      const calls = trackMock.mock.calls.filter(
         (c) => c[0] === "credit_topup_history_viewed"
       );
       expect(calls).toHaveLength(0);
@@ -220,7 +266,7 @@ describe("PaymentsHistorySection", () => {
       );
       expect(screen.getAllByText("Refunded")).toHaveLength(2);
       // Must not also read as Succeeded.
-      expect(screen.queryByText("Succeeded")).not.toBeInTheDocument();
+      expect(screen.queryByText("Paid")).not.toBeInTheDocument();
     });
 
     it("renders a Partially refunded badge with a reversed-amount tooltip", () => {
@@ -248,7 +294,7 @@ describe("PaymentsHistorySection", () => {
         })
       );
       expect(screen.getAllByText("Disputed")).toHaveLength(2);
-      expect(screen.queryByText("Succeeded")).not.toBeInTheDocument();
+      expect(screen.queryByText("Paid")).not.toBeInTheDocument();
     });
 
     it("renders a seat refund row without a receipt link", () => {
@@ -292,6 +338,92 @@ describe("PaymentsHistorySection", () => {
           "-1 Team seat · prorated · $300 card refund + $59.97 account credit"
         )
       ).toHaveLength(2);
+    });
+  });
+
+  describe("billing rows", () => {
+    it("collapses Stripe proration lines into a simple seat-change detail", () => {
+      hookState = {
+        entries: [],
+        isLoading: false,
+        isAuthenticated: true,
+      };
+      invoiceHookState = {
+        entries: [
+          {
+            id: "in_prorated",
+            createdAt: Date.UTC(2026, 5, 10),
+            status: "paid",
+            amountDueCents: 35997,
+            amountPaidCents: 35997,
+            currency: "usd",
+            hostedInvoiceUrl: "https://billing.stripe.com/invoice",
+            lines: [
+              {
+                description: "Unused time on MCPJam Team after 11 Jun 2026",
+                amountCents: -35997,
+                quantity: 1,
+              },
+              {
+                description:
+                  "Remaining time on 2 × MCPJam Team after 11 Jun 2026",
+                amountCents: 71994,
+                quantity: 2,
+              },
+            ],
+          } satisfies InvoiceHistoryEntry,
+        ],
+        upcoming: null,
+        isLoading: false,
+        error: null,
+      };
+
+      render(<PaymentsHistorySection organizationId="org-1" canViewInvoices />);
+
+      expect(screen.getAllByText("+1 Team seat · prorated")).toHaveLength(2);
+      expect(screen.getAllByText("$359.97")).toHaveLength(2);
+      expect(
+        screen.queryByText(/Unused time on MCPJam Team/)
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText(/Remaining time on 2/)).not.toBeInTheDocument();
+    });
+
+    it("hides void Stripe invoices from payment history", () => {
+      hookState = {
+        entries: [],
+        isLoading: false,
+        isAuthenticated: true,
+      };
+      invoiceHookState = {
+        entries: [
+          {
+            id: "in_void",
+            createdAt: Date.UTC(2026, 5, 10),
+            status: "void",
+            amountDueCents: 35968,
+            amountPaidCents: 0,
+            currency: "usd",
+            hostedInvoiceUrl: "https://billing.stripe.com/invoice-void",
+            lines: [
+              {
+                description:
+                  "Remaining time on 2 × MCPJam Team after 11 Jun 2026",
+                amountCents: 35968,
+                quantity: 2,
+              },
+            ],
+          } satisfies InvoiceHistoryEntry,
+        ],
+        upcoming: null,
+        isLoading: false,
+        error: null,
+      };
+
+      render(<PaymentsHistorySection organizationId="org-1" canViewInvoices />);
+
+      expect(screen.getByTestId("payments-history-empty")).toBeInTheDocument();
+      expect(screen.queryByText("void")).not.toBeInTheDocument();
+      expect(screen.queryByText("$359.68")).not.toBeInTheDocument();
     });
   });
 });

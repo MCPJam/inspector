@@ -1,4 +1,5 @@
 import { HOSTED_MODE } from "@/lib/config";
+import { MCPJAM_HOSTED_APP_ORIGIN } from "@/lib/oauth/constants";
 
 export interface XaaIdpUrls {
   issuerBaseUrl: string;
@@ -11,6 +12,63 @@ function getIssuerBasePath(): string {
 }
 
 /**
+ * Org-scoped issuer path segment, e.g. `/o/<orgId>`. Hosted-only: the local
+ * router has no org concept, so a missing org (or local mode) yields "" and
+ * every caller falls back to the unscoped issuer. Signed-in hosted users
+ * should always prefer the scoped issuer — minting under it is gated on org
+ * membership, unlike the legacy unscoped issuer.
+ */
+export function getOrgScopedIssuerSegment(
+  organizationId?: string | null,
+  issuerKind: "org" | "anonymous" = "org",
+): string {
+  if (!HOSTED_MODE || !organizationId) return "";
+  // "anonymous" = the /g/ anonymous test issuer (guest sessions, bound to
+  // the personal org; a RAS must explicitly allowlist it).
+  return issuerKind === "anonymous"
+    ? `/g/${organizationId}`
+    : `/o/${organizationId}`;
+}
+
+/**
+ * The hosted issuer a LOCAL run advertises when the "Use hosted issuer"
+ * opt-in is on: minting is forwarded server-to-server to app.mcpjam.com, so
+ * the token's `iss` (and the JWKS a remote AS fetches) live on the hosted
+ * origin regardless of this build's mode. Signed-in users mint under their
+ * org-scoped issuer; without an org the legacy unscoped issuer applies.
+ * These URLs are constructed, not fetched — hosted CORS blocks a local
+ * browser from reading the hosted discovery doc directly.
+ */
+// The LOCAL server relays hosted-issuer mints to its MCPJAM_HOSTED_ORIGIN
+// (server env), and we advertise THAT issuer's discovery/JWKS URLs — so the
+// client must resolve the same origin, not a hardcoded one. Read
+// VITE_MCPJAM_HOSTED_ORIGIN, defaulting to app.mcpjam.com exactly like the
+// server; set both together when pointing at a staging/self-hosted origin,
+// otherwise the advertised URLs would name a different key than signs the token.
+const HOSTED_ISSUER_ORIGIN =
+  (import.meta.env.VITE_MCPJAM_HOSTED_ORIGIN as string | undefined)?.replace(
+    /\/+$/,
+    "",
+  ) || MCPJAM_HOSTED_APP_ORIGIN;
+
+export function getHostedXaaIdpUrls(
+  organizationId?: string | null,
+  issuerKind: "org" | "anonymous" = "org",
+): XaaIdpUrls {
+  const segment = organizationId
+    ? issuerKind === "anonymous"
+      ? `/g/${organizationId}`
+      : `/o/${organizationId}`
+    : "";
+  const issuerBaseUrl = `${HOSTED_ISSUER_ORIGIN}/api/web/xaa${segment}`;
+  return {
+    issuerBaseUrl,
+    openidConfigUrl: `${issuerBaseUrl}/.well-known/openid-configuration`,
+    jwksUrl: `${issuerBaseUrl}/.well-known/jwks.json`,
+  };
+}
+
+/**
  * Resolve the MCPJam-as-IdP endpoints the user pastes into their own
  * authorization server, derived from the browser origin. This is a synchronous
  * best-effort guess used for the initial render and as a fallback — in local
@@ -18,9 +76,12 @@ function getIssuerBasePath(): string {
  * that actually mints the ID-JAG `iss`, so prefer `fetchXaaIdpUrls` when an
  * accurate value matters (registration, issuer-trust comparisons).
  */
-export function getXaaIdpUrls(): XaaIdpUrls {
+export function getXaaIdpUrls(
+  organizationId?: string | null,
+  issuerKind: "org" | "anonymous" = "org",
+): XaaIdpUrls {
   const origin = typeof window === "undefined" ? "" : window.location.origin;
-  const issuerBaseUrl = `${origin}${getIssuerBasePath()}`;
+  const issuerBaseUrl = `${origin}${getIssuerBasePath()}${getOrgScopedIssuerSegment(organizationId, issuerKind)}`;
   return {
     issuerBaseUrl,
     openidConfigUrl: `${issuerBaseUrl}/.well-known/openid-configuration`,
@@ -38,8 +99,10 @@ export function getXaaIdpUrls(): XaaIdpUrls {
  */
 export async function fetchXaaIdpUrls(
   signal?: AbortSignal,
+  organizationId?: string | null,
+  issuerKind: "org" | "anonymous" = "org",
 ): Promise<XaaIdpUrls | null> {
-  const { openidConfigUrl } = getXaaIdpUrls();
+  const { openidConfigUrl } = getXaaIdpUrls(organizationId, issuerKind);
   try {
     const response = await fetch(openidConfigUrl, { signal });
     if (!response.ok) {

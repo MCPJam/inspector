@@ -1,9 +1,32 @@
 import type { EvalTraceBlobV1 } from "@/shared/eval-trace";
 import type {
+  EvalStepStatus,
   EvalStreamEvent,
   EvalStreamToolCall,
 } from "@/shared/eval-stream-events";
+import type { TestStepKind } from "@/shared/steps";
 import type { TraceEnvelope, TraceMessage } from "./trace-viewer-adapter";
+
+/**
+ * Live status for one authored step (turn granularity in v1). Keyed in
+ * {@link EvalStreamState.stepStatus} by `stepId` when present, else by
+ * `turn-<turnIndex>-<kind>`.
+ */
+export type EvalStepStatusEntry = {
+  turnIndex: number;
+  stepId?: string;
+  kind: TestStepKind;
+  status: EvalStepStatus;
+  detail?: string;
+};
+
+export function stepStatusKey(entry: {
+  turnIndex: number;
+  stepId?: string;
+  kind: TestStepKind;
+}): string {
+  return entry.stepId ?? `turn-${entry.turnIndex}-${entry.kind}`;
+}
 
 export type EvalStreamState = {
   trace: EvalTraceBlobV1 | null;
@@ -12,6 +35,7 @@ export type EvalStreamState = {
   tokensUsed: number;
   toolCallCount: number;
   currentTurnIndex: number;
+  stepStatus: Record<string, EvalStepStatusEntry>;
 };
 
 export const initialEvalStreamState: EvalStreamState = {
@@ -21,6 +45,7 @@ export const initialEvalStreamState: EvalStreamState = {
   tokensUsed: 0,
   toolCallCount: 0,
   currentTurnIndex: 0,
+  stepStatus: {},
 };
 
 export function mergeStreamingTrace(
@@ -144,6 +169,23 @@ export function reduceEvalStreamEvent(
       return {
         ...state,
         currentTurnIndex: event.turnIndex,
+      };
+    }
+
+    case "step_status": {
+      const entry: EvalStepStatusEntry = {
+        turnIndex: event.turnIndex,
+        stepId: event.stepId,
+        kind: event.kind,
+        status: event.status,
+        detail: event.detail,
+      };
+      return {
+        ...state,
+        stepStatus: {
+          ...state.stepStatus,
+          [stepStatusKey(entry)]: entry,
+        },
       };
     }
 

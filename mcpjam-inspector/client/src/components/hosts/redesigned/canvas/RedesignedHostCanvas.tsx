@@ -26,6 +26,7 @@ import {
 import { ArrowRight, ArrowUpRight, Plus, Server, Settings, TerminalSquare } from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import { cn } from "@/lib/utils";
+import type { HostThemeMode } from "@/lib/client-styles";
 import { ComputerStatusChip } from "@/components/computer/ComputerStatusChip";
 import {
   ADD_SERVER_NODE_ID,
@@ -61,6 +62,7 @@ const HostMatrixContext = createContext<{
   selectedNodeId: string | null;
   onSelectNode: (id: string) => void;
   reportMatrixHeight: (height: number) => void;
+  themeMode: HostThemeMode;
   /** Navigate to the Computer tab — threaded to the Computer island's "Open terminal" link. */
   onOpenComputer?: () => void;
 } | null>(null);
@@ -117,6 +119,7 @@ const HostMatrixNodeRenderer = memo(
           appsExtensionAdvertised={data.appsExtensionAdvertised}
           compatRuntime={data.compatRuntime}
           mcpAppsBridge={data.mcpAppsBridge}
+          themeMode={ctx?.themeMode ?? "light"}
           selectedNodeId={ctx?.selectedNodeId ?? null}
           onSelectNode={ctx?.onSelectNode ?? (() => {})}
         />
@@ -637,6 +640,7 @@ interface RedesignedHostCanvasProps {
   onAddServer: () => void;
   /** Navigate to the Computer tab — wired to the Computer island's "Open terminal" link. */
   onOpenComputer?: () => void;
+  themeMode?: HostThemeMode;
   shellStyle?: CSSProperties;
   /**
    * Read-only mode: rendered identically but inert.
@@ -665,6 +669,7 @@ export function RedesignedHostCanvas({
   onClearSelection,
   onAddServer,
   onOpenComputer,
+  themeMode = "light",
   shellStyle,
   readOnly = false,
   onRequestEdit,
@@ -756,8 +761,15 @@ export function RedesignedHostCanvas({
             selectedNodeId: null,
             onSelectNode: () => onRequestEdit?.(),
             reportMatrixHeight,
+            themeMode,
           }
-        : { selectedNodeId, onSelectNode, reportMatrixHeight, onOpenComputer },
+        : {
+            selectedNodeId,
+            onSelectNode,
+            reportMatrixHeight,
+            themeMode,
+            onOpenComputer,
+          },
     [
       selectedNodeId,
       onSelectNode,
@@ -765,6 +777,7 @@ export function RedesignedHostCanvas({
       onRequestEdit,
       reportMatrixHeight,
       onOpenComputer,
+      themeMode,
     ],
   );
 

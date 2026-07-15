@@ -7,6 +7,8 @@ beforeEach(() => {
   useMCPJamLimitDialogStore.setState({
     authStatus: "loading",
     hasPendingLimit: false,
+    outOfCreditsHit: false,
+    outOfCreditsOrganizationId: null,
     isOpen: false,
     intent: null,
     organizationId: null,
@@ -28,7 +30,7 @@ describe("ErrorBox daily-limit handling", () => {
     expect(container).toBeEmptyDOMElement();
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
     expect(
-      screen.queryByText(/Daily MCPJam model limit reached/i),
+      screen.queryByText(/Daily MCPJam model limit reached/i)
     ).not.toBeInTheDocument();
   });
 
@@ -46,7 +48,7 @@ describe("ErrorBox daily-limit handling", () => {
         code="user_rate_limit"
         limitKind="total"
         onResetChat={vi.fn()}
-      />,
+      />
     );
 
     expect(container).toBeEmptyDOMElement();
@@ -60,11 +62,11 @@ describe("ErrorBox daily-limit handling", () => {
         limitKind="concurrency"
         retryAfterMs={3000}
         onResetChat={vi.fn()}
-      />,
+      />
     );
 
     expect(
-      screen.getByText(/Another credit-funded chat is finishing/i),
+      screen.getByText(/Another credit-funded chat is finishing/i)
     ).toBeInTheDocument();
   });
 
@@ -74,7 +76,7 @@ describe("ErrorBox daily-limit handling", () => {
         message="Something exploded"
         code="provider_error"
         onResetChat={vi.fn()}
-      />,
+      />
     );
 
     expect(screen.getByText(/Something exploded/i)).toBeInTheDocument();
@@ -82,13 +84,7 @@ describe("ErrorBox daily-limit handling", () => {
   });
 
   it("still renders the wallet-locked banner when walletLocked is set", () => {
-    render(
-      <ErrorBox
-        message="Locked"
-        walletLocked
-        onResetChat={vi.fn()}
-      />,
-    );
+    render(<ErrorBox message="Locked" walletLocked onResetChat={vi.fn()} />);
 
     expect(screen.getByText(/Account under review/i)).toBeInTheDocument();
   });

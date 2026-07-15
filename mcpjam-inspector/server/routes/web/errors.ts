@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { describeError, type NormalizedError } from "@mcpjam/sdk";
+import {
+  describeError,
+  isUnauthorized401,
+  type NormalizedError,
+} from "@mcpjam/sdk";
 
 export const ErrorCode = {
   UNAUTHORIZED: "UNAUTHORIZED",
@@ -11,6 +15,12 @@ export const ErrorCode = {
   SERVER_UNREACHABLE: "SERVER_UNREACHABLE",
   TIMEOUT: "TIMEOUT",
   INTERNAL_ERROR: "INTERNAL_ERROR",
+  // A billing/entitlement cap was hit (HTTP 402). The structured billing
+  // payload (code "billing_limit_reached" / "billing_feature_not_included",
+  // limit, allowedValue, plan, resetsAt, …) rides along in the WebRouteError
+  // `details` so the client can rebuild a ConvexError and render the proper
+  // upgrade message instead of a generic failure.
+  BILLING_LIMIT_REACHED: "BILLING_LIMIT_REACHED",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -107,6 +117,22 @@ export function mapRuntimeError(error: unknown): WebRouteError {
   const message = parseErrorMessage(error);
   const lower = message.toLowerCase();
   const normalized = describeError(error);
+
+  // A raw 401 from the target MCP server is an authorization failure, not an
+  // internal error — return the honest status. No `oauthRequired` here: this
+  // mapper has no per-server auth context (multi-server managers), so the
+  // escalation tag is applied only where the effective auth method is known
+  // (the tokenless-discover onUnauthorized handler in createAuthorizedManager
+  // and the local connect executor).
+  if (isUnauthorized401(error)) {
+    return new WebRouteError(
+      401,
+      ErrorCode.UNAUTHORIZED,
+      message,
+      undefined,
+      normalized
+    );
+  }
 
   if (lower.includes("timed out") || lower.includes("timeout")) {
     return new WebRouteError(504, ErrorCode.TIMEOUT, message, undefined, normalized);
