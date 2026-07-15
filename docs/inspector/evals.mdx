@@ -235,6 +235,16 @@ Select any two completed runs and click **Compare**. The diff view shows per-cas
 - **Pass rate by model** — does this case only work on one model?
 - Every past iteration with its trace, so you can A/B a regression against a working run.
 
+## Promoting sessions to cases
+
+Any completed chat session can be turned into a test case without rewriting it from scratch. The full conversation is compiled into multi-turn prompt turns, and the dialog lets you pick a destination suite or create a new one.
+
+**From the Playground** — Open the **Sessions** rail, hover a session, and click **Promote to test case**.
+
+**From the Swarms tab** — Open a completed run, click a session row to select it, then click **Promote to test case** above the session viewer. The session must belong to a completed run attempt; sessions from in-progress runs show an error in the dialog instead of blocking at submit.
+
+In both cases the dialog shows the servers recorded for that session, lets you set a case title and suite name, and (when attachment pickers are enabled) lets you configure the server attachment and client host for the new suite.
+
 ## Generating cases from your tools
 
 The **Generate** button reads your attached servers' tool catalog and drafts realistic cases — a mix of positive ("call `search` with a query") and negative ("don't call `delete_user` on a meta-question"). Treat it as a draft: skim, edit the prompts to match how your users actually talk, tighten the checks, then save.
