@@ -20,12 +20,27 @@ vi.mock("../../utils/mcp-app-render-observation", () => ({
     isRenderableMcpAppTool(...args),
 }));
 
+// Capability lookup is network-backed (OpenRouter catalog) — stub it. Claude
+// ids never reach it (offline fast path); the default `false` preserves the
+// "no computer tools" behavior for unknown drivers.
+const modelSupportsComputerUse = vi.fn();
+
+vi.mock("../../utils/model-capabilities", () => ({
+  modelSupportsComputerUse: (...args: unknown[]) =>
+    modelSupportsComputerUse(...args),
+}));
+
 const harnessInstances: Array<{
   getMountedWidgetId: ReturnType<typeof vi.fn>;
   dismissWidget: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   executeAction: ReturnType<typeof vi.fn>;
+  runScriptedStep: ReturnType<typeof vi.fn>;
 }> = [];
+
+// Shared across all (lazily-created) harness instances so a test can control a
+// scripted step's pass/fail BEFORE the render that creates the harness.
+const runScriptedStepImpl = vi.fn();
 
 vi.mock("../../utils/mcp-app-browser-harness", async () => {
   const actual = await vi.importActual<
@@ -39,6 +54,7 @@ vi.mock("../../utils/mcp-app-browser-harness", async () => {
         dismissWidget: vi.fn().mockResolvedValue(undefined),
         dispose: vi.fn().mockResolvedValue(undefined),
         executeAction: vi.fn(),
+        runScriptedStep: (...args: unknown[]) => runScriptedStepImpl(...args),
       };
       harnessInstances.push(instance);
       return instance;
@@ -46,7 +62,10 @@ vi.mock("../../utils/mcp-app-browser-harness", async () => {
   };
 });
 
-import { createBrowserSessionContext } from "../browser-session-context";
+import {
+  createBrowserSessionContext,
+  boundFollowUpsForArtifact,
+} from "../browser-session-context";
 
 const CLAUDE_MODEL = "claude-haiku-4-5";
 const NON_CLAUDE_MODEL = "gpt-5-mini";
@@ -62,33 +81,80 @@ beforeEach(() => {
   vi.clearAllMocks();
   harnessInstances.length = 0;
   isRenderableMcpAppTool.mockReturnValue(false);
+  modelSupportsComputerUse.mockResolvedValue(false);
+  // Default: every scripted step passes; failure tests override.
+  runScriptedStepImpl.mockResolvedValue({
+    ok: true,
+    widgetToolCalls: [],
+    followUps: [],
+    elapsedMs: 1,
+  });
+});
+
+describe("boundFollowUpsForArtifact (R1 durable-artifact bounds)", () => {
+  it("passes short follow-ups through unchanged", () => {
+    expect(boundFollowUpsForArtifact(["Show my cart"])).toEqual([
+      "Show my cart",
+    ]);
+  });
+
+  it("caps the number of follow-ups per step at 10", () => {
+    const many = Array.from({ length: 25 }, (_, i) => `msg ${i}`);
+    expect(boundFollowUpsForArtifact(many)).toHaveLength(10);
+  });
+
+  it("truncates an over-long follow-up string", () => {
+    const huge = "x".repeat(10_000);
+    const [bounded] = boundFollowUpsForArtifact([huge]);
+    expect(bounded.length).toBe(5_000);
+  });
 });
 
 describe("createBrowserSessionContext — Computer Use surface", () => {
-  it("builds wire-format computer tools + gate for Claude drivers", () => {
-    const ctx = createBrowserSessionContext({
+  // Computer Use is OPT-IN (default off, reserved for session simulation). These
+  // tests pass `enableComputerUse: true` to exercise the capability machinery.
+  it("stays off by default (no opt-in) even for a capable driver", async () => {
+    const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
       mcpClientManager: stubManager(),
     });
 
+    expect(ctx.computerUseSupported).toBe(false);
+    expect(ctx.computerUseVersion).toBeNull();
+    expect(ctx.computerWidgetTools).toEqual({});
+    expect(ctx.prepareAdvertisedTools).toBeUndefined();
+  });
+
+  it("builds wire-format computer tools + gate for Claude drivers", async () => {
+    const ctx = await createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      enableComputerUse: true,
+      mcpClientManager: stubManager(),
+    });
+
+    expect(ctx.computerUseSupported).toBe(true);
     expect(ctx.computerUseVersion).toBe("20250124");
+    // Claude ids resolve offline — the catalog lookup is never consulted.
+    expect(modelSupportsComputerUse).not.toHaveBeenCalled();
     expect(Object.keys(ctx.computerWidgetTools).sort()).toEqual([
       "computer",
       "finish_widget",
     ]);
     // Wire format: NOT the provider-defined factory output.
     expect(
-      (ctx.computerWidgetTools.computer as { id?: string }).id,
+      (ctx.computerWidgetTools.computer as { id?: string }).id
     ).toBeUndefined();
     expect(ctx.prepareAdvertisedTools).toBeDefined();
   });
 
-  it("builds no computer tools and no gate for non-Claude drivers", () => {
-    const ctx = createBrowserSessionContext({
+  it("builds no computer tools and no gate for capability-less drivers", async () => {
+    const ctx = await createBrowserSessionContext({
       model: NON_CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: stubManager(),
     });
 
+    expect(ctx.computerUseSupported).toBe(false);
     expect(ctx.computerUseVersion).toBeNull();
     expect(ctx.computerWidgetTools).toEqual({});
     expect(ctx.prepareAdvertisedTools).toBeUndefined();
@@ -96,21 +162,42 @@ describe("createBrowserSessionContext — Computer Use surface", () => {
     expect(harnessInstances).toHaveLength(0);
   });
 
-  it("gate hides computer tools until a widget is mounted, then reveals", () => {
-    const ctx = createBrowserSessionContext({
+  it("builds computer tools for non-Claude drivers with vision + tool calling", async () => {
+    modelSupportsComputerUse.mockResolvedValue(true);
+    const ctx = await createBrowserSessionContext({
+      model: NON_CLAUDE_MODEL,
+      enableComputerUse: true,
+      mcpClientManager: stubManager(),
+    });
+
+    expect(modelSupportsComputerUse).toHaveBeenCalledWith(NON_CLAUDE_MODEL);
+    expect(ctx.computerUseSupported).toBe(true);
+    // No provider-native version — wire format doesn't need one.
+    expect(ctx.computerUseVersion).toBeNull();
+    expect(Object.keys(ctx.computerWidgetTools).sort()).toEqual([
+      "computer",
+      "finish_widget",
+    ]);
+    expect(ctx.prepareAdvertisedTools).toBeDefined();
+    expect(harnessInstances).toHaveLength(1);
+  });
+
+  it("gate hides computer tools until a widget is mounted, then reveals", async () => {
+    const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: stubManager(),
     });
     const harness = harnessInstances[0]!;
     const names = ["search", "computer", "finish_widget"];
 
     expect(
-      ctx.prepareAdvertisedTools!({ stepIndex: 0, defaultToolNames: names }),
+      ctx.prepareAdvertisedTools!({ stepIndex: 0, defaultToolNames: names })
     ).toEqual(["search"]);
 
     harness.getMountedWidgetId.mockReturnValue("tc-1");
     expect(
-      ctx.prepareAdvertisedTools!({ stepIndex: 1, defaultToolNames: names }),
+      ctx.prepareAdvertisedTools!({ stepIndex: 1, defaultToolNames: names })
     ).toEqual(names);
   });
 });
@@ -144,8 +231,9 @@ describe("createBrowserSessionContext — render hook", () => {
       ts: 123,
     });
 
-    const ctx = createBrowserSessionContext({
+    const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: manager,
       injectOpenAiCompat: true,
     });
@@ -181,7 +269,7 @@ describe("createBrowserSessionContext — render hook", () => {
       executeTool: vi.fn(),
       getAllToolsMetadata: vi.fn().mockReturnValue({ show_widget: {} }),
     } as never;
-    const ctx = createBrowserSessionContext({
+    const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
       mcpClientManager: manager,
     });
@@ -205,12 +293,14 @@ describe("createBrowserSessionContext — render hook", () => {
     isRenderableMcpAppTool.mockReturnValue(true);
     renderMcpAppToolResult.mockRejectedValue(new Error("chromium exploded"));
 
-    const ctx = createBrowserSessionContext({
+    const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
       mcpClientManager: manager,
     });
 
-    await expect(ctx.handleEngineToolResult(baseEvent)).resolves.toBeUndefined();
+    await expect(
+      ctx.handleEngineToolResult(baseEvent)
+    ).resolves.toBeUndefined();
     expect(ctx.widgetRenderObservations).toEqual([]);
   });
 
@@ -231,7 +321,7 @@ describe("createBrowserSessionContext — render hook", () => {
       ts: 123,
     });
 
-    const ctx = createBrowserSessionContext({
+    const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
       mcpClientManager: manager,
     });
@@ -240,7 +330,7 @@ describe("createBrowserSessionContext — render hook", () => {
     await ctx.handleEngineToolResult(baseEvent);
     expect(
       (renderMcpAppToolResult.mock.calls[0]![0] as { toolInput?: unknown })
-        .toolInput,
+        .toolInput
     ).toEqual({ city: "lisbon" });
 
     // The entry was consumed; a second result for the same id no longer
@@ -248,7 +338,7 @@ describe("createBrowserSessionContext — render hook", () => {
     await ctx.handleEngineToolResult(baseEvent);
     expect(
       (renderMcpAppToolResult.mock.calls[1]![0] as { toolInput?: unknown })
-        .toolInput,
+        .toolInput
     ).toBeUndefined();
   });
 
@@ -269,7 +359,7 @@ describe("createBrowserSessionContext — render hook", () => {
       ts: 123,
     });
 
-    const ctx = createBrowserSessionContext({
+    const ctx = await createBrowserSessionContext({
       model: NON_CLAUDE_MODEL,
       mcpClientManager: manager,
     });
@@ -279,15 +369,16 @@ describe("createBrowserSessionContext — render hook", () => {
     // No Computer Use → don't keep the widget mounted.
     expect(
       (renderMcpAppToolResult.mock.calls[0]![0] as { keepMounted?: boolean })
-        .keepMounted,
+        .keepMounted
     ).toBe(false);
   });
 });
 
 describe("createBrowserSessionContext — interaction steps", () => {
   it("collects browserInteractionSteps from computer-tool actions with per-widget step ordinals", async () => {
-    const ctx = createBrowserSessionContext({
+    const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: stubManager(),
     });
     const harness = harnessInstances[0]!;
@@ -321,8 +412,9 @@ describe("createBrowserSessionContext — interaction steps", () => {
   });
 
   it("narrows unknown harness notes instead of dropping the step", async () => {
-    const ctx = createBrowserSessionContext({
+    const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: stubManager(),
     });
     const harness = harnessInstances[0]!;
@@ -346,8 +438,9 @@ describe("createBrowserSessionContext — interaction steps", () => {
 
 describe("createBrowserSessionContext — lifecycle", () => {
   it("dismissCarriedWidget dismisses only when a widget is mounted", async () => {
-    const ctx = createBrowserSessionContext({
+    const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: stubManager(),
     });
     const harness = harnessInstances[0]!;
@@ -361,14 +454,15 @@ describe("createBrowserSessionContext — lifecycle", () => {
   });
 
   it("dispose tears down the harness; no-op when never constructed", async () => {
-    const claudeCtx = createBrowserSessionContext({
+    const claudeCtx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: stubManager(),
     });
     await claudeCtx.dispose();
     expect(harnessInstances[0]!.dispose).toHaveBeenCalledTimes(1);
 
-    const plainCtx = createBrowserSessionContext({
+    const plainCtx = await createBrowserSessionContext({
       model: NON_CLAUDE_MODEL,
       mcpClientManager: stubManager(),
     });
@@ -392,7 +486,7 @@ describe("createBrowserSessionContext — lifecycle", () => {
       ts: 1,
     });
 
-    const ctx = createBrowserSessionContext({
+    const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
       mcpClientManager: manager,
     });
@@ -411,7 +505,7 @@ describe("createBrowserSessionContext — lifecycle", () => {
 
     expect(
       (renderMcpAppToolResult.mock.calls[0]![0] as { toolInput?: unknown })
-        .toolInput,
+        .toolInput
     ).toBeUndefined();
   });
 });
@@ -442,8 +536,9 @@ describe("createBrowserSessionContext — direct (local AI-SDK) render hook", ()
       ts: 123,
     });
 
-    const ctx = createBrowserSessionContext({
+    const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: manager,
     });
     ctx.setActivePromptIndex(3);
@@ -473,16 +568,19 @@ describe("createBrowserSessionContext — direct (local AI-SDK) render hook", ()
     isRenderableMcpAppTool.mockReturnValue(true);
     renderMcpAppToolResult.mockRejectedValue(new Error("chromium exploded"));
 
-    const ctx = createBrowserSessionContext({
+    const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
       mcpClientManager: manager,
     });
 
-    await ctx.handleDirectToolResultChunk({ ...baseChunk, serverId: undefined });
+    await ctx.handleDirectToolResultChunk({
+      ...baseChunk,
+      serverId: undefined,
+    });
     expect(renderMcpAppToolResult).not.toHaveBeenCalled();
 
     await expect(
-      ctx.handleDirectToolResultChunk(baseChunk),
+      ctx.handleDirectToolResultChunk(baseChunk)
     ).resolves.toBeUndefined();
     expect(ctx.widgetRenderObservations).toEqual([]);
   });
@@ -505,11 +603,12 @@ describe("createBrowserSessionContext — drainNewArtifacts", () => {
         status: "rendered",
         elapsedMs: 5,
         ts: 123,
-      }),
+      })
     );
 
-    const ctx = createBrowserSessionContext({
+    const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
+      enableComputerUse: true,
       mcpClientManager: manager,
     });
     const harness = harnessInstances[0]!;
@@ -550,5 +649,271 @@ describe("createBrowserSessionContext — drainNewArtifacts", () => {
     // End-of-run consumers still see everything.
     expect(ctx.widgetRenderObservations).toHaveLength(1);
     expect(ctx.browserInteractionSteps).toHaveLength(2);
+  });
+});
+
+describe("createBrowserSessionContext — widget interaction checks", () => {
+  function managerWithWidget() {
+    return {
+      executeTool: vi.fn(),
+      getAllToolsMetadata: vi
+        .fn()
+        .mockReturnValue({ create_view: { "mcpjam/widget": true } }),
+    } as never;
+  }
+  function rendered(status = "rendered") {
+    isRenderableMcpAppTool.mockReturnValue(true);
+    renderMcpAppToolResult.mockResolvedValue({
+      toolCallId: "tc-1",
+      toolName: "create_view",
+      serverId: "srv-1",
+      status,
+      elapsedMs: 5,
+      ts: 1,
+    });
+  }
+  const renderArgs = {
+    toolCallId: "tc-1",
+    toolName: "create_view",
+    serverId: "srv-1",
+    toolInput: {},
+    output: {},
+  };
+
+  it("runs a group when its widget renders and records scripted steps", async () => {
+    rendered();
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    ctx.setActiveWidgetChecks([
+      {
+        toolName: "create_view",
+        steps: [{ kind: "assert", assertion: { type: "textVisible", text: "Hi" } }],
+      },
+    ]);
+    await ctx.renderPinnedToolResult(renderArgs);
+
+    const scripted = ctx.browserInteractionSteps.filter(
+      (s) => s.source === "scripted",
+    );
+    expect(scripted).toHaveLength(1);
+    expect(scripted[0]!.assertion).toMatchObject({
+      type: "textVisible",
+      passed: true,
+    });
+    expect(ctx.scriptedCheckFailures).toHaveLength(0);
+  });
+
+  it("forwards prior widget tool calls across separate unified steps (widgetToolCalled sees an earlier interact's call)", async () => {
+    rendered();
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    // Keep the widget mounted across render so the unified replay path is
+    // eligible (otherwise the widget is dismissed after render).
+    ctx.setKeepWidgetsMountedForSteps(true);
+    await ctx.renderPinnedToolResult(renderArgs);
+    harnessInstances[0]!.getMountedWidgetId.mockReturnValue("tc-1");
+
+    const checkoutCall = {
+      name: "checkout",
+      args: { cartId: "c1" },
+      ok: true,
+      elapsedMs: 1,
+    };
+    // Step 1 (interact: a click) triggers a widget→host call...
+    runScriptedStepImpl.mockResolvedValueOnce({
+      ok: true,
+      widgetToolCalls: [checkoutCall],
+      followUps: [],
+      elapsedMs: 1,
+    });
+    await ctx.replayInteractStep("create_view", {
+      kind: "click",
+      target: { role: { role: "button", name: "Checkout" } },
+    });
+    // Step 2 (a SEPARATE assert) must see the call the click triggered.
+    await ctx.evaluateWidgetAssertion("create_view", {
+      kind: "widgetToolCalled",
+      toolName: "create_view",
+      calledToolName: "checkout",
+    });
+
+    // The assert's runScriptedStep call must receive the accumulated calls.
+    const assertCallArg = runScriptedStepImpl.mock.calls.at(-1)?.[0];
+    expect(assertCallArg.priorWidgetToolCalls).toEqual([checkoutCall]);
+  });
+
+  it("drains a widget's render-time ui/message follow-up as a model turn", async () => {
+    // Auto-send-on-render: a widget that emits ui/message during its initial
+    // render must continue the model turn, not be silently dropped.
+    rendered();
+    renderMcpAppToolResult.mockResolvedValue({
+      toolCallId: "tc-1",
+      toolName: "create_view",
+      serverId: "srv-1",
+      status: "rendered",
+      elapsedMs: 5,
+      ts: 1,
+      followUps: ["auto-sent on render"],
+    });
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    ctx.setKeepWidgetsMountedForSteps(true);
+    await ctx.renderPinnedToolResult(renderArgs);
+
+    expect(ctx.drainFollowUps()).toEqual(["auto-sent on render"]);
+    // The trace observation stays a pure render record (no followUps leak).
+    const obs = ctx.widgetRenderObservations.find(
+      (o) => o.toolCallId === "tc-1",
+    );
+    expect(obs).toBeDefined();
+    expect((obs as Record<string, unknown>).followUps).toBeUndefined();
+  });
+
+  it("truncates an oversized render follow-up before it drives a model turn", async () => {
+    rendered();
+    const huge = "x".repeat(200_000);
+    renderMcpAppToolResult.mockResolvedValue({
+      toolCallId: "tc-1",
+      toolName: "create_view",
+      serverId: "srv-1",
+      status: "rendered",
+      elapsedMs: 5,
+      ts: 1,
+      followUps: [huge],
+    });
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    ctx.setKeepWidgetsMountedForSteps(true);
+    await ctx.renderPinnedToolResult(renderArgs);
+
+    const drained = ctx.drainFollowUps();
+    expect(drained).toHaveLength(1);
+    expect(drained[0]!.length).toBeLessThan(huge.length);
+  });
+
+  it("records a failure when a scripted assertion fails", async () => {
+    rendered();
+    runScriptedStepImpl.mockResolvedValue({
+      ok: false,
+      reason: 'text not visible: "Hi"',
+      widgetToolCalls: [],
+      elapsedMs: 1,
+    });
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    ctx.setActiveWidgetChecks([
+      {
+        toolName: "create_view",
+        steps: [{ kind: "assert", assertion: { type: "textVisible", text: "Hi" } }],
+      },
+    ]);
+    await ctx.renderPinnedToolResult(renderArgs);
+
+    expect(ctx.scriptedCheckFailures).toHaveLength(1);
+    expect(ctx.scriptedCheckFailures[0]).toMatchObject({
+      toolName: "create_view",
+    });
+  });
+
+  it("stamps ok=true on a successful pure action step (no assertion field)", async () => {
+    rendered();
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    ctx.setActiveWidgetChecks([
+      {
+        toolName: "create_view",
+        steps: [
+          {
+            kind: "click",
+            target: { role: { role: "button", name: "Add to cart" } },
+          },
+        ],
+      },
+    ]);
+    await ctx.renderPinnedToolResult(renderArgs);
+
+    const scripted = ctx.browserInteractionSteps.filter(
+      (s) => s.source === "scripted",
+    );
+    expect(scripted).toHaveLength(1);
+    expect(scripted[0]!.ok).toBe(true);
+    expect(scripted[0]!.assertion).toBeUndefined();
+    expect(ctx.scriptedCheckFailures).toHaveLength(0);
+  });
+
+  it("stamps ok=false on a failed action and still fails closed", async () => {
+    rendered();
+    runScriptedStepImpl.mockResolvedValue({
+      ok: false,
+      reason: 'locator not found: button "Add to cart"',
+      widgetToolCalls: [],
+      elapsedMs: 1,
+    });
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    ctx.setActiveWidgetChecks([
+      {
+        toolName: "create_view",
+        steps: [
+          {
+            kind: "click",
+            target: { role: { role: "button", name: "Add to cart" } },
+          },
+        ],
+      },
+    ]);
+    await ctx.renderPinnedToolResult(renderArgs);
+
+    const scripted = ctx.browserInteractionSteps.filter(
+      (s) => s.source === "scripted",
+    );
+    expect(scripted[0]!.ok).toBe(false);
+    expect(ctx.scriptedCheckFailures).toHaveLength(1);
+  });
+
+  it("fails closed when a group's widget never renders (flush)", async () => {
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    // A group for a tool that the turn never renders.
+    ctx.setActiveWidgetChecks([
+      {
+        toolName: "never_rendered",
+        steps: [{ kind: "assert", assertion: { type: "textVisible", text: "x" } }],
+      },
+    ]);
+    ctx.flushActiveWidgetChecks();
+    expect(ctx.scriptedCheckFailures).toHaveLength(1);
+    expect(ctx.scriptedCheckFailures[0]!.toolName).toBe("never_rendered");
+  });
+
+  it("fails closed when a tool renders a second widget in one turn (v1 invariant)", async () => {
+    rendered();
+    const ctx = await createBrowserSessionContext({
+      mcpClientManager: managerWithWidget(),
+    });
+    ctx.setActiveWidgetChecks([
+      {
+        toolName: "create_view",
+        steps: [{ kind: "assert", assertion: { type: "textVisible", text: "Hi" } }],
+      },
+    ]);
+    // First render runs the group; a second render of the same tool can't be
+    // targeted by toolName → fail closed (not a silent re-run).
+    await ctx.renderPinnedToolResult({ ...renderArgs, toolCallId: "tc-a" });
+    await ctx.renderPinnedToolResult({ ...renderArgs, toolCallId: "tc-b" });
+
+    expect(
+      ctx.scriptedCheckFailures.some((f) =>
+        /multiple widgets for tool/i.test(f.reason),
+      ),
+    ).toBe(true);
   });
 });

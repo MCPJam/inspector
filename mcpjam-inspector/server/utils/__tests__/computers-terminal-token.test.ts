@@ -1,9 +1,20 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { verifyComputerTerminalToken } from "../computers/terminal-token";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  beforeEach,
+  afterEach,
+  vi,
+} from "vitest";
+import { SignJWT, exportJWK, generateKeyPair } from "jose";
+import {
+  verifyComputerTerminalToken,
+  resetComputerTerminalJwksCacheForTests,
+} from "../computers/terminal-token";
 
-// Local HS256 signer reproducing the mcpjam-backend mint
-// (convex/lib/computerTerminalToken.ts) so verification is exercised against
-// the exact claim contract without importing across repos.
+// A local HS256 signer (the retired mint mode) — kept only to prove such
+// tokens are now REJECTED, and to build the alg-confusion probe below.
 
 const SECRET = "test-terminal-secret-0123456789";
 const ISSUER = "https://api.mcpjam.com/computer-terminal";
@@ -52,71 +63,177 @@ function baseClaims(): Record<string, unknown> {
   };
 }
 
-beforeEach(() => {
-  vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", SECRET);
-});
-
 afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("verifyComputerTerminalToken", () => {
-  it("accepts a valid token and returns its claims", async () => {
+describe("verifyComputerTerminalToken (alg gate)", () => {
+  it("rejects a well-formed HS256 token (RS256 only) before any network call", async () => {
+    // Even a validly-signed HS256 token in the retired shared-secret scheme
+    // is refused — mint is RS256-only now.
     const token = await sign(baseClaims());
+    expect(await verifyComputerTerminalToken(token)).toBeNull();
+  });
+
+  it("rejects alg:none and malformed tokens without throwing", async () => {
+    const header = b64url(
+      new TextEncoder().encode(JSON.stringify({ alg: "none", typ: "JWT" }))
+    );
+    const payload = b64url(
+      new TextEncoder().encode(JSON.stringify(baseClaims()))
+    );
+    expect(
+      await verifyComputerTerminalToken(`${header}.${payload}.sig`)
+    ).toBeNull();
+    expect(await verifyComputerTerminalToken("")).toBeNull();
+    expect(await verifyComputerTerminalToken("a.b")).toBeNull();
+    expect(await verifyComputerTerminalToken("not!.b64.!!!")).toBeNull();
+  });
+});
+
+describe("verifyComputerTerminalToken (RS256 via JWKS)", () => {
+  const KID = "computer-terminal-1";
+  let keys: Awaited<ReturnType<typeof generateKeyPair>>;
+  let otherKeys: Awaited<ReturnType<typeof generateKeyPair>>;
+  let jwksDoc: unknown;
+  let fetchCalls: string[];
+  let jwksResponse: () => Response | Promise<Response>;
+
+  beforeAll(async () => {
+    keys = await generateKeyPair("RS256");
+    otherKeys = await generateKeyPair("RS256");
+    const jwk = await exportJWK(keys.publicKey);
+    jwksDoc = { keys: [{ ...jwk, kid: KID, alg: "RS256", use: "sig" }] };
+  });
+
+  beforeEach(() => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example.test");
+    resetComputerTerminalJwksCacheForTests();
+    fetchCalls = [];
+    jwksResponse = () =>
+      new Response(JSON.stringify(jwksDoc), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        fetchCalls.push(String(url));
+        return jwksResponse();
+      })
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetComputerTerminalJwksCacheForTests();
+  });
+
+  async function signRs256(
+    claims: Record<string, unknown>,
+    opts: { kid?: string; privateKey?: CryptoKey; omitExp?: boolean } = {}
+  ): Promise<string> {
+    const { exp, iat, iss, ...rest } = claims as Record<string, unknown> & {
+      exp: number;
+      iat: number;
+      iss: string;
+    };
+    const jwt = new SignJWT(rest)
+      .setProtectedHeader({ alg: "RS256", kid: opts.kid ?? KID })
+      .setIssuer(iss)
+      .setIssuedAt(iat);
+    if (!opts.omitExp) jwt.setExpirationTime(exp);
+    return jwt.sign(opts.privateKey ?? (keys.privateKey as CryptoKey));
+  }
+
+  it("accepts a backend-minted RS256 token against the published JWKS", async () => {
+    const token = await signRs256(baseClaims());
     expect(await verifyComputerTerminalToken(token)).toEqual({
       userId: "users_123",
       computerId: "computers_456",
       projectId: "projects_789",
     });
+    expect(fetchCalls).toEqual([
+      "https://convex.example.test/computers/terminal-jwks",
+    ]);
+    // Second verify uses the cached JWKS — no refetch.
+    expect(
+      await verifyComputerTerminalToken(await signRs256(baseClaims()))
+    ).not.toBeNull();
+    expect(fetchCalls).toHaveLength(1);
   });
 
-  it("rejects an expired token", async () => {
-    const claims = baseClaims();
-    claims.exp = Math.floor(Date.now() / 1000) - 5;
-    expect(await verifyComputerTerminalToken(await sign(claims))).toBeNull();
+  it("rejects an RS256 token signed by a different key (unknown kid or wrong key)", async () => {
+    const wrongKey = await signRs256(baseClaims(), {
+      privateKey: otherKeys.privateKey as CryptoKey,
+    });
+    expect(await verifyComputerTerminalToken(wrongKey)).toBeNull();
+    const unknownKid = await signRs256(baseClaims(), { kid: "rogue-kid" });
+    expect(await verifyComputerTerminalToken(unknownKid)).toBeNull();
   });
 
-  it("rejects a missing/foreign purpose claim (other JWT populations)", async () => {
-    const noPurpose = { ...baseClaims() };
-    delete (noPurpose as { purpose?: unknown }).purpose;
-    expect(await verifyComputerTerminalToken(await sign(noPurpose))).toBeNull();
-
+  it("rejects an expired RS256 token and a foreign purpose", async () => {
+    const expired = {
+      ...baseClaims(),
+      exp: Math.floor(Date.now() / 1000) - 5,
+    };
+    expect(await verifyComputerTerminalToken(await signRs256(expired))).toBeNull();
     const wrongPurpose = { ...baseClaims(), purpose: "guest-promotion" };
     expect(
-      await verifyComputerTerminalToken(await sign(wrongPurpose))
+      await verifyComputerTerminalToken(await signRs256(wrongPurpose))
     ).toBeNull();
   });
 
-  it("rejects a wrong issuer", async () => {
-    const claims = { ...baseClaims(), iss: "https://evil.example" };
-    expect(await verifyComputerTerminalToken(await sign(claims))).toBeNull();
-  });
-
-  it("rejects a token signed with a different secret", async () => {
-    const token = await sign(baseClaims(), "a-completely-different-secret-xx");
+  it("rejects an RS256 token that carries no exp", async () => {
+    // jose rejects an expired exp but does not require one to be present; the
+    // verifier must (requiredClaims), or tokens would verify as never-expiring.
+    const token = await signRs256(baseClaims(), { omitExp: true });
     expect(await verifyComputerTerminalToken(token)).toBeNull();
   });
 
-  it("rejects a tampered payload", async () => {
-    const token = await sign(baseClaims());
-    const [h, p, s] = token.split(".");
-    const payload = JSON.parse(Buffer.from(p, "base64url").toString("utf8"));
-    payload.computerId = "computers_stolen";
-    const forged = b64url(new TextEncoder().encode(JSON.stringify(payload)));
-    expect(await verifyComputerTerminalToken(`${h}.${forged}.${s}`)).toBeNull();
+  it("collapses a burst of concurrent cold-cache verifies onto one JWKS fetch", async () => {
+    const tokens = await Promise.all(
+      Array.from({ length: 5 }, () => signRs256(baseClaims()))
+    );
+    const results = await Promise.all(
+      tokens.map((t) => verifyComputerTerminalToken(t))
+    );
+    expect(results.every((r) => r !== null)).toBe(true);
+    // Without in-flight memoization this would be 5 fetches.
+    expect(fetchCalls).toHaveLength(1);
   });
 
-  it("fails closed when the secret is unconfigured or weak", async () => {
-    const token = await sign(baseClaims());
-    vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "");
-    expect(await verifyComputerTerminalToken(token)).toBeNull();
-    vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "short");
+  it("forecloses alg-confusion: an HS256 token keyed on the public JWK bytes is rejected", async () => {
+    // The classic RS256→HS256 downgrade: attacker HMACs with the public key
+    // material. The verifier rejects any non-RS256 alg outright, so this never
+    // reaches signature verification.
+    const publicJwkBytes = JSON.stringify(await exportJWK(keys.publicKey));
+    const token = await sign(baseClaims(), publicJwkBytes);
     expect(await verifyComputerTerminalToken(token)).toBeNull();
   });
 
-  it("rejects malformed tokens without throwing", async () => {
-    expect(await verifyComputerTerminalToken("")).toBeNull();
-    expect(await verifyComputerTerminalToken("a.b")).toBeNull();
-    expect(await verifyComputerTerminalToken("not!.b64.!!!")).toBeNull();
+  it("fails closed when the JWKS is unreachable, empty, or CONVEX_HTTP_URL is unset", async () => {
+    jwksResponse = () => {
+      throw new TypeError("fetch failed");
+    };
+    const token = await signRs256(baseClaims());
+    expect(await verifyComputerTerminalToken(token)).toBeNull();
+
+    resetComputerTerminalJwksCacheForTests();
+    jwksResponse = () =>
+      new Response(JSON.stringify({ keys: [] }), { status: 200 });
+    expect(await verifyComputerTerminalToken(token)).toBeNull();
+
+    vi.stubEnv("CONVEX_HTTP_URL", "");
+    resetComputerTerminalJwksCacheForTests();
+    expect(await verifyComputerTerminalToken(token)).toBeNull();
+  });
+
+  it("remembers a failed JWKS fetch briefly instead of hammering Convex", async () => {
+    jwksResponse = () => new Response("nope", { status: 500 });
+    const token = await signRs256(baseClaims());
+    expect(await verifyComputerTerminalToken(token)).toBeNull();
+    expect(await verifyComputerTerminalToken(token)).toBeNull();
+    expect(fetchCalls).toHaveLength(1);
   });
 });

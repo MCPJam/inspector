@@ -43,9 +43,9 @@ vi.mock("../../../utils/org-model-config.js", async () => {
 });
 
 vi.mock("../../session-agent.js", async () => {
-  const actual = await vi.importActual<
-    typeof import("../../session-agent.js")
-  >("../../session-agent.js");
+  const actual = await vi.importActual<typeof import("../../session-agent.js")>(
+    "../../session-agent.js"
+  );
   return {
     ...actual,
     personaNextTurn: (...args: unknown[]) => personaNextTurnMock(...args),
@@ -117,8 +117,9 @@ vi.mock("../../browser-artifact-serialization.js", async () => {
 });
 
 vi.mock("convex/browser", async () => {
-  const actual =
-    await vi.importActual<typeof import("convex/browser")>("convex/browser");
+  const actual = await vi.importActual<typeof import("convex/browser")>(
+    "convex/browser"
+  );
   return {
     ...actual,
     ConvexHttpClient: class {
@@ -149,6 +150,7 @@ function buildFakeBrowserContext(opts: { computerUse: boolean }) {
     steps: Array<Record<string, unknown>>;
   } = { observations: [], steps: [] };
   const ctx = {
+    computerUseSupported: opts.computerUse,
     computerUseVersion: opts.computerUse ? ("20250124" as const) : null,
     computerWidgetTools: opts.computerUse
       ? { computer: { fake: true }, finish_widget: { fake: true } }
@@ -180,7 +182,7 @@ function buildFakeBrowserContext(opts: { computerUse: boolean }) {
     /** Test handle: queue artifacts the next drain returns. */
     _queueArtifacts(
       observations: Array<Record<string, unknown>>,
-      steps: Array<Record<string, unknown>>,
+      steps: Array<Record<string, unknown>>
     ) {
       artifacts.observations = observations;
       artifacts.steps = steps;
@@ -194,7 +196,7 @@ function baseOptions() {
     runId: "run-1",
     chatboxId: "chatbox-1",
     projectId: "proj-1",
-    personas: [{ id: "p1", name: "Persona One", role: "tester" }],
+    personas: [{ id: "p1", name: "Persona One", role: "tester", notes: "" }],
     sessionsPerPersona: 1,
     maxTurns: 3,
     modelId: "anthropic/claude-haiku-4.5",
@@ -287,7 +289,7 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
           ts: 2,
           screenshotBase64: "img2",
         },
-      ],
+      ]
     );
     createBrowserSessionContextMock.mockReturnValue(fake);
 
@@ -298,6 +300,8 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
     expect(createBrowserSessionContextMock.mock.calls[0]![0]).toMatchObject({
       model: "anthropic/claude-haiku-4.5",
       logScope: "sessionSimulation",
+      // Session simulation is the one surface that opts into Computer Use.
+      enableComputerUse: true,
     });
 
     // Per-turn hygiene runs BEFORE the engine; dispose runs at session end.
@@ -329,7 +333,7 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
     expect(persistChatSessionToConvexMock).toHaveBeenCalledTimes(1);
     expect(captureMcpAppWidgetSnapshotsMock).toHaveBeenCalledTimes(1);
     const artifactCall = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "chatSessions:recordBrowserArtifacts",
+      (c) => c[0] === "chatSessions:recordBrowserArtifacts"
     );
     expect(artifactCall).toBeDefined();
     expect(artifactCall![1]).toMatchObject({
@@ -377,7 +381,7 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
           promptIndex: 0,
         },
       ],
-      [],
+      []
     );
     createBrowserSessionContextMock.mockReturnValue(fake);
 
@@ -391,11 +395,66 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
     expect(engineOpts.prepareAdvertisedTools).toBeUndefined();
 
     const artifactCall = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "chatSessions:recordBrowserArtifacts",
+      (c) => c[0] === "chatSessions:recordBrowserArtifacts"
     );
     expect(artifactCall).toBeDefined();
     expect((artifactCall![1] as any).widgetRenderObservations).toHaveLength(1);
     expect((artifactCall![1] as any).browserInteractionSteps).toBeUndefined();
+  });
+
+  it("passes chatbox computer resources to the built-in tool resolver", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: false });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+
+    await startSimulation({
+      ...baseOptions(),
+      builtInToolIds: ["bash"],
+      computer: { kind: "personal", workdir: "/workspace" },
+      requireToolApproval: true,
+    });
+
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(Object.keys(prepareOpts.builtInTools ?? {})).toEqual(["bash"]);
+    expect(prepareOpts.builtInTools.bash).toBeDefined();
+  });
+
+  it("wires Cloud Skills on the emulated synthetic path (member, no harness)", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: false });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+
+    await startSimulation({ ...baseOptions() });
+
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(prepareOpts.cloudSkills).toEqual({
+      authHeader: "Bearer token",
+      projectId: "proj-1",
+    });
+  });
+
+  it("omits Cloud Skills tools on the harness path (delivered natively)", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: false });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+
+    // claude-code + an MCPJam-provided model ⇒ the turn runs the real harness,
+    // which writes skills into the sandbox itself; the emulated listSkills/
+    // loadSkill tools must NOT also be advertised.
+    await startSimulation({ ...baseOptions(), harness: "claude-code" });
+
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(prepareOpts.cloudSkills).toBeUndefined();
+  });
+
+  it("omits Cloud Skills under tool approval (headless can't approve)", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: false });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+
+    // A synthetic visitor can't grant approval; the local-BYOK path fail-closes
+    // on any non-empty tool set, so the always-present listSkills/loadSkill
+    // meta-tools must not be injected when requireToolApproval is on.
+    await startSimulation({ ...baseOptions(), requireToolApproval: true });
+
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(prepareOpts.cloudSkills).toBeUndefined();
   });
 
   it("disposes the context when the turn throws (session failure path)", async () => {
@@ -410,6 +469,31 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
     expect(updateRunMock).toHaveBeenCalled();
   });
 
+  it("routes a rate-limit turn error to the rate_limited outcome (shared classifyTurnFailure)", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: true });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+    // A spend-cap / rate-limit error from the turn must fold into the amber
+    // `rate_limited` outcome via the shared `classifyTurnFailure`, not `failed`.
+    runAssistantTurnMock.mockRejectedValue(
+      new Error("Daily spend cap reached for free models"),
+    );
+
+    await startSimulation(baseOptions());
+
+    // runOneSession → catch → classifyTurnFailure("...cap...") === "rate_limited"
+    // → tryUpdateRunWithRetry with a { rateLimited: 1 } delta.
+    const rateLimitedProgress = updateRunMock.mock.calls.some(
+      (call) => (call[4] as { rateLimited?: number })?.rateLimited === 1,
+    );
+    expect(rateLimitedProgress).toBe(true);
+    // Whole batch tripped the cap (no successes, no hard failures) → terminal
+    // status is rate_limited.
+    const terminalRateLimited = updateRunMock.mock.calls.some(
+      (call) => call[5] === "rate_limited",
+    );
+    expect(terminalRateLimited).toBe(true);
+  });
+
   it("skips the artifact mutation when a turn drained nothing", async () => {
     const fake = buildFakeBrowserContext({ computerUse: true });
     createBrowserSessionContextMock.mockReturnValue(fake);
@@ -418,8 +502,8 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
 
     expect(
       convexMutationMock.mock.calls.some(
-        (c) => c[0] === "chatSessions:recordBrowserArtifacts",
-      ),
+        (c) => c[0] === "chatSessions:recordBrowserArtifacts"
+      )
     ).toBe(false);
   });
 });

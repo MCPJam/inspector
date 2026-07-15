@@ -8,6 +8,10 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { email: "tester@example.com" } }),
+}));
+
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
 }));
@@ -54,7 +58,7 @@ function createFormState(overrides: Record<string, unknown> = {}) {
     setOauthScopesInput: vi.fn(),
     oauthProtocolMode: "2025-11-25",
     setOauthProtocolMode: vi.fn(),
-    oauthRegistrationMode: "auto",
+    registrationMode: "auto",
     setOauthRegistrationMode: vi.fn(),
     useCustomClientId: false,
     setUseCustomClientId: vi.fn(),

@@ -11,6 +11,7 @@
     "test:fast": "vitest run",
     "ui:watch": "vite build --config vite.config.ts --watch --mode development",
     "dev": "npm run build:ui && wrangler dev --env staging",
+    "dev:local": "npm run build:ui && wrangler dev --env dev",
     "start": "npm run build:ui && wrangler dev --env staging",
     "deploy:staging": "npm run build:ui && wrangler deploy --env staging",
     "deploy": "npm run build:ui && wrangler deploy",

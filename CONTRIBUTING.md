@@ -73,8 +73,29 @@ This runs:
 
 - **Client**: Vite dev server on `:5173`
 - **Server**: Hono dev server on `:6274`
+- **Platform MCP worker**: `mcp/` via `wrangler dev --env dev` on `:8787`
 
 Open `http://localhost:5173` in your browser. The client proxies API requests to the server.
+
+The platform MCP worker backs the Home/MCPJam agent's workspace tools (`list_projects`,
+`show_servers`, eval/chatbox tools). It starts automatically with `npm run dev`, and the
+agent connects to it on `:8787` — no env var to set. If you only need the UI/server and
+want to skip the worker (and its one-time UI build), use `npm run dev:app` instead.
+
+### Dev Convex configuration (for the Home agent's platform tools)
+
+The platform worker forwards your dev AuthKit token through `/api/v1` to the dev **Convex**
+deployment (the one your `.env.development` `CONVEX_HTTP_URL` points at). That deployment
+must trust the dev WorkOS app, or `list_projects` returns a 401. Set these once on the dev
+Convex deployment (in the `mcpjam-backend` repo / Convex dashboard — this is backend/infra
+config, not in this repo):
+
+```bash
+npx convex env set WORKOS_CLIENT_ID client_01KTN2EWHHJCKRB8RSR307X4SG
+npx convex env set AUTHKIT_DOMAIN  deep-vanilla-68-test.authkit.app
+npx convex env set GUEST_JWKS_URL  http://localhost:6274/api/web/guest-jwks
+npx convex env list   # verify WORKOS_CLIENT_ID / AUTHKIT_DOMAIN are the dev values
+```
 
 ### Electron Development
 

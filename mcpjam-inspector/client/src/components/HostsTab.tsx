@@ -127,12 +127,17 @@ export function HostsTab({
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 18, scale: 0.97 }}
                 transition={SNAPPY_RAIL}
-                className="absolute inset-0 [transform-origin:50%_30%]"
+                className="absolute inset-0 flex flex-col [transform-origin:50%_30%]"
               >
-                <HostBuilderView
-                  hostId={selectedHostId}
-                  projectId={projectId}
-                />
+                {/* The Host/Compare segmented pill now lives inline in the
+                    host canvas header (HostBuilderViewRedesigned) so the
+                    section nav is a single row, not stacked above the canvas. */}
+                <div className="min-h-0 flex-1">
+                  <HostBuilderView
+                    hostId={selectedHostId}
+                    projectId={projectId}
+                  />
+                </div>
               </motion.div>
             ) : (
               <motion.div

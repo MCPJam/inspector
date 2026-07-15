@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   getCanonicalModelId,
   getModelById,
+  hostedModelDefinitionsFromSnapshot,
+  hostedProviderFromCanonicalId,
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
+  isModelSupported,
+  SUPPORTED_MODELS,
 } from "../types.js";
 
 describe("MCPJam-provided model classification", () => {
@@ -20,7 +24,22 @@ describe("MCPJam-provided model classification", () => {
     expect(isMCPJamProvidedModel("deepseek/deepseek-v4-pro")).toBe(true);
     expect(isMCPJamProvidedModel("deepseek/deepseek-v4-flash")).toBe(true);
     expect(isMCPJamProvidedModel("qwen/qwen3.6-plus")).toBe(true);
+    expect(isMCPJamProvidedModel("mistralai/mistral-small-2603")).toBe(true);
+    expect(isMCPJamProvidedModel("mistralai/mistral-medium-3-5")).toBe(true);
+    expect(isMCPJamProvidedModel("mistralai/mistral-large-2512")).toBe(true);
+    expect(isMCPJamProvidedModel("mistralai/devstral-2512")).toBe(true);
+    expect(isMCPJamProvidedModel("z-ai/glm-5.2")).toBe(true);
     expect(isMCPJamGuestAllowedModel("openai/gpt-oss-120b")).toBe(true);
+    expect(isMCPJamGuestAllowedModel("mistralai/mistral-small-2603")).toBe(
+      true
+    );
+    expect(isMCPJamGuestAllowedModel("mistralai/devstral-2512")).toBe(true);
+    expect(isMCPJamGuestAllowedModel("mistralai/mistral-medium-3-5")).toBe(
+      false
+    );
+    expect(isMCPJamGuestAllowedModel("mistralai/mistral-large-2512")).toBe(
+      false
+    );
     expect(isMCPJamGuestAllowedModel("openai/gpt-5.4")).toBe(false);
     expect(isMCPJamGuestAllowedModel("openai/gpt-5.4-mini")).toBe(false);
     expect(isMCPJamGuestAllowedModel("openai/gpt-5.4-nano")).toBe(false);
@@ -28,47 +47,103 @@ describe("MCPJam-provided model classification", () => {
     expect(isMCPJamGuestAllowedModel("openai/gpt-5.5")).toBe(false);
     expect(isMCPJamGuestAllowedModel("openai/gpt-5.5-pro")).toBe(false);
     expect(isMCPJamGuestAllowedModel("deepseek/deepseek-v4-pro")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("deepseek/deepseek-v4-flash")).toBe(
-      false,
-    );
+    expect(isMCPJamGuestAllowedModel("deepseek/deepseek-v4-flash")).toBe(false);
     expect(isMCPJamGuestAllowedModel("anthropic/claude-opus-4.6")).toBe(false);
     expect(isMCPJamGuestAllowedModel("anthropic/claude-opus-4.6-fast")).toBe(
-      false,
+      false
     );
     expect(isMCPJamGuestAllowedModel("anthropic/claude-sonnet-4.6")).toBe(
-      false,
+      false
     );
     expect(isMCPJamGuestAllowedModel("anthropic/claude-opus-4.7")).toBe(false);
     expect(isMCPJamGuestAllowedModel("google/gemini-3.1-pro-preview")).toBe(
-      false,
+      false
     );
     expect(isMCPJamGuestAllowedModel("qwen/qwen3.6-plus")).toBe(true);
+    expect(isMCPJamGuestAllowedModel("z-ai/glm-5.2")).toBe(true);
   });
 
-  it("resolves provider metadata for new qwen and xAI hosted models", () => {
-    expect(getModelById("qwen/qwen3.6-plus")?.provider).toBe("qwen");
-    expect(getModelById("x-ai/grok-4-fast")?.provider).toBe("xai");
+  it("derives hosted provider from the id prefix (display rows removed)", () => {
+    // Hosted display rows no longer live in SUPPORTED_MODELS — provider comes
+    // from the canonical id prefix (with the OpenRouter→provider aliases).
+    expect(hostedProviderFromCanonicalId("qwen/qwen3.6-plus")).toBe("qwen");
+    expect(hostedProviderFromCanonicalId("x-ai/grok-4-fast")).toBe("xai");
+    expect(hostedProviderFromCanonicalId("x-ai/grok-4.5")).toBe("xai");
+    expect(hostedProviderFromCanonicalId("mistralai/mistral-small-2603")).toBe(
+      "mistral"
+    );
+    expect(hostedProviderFromCanonicalId("meta-llama/llama-4-scout")).toBe(
+      "meta"
+    );
+    expect(getModelById("qwen/qwen3.6-plus")).toBeUndefined();
   });
 
   it("normalizes bare model ids with provider metadata", () => {
     expect(getCanonicalModelId("claude-haiku-4.5", "anthropic")).toBe(
-      "anthropic/claude-haiku-4.5",
+      "anthropic/claude-haiku-4.5"
     );
     expect(isMCPJamProvidedModel("claude-haiku-4.5", "anthropic")).toBe(true);
+    expect(isMCPJamProvidedModel("grok-4.5", "xai")).toBe(true);
     expect(isMCPJamProvidedModel("grok-4-fast", "xai")).toBe(true);
   });
 
-  it("resolves exact hosted IDs that are allowlisted in the backend", () => {
+  it("canonicalizes against an injected catalog (catalog-only ids)", () => {
+    const catalog = [
+      { id: "newvendor/brand-new-model", provider: "newvendor" },
+    ];
+    // A bare id resolves to the prefixed catalog id when the catalog is injected…
+    expect(getCanonicalModelId("brand-new-model", "newvendor", catalog)).toBe(
+      "newvendor/brand-new-model"
+    );
+    // …and an exact catalog id passes through.
+    expect(
+      getCanonicalModelId("newvendor/brand-new-model", undefined, catalog)
+    ).toBe("newvendor/brand-new-model");
+    // Without the injected catalog, the unknown bare id can't be canonicalized.
+    expect(getCanonicalModelId("brand-new-model", "newvendor")).toBe(
+      "brand-new-model"
+    );
+  });
+
+  it("classifies hosted ids via the snapshot, not the static display rows", () => {
+    // Display rows are gone → getModelById returns undefined for hosted ids…
+    expect(getModelById("openai/gpt-4o-mini")).toBeUndefined();
+    expect(getModelById("z-ai/glm-5.2")).toBeUndefined();
+    // …but they are still MCPJam-provided and count as "supported".
+    expect(isMCPJamProvidedModel("openai/gpt-4o-mini")).toBe(true);
+    expect(isMCPJamProvidedModel("deepseek/deepseek-v4-pro")).toBe(true);
+    expect(isModelSupported("z-ai/glm-5.2")).toBe(true);
     expect(getModelById("google/gemini-3-pro-preview")).toBeUndefined();
-    expect(getModelById("openai/gpt-4o-mini")?.provider).toBe("openai");
-    expect(getModelById("openai/gpt-5.4-mini")?.provider).toBe("openai");
-    expect(getModelById("openai/gpt-5.5")?.provider).toBe("openai");
-    expect(getModelById("deepseek/deepseek-v4-pro")?.provider).toBe(
-      "deepseek",
-    );
-    expect(getModelById("google/gemini-3.1-pro-preview")?.provider).toBe(
-      "google",
-    );
-    expect(getModelById("z-ai/glm-4.6")?.provider).toBe("z-ai");
+  });
+
+  it("isModelSupported stays permissive for provider-prefixed ids (catalog is the real gate)", () => {
+    // A provider-prefixed id we don't statically know may be a newer catalog
+    // model — supported optimistically so a fresh backend model isn't snapped
+    // to a template default before this snapshot regenerates.
+    expect(isModelSupported("newvendor/some-new-model")).toBe(true);
+    // A bare id that isn't a BYOK static remains unsupported.
+    expect(isModelSupported("totally-unknown-bare-model")).toBe(false);
+  });
+
+  it("SUPPORTED_MODELS is BYOK-only: no hosted (slash / '(Free)') rows remain", () => {
+    for (const model of SUPPORTED_MODELS) {
+      const id = String(model.id);
+      // Only BYOK bare ids or "azure/…" ids survive; no hosted "(Free)" names.
+      expect(model.name.endsWith("(Free)")).toBe(false);
+      if (id.includes("/")) {
+        expect(id.startsWith("azure/")).toBe(true);
+      }
+    }
+  });
+
+  it("hostedModelDefinitionsFromSnapshot() is a non-empty, all-hosted fallback", () => {
+    const hosted = hostedModelDefinitionsFromSnapshot();
+    expect(hosted.length).toBeGreaterThan(100);
+    expect(hosted.every((m) => m.hosted === true)).toBe(true);
+    // Guest gating is preserved off the static gated set.
+    const haiku = hosted.find((m) => m.id === "anthropic/claude-haiku-4.5");
+    expect(haiku?.guestAllowed).toBe(true);
+    const gatedOpus = hosted.find((m) => m.id === "anthropic/claude-opus-4.6");
+    expect(gatedOpus?.guestAllowed).toBe(false);
   });
 });

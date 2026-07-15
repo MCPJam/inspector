@@ -8,13 +8,18 @@
  *
  * Handshake / auth:
  *   - The browser first calls Convex `projectComputers.mintTerminalToken`
- *     (member-gated, ~60s TTL) and connects with `?token=<jwt>`.
- *   - We verify the token LOCALLY (shared HS256 secret) — no Convex round
- *     trip — then exchange the token's `computerId` for the vendor sandbox id
- *     via the secret-gated `/computers/sandbox-info` route. The browser never
- *     sees vendor ids or credentials.
- *   - Invalid/expired token ⇒ the socket opens and immediately closes with
- *     code 4401 (createEvents cannot return an HTTP rejection once the
+ *     (member-gated, ~60s TTL) and connects with the token as a WebSocket
+ *     subprotocol (`new WebSocket(url, [token])`) — browsers can't attach
+ *     custom headers to a WS handshake, and a `?token=` query string would
+ *     land in proxy/CDN access logs, so the subprotocol slot is the only
+ *     place left to put it. There is no query-string fallback.
+ *   - We verify the token's RS256 signature against the backend-published
+ *     JWKS (`/computers/terminal-jwks`, short-cached), then exchange the
+ *     token's `computerId` for the vendor sandbox id via the secret-gated
+ *     `/computers/sandbox-info` route. The browser never sees vendor ids or
+ *     credentials.
+ *   - Invalid/expired/missing token ⇒ the socket opens and immediately closes
+ *     with code 4401 (createEvents cannot return an HTTP rejection once the
  *     client requested an upgrade).
  *
  * Wire protocol (client ⇄ server):
@@ -35,9 +40,14 @@ import type { MiddlewareHandler } from "hono";
 import { Sandbox, type CommandHandle } from "e2b";
 import { verifyComputerTerminalToken } from "../../utils/computers/terminal-token.js";
 import {
+  createPtyWithCwd,
+  sanitizeTerminalCwd,
+} from "../../utils/computers/create-pty.js";
+import {
   getComputerSandboxInfo,
   isComputersDataPlaneConfigured,
   recordTerminalSession,
+  touchComputerActivity,
 } from "../../utils/computers/control-plane-client.js";
 import { logger } from "../../utils/logger.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
@@ -50,6 +60,13 @@ import { classifyError } from "../../utils/error-classify.js";
 const PTY_TIMEOUT_MS = 60 * 60 * 1000;
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
+
+// Throttle for the activity touch sent back to the control plane on PTY I/O.
+// Bumps the computer's `lastActiveAt` so the 30-min idle sweep treats an
+// interactive terminal (raw PTY bytes, not discrete `bash` commands) as active
+// and doesn't reap it mid-use. One touch per minute is ample against a 30-min
+// cutoff and keeps this off the hot path of every keystroke/output chunk.
+const ACTIVITY_TOUCH_THROTTLE_MS = 60 * 1000;
 
 // Close codes (4xxx = application-defined).
 const CLOSE_UNAUTHORIZED = 4401;
@@ -78,9 +95,16 @@ export function createComputerTerminalWsHandler(
   >
 ): MiddlewareHandler {
   return upgradeWebSocket(async (c) => {
-    const token = c.req.query("token") ?? "";
+    // Token rides the Sec-WebSocket-Protocol handshake header — the browser
+    // WebSocket API has no way to set a custom Authorization header, and a
+    // `?token=` query string would land in proxy/CDN access logs. No fallback.
+    const protocolHeader = c.req.header("sec-websocket-protocol") ?? "";
+    const token = protocolHeader.split(",")[0]?.trim() ?? "";
     const cols = clampDimension(c.req.query("cols"), DEFAULT_COLS, 500);
     const rows = clampDimension(c.req.query("rows"), DEFAULT_ROWS, 300);
+    // Optional starting directory (e.g. the harness session workdir). Best
+    // effort: a stale/invalid path falls back to home (createPtyWithCwd).
+    const cwd = sanitizeTerminalCwd(c.req.query("cwd"));
     // Captured at upgrade time; the WS callbacks below outlive the request
     // but keep its log context (requestId, route) for typed events.
     const requestLogger = getRequestLogger(c, "routes.web.computer-terminal");
@@ -108,6 +132,17 @@ export function createComputerTerminalWsHandler(
         if (!info.ok) {
           rejectCode = CLOSE_UNAVAILABLE;
           rejectMessage = `Computer unavailable: ${info.error}`;
+        } else if (
+          info.value.ownerUserId !== claims.userId ||
+          info.value.projectId !== claims.projectId
+        ) {
+          // Defense-in-depth: the token was already authorized for this
+          // computerId at mint time (~60s TTL), but re-check the row's
+          // current owner/project against the token's claims before ever
+          // touching the vendor sandbox — guards the (narrow) window where
+          // the row's ownership or project changes between mint and use.
+          rejectCode = CLOSE_UNAUTHORIZED;
+          rejectMessage = "Invalid or expired terminal token.";
         } else if (!info.value.providerComputerId) {
           rejectCode = CLOSE_UNAVAILABLE;
           rejectMessage = "Computer is still provisioning.";
@@ -121,6 +156,16 @@ export function createComputerTerminalWsHandler(
     let pty: CommandHandle | null = null;
     let sandbox: Sandbox | null = null;
     let closed = false;
+    // Throttle gate for the activity touch (see ACTIVITY_TOUCH_THROTTLE_MS).
+    let lastActivityTouchAt = 0;
+    const maybeTouchActivity = () => {
+      if (!computerId) return;
+      const now = Date.now();
+      if (now - lastActivityTouchAt < ACTIVITY_TOUCH_THROTTLE_MS) return;
+      lastActivityTouchAt = now;
+      // Fire-and-forget: a failed touch only risks an earlier idle hibernate.
+      void touchComputerActivity({ computerId });
+    };
 
     return {
       onOpen: (_evt, ws) => {
@@ -142,23 +187,30 @@ export function createComputerTerminalWsHandler(
         void (async () => {
           try {
             sandbox = await Sandbox.connect(sandboxId);
-            pty = await sandbox.pty.create({
-              cols,
-              rows,
-              timeoutMs: PTY_TIMEOUT_MS,
-              onData: (data) => {
-                if (closed) return;
-                // Copy into a standalone ArrayBuffer: WSContext.send is typed
-                // for Uint8Array<ArrayBuffer>, while the SDK hands us a view
-                // over ArrayBufferLike.
-                ws.send(
-                  data.buffer.slice(
-                    data.byteOffset,
-                    data.byteOffset + data.byteLength
-                  ) as ArrayBuffer
-                );
+            pty = await createPtyWithCwd(
+              sandbox,
+              {
+                cols,
+                rows,
+                timeoutMs: PTY_TIMEOUT_MS,
+                onData: (data) => {
+                  if (closed) return;
+                  // PTY output = the box is doing work the user is watching
+                  // (e.g. a long build); keep it alive against the idle sweep.
+                  maybeTouchActivity();
+                  // Copy into a standalone ArrayBuffer: WSContext.send is typed
+                  // for Uint8Array<ArrayBuffer>, while the SDK hands us a view
+                  // over ArrayBufferLike.
+                  ws.send(
+                    data.buffer.slice(
+                      data.byteOffset,
+                      data.byteOffset + data.byteLength
+                    ) as ArrayBuffer
+                  );
+                },
               },
-            });
+              cwd
+            );
             await recordTerminalSession({
               sessionId,
               action: "open",
@@ -227,6 +279,8 @@ export function createComputerTerminalWsHandler(
         // Binary frames are stdin.
         const bytes = toUint8Array(data);
         if (bytes && pty && sandbox) {
+          // Keystrokes are true user activity — refresh the idle timer.
+          maybeTouchActivity();
           void sandbox.pty.sendInput(pty.pid, bytes).catch(() => {});
         }
       },

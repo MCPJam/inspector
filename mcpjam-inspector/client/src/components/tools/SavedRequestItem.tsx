@@ -1,8 +1,7 @@
 import { Button } from "@mcpjam/design-system/button";
 import { Edit2, Copy, Trash2 } from "lucide-react";
 import type { SavedRequest } from "@/lib/types/request-types";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 interface SavedRequestItemProps {
   request: SavedRequest;
   isHighlighted: boolean;
@@ -20,7 +19,6 @@ export function SavedRequestItem({
   onDuplicate,
   onDelete,
 }: SavedRequestItemProps) {
-  const posthog = usePostHog();
   return (
     <div
       className={`group p-2 rounded mx-2 cursor-pointer transition-all duration-200 ${
@@ -29,10 +27,8 @@ export function SavedRequestItem({
           : "hover:bg-muted/40"
       }`}
       onClick={() => {
-        posthog.capture("saved_request_item_loaded", {
+        track("saved_request_item_loaded", {
           location: "tools_sidebar",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
         });
         onLoad(request);
       }}

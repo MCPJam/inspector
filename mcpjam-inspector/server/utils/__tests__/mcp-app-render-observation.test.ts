@@ -4,8 +4,16 @@ import {
   renderMcpAppToolResult,
   isRenderableMcpAppTool,
 } from "../mcp-app-render-observation";
-import { McpAppBrowserHarness } from "../mcp-app-browser-harness";
+import {
+  McpAppBrowserHarness,
+  isChromiumInstalled,
+} from "../mcp-app-browser-harness";
 import type { MCPClientManager } from "@mcpjam/sdk";
+
+// The "real harness integration" suite below launches a real Chromium; run it
+// only where one is installed (CI + the hosted image). The mocked suites above
+// it need no browser and always run.
+const CHROMIUM_AVAILABLE = await isChromiumInstalled();
 
 const MCP_APP_META = { ui: { resourceUri: "ui://widget/seats" } };
 
@@ -235,7 +243,7 @@ async function bundleGuestHtml(): Promise<string> {
   return `<!doctype html><html><head><meta charset="utf-8"></head><body><script>${r.outputFiles[0].text}</script></body></html>`;
 }
 
-describe("renderMcpAppToolResult — real harness integration", () => {
+describe.skipIf(!CHROMIUM_AVAILABLE)("renderMcpAppToolResult — real harness integration", () => {
   it("reads the resource and renders the widget in headless Chromium", async () => {
     const html = await bundleGuestHtml();
     const harness = new McpAppBrowserHarness({

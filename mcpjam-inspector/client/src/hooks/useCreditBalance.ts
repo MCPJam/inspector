@@ -1,6 +1,8 @@
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
+import { readStoredActiveOrganizationId } from "@/lib/active-organization-storage";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 export interface CreditBalanceState {
   /** Shared paid top-up credits currently available to the organization. */
@@ -37,6 +39,15 @@ export interface CreditBalanceState {
   monthlyAllowanceRemaining?: number;
   /** Epoch ms when the monthly allowance resets. Only set when monthly. */
   monthlyResetAt?: number | null;
+  /**
+   * Seconds of voice transcription the user can still afford today.
+   * Derived on the backend from remaining cents at Whisper-1 pricing so the
+   * client never sees the dollar amount. A real 0 means the mic should be
+   * disabled; `undefined` means the backend didn't report it (e.g. an older
+   * deploy) and the mic should stay enabled under the global cap rather than
+   * read as "out of budget".
+   */
+  voiceSecondsRemaining?: number;
 }
 
 const clampPercent = (value: unknown): number => {
@@ -75,6 +86,9 @@ const normalizeBalance = (raw: unknown): CreditBalanceState | undefined => {
       r.monthlyAllowanceRemaining
     ),
     monthlyResetAt: optionalNumberOrUndefined(r.monthlyResetAt) ?? null,
+    // Absent (older backend) → undefined so the mic falls back to the global
+    // cap; a real 0 stays 0 and disables the mic.
+    voiceSecondsRemaining: optionalNumberOrUndefined(r.voiceSecondsRemaining),
   };
 };
 
@@ -119,4 +133,68 @@ export function useCreditBalance({
     isAuthenticated: hasConvexIdentity,
     hasWorkOsUser,
   };
+}
+
+/**
+ * True when the org (or guest) has no spendable MCPJam credits left — the
+ * state that makes MCPJam-provided ("free") models unusable. Mirrors the
+ * sidebar's daily-vs-monthly split: monthly teams spend their monthly
+ * allowance then shared paid top-ups; everyone else spends the free daily
+ * bucket then paid top-ups. Wallet-lock (spending paused for review) is
+ * deliberately NOT folded in here — that's a separate state with its own
+ * backend handling.
+ */
+export function isOutOfCredits(
+  balance: CreditBalanceState | undefined
+): boolean {
+  if (!balance) return false;
+  const paidRemaining = balance.paidCreditsRemaining;
+  if (balance.billingModel === "monthly_per_seat") {
+    return (balance.monthlyAllowanceRemaining ?? 0) <= 0 && paidRemaining <= 0;
+  }
+  return balance.freeDailyCreditsRemaining <= 0 && paidRemaining <= 0;
+}
+
+/**
+ * Convenience hook over useCreditBalance that returns just the "out of
+ * credits" boolean for the active organization — used to gray out
+ * MCPJam-provided models in the picker once the org/guest can no longer
+ * spend. Resolves the org from the caller-provided id, falling back to the
+ * stored active organization (the same source the limit dialog uses).
+ * Also honors the local limit-hit latch set by failed sends so the picker
+ * locks immediately instead of waiting for the balance query to catch up.
+ */
+export function useOutOfCredits(organizationId?: string | null): boolean {
+  const { user } = useAuth();
+  const resolvedOrganizationId =
+    organizationId ?? (user ? readStoredActiveOrganizationId(user.id) : null);
+  const { balance } = useCreditBalance({
+    organizationId: resolvedOrganizationId,
+    includeGuests: true,
+  });
+  const balanceOutOfCredits = isOutOfCredits(balance);
+  const outOfCreditsHit = useMCPJamLimitDialogStore(
+    (state) => state.outOfCreditsHit
+  );
+  const locallyLimited = useMCPJamLimitDialogStore((state) => {
+    if (!state.outOfCreditsHit) return false;
+    if (!state.outOfCreditsOrganizationId) return true;
+    if (!resolvedOrganizationId) return true;
+    return state.outOfCreditsOrganizationId === resolvedOrganizationId;
+  });
+  const clearOutOfCreditsHit = useMCPJamLimitDialogStore(
+    (state) => state.clearOutOfCreditsHit
+  );
+
+  useEffect(() => {
+    if (!outOfCreditsHit || !balanceOutOfCredits) return;
+    clearOutOfCreditsHit(resolvedOrganizationId ?? null);
+  }, [
+    balanceOutOfCredits,
+    clearOutOfCreditsHit,
+    outOfCreditsHit,
+    resolvedOrganizationId,
+  ]);
+
+  return balanceOutOfCredits || locallyLimited;
 }

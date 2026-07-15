@@ -51,7 +51,6 @@ export function latestErroredHttpEntry(
 
 export type XAAErrorActionIntent =
   | "configure"
-  | "bootstrap"
   | "reset"
   | "link";
 
@@ -77,11 +76,6 @@ export interface XAAErrorGuidanceInput {
 const CONFIGURE: XAAErrorAction = {
   label: "Open Configure Target",
   intent: "configure",
-};
-
-const REGISTER_ISSUER: XAAErrorAction = {
-  label: "Show issuer registration",
-  intent: "bootstrap",
 };
 
 const RESET_FLOW: XAAErrorAction = { label: "Reset flow", intent: "reset" };
@@ -223,6 +217,110 @@ export function getXAAErrorGuidance(
     }
   }
 
+  if (step === "request_client_registration") {
+    // Pre-validation: no registration endpoint was advertised — no request
+    // was made, so don't frame this as a server refusal.
+    if (!httpEntry && messageIncludes(stateError, "registration_endpoint")) {
+      return {
+        title: "No open registration endpoint advertised",
+        explanation:
+          "The authorization server's metadata has no `registration_endpoint`, so open Dynamic Client Registration isn't available. That's a readiness finding, not a flow bug — the server may still support protected DCR (initial access token), which this debugger doesn't send. Switch the registration strategy to pre-registered credentials to continue.",
+        actions: [CONFIGURE],
+        severity: "error",
+      };
+    }
+    if (messageIncludes(stateError, "cannot use the returned client-auth method")) {
+      return {
+        title: "Registered, but with an auth method this debugger can't use",
+        explanation:
+          "Registration succeeded, but the server assigned a client-authentication method (for example `private_key_jwt`) that this debugger doesn't exercise yet. That's a debugger limitation, not authorization-server unreadiness. Use pre-registered credentials with a supported method to continue.",
+        actions: [CONFIGURE],
+        severity: "error",
+      };
+    }
+    if (
+      messageIncludes(stateError, "explicitly substituted") ||
+      messageIncludes(stateError, "without the JWT Bearer grant")
+    ) {
+      return {
+        title: "The server substituted the requested XAA client metadata",
+        explanation:
+          "The registration response explicitly returned metadata without the ID-JAG profile or the JWT Bearer grant. Unlike an omitted echo (which RFC 7591 permits), an explicit substitution means the registered client can't run this flow. Check whether the server can enable the jwt-bearer grant for dynamically registered clients.",
+        actions: [],
+        severity: "error",
+      };
+    }
+    if (
+      messageIncludes(stateError, "inconsistent registration response") ||
+      messageIncludes(stateError, "missing a client_id") ||
+      messageIncludes(stateError, "already expired") ||
+      messageIncludes(stateError, "could not be parsed")
+    ) {
+      return {
+        title: "Registration response was malformed or unusable",
+        explanation:
+          "The server answered 2xx but the registration isn't usable (missing client_id, inconsistent secret/auth-method combination, or an already-expired secret). Expand the HTTP entry for the raw (redacted) response. A remote client may still have been created — retrying asks for confirmation first.",
+        actions: [CONFIGURE],
+        severity: "error",
+      };
+    }
+    if (stateError || hasFailedResponse || httpEntry?.error) {
+      return {
+        title: "Open dynamic registration was not accepted",
+        explanation:
+          "The authorization server refused the unauthenticated registration POST (this debugger sends no initial access token or software statement). RFC 7591 permits protected registration endpoints, so this does not prove the server lacks DCR — it proves open DCR isn't offered. Expand the HTTP entry for the server's RFC error body, then switch to pre-registered credentials.",
+        actions: [CONFIGURE],
+        severity: "error",
+      };
+    }
+  }
+
+  if (step === "fetch_client_metadata_document") {
+    if (
+      messageIncludes(stateError, "client_id_metadata_document_supported")
+    ) {
+      return {
+        title: "The authorization server doesn't advertise CIMD support",
+        explanation:
+          "Client ID Metadata Documents require the server to advertise `client_id_metadata_document_supported: true`; the draft directs clients not to attempt the flow otherwise. This parked run is itself the readiness answer. Switch to pre-registered credentials (or DCR) to continue testing.",
+        actions: [CONFIGURE],
+        severity: "error",
+      };
+    }
+    if (messageIncludes(stateError, "key-based auth method")) {
+      return {
+        title: "Confidential CIMD isn't supported by this debugger yet",
+        explanation:
+          "The hosted metadata document declares a key-based client-auth method, which this debugger cannot exercise yet. This is a debugger limitation, not a server finding.",
+        actions: [],
+        severity: "error",
+      };
+    }
+    if (
+      messageIncludes(stateError, "does not exactly equal") ||
+      messageIncludes(stateError, "insufficient for XAA") ||
+      messageIncludes(stateError, "shared-secret auth method") ||
+      messageIncludes(stateError, "not a JSON")
+    ) {
+      return {
+        title: "The hosted client metadata document failed validation",
+        explanation:
+          "The debugger's preflight found the hosted document itself invalid (wrong client_id, missing XAA grants, or a forbidden auth method). This points at MCPJam's hosted document, not your authorization server. Retry freely — no remote state was created.",
+        actions: [],
+        severity: "error",
+      };
+    }
+    if (stateError || hasFailedResponse || httpEntry?.error) {
+      return {
+        title: "Client metadata document preflight failed",
+        explanation:
+          "The debugger could not fetch the hosted document as draft-02 requires (a direct 200 JSON response; redirects are forbidden because the authorization server must not follow them). Retry freely — this GET creates no remote state. If it keeps failing, the hosted route may be down.",
+        actions: [],
+        severity: "error",
+      };
+    }
+  }
+
   if (step === "jwt_bearer_request") {
     // Pre-request validation: no HTTP call was made. Don't claim the AS
     // rejected anything — the state machine set an error before contact.
@@ -249,7 +347,7 @@ export function getXAAErrorGuidance(
         title: "Your authorization server doesn't support the jwt-bearer grant",
         explanation:
           "The AS returned `unsupported_grant_type`. XAA requires the AS to accept `urn:ietf:params:oauth:grant-type:jwt-bearer` (RFC 7523). Most ASes don't yet — Okta does natively, Auth0/Keycloak with config, WorkOS/Stytch currently don't. Common workaround: run a small bridge service that accepts the ID-JAG, validates it against MCPJam's JWKS, and mints tokens via your AS's admin API.",
-        actions: [REGISTER_ISSUER],
+        actions: [],
         severity: "error",
       };
     }
@@ -275,7 +373,7 @@ export function getXAAErrorGuidance(
         title: "Authorization server rejected the ID-JAG assertion",
         explanation:
           "The AS accepted the grant type but rejected the assertion itself. Likely causes: (1) the AS doesn't trust MCPJam as an issuer — register the JWKS URL; (2) `aud` doesn't match the AS's own issuer; (3) `resource` isn't a registered resource; (4) the token is expired; (5) a negative-test mode is active.",
-        actions: [REGISTER_ISSUER],
+        actions: [],
         severity: "error",
       };
     }
@@ -300,7 +398,7 @@ export function getXAAErrorGuidance(
         title: "JWT bearer request failed at the authorization server",
         explanation:
           "The AS returned a non-success response. Expand the HTTP entry below for the raw body, then check: (1) AS supports the jwt-bearer grant, (2) AS trusts MCPJam's JWKS, (3) `client_id` is registered, (4) `resource` is recognized.",
-        actions: [REGISTER_ISSUER],
+        actions: [],
         severity: "error",
       };
     }

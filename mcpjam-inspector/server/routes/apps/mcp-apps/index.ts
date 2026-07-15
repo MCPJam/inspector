@@ -17,6 +17,7 @@ import type {
   McpUiResourceMeta,
 } from "@modelcontextprotocol/ext-apps";
 import { MCP_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled";
+import { RECORDER_SHIM_JS } from "./recorder-shim";
 import { injectOpenAICompat } from "../../../utils/widget-helpers";
 
 const apps = new Hono();
@@ -468,6 +469,14 @@ apps.post("/widget-content", async (c) => {
   }
 });
 
+// Inject the Tier 2 recorder shim (a JS string from recorder-shim.ts) into the
+// proxy's `RECORDER_SHIM` placeholder at serve time, so the heavy, unit-tested
+// shim source lives in one TS module and never drifts from a copy in the HTML.
+const SANDBOX_PROXY_HTML_WITH_RECORDER = MCP_APPS_SANDBOX_PROXY_HTML.replace(
+  '"__MCPJAM_RECORDER_SHIM__"',
+  () => JSON.stringify(RECORDER_SHIM_JS)
+);
+
 apps.get("/sandbox-proxy", (c) => {
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -476,7 +485,7 @@ apps.get("/sandbox-proxy", (c) => {
     "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*"
   );
   c.res.headers.delete("X-Frame-Options");
-  return c.body(MCP_APPS_SANDBOX_PROXY_HTML);
+  return c.body(SANDBOX_PROXY_HTML_WITH_RECORDER);
 });
 
 export default apps;

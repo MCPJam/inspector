@@ -76,7 +76,10 @@ console.log(
   `\n🌲 Worktree instance ${instance}  →  client :${clientPort}  server :${serverPort}  backend ${backendTarget}\n`,
 );
 
-const child = spawn("npm", ["run", "dev"], {
+// Use `dev:app` (no platform MCP worker): the worker binds a fixed port (8787)
+// and its PLATFORM_API_URL is pinned to the main :6274 server, so it can't be
+// run per-worktree. Worktree instances run the UI + server only.
+const child = spawn("npm", ["run", "dev:app"], {
   stdio: "inherit",
   env: {
     ...process.env,

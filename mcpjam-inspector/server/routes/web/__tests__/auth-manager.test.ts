@@ -18,7 +18,7 @@ vi.mock("@mcpjam/sdk", async () => {
 });
 
 import type { Context } from "hono";
-import { createAuthorizedManager } from "../auth.js";
+import { createAuthorizedManager, callerContextFromHono } from "../auth.js";
 import { WebRouteError } from "../errors.js";
 
 // Faithful Hono Context stub: `get`, `var`, and `set` all read/write the same
@@ -83,7 +83,7 @@ describe("web auth manager batching", () => {
 
     await expect(
       createAuthorizedManager(
-        mockContext,
+        callerContextFromHono(mockContext),
         "bearer-token",
         "project-1",
         ["server-b", "server-a"],
@@ -125,7 +125,7 @@ describe("web auth manager batching", () => {
     }) as typeof fetch;
 
     const result = await createAuthorizedManager(
-      mockContext,
+      callerContextFromHono(mockContext),
       "bearer-token",
       "project-1",
       ["server-1"],
@@ -208,7 +208,7 @@ describe("web auth manager batching", () => {
     }) as typeof fetch;
 
     await createAuthorizedManager(
-      mockContext,
+      callerContextFromHono(mockContext),
       "bearer-token",
       "project-1",
       ["server-1"],
@@ -279,7 +279,7 @@ describe("web auth manager batching", () => {
     }) as typeof fetch;
 
     await createAuthorizedManager(
-      mockContext,
+      callerContextFromHono(mockContext),
       "bearer-token",
       "project-1",
       ["server-1"],
@@ -336,7 +336,7 @@ describe("web auth manager batching", () => {
 
     await expect(
       createAuthorizedManager(
-        mockContext,
+        callerContextFromHono(mockContext),
         "bearer-token",
         "project-1",
         ["server-1"],
@@ -359,6 +359,112 @@ describe("web auth manager batching", () => {
         serverUrl: "https://server-1.example.com/mcp",
       },
     });
+  });
+
+  it("connects a tokenless auto (discover) server unauthenticated and tags a live 401", async () => {
+    global.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          results: {
+            "server-1": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: "https://server-1.example.com/mcp",
+                headers: {},
+                authMethod: "auto",
+              },
+            },
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }) as typeof fetch;
+
+    // No pre-connect throw: discover attempts the server without credentials.
+    await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000,
+      undefined,
+      undefined,
+      { serverNames: ["Asana"] }
+    );
+
+    const config = mcpClientManagerMock.mock.calls[0]?.[0]?.["server-1"];
+    expect(config.requestInit?.headers?.Authorization).toBeUndefined();
+    // A live 401 converts into the tagged oauthRequired shape via the
+    // discover onUnauthorized handler.
+    await expect(
+      config.onUnauthorized({
+        serverId: "server-1",
+        error: Object.assign(new Error("HTTP 401"), { statusCode: 401 }),
+      })
+    ).rejects.toMatchObject<WebRouteError>({
+      status: 401,
+      code: "UNAUTHORIZED",
+      message: 'Server "Asana" requires authorization.',
+      details: {
+        oauthRequired: true,
+        serverId: "server-1",
+        serverName: "Asana",
+        serverUrl: "https://server-1.example.com/mcp",
+      },
+    });
+  });
+
+  it("keeps the oauth path for an auto (discover) server whose batch returned a token", async () => {
+    global.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          results: {
+            "server-1": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              oauthAccessToken: "stored-token",
+              serverConfig: {
+                transportType: "http",
+                url: "https://server-1.example.com/mcp",
+                headers: {},
+                authMethod: "auto",
+              },
+            },
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }) as typeof fetch;
+
+    await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000,
+      undefined,
+      undefined,
+      { serverNames: ["Asana"] }
+    );
+
+    const config = mcpClientManagerMock.mock.calls[0]?.[0]?.["server-1"];
+    expect(config.requestInit?.headers?.Authorization).toBe(
+      "Bearer stored-token"
+    );
+    // Stored-token rung: the refresh handler is attached, not the tagging one.
+    expect(typeof config.onUnauthorized).toBe("function");
   });
 
   // Codex P2 regression: client now forwards
@@ -395,7 +501,7 @@ describe("web auth manager batching", () => {
     }) as typeof fetch;
 
     await createAuthorizedManager(
-      mockContext,
+      callerContextFromHono(mockContext),
       "bearer-token",
       "project-1",
       ["server-1"],
@@ -454,7 +560,7 @@ describe("web auth manager batching", () => {
     }) as typeof fetch;
 
     await createAuthorizedManager(
-      mockContext,
+      callerContextFromHono(mockContext),
       "bearer-token",
       "project-1",
       ["server-1"],
@@ -494,5 +600,74 @@ describe("web auth manager batching", () => {
       "2025-11-25",
       "2025-06-18",
     ]);
+  });
+
+  // CONTRACT: the swarm runner threads each pinned server's
+  // `requestTimeoutOverride` through `options.requestTimeoutByServerId`. Each
+  // server's connection `timeout` must reflect ITS pin (falling back to the
+  // host-level timeout when absent) — before the fix every server got the
+  // single host-level timeout uniformly.
+  it("applies per-server requestTimeoutByServerId overrides to each connection", async () => {
+    global.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          results: {
+            "server-fast": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: "https://fast.example.com/mcp",
+                headers: {},
+                useOAuth: false,
+              },
+            },
+            "server-default": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: "https://default.example.com/mcp",
+                headers: {},
+                useOAuth: false,
+              },
+            },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }) as typeof fetch;
+
+    await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-fast", "server-default"],
+      10_000,
+      undefined,
+      undefined,
+      {
+        accessScope: "project_member",
+        // Only server-fast is pinned; server-default falls back to 10_000.
+        requestTimeoutByServerId: { "server-fast": 3_000 },
+      }
+    );
+
+    const configs = mcpClientManagerMock.mock.calls[0]?.[0] as Record<
+      string,
+      { timeout: number }
+    >;
+    expect(configs["server-fast"]!.timeout).toBe(3_000);
+    expect(configs["server-default"]!.timeout).toBe(10_000);
+
+    // Manager-level defaultTimeout stays the host-level timeout.
+    const managerOpts = mcpClientManagerMock.mock.calls[0]?.[1] as {
+      defaultTimeout: number;
+    };
+    expect(managerOpts.defaultTimeout).toBe(10_000);
   });
 });

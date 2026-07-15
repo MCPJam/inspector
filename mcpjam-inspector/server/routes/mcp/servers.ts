@@ -8,6 +8,22 @@ import {
   respondWithLocalRouteError,
 } from "../../utils/local-server-resolver.js";
 
+function hasBearerAuthorizationHeader(headers: unknown): boolean {
+  if (!headers || typeof headers !== "object") {
+    return false;
+  }
+  for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+    if (
+      key.trim().toLowerCase() === "authorization" &&
+      typeof value === "string" &&
+      value.startsWith("Bearer ")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function redactServerConfig(config: unknown) {
   if (!config || typeof config !== "object") {
     return config;
@@ -34,6 +50,11 @@ function redactServerConfig(config: unknown) {
         typeof nextRequestInit.headers === "object" &&
         Object.keys(nextRequestInit.headers as Record<string, unknown>).length >
           0;
+      // Flag bearer auth before the header value is stripped, so the edit form
+      // can keep the auth type as "bearer" and preserve the hidden token.
+      redacted.hasBearerToken = hasBearerAuthorizationHeader(
+        nextRequestInit.headers
+      );
       delete nextRequestInit.headers;
     }
     redacted.requestInit = nextRequestInit;

@@ -6,8 +6,8 @@ import {
 } from "../drafts";
 
 describe("getDefaultHostedModelId", () => {
-  it("defaults to GPT-5 Mini, not the first MCPJam model in the catalog (gpt-oss)", () => {
-    expect(getDefaultHostedModelId()).toBe("openai/gpt-5-mini");
+  it("defaults to Mistral Small 4, not the first MCPJam model by accident", () => {
+    expect(getDefaultHostedModelId()).toBe("mistralai/mistral-small-2603");
     expect(getDefaultHostedModelId()).not.toBe("openai/gpt-oss-120b");
   });
 });

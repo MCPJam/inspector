@@ -34,7 +34,10 @@ import {
   generateRandomString,
   generateCodeChallenge,
 } from "./shared/pkce.js";
-import { buildResourceMetadataUrl } from "./shared/urls.js";
+import {
+  buildResourceMetadataUrl,
+  resourceMatchesServerUrl,
+} from "./shared/urls.js";
 import {
   buildInitializeRequestBody,
   resolveInitializeProtocolVersion,
@@ -44,7 +47,15 @@ import {
   parseScopeString,
   resolveRequestedScopeValue,
 } from "./shared/challenges.js";
-import { resolvePreregisteredClientAuthMethod } from "./shared/client-auth.js";
+import {
+  buildTokenRequestClientAuth,
+  normalizeRegisteredClientAuthMethod,
+  resolvePreregisteredClientAuthMethod,
+} from "./shared/client-auth.js";
+import {
+  buildDynamicClientRegistrationRequest,
+  executeDynamicClientRegistration,
+} from "./shared/dynamic-client-registration.js";
 import { discoverOAuthProtectedResourceMetadata } from "../browser-auth.js";
 
 // Re-export types for backward compatibility
@@ -428,6 +439,19 @@ export const createDebugOAuthStateMachine = (
 
   // Helper to get current state (use getState if provided, otherwise use initial state)
   const getCurrentState = () => (getState ? getState() : initialState);
+
+  // Per RFC 8707 and the MCP Authorization spec, the OAuth `resource` indicator
+  // must use the identifier advertised in the server's Protected Resource
+  // Metadata when one was discovered. That identifier may be any URI (including
+  // a URN) and is not required to equal the MCP endpoint URL, so the client must
+  // not overwrite it with the server URL. Only fall back to the server URL when
+  // no PRM `resource` is available. Resolving through a single helper also keeps
+  // the authorization request and the token request resource values identical —
+  // some authorization servers reject a mismatch between the two.
+  const resolveResourceParameter = (): string | undefined => {
+    const current = getCurrentState();
+    return current.resourceMetadata?.resource ?? current.serverUrl;
+  };
 
   const executeRequest = (url: string, options: RequestInit = {}) =>
     requestExecutor({
@@ -843,7 +867,7 @@ export const createDebugOAuthStateMachine = (
                 resourceMetadata.authorization_servers?.[0] || serverUrl;
 
               // Add info log for Authorization Servers
-              const infoLogs = addInfoLog(
+              let infoLogs = addInfoLog(
                 state,
                 "received_resource_metadata",
                 "authorization-servers",
@@ -854,6 +878,27 @@ export const createDebugOAuthStateMachine = (
                     resourceMetadata.authorization_servers,
                 },
               );
+
+              if (
+                resourceMetadata.resource &&
+                !resourceMatchesServerUrl(
+                  resourceMetadata.resource,
+                  state.serverUrl,
+                )
+              ) {
+                infoLogs = addInfoLog(
+                  { ...state, infoLogs },
+                  "received_resource_metadata",
+                  "resource-identifier-mismatch",
+                  "Resource identifier mismatch",
+                  {
+                    "Advertised resource": resourceMetadata.resource,
+                    "Server URL": state.serverUrl,
+                    Note: "The debugger will send the advertised resource as-is (RFC 8707), but strict MCP clients — including MCPJam's Quick OAuth and the official MCP SDK — validate it against the server URL (RFC 9728 §3.3) and will refuse to connect.",
+                  },
+                  { level: "warning" },
+                );
+              }
 
               updateState({
                 currentStep: "received_resource_metadata",
@@ -1166,33 +1211,14 @@ export const createDebugOAuthStateMachine = (
                 supportedScopes: scopesSupported,
               });
 
-              const clientMetadata: Record<string, any> = {
-                ...dynamicRegistrationDefaults,
-                redirect_uris:
-                  dynamicRegistrationDefaults.redirect_uris ?? [redirectUri],
-                grant_types: dynamicRegistrationDefaults.grant_types ?? [
-                  "authorization_code",
-                  "refresh_token",
-                ],
-                response_types:
-                  dynamicRegistrationDefaults.response_types ?? ["code"],
-                token_endpoint_auth_method:
-                  dynamicRegistrationDefaults.token_endpoint_auth_method ??
-                  "none",
-              };
-
-              if (requestedScopeValue) {
-                clientMetadata.scope = requestedScopeValue;
-              }
-
-              const registrationRequest = {
-                method: "POST",
-                url: state.authorizationServerMetadata.registration_endpoint,
-                headers: mergeHeadersForAuthServer(customHeaders, {
-                  "Content-Type": "application/json",
-                }),
-                body: clientMetadata,
-              };
+              const registrationRequest = buildDynamicClientRegistrationRequest({
+                registrationEndpoint:
+                  state.authorizationServerMetadata.registration_endpoint,
+                redirectUri,
+                dynamicRegistrationDefaults,
+                scope: requestedScopeValue,
+                customHeaders,
+              });
 
               // Update state with the request
               updateState({
@@ -1250,7 +1276,7 @@ export const createDebugOAuthStateMachine = (
             }
             break;
 
-          case "request_client_registration":
+          case "request_client_registration": {
             // Step 6: Dynamic Client Registration (RFC 7591)
             if (!state.authorizationServerMetadata?.registration_endpoint) {
               throw new Error("No registration endpoint available");
@@ -1260,172 +1286,39 @@ export const createDebugOAuthStateMachine = (
               throw new Error("No client metadata in request");
             }
 
-            try {
-              // Make actual POST request to registration endpoint via backend proxy
-              const response = await executeRequest(
-                state.authorizationServerMetadata.registration_endpoint,
-                {
-                  method: "POST",
-                  headers: mergeHeadersForAuthServer(customHeaders, {
-                    "Content-Type": "application/json",
-                  }),
-                  body: JSON.stringify(state.lastRequest.body),
-                },
-              );
+            // Execute the exact request recorded in lastRequest so the
+            // displayed request and the executed request cannot drift.
+            const dcr = await executeDynamicClientRegistration({
+              request: state.lastRequest,
+              requestExecutor,
+              httpHistory: state.httpHistory,
+            });
 
-              const registrationResponseData = {
-                status: response.status,
-                statusText: response.statusText,
-                headers: response.headers,
-                body: response.body,
-              };
-
-              // Update the last history entry with the response
-              const updatedHistoryReg = [...(state.httpHistory || [])];
-              if (updatedHistoryReg.length > 0) {
-                const lastEntry =
-                  updatedHistoryReg[updatedHistoryReg.length - 1];
-                lastEntry.response = registrationResponseData;
-                lastEntry.duration =
-                  Date.now() - (lastEntry.timestamp || Date.now());
-              }
-
-              if (!response.ok) {
-                // Registration failed - could be server doesn't support DCR or request was invalid
-                const registrationError = `Dynamic Client Registration failed (${response.status}).`;
-
-                // Update state with error but continue with fallback
-                updateState({
-                  lastResponse: registrationResponseData,
-                  httpHistory: updatedHistoryReg,
-                  error: registrationError,
-                });
-
-                if (strictConformance) {
-                  return;
-                }
-
-                const fallbackClient =
-                  await loadFallbackPreregisteredClient(
-                    `Dynamic Client Registration failed (${response.status}); using pre-registered client credentials.`,
-                  );
-
-                if (!fallbackClient) {
-                  updateState({
-                    error:
-                      `${registrationError} Configure a pre-registered client or enable DCR on the authorization server.`,
-                    isInitiatingAuth: false,
-                  });
-                  return;
-                }
-
-                updateState({
-                  currentStep: "received_client_credentials",
-                  clientId: fallbackClient.clientId,
-                  clientSecret: fallbackClient.clientSecret,
-                  tokenEndpointAuthMethod:
-                    fallbackClient.tokenEndpointAuthMethod,
-                  infoLogs: fallbackClient.infoLogs,
-                  error: undefined,
-                  isInitiatingAuth: false,
-                });
-              } else {
-                // Registration successful
-                const clientInfo = response.body;
-                if (
-                  strictConformance &&
-                  typeof clientInfo?.client_id !== "string"
-                ) {
-                  updateState({
-                    lastResponse: registrationResponseData,
-                    httpHistory: updatedHistoryReg,
-                    error:
-                      "Dynamic Client Registration response is missing a client_id.",
-                    isInitiatingAuth: false,
-                  });
-                  return;
-                }
-
-                // Add info log for DCR
-                const dcrInfo: Record<string, any> = {
-                  "Client ID": clientInfo.client_id,
-                  "Client Name": clientInfo.client_name,
-                  "Token Auth Method":
-                    clientInfo.token_endpoint_auth_method || "none",
-                  "Redirect URIs": clientInfo.redirect_uris,
-                  "Grant Types": clientInfo.grant_types,
-                  "Response Types": clientInfo.response_types,
-                };
-
-                if (clientInfo.client_secret) {
-                  dcrInfo["Client Secret"] =
-                    clientInfo.client_secret.substring(0, 20) + "...";
-                  dcrInfo["Note"] =
-                    "Server issued client_secret - this will be used in token requests";
-                }
-
-                const infoLogs = addInfoLog(
-                  getCurrentState(),
-                  "received_client_credentials",
-                  "dcr",
-                  "Dynamic Client Registration",
-                  dcrInfo,
-                );
-
-                updateState({
-                  currentStep: "received_client_credentials",
-                  clientId: clientInfo.client_id,
-                  clientSecret: clientInfo.client_secret,
-                  tokenEndpointAuthMethod:
-                    clientInfo.token_endpoint_auth_method || "none",
-                  lastResponse: registrationResponseData,
-                  httpHistory: updatedHistoryReg,
-                  infoLogs,
-                  error: undefined,
-                  isInitiatingAuth: false,
-                });
-              }
-            } catch (error) {
-              // Capture the error but continue with fallback
-              const errorResponse = {
-                status: 0,
-                statusText: "Network Error",
-                headers: {},
-                body: {
-                  error: error instanceof Error ? error.message : String(error),
-                },
-              };
-
-              const updatedHistoryError = [...(state.httpHistory || [])];
-              if (updatedHistoryError.length > 0) {
-                const lastEntry =
-                  updatedHistoryError[updatedHistoryError.length - 1];
-                lastEntry.response = errorResponse;
-                lastEntry.duration =
-                  Date.now() - (lastEntry.timestamp || Date.now());
-              }
-
-              const registrationError = `Client registration failed: ${error instanceof Error ? error.message : String(error)}`;
-
+            if (dcr.status !== "registered") {
+              // Update state with error but continue with fallback
               updateState({
-                lastResponse: errorResponse,
-                httpHistory: updatedHistoryError,
-                error: registrationError,
+                lastResponse: dcr.response,
+                httpHistory: dcr.httpHistory,
+                error: dcr.error,
               });
 
               if (strictConformance) {
+                // A 2xx-but-unusable registration body previously reached the
+                // strict missing-client_id path, which cleared isInitiatingAuth.
+                // Preserve that so a failed strict run isn't left "initiating".
+                if (dcr.status === "invalid_response") {
+                  updateState({ isInitiatingAuth: false });
+                }
                 return;
               }
 
-              const fallbackClient =
-                await loadFallbackPreregisteredClient(
-                  "Client registration failed; using pre-registered client credentials.",
-                );
+              const fallbackClient = await loadFallbackPreregisteredClient(
+                dcr.fallbackNote,
+              );
 
               if (!fallbackClient) {
                 updateState({
-                  error:
-                    `${registrationError}. Configure a pre-registered client or enable DCR on the authorization server.`,
+                  error: dcr.errorWithFallbackHint,
                   isInitiatingAuth: false,
                 });
                 return;
@@ -1441,8 +1334,44 @@ export const createDebugOAuthStateMachine = (
                 error: undefined,
                 isInitiatingAuth: false,
               });
+              break;
             }
+
+            // Registration successful
+            if (strictConformance && dcr.missingClientId) {
+              updateState({
+                lastResponse: dcr.response,
+                httpHistory: dcr.httpHistory,
+                error:
+                  "Dynamic Client Registration response is missing a client_id.",
+                isInitiatingAuth: false,
+              });
+              return;
+            }
+
+            const infoLogs = addInfoLog(
+              getCurrentState(),
+              "received_client_credentials",
+              "dcr",
+              "Dynamic Client Registration",
+              dcr.infoLogData,
+            );
+
+            updateState({
+              currentStep: "received_client_credentials",
+              clientId: dcr.credentials.clientId,
+              clientSecret: dcr.credentials.clientSecret,
+              tokenEndpointAuthMethod: normalizeRegisteredClientAuthMethod(
+                dcr.clientInfo,
+              ),
+              lastResponse: dcr.response,
+              httpHistory: dcr.httpHistory,
+              infoLogs,
+              error: undefined,
+              isInitiatingAuth: false,
+            });
             break;
+          }
 
           case "received_client_credentials":
             // Step 7: Generate PKCE parameters
@@ -1460,7 +1389,7 @@ export const createDebugOAuthStateMachine = (
               {
                 code_challenge: codeChallenge,
                 method: "S256",
-                resource: state.serverUrl || "Unknown",
+                resource: resolveResourceParameter() || "Unknown",
               },
             );
 
@@ -1496,8 +1425,9 @@ export const createDebugOAuthStateMachine = (
             );
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
-            if (state.serverUrl) {
-              authUrl.searchParams.set("resource", state.serverUrl);
+            const authResourceParam = resolveResourceParameter();
+            if (authResourceParam) {
+              authUrl.searchParams.set("resource", authResourceParam);
             }
 
             const requestedScopeValue = resolveRequestedScopeValue({
@@ -1545,7 +1475,7 @@ export const createDebugOAuthStateMachine = (
             });
             break;
 
-          case "received_authorization_code":
+          case "received_authorization_code": {
             // Step 10: Validate authorization code and prepare for token exchange
 
             if (
@@ -1565,26 +1495,26 @@ export const createDebugOAuthStateMachine = (
             }
 
             // Build the token request body as an object (will be shown in HTTP history)
+            const previewClientAuth = buildTokenRequestClientAuth({
+              clientId: state.clientId,
+              clientSecret: state.clientSecret,
+              tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+            });
+
             const tokenRequestBodyObj: Record<string, string> = {
               grant_type: "authorization_code",
               code: state.authorizationCode,
               redirect_uri: redirectUri,
+              ...previewClientAuth.bodyParams,
             };
-
-            if (state.clientId) {
-              tokenRequestBodyObj.client_id = state.clientId;
-            }
-
-            if (state.clientSecret) {
-              tokenRequestBodyObj.client_secret = state.clientSecret;
-            }
 
             if (state.codeVerifier) {
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
             }
 
-            if (state.serverUrl) {
-              tokenRequestBodyObj.resource = state.serverUrl;
+            const tokenBodyResourceParam = resolveResourceParameter();
+            if (tokenBodyResourceParam) {
+              tokenRequestBodyObj.resource = tokenBodyResourceParam;
             }
 
             const tokenRequest = {
@@ -1592,6 +1522,7 @@ export const createDebugOAuthStateMachine = (
               url: state.authorizationServerMetadata.token_endpoint,
               headers: {
                 "Content-Type": "application/x-www-form-urlencoded",
+                ...previewClientAuth.headers,
               },
               body: tokenRequestBodyObj,
             };
@@ -1617,6 +1548,7 @@ export const createDebugOAuthStateMachine = (
             // Automatically proceed to make the actual request
             autoAdvance(50);
             return;
+          }
 
           case "token_request":
             // Step 11: Exchange authorization code for access token
@@ -1636,32 +1568,41 @@ export const createDebugOAuthStateMachine = (
 
             try {
               // Prepare token request body (form-urlencoded)
+              const clientAuth = buildTokenRequestClientAuth({
+                clientId: state.clientId,
+                clientSecret: state.clientSecret,
+                tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+              });
+
               const tokenRequestBody = new URLSearchParams({
                 grant_type: "authorization_code",
                 code: state.authorizationCode,
                 redirect_uri: redirectUri,
-                client_id: state.clientId || "",
                 code_verifier: state.codeVerifier || "",
+                ...clientAuth.bodyParams,
               });
 
-              // Add client_secret if available (for confidential clients)
-              if (state.clientSecret) {
-                tokenRequestBody.set("client_secret", state.clientSecret);
-              }
-
               // Add resource parameter if available
-              if (state.serverUrl) {
-                tokenRequestBody.set("resource", state.serverUrl);
+              const tokenResourceParam = resolveResourceParameter();
+              if (tokenResourceParam) {
+                tokenRequestBody.set("resource", tokenResourceParam);
               }
 
-              // Make the token request via backend proxy
+              // Make the token request via backend proxy. The client-auth
+              // Authorization header is applied AFTER the merge: the merge
+              // strips user-configured Authorization headers so MCP-server
+              // credentials never leak to the AS, but the Basic credential
+              // here IS addressed to the AS (client_secret_basic).
               const response = await executeRequest(
                 state.authorizationServerMetadata.token_endpoint,
                 {
                   method: "POST",
-                  headers: mergeHeadersForAuthServer(customHeaders, {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                  }),
+                  headers: {
+                    ...mergeHeadersForAuthServer(customHeaders, {
+                      "Content-Type": "application/x-www-form-urlencoded",
+                    }),
+                    ...clientAuth.headers,
+                  },
                   body: tokenRequestBody.toString(),
                 },
               );
