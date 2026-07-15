@@ -21,8 +21,17 @@ export default defineConfig({
     "src/host-config/index.ts",
     // Low-level first-party entry used by the backend and SDK tooling.
     "src/host-config/internal.ts",
+    // Node-safe host-template seeding (server `--template` resolver + CLI).
+    "src/host-config/templates/index.ts",
     // Runtime-agnostic Platform API client (Workers/browser/Node safe).
     "src/platform/index.ts",
+    // Framework-free public-API wire contract (error codes + envelopes) shared
+    // by the Inspector gateway and (eventually) the Convex backend.
+    "src/public-api/index.ts",
+    // Framework-free widget/app runtime building blocks (SEP-1865).
+    "src/widget-runtime/index.ts",
+    // Shared host-compatibility verdict engine (UI / CLI / API / MCP).
+    "src/host-compat/index.ts",
   ],
   external: ["@sentry/node"],
   format: ["esm"],

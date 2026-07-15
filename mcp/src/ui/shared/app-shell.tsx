@@ -164,6 +164,20 @@ export function getResultText(result: CallToolResult): string | undefined {
   return textBlock?.type === "text" ? textBlock.text : undefined;
 }
 
+// Machine-readable error code the worker attaches to error results
+// (`structuredContent.error.code`), so the widget can distinguish an empty
+// state (NOT_FOUND) from a real failure. Returns undefined for ok results or
+// errors that carry no code.
+export function getResultErrorCode(
+  result: CallToolResult
+): string | undefined {
+  const structured = result.structuredContent as
+    | { error?: { code?: unknown } }
+    | undefined;
+  const code = structured?.error?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
 function mergeHostContext(
   previous: McpUiHostContext | undefined,
   next: Partial<McpUiHostContext>

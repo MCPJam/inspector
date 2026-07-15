@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useConvexAuth, useQuery } from "convex/react";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import { useLogger } from "./use-logger";
@@ -239,10 +239,10 @@ export function useAppState({
     validOrganizations.some(
       (organization) => organization._id === pendingOAuthMarkerOrgId
     );
-  const activeOrganizationId = isStoredActiveOrganizationValid
-    ? storedActiveOrganizationId
-    : isPendingOAuthMarkerOrgValid
+  const activeOrganizationId = isPendingOAuthMarkerOrgValid
     ? pendingOAuthMarkerOrgId
+    : isStoredActiveOrganizationValid
+    ? storedActiveOrganizationId
     : fallbackActiveOrganizationId;
   const setActiveOrganizationId = useCallback(
     (organizationId: string | undefined) => {
@@ -517,6 +517,8 @@ export function useAppState({
     isAuthLoading,
     isLoadingProjects: projectState.isLoadingProjects,
     useLocalFallback: projectState.useLocalFallback,
+    activeOrganizationId,
+    restoreActiveOrganizationId: setActiveOrganizationId,
     effectiveProjects: projectState.effectiveProjects,
     effectiveActiveProjectId: projectState.effectiveActiveProjectId,
     activeProjectServersFlat: projectState.activeProjectServersFlat,
@@ -848,6 +850,7 @@ export function useAppState({
       serverState.handleRefreshTokensFromOAuthFlow,
     persistRuntimeServerToProjectIfNeeded:
       serverState.persistRuntimeServerToProjectIfNeeded,
+    ensureHostedServerIdsForNames: serverState.ensureHostedServerIdsForNames,
 
     handleSwitchProject,
     handleCreateProject: projectState.handleCreateProject,

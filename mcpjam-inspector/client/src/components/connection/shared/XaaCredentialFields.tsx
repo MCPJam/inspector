@@ -1,0 +1,672 @@
+import { useEffect, useId, useState } from "react";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
+import { Switch } from "@mcpjam/design-system/switch";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Eye,
+  EyeOff,
+  Info,
+  Loader2,
+} from "lucide-react";
+import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
+import {
+  XAA_DEMO_IDENTITY,
+  isCompleteIdentityPair,
+} from "@/lib/xaa/identity";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
+
+/**
+ * The Cross-App Access (XAA) credential fields, shared by the /servers Connect
+ * page (AuthenticationSection) and the XAA Debugger's "Configure Server to
+ * Test" modal so both surfaces have identical fields, ordering, and style.
+ *
+ * Presentational + fully controlled. The simulated-identity binding differs by
+ * surface (per-server on Connect, global run-settings in the Debugger), so the
+ * caller owns those values and the help copy.
+ */
+export interface XaaCredentialFieldsProps {
+  // Resource authorization-server credentials (jwt-bearer "leg 3").
+  clientId: string;
+  onClientIdChange: (value: string) => void;
+  clientIdError?: string | null;
+  /**
+   * Whether Client ID is required. Defaults to true (the Connect page and
+   * pre-registered flows). The XAA Debugger sets this false for DCR/CIMD, where
+   * the client identity is minted or supplied by a metadata URL.
+   */
+  clientIdRequired?: boolean;
+  /** Hide pre-registered client credentials for DCR/CIMD flows. */
+  showClientCredentials?: boolean;
+  clientSecret: string;
+  onClientSecretChange: (value: string) => void;
+  hasStoredClientSecret?: boolean;
+  clearClientSecret?: boolean;
+  onClearClientSecret?: () => void;
+  onUndoClearClientSecret?: () => void;
+  clientSecretError?: string | null;
+  scopes: string;
+  onScopesChange: (value: string) => void;
+
+  // Advanced
+  xaaAuthzIssuer: string;
+  onXaaAuthzIssuerChange: (value: string) => void;
+  /** Opt-in: accept a path-scoped authorization server whose metadata
+   * advertises the same-origin root as issuer. */
+  xaaAllowPathScopedIssuer: boolean;
+  onXaaAllowPathScopedIssuerChange: (value: boolean) => void;
+  xaaSubject: string;
+  onXaaSubjectChange: (value: string) => void;
+  xaaEmail: string;
+  onXaaEmailChange: (value: string) => void;
+  /**
+   * The project's admin-controlled default identity, shown as the override
+   * placeholders when complete. Absent (or partial) → the placeholders show
+   * the MCPJam demo identity instead.
+   */
+  projectDefaultIdentity?: { subject: string; email: string } | null;
+  /** Per-surface copy under the "Override identity" heading. */
+  identityHelpText?: string;
+  /** Start the Advanced section expanded (Debugger wants identity visible). */
+  defaultAdvancedOpen?: boolean;
+  /**
+   * Hosted-mode reveal context. When both are present and a secret is stored,
+   * a "Reveal" button fetches the saved secret (same API + UX as OAuth).
+   */
+  projectId?: string | null;
+  hostedServerId?: string | null;
+}
+
+export function XaaCredentialFields({
+  clientId,
+  onClientIdChange,
+  clientIdError,
+  clientIdRequired = true,
+  showClientCredentials = true,
+  clientSecret,
+  onClientSecretChange,
+  hasStoredClientSecret = false,
+  clearClientSecret = false,
+  onClearClientSecret,
+  onUndoClearClientSecret,
+  clientSecretError,
+  scopes,
+  onScopesChange,
+  xaaAuthzIssuer,
+  onXaaAuthzIssuerChange,
+  xaaAllowPathScopedIssuer,
+  onXaaAllowPathScopedIssuerChange,
+  xaaSubject,
+  onXaaSubjectChange,
+  xaaEmail,
+  onXaaEmailChange,
+  projectDefaultIdentity = null,
+  identityHelpText,
+  defaultAdvancedOpen = false,
+  projectId = null,
+  hostedServerId = null,
+}: XaaCredentialFieldsProps) {
+  const [showAdvanced, setShowAdvanced] = useState(defaultAdvancedOpen);
+  const [isSecretVisible, setIsSecretVisible] = useState(false);
+  // Hosted-mode reveal — mirrors the OAuth client-secret reveal exactly, using
+  // the same endpoint (the secret lives in the same vault column).
+  const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
+  const [revealedContextKey, setRevealedContextKey] = useState<string | null>(
+    null
+  );
+  const [isRevealedVisible, setIsRevealedVisible] = useState(false);
+  const [isRevealing, setIsRevealing] = useState(false);
+  const [revealError, setRevealError] = useState<string | null>(null);
+  const [didCopy, setDidCopy] = useState(false);
+  const [isReplacing, setIsReplacing] = useState(false);
+
+  const canReveal =
+    hasStoredClientSecret &&
+    !clearClientSecret &&
+    !!projectId &&
+    !!hostedServerId;
+  const revealContextKey = canReveal ? `${projectId}:${hostedServerId}` : null;
+  const visibleRevealedSecret =
+    revealedContextKey === revealContextKey ? revealedSecret : null;
+
+  // Drop any revealed value when the saved-secret context changes (replacement
+  // typed, Clear toggled, or a different server selected).
+  useEffect(() => {
+    if (revealedContextKey !== revealContextKey) {
+      setRevealedSecret(null);
+      setRevealedContextKey(null);
+      setIsRevealedVisible(false);
+      setRevealError(null);
+      setDidCopy(false);
+      setIsReplacing(false);
+    }
+  }, [revealContextKey, revealedContextKey]);
+
+  const handleReveal = async () => {
+    if (!projectId || !hostedServerId || !revealContextKey || isRevealing)
+      return;
+    setIsRevealing(true);
+    setRevealError(null);
+    setIsReplacing(false);
+    try {
+      const result = await fetchOAuthClientSecret({
+        projectId,
+        serverId: hostedServerId,
+      });
+      setRevealedSecret(result.clientSecret);
+      setRevealedContextKey(revealContextKey);
+      setIsRevealedVisible(true);
+    } catch (error) {
+      setRevealedSecret(null);
+      setRevealedContextKey(null);
+      setIsRevealedVisible(false);
+      setRevealError(
+        error instanceof Error
+          ? error.message
+          : "Failed to reveal client secret"
+      );
+    } finally {
+      setIsRevealing(false);
+    }
+  };
+
+  const handleHideRevealed = () => {
+    setRevealedSecret(null);
+    setRevealedContextKey(null);
+    setIsRevealedVisible(false);
+    setRevealError(null);
+    setDidCopy(false);
+    if (isReplacing) onClientSecretChange("");
+    setIsReplacing(false);
+  };
+
+  const handleCopyRevealed = async (value: string) => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setDidCopy(true);
+      setTimeout(() => setDidCopy(false), 2000);
+    } catch {
+      // Clipboard failures are non-fatal.
+    }
+  };
+
+  // While showing the saved secret (not yet edited) render the revealed value;
+  // once the user edits, track their replacement.
+  const secretFieldValue = isReplacing
+    ? clientSecret
+    : visibleRevealedSecret ?? "";
+  const baseId = useId();
+  const ids = {
+    clientId: `${baseId}-client-id`,
+    clientSecret: `${baseId}-client-secret`,
+    scopes: `${baseId}-scopes`,
+    issuer: `${baseId}-issuer`,
+    pathScoped: `${baseId}-path-scoped`,
+    subject: `${baseId}-subject`,
+    email: `${baseId}-email`,
+  };
+
+  // Placeholders show the identity a blank override actually resolves to:
+  // the complete project default when one exists, otherwise the documented
+  // MCPJam demo identity.
+  const effectiveDefault = isCompleteIdentityPair(projectDefaultIdentity)
+    ? projectDefaultIdentity
+    : XAA_DEMO_IDENTITY;
+  const subjectPlaceholder = `Defaults to ${effectiveDefault.subject}`;
+  const emailPlaceholder = `Defaults to ${effectiveDefault.email}`;
+
+  return (
+    <div className="space-y-3">
+      {/* Identity provider — single option in v1; bring-your-own-IdP joins
+          here later without a relabel. */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-1.5">
+          <label className="block text-sm font-medium text-foreground">
+            Identity provider
+          </label>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label="Identity provider information"
+                className="flex items-center text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <Info className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent
+              variant="muted"
+              side="top"
+              className="max-w-[14rem]"
+            >
+              MCPJam signs the ID token and ID-JAG used in this test.
+            </TooltipContent>
+          </Tooltip>
+        </div>
+        <div
+          role="status"
+          aria-label="Identity provider"
+          className="flex h-10 w-full items-center rounded-md border border-input bg-muted/30 px-3 text-sm text-muted-foreground"
+        >
+          MCPJam test identity provider
+        </div>
+      </div>
+
+      {/* Authorization server credentials (resource AS, leg 3) */}
+      <div className="space-y-3">
+        {showClientCredentials && (
+          <>
+            <div className="space-y-2">
+              <label
+                htmlFor={ids.clientId}
+                className="block text-sm font-medium text-foreground"
+              >
+                Client ID
+                {clientIdRequired && (
+                  <span className="text-destructive" aria-hidden="true">
+                    {" *"}
+                  </span>
+                )}
+              </label>
+              <Input
+                id={ids.clientId}
+                value={clientId}
+                onChange={(e) => onClientIdChange(e.target.value)}
+                placeholder="Client ID registered with the server's authorization server"
+                aria-required={clientIdRequired}
+                spellCheck={false}
+                autoComplete="off"
+                data-1p-ignore
+                data-lpignore="true"
+                data-form-type="other"
+                className={`h-10 ${clientIdError ? "border-red-500" : ""}`}
+              />
+              {clientIdError && (
+                <p className="text-xs text-red-500">{clientIdError}</p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <label
+                  htmlFor={ids.clientSecret}
+                  className="block text-sm font-medium text-foreground"
+                >
+                  Client Secret (Optional)
+                </label>
+                <div className="flex items-center gap-1">
+                  {canReveal && !visibleRevealedSecret && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-xs"
+                      onClick={() => void handleReveal()}
+                      disabled={isRevealing}
+                    >
+                      {isRevealing ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        "Reveal"
+                      )}
+                    </Button>
+                  )}
+                  {visibleRevealedSecret && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-xs"
+                      onClick={handleHideRevealed}
+                    >
+                      Hide
+                    </Button>
+                  )}
+                  {hasStoredClientSecret && !clearClientSecret && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-xs"
+                      onClick={onClearClientSecret}
+                    >
+                      Clear
+                    </Button>
+                  )}
+                  {hasStoredClientSecret && clearClientSecret && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-xs"
+                      onClick={onUndoClearClientSecret}
+                    >
+                      Undo
+                    </Button>
+                  )}
+                </div>
+              </div>
+              {hasStoredClientSecret && clearClientSecret ? (
+                <p className="text-xs text-muted-foreground">
+                  Saved client secret will be removed when you save.
+                </p>
+              ) : visibleRevealedSecret !== null ? (
+                <>
+                  <div className="relative">
+                    <Input
+                      id={ids.clientSecret}
+                      type={isRevealedVisible ? "text" : "password"}
+                      value={secretFieldValue}
+                      onChange={(e) => {
+                        if (!isReplacing) setIsReplacing(true);
+                        onClientSecretChange(e.target.value);
+                      }}
+                      placeholder="Enter a new value to replace."
+                      autoComplete="off"
+                      data-1p-ignore
+                      data-lpignore="true"
+                      data-form-type="other"
+                      className={`h-10 pr-16 font-mono ${
+                        clientSecretError ? "border-red-500" : ""
+                      }`}
+                    />
+                    <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+                      <button
+                        type="button"
+                        aria-label={
+                          isRevealedVisible
+                            ? "Hide client secret"
+                            : "Show client secret"
+                        }
+                        title={
+                          isRevealedVisible
+                            ? "Hide client secret"
+                            : "Show client secret"
+                        }
+                        onClick={() => setIsRevealedVisible((prev) => !prev)}
+                        className="p-1 text-muted-foreground/60 transition-colors hover:text-foreground cursor-pointer"
+                      >
+                        {isRevealedVisible ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Copy client secret"
+                        title="Copy client secret"
+                        onClick={() =>
+                          void handleCopyRevealed(secretFieldValue)
+                        }
+                        className="p-1 text-muted-foreground/50 transition-colors hover:text-foreground cursor-pointer"
+                      >
+                        {didCopy ? (
+                          <Check className="h-4 w-4 text-green-500" />
+                        ) : (
+                          <Copy className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  {!isReplacing && (
+                    <p className="text-xs text-muted-foreground">
+                      Editing this replaces the saved secret when you save.
+                    </p>
+                  )}
+                </>
+              ) : canReveal ? (
+                <p className="text-xs text-muted-foreground">
+                  A client secret is saved. Reveal it to view or replace it.
+                </p>
+              ) : (
+                <div className="relative">
+                  <Input
+                    id={ids.clientSecret}
+                    type={isSecretVisible ? "text" : "password"}
+                    value={clientSecret}
+                    onChange={(e) => onClientSecretChange(e.target.value)}
+                    placeholder={
+                      hasStoredClientSecret
+                        ? "Saved — enter a new value to replace"
+                        : "Client secret (for confidential clients)"
+                    }
+                    autoComplete="off"
+                    data-1p-ignore
+                    data-lpignore="true"
+                    data-form-type="other"
+                    className="h-10 pr-10"
+                  />
+                  <button
+                    type="button"
+                    aria-label={
+                      isSecretVisible
+                        ? "Hide client secret"
+                        : "Show client secret"
+                    }
+                    title={
+                      isSecretVisible
+                        ? "Hide client secret"
+                        : "Show client secret"
+                    }
+                    onClick={() => setIsSecretVisible((prev) => !prev)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground/60 transition-colors hover:text-foreground cursor-pointer"
+                  >
+                    {isSecretVisible ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+              )}
+              {clientSecretError && (
+                <p className="text-xs text-red-500">{clientSecretError}</p>
+              )}
+              {revealError && (
+                <p className="text-xs text-red-500">{revealError}</p>
+              )}
+            </div>
+          </>
+        )}
+
+        <div className="space-y-2">
+          <label
+            htmlFor={ids.scopes}
+            className="block text-sm font-medium text-foreground"
+          >
+            Scopes
+          </label>
+          <Input
+            id={ids.scopes}
+            value={scopes}
+            onChange={(e) => onScopesChange(e.target.value)}
+            placeholder="Optional scopes separated by spaces"
+            spellCheck={false}
+            autoComplete="off"
+            className="h-10"
+          />
+        </div>
+      </div>
+
+      {/* Advanced: issuer + simulated identity */}
+      <button
+        type="button"
+        onClick={() => setShowAdvanced(!showAdvanced)}
+        className="w-full flex items-center gap-2 py-2 hover:bg-muted/50 transition-colors cursor-pointer"
+      >
+        {showAdvanced ? (
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+        )}
+        <span className="text-xs font-medium text-muted-foreground">
+          Advanced
+        </span>
+      </button>
+
+      {showAdvanced && (
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <div className="flex items-center gap-1.5">
+              <label
+                htmlFor={ids.issuer}
+                className="block text-sm font-medium text-foreground"
+              >
+                Authorization Server Issuer
+              </label>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label="How the authorization server issuer is auto-discovered"
+                  >
+                    <Info className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent variant="muted" side="top" className="max-w-xs">
+                  Leave blank to use the authorization server MCPJam discovers
+                  from the MCP server. Enter a URL to use a different
+                  authorization server instead.
+                </TooltipContent>
+              </Tooltip>
+            </div>
+            <Input
+              id={ids.issuer}
+              value={xaaAuthzIssuer}
+              onChange={(e) => onXaaAuthzIssuerChange(e.target.value)}
+              placeholder="Auto-discovered if blank"
+              spellCheck={false}
+              autoComplete="off"
+              className="h-10"
+            />
+            <div className="flex items-start gap-2 pt-1">
+              <Switch
+                id={ids.pathScoped}
+                checked={xaaAllowPathScopedIssuer}
+                onCheckedChange={onXaaAllowPathScopedIssuerChange}
+              />
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-1">
+                  <label
+                    htmlFor={ids.pathScoped}
+                    className="block text-xs font-medium text-foreground"
+                  >
+                    Path-scoped authorization server
+                  </label>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label="About path-scoped authorization servers"
+                      >
+                        <Info className="h-3.5 w-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      variant="muted"
+                      side="top"
+                      className="max-w-xs"
+                    >
+                      Use only for compatibility testing when the discovered
+                      authorization server URL and the metadata{" "}
+                      <code className="font-mono">issuer</code> differ but
+                      belong to the same origin.{" "}
+                      <a
+                        href="https://www.rfc-editor.org/rfc/rfc8414"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline underline-offset-2 hover:text-foreground"
+                      >
+                        RFC 8414
+                      </a>{" "}
+                      requires an exact match. Enabling this setting relaxes
+                      that check.
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border bg-background/40 p-3 space-y-2">
+            <div className="space-y-1">
+              <div className="flex items-center gap-1">
+                <span className="block text-xs font-medium text-foreground">
+                  Override identity for this server
+                </span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      aria-label="About the server identity override"
+                    >
+                      <Info className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    variant="muted"
+                    side="top"
+                    className="max-w-xs"
+                  >
+                    {identityHelpText ??
+                      "MCPJam acts as the test identity provider and puts these values in the ID token. Leave blank to use the project's default test identity when one is set, otherwise MCPJam's demo identity. Set both fields together to test a specific user on this server."}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              <label
+                htmlFor={ids.subject}
+                className="block text-xs font-medium text-foreground"
+              >
+                Subject (sub)
+              </label>
+              <Input
+                id={ids.subject}
+                value={xaaSubject}
+                onChange={(e) => onXaaSubjectChange(e.target.value)}
+                placeholder={subjectPlaceholder}
+                spellCheck={false}
+                autoComplete="off"
+                data-1p-ignore
+                data-lpignore="true"
+                data-form-type="other"
+                className="h-9"
+              />
+            </div>
+            <div className="space-y-1">
+              <label
+                htmlFor={ids.email}
+                className="block text-xs font-medium text-foreground"
+              >
+                Email
+              </label>
+              <Input
+                id={ids.email}
+                value={xaaEmail}
+                onChange={(e) => onXaaEmailChange(e.target.value)}
+                placeholder={emailPlaceholder}
+                spellCheck={false}
+                autoComplete="off"
+                data-1p-ignore
+                data-lpignore="true"
+                data-form-type="other"
+                className="h-9"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

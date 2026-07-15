@@ -20,6 +20,8 @@ vi.mock("../../../utils/guest-session-source.js", () => ({
 import guestToken from "../guest-token.js";
 
 const SERVICE_TOKEN = "svc_test_token";
+// Must match LOCAL_DEV_SERVICE_TOKEN in ../guest-token.ts.
+const LOCAL_DEV_SERVICE_TOKEN = "mcpjam-local-dev-service-token";
 
 function makeApp(): Hono {
   const app = new Hono();
@@ -43,11 +45,14 @@ function mint(
 describe("POST /api/web/guest-token", () => {
   const originalServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
   const originalLockdown = process.env.MCPJAM_NONPROD_LOCKDOWN;
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalAllowLocalDev = process.env.ALLOW_LOCAL_DEV_SERVICE_TOKEN;
 
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.INSPECTOR_SERVICE_TOKEN = SERVICE_TOKEN;
     delete process.env.MCPJAM_NONPROD_LOCKDOWN;
+    delete process.env.ALLOW_LOCAL_DEV_SERVICE_TOKEN;
     fetchConvexGuestSessionMock.mockResolvedValue({
       kind: "session",
       session: { guestId: "g1", token: "guest.jwt.token", expiresAt: 123 },
@@ -65,6 +70,16 @@ describe("POST /api/web/guest-token", () => {
       delete process.env.MCPJAM_NONPROD_LOCKDOWN;
     } else {
       process.env.MCPJAM_NONPROD_LOCKDOWN = originalLockdown;
+    }
+    if (originalNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
+    if (originalAllowLocalDev === undefined) {
+      delete process.env.ALLOW_LOCAL_DEV_SERVICE_TOKEN;
+    } else {
+      process.env.ALLOW_LOCAL_DEV_SERVICE_TOKEN = originalAllowLocalDev;
     }
   });
 
@@ -104,6 +119,56 @@ describe("POST /api/web/guest-token", () => {
       expiresAt: 123,
     });
     expect(fetchConvexGuestSessionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts the local-dev sentinel when opted in (non-production + flag)", async () => {
+    process.env.NODE_ENV = "development";
+    process.env.ALLOW_LOCAL_DEV_SERVICE_TOKEN = "true";
+    // Even with a different configured secret, the opted-in sentinel works.
+    const res = await mint(makeApp(), {
+      "x-inspector-service-token": LOCAL_DEV_SERVICE_TOKEN,
+      "x-mcpjam-client-ip": "3.3.3.1",
+    });
+    expect(res.status).toBe(200);
+    expect(fetchConvexGuestSessionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects the local-dev sentinel without the opt-in flag (non-production)", async () => {
+    process.env.NODE_ENV = "development";
+    delete process.env.ALLOW_LOCAL_DEV_SERVICE_TOKEN;
+    const res = await mint(makeApp(), {
+      "x-inspector-service-token": LOCAL_DEV_SERVICE_TOKEN,
+      "x-mcpjam-client-ip": "3.3.3.4",
+    });
+    expect(res.status).toBe(401);
+    expect(fetchConvexGuestSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects the local-dev sentinel in production even with the flag set", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.ALLOW_LOCAL_DEV_SERVICE_TOKEN = "true";
+    const res = await mint(makeApp(), {
+      "x-inspector-service-token": LOCAL_DEV_SERVICE_TOKEN,
+      "x-mcpjam-client-ip": "3.3.3.2",
+    });
+    expect(res.status).toBe(401);
+    expect(fetchConvexGuestSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("still accepts the configured secret in production", async () => {
+    process.env.NODE_ENV = "production";
+    // Production mints through the remote source, not Convex (shouldUseConvex).
+    fetchRemoteGuestSessionMock.mockResolvedValue({
+      kind: "session",
+      session: { guestId: "g1", token: "guest.jwt.token", expiresAt: 123 },
+      setCookies: [],
+    });
+    const res = await mint(makeApp(), {
+      "x-inspector-service-token": SERVICE_TOKEN,
+      "x-mcpjam-client-ip": "3.3.3.3",
+    });
+    expect(res.status).toBe(200);
+    expect(fetchRemoteGuestSessionMock).toHaveBeenCalledTimes(1);
   });
 
   it("rate-limits per forwarded client IP (429 after the cap)", async () => {

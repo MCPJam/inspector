@@ -67,13 +67,51 @@ function allowMint(ip: string): boolean {
   return true;
 }
 
+// Local-dev fallback so contributors get a working guest-mint with zero setup.
+// The platform MCP worker's local-only `dev` env hardcodes this sentinel
+// (mcp/wrangler.jsonc -> MCPJAM_INSPECTOR_SERVICE_TOKEN), so `npm run dev`
+// wires both sides automatically — whether or not the contributor also has a
+// personal INSPECTOR_SERVICE_TOKEN set.
+const LOCAL_DEV_SERVICE_TOKEN = "mcpjam-local-dev-service-token";
+
+// The sentinel is accepted ONLY when the process explicitly opts in via
+// ALLOW_LOCAL_DEV_SERVICE_TOKEN=true *and* it isn't a production build. The
+// local `dev:server` script sets the opt-in, so `npm run dev` stays
+// zero-config; no deployed env (preview/staging/prod) sets it, so the sentinel
+// is never accepted there even if a deployment happens to run non-production.
+// NODE_ENV=production is a second, independent guard.
+function localDevServiceTokenAllowed(): boolean {
+  return (
+    process.env.NODE_ENV !== "production" &&
+    process.env.ALLOW_LOCAL_DEV_SERVICE_TOKEN === "true"
+  );
+}
+
+function timingSafeStringEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
+}
+
+// Accepted service tokens: the configured secret always, plus the local-dev
+// sentinel only when explicitly opted in (see localDevServiceTokenAllowed).
+function acceptedServiceTokens(): string[] {
+  const accepted: string[] = [];
+  if (process.env.INSPECTOR_SERVICE_TOKEN) {
+    accepted.push(process.env.INSPECTOR_SERVICE_TOKEN);
+  }
+  if (localDevServiceTokenAllowed()) {
+    accepted.push(LOCAL_DEV_SERVICE_TOKEN);
+  }
+  return accepted;
+}
+
 function serviceTokenMatches(provided: string | undefined): boolean {
-  const expected = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!expected || !provided) return false;
-  const a = Buffer.from(provided);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
+  if (!provided) return false;
+  return acceptedServiceTokens().some((expected) =>
+    timingSafeStringEqual(provided, expected)
+  );
 }
 
 // Hosted web + local dev mint through Convex directly; local production

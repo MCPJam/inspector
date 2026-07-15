@@ -32,6 +32,14 @@
   --border: 240 5.9% 90%;
   --destructive: 0 84.2% 60.2%;
   --destructive-foreground: 0 0% 98%;
+  /* Trace-timeline-only tokens (popover tooltip, focus ring, warning badge). */
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 3.9%;
+  --accent: 240 4.8% 95.9%;
+  --accent-foreground: 240 5.9% 10%;
+  --ring: 240 10% 3.9%;
+  --warning: 38 92% 50%;
+  --warning-foreground: 0 0% 98%;
 }
 
 .mcpjam-chat-ui {
@@ -57,6 +65,14 @@
   --border: 240 3.7% 15.9%;
   --destructive: 0 62.8% 30.6%;
   --destructive-foreground: 0 0% 98%;
+  /* Trace-timeline-only tokens (popover tooltip, focus ring, warning badge). */
+  --popover: 240 10% 3.9%;
+  --popover-foreground: 0 0% 98%;
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 0 0% 98%;
+  --ring: 240 4.9% 83.9%;
+  --warning: 38 92% 50%;
+  --warning-foreground: 48 96% 9%;
 }
 
 /* Keep long tool input/output readable without a horizontal scrollbar war. */
@@ -68,4 +84,151 @@
 
 .mcpjam-chat-ui .mcpjam-chat-markdown {
   overflow-wrap: anywhere;
+}
+
+/*
+ * Trace timeline waterfall — category bar fills, glyph colors and row accents.
+ * Ported from the inspector's global `index.css`; here the classes + their
+ * `--trace-waterfall-*` color variables are scoped to `.mcpjam-chat-ui` so they
+ * travel with the package stylesheet. Light values are the base; the dark block
+ * overrides bar/accent tokens. Relative-color `oklch(from …)` darkens glyphs and
+ * row-accent borders to match the (lighter) bar fills.
+ */
+.mcpjam-chat-ui {
+  --trace-waterfall-bar-prompt: oklch(0.885 0.082 292);
+  --trace-waterfall-bar-llm: oklch(0.885 0.076 255);
+  --trace-waterfall-bar-tool: oklch(0.905 0.105 96);
+  --trace-waterfall-bar-step: oklch(0.88 0.055 250);
+  --trace-waterfall-bar-error: oklch(0.88 0.115 25);
+  --trace-waterfall-row-selected: oklch(0.67 0.1 288 / 0.12);
+}
+
+.mcpjam-chat-ui.dark,
+.dark .mcpjam-chat-ui:not(.light) {
+  --trace-waterfall-bar-prompt: oklch(0.79 0.11 292 / 0.58);
+  --trace-waterfall-bar-llm: oklch(0.79 0.1 255 / 0.58);
+  --trace-waterfall-bar-tool: oklch(0.83 0.12 88 / 0.58);
+  --trace-waterfall-bar-step: oklch(0.77 0.06 250 / 0.56);
+  --trace-waterfall-bar-error: oklch(0.78 0.14 25 / 0.58);
+  --trace-waterfall-row-selected: oklch(0.8 0.09 288 / 0.18);
+  --trace-waterfall-accent-prompt: oklch(0.84 0.11 292 / 0.82);
+  --trace-waterfall-accent-llm: oklch(0.84 0.1 255 / 0.82);
+  --trace-waterfall-accent-tool: oklch(0.87 0.11 88 / 0.82);
+  --trace-waterfall-accent-step: oklch(0.8 0.065 250 / 0.82);
+  --trace-waterfall-accent-error: oklch(0.84 0.12 25 / 0.82);
+}
+
+.mcpjam-chat-ui .trace-waterfall-bar-prompt {
+  background-color: var(--trace-waterfall-bar-prompt);
+}
+.mcpjam-chat-ui .trace-waterfall-bar-llm {
+  background-color: var(--trace-waterfall-bar-llm);
+}
+.mcpjam-chat-ui .trace-waterfall-bar-tool {
+  background-color: var(--trace-waterfall-bar-tool);
+}
+.mcpjam-chat-ui .trace-waterfall-bar-step {
+  background-color: var(--trace-waterfall-bar-step);
+}
+.mcpjam-chat-ui .trace-waterfall-bar-error {
+  background-color: var(--trace-waterfall-bar-error);
+}
+.mcpjam-chat-ui .trace-waterfall-bar-prompt,
+.mcpjam-chat-ui .trace-waterfall-bar-llm,
+.mcpjam-chat-ui .trace-waterfall-bar-tool,
+.mcpjam-chat-ui .trace-waterfall-bar-step,
+.mcpjam-chat-ui .trace-waterfall-bar-error {
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.28),
+    0 1px 3px rgb(15 23 42 / 0.08);
+}
+.mcpjam-chat-ui.dark .trace-waterfall-bar-prompt,
+.mcpjam-chat-ui.dark .trace-waterfall-bar-llm,
+.mcpjam-chat-ui.dark .trace-waterfall-bar-tool,
+.mcpjam-chat-ui.dark .trace-waterfall-bar-step,
+.mcpjam-chat-ui.dark .trace-waterfall-bar-error,
+.dark .mcpjam-chat-ui:not(.light) .trace-waterfall-bar-prompt,
+.dark .mcpjam-chat-ui:not(.light) .trace-waterfall-bar-llm,
+.dark .mcpjam-chat-ui:not(.light) .trace-waterfall-bar-tool,
+.dark .mcpjam-chat-ui:not(.light) .trace-waterfall-bar-step,
+.dark .mcpjam-chat-ui:not(.light) .trace-waterfall-bar-error {
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.12),
+    0 1px 4px rgb(0 0 0 / 0.26);
+}
+.mcpjam-chat-ui .trace-waterfall-row-selected {
+  background-color: var(--trace-waterfall-row-selected);
+}
+
+.mcpjam-chat-ui .trace-waterfall-glyph-prompt {
+  color: oklch(from var(--trace-waterfall-bar-prompt) calc(l - 0.36) c h);
+}
+.mcpjam-chat-ui .trace-waterfall-glyph-llm {
+  color: oklch(from var(--trace-waterfall-bar-llm) calc(l - 0.36) c h);
+}
+.mcpjam-chat-ui .trace-waterfall-glyph-tool {
+  color: oklch(from var(--trace-waterfall-bar-tool) calc(l - 0.36) c h);
+}
+.mcpjam-chat-ui .trace-waterfall-glyph-step {
+  color: oklch(from var(--trace-waterfall-bar-step) calc(l - 0.36) c h);
+}
+.mcpjam-chat-ui .trace-waterfall-glyph-error {
+  color: oklch(from var(--trace-waterfall-bar-error) calc(l - 0.36) c h);
+}
+
+.mcpjam-chat-ui .trace-waterfall-row-accent-prompt {
+  border-left-color: oklch(from var(--trace-waterfall-bar-prompt) calc(l - 0.36) c h);
+}
+.mcpjam-chat-ui .trace-waterfall-row-accent-llm {
+  border-left-color: oklch(from var(--trace-waterfall-bar-llm) calc(l - 0.36) c h);
+}
+.mcpjam-chat-ui .trace-waterfall-row-accent-tool {
+  border-left-color: oklch(from var(--trace-waterfall-bar-tool) calc(l - 0.36) c h);
+}
+.mcpjam-chat-ui .trace-waterfall-row-accent-step {
+  border-left-color: oklch(from var(--trace-waterfall-bar-step) calc(l - 0.36) c h);
+}
+.mcpjam-chat-ui .trace-waterfall-row-accent-error {
+  border-left-color: oklch(from var(--trace-waterfall-bar-error) calc(l - 0.36) c h);
+}
+
+.mcpjam-chat-ui.dark .trace-waterfall-glyph-prompt,
+.dark .mcpjam-chat-ui:not(.light) .trace-waterfall-glyph-prompt {
+  color: var(--trace-waterfall-accent-prompt);
+}
+.mcpjam-chat-ui.dark .trace-waterfall-glyph-llm,
+.dark .mcpjam-chat-ui:not(.light) .trace-waterfall-glyph-llm {
+  color: var(--trace-waterfall-accent-llm);
+}
+.mcpjam-chat-ui.dark .trace-waterfall-glyph-tool,
+.dark .mcpjam-chat-ui:not(.light) .trace-waterfall-glyph-tool {
+  color: var(--trace-waterfall-accent-tool);
+}
+.mcpjam-chat-ui.dark .trace-waterfall-glyph-step,
+.dark .mcpjam-chat-ui:not(.light) .trace-waterfall-glyph-step {
+  color: var(--trace-waterfall-accent-step);
+}
+.mcpjam-chat-ui.dark .trace-waterfall-glyph-error,
+.dark .mcpjam-chat-ui:not(.light) .trace-waterfall-glyph-error {
+  color: var(--trace-waterfall-accent-error);
+}
+.mcpjam-chat-ui.dark .trace-waterfall-row-accent-prompt,
+.dark .mcpjam-chat-ui:not(.light) .trace-waterfall-row-accent-prompt {
+  border-left-color: var(--trace-waterfall-accent-prompt);
+}
+.mcpjam-chat-ui.dark .trace-waterfall-row-accent-llm,
+.dark .mcpjam-chat-ui:not(.light) .trace-waterfall-row-accent-llm {
+  border-left-color: var(--trace-waterfall-accent-llm);
+}
+.mcpjam-chat-ui.dark .trace-waterfall-row-accent-tool,
+.dark .mcpjam-chat-ui:not(.light) .trace-waterfall-row-accent-tool {
+  border-left-color: var(--trace-waterfall-accent-tool);
+}
+.mcpjam-chat-ui.dark .trace-waterfall-row-accent-step,
+.dark .mcpjam-chat-ui:not(.light) .trace-waterfall-row-accent-step {
+  border-left-color: var(--trace-waterfall-accent-step);
+}
+.mcpjam-chat-ui.dark .trace-waterfall-row-accent-error,
+.dark .mcpjam-chat-ui:not(.light) .trace-waterfall-row-accent-error {
+  border-left-color: var(--trace-waterfall-accent-error);
 }

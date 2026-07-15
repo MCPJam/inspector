@@ -4,6 +4,7 @@ import {
   filterByFeatureFlags,
   getEvalsSubnavItems,
   getHostedNavigationSections,
+  resolveHostedSkillsNav,
 } from "../mcp-sidebar";
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 
@@ -405,6 +406,34 @@ describe("getHostedNavigationSections", () => {
         evalsSubnav: true,
       },
     ]);
+  });
+});
+
+describe("resolveHostedSkillsNav (skills-enabled gate)", () => {
+  const hostedSections = () =>
+    getHostedNavigationSections([
+      {
+        id: "others",
+        items: [
+          { title: "Skills", url: "#skills", icon: FakeIcon },
+          { title: "Tools", url: "#tools", icon: FakeIcon },
+        ],
+      },
+    ]);
+
+  it("enables the Skills item when the flag is on", () => {
+    const result = resolveHostedSkillsNav(hostedSections(), true);
+    const skills = result[0].items.find((i) => i.title === "Skills");
+    expect(skills).toBeDefined();
+    expect(skills?.disabled).toBe(false);
+    expect(skills?.disabledTooltip).toBeUndefined();
+  });
+
+  it("drops the Skills item entirely when the flag is off", () => {
+    const result = resolveHostedSkillsNav(hostedSections(), false);
+    expect(result[0].items.find((i) => i.title === "Skills")).toBeUndefined();
+    // Sibling items are untouched.
+    expect(result[0].items.find((i) => i.title === "Tools")).toBeDefined();
   });
 });
 

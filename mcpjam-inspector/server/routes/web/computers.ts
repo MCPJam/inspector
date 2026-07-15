@@ -4,11 +4,14 @@
  *   GET  /config  (open)    Which data plane serves this inspector: itself
  *                           (`localConfigured`, it holds the vendor key +
  *                           secrets) or a deployed one (`remoteDataPlaneUrl`,
- *                           the NON-secret COMPUTERS_REMOTE_DATA_PLANE_URL).
- *                           The client uses this to aim the terminal
- *                           WebSocket and to render an honest empty state
- *                           when neither is available. No secrets here — a
- *                           boolean and a public URL.
+ *                           the NON-secret COMPUTERS_REMOTE_DATA_PLANE_URL —
+ *                           explicit, or auto-discovered via Convex; see
+ *                           remote-data-plane.ts). Awaits any in-flight
+ *                           discovery so the client's cached first answer is
+ *                           never a false negative. The client uses this to
+ *                           aim the terminal WebSocket and to render an
+ *                           honest empty state when neither is available.
+ *                           No secrets here — a boolean and a public URL.
  *
  *   POST /exec    (bearer)  Run one command on the CALLER'S computer. This is
  *                           what a credential-less local inspector forwards
@@ -27,8 +30,9 @@
  */
 import { Hono } from "hono";
 import { z } from "zod";
-import { isComputersDataPlaneConfigured } from "../../utils/computers/control-plane-client.js";
-import { getComputersRemoteDataPlaneUrl } from "../../utils/computers/remote-data-plane.js";
+import { executionScopeSchema } from "../../utils/execution-scope.js";
+import { resolveComputersLocalConfigured } from "../../utils/computers/runtime-config.js";
+import { resolveComputersRemoteDataPlaneUrl } from "../../utils/computers/remote-data-plane.js";
 import {
   MAX_COMMAND_TIMEOUT_S,
   e2bRunner,
@@ -40,6 +44,10 @@ import { assertBearerToken } from "./errors.js";
 
 const execSchema = z.object({
   projectId: z.string().min(1),
+  // Phase 3: a delegating server forwards the opaque execution scope so this
+  // data plane's reserve re-resolves live access. Shape-validated only; the
+  // backend authorizes it. Absent ⇒ legacy projectId reserve.
+  executionScope: executionScopeSchema.optional(),
   command: z.string().min(1).max(10_000),
   /** Idempotency key for the durable command log (the tool call id). */
   commandId: z.string().min(1).max(200),
@@ -50,12 +58,16 @@ const execSchema = z.object({
 export function createComputersRoutes(runner: BashRunner = e2bRunner): Hono {
   const computers = new Hono();
 
-  computers.get("/config", (c) =>
-    c.json({
-      localConfigured: isComputersDataPlaneConfigured(),
-      remoteDataPlaneUrl: getComputersRemoteDataPlaneUrl(),
-    })
-  );
+  computers.get("/config", async (c) => {
+    // Await any in-flight startup bootstrap/discovery — the client caches
+    // this FIRST response for the whole SPA session, so it must never race
+    // a still-resolving lookup into a false "unconfigured".
+    const [localConfigured, remoteDataPlaneUrl] = await Promise.all([
+      resolveComputersLocalConfigured(),
+      resolveComputersRemoteDataPlaneUrl(),
+    ]);
+    return c.json({ localConfigured, remoteDataPlaneUrl });
+  });
 
   computers.post("/exec", async (c) =>
     handleRoute(c, async () => {
@@ -65,6 +77,9 @@ export function createComputersRoutes(runner: BashRunner = e2bRunner): Hono {
         {
           authHeader: `Bearer ${bearerToken}`,
           projectId: body.projectId,
+          ...(body.executionScope
+            ? { executionScope: body.executionScope }
+            : {}),
           command: body.command,
           commandId: body.commandId,
           source: "chat",

@@ -227,27 +227,37 @@ export function CreditBalanceCard({
                   )}`
                 : undefined
             }
+            // "remaining / allowed": bar drains as iterations are used —
+            // matches the monthly team credits row.
             rightText={
               isEvalIterationQuotaLoading ||
               !evalIterationQuota ||
               evalIterationQuota.allowed === null
                 ? null
-                : `${evalIterationQuota.used.toLocaleString()} / ${evalIterationQuota.allowed.toLocaleString()}`
+                : `${Math.max(
+                    0,
+                    evalIterationQuota.allowed - evalIterationQuota.used
+                  ).toLocaleString()} / ${evalIterationQuota.allowed.toLocaleString()}`
             }
             fillPercent={
               isEvalIterationQuotaLoading ||
               !evalIterationQuota ||
               !evalIterationQuota.allowed
                 ? 0
-                : Math.min(
-                    100,
-                    (evalIterationQuota.used / evalIterationQuota.allowed) * 100
+                : Math.max(
+                    0,
+                    ((evalIterationQuota.allowed - evalIterationQuota.used) /
+                      evalIterationQuota.allowed) *
+                      100
                   )
             }
-            ariaLabel={`${evalIterationLabel} used`}
+            ariaLabel={`${evalIterationLabel} remaining`}
             ariaValueText={
               evalIterationQuota && evalIterationQuota.allowed !== null
-                ? `${evalIterationQuota.used.toLocaleString()} of ${evalIterationQuota.allowed.toLocaleString()} eval iterations used`
+                ? `${Math.max(
+                    0,
+                    evalIterationQuota.allowed - evalIterationQuota.used
+                  ).toLocaleString()} of ${evalIterationQuota.allowed.toLocaleString()} eval iterations remaining`
                 : undefined
             }
             isLoading={isEvalIterationQuotaLoading}

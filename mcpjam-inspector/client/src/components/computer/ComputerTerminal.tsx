@@ -9,10 +9,18 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { Button } from "@mcpjam/design-system/button";
-import { Copy, Eraser, Loader2, RotateCcw, TerminalSquare } from "lucide-react";
+import {
+  Copy,
+  Eraser,
+  Loader2,
+  RotateCcw,
+  TerminalSquare,
+  Upload,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   openTerminalConnection,
+  uploadFilesToComputer,
   type TerminalConnection,
 } from "@/lib/computer-terminal-connection";
 
@@ -115,6 +123,7 @@ export function ComputerTerminal({
   themeMode,
   className,
   baseUrl,
+  cwd,
 }: {
   mintToken: () => Promise<string>;
   themeMode: "light" | "dark";
@@ -125,6 +134,12 @@ export function ComputerTerminal({
    * (see useComputersDataPlaneConfig).
    */
   baseUrl?: string;
+  /**
+   * Starting working directory for the PTY (e.g. a harness session workdir).
+   * Applied at (re)connect; the server falls back to home if it can't `cd` there.
+   * To re-target an already-open terminal, remount with a new `key`.
+   */
+  cwd?: string;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -142,6 +157,11 @@ export function ComputerTerminal({
   const [state, setState] = useState<TerminalState>("connecting");
   const [detail, setDetail] = useState<string>("");
   const [hasSelection, setHasSelection] = useState(false);
+  // Drag-and-drop file upload into the box. dragDepth counts nested
+  // dragenter/leave so the overlay doesn't flicker over child elements.
+  const [dragActive, setDragActive] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const dragDepthRef = useRef(0);
 
   const termBg = themeMode === "dark" ? "#1a1916" : "#f5f0e8";
   const toolbarBg = themeMode === "dark" ? "#222019" : "#ede7d8";
@@ -188,6 +208,7 @@ export function ComputerTerminal({
       cols: term.cols,
       rows: term.rows,
       ...(baseUrl ? { baseUrl } : {}),
+      ...(cwd ? { cwd } : {}),
       onOutput: (bytes) => {
         if (isStale()) return;
         term.write(bytes);
@@ -218,7 +239,7 @@ export function ComputerTerminal({
       if (isStale()) return;
       conn.ping();
     }, PING_INTERVAL_MS);
-  }, [mintToken, teardownConnection, baseUrl]);
+  }, [mintToken, teardownConnection, baseUrl, cwd]);
 
   const handleCopy = useCallback(() => {
     const sel = termRef.current?.getSelection();
@@ -232,6 +253,78 @@ export function ComputerTerminal({
     termRef.current?.clear();
     termRef.current?.focus();
   }, []);
+
+  const hasDraggedFiles = (e: React.DragEvent) =>
+    Array.from(e.dataTransfer?.types ?? []).includes("Files");
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    if (!hasDraggedFiles(e)) return;
+    e.preventDefault();
+    dragDepthRef.current += 1;
+    setDragActive(true);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (!hasDraggedFiles(e)) return;
+    // Required for the drop event to fire.
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    if (!hasDraggedFiles(e)) return;
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setDragActive(false);
+  }, []);
+
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      dragDepthRef.current = 0;
+      setDragActive(false);
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      if (files.length === 0) return;
+      if (state !== "connected") {
+        toast.error("Connect the terminal first, then drop files.");
+        return;
+      }
+      setUploading(true);
+      try {
+        const token = await mintToken();
+        const written = await uploadFilesToComputer({
+          token,
+          files,
+          // Land files in the Shell's cwd (the harness workdir) when known, so
+          // they appear right where the user is working; else the server bucket.
+          ...(baseUrl ? { baseUrl } : {}),
+          ...(cwd ? { dir: cwd } : {}),
+        });
+        // The destination dir of the first written file (server-resolved; may be
+        // the fallback bucket if cwd was absent/rejected).
+        const destDir =
+          written[0]?.path.slice(0, written[0].path.lastIndexOf("/")) || "~";
+        const single = written.length === 1 ? written[0] : undefined;
+        // Copy the path so the user can paste it straight into chat ("read <path>").
+        if (single) void navigator.clipboard?.writeText(single.path).catch(() => {});
+        toast.success(
+          single
+            ? `Uploaded to ${single.path} (path copied)`
+            : `Uploaded ${written.length} files to ${destDir}`,
+          { duration: 4000 }
+        );
+        // Surface the result in the user's real shell. Ctrl-U (\x15) clears any
+        // half-typed input first so this can't interleave with their command.
+        connRef.current?.sendInput(
+          new TextEncoder().encode(`\x15ls -la ${destDir}/\n`)
+        );
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Upload failed.");
+      } finally {
+        setUploading(false);
+      }
+    },
+    [state, mintToken, baseUrl, cwd]
+  );
 
   // Create the xterm instance once; wire input + resize; auto-connect.
   useEffect(() => {
@@ -363,8 +456,33 @@ export function ComputerTerminal({
         </div>
 
         {/* Terminal canvas + overlay */}
-        <div className="relative min-h-0 flex-1">
+        <div
+          className="relative min-h-0 flex-1"
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
           <div ref={containerRef} className="absolute inset-0 p-1" onClick={() => termRef.current?.focus()} />
+          {dragActive || uploading ? (
+            <div className="pointer-events-none absolute inset-2 z-10 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-primary/60 bg-background/85 text-sm">
+              {uploading ? (
+                <span className="inline-flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Uploading…
+                </span>
+              ) : (
+                <>
+                  <Upload className="h-5 w-5 text-primary" />
+                  <span className="text-foreground">
+                    {cwd
+                      ? "Drop files to upload to this directory"
+                      : "Drop files to upload to your computer"}
+                  </span>
+                </>
+              )}
+            </div>
+          ) : null}
           {showOverlay ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background/80 text-sm">
               {state === "connecting" ? (

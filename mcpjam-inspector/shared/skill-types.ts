@@ -32,6 +32,34 @@ export interface SkillFrontmatter {
 }
 
 /**
+ * How a durable (cloud) skill record came to exist — distinct from
+ * {@link SkillListItem.origin}, which is storage locus (local FS vs cloud).
+ * - `authored`         — created via the Skills UI / API (the legacy default).
+ * - `computer-adopted` — synced up from a filesystem-installed skill on a
+ *                        Computer (`~/.claude/skills`) during a harness turn.
+ *
+ * The wire may carry values a shipped inspector doesn't know yet (e.g. a future
+ * `mcp-server`), so transport DTOs type provenance as a plain `string` and
+ * normalize through {@link normalizeProvenance}; this union is the normalized set.
+ */
+export type SkillProvenance = "authored" | "computer-adopted";
+
+/**
+ * The minimal shape both live runtime skills and eval snapshots share, and that
+ * a future `mcp-server` catalog adapter can also produce. Deliberately flat:
+ * `contentHash` is the drift/identity key (an aggregate hash once supporting
+ * files exist), `provenance` is optional so producers without it (e.g. an eval
+ * pin) can omit it.
+ */
+export interface PinnableSkill {
+  name: string;
+  description: string;
+  content: string;
+  contentHash: string;
+  provenance?: SkillProvenance;
+}
+
+/**
  * Full skill with content (used when loading a skill)
  */
 export interface Skill {
@@ -42,12 +70,27 @@ export interface Skill {
 }
 
 /**
- * Skill list item (used for listing skills without full content)
+ * Skill list item (used for listing skills without full content).
+ *
+ * Local (filesystem) skills set `path`. Cloud (Convex) skills set `skillId`,
+ * `sharing`, `isOwner`, and `origin` so the UI can key mutations by id and badge
+ * each row Personal/Shared. All cloud fields are optional for backward-compat
+ * with the local shape.
  */
 export interface SkillListItem {
   name: string;
   description: string;
   path: string;
+  /** Cloud skills only — stable id for mutations (delete/promote/get). */
+  skillId?: string;
+  /** Cloud skills only — 'user' (personal) or 'project' (shared). */
+  sharing?: "user" | "project";
+  /** Cloud skills only — whether the caller owns this (personal) skill. */
+  isOwner?: boolean;
+  /** Where the skill lives: 'local' filesystem or 'cloud' (Convex/Computer). */
+  origin?: "local" | "cloud";
+  /** Cloud skills only — how the record came to exist (absent ⇒ 'authored'). */
+  provenance?: SkillProvenance;
 }
 
 /**
