@@ -43,6 +43,8 @@ The XAA Flow header shows three URLs:
 
 Configure your authorization server with the values it requests. The **Issuer URL** identifies MCPJam's test identity provider, the **OpenID Config** URL provides discovery metadata, and the **JWKS URL** provides the public signing keys.
 
+The header also shows an **Identity assertion** toggle that lets you switch between **OIDC** and **SAML** assertion modes for the selected server. OIDC (the default) mints a standard OpenID Connect ID token as the identity assertion. SAML mints a SAML 2.0 assertion instead — the ID-JAG still carries a JWT signed by this issuer, but the subject identifier uses the `saml-nameid` format. Choose the mode that matches what your authorization server expects. This setting is saved per server and applies only to bar-server runs; runs against a registered app always use OIDC.
+
 If MCPJam is running locally and your authorization server is hosted in the
 cloud, turn on **Use hosted issuer** in the XAA Flow header. A cloud server
 cannot reach a local Issuer URL.
