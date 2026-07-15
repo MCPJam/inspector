@@ -33,7 +33,7 @@ interface HTTPHistoryEntryProps {
    * classic combined view. "request" renders only the request side — with a
    * muted "response → next step" hint when the response exists but is
    * presented under the paired received-step card. "response" renders the
-   * status line and response side (method/url kept as context).
+   * status line and response side; method/url remain in the card header only.
    */
   view?: HttpEntryView;
 }
@@ -178,17 +178,17 @@ export function HTTPHistoryEntry({
                 <span>{errorMessage}</span>
               </div>
             )}
-            {/* Keep the endpoint visible as context, but do not present it as
-                response data when this card is the response half. */}
-            <div>
-              <div className="text-xs font-medium text-muted-foreground mb-1">
-                {view === "response" ? "Response to request" : "Request URL"}
+            {showRequestSections && (
+              <div>
+                <div className="text-xs font-medium text-muted-foreground mb-1">
+                  Request URL
+                </div>
+                <ScrollableJsonView
+                  value={{ url }}
+                  containerClassName="rounded-sm bg-background/60 p-2 max-h-[200px]"
+                />
               </div>
-              <ScrollableJsonView
-                value={view === "response" ? { method, url } : { url }}
-                containerClassName="rounded-sm bg-background/60 p-2 max-h-[200px]"
-              />
-            </div>
+            )}
 
             {/* Request Headers */}
             {showRequestSections &&
