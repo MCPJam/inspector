@@ -17,6 +17,7 @@ describe("evaluateResourceIndicator", () => {
       source: "prm",
       status: "valid",
       strictClientCompatible: true,
+      rfc9728Compliant: true,
     });
   });
 
@@ -27,6 +28,7 @@ describe("evaluateResourceIndicator", () => {
     });
     expect(decision.status).toBe("valid");
     expect(decision.strictClientCompatible).toBe(true);
+    expect(decision.rfc9728Compliant).toBe(true);
     expect(decision.value).toBe("https://mcp.example.com");
   });
 
@@ -53,6 +55,8 @@ describe("evaluateResourceIndicator", () => {
     });
     expect(decision.status).toBe("valid");
     expect(decision.strictClientCompatible).toBe(false);
+    expect(decision.rfc9728Compliant).toBe(false);
+    expect(decision.rfc9728Reason).toContain("protected-resource binding");
     expect(decision.value).toBe("https://mcp.asana.com/v2/mcp");
     expect(decision.reason).toContain("path prefix");
   });
@@ -68,6 +72,7 @@ describe("evaluateResourceIndicator", () => {
     });
     expect(decision.status).toBe("valid");
     expect(decision.strictClientCompatible).toBe(false);
+    expect(decision.rfc9728Compliant).toBe(false);
   });
 
   it("rejects a cross-origin https resource as incompatible, value verbatim", () => {
@@ -77,6 +82,7 @@ describe("evaluateResourceIndicator", () => {
     });
     expect(decision.status).toBe("incompatible");
     expect(decision.strictClientCompatible).toBe(false);
+    expect(decision.rfc9728Compliant).toBe(false);
     expect(decision.value).toBe("https://other.example.com/mcp");
     expect(decision.reason).toContain("different origin");
   });
@@ -88,6 +94,7 @@ describe("evaluateResourceIndicator", () => {
     });
     expect(decision.status).toBe("invalid");
     expect(decision.strictClientCompatible).toBe(false);
+    expect(decision.rfc9728Compliant).toBe(false);
     expect(decision.value).toBe("urn:example:my-resource");
     expect(decision.reason).toContain("https URL");
   });
@@ -109,13 +116,15 @@ describe("evaluateResourceIndicator", () => {
     expect(decision.value).toBe("not a uri at all");
   });
 
-  it("tolerates http when it binds to an http server (local development)", () => {
+  it("keeps same-origin http usable for development but marks it noncompliant", () => {
     const decision = evaluateResourceIndicator({
       serverUrl: "http://localhost:8000/mcp",
       prmResource: "http://localhost:8000/mcp",
     });
     expect(decision.status).toBe("valid");
     expect(decision.strictClientCompatible).toBe(true);
+    expect(decision.rfc9728Compliant).toBe(false);
+    expect(decision.rfc9728Reason).toContain("https scheme");
     expect(decision.value).toBe("http://localhost:8000/mcp");
   });
 
@@ -143,6 +152,7 @@ describe("evaluateResourceIndicator", () => {
       source: "server",
       status: "valid",
       strictClientCompatible: true,
+      rfc9728Compliant: true,
     });
   });
 
@@ -198,6 +208,7 @@ describe("resolveResourceIndicatorValue", () => {
           source: "prm",
           status: "invalid",
           strictClientCompatible: false,
+          rfc9728Compliant: false,
         },
       })
     ).toBe("urn:example:persisted");

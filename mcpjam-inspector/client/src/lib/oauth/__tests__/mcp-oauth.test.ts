@@ -1509,6 +1509,95 @@ describe("mcp-oauth", () => {
       expect(mockExchangeAuthorization).toHaveBeenCalledTimes(1);
     });
 
+    it("preserves one advertised resource string through authorization, callback, storage, and refresh", async () => {
+      const serverName = "example";
+      const serverUrl = "https://mcp.example.com/api/mcp";
+      const advertisedResource = "HTTPS://MCP.EXAMPLE.COM:443/api/";
+      const discoveryState = {
+        ...createDiscoveryState(),
+        resourceMetadataUrl:
+          "https://mcp.example.com/.well-known/oauth-protected-resource/api",
+        resourceMetadata: {
+          resource: advertisedResource,
+          authorization_servers: ["https://auth.example.com"],
+        },
+      };
+
+      mockDiscoverOAuthServerInfo.mockResolvedValue(discoveryState);
+      mockStartAuthorization.mockResolvedValue({
+        authorizationUrl: new URL(
+          "https://auth.example.com/authorize?state=mock-state"
+        ),
+        codeVerifier: "test-verifier",
+      });
+      mockExchangeAuthorization.mockImplementationOnce(
+        async (_authorizationServerUrl, options) => {
+          expect(options?.resource).toBe(advertisedResource);
+          return {
+            access_token: "access-token",
+            refresh_token: "refresh-token",
+            token_type: "Bearer",
+          };
+        }
+      );
+
+      const { handleOAuthCallback, initiateOAuth, refreshOAuthTokens } =
+        await import("../mcp-oauth");
+
+      const initiateResult = await initiateOAuth({ serverName, serverUrl });
+      expect(initiateResult.success).toBe(true);
+
+      const storedFlow = JSON.parse(
+        localStorage.getItem(`mcp-oauth-flow-state-${serverName}`) ?? "{}"
+      );
+      expect(
+        new URL(storedFlow.state.authorizationUrl).searchParams.get("resource")
+      ).toBe(advertisedResource);
+      expect(
+        JSON.parse(
+          localStorage.getItem(`mcp-oauth-config-${serverName}`) ?? "{}"
+        ).resourceUrl
+      ).toBe(advertisedResource);
+
+      // Exercise the callback path that performs the exchange directly; the
+      // state-machine path already owns separate resource persistence tests.
+      localStorage.removeItem(`mcp-oauth-flow-state-${serverName}`);
+      const callbackResult = await handleOAuthCallback("oauth-code");
+      expect(callbackResult.success, callbackResult.error).toBe(true);
+      expect(callbackResult.oauthResourceUrl).toBe(advertisedResource);
+      expect(
+        JSON.parse(
+          localStorage.getItem(`mcp-oauth-config-${serverName}`) ?? "{}"
+        ).resourceUrl
+      ).toBe(advertisedResource);
+
+      // Production imports callback tokens into secure storage. Seed the
+      // local refresh-token adapter explicitly so this unit test can exercise
+      // the browser refresh request that replays the stored resource value.
+      localStorage.setItem(
+        `mcp-tokens-${serverName}`,
+        JSON.stringify({
+          access_token: "access-token",
+          refresh_token: "refresh-token",
+          token_type: "Bearer",
+        })
+      );
+
+      mockFetchToken.mockImplementationOnce(
+        async (_provider, _authorizationServerUrl, options) => {
+          expect(options?.resource).toBe(advertisedResource);
+          return {
+            access_token: "refreshed-access-token",
+            refresh_token: "refresh-token",
+            token_type: "Bearer",
+          };
+        }
+      );
+
+      const refreshResult = await refreshOAuthTokens(serverName);
+      expect(refreshResult.success).toBe(true);
+    });
+
     it("treats malformed stored token data as invalid instead of throwing", async () => {
       const { getStoredTokens, getStoredTokensState } = await import(
         "../mcp-oauth"

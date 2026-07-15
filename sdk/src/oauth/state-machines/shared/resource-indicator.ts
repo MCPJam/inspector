@@ -34,16 +34,16 @@ export function resolveFlowResourceValue(
 
 /**
  * The discovery-step half of the policy: evaluate the advertised resource
- * ONCE, enforce per the surface's mode (reject → throw, which the machine's
- * discovery error path turns into a failed step), and append the mismatch
- * warning for warn-mode surfaces. The returned decision is what the machine
+ * ONCE, enforce per the surface's mode (`reject` rejects unsafe values;
+ * `reject-rfc9728` also rejects noncompliant interoperability exceptions), and
+ * append the mismatch warning. The returned decision is what the machine
  * persists as `state.resourceIndicator`.
  */
 export function resolveDiscoveryResourceIndicator(input: {
   state: OAuthFlowState;
   fallbackServerUrl: string;
   prmResource: string | undefined;
-  enforcement: "warn" | "reject";
+  enforcement: "warn" | "reject" | "reject-rfc9728";
   infoLogs: Array<InfoLogEntry>;
 }): { resourceIndicator: ResourceIndicatorDecision; infoLogs: Array<InfoLogEntry> } {
   const serverUrl = input.state.serverUrl ?? input.fallbackServerUrl;
@@ -58,7 +58,7 @@ export function resolveDiscoveryResourceIndicator(input: {
     const reason =
       'Protected Resource Metadata is missing its required "resource" identifier (RFC 9728 §2).';
 
-    if (input.enforcement === "reject") {
+    if (input.enforcement !== "warn") {
       throw new Error(reason);
     }
 
@@ -83,13 +83,19 @@ export function resolveDiscoveryResourceIndicator(input: {
     prmResource,
   });
 
+  const rejectUnusable =
+    input.enforcement !== "warn" && resourceIndicator.status !== "valid";
+  const rejectNoncompliant =
+    input.enforcement === "reject-rfc9728" &&
+    !resourceIndicator.rfc9728Compliant;
+
   if (
-    input.enforcement === "reject" &&
     resourceIndicator.source === "prm" &&
-    resourceIndicator.status !== "valid"
+    (rejectUnusable || rejectNoncompliant)
   ) {
     throw new Error(
-      resourceIndicator.reason ??
+      (rejectNoncompliant ? resourceIndicator.rfc9728Reason : undefined) ??
+        resourceIndicator.reason ??
         "Protected Resource Metadata advertises an unusable resource identifier.",
     );
   }

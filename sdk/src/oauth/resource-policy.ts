@@ -7,14 +7,16 @@
 // cannot drift between paths. The evaluator only *describes* the decision —
 // enforcement is the caller's job and differs by surface: the debugger warns
 // and continues (so users can observe real server behavior), while connect,
-// login, and conformance surfaces reject non-`valid` decisions.
+// login rejects non-`valid` decisions, and conformance additionally requires
+// `rfc9728Compliant`.
 //
-// Spec grounding for the status taxonomy: RFC 8707 permits abstract resource
-// indicators in general, but RFC 9728 §2 narrows a Protected Resource
-// Metadata `resource` to an https URL without a fragment. A URN in PRM is
-// therefore *invalid metadata* (not a valid exotic identifier), and a
-// well-formed URL on a different origin is *incompatible* — a compromised
-// server must not be able to steer tokens to an audience it doesn't own.
+// `status` is the interoperability/security taxonomy: a URN or fragment is
+// invalid metadata, and a well-formed URL on a different origin is
+// incompatible because a compromised server must not be able to steer tokens
+// to an audience it doesn't own. RFC 9728 compliance is a separate axis: it
+// additionally requires HTTPS and the strict server/path binding. This keeps
+// local HTTP and same-origin real-world servers observable/connectable without
+// letting the conformance runner label them compliant.
 //
 // Deliberately NOT part of validity: the official MCP SDK's path-prefix rule
 // (the advertised resource must be a path prefix of the server URL). Real
@@ -46,6 +48,17 @@ export interface ResourceIndicatorDecision {
    * path). Always false when `status` is not `valid`.
    */
   strictClientCompatible: boolean;
+  /**
+   * Whether the value satisfies the RFC 9728 requirements this evaluator can
+   * determine from the resource and server URLs: HTTPS, no fragment, and the
+   * official MCP SDK's server/path binding. This is deliberately separate
+   * from `status`: an HTTP or same-origin non-prefix value can be safe enough
+   * for an interoperability-first surface to try while still being unsuitable
+   * for a conformance result.
+   */
+  rfc9728Compliant: boolean;
+  /** Human-readable explanation when `rfc9728Compliant` is false. */
+  rfc9728Reason?: string;
   /** Human-readable explanation when not fully valid/strict. */
   reason?: string;
 }
@@ -111,6 +124,8 @@ function evaluateCandidate(
     source,
     status: "invalid",
     strictClientCompatible: false,
+    rfc9728Compliant: false,
+    rfc9728Reason: reason,
     reason,
   });
 
@@ -146,16 +161,25 @@ function evaluateCandidate(
   }
 
   if (parsed.origin !== server.origin) {
+    const reason = `Resource indicator "${candidate}" is on a different origin than the server URL "${serverUrl}" — honoring it would let the server steer tokens to an audience it doesn't own.`;
     return {
       value: candidate,
       source,
       status: "incompatible",
       strictClientCompatible: false,
-      reason: `Resource indicator "${candidate}" is on a different origin than the server URL "${serverUrl}" — honoring it would let the server steer tokens to an audience it doesn't own.`,
+      rfc9728Compliant: false,
+      rfc9728Reason: reason,
+      reason,
     };
   }
 
   const strictClientCompatible = passesStrictClientBinding(parsed, server);
+  const rfc9728Reason =
+    parsed.protocol !== "https:"
+      ? `Resource indicator "${candidate}" must use the https scheme to comply with RFC 9728.`
+      : !strictClientCompatible
+      ? `Resource indicator "${candidate}" does not satisfy the protected-resource binding for server URL "${serverUrl}" required for RFC 9728 conformance.`
+      : undefined;
 
   return {
     // Echo the advertised value verbatim: the authorization server compares
@@ -167,6 +191,8 @@ function evaluateCandidate(
     source,
     status: "valid",
     strictClientCompatible,
+    rfc9728Compliant: rfc9728Reason === undefined,
+    ...(rfc9728Reason ? { rfc9728Reason } : {}),
     ...(strictClientCompatible
       ? {}
       : {
@@ -243,14 +269,24 @@ export function evaluateResourceIndicator(
       source: "server",
       status: "invalid",
       strictClientCompatible: false,
+      rfc9728Compliant: false,
+      rfc9728Reason: `Server URL "${input.serverUrl}" is not a parseable URI.`,
       reason: `Server URL "${input.serverUrl}" is not a parseable URI.`,
     };
   }
+
+  const server = new URL(input.serverUrl);
+  const rfc9728Reason =
+    server.protocol === "https:"
+      ? undefined
+      : `Resource indicator "${input.serverUrl}" must use the https scheme to comply with RFC 9728.`;
 
   return {
     value: canonicalizeResourceUrl(input.serverUrl),
     source: "server",
     status: "valid",
     strictClientCompatible: true,
+    rfc9728Compliant: rfc9728Reason === undefined,
+    ...(rfc9728Reason ? { rfc9728Reason } : {}),
   };
 }

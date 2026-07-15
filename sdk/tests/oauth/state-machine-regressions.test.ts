@@ -689,7 +689,7 @@ describe("OAuth state machine regressions", () => {
   const runResourceMetadataStep = async (
     protocolVersion: OAuthProtocolVersion,
     resource: string | undefined,
-    enforcement?: "warn" | "reject",
+    enforcement?: "warn" | "reject" | "reject-rfc9728",
   ) => {
     let state: any = seedResourceMetadataFetch();
 
@@ -757,6 +757,8 @@ describe("OAuth state machine regressions", () => {
         source: "prm",
         status: "invalid",
         strictClientCompatible: false,
+        rfc9728Compliant: false,
+        rfc9728Reason: expect.stringContaining("https URL"),
         reason: expect.stringContaining("https URL"),
       });
     },
@@ -777,11 +779,56 @@ describe("OAuth state machine regressions", () => {
       expect(state.currentStep).toBe("received_resource_metadata");
       expect(state.resourceIndicator?.status).toBe("valid");
       expect(state.resourceIndicator?.strictClientCompatible).toBe(false);
+      expect(state.resourceIndicator?.rfc9728Compliant).toBe(false);
       expect(
         state.infoLogs?.find(
           (log: any) => log.id === "resource-identifier-mismatch",
         )?.level,
       ).toBe("warning");
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "rejects a same-origin non-prefix resource under RFC 9728 enforcement in %s",
+    async (protocolVersion) => {
+      const state = await runResourceMetadataStep(
+        protocolVersion,
+        "https://mcp.example.com/v2/other",
+        "reject-rfc9728",
+      );
+
+      expect(state.error).toMatch(/RFC 9728 conformance/);
+      expect(state.currentStep).not.toBe("received_resource_metadata");
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "rejects same-origin HTTP metadata under RFC 9728 enforcement in %s",
+    async (protocolVersion) => {
+      let state: any = {
+        ...seedResourceMetadataFetch(),
+        serverUrl: "http://localhost:8000/mcp",
+      };
+
+      const machine = createOAuthStateMachine({
+        protocolVersion,
+        registrationStrategy: "preregistered" as any,
+        state,
+        getState: () => state,
+        updateState: (updates) => {
+          state = { ...state, ...updates };
+        },
+        serverUrl: state.serverUrl,
+        serverName: "Test Server",
+        redirectUrl: REDIRECT_URI,
+        requestExecutor: prmExecutor("http://localhost:8000/mcp"),
+        resourceIndicatorEnforcement: "reject-rfc9728",
+      });
+
+      await machine.proceedToNextStep();
+
+      expect(state.error).toMatch(/https scheme/);
+      expect(state.currentStep).not.toBe("received_resource_metadata");
     },
   );
 
@@ -827,6 +874,7 @@ describe("OAuth state machine regressions", () => {
         source: "server",
         status: "valid",
         value: SERVER_URL,
+        rfc9728Compliant: true,
       });
       expect(
         state.infoLogs?.find(
@@ -848,6 +896,7 @@ describe("OAuth state machine regressions", () => {
       expect(state.currentStep).toBe("received_resource_metadata");
       expect(state.resourceIndicator?.status).toBe("valid");
       expect(state.resourceIndicator?.value).toBe(SERVER_URL);
+      expect(state.resourceIndicator?.rfc9728Compliant).toBe(true);
     },
   );
 });

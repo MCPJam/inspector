@@ -428,10 +428,11 @@ export class OAuthConformanceTest {
         customHeaders: this.config.customHeaders,
         authMode: this.config.auth.mode,
         strictConformance: true,
-        // Fail the discovery step on unusable PRM resource metadata so
-        // downstream (negative-test) results aren't produced against a
-        // broken baseline.
-        resourceIndicatorEnforcement: "reject",
+        // Fail the discovery step on unusable OR RFC 9728-noncompliant PRM
+        // resource metadata so downstream negative-test results aren't
+        // produced against a broken baseline. Connect surfaces intentionally
+        // retain a looser interoperability posture.
+        resourceIndicatorEnforcement: "reject-rfc9728",
       });
 
       let guard = 0;

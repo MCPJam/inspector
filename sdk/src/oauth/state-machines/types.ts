@@ -234,10 +234,11 @@ export interface BaseOAuthStateMachineConfig {
   // What to do at PRM discovery when the advertised resource indicator is not
   // `valid`: the debugger defaults to "warn" (log and continue with the
   // advertised value so real server behavior stays observable); connect-like
-  // surfaces (oauth-login, conformance) pass "reject" to fail the discovery
-  // step instead. Orthogonal to `strictConformance`, which governs
-  // registration strictness.
-  resourceIndicatorEnforcement?: "warn" | "reject";
+  // surfaces pass "reject" to reject unsafe/unparseable values while retaining
+  // interoperability with same-origin servers; conformance passes
+  // "reject-rfc9728" to additionally reject HTTP and strict-binding gaps.
+  // Orthogonal to `strictConformance`, which governs registration strictness.
+  resourceIndicatorEnforcement?: "warn" | "reject" | "reject-rfc9728";
 }
 
 // Registration strategies

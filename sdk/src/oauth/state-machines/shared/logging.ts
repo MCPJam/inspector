@@ -50,7 +50,7 @@ export function addResourceMismatchWarning(
   if (
     !decision ||
     decision.source !== "prm" ||
-    decision.strictClientCompatible
+    (decision.strictClientCompatible && decision.rfc9728Compliant)
   ) {
     return infoLogs;
   }
@@ -65,10 +65,14 @@ export function addResourceMismatchWarning(
       "Server URL": serverUrl,
       Status: decision.status,
       Reason: decision.reason,
+      "RFC 9728 compliant": decision.rfc9728Compliant,
+      ...(decision.rfc9728Reason
+        ? { "RFC 9728 reason": decision.rfc9728Reason }
+        : {}),
       Note:
         decision.status === "valid"
-          ? "The flow will send the advertised resource, but clients enforcing the official MCP SDK's strict path-prefix binding may refuse to connect to this server."
-          : "The debugger will send the advertised resource as-is (RFC 8707) so you can observe real behavior, but MCP clients — including MCPJam's Quick OAuth and the official MCP SDK — validate it against the server URL and will refuse to connect.",
+          ? "The flow will send this interoperability-safe resource, but it is not RFC 9728 compliant and strict conformance surfaces will reject it."
+          : "The debugger will send the advertised resource as-is so you can observe real behavior, but MCP clients — including MCPJam's Quick OAuth and the official MCP SDK — validate it against the server URL and will refuse to connect.",
     },
     { level: "warning" },
   );

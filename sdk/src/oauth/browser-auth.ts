@@ -601,7 +601,15 @@ async function authInternal(
     } satisfies OAuthDiscoveryState);
   }
 
-  const resource = await selectResourceURL(serverUrl, provider, resourceMetadata);
+  // Preserve a PRM-advertised identifier as a string on the wire. The public
+  // selectResourceURL() helper retains its historical URL return contract,
+  // but URL construction can normalize an advertised value (for example by
+  // adding a root slash or removing a default port).
+  const resource = await selectResourceForAuth(
+    serverUrl,
+    provider,
+    resourceMetadata,
+  );
 
   let clientInformation = await provider.clientInformation();
   if (!clientInformation) {
@@ -702,11 +710,11 @@ async function authInternal(
   return "REDIRECT";
 }
 
-export async function selectResourceURL(
+async function selectResourceForAuth(
   serverUrl: string | URL,
   provider: OAuthClientProvider,
   resourceMetadata?: OAuthProtectedResourceMetadata,
-): Promise<URL | undefined> {
+): Promise<URL | string | undefined> {
   const defaultResource = resourceUrlFromServerUrl(serverUrl);
 
   if (provider.validateResourceURL) {
@@ -741,7 +749,24 @@ export async function selectResourceURL(
     );
   }
 
-  return new URL(decision.value);
+  return decision.value;
+}
+
+export async function selectResourceURL(
+  serverUrl: string | URL,
+  provider: OAuthClientProvider,
+  resourceMetadata?: OAuthProtectedResourceMetadata,
+): Promise<URL | undefined> {
+  const resource = await selectResourceForAuth(
+    serverUrl,
+    provider,
+    resourceMetadata,
+  );
+
+  // Backward compatibility for direct consumers of this public helper. auth()
+  // uses selectResourceForAuth() above so its authorization, exchange, and
+  // refresh requests retain the advertised string verbatim.
+  return typeof resource === "string" ? new URL(resource) : resource;
 }
 
 export async function discoverOAuthProtectedResourceMetadata(
