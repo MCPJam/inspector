@@ -33,6 +33,16 @@ export interface ServerActions {
    * flip each toggle by hand after every switch.
    */
   setSelectedServerNames: (names: string[]) => void;
+  /**
+   * Resolve selected runtime server names → persisted Convex server ids for a
+   * hosted send (persisting ad-hoc/App servers that aren't saved yet). Throws if
+   * a name can't be resolved/persisted. Surfaces use this as a preflight before a
+   * hosted harness turn so the proxy/authorize-batch never receive a display
+   * name. Re-exposed from `useServerState().ensureHostedServerIdsForNames`.
+   */
+  ensureHostedServerIdsForNames: (
+    serverNames: string[],
+  ) => Promise<Array<{ serverName: string; serverId: string }>>;
 }
 
 const ServerActionsContext = createContext<ServerActions | null>(null);
@@ -59,4 +69,13 @@ export function useServerActions(): ServerActions {
     );
   }
   return ctx;
+}
+
+/**
+ * Non-throwing variant: returns `null` when rendered outside a provider (e.g. a
+ * PlaygroundMain embedded in an isolated context). Callers must treat the
+ * actions as optional.
+ */
+export function useServerActionsOptional(): ServerActions | null {
+  return useContext(ServerActionsContext);
 }

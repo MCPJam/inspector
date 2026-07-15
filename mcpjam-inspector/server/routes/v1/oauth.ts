@@ -35,6 +35,9 @@ const importTokensSchema = z.object({
   serverId: z.string().min(1),
   serverUrl: z.string().min(1),
   oauthResourceUrl: z.string().optional(),
+  // AS URL discovered by the caller; refresh fallback for servers the hosted
+  // backend can't reach (e.g. localhost). Forwarded to Convex import-tokens.
+  authorizationServerUrl: z.string().optional(),
   clientInformation: z
     .object({
       clientId: z.string().min(1),

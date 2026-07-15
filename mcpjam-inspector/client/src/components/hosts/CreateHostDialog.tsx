@@ -1,9 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useConvexAuth } from "convex/react";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import {
   Dialog,
   DialogContent,
@@ -16,21 +15,35 @@ import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { useHostMutations } from "@/hooks/useClients";
 import { useProjectServers } from "@/hooks/useViews";
-import {
-  DEFAULT_HOST_TEMPLATE_ID,
-  HOST_TEMPLATES,
-  seedFromHostTemplate,
-  type HostTemplateId,
-} from "@/lib/client-templates";
+import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { cloneHostTemplateInput } from "@/lib/client-config-v2";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
+import {
+  getCatalogHost,
+  getCatalogHosts,
+  getCatalogTemplate,
+} from "@mcpjam/sdk/host-compat";
+import {
+  DEFAULT_CATALOG_HOST_ID,
+  getHostLogoSrc,
+} from "@/lib/host-ui-metadata";
+import { filterHostsByFeatureFlags } from "@/lib/host-compat/feature-visibility";
 
 interface CreateHostDialogProps {
   isOpen: boolean;
   onClose: () => void;
   projectId: string;
   onCreated: (hostId: string) => void;
-  initialTemplateId?: HostTemplateId;
+  initialTemplateId?: string;
+  /**
+   * Product ownership for the new host. `'journeys'` mints a STANDALONE
+   * (chatbox-less) host owned by the Swarms surface. Absent → legacy behavior
+   * (a chatbox / publish surface is minted). Every existing mount omits it.
+   */
+  owner?: "journeys";
 }
 
 export function CreateHostDialog({
@@ -39,38 +52,96 @@ export function CreateHostDialog({
   projectId,
   onCreated,
   initialTemplateId,
+  owner,
 }: CreateHostDialogProps) {
-  const posthog = usePostHog();
   const { createHost } = useHostMutations();
   const { isAuthenticated } = useConvexAuth();
   const { servers } = useProjectServers({ isAuthenticated, projectId });
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  const catalogState = useHostCatalog();
+  const claudeCodeEnabled = useClaudeCodeHostEnabled();
+  const codexEnabled = useCodexHostEnabled();
+  const visibleCatalogHosts = useMemo(
+    () =>
+      catalogState.status === "live"
+        ? filterHostsByFeatureFlags(getCatalogHosts(catalogState.catalog), {
+            claudeCode: claudeCodeEnabled,
+            codex: codexEnabled,
+          }).sort((a, b) => a.label.localeCompare(b.label))
+        : [],
+    [catalogState, claudeCodeEnabled, codexEnabled]
+  );
+  const defaultHostId =
+    visibleCatalogHosts.find((host) => host.id === DEFAULT_CATALOG_HOST_ID)
+      ?.id ??
+    visibleCatalogHosts[0]?.id ??
+    DEFAULT_CATALOG_HOST_ID;
+  const visibleHostIds = useMemo(
+    () => new Set(visibleCatalogHosts.map((host) => host.id)),
+    [visibleCatalogHosts]
+  );
   const [name, setName] = useState("");
-  const [selectedTemplateId, setSelectedTemplateId] = useState<HostTemplateId>(
-    initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID,
+  // True once the user hand-types a (non-empty) name; the template-label
+  // defaulting effect below must not clobber it. Tracked outside the
+  // setName updater: mutating a ref inside an updater is impure, and
+  // StrictMode's double-invoke made the old ref-inside-updater guard
+  // misread the defaulted name as user-typed, pinning it forever.
+  const userEditedNameRef = useRef(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(
+    initialTemplateId ?? DEFAULT_CATALOG_HOST_ID
   );
   const [isSaving, setIsSaving] = useState(false);
+  const selectedTemplateInput =
+    catalogState.status === "live"
+      ? getCatalogTemplate(catalogState.catalog, selectedTemplateId)
+      : undefined;
+  const selectedTemplateLabel =
+    (catalogState.status === "live"
+      ? getCatalogHost(catalogState.catalog, selectedTemplateId)?.label
+      : undefined) ?? "";
+  const templatesUnavailableMessage =
+    catalogState.status === "loading"
+      ? "Loading client templates..."
+      : catalogState.status === "fallback" || catalogState.status === "error"
+      ? "Could not load live client templates."
+      : !selectedTemplateInput
+      ? "Selected client template is unavailable."
+      : null;
+  const canCreate =
+    Boolean(name.trim()) &&
+    !isSaving &&
+    catalogState.status === "live" &&
+    Boolean(selectedTemplateInput);
 
   useEffect(() => {
     if (!isOpen) return;
-    setSelectedTemplateId(initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID);
-  }, [isOpen, initialTemplateId]);
+    if (visibleCatalogHosts.length === 0) return;
+    const requested = initialTemplateId ?? DEFAULT_CATALOG_HOST_ID;
+    const allowed = visibleHostIds.has(requested);
+    setSelectedTemplateId(allowed ? requested : defaultHostId);
+  }, [isOpen, initialTemplateId, visibleCatalogHosts.length, visibleHostIds, defaultHostId]);
 
   useEffect(() => {
     if (!isOpen) return;
-    const template = HOST_TEMPLATES.find((t) => t.id === selectedTemplateId);
-    setName(template?.label ?? "");
-  }, [isOpen, selectedTemplateId]);
+    if (userEditedNameRef.current) return;
+    setName(selectedTemplateLabel);
+  }, [isOpen, selectedTemplateId, selectedTemplateLabel]);
 
   const handleClose = () => {
     setName("");
-    setSelectedTemplateId(initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID);
+    userEditedNameRef.current = false;
+    setSelectedTemplateId(initialTemplateId ?? DEFAULT_CATALOG_HOST_ID);
     onClose();
   };
 
   const handleCreate = async () => {
     const trimmed = name.trim();
-    if (!trimmed) return;
+    if (!trimmed || !selectedTemplateInput || catalogState.status !== "live") {
+      if (trimmed && catalogState.status !== "loading") {
+        toast.error("Could not load live client templates");
+      }
+      return;
+    }
     setIsSaving(true);
     try {
       // New hosts start with no seeded servers: keeps creation deliberate.
@@ -80,14 +151,7 @@ export function CreateHostDialog({
       // storm. The current auto-connect toggle is project-scoped (see
       // preferences-store.ts:40), so the original storm risk is gone,
       // but the deliberate-creation framing stays.
-      //
-      // Thread MCPJam's current global theme into the seed so the new
-      // host opens matching the inspector chrome instead of always
-      // defaulting to dark — user can still flip it later from the host
-      // editor.
-      const seed = seedFromHostTemplate(selectedTemplateId, {
-        theme: themeMode,
-      });
+      const seed = cloneHostTemplateInput(selectedTemplateInput, { themeMode });
       // Capture available-server count for analytics (we don't attach
       // them — see above — but knowing the count at creation time is
       // useful signal for onboarding funnels).
@@ -96,16 +160,19 @@ export function CreateHostDialog({
         projectId,
         name: trimmed,
         input: { ...seed, serverIds: [] },
+        // Standalone (Swarms-owned) host when requested; omitted → legacy
+        // chatbox-minting path.
+        ...(owner ? { owner } : {}),
       });
-      toast.success(`Host "${trimmed}" created`);
+      toast.success(`Client "${trimmed}" created`);
       handleClose();
       onCreated(hostId);
       // Telemetry is best-effort: a posthog throw must not bubble into the
       // shared catch and surface a "creation failed" toast after we've
       // already shown success and notified the caller.
       try {
-        posthog.capture("client_created", {
-          ...standardEventProps("create_client_dialog"),
+        track("client_created", {
+          location: "create_client_dialog",
           client_id: hostId,
           client_config_id: hostConfigId,
           template_id: selectedTemplateId,
@@ -115,7 +182,7 @@ export function CreateHostDialog({
         // swallow — analytics must not block the success path
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create host");
+      toast.error(err instanceof Error ? err.message : "Failed to create client");
     } finally {
       setIsSaving(false);
     }
@@ -125,48 +192,65 @@ export function CreateHostDialog({
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>New Host</DialogTitle>
+          <DialogTitle>New Client</DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-4 py-2">
           <div className="flex flex-col gap-2">
             <Label>Start from template</Label>
             <div className="grid grid-cols-3 gap-2">
-              {HOST_TEMPLATES.map((template) => {
-                const isSelected = template.id === selectedTemplateId;
+              {visibleCatalogHosts.map((host) => {
+                const isSelected = host.id === selectedTemplateId;
+                const templateAvailable =
+                  catalogState.status === "live" &&
+                  getCatalogTemplate(catalogState.catalog, host.id) !==
+                    undefined;
                 return (
                   <button
-                    key={template.id}
+                    key={host.id}
                     type="button"
-                    onClick={() => setSelectedTemplateId(template.id)}
+                    onClick={() => setSelectedTemplateId(host.id)}
+                    disabled={!templateAvailable}
                     className={cn(
                       "flex flex-col items-start gap-2 rounded-md border p-3 text-left transition-colors",
                       isSelected
                         ? "border-primary ring-2 ring-primary/30 bg-accent"
                         : "border-border hover:bg-accent/50",
+                      !templateAvailable && "cursor-not-allowed opacity-50"
                     )}
                     aria-pressed={isSelected}
                   >
                     <img
-                      src={template.logoSrc}
+                      src={getHostLogoSrc(host.id, themeMode)}
                       alt=""
                       className="h-6 w-6 object-contain"
                     />
                     <span className="text-sm font-medium leading-none">
-                      {template.label}
+                      {host.label}
                     </span>
                   </button>
                 );
               })}
             </div>
+            {templatesUnavailableMessage && (
+              <p className="text-xs text-muted-foreground">
+                {templatesUnavailableMessage}
+              </p>
+            )}
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="host-name">Name</Label>
             <Input
               id="host-name"
-              placeholder="My Host"
+              placeholder="My Client"
               value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+              onChange={(e) => {
+                setName(e.target.value);
+                // Clearing the field re-arms template defaulting.
+                userEditedNameRef.current = e.target.value.trim() !== "";
+              }}
+              onKeyDown={(e) =>
+                e.key === "Enter" && canCreate && handleCreate()
+              }
               autoFocus
             />
           </div>
@@ -175,10 +259,7 @@ export function CreateHostDialog({
           <Button variant="outline" onClick={handleClose} disabled={isSaving}>
             Cancel
           </Button>
-          <Button
-            onClick={handleCreate}
-            disabled={!name.trim() || isSaving}
-          >
+          <Button onClick={handleCreate} disabled={!canCreate}>
             {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Create
           </Button>

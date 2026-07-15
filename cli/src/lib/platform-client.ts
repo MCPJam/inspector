@@ -14,6 +14,7 @@ import {
 export interface PlatformClientOptions {
   apiKey?: string;
   apiUrl?: string;
+  timeoutMs?: number;
 }
 
 /**
@@ -89,6 +90,9 @@ export function buildPlatformClient(
     baseUrl: baseUrl ?? DEFAULT_PLATFORM_API_BASE_URL,
     getAuth: credential.getAuth,
     ...(deps.fetchFn ? { fetch: deps.fetchFn } : {}),
+    ...(options.timeoutMs !== undefined
+      ? { timeoutMs: options.timeoutMs }
+      : {}),
     userAgent: `mcpjam-cli/${packageJson.version}`,
   });
   return { client, credentialKind: credential.kind };

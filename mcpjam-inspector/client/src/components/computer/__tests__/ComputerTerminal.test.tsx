@@ -22,6 +22,15 @@ const h = vi.hoisted(() => {
     onResize() {
       return { dispose() {} };
     }
+    onSelectionChange() {
+      return { dispose() {} };
+    }
+    hasSelection() {
+      return false;
+    }
+    getSelection() {
+      return "";
+    }
     dispose() {}
   }
   class FakeFit {

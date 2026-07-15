@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 import { Button } from "@mcpjam/design-system/button";
-import { usePostHog } from "posthog-js/react";
 import type {
   BillingFeatureName,
   OrganizationPlan,
@@ -9,7 +8,7 @@ import {
   formatBillingFeatureName,
   formatPlanName,
 } from "@/lib/billing-entitlements";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 
 const FEATURE_DESCRIPTIONS: Partial<Record<BillingFeatureName, string>> = {
   evals:
@@ -36,7 +35,6 @@ export function BillingUpsellGate({
   canManageBilling,
   onNavigateToBilling,
 }: BillingUpsellGateProps) {
-  const posthog = usePostHog();
   const viewedRef = useRef(false);
   const featureName = formatBillingFeatureName(feature);
   const description =
@@ -50,21 +48,15 @@ export function BillingUpsellGate({
   useEffect(() => {
     if (viewedRef.current) return;
     viewedRef.current = true;
-    posthog?.capture("billing_upsell_gate_viewed", {
-      ...standardEventProps("billing_upsell_gate"),
+    track("billing_upsell_gate_viewed", {
+      location: "billing_upsell_gate",
       feature,
       current_plan: currentPlan,
       upgrade_plan: upgradePlan,
       can_manage_billing: canManageBilling,
       surface: window.location.pathname,
     });
-  }, [
-    canManageBilling,
-    currentPlan,
-    feature,
-    posthog,
-    upgradePlan,
-  ]);
+  }, [canManageBilling, currentPlan, feature, upgradePlan]);
 
   return (
     <div

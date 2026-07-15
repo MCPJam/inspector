@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MCPJamLimitDialog } from "../mcpjam-limit-dialog";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
+import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 const signIn = vi.fn();
 const authState: { isLoading: boolean; user: { id: string } | null } = {
@@ -15,7 +16,6 @@ const sortedOrganizationsState: Array<{
   myRole?: string;
   isCreator?: boolean;
 }> = [];
-let creditsFlagState = true;
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
@@ -46,10 +46,6 @@ vi.mock("@/hooks/useOrganizations", () => ({
       org.isCreator === true),
 }));
 
-vi.mock("@/lib/credit-topups-flag", () => ({
-  useCreditTopupsUiEnabled: () => creditsFlagState,
-}));
-
 const originalHash = window.location.hash;
 
 beforeEach(() => {
@@ -57,17 +53,19 @@ beforeEach(() => {
   authState.isLoading = false;
   authState.user = null;
   sortedOrganizationsState.length = 0;
-  creditsFlagState = true;
   window.location.hash = "";
   localStorage.clear();
   useMCPJamLimitDialogStore.setState({
     authStatus: "loading",
     hasPendingLimit: false,
+    outOfCreditsHit: false,
+    outOfCreditsOrganizationId: null,
     isOpen: false,
     intent: null,
     organizationId: null,
     pendingInput: null,
   });
+  useModelPickerIntentStore.setState({ openProvidersTabNonce: 0 });
 });
 
 afterEach(() => {
@@ -140,27 +138,6 @@ describe("MCPJamLimitDialog", () => {
     ).toBeInTheDocument();
   });
 
-  it("hides the Top up button when the credits UI flag is off", () => {
-    creditsFlagState = false;
-    authState.user = { id: "user-1" };
-    sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
-    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
-    render(<MCPJamLimitDialog />);
-
-    expect(
-      screen.queryByRole("button", { name: /^top up$/i })
-    ).not.toBeInTheDocument();
-    expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      "without waiting for your org's credits to reset"
-    );
-    expect(screen.getByTestId("limit-dialog-description")).not.toHaveTextContent(
-      /tomorrow/i
-    );
-    expect(
-      screen.getByRole("button", { name: /bring your own key/i })
-    ).toBeInTheDocument();
-  });
-
   it("shows the ask-admin copy and no CTAs for org members", () => {
     authState.user = { id: "user-1" };
     sortedOrganizationsState.push({ _id: "org-1", myRole: "member" });
@@ -179,19 +156,26 @@ describe("MCPJamLimitDialog", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("redirects to the org models page on BYOK click", async () => {
+  it("opens the model picker's Your providers tab on BYOK click (no org redirect)", async () => {
     const user = userEvent.setup();
     authState.user = { id: "user-1" };
     localStorage.setItem("active-organization-id:user-1", "org-active");
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
+    const nonceBefore =
+      useModelPickerIntentStore.getState().openProvidersTabNonce;
     render(<MCPJamLimitDialog />);
 
     await user.click(
       screen.getByRole("button", { name: /bring your own key/i })
     );
 
+    // Closes the dialog and asks the picker to open its "Your providers" tab —
+    // it must NOT navigate to the org models settings page.
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
-    expect(window.location.pathname).toBe("/organizations/org-active/models");
+    expect(useModelPickerIntentStore.getState().openProvidersTabNonce).toBe(
+      nonceBefore + 1
+    );
+    expect(window.location.pathname).not.toContain("/models");
   });
 
   it("redirects to the active org's billing page with the topup flag on CTA click", async () => {

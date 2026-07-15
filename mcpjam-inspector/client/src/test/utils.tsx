@@ -4,7 +4,7 @@
  */
 import React, { ReactElement, ReactNode } from "react";
 import { render, RenderOptions, RenderResult } from "@testing-library/react";
-import { vi } from "vitest";
+import { expect, vi } from "vitest";
 
 // Re-export everything from testing-library
 export * from "@testing-library/react";
@@ -154,4 +154,26 @@ export function spyOnConsole(method: "log" | "warn" | "error" | "info") {
  */
 export function generateTestId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Matcher for the message argument of an error toast.
+ *
+ * `toast.error` from `@/lib/toast` wraps string messages in a
+ * `<CopyableErrorMessage text={message} />` element before handing them to
+ * Sonner (so long errors get a hover copy button). Tests that spy on the
+ * underlying `sonner` toast therefore see that element, not the raw string.
+ * Use this in place of the string to assert on the wrapped text:
+ *
+ * @example
+ * expect(toastError).toHaveBeenCalledWith(
+ *   errorToastMessage("Something went wrong."),
+ *   { duration: Infinity },
+ * );
+ */
+export function errorToastMessage(text: string) {
+  return expect.objectContaining({
+    type: expect.any(Function),
+    props: expect.objectContaining({ text }),
+  });
 }

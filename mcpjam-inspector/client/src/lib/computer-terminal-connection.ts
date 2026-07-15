@@ -8,9 +8,11 @@
  *   server → client  text {type:"ready",sessionId} | {type:"exit"}
  *                    | {type:"error",message} | {type:"pong"}
  *
- * Auth is the Convex-minted terminal token in the query string (the
- * `/api/web/*` routes are not session-gated; the token IS the auth). Kept
- * free of xterm so the protocol is unit-testable with a fake WebSocket.
+ * Auth is the Convex-minted terminal token, sent as a WebSocket subprotocol
+ * (`new WebSocket(url, [token])`) — the `/api/web/*` routes are not
+ * session-gated, so the token IS the auth, and browsers can't attach a
+ * custom header to a WS handshake. Kept free of xterm so the protocol is
+ * unit-testable with a fake WebSocket.
  */
 
 export type TerminalEvent =
@@ -36,16 +38,104 @@ export interface OpenTerminalOptions {
   onClose: (code: number, reason: string) => void;
   /** Origin override (defaults to the current page origin); mainly for tests. */
   baseUrl?: string;
+  /** Starting working directory for the PTY (e.g. the harness session workdir).
+   *  Applied server-side at PTY creation; falls back to home if it can't be set. */
+  cwd?: string;
   /** WebSocket factory override for tests. */
-  wsFactory?: (url: string) => WebSocket;
+  wsFactory?: (url: string, protocols: string[]) => WebSocket;
 }
 
-/** Build the `ws(s)://…/api/web/computers/terminal?…` URL from page origin. */
-export function buildTerminalWsUrl(args: {
+/**
+ * Convert a data-plane HTTP(S) origin into the `ws(s)://host` base expected
+ * by `buildTerminalWsUrl`. Used when this inspector delegates to a remote
+ * data plane (see GET /api/web/computers/config); the terminal token rides
+ * the WS subprotocol, so a cross-origin socket needs nothing else.
+ */
+export function toTerminalWsBase(httpOrigin: string): string | undefined {
+  try {
+    const url = new URL(httpOrigin);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return undefined;
+    }
+    return `${url.protocol === "https:" ? "wss:" : "ws:"}//${url.host}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Build the `http(s)://…/api/web/computers/upload` URL. The upload MUST hit the
+ * same data plane as the terminal WebSocket (the sandbox lives there), so when a
+ * remote `ws(s)://` base is set we convert it back to `http(s)://`; otherwise we
+ * return a page-origin-relative path.
+ */
+export function buildComputerUploadUrl(args?: { baseUrl?: string }): string {
+  const path = "/api/web/computers/upload";
+  const base = args?.baseUrl;
+  if (!base) return path;
+  // `baseUrl` is the ws(s):// terminal base; swap the scheme for fetch.
+  const origin = base
+    .replace(/^wss:\/\//i, "https://")
+    .replace(/^ws:\/\//i, "http://");
+  return `${origin}${path}`;
+}
+
+export interface UploadedComputerFile {
+  name: string;
+  path: string;
+  bytes: number;
+}
+
+/**
+ * POST files to the user's project computer (drag-and-drop from the Shell). The
+ * `token` is a fresh Convex-minted terminal token (the same one the WS uses);
+ * auth is `Authorization: Bearer <token>` — headers stay out of access/proxy
+ * logs, query strings don't. `dir` targets a destination directory (the
+ * Shell's cwd — i.e. the harness workdir) so uploads land where the user is
+ * working; the server confines it under the box home and falls back to a
+ * default bucket when absent/invalid. Resolves to the written files (with
+ * their absolute sandbox paths) or throws with a server-supplied message.
+ */
+export async function uploadFilesToComputer(args: {
   token: string;
+  files: File[];
+  baseUrl?: string;
+  dir?: string;
+  fetchImpl?: typeof fetch;
+}): Promise<UploadedComputerFile[]> {
+  const params = new URLSearchParams();
+  if (args.dir) params.set("dir", args.dir);
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  const url = `${buildComputerUploadUrl({ baseUrl: args.baseUrl })}${query}`;
+  const form = new FormData();
+  for (const file of args.files) form.append("files", file);
+
+  const doFetch = args.fetchImpl ?? fetch;
+  const res = await doFetch(url, {
+    method: "POST",
+    body: form,
+    headers: { Authorization: `Bearer ${args.token}` },
+  });
+  let body: { ok?: boolean; files?: UploadedComputerFile[]; error?: string } = {};
+  try {
+    body = (await res.json()) as typeof body;
+  } catch {
+    // non-JSON (e.g. a proxy error page) — fall through to the status check.
+  }
+  if (!res.ok || !body.ok) {
+    throw new Error(body.error || `Upload failed (${res.status}).`);
+  }
+  return body.files ?? [];
+}
+
+/** Build the `ws(s)://…/api/web/computers/terminal?…` URL from page origin.
+ *  The auth token is NOT part of this URL — it rides the WS subprotocol
+ *  (see `openTerminalConnection`) so it never lands in proxy/CDN access logs. */
+export function buildTerminalWsUrl(args: {
   cols: number;
   rows: number;
   baseUrl?: string;
+  cwd?: string;
 }): string {
   const origin =
     args.baseUrl ??
@@ -53,10 +143,10 @@ export function buildTerminalWsUrl(args: {
       window.location.host
     }`;
   const params = new URLSearchParams({
-    token: args.token,
     cols: String(args.cols),
     rows: String(args.rows),
   });
+  if (args.cwd) params.set("cwd", args.cwd);
   return `${origin}/api/web/computers/terminal?${params.toString()}`;
 }
 
@@ -64,7 +154,10 @@ export function openTerminalConnection(
   opts: OpenTerminalOptions
 ): TerminalConnection {
   const url = buildTerminalWsUrl(opts);
-  const ws = (opts.wsFactory ?? ((u: string) => new WebSocket(u)))(url);
+  const ws = (opts.wsFactory ?? ((u: string, p: string[]) => new WebSocket(u, p)))(
+    url,
+    [opts.token]
+  );
   ws.binaryType = "arraybuffer";
 
   ws.onopen = () => opts.onOpen?.();

@@ -6,6 +6,7 @@ import {
   SDK_EVAL_QUICKSTART_ENV,
   SDK_EVAL_QUICKSTART_DOTENV,
   SDK_EVAL_QUICKSTART_RUN,
+  buildSdkEvalQuickstartDotenv,
 } from "../sdk-eval-quickstart";
 
 vi.mock("@/lib/clipboard", () => ({
@@ -17,11 +18,11 @@ describe("SdkEvalQuickstart", () => {
     renderWithProviders(<SdkEvalQuickstart projectId="ws-1" />);
 
     expect(
-      screen.getByText("Create a project and install the SDK"),
+      screen.getByText("Create a project and install the SDK")
     ).toBeTruthy();
     expect(screen.getByText("Set environment")).toBeTruthy();
     expect(
-      screen.getByText("Add mcp-eval.quickstart.test.ts to your project"),
+      screen.getByText("Add mcp-eval.quickstart.test.ts to your project")
     ).toBeTruthy();
     expect(screen.getByText("Run the demo test")).toBeTruthy();
 
@@ -30,7 +31,7 @@ describe("SdkEvalQuickstart", () => {
     expect(document.body.textContent).toContain("learn.mcpjam.com");
     expect(document.body.textContent).toContain("openai");
     expect(
-      screen.getAllByText(/mcp-eval\.quickstart\.test\.ts/).length,
+      screen.getAllByText(/mcp-eval\.quickstart\.test\.ts/).length
     ).toBeGreaterThanOrEqual(1);
 
     expect(SDK_EVAL_QUICKSTART_RUN).toMatch(/EvalTest/);
@@ -38,16 +39,30 @@ describe("SdkEvalQuickstart", () => {
     expect(SDK_EVAL_QUICKSTART_RUN).toMatch(/evalTest\.accuracy/);
   });
 
-  it("contains no project API key (mcpjam_) wiring — the keys are retired", () => {
+  it("wires sk_-keyed reporting and never the retired mcpjam_ keys", () => {
     renderWithProviders(<SdkEvalQuickstart projectId="ws-1" />);
 
-    expect(document.body.textContent).not.toContain("MCPJAM_API_KEY");
-    expect(SDK_EVAL_QUICKSTART_ENV).not.toMatch(/MCPJAM_API_KEY/);
-    expect(SDK_EVAL_QUICKSTART_DOTENV).not.toMatch(/MCPJAM_API_KEY/);
-    // The demo test must not wire `mcpjam:` reporting — ingestion is gone.
-    expect(SDK_EVAL_QUICKSTART_RUN).not.toMatch(/mcpjam:/);
+    // Reporting runs on MCPJam API keys (sk_) — same env var, new key kind.
+    expect(SDK_EVAL_QUICKSTART_ENV).toMatch(/MCPJAM_API_KEY=<your sk_/);
+    expect(SDK_EVAL_QUICKSTART_DOTENV).toMatch(/MCPJAM_API_KEY=<your sk_/);
+    expect(SDK_EVAL_QUICKSTART_RUN).toMatch(/mcpjam:/);
+    expect(SDK_EVAL_QUICKSTART_RUN).toMatch(/suiteName/);
+
+    // The quickstart targets the current project via MCPJAM_PROJECT_ID.
+    expect(buildSdkEvalQuickstartDotenv("ws-1")).toContain(
+      "MCPJAM_PROJECT_ID=ws-1"
+    );
+    expect(buildSdkEvalQuickstartDotenv(null)).not.toContain(
+      "MCPJAM_PROJECT_ID"
+    );
+    expect(document.body.textContent).toContain("MCPJAM_PROJECT_ID=ws-1");
+
+    // The retired key kind must never resurface.
+    expect(document.body.textContent).not.toContain("mcpjam_");
+    // The quickstart never mints keys in-app; users create sk_ keys in
+    // Settings → API keys.
     expect(
-      screen.queryByRole("button", { name: "Generate API key" }),
+      screen.queryByRole("button", { name: "Generate API key" })
     ).toBeNull();
   });
 
@@ -100,6 +115,8 @@ describe("SdkEvalQuickstart", () => {
 
     await user.click(screen.getByRole("button", { name: "Copy .env" }));
 
-    expect(copyToClipboard).toHaveBeenCalledWith(SDK_EVAL_QUICKSTART_DOTENV);
+    expect(copyToClipboard).toHaveBeenCalledWith(
+      buildSdkEvalQuickstartDotenv("ws-1")
+    );
   });
 });

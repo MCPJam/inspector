@@ -12,24 +12,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@mcpjam/design-system/popover";
 import { Badge } from "@mcpjam/design-system/badge";
-import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import { learnMoreContent } from "@/lib/learn-more-content";
 import { LearnMoreHoverCard } from "@/components/learn-more/LearnMoreHoverCard";
-import { useDismissibleAnnouncement } from "@/hooks/use-dismissible-announcement";
-
-interface NavMainItemAnnouncement {
-  id: string;
-  badge: string;
-  title: string;
-  body: string;
-}
 
 interface NavMainItem {
   title: string;
@@ -38,7 +24,8 @@ interface NavMainItem {
   isActive?: boolean;
   disabled?: boolean;
   disabledTooltip?: string;
-  announcement?: NavMainItemAnnouncement;
+  /** Optional pill shown next to the label, e.g. "New" */
+  badge?: string;
 }
 
 interface LearnMoreProps {
@@ -95,15 +82,10 @@ export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
     );
   };
 
-  const renderButton = (
-    item: NavMainItem,
-    options: { suppressTooltip?: boolean; badge?: React.ReactNode } = {}
-  ) => (
+  const renderButton = (item: NavMainItem) => (
     <SidebarMenuButton
       tooltip={
-        !item.disabled &&
-        !options.suppressTooltip &&
-        (!shouldShowHoverCard(item) || sidebarOpen)
+        !item.disabled && (!shouldShowHoverCard(item) || sidebarOpen)
           ? item.title
           : undefined
       }
@@ -111,13 +93,28 @@ export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
       onClick={item.disabled ? undefined : () => handleClick(item.url)}
       aria-disabled={item.disabled || undefined}
       tabIndex={item.disabled ? -1 : undefined}
-      className={getButtonClassName(item)}
+      className={cn(
+        getButtonClassName(item),
+        // Tighten the icon→label gap on badged rows so a long label + badge
+        // (e.g. "XAA Debugger" + "New") fits on one line at the 12rem width.
+        item.badge && "gap-1.5"
+      )}
     >
       {item.icon && <item.icon className="h-4 w-4" />}
-      <span className="flex min-w-0 flex-1 items-center gap-1.5">
+      {item.badge ? (
+        // A <div> (not a <span>) sidesteps the sidebar's
+        // [&>span:last-child]:truncate rule (which otherwise clips the badge).
+        // Tight tracking + compact gaps/badge keep the full title AND the badge
+        // on one line without widening the sidebar; truncate is a last resort.
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <span className="min-w-0 truncate tracking-tight">{item.title}</span>
+          <Badge className="h-4 shrink-0 px-1 text-[10px] font-medium leading-none">
+            {item.badge}
+          </Badge>
+        </div>
+      ) : (
         <span className="truncate">{item.title}</span>
-        {options.badge}
-      </span>
+      )}
     </SidebarMenuButton>
   );
 
@@ -126,17 +123,6 @@ export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
       <SidebarGroupContent>
         <SidebarMenu className="gap-0.5">
           {items.map((item) => {
-            if (item.announcement && !item.disabled) {
-              return (
-                <AnnouncementNavRow
-                  key={item.title}
-                  item={{ ...item, announcement: item.announcement }}
-                  sidebarOpen={sidebarOpen}
-                  renderButton={renderButton}
-                />
-              );
-            }
-
             const button = renderButton(item);
 
             if (item.disabled) {
@@ -176,77 +162,5 @@ export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>
-  );
-}
-
-interface AnnouncementNavRowProps {
-  item: NavMainItem & { announcement: NavMainItemAnnouncement };
-  sidebarOpen: boolean;
-  renderButton: (
-    item: NavMainItem,
-    options?: { suppressTooltip?: boolean; badge?: React.ReactNode }
-  ) => React.ReactNode;
-}
-
-function AnnouncementNavRow({
-  item,
-  sidebarOpen,
-  renderButton,
-}: AnnouncementNavRowProps) {
-  const { announcement } = item;
-  const { dismissed, dismiss } = useDismissibleAnnouncement(announcement.id);
-
-  const badge = !dismissed ? (
-    <Badge
-      variant="secondary"
-      className="ml-1 px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wide"
-    >
-      {announcement.badge}
-    </Badge>
-  ) : null;
-
-  const button = renderButton(item, {
-    suppressTooltip: !dismissed && sidebarOpen,
-    badge,
-  });
-
-  if (dismissed || !sidebarOpen) {
-    return <SidebarMenuItem>{button}</SidebarMenuItem>;
-  }
-
-  // Radix Popover treats a click on the trigger (the nav button) as a request
-  // to toggle open → onOpenChange(false) fires, which dismisses. So navigating
-  // away by clicking the row also marks the announcement seen.
-  return (
-    <SidebarMenuItem>
-      <Popover
-        open
-        onOpenChange={(next) => {
-          if (!next) dismiss();
-        }}
-      >
-        <PopoverTrigger asChild>{button}</PopoverTrigger>
-        <PopoverContent
-          side="right"
-          align="start"
-          sideOffset={12}
-          className="w-72"
-          onOpenAutoFocus={(event) => event.preventDefault()}
-          onPointerDownOutside={(event) => event.preventDefault()}
-          onFocusOutside={(event) => event.preventDefault()}
-          onEscapeKeyDown={(event) => event.preventDefault()}
-        >
-          <div className="font-medium">{announcement.title}</div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {announcement.body}
-          </p>
-          <div className="mt-3 flex justify-end">
-            <Button size="sm" onClick={dismiss}>
-              Got it
-            </Button>
-          </div>
-        </PopoverContent>
-      </Popover>
-    </SidebarMenuItem>
   );
 }

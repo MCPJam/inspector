@@ -353,6 +353,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
       await captureEvalReportingFailure(error, {
         apiKey: this.runtimeConfig.apiKey,
         baseUrl: this.runtimeConfig.baseUrl,
+        project: this.runtimeConfig.project,
         bufferedCount: this.buffered.length,
         entrypoint: "evalRunReporter.flush",
         resultCount: this.buffered.length,
@@ -387,6 +388,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
         ci: this.withoutCiProvider(this.input.ci),
         apiKey: this.input.apiKey,
         baseUrl: this.input.baseUrl,
+        project: this.input.project,
         strict: this.input.strict,
         agent: this.input.agent,
         mcpClientManager: this.input.mcpClientManager,
@@ -427,6 +429,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
       await captureEvalReportingFailure(error, {
         apiKey: this.runtimeConfig.apiKey,
         baseUrl: this.runtimeConfig.baseUrl,
+        project: this.runtimeConfig.project,
         bufferedCount: this.buffered.length,
         entrypoint: "evalRunReporter.finalize",
         resultCount: this.buffered.length,

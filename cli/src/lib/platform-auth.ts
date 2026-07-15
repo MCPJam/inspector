@@ -1,7 +1,7 @@
 /**
  * MCPJam platform credentials for the CLI.
  *
- * Resolution precedence for cloud commands:
+ * Resolution precedence for platform commands:
  *   1. `--api-key` flag      (explicit `mcpjam_...` legacy keys hard-error)
  *   2. `MCPJAM_API_KEY` env  (`mcpjam_...` warns and falls through — that
  *                             env var is shared with SDK eval reporting,
@@ -34,7 +34,7 @@ const TOKEN_REFRESH_SKEW_MS = 60_000;
 const DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60_000;
 
 const LEGACY_KEY_REMEDY =
-  "Legacy mcpjam_ API keys are not supported by cloud commands. Create an sk_ key at https://app.mcpjam.com/settings/api-keys or run `mcpjam login`.";
+  "Legacy mcpjam_ API keys are not supported by platform commands. Create an sk_ key at https://app.mcpjam.com/settings/api-keys or run `mcpjam login`.";
 
 export interface PlatformCredential {
   kind: "api-key" | "oauth";
@@ -71,7 +71,7 @@ export function resolvePlatformCredential(
       return { kind: "api-key", getAuth: async () => envKey };
     }
     // A legacy key in the shared env var is a valid eval-reporting setup, so
-    // it must not break cloud commands for a logged-in user: warn, ignore it.
+    // it must not break platform commands for a logged-in user: warn, ignore it.
     warn(
       `Ignoring legacy mcpjam_ key in MCPJAM_API_KEY for this command. ${LEGACY_KEY_REMEDY}`,
     );

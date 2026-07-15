@@ -1,5 +1,6 @@
 import { useAction, useMutation, useQuery } from "convex/react";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { confirmSeatPaymentWithStripe } from "@/lib/seat-payment-stripe";
 
 export type OrganizationPlan = "free" | "team" | "enterprise";
 export type BillingInterval = "monthly" | "annual";
@@ -19,7 +20,8 @@ export type BillingLimitName =
   | "maxChatboxesPerProject"
   | "maxEvalRunsPerMonth"
   | "maxEvalIterationsPerMonth"
-  | "insightsPerDay";
+  | "insightsPerDay"
+  | "computerStartsPerDay";
 
 /** Mirrors backend premiumness gate keys exactly. */
 export type PremiumnessGateKey =
@@ -106,6 +108,25 @@ export interface OrganizationBillingStatus {
   trialDecision: string | null;
 }
 
+export interface OrganizationSeatPaymentIntent {
+  _id: string;
+  organizationId: string;
+  userId: string;
+  email: string;
+  role: "guest" | "member";
+  source: string;
+  status: "pending" | "requires_action";
+  targetSeatQuantity: number | null;
+  stripeInvoiceId: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type SeatPaymentResult =
+  | { status: "paid"; seatQuantity: number; stripeInvoiceId?: string }
+  | { status: "failed"; stripeInvoiceId?: string; reason?: string }
+  | { status: "noop"; reason: string };
+
 export interface PlanCatalogEntry {
   plan: OrganizationPlan;
   displayName: string;
@@ -174,6 +195,7 @@ export function isPaidPlan(plan: OrganizationPlan): boolean {
 export interface UseOrganizationBillingOptions {
   projectId?: string | null;
   enabled?: boolean;
+  includeSeatPaymentIntent?: boolean;
 }
 
 export interface UseOrganizationBillingStatusOptions {
@@ -204,6 +226,8 @@ export function useOrganizationBilling(
   const enabled = options?.enabled ?? true;
   const shouldQueryOrganization = enabled && !!organizationId;
   const shouldQueryProject = shouldQueryOrganization && !!projectId;
+  const shouldQuerySeatPaymentIntent =
+    shouldQueryOrganization && options?.includeSeatPaymentIntent === true;
 
   const billingStatus = useOrganizationBillingStatus(organizationId, {
     enabled,
@@ -229,6 +253,11 @@ export function useOrganizationBilling(
     shouldQueryOrganization ? ({ organizationId } as any) : "skip"
   ) as PlanCatalog | undefined;
 
+  const activeSeatPaymentIntent = useQuery(
+    "billing:getActiveOrganizationSeatPaymentIntent" as any,
+    shouldQuerySeatPaymentIntent ? ({ organizationId } as any) : "skip"
+  ) as OrganizationSeatPaymentIntent | null | undefined;
+
   const startPlanChangeAction = useAction(
     "billing:startOrganizationPlanChange" as any
   );
@@ -247,6 +276,11 @@ export function useOrganizationBilling(
   const selectFreeAfterTrialMutation = useMutation(
     "billing:selectOrganizationFreePlanAfterTrial" as any
   );
+  const startSeatPaymentAction = useAction("billing:startSeatPayment" as any);
+  const completeSeatPaymentAction = useAction(
+    "billing:completeSeatPayment" as any
+  );
+  const cancelSeatPaymentAction = useAction("billing:cancelSeatPayment" as any);
 
   const [isStartingPlanChange, setIsStartingPlanChange] = useState(false);
   const [pendingPlanChangeTarget, setPendingPlanChangeTarget] = useState<
@@ -259,6 +293,11 @@ export function useOrganizationBilling(
   ] = useState(false);
   const [isSelectingFreeAfterTrial, setIsSelectingFreeAfterTrial] =
     useState(false);
+  const [isFinishingSeatPayment, setIsFinishingSeatPayment] = useState(false);
+  const [isCompletingSeatPayment, setIsCompletingSeatPayment] = useState(false);
+  const [isCancelingSeatPayment, setIsCancelingSeatPayment] = useState(false);
+  const seatPaymentCancelVersionRef = useRef(0);
+  const seatPaymentCompletionInFlightRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   const startPlanChange = useCallback(
@@ -405,6 +444,145 @@ export function useOrganizationBilling(
     }
   }, [organizationId, selectFreeAfterTrialMutation]);
 
+  const finishSeatPayment = useCallback(
+    async (seatPaymentIntentId?: string): Promise<SeatPaymentResult> => {
+      if (!organizationId) throw new Error("Organization is required");
+      const activeSeatPaymentIntentId =
+        seatPaymentIntentId ?? activeSeatPaymentIntent?._id;
+      if (!activeSeatPaymentIntentId) {
+        return { status: "noop", reason: "no_pending_seat_payment" };
+      }
+
+      setIsFinishingSeatPayment(true);
+      setError(null);
+      const cancelVersionAtStart = seatPaymentCancelVersionRef.current;
+      try {
+        const startResult = await startSeatPaymentAction({
+          organizationId,
+          seatPaymentIntentId: activeSeatPaymentIntentId,
+        } as any);
+
+        if (seatPaymentCancelVersionRef.current !== cancelVersionAtStart) {
+          return { status: "noop", reason: "seat_payment_canceled" };
+        }
+
+        if (startResult.status === "requires_action") {
+          if (!startResult.clientSecret) {
+            throw new Error("Payment confirmation is unavailable");
+          }
+
+          try {
+            await confirmSeatPaymentWithStripe({
+              publishableKey: startResult.publishableKey,
+              clientSecret: startResult.clientSecret,
+            });
+          } catch (confirmError) {
+            try {
+              await cancelSeatPaymentAction({
+                organizationId,
+                seatPaymentIntentId: activeSeatPaymentIntentId,
+                stripeInvoiceId: startResult.stripeInvoiceId,
+              } as any);
+            } catch (cancelError) {
+              console.warn(
+                "[billing] Failed to cancel incomplete seat payment",
+                cancelError
+              );
+            }
+            throw confirmError;
+          }
+
+          if (seatPaymentCancelVersionRef.current !== cancelVersionAtStart) {
+            return { status: "noop", reason: "seat_payment_canceled" };
+          }
+
+          seatPaymentCompletionInFlightRef.current = true;
+          setIsCompletingSeatPayment(true);
+          try {
+            const completeResult = (await completeSeatPaymentAction({
+              seatPaymentIntentId: activeSeatPaymentIntentId,
+              stripeInvoiceId: startResult.stripeInvoiceId,
+            } as any)) as SeatPaymentResult;
+            if (seatPaymentCancelVersionRef.current !== cancelVersionAtStart) {
+              return { status: "noop", reason: "seat_payment_canceled" };
+            }
+            if (completeResult.status !== "paid") {
+              throw new Error("Payment was not completed");
+            }
+            return completeResult;
+          } finally {
+            seatPaymentCompletionInFlightRef.current = false;
+            setIsCompletingSeatPayment(false);
+          }
+        }
+
+        if (startResult.status === "failed") {
+          if (startResult.reason === "missing_payment_method") {
+            throw new Error(
+              "Stripe has no default payment method for this subscription. Add or select a card in Billing, then click Finish payment again."
+            );
+          }
+          throw new Error("Payment failed. The member was not added.");
+        }
+
+        return startResult as SeatPaymentResult;
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to finish seat payment";
+        setError(message);
+        throw err;
+      } finally {
+        setIsFinishingSeatPayment(false);
+      }
+    },
+    [
+      activeSeatPaymentIntent?._id,
+      cancelSeatPaymentAction,
+      completeSeatPaymentAction,
+      organizationId,
+      startSeatPaymentAction,
+    ]
+  );
+
+  const cancelSeatPayment = useCallback(
+    async (seatPaymentIntentId?: string): Promise<void> => {
+      if (!organizationId) throw new Error("Organization is required");
+      const activeSeatPaymentIntentId =
+        seatPaymentIntentId ?? activeSeatPaymentIntent?._id;
+      if (!activeSeatPaymentIntentId) {
+        return;
+      }
+      if (seatPaymentCompletionInFlightRef.current) {
+        return;
+      }
+
+      setIsCancelingSeatPayment(true);
+      seatPaymentCancelVersionRef.current += 1;
+      setError(null);
+      try {
+        await cancelSeatPaymentAction({
+          organizationId,
+          seatPaymentIntentId: activeSeatPaymentIntentId,
+          stripeInvoiceId:
+            activeSeatPaymentIntent?.stripeInvoiceId ?? undefined,
+        } as any);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to cancel seat payment";
+        setError(message);
+        throw err;
+      } finally {
+        setIsCancelingSeatPayment(false);
+      }
+    },
+    [
+      activeSeatPaymentIntent?._id,
+      activeSeatPaymentIntent?.stripeInvoiceId,
+      cancelSeatPaymentAction,
+      organizationId,
+    ]
+  );
+
   const isLoadingOrganizationPremiumness =
     shouldQueryOrganization && organizationPremiumness === undefined;
   const isLoadingProjectPremiumness =
@@ -415,6 +593,7 @@ export function useOrganizationBilling(
     organizationPremiumness,
     projectPremiumness,
     entitlements,
+    activeSeatPaymentIntent,
     planCatalog,
     isLoadingBilling: shouldQueryOrganization && billingStatus === undefined,
     isLoadingEntitlements:
@@ -427,6 +606,13 @@ export function useOrganizationBilling(
     isOpeningPortal,
     isCancelingScheduledBillingChange,
     isSelectingFreeAfterTrial,
+    isFinishingSeatPayment,
+    isCompletingSeatPayment,
+    isCancelingSeatPayment,
+    isHandlingSeatPayment:
+      isFinishingSeatPayment ||
+      isCompletingSeatPayment ||
+      isCancelingSeatPayment,
     error,
     startPlanChange,
     openPortal,
@@ -434,5 +620,7 @@ export function useOrganizationBilling(
     openIntervalChangePortal,
     cancelScheduledBillingChange,
     selectFreeAfterTrial,
+    finishSeatPayment,
+    cancelSeatPayment,
   };
 }

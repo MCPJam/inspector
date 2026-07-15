@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { errorToastMessage } from "@/test/utils";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useUpdateNotification } from "../useUpdateNotification";
 import type { UpdateStatus } from "@/types/electron";
@@ -184,7 +185,7 @@ describe("useUpdateNotification", () => {
       });
 
       expect(mockToastError).toHaveBeenCalledWith(
-        "Update failed. Try again later.",
+        errorToastMessage("Update failed. Try again later."),
         expect.objectContaining({
           action: expect.objectContaining({
             label: "Download manually",

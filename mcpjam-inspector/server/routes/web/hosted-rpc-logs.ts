@@ -1,5 +1,6 @@
 import type { UIMessageChunk } from "ai";
 import type { RpcLogger } from "@mcpjam/sdk";
+import { rpcLogBus } from "../../services/rpc-log-bus.js";
 import { logger } from "../../utils/logger.js";
 import type {
   HostedRpcLogEvent,
@@ -150,6 +151,45 @@ export function createHostedRpcLogCollector(
   body: Record<string, unknown> | null | undefined,
 ): HostedRpcLogCollector {
   return new HostedRpcLogCollector(extractServerNamesById(body));
+}
+
+/**
+ * Bridge sandbox-originated harness MCP traffic into a live turn's collector.
+ *
+ * A harness turn's MCP calls don't flow through the chat request's manager —
+ * they arrive as separate `/api/web/harness-mcp/:serverId` requests, whose
+ * per-request manager publishes into the in-process `rpcLogBus` (the same bus
+ * the local singleton manager feeds). Subscribing the turn's collector to the
+ * bus for its selected servers routes those entries into the SAME delivery the
+ * emulated engine uses (`data-rpc-log` stream parts / response envelope), so
+ * the Playground Logs panel fills for harness turns with zero client changes.
+ *
+ * SINGLE-INSTANCE by design: the bus is per-process, so this covers local dev
+ * and self-hosted. In the horizontally-scaled hosted plane a harness-mcp
+ * request may land on another instance and its entries won't reach this turn —
+ * cross-instance fan-in needs a shared sink (tracked as a follow-up issue).
+ *
+ * Scoped by serverId only (the proxy token carries no turn id), so a
+ * concurrent turn against the same server on this instance would also see the
+ * entries — same per-server semantics as the local-mode Logs SSE.
+ *
+ * Returns the unsubscribe; callers MUST run it on stream completion or the
+ * collector (and its closed writer) leak on the bus for the process lifetime.
+ */
+export function bridgeHarnessRpcLogsToCollector(
+  serverIds: string[],
+  collector: HostedRpcLogCollector,
+): () => void {
+  // An empty filter would subscribe to EVERY server's traffic (bus semantics);
+  // a harness turn with no MCP servers has nothing to bridge.
+  if (serverIds.length === 0) return () => {};
+  return rpcLogBus.subscribe(serverIds, (event) => {
+    collector.rpcLogger({
+      direction: event.direction,
+      message: event.message,
+      serverId: event.serverId,
+    });
+  });
 }
 
 export function attachHostedRpcLogs<T>(

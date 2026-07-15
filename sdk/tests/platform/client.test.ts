@@ -113,6 +113,161 @@ describe("PlatformApiClient", () => {
     expect(sessions.searchParams.get("limit")).toBe("5");
   });
 
+  it("posts tunnel creates with the name body and encoded project id", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ serverId: "srv_1", slug: "calm-otter" })
+    );
+    const client = makeClient(fetchMock);
+
+    await client.createTunnel({ projectId: "p/1", name: "my server" });
+
+    const { url, init } = requestOf(fetchMock);
+    expect(url.pathname).toBe("/api/v1/projects/p%2F1/tunnels");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ name: "my server" }));
+  });
+
+  it("posts tunnel closes with encoded path params and no body", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ serverId: "s 2", status: "closed" })
+    );
+    const client = makeClient(fetchMock);
+
+    const result = await client.closeTunnel({
+      projectId: "p/1",
+      serverId: "s 2",
+    });
+
+    const { url, init } = requestOf(fetchMock);
+    expect(url.pathname).toBe("/api/v1/projects/p%2F1/tunnels/s%202/close");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeUndefined();
+    expect(result.status).toBe("closed");
+  });
+
+  it("builds chatbox read URLs with encoded path params", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ items: [] }));
+    const client = makeClient(fetchMock);
+
+    await client.listChatboxes({ projectId: "p1" });
+    await client.getChatbox({ projectId: "p1", chatboxId: "box/1" });
+
+    expect(requestOf(fetchMock, 0).url.pathname).toBe(
+      "/api/v1/projects/p1/chatboxes"
+    );
+    const detail = requestOf(fetchMock, 1);
+    expect(detail.url.pathname).toBe("/api/v1/projects/p1/chatboxes/box%2F1");
+    expect(detail.init.method).toBe("GET");
+  });
+
+  it("posts eval-run creation bodies and parses the 202 envelope", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(
+        {
+          runId: "run-1",
+          suiteId: "suite-1",
+          status: "running",
+          caseUpsert: { committed: [], failed: [] },
+        },
+        { status: 202 }
+      )
+    );
+    const client = makeClient(fetchMock);
+
+    const created = await client.createEvalRun({
+      projectId: "p1",
+      body: { suiteId: "suite-1", serverIds: ["s1", "s2"] },
+    });
+
+    const { url, init } = requestOf(fetchMock);
+    expect(url.pathname).toBe("/api/v1/projects/p1/eval-runs");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      suiteId: "suite-1",
+      serverIds: ["s1", "s2"],
+    });
+    expect(created.runId).toBe("run-1");
+    expect(created.status).toBe("running");
+  });
+
+  it("posts eval-suite creation bodies and parses the 201 envelope", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(
+        {
+          suiteId: "suite-9",
+          name: "Authored",
+          servers: [{ id: "s1" }],
+          caseUpsert: { committed: [{ name: "c1" }], failed: [] },
+        },
+        { status: 201 }
+      )
+    );
+    const client = makeClient(fetchMock);
+
+    const created = await client.createEvalSuite({
+      projectId: "p1",
+      body: {
+        name: "Authored",
+        serverIds: ["s1"],
+        model: "anthropic/claude-haiku-4.5",
+        tests: [{ title: "t", query: "q" }],
+      },
+    });
+
+    const { url, init } = requestOf(fetchMock);
+    expect(url.pathname).toBe("/api/v1/projects/p1/eval-suites");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      name: "Authored",
+      serverIds: ["s1"],
+      model: "anthropic/claude-haiku-4.5",
+      tests: [{ title: "t", query: "q" }],
+    });
+    expect(created.suiteId).toBe("suite-9");
+    expect(created.name).toBe("Authored");
+  });
+
+  it("builds eval polling URLs and forwards cursor/limit query params", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ items: [] }));
+    const client = makeClient(fetchMock);
+
+    await client.getEvalRun({ projectId: "p1", runId: "run-1" });
+    await client.listEvalRunIterations({
+      projectId: "p1",
+      runId: "run-1",
+      cursor: "abc",
+      limit: 25,
+    });
+    await client.getEvalIterationTrace({
+      projectId: "p1",
+      runId: "run-1",
+      iterationId: "iter-1",
+    });
+    await client.listEvalSuiteRuns({
+      projectId: "p1",
+      suiteId: "suite-1",
+      limit: 10,
+    });
+
+    expect(requestOf(fetchMock, 0).url.pathname).toBe(
+      "/api/v1/projects/p1/eval-runs/run-1"
+    );
+    const iterations = requestOf(fetchMock, 1).url;
+    expect(iterations.pathname).toBe(
+      "/api/v1/projects/p1/eval-runs/run-1/iterations"
+    );
+    expect(iterations.searchParams.get("cursor")).toBe("abc");
+    expect(iterations.searchParams.get("limit")).toBe("25");
+    expect(requestOf(fetchMock, 2).url.pathname).toBe(
+      "/api/v1/projects/p1/eval-runs/run-1/iterations/iter-1/trace"
+    );
+    const suiteRuns = requestOf(fetchMock, 3).url;
+    expect(suiteRuns.pathname).toBe(
+      "/api/v1/projects/p1/eval-suites/suite-1/runs"
+    );
+    expect(suiteRuns.searchParams.get("limit")).toBe("10");
+  });
+
   it("sets a user-agent header only when configured", async () => {
     const fetchMock = vi.fn(async () => jsonResponse({}));
     await makeClient(fetchMock).getMe();

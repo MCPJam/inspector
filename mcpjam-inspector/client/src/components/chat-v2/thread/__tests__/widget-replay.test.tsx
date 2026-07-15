@@ -1,8 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { MCP_UI_EXTENSION_ID } from "@mcpjam/sdk/browser";
 import { WidgetReplay } from "../widget-replay";
-import { ActiveHostCapsResolverProvider } from "@/contexts/active-host-client-capabilities-context";
 
 const mockDetectUIType = vi.fn();
 
@@ -14,6 +12,17 @@ vi.mock("../mcp-apps/mcp-apps-renderer", () => ({
   MCPAppsRenderer: ({ toolName }: { toolName: string }) => (
     <div data-testid="mcp-apps-renderer">{toolName}</div>
   ),
+}));
+
+// WidgetReplay wraps the renderer in <InspectorWidgetHostProvider> (which composes
+// the host from ~14 stores/contexts). These routing tests mock the renderer to a
+// stub, so the provider is a pass-through here.
+vi.mock("../mcp-apps/use-widget-host", () => ({
+  InspectorWidgetHostProvider: ({
+    children,
+  }: {
+    children: import("react").ReactNode;
+  }) => children,
 }));
 
 vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
@@ -73,33 +82,43 @@ describe("WidgetReplay", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  describe("host capability gate (Bug 1)", () => {
-    it("renders when the host advertises the MCP UI extension", () => {
+  // The caps-blob → boolean integration (`hostSupportsWidgetRendering` over the
+  // active host's resolved `clientCapabilities`) now lives in the injecting
+  // caller (PartSwitch) and is covered by PartSwitch.test.tsx. WidgetReplay only
+  // applies the injected `resolveHostSupportsWidget` gate with its own serverId.
+  describe("host capability gate (injected)", () => {
+    it("renders when resolveHostSupportsWidget returns true", () => {
       mockDetectUIType.mockReturnValue("mcp-apps");
-      const caps = {
-        extensions: {
-          [MCP_UI_EXTENSION_ID]: {
-            mimeTypes: ["text/html;profile=mcp-app"],
-          },
-        },
-      };
       render(
-        <ActiveHostCapsResolverProvider value={() => caps}>
-          <WidgetReplay {...baseProps} />
-        </ActiveHostCapsResolverProvider>
+        <WidgetReplay {...baseProps} resolveHostSupportsWidget={() => true} />
       );
       expect(screen.getByTestId("mcp-apps-renderer")).toBeInTheDocument();
     });
 
-    it("renders nothing when the host strips the UI extension (Codex)", () => {
+    it("renders nothing when resolveHostSupportsWidget returns false (e.g. Codex strips the UI extension)", () => {
       mockDetectUIType.mockReturnValue("mcp-apps");
-      const codexCaps = { elicitation: {} };
       const { container } = render(
-        <ActiveHostCapsResolverProvider value={() => codexCaps}>
-          <WidgetReplay {...baseProps} />
-        </ActiveHostCapsResolverProvider>
+        <WidgetReplay {...baseProps} resolveHostSupportsWidget={() => false} />
       );
       expect(container.firstChild).toBeNull();
+    });
+
+    it("applies the gate with the tool's resolved serverId", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      const resolveHostSupportsWidget = vi.fn(() => true);
+      render(
+        <WidgetReplay
+          {...baseProps}
+          resolveHostSupportsWidget={resolveHostSupportsWidget}
+        />
+      );
+      expect(resolveHostSupportsWidget).toHaveBeenCalledWith("server-1");
+    });
+
+    it("defaults to permissive (renders) when no gate is injected", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      render(<WidgetReplay {...baseProps} />);
+      expect(screen.getByTestId("mcp-apps-renderer")).toBeInTheDocument();
     });
   });
 });

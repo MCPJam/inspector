@@ -1,5 +1,8 @@
 import { Badge } from "@mcpjam/design-system/badge";
-import type { ComputerStatus } from "@/hooks/useProjectComputer";
+import type {
+  ComputerHibernatedReason,
+  ComputerStatus,
+} from "@/hooks/useProjectComputer";
 
 type ChipSpec = {
   label: string;
@@ -22,8 +25,15 @@ const SPECS: Record<ComputerStatus, ChipSpec> = {
 
 export function ComputerStatusChip({
   status,
+  hibernatedReason,
 }: {
   status: ComputerStatus | null | undefined;
+  /**
+   * COMP-7: when the machine is asleep FOR BILLING, the chip reads "Paused for
+   * billing" instead of "Asleep" so a paused-for-money machine is visibly
+   * distinct from one asleep from inactivity.
+   */
+  hibernatedReason?: ComputerHibernatedReason;
 }) {
   if (status === undefined) {
     return (
@@ -34,6 +44,9 @@ export function ComputerStatusChip({
   }
   if (status === null) {
     return <Badge variant="outline">No computer</Badge>;
+  }
+  if (status === "hibernating" && hibernatedReason === "billing") {
+    return <Badge variant="outline">Paused for billing</Badge>;
   }
   const spec = SPECS[status];
   return <Badge variant={spec.variant}>{spec.label}</Badge>;
