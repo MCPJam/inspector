@@ -152,7 +152,42 @@ export function createElicitationTimeoutSuspension(
     watchdog.abort(error);
   };
 
-  const timer = setInterval(() => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  /**
+   * Sample interval for the NEXT check.
+   *
+   * A fixed 1s cadence silently broke short per-call timeouts: we raise the
+   * upstream timeout to `base + extension` immediately, so a caller asking for
+   * 100ms would not be stopped until our first sample at 1s — a 10x overrun of
+   * a budget the caller explicitly set.
+   *
+   * We cannot schedule a single one-shot at the full remaining budget instead:
+   * `hasPending()` is a poll, so we must keep looking often enough to notice an
+   * elicitation *starting* and stop counting its wait as server time.
+   *
+   * So: sample at the cap, or at whatever budget remains if that is sooner.
+   * Overshoot is bounded by one interval, which is now always ≤ the budget
+   * itself — 120s budgets still sample at 1s (0.8% slop), while a 100ms budget
+   * samples at 100ms and fires on time.
+   */
+  const nextDelay = (): number => {
+    const remainingActive = Math.max(0, baseTimeoutMs - activeMs);
+    const remainingSuspended = Math.max(0, extensionMs - suspendedMs);
+    // Bound by BOTH budgets, always — including `remainingActive` while an
+    // elicitation is pending. That looks redundant (the active clock is paused)
+    // but it is what bounds how late we notice the elicitation *ending*: a
+    // 100ms budget that samples every 1s during a 5-minute wait would overshoot
+    // by up to 1s the moment the user answers. Sampling at 100ms throughout
+    // costs nothing measurable and keeps the budget honest on both sides of the
+    // transition.
+    return Math.max(
+      1,
+      Math.min(intervalMs, remainingActive, remainingSuspended)
+    );
+  };
+
+  const tick = () => {
     const now = Date.now();
     const elapsed = Math.max(0, now - lastSampleAt);
     lastSampleAt = now;
@@ -166,23 +201,32 @@ export function createElicitationTimeoutSuspension(
             { serverId, timeout: extensionMs, reason: "elicitation-budget" }
           )
         );
+        return;
       }
-      return;
+    } else {
+      activeMs += elapsed;
+      if (activeMs >= baseTimeoutMs) {
+        abortWith(
+          createElicitationTimeoutError(
+            `Request timed out after ${activeMs}ms of server time (${baseTimeoutMs}ms budget, excluding time suspended on elicitation).`,
+            { serverId, timeout: baseTimeoutMs, reason: "server-timeout" }
+          )
+        );
+        return;
+      }
     }
 
-    activeMs += elapsed;
-    if (activeMs >= baseTimeoutMs) {
-      abortWith(
-        createElicitationTimeoutError(
-          `Request timed out after ${activeMs}ms of server time (${baseTimeoutMs}ms budget, excluding time suspended on elicitation).`,
-          { serverId, timeout: baseTimeoutMs, reason: "server-timeout" }
-        )
-      );
-    }
-  }, intervalMs);
-  // Never hold the event loop open on this watchdog.
-  (timer as unknown as { unref?: () => void }).unref?.();
+    if (disposed) return;
+    schedule();
+  };
 
+  function schedule() {
+    timer = setTimeout(tick, nextDelay());
+    // Never hold the event loop open on this watchdog.
+    (timer as unknown as { unref?: () => void }).unref?.();
+  }
+
+  schedule();
   const composed = composeAbortSignals(
     callerSignal ? [callerSignal, watchdog.signal] : [watchdog.signal]
   );
@@ -193,7 +237,7 @@ export function createElicitationTimeoutSuspension(
     dispose: () => {
       if (disposed) return;
       disposed = true;
-      clearInterval(timer);
+      if (timer) clearTimeout(timer);
       composed.dispose();
     },
   };

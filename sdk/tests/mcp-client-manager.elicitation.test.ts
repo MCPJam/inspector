@@ -10,6 +10,10 @@ import {
   ELICITATION_WATCHDOG_INTERVAL_MS,
 } from "../src/mcp-client-manager/elicitation-timeout";
 import { isRetryableTransientError } from "../src/retry";
+import {
+  isNonRetryableMarkedError,
+  markNonRetryableError,
+} from "../src/mcp-client-manager/error-utils";
 import type { ManagedMcpClient } from "../src/mcp-client-manager/managed-mcp-client";
 
 const ELICIT_METHOD = "elicitation/create";
@@ -395,6 +399,41 @@ describe("buildCapabilities elicitation shape", () => {
   });
 });
 
+describe("non-retryable marker", () => {
+  it("is not forgeable through the prototype chain", () => {
+    // A string-keyed marker was read with plain property access, so ANY error
+    // inheriting a truthy `__mcpjamNonRetryable` — including via prototype
+    // pollution — silently suppressed legitimate retries. Set membership can't
+    // be inherited.
+    const impostor = Object.create({ __mcpjamNonRetryable: true }) as object;
+    expect(isNonRetryableMarkedError(impostor)).toBe(false);
+
+    const polluted = new Error("transient");
+    (polluted as unknown as Record<string, unknown>).__mcpjamNonRetryable = true;
+    expect(isNonRetryableMarkedError(polluted)).toBe(false);
+  });
+
+  it("marks only the exact error object handed to it", () => {
+    const marked = markNonRetryableError(new Error("verdict"));
+    expect(isNonRetryableMarkedError(marked)).toBe(true);
+    expect(isNonRetryableMarkedError(new Error("verdict"))).toBe(false);
+  });
+
+  it("stamps nothing onto the error it marks", () => {
+    // We don't own these objects; a marker property would leak into anything
+    // that serializes or enumerates them.
+    const error = markNonRetryableError(new Error("verdict"));
+    expect(Object.keys(error)).not.toContain("__mcpjamNonRetryable");
+    expect(
+      Object.getOwnPropertyNames(error).some((k) => k.includes("Retryable")),
+    ).toBe(false);
+  });
+
+  it.each([[null], [undefined], ["str"], [42]])("is false for %p", (v) => {
+    expect(isNonRetryableMarkedError(v)).toBe(false);
+  });
+});
+
 describe("createElicitationTimeoutSuspension", () => {
   beforeEach(() => {
     jest.useFakeTimers();
@@ -414,6 +453,47 @@ describe("createElicitationTimeoutSuspension", () => {
 
     await jest.advanceTimersByTimeAsync(120_000);
     expect(suspension.signal.aborted).toBe(false);
+    suspension.dispose();
+  });
+
+  it("honors a per-call timeout SHORTER than the watchdog sample interval", async () => {
+    // The bug: we raise the upstream timeout to base+extension immediately, so
+    // the watchdog is the only thing enforcing `base`. Sampling at a fixed 1s
+    // meant a caller asking for 100ms wasn't stopped until 1s — a 10x overrun
+    // of a budget they explicitly set.
+    const suspension = createElicitationTimeoutSuspension({
+      serverId: "srv",
+      baseTimeoutMs: 100,
+      extensionMs: 600_000,
+      hasPending: () => false,
+    });
+
+    await jest.advanceTimersByTimeAsync(99);
+    expect(suspension.signal.aborted).toBe(false);
+
+    // Fires on ITS budget, not on the sampler's cadence.
+    await jest.advanceTimersByTimeAsync(2);
+    expect(suspension.signal.aborted).toBe(true);
+    suspension.dispose();
+  });
+
+  it("still pauses a short budget while an elicitation is pending", async () => {
+    // The short-timeout fix must not cost the suspension itself: a 100ms budget
+    // with a human mid-form should not fire at 100ms.
+    let pending = true;
+    const suspension = createElicitationTimeoutSuspension({
+      serverId: "srv",
+      baseTimeoutMs: 100,
+      extensionMs: 600_000,
+      hasPending: () => pending,
+    });
+
+    await jest.advanceTimersByTimeAsync(30_000);
+    expect(suspension.signal.aborted).toBe(false);
+
+    pending = false;
+    await jest.advanceTimersByTimeAsync(101);
+    expect(suspension.signal.aborted).toBe(true);
     suspension.dispose();
   });
 
