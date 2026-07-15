@@ -1,13 +1,36 @@
 import { describe, expect, it } from "vitest";
+import type { ModelDefinition } from "@/shared/types";
 import {
+  buildAvailableModels,
   buildAvailableModelsFromOrgConfig,
   buildModelMenuGroups,
   getDefaultModel,
+  getProviderDisplayName,
+  isMCPJamProvidedModelMenuItem,
   isOrgProviderAvailable,
 } from "../model-helpers";
 
+// A hosted model the backend catalog knows about but the static SUPPORTED_MODELS
+// list does NOT — the whole reason this PR exists.
+const CATALOG_ONLY: ModelDefinition = {
+  id: "newvendor/brand-new-model",
+  name: "Brand New Model",
+  provider: "newvendor",
+  hosted: true,
+  guestAllowed: false,
+};
+
+const NO_KEYS = {
+  hasToken: () => false,
+  getOpenRouterSelectedModels: () => [],
+  isOllamaRunning: false,
+  ollamaModels: [] as ModelDefinition[],
+  getAzureBaseUrl: () => "",
+  customProviders: [],
+};
+
 describe("org model helpers", () => {
-  it("prefers Mistral Small 4 as the MCPJam default model", () => {
+  it("prefers Claude Haiku 4.5 as the MCPJam default model", () => {
     expect(
       getDefaultModel([
         {
@@ -21,7 +44,7 @@ describe("org model helpers", () => {
           provider: "mistral",
         },
       ]).id,
-    ).toBe("mistralai/mistral-small-2603");
+    ).toBe("anthropic/claude-haiku-4.5");
   });
 
   it("includes enabled custom providers that do not require an API key", () => {
@@ -96,6 +119,49 @@ describe("org model helpers", () => {
         (m) => m.provider === "bedrock"
       )
     ).toBe(false);
+  });
+
+  it("buildAvailableModels uses the injected hosted catalog as the hosted source", () => {
+    const models = buildAvailableModels({ ...NO_KEYS, hostedCatalog: [CATALOG_ONLY] });
+    // The catalog-only model surfaces even though it's absent from SUPPORTED_MODELS.
+    expect(models).toContainEqual(CATALOG_ONLY);
+    // With no BYOK keys, the hosted catalog is the whole cloud list.
+    expect(models.every((m) => m.hosted === true)).toBe(true);
+  });
+
+  it("buildAvailableModels falls back to the static hosted subset when no catalog is given", () => {
+    const models = buildAvailableModels(NO_KEYS);
+    // Non-empty, and every static hosted entry classifies as MCPJam-provided.
+    expect(models.length).toBeGreaterThan(0);
+    expect(models.some((m) => isMCPJamProvidedModelMenuItem(m))).toBe(true);
+  });
+
+  it("buildAvailableModelsFromOrgConfig uses the injected catalog for the hosted source", () => {
+    const models = buildAvailableModelsFromOrgConfig(
+      { providers: [] },
+      [CATALOG_ONLY]
+    );
+    expect(models).toContainEqual(CATALOG_ONLY);
+  });
+
+  it("isMCPJamProvidedModelMenuItem trusts the hosted flag for catalog-only ids", () => {
+    // Not in the static list, not an own-provider source — the flag decides.
+    expect(isMCPJamProvidedModelMenuItem(CATALOG_ONLY)).toBe(true);
+    // An own-provider (BYOK) model is never MCPJam-provided even if mis-flagged absent.
+    expect(
+      isMCPJamProvidedModelMenuItem({
+        id: "some/model",
+        name: "x",
+        provider: "openrouter",
+      })
+    ).toBe(false);
+  });
+
+  it("getProviderDisplayName title-cases unknown catalog providers", () => {
+    expect(getProviderDisplayName("arcee-ai")).toBe("Arcee Ai");
+    expect(getProviderDisplayName("nvidia")).toBe("Nvidia");
+    // Known providers keep their curated names.
+    expect(getProviderDisplayName("anthropic")).toBe("Anthropic");
   });
 
   it("keeps OpenRouter models with provider-prefixed ids under configured providers", () => {

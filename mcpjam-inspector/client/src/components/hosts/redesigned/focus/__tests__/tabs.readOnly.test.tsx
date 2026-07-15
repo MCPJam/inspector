@@ -15,7 +15,11 @@ vi.mock("@/hooks/useBuiltInToolCatalog", () => ({
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({
     availableModels: [
-      { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "anthropic" },
+      {
+        id: "claude-haiku-4-5",
+        name: "Claude Haiku 4.5",
+        provider: "anthropic",
+      },
     ],
   }),
 }));
@@ -52,7 +56,7 @@ describe("Client editor tabs — readOnly prop wiring", () => {
         onDraftChange={vi.fn()}
         attention={[]}
         readOnly
-      />,
+      />
     );
     // Empty draft modelId renders the picker trigger as "Select model".
     const modelTrigger = screen.getByRole("button", {
@@ -68,22 +72,22 @@ describe("Client editor tabs — readOnly prop wiring", () => {
         onDraftChange={vi.fn()}
         attention={[]}
         readOnly
-      />,
+      />
     );
     const textarea = screen.getByPlaceholderText(
-      "You are a helpful assistant…",
+      "You are a helpful assistant…"
     ) as HTMLTextAreaElement;
     expect(textarea).toHaveAttribute("readonly");
   });
 
-  it("BehaviorTab readOnly disables tool-approval and visibility switches", () => {
+  it("BehaviorTab readOnly disables tool-approval, visibility, and tool-image switches", () => {
     render(
       <BehaviorTab
         draft={emptyHostConfigInputV2()}
         onDraftChange={vi.fn()}
         attention={[]}
         readOnly
-      />,
+      />
     );
     const approval = screen.getByRole("switch", {
       name: /require tool approval/i,
@@ -91,8 +95,12 @@ describe("Client editor tabs — readOnly prop wiring", () => {
     const visibility = screen.getAllByRole("switch", {
       name: /respect tool visibility/i,
     })[0];
+    const toolImages = screen.getByRole("switch", {
+      name: /make tool image content visible to model/i,
+    });
     expect(approval).toBeDisabled();
     expect(visibility).toBeDisabled();
+    expect(toolImages).toBeDisabled();
   });
 
   it("BehaviorTab without readOnly leaves controls enabled (sanity check)", () => {
@@ -101,7 +109,7 @@ describe("Client editor tabs — readOnly prop wiring", () => {
         draft={emptyHostConfigInputV2()}
         onDraftChange={vi.fn()}
         attention={[]}
-      />,
+      />
     );
     const modelTrigger = screen.getByRole("button", {
       name: /select model/i,
@@ -116,7 +124,7 @@ describe("Client editor tabs — readOnly prop wiring", () => {
         onDraftChange={vi.fn()}
         attention={[]}
         readOnly
-      />,
+      />
     );
     const fieldset = container.querySelector("fieldset");
     expect(fieldset).not.toBeNull();
@@ -129,11 +137,40 @@ describe("Client editor tabs — readOnly prop wiring", () => {
         draft={emptyHostConfigInputV2()}
         onDraftChange={vi.fn()}
         attention={[]}
-      />,
+      />
     );
     const fieldset = container.querySelector("fieldset");
     expect(fieldset).not.toBeNull();
     expect(fieldset).not.toBeDisabled();
+  });
+
+  it("ProtocolTab readOnly disables the EMA advertise switch", () => {
+    render(
+      <ProtocolTab
+        draft={emptyHostConfigInputV2()}
+        onDraftChange={vi.fn()}
+        attention={[]}
+        readOnly
+      />
+    );
+    const emaSwitch = screen.getByRole("switch", {
+      name: /advertise ema support by default/i,
+    });
+    expect(emaSwitch).toBeDisabled();
+  });
+
+  it("ProtocolTab without readOnly leaves the EMA switch enabled", () => {
+    render(
+      <ProtocolTab
+        draft={emptyHostConfigInputV2()}
+        onDraftChange={vi.fn()}
+        attention={[]}
+      />
+    );
+    const emaSwitch = screen.getByRole("switch", {
+      name: /advertise ema support by default/i,
+    });
+    expect(emaSwitch).not.toBeDisabled();
   });
 
   it("ProtocolTab accepts the readOnly prop without throwing", () => {
@@ -149,8 +186,8 @@ describe("Client editor tabs — readOnly prop wiring", () => {
           onDraftChange={vi.fn()}
           attention={[]}
           readOnly
-        />,
-      ),
+        />
+      )
     ).not.toThrow();
   });
 });

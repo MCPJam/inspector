@@ -261,13 +261,11 @@ export function registerHostsCommands(program: Command): void {
       .description("Permanently delete a host from a project")
       .requiredOption("--host <id-or-name>", "Host name or ID")
       .option("--project <id-or-name>", "Project name or ID")
-      .option("--force", "Delete even if the host is still referenced")
   ).action(
     async (
       options: PlatformOptions & {
         project?: string;
         host: string;
-        force?: boolean;
       },
       command
     ) => {
@@ -280,7 +278,6 @@ export function registerHostsCommands(program: Command): void {
             {
               project: options.project,
               host: options.host,
-              ...(options.force ? { force: true } : {}),
             },
             { client, signal }
           )

@@ -1,5 +1,6 @@
 import { HostRunner } from "../src/HostRunner";
 import { PromptResult } from "../src/PromptResult";
+import { Host } from "../src/host-config/host";
 import type { ToolSet } from "ai";
 import type { Tool } from "../src/mcp-client-manager/types";
 
@@ -1815,6 +1816,47 @@ describe("HostRunner", () => {
       const toolNames = Object.keys(callArgs.tools);
 
       expect(toolNames).toContain("noVisibilityTool");
+    });
+
+    it("should map direct MCP image results for raw Tool[] conversion", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const tools: Tool[] = [createMockTool("imageTool")];
+      const host = new Host({
+        style: "claude",
+        model: "openai/gpt-4o",
+      });
+
+      const agent = new HostRunner({
+        host,
+        tools,
+        apiKey: "test-key",
+      });
+
+      await agent.run("Test");
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      const converted = callArgs.tools.imageTool;
+
+      expect(typeof converted.toModelOutput).toBe("function");
+      expect(
+        converted.toModelOutput({
+          output: {
+            content: [
+              { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+            ],
+          },
+        })
+      ).toEqual({
+        type: "content",
+        value: [
+          { type: "media", data: "aGVsbG8=", mediaType: "image/png" },
+        ],
+      });
     });
   });
 });

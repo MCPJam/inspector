@@ -1,17 +1,13 @@
 /**
- * Node-safe host-template seeds (9 templates: mcpjam, claude, claude-code,
- * chatgpt, cursor, codex, copilot, vscode, agentcore).
+ * Node-safe host-template seeds for built-in MCPJam host presets.
  *
- * GENERATED-FROM (verbatim port): inspector client
- * `client/src/lib/client-templates.ts`. Moved into the SDK so the server's
- * `--template` resolver and the CLI can seed a host config in Node without
- * importing browser-only client code. The client re-exports `seedHostTemplate`
- * from here (delegating its UI templates) so the seed logic has one source of
- * truth; UI-only metadata (logos) stays client-side.
+ * Historical origin: this was ported from the old inspector client template
+ * adapter. It now remains in the SDK for CLI/dev fallback paths; normal product
+ * host creation reads the backend-owned host catalog instead.
  *
  * Two deliberate edits vs the client source: the Vite `__APP_VERSION__`
- * constant is parametrized as `opts.appVersion`, and the UI `logoSrc` metadata
- * is dropped. A parity test asserts byte-identical output vs the client seeds.
+ * The old Vite `__APP_VERSION__` constant is parametrized as
+ * `opts.appVersion`, and UI `logoSrc` metadata is kept client-side.
  */
 
 import {
@@ -22,12 +18,19 @@ import {
   MCP_UI_EXTENSION_ID,
   MCP_UI_RESOURCE_MIME_TYPE,
 } from "../../mcp-client-manager/capabilities.js";
+import { XAA_MCP_EXTENSION } from "../../xaa/mcp-init.js";
 import {
   MCPJAM_FONT_CSS,
   MCPJAM_PLATFORM,
   getMcpJamStyleVariables,
 } from "./mcpjam-style.js";
 import { getMistralStyleVariables } from "./mistral-style.js";
+import {
+  GOOSE_FONT_CSS,
+  GOOSE_HOST_STYLE_VARIABLES,
+  GOOSE_PLATFORM,
+} from "./goose-style.js";
+import { SLACK_FONT_CSS, getSlackStyleVariables } from "./slack-style.js";
 
 type HostThemeMode = "light" | "dark";
 
@@ -234,6 +237,8 @@ export const HOST_TEMPLATE_IDS = [
   "claude-code",
   "chatgpt",
   "mistral",
+  "goose",
+  "slack",
   "cursor",
   "codex",
   "copilot",
@@ -241,6 +246,8 @@ export const HOST_TEMPLATE_IDS = [
   "agentcore",
   "n8n",
   "perplexity",
+  "cline",
+  "notion",
 ] as const;
 
 export type HostTemplateId = (typeof HOST_TEMPLATE_IDS)[number];
@@ -286,8 +293,10 @@ export interface HostTemplate {
  * validated against the backend built-in tool catalog; `computer` is the
  * Project Computers resource). Recorded verbatim so a future
  * computer-use / host-native-toolset feature can seed an honest Claude
- * Code environment instead of guessing. Deliberately NOT wired into the
- * "claude-code" template seed below.
+ * Code environment instead of guessing. These are NOT wired into
+ * `builtInToolIds` — when the "claude-code" template runs under
+ * `harness: "claude-code"`, the real Claude Code runtime provides them from
+ * inside the sandbox; this catalogue is documentation of that surface.
  */
 export const CLAUDE_CODE_NATIVE_TOOLS = {
   /** Always loaded at session start. */
@@ -356,12 +365,15 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
   {
     id: "mcpjam",
     label: "MCPJam",
-    description: "SDK defaults. Pick a model later.",
+    description: "SDK defaults with hosted Claude Haiku.",
     // Explicit `hostStyle: "mcpjam"` so the template doesn't silently
     // inherit the registry default — keeps MCPJam hosts visually distinct
     // from Claude even if the default ever drifts.
     seed: (opts) => {
-      const base = emptyHostConfigInputV2({ hostStyle: "mcpjam" });
+      const base = emptyHostConfigInputV2({
+        hostStyle: "mcpjam",
+        modelId: "anthropic/claude-haiku-4.5",
+      });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // MCPJam is the "out of the box" default the rest of the product
       // assumes works for every UI Resource. Goal: advertise the
@@ -390,6 +402,21 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         logging: {},
         updateModelContext: { text: {}, image: {} },
         message: { text: {} },
+      };
+      // Advertise MCP Enterprise-Managed Authorization support. The MCPJam
+      // persona is the inspector's own client, which implements the full
+      // XAA path (SSO assertion → ID-JAG → RAS token redemption), so the
+      // declaration is honest here. Real-host templates deliberately stay
+      // silent until those hosts ship support — the connect surfaces still
+      // merge the extension at connect time for XAA-configured servers
+      // regardless of the stored baseline. Spread keeps the SDK-default
+      // MCP UI extension intact.
+      base.clientCapabilities = {
+        ...base.clientCapabilities,
+        extensions: {
+          ...(base.clientCapabilities.extensions as Record<string, unknown>),
+          [XAA_MCP_EXTENSION]: {},
+        },
       };
       // Per-resource hostContext for MCPJam's own house chrome. Style
       // variables come straight from the design-system tokens that
@@ -428,14 +455,20 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.mcpProfile = {
         profileVersion: 1,
         initialize: {
-          clientInfo: { name: "mcpjam-inspector", version: (opts?.appVersion ?? DEFAULT_SEED_APP_VERSION) },
+          clientInfo: {
+            name: "mcpjam-inspector",
+            version: opts?.appVersion ?? DEFAULT_SEED_APP_VERSION,
+          },
         },
         apps: {
           // MCP Apps extension: hostInfo sent to the View iframe in
           // `ui/initialize`. Views that branch on hostInfo.name === "MCPJam"
           // (e.g. dev-tool-aware widgets) need this to identify the host.
           uiInitialize: {
-            hostInfo: { name: "MCPJam", version: (opts?.appVersion ?? DEFAULT_SEED_APP_VERSION) },
+            hostInfo: {
+              name: "MCPJam",
+              version: opts?.appVersion ?? DEFAULT_SEED_APP_VERSION,
+            },
           },
           // Vendor compat-runtime shims the inspector injects into widget
           // HTML before sandboxing. MCPJam intentionally exposes
@@ -677,6 +710,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "anthropic/claude-haiku-4.5",
         temperature: 1.0,
         requireToolApproval: false,
+        // Run the REAL Claude Code runtime (the @ai-sdk/harness-claude-code
+        // adapter) instead of MCPJam's emulated engine. The harness executes
+        // inside an attached personal computer, so seed one too — the backend
+        // enforces the `harness ⇒ computer` invariant on write.
+        harness: "claude-code",
+        computer: { kind: "personal" },
       });
       // Verbatim from a live mcpjam-learn `start-host-probe` against
       // Claude Code CLI v2.1.176: raw `initialize` capabilities are
@@ -690,10 +729,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         roots: {},
         elicitation: {},
       };
-      // Progressive tool discovery ON. Product choice, not probe data —
-      // tool disclosure isn't an MCP `initialize` capability, so nothing
-      // about it was (or could be) extracted from the host probe.
-      base.progressiveToolDiscovery = true;
+      // The real Claude Code owns native tool discovery from the generated
+      // .mcp.json. Keep MCPJam's progressive meta-tools off for this template
+      // so `search_mcp_tools` never looks like a Claude Code built-in.
+      base.progressiveToolDiscovery = false;
       // CLI client: no widget rendering, so `hostContext` stays the
       // empty object.
       //
@@ -709,9 +748,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // returned no ui/initialize snapshot at all.
       base.hostCapabilitiesOverride = {};
       //
-      // The CLI's native harness toolset (Bash/Read/Write/etc.) is
-      // catalogued in CLAUDE_CODE_NATIVE_TOOLS above for a future
-      // computer-use feature; intentionally not attached to this seed.
+      // The CLI's native harness toolset (Bash/Read/Write/etc.) is NOT seeded
+      // into `builtInToolIds` — under `harness: "claude-code"` those tools come
+      // from the real Claude Code runtime inside the sandbox, not MCPJam's
+      // built-in tool registry. CLAUDE_CODE_NATIVE_TOOLS above remains the
+      // documented catalogue of what that runtime exposes.
       base.mcpProfile = {
         profileVersion: 1,
         initialize: {
@@ -897,10 +938,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "mistral",
-        // Le Chat's MCP/App captures identify the host and MCP client, not
-        // the backing model. Keep this empty so the template doesn't imply
-        // unobserved evidence such as "Mistral Large".
-        modelId: "",
+        // Default the Mistral host to Mistral Large 3 2512 (MCPJam-hosted).
+        modelId: "mistralai/mistral-large-2512",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -978,14 +1017,6 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           sandbox: {
             csp: {
               mode: "declared",
-              restrictTo: {
-                connectDomains: [
-                  "https://api.openai.com",
-                  "https://api.anthropic.com",
-                  "https://cdn.jsdelivr.net",
-                ],
-                resourceDomains: ["https://cdn.jsdelivr.net"],
-              },
             },
             permissions: {
               mode: "custom",
@@ -999,9 +1030,233 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     },
   },
   {
+    id: "goose",
+    label: "Goose",
+    description:
+      "Goose Desktop. MCP Apps rendering, no OpenAI compatibility shim.",
+    seed: (opts) => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "goose",
+        // Goose Desktop is model-provider agnostic. Use MCPJam's smallest
+        // hosted model so the simulated chat runs before a user wires their
+        // own Goose-like model stack.
+        modelId: "openai/gpt-5-nano",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      const theme = opts?.theme ?? DEFAULT_SEED_THEME;
+
+      // Captured from Goose Desktop 1.38.0: the client advertises MCP UI
+      // support plus roots, sampling, and elicitation. Preserve the raw
+      // empty-object shapes instead of normalizing elicitation to
+      // `{ form: {} }` so the MCP initialize layer stays faithful.
+      base.clientCapabilities = {
+        extensions: {
+          [MCP_UI_EXTENSION_ID]: {
+            mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE],
+          },
+        },
+        roots: {},
+        sampling: {},
+        elicitation: {},
+      };
+
+      // Progressive tool discovery ON for Goose-shaped hosts. Product
+      // choice, not probe data: tool disclosure is an MCPJam execution
+      // policy and does not appear in the MCP initialize handshake.
+      base.progressiveToolDiscovery = true;
+
+      // Goose's captured `ui/initialize` response only advertised
+      // `openLinks`. It rendered the View and supplied rich HostContext,
+      // but did not claim serverTools, resources, logging, message, or
+      // updateModelContext.
+      base.hostCapabilitiesOverride = {
+        openLinks: {},
+      };
+
+      base.hostContext = {
+        theme,
+        displayMode: "inline",
+        availableDisplayModes: ["inline", "fullscreen", "pip"],
+        containerDimensions: { width: 1274 },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent:
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Goose/1.38.0 Chrome/146.0.7680.65 Electron/41.0.0 Safari/537.36",
+        platform: GOOSE_PLATFORM,
+        deviceCapabilities: { touch: false, hover: true },
+        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+        styles: {
+          variables: GOOSE_HOST_STYLE_VARIABLES,
+          css: { fonts: GOOSE_FONT_CSS },
+        },
+      };
+
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-03-26"],
+          clientInfo: { name: "goose-desktop", version: "1.38.0" },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: { name: "MCP-UI Host", version: "1.0.0" },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen", "pip"],
+            toolInputPartial: false,
+            toolCancelled: false,
+            hostContextChanged: false,
+            resourceTeardown: false,
+            toolInfo: true,
+            openLinks: true,
+            serverTools: false,
+            serverResources: false,
+            logging: false,
+            updateModelContext: false,
+            message: false,
+            sandboxPermissions: false,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: false,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+          compatRuntime: { openaiApps: false },
+          sandbox: {
+            csp: {
+              mode: "declared",
+              cspDirectives: {
+                "font-src": ["https://cash-f.squarecdn.com"],
+              },
+            },
+            permissions: {
+              mode: "custom",
+              allow: {},
+            },
+            sandboxAttrs: ["allow-forms"],
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "slack",
+    label: "Slackbot",
+    description:
+      "Slackbot MCP host. MCP Apps rendering, no OpenAI compatibility shim.",
+    seed: (opts) => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "slack",
+        // Slackbot's MCP host is model-provider agnostic toward the server.
+        // Use MCPJam's smallest hosted model so simulated chats run before a
+        // user wires their own Slackbot-shaped model stack.
+        modelId: "openai/gpt-5-nano",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      const theme = opts?.theme ?? DEFAULT_SEED_THEME;
+
+      // Captured from Slackbot on 2026-06-24: the base MCP initialize path
+      // advertises only the MCP UI extension. Preserve that exact surface.
+      base.clientCapabilities = {
+        extensions: {
+          [MCP_UI_EXTENSION_ID]: {
+            mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE],
+          },
+        },
+      };
+
+      // Captured from Slackbot's `ui/initialize` response. No
+      // updateModelContext/message/downloadFile claims were present.
+      base.hostCapabilitiesOverride = {
+        openLinks: {},
+        serverTools: {},
+        serverResources: {},
+        logging: {},
+      };
+
+      // Per-resource environment context Slackbot exposes to MCP apps.
+      // `toolInfo` is omitted here because it is per-invocation and filled by
+      // the renderer when the matrix enables it.
+      base.hostContext = {
+        theme,
+        displayMode: "inline",
+        availableDisplayModes: ["inline", "fullscreen"],
+        containerDimensions: { maxWidth: 598 },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        platform: "web",
+        deviceCapabilities: { touch: false, hover: true },
+        styles: {
+          variables: getSlackStyleVariables(theme),
+          css: { fonts: SLACK_FONT_CSS },
+        },
+      };
+
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-06-18"],
+          clientInfo: { name: "Slackbot MCP Client", version: "1.0.0" },
+        },
+        apps: {
+          uiInitialize: {
+            hostInfo: { name: "Slackbot", version: "1.0.0" },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen"],
+            toolInputPartial: false,
+            toolCancelled: false,
+            hostContextChanged: false,
+            resourceTeardown: false,
+            toolInfo: true,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: false,
+            message: false,
+            sandboxPermissions: false,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: false,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+          compatRuntime: { openaiApps: false },
+          sandbox: {
+            csp: {
+              // Slack proxies the View with the resource-declared CSP payload
+              // in the sandbox URL. Do not add a host-side restrictTo
+              // allowlist: that would intersect with the View declaration and
+              // can only make widgets fail under MCPJam-as-Slack.
+              mode: "declared",
+            },
+            permissions: {
+              mode: "custom",
+              // The captured iframe had no `allow` attribute, so do not grant
+              // resource-declared permissions until Slack is observed doing so.
+              allow: {},
+            },
+            // Captured iframe sandbox:
+            // `allow-scripts allow-same-origin allow-forms`. The first two
+            // are the renderer baseline; `allow-forms` is Slack's addition.
+            sandboxAttrs: ["allow-forms"],
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
     id: "cursor",
     label: "Cursor",
-    description: "Cursor IDE chat panel. MCP UI extension on, no message/updateModelContext.",
+    description:
+      "Cursor IDE chat panel. MCP UI extension on, no message/updateModelContext.",
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "cursor",
@@ -1110,6 +1365,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "openai/gpt-5-nano",
         temperature: 0.7,
         requireToolApproval: false,
+        // Run the REAL OpenAI Codex runtime (the @ai-sdk/harness-codex adapter)
+        // instead of MCPJam's emulated engine — mirrors the claude-code template.
+        // The harness executes inside an attached personal computer, so seed one
+        // too; the backend enforces the `harness ⇒ computer` invariant on write.
+        // Gated in the UI behind the `codex-host-enabled` flag.
+        harness: "codex",
+        computer: { kind: "personal" },
       });
       // Codex CLI probe advertises only elicitation. It does NOT advertise
       // the MCP UI extension (no widget rendering), so we replace the SDK
@@ -1445,8 +1707,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
   {
     id: "n8n",
     label: "n8n",
-    description:
-      "n8n MCP Client Tool. Tools-only client, no widget rendering.",
+    description: "n8n MCP Client Tool. Tools-only client, no widget rendering.",
     seed: () => {
       const base = emptyHostConfigInputV2({
         hostStyle: "n8n",
@@ -1505,16 +1766,80 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       return base;
     },
   },
+  {
+    id: "cline",
+    label: "Cline",
+    description:
+      "Cline coding-agent MCP client. Tools-only client, no widget rendering.",
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "cline",
+        // The probe only identifies Cline's MCP client, not a reusable model
+        // id; keep MCPJam's simulated chat runnable with a hosted model.
+        modelId: "anthropic/claude-haiku-4.5",
+        temperature: 1.0,
+        requireToolApproval: false,
+      });
+      // Captured from the Cline 3.89.2 host probe: protocol 2025-11-25,
+      // clientInfo Cline@3.89.2, and an empty clientCapabilities object.
+      base.clientCapabilities = {};
+      // The probe reported no snapshot ("no-snapshot-yet") and Cline renders
+      // its own native agent UI, not MCP Apps widgets — so there is no
+      // ui/initialize host-capability negotiation and no hostContext.
+      base.hostCapabilitiesOverride = {};
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: { name: "Cline", version: "3.89.2" },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "notion",
+    label: "Notion",
+    description:
+      "Notion AI agent MCP client. Tools-only client, no widget rendering.",
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "notion",
+        // Notion AI is model-provider agnostic toward MCP servers; this hosted
+        // default only keeps MCPJam's simulated chat runnable out-of-the-box.
+        modelId: "anthropic/claude-haiku-4.5",
+        temperature: 1.0,
+        requireToolApproval: false,
+      });
+      // Bare client: advertises an empty capabilities object and negotiates no
+      // MCP Apps/UI extension (no `mimeTypes`). Replace the SDK default
+      // entirely so nothing is layered on top.
+      base.clientCapabilities = {};
+      // Notion renders its own native agent UI, not MCP Apps widgets, so there
+      // is no ui/initialize host-capability negotiation and no hostContext.
+      base.hostCapabilitiesOverride = {};
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          // NOTE: name/version are placeholders — only Notion's browser thinking
+          // animation was captured, not its MCP `initialize` handshake. Swap in
+          // the real clientInfo once a wire probe is available.
+          clientInfo: { name: "notion", version: "1.0.0" },
+        },
+      };
+      return base;
+    },
+  },
 ];
 
 export const DEFAULT_HOST_TEMPLATE_ID: HostTemplateId = "mcpjam";
 
 export function seedFromHostTemplate(
   id: HostTemplateId,
-  opts?: SeedHostTemplateOptions,
+  opts?: SeedHostTemplateOptions
 ): SeededHostConfigInput {
-  const template =
-    HOST_TEMPLATES.find((t) => t.id === id) ?? HOST_TEMPLATES[0];
+  const template = HOST_TEMPLATES.find((t) => t.id === id) ?? HOST_TEMPLATES[0];
   return template.seed(opts);
 }
 

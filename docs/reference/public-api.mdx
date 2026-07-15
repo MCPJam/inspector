@@ -232,7 +232,7 @@ and an interactive playground — under **Endpoints** in the sidebar.
 
 | Endpoint | What it does |
 | --- | --- |
-| `POST .../eval-suites` | Author-only: create a suite + its test cases from `name` + `serverIds` + a default `model` + `tests`, WITHOUT running it; responds `201` + `suiteId`. Per-test `model`/`provider`/`runs`/`expectedToolCalls` are optional and fall back to suite defaults |
+| `POST .../eval-suites` | Author-only: create a suite + its test cases from `name` + `serverIds` + a default `model` + `tests`, WITHOUT running it; responds `201` + `suiteId`. Each test's case body is an ordered `steps` array (prompt / toolCall / interact / assert); per-test `model`/`provider`/`runs` are optional and fall back to suite defaults |
 | `POST .../eval-runs` | Create a run from a `suiteId` (rerun; `serverIds` optional — defaults to the suite's saved servers) or `suiteName` + inline `tests` + `serverIds` (new suite); responds `202` + `runId` |
 | `GET .../eval-runs/{runId}` | Run status, result, and summary — poll until terminal |
 | `GET .../eval-runs/{runId}/iterations` | Per-iteration results: tool calls, token usage, latency (paginated) |
@@ -275,11 +275,21 @@ RUN_ID=$(curl -fsS -X POST \
     "serverIds": ["'$SERVER_ID'"],
     "tests": [{
       "title": "echo works",
-      "query": "Use the echo tool to say hi",
       "runs": 1,
       "model": "anthropic/claude-haiku-4.5",
       "provider": "anthropic",
-      "expectedToolCalls": [{ "toolName": "echo", "arguments": { "text": "hi" } }]
+      "steps": [
+        { "id": "s1", "kind": "prompt", "prompt": "Use the echo tool to say hi" },
+        {
+          "id": "s2",
+          "kind": "assert",
+          "assertion": {
+            "type": "toolCalledWith",
+            "toolName": "echo",
+            "args": { "args": { "text": "hi" } }
+          }
+        }
+      ]
     }]
   }' | jq -er .runId)
 

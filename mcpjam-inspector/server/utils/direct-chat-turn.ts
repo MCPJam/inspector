@@ -36,10 +36,13 @@ import { isAbortError } from "@/shared/abort-errors";
 import {
   commitNewlyLoaded,
   gateToolsToActiveSubset,
+  META_TOOL_SEARCH,
   resolveActiveToolNames,
+  shouldForceInitialToolSearch,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
+import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
 import type { PersistedTurnTrace } from "./chat-ingestion";
 import { logger } from "./logger";
 import {
@@ -370,10 +373,75 @@ export interface RunDirectChatTurnHandle {
   result: ReturnType<typeof streamText>;
   traceContext: ReturnType<typeof createAiSdkEvalTraceContext>;
   traceTurn: DirectChatTurnTraceTurn;
+  /** Model id for this turn — lets headless consumers build the real turnTrace. */
+  modelId: string;
   /** Removes the abort listener (idempotent). Call from a finally block. */
   cleanup: () => void;
   /** True once the abort signal has fired (mirrors chat's local flag). */
   isAborted: () => boolean;
+}
+
+export function stampMcpToolOriginProviderOptions(
+  messages: ModelMessage[],
+  tools: ToolSet
+): ModelMessage[] {
+  let didChange = false;
+  const stamped = messages.map((message) => {
+    if (!Array.isArray((message as { content?: unknown }).content)) {
+      return message;
+    }
+
+    let messageChanged = false;
+    const content = ((message as { content: unknown[] }).content).map(
+      (part) => {
+        if (!part || typeof part !== "object" || Array.isArray(part)) {
+          return part;
+        }
+        const record = part as Record<string, unknown>;
+        if (
+          record.type !== "tool-call" &&
+          record.type !== "tool-result"
+        ) {
+          return part;
+        }
+        const toolName = record.toolName;
+        if (typeof toolName !== "string") return part;
+        const serverId = readToolServerId(tools, toolName);
+        const providerOptions = mergeMcpToolOriginMetadata(
+          record.providerOptions,
+          serverId
+        );
+        if (!providerOptions) return part;
+        messageChanged = true;
+        return { ...record, providerOptions };
+      }
+    );
+
+    if (!messageChanged) return message;
+    didChange = true;
+    return { ...message, content } as ModelMessage;
+  });
+
+  return didChange ? stamped : messages;
+}
+
+export function withMcpToolOriginChunkMetadata<
+  T extends { type?: string; toolName?: unknown; providerMetadata?: unknown },
+>(chunk: T, tools: ToolSet): T {
+  if (
+    chunk.type !== "tool-input-start" &&
+    chunk.type !== "tool-input-available" &&
+    chunk.type !== "tool-input-error"
+  ) {
+    return chunk;
+  }
+  if (typeof chunk.toolName !== "string") return chunk;
+  const serverId = readToolServerId(tools, chunk.toolName);
+  const providerMetadata = mergeMcpToolOriginMetadata(
+    chunk.providerMetadata,
+    serverId
+  );
+  return providerMetadata ? { ...chunk, providerMetadata } : chunk;
 }
 
 function toLiveChatTraceUsage(
@@ -653,9 +721,28 @@ export function runDirectChatTurn(
         // a hidden tool call can't take effect (read by `executableTools`).
         advertisedToolNames = new Set(activeToolNames);
       }
-      return activeToolNames !== undefined
-        ? { activeTools: activeToolNames }
-        : {};
+      const stepOptions: {
+        activeTools?: string[];
+        toolChoice?: ToolChoice<Record<string, AiTool>>;
+      } = {};
+      if (activeToolNames !== undefined) {
+        stepOptions.activeTools = activeToolNames;
+      }
+      if (
+        toolChoice === undefined &&
+        shouldForceInitialToolSearch(
+          progressivePlan,
+          discoveryState,
+          stepNumber,
+        ) &&
+        activeToolNames?.includes(META_TOOL_SEARCH)
+      ) {
+        stepOptions.toolChoice = {
+          type: "tool",
+          toolName: META_TOOL_SEARCH,
+        };
+      }
+      return stepOptions;
     },
     onChunk: async ({ chunk }) => {
       // First streamed chunk of this step → TTFC anchor (any chunk type).
@@ -708,9 +795,12 @@ export function runDirectChatTurn(
       }
     },
     onStepFinish: async (step) => {
-      const responseMessages = Array.isArray(step?.response?.messages)
-        ? (step.response.messages as ModelMessage[])
-        : [];
+      const responseMessages = stampMcpToolOriginProviderOptions(
+        Array.isArray(step?.response?.messages)
+          ? (step.response.messages as ModelMessage[])
+          : [],
+        tools
+      );
       const beforeLength = traceHistory.length;
       appendDedupedModelMessages(traceHistory, responseMessages);
       const afterLength = traceHistory.length;
@@ -886,9 +976,12 @@ export function runDirectChatTurn(
       for (const step of event.steps) {
         appendDedupedModelMessages(
           responseMessages,
-          Array.isArray(step?.response?.messages)
-            ? (step.response.messages as ModelMessage[])
-            : [],
+          stampMcpToolOriginProviderOptions(
+            Array.isArray(step?.response?.messages)
+              ? (step.response.messages as ModelMessage[])
+              : [],
+            tools
+          ),
         );
       }
       try {
@@ -924,6 +1017,7 @@ export function runDirectChatTurn(
     result,
     traceContext,
     traceTurn,
+    modelId,
     cleanup,
     isAborted: () => aborted || abortSignal?.aborted === true,
   };
@@ -937,6 +1031,13 @@ export interface DirectChatTurnHeadlessResult {
   spans: Awaited<
     ReturnType<typeof createAiSdkEvalTraceContext>
   >["recordedSpans"];
+  /**
+   * The turn's real `PersistedTurnTrace`, built from the engine's own
+   * `traceTurn` accumulator + `recordedSpans` — the SAME construction the
+   * streaming `onPersist` path uses (see runDirectChatTurn). Lets the unified
+   * turn facade hand direct + hosted callers an identical trace shape.
+   */
+  turnTrace: PersistedTurnTrace;
   /** True if the abort signal fired mid-turn. The caller should drop the result on true. */
   aborted: boolean;
 }
@@ -958,12 +1059,26 @@ export async function consumeDirectChatTurnHeadless(
     const messages = Array.isArray(response?.messages)
       ? (response.messages as ModelMessage[])
       : [];
+    // Build the real turnTrace from the engine's own accumulator — mirrors the
+    // streaming `onPersist` construction (runDirectChatTurn ~902) so headless
+    // and streaming produce the identical PersistedTurnTrace.
+    const turnTrace: PersistedTurnTrace = {
+      turnId: handle.traceTurn.turnId,
+      promptIndex: handle.traceTurn.promptIndex,
+      startedAt: handle.traceTurn.turnStartedAt,
+      endedAt: Date.now(),
+      spans: [...handle.traceContext.recordedSpans],
+      usage: handle.traceTurn.turnUsage,
+      finishReason: finishReason ?? undefined,
+      modelId: handle.modelId,
+    };
     return {
       messages,
       steps,
       totalUsage,
       finishReason,
       spans: handle.traceContext.recordedSpans,
+      turnTrace,
       aborted: handle.isAborted(),
     };
   } finally {

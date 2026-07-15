@@ -1,6 +1,6 @@
 import { useEffect } from "react";
-import { toast } from "sonner";
-import { usePostHog } from "posthog-js/react";
+import { toast } from "@/lib/toast";
+import { track } from "@/lib/analytics";
 
 import { clearPendingTopup, peekPendingTopup } from "@/hooks/useCreditTopup";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
@@ -33,8 +33,6 @@ export function useCreditTopupReturnFlow({
   chatSessionId,
   sendMessage,
 }: UseCreditTopupReturnFlowOptions): void {
-  const posthog = usePostHog();
-
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
@@ -49,7 +47,8 @@ export function useCreditTopupReturnFlow({
 
     if (topupParam === "cancelled") {
       const pending = peekPendingTopup();
-      posthog?.capture("credit_topup_return_cancelled", {
+      track("credit_topup_return_cancelled", {
+        location: "credit_topup_return",
         had_pending_stash: pending !== null,
       });
       return;
@@ -80,7 +79,8 @@ export function useCreditTopupReturnFlow({
       }
     }
 
-    posthog?.capture("credit_topup_return_success", {
+    track("credit_topup_return_success", {
+      location: "credit_topup_return",
       had_pending_stash: hadPendingStash,
       chat_session_matched: chatSessionMatched,
       resend_executed: resendExecuted,
@@ -105,8 +105,6 @@ interface UseCreditTopupReturnFlowBillingOptions {
 export function useCreditTopupReturnFlowBilling({
   enabled = true,
 }: UseCreditTopupReturnFlowBillingOptions = {}): void {
-  const posthog = usePostHog();
-
   useEffect(() => {
     if (!enabled) return;
     if (typeof window === "undefined") return;
@@ -121,14 +119,18 @@ export function useCreditTopupReturnFlowBilling({
     window.history.replaceState(null, "", cleanedUrl);
 
     if (topupParam === "cancelled") {
-      posthog?.capture("credit_topup_return_cancelled");
+      track("credit_topup_return_cancelled", {
+        location: "credit_topup_return_billing",
+      });
       return;
     }
 
     useMCPJamLimitDialogStore.getState().clearOutOfCreditsHit();
 
     toast.success("Credits added.");
-    posthog?.capture("credit_topup_return_success");
+    track("credit_topup_return_success", {
+      location: "credit_topup_return_billing",
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 }

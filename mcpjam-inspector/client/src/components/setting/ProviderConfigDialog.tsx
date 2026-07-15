@@ -10,8 +10,7 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { Alert, AlertDescription } from "@mcpjam/design-system/alert";
-import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 interface ProviderConfig {
   id: string;
   name: string;
@@ -45,7 +44,6 @@ export function ProviderConfigDialog({
   onRemove,
   isConfigured,
 }: ProviderConfigDialogProps) {
-  const posthog = usePostHog();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
@@ -143,10 +141,8 @@ export function ProviderConfigDialog({
             </Button>
             <Button
               onClick={() => {
-                posthog.capture("save_api_key", {
+                track("save_api_key", {
                   location: "provider_config_dialog",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
                 });
                 onSave();
               }}

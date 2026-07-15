@@ -18,6 +18,10 @@ vi.mock("posthog-js", () => ({
   },
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
+}));
+
 vi.mock("@/lib/PosthogUtils", () => ({
   detectEnvironment: vi.fn().mockReturnValue("test"),
   detectPlatform: vi.fn().mockReturnValue("web"),
@@ -327,6 +331,35 @@ describe("TestCasesOverview", () => {
     );
 
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  });
+
+  it("uses in-place scrolling layout when fillAvailableHeight is set", () => {
+    useConvexMock.mockReturnValue({ query: vi.fn() });
+    useQueryMock.mockReturnValue(undefined);
+
+    const { container } = renderWithProviders(
+      <TestCasesOverview
+        suite={suite}
+        cases={[baseCase]}
+        allIterations={[savedIteration]}
+        runsViewMode="test-cases"
+        onViewModeChange={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        fillAvailableHeight
+        hideViewModeSelect
+        runTrendData={[]}
+        modelStats={[]}
+        runsLoading={false}
+      />,
+    );
+
+    const scrollRegion = container.querySelector(".divide-y");
+    expect(scrollRegion).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
+    expect(scrollRegion?.parentElement).toHaveClass(
+      "flex-1",
+      "min-h-0",
+      "overflow-hidden",
+    );
   });
 
   it("calls onRunTestCase when the row Run button is clicked", async () => {

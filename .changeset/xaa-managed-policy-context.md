@@ -1,0 +1,5 @@
+---
+"@mcpjam/sdk": minor
+---
+
+XAA: managed-IdP policy context and outcomes in the flow state machine (additive). `BaseXAAStateMachineConfig` gains optional `policyMode`/`testIdentityId`/`resourceAppId`; when `policyMode` is set the ID-JAG mint carries the managed context (`x-mcpjam-policy-mode`/`x-mcpjam-test-identity-id`/`x-mcpjam-resource-app-id` headers on the spec `/token` form, body fields on the legacy JSON mint) — keyed on presence, independent of the local-forwarding `issuerMode` opt-in. `XAAFlowState` gains `idpPolicy` recording the issuer's ruling: `granted`/`downscoped` (with `requestedScope`/`grantedScope`) on success, or `denied` with an allowlisted OAuth `errorCode` plus a truncated `reasonCode` on a policy rejection (the flow still parks at `token_exchange_request` as before). Downstream, ID-JAG inspection lints against and the jwt-bearer redemption requests the IdP-granted scope (`idpPolicy.grantedScope`) instead of the original request. No managed context ⇒ byte-identical legacy behavior; codes and scope strings only — never tokens.

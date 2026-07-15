@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "2.17.0",
+  "version": "2.26.0",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -44,12 +44,12 @@
     "LICENSE"
   ],
   "scripts": {
-    "predev": "npm run sdk:build",
+    "predev": "npm run sdk:build && npm run bundle:sandbox-proxies && npm run bundle:browser-harness",
     "dev": "run-script-os",
     "dev:default": "concurrently \"npm run dev:server\" \"npm run dev:client\" \"npm run dev:worker\"",
     "dev:win32": "concurrently --raw \"npm run dev:server\" \"npm run dev:client\" \"npm run dev:worker\"",
     "dev:worker": "npm --prefix ../mcp run dev:local",
-    "predev:app": "npm run sdk:build",
+    "predev:app": "npm run sdk:build && npm run bundle:sandbox-proxies && npm run bundle:browser-harness",
     "dev:app": "run-script-os",
     "dev:app:default": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:app:win32": "concurrently --raw \"npm run dev:server\" \"npm run dev:client\"",
@@ -97,6 +97,7 @@
     "test:watch": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vitest",
     "test:coverage": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vitest run --coverage",
     "test:e2e": "playwright test",
+    "test:e2e:oauth-debugger": "npm run sdk:build && playwright test -c playwright.oauth-debugger.config.ts",
     "ship": "bash scripts/ship.sh"
   },
   "dependencies": {
@@ -105,8 +106,9 @@
     "@ai-sdk/azure": "^3.0.26",
     "@ai-sdk/deepseek": "^2.0.17",
     "@ai-sdk/google": "^3.0.20",
-    "@ai-sdk/harness": "^1.0.0-canary.13",
-    "@ai-sdk/harness-claude-code": "^1.0.0-canary.9",
+    "@ai-sdk/harness": "1.0.0-canary.13",
+    "@ai-sdk/harness-claude-code": "1.0.0-canary.9",
+    "@ai-sdk/harness-codex": "1.0.0-canary.9",
     "@ai-sdk/mistral": "^3.0.18",
     "@ai-sdk/openai": "^3.0.25",
     "@ai-sdk/react": "^3.0.156",
@@ -129,8 +131,8 @@
     "@hookform/resolvers": "^3.10.0",
     "@lezer/highlight": "^1.2.3",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^1.22.0",
-    "@modelcontextprotocol/client": "^2.0.0-alpha.2",
+    "@mcpjam/sdk": "^1.31.0",
+    "@modelcontextprotocol/client": "2.0.0-alpha.2",
     "@modelcontextprotocol/ext-apps": "^1.7.2",
     "@openrouter/ai-sdk-provider": "^2.0.2",
     "@sentry/electron": "^5.10.0",
@@ -140,6 +142,7 @@
     "@tanstack/react-virtual": "^3.13.12",
     "@workos-inc/authkit-react": "^0.12.0",
     "@workos-inc/node": "^10.2.0",
+    "@xmldom/xmldom": "^0.8.13",
     "@xterm/addon-clipboard": "^0.2.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
@@ -194,6 +197,8 @@
     "url-template": "^3.1.1",
     "use-stick-to-bottom": "^1.1.1",
     "ws": "^8.18.0",
+    "xml-crypto": "^6.1.2",
+    "xpath": "^0.0.34",
     "zod": "^4.1.12",
     "zustand": "^5.0.6"
   },

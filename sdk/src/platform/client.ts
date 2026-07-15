@@ -14,6 +14,13 @@ import type {
   PlatformEvalSuiteCreated,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
+  PlatformEvalStepResult,
+  PlatformComputerAttached,
+  PlatformComputerReset,
+  PlatformEnvironment,
+  PlatformEnvironmentBuild,
+  PlatformEnvironmentBuildStarted,
+  PlatformEnvironmentDeleted,
   PlatformHost,
   PlatformHostDeleted,
   PlatformHostDetail,
@@ -252,6 +259,156 @@ export class PlatformApiClient {
     );
   }
 
+  // ── Computer environments ────────────────────────────────────────────
+
+  listEnvironments(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformEnvironment>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/computer-environments`,
+      {},
+      options
+    );
+  }
+
+  getEnvironment(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironment> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/computer-environments/${encodeURIComponent(params.environmentId)}`,
+      {},
+      options
+    );
+  }
+
+  createEnvironment(
+    params: { projectId: string; body: { name: string; dockerfile: string } },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironment> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/computer-environments`,
+      { body: params.body },
+      options
+    );
+  }
+
+  updateEnvironment(
+    params: {
+      projectId: string;
+      environmentId: string;
+      body: { name?: string; dockerfile?: string };
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironment> {
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/computer-environments/${encodeURIComponent(params.environmentId)}`,
+      { body: params.body },
+      options
+    );
+  }
+
+  deleteEnvironment(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironmentDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/computer-environments/${encodeURIComponent(params.environmentId)}`,
+      {},
+      options
+    );
+  }
+
+  listEnvironmentBuilds(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformEnvironmentBuild>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/computer-environments/${encodeURIComponent(
+        params.environmentId
+      )}/builds`,
+      {},
+      options
+    );
+  }
+
+  /** `POST …/build` — async (202); poll `listEnvironmentBuilds` for status. */
+  buildEnvironment(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironmentBuildStarted> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/computer-environments/${encodeURIComponent(
+        params.environmentId
+      )}/build`,
+      {},
+      options
+    );
+  }
+
+  promoteEnvironment(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironment> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/computer-environments/${encodeURIComponent(
+        params.environmentId
+      )}/promote`,
+      {},
+      options
+    );
+  }
+
+  /** Attach the environment to the caller's computer (re-provisions from the
+   * pinned image). */
+  useEnvironment(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformComputerAttached> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/computer-environments/${encodeURIComponent(params.environmentId)}/use`,
+      {},
+      options
+    );
+  }
+
+  /** Reset the caller's computer to its image (wipes mutable state). */
+  resetComputer(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformComputerReset> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/computer/reset`,
+      {},
+      options
+    );
+  }
+
   /**
    * `POST /projects/{p}/eval-runs` — validates and creates the run, then
    * detaches execution and responds 202. Poll `getEvalRun` until terminal.
@@ -331,6 +488,38 @@ export class PlatformApiClient {
       )}/eval-runs/${encodeURIComponent(
         params.runId
       )}/iterations/${encodeURIComponent(params.iterationId)}/trace`,
+      {},
+      options
+    );
+  }
+
+  /** Cancel an in-flight run; returns the run in its (now cancelled) state. */
+  cancelEvalRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRun> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options
+    );
+  }
+
+  /** One row per authored step (status + reason + evidence) for one iteration. */
+  getEvalRunSteps(
+    params: { projectId: string; runId: string; iterationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformEvalStepResult>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(
+        params.runId
+      )}/iterations/${encodeURIComponent(params.iterationId)}/steps`,
       {},
       options
     );

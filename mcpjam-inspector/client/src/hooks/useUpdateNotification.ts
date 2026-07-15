@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import type { UpdateStatus } from "@/types/electron";
 
 // Public releases page — repo is github.com/MCPJam/inspector (verified from

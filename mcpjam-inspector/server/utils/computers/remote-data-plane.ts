@@ -18,24 +18,156 @@
  *
  * Local configuration (real secrets) always wins over the remote URL — a
  * deployed data plane never delegates, so there is no forwarding loop.
+ *
+ * `COMPUTERS_REMOTE_DATA_PLANE_URL` is an explicit override, not the primary
+ * path — hand-setting it per environment (per dev laptop, per PR preview) is
+ * exactly the manual-config problem this module exists to avoid. When it's
+ * unset, `initComputersRemoteDataPlaneDiscovery` (called once at server
+ * startup) asks THIS deployment's own Convex for the answer via the
+ * non-secret `/computers/data-plane-url` route (`mcpjam-backend
+ * convex/computersDataPlane.ts`) and caches it — every server pointed at the
+ * same Convex deployment auto-discovers the same data plane with zero
+ * per-environment config.
  */
 import { logger } from "../logger.js";
 import {
   COMPUTERS_NOT_CONFIGURED_ERROR,
   type RunComputerCommandResult,
 } from "./run-command.js";
+import { type ExecutionScope } from "../execution-scope.js";
+import {
+  getConvexHttpUrl,
+  isComputersDataPlaneConfigured,
+} from "./control-plane-client.js";
+import { initComputersRuntimeConfigBootstrap } from "./runtime-config.js";
 
-/** Origin of the deployed data plane, or null when unset/invalid. */
-export function getComputersRemoteDataPlaneUrl(): string | null {
-  const raw = process.env.COMPUTERS_REMOTE_DATA_PLANE_URL?.trim();
+/**
+ * The one computers startup entrypoint. Order matters: the credential
+ * bootstrap must resolve BEFORE discovery, because discovery skips itself on
+ * `isComputersDataPlaneConfigured()` — and bootstrap is what makes that true
+ * for a service-token-only server. Run the other way, a soon-to-be data
+ * plane could race into discovering (and delegating to) a remote while also
+ * being locally configured.
+ *
+ * Both production entries (server/index.ts, server/app.ts) AWAIT this before
+ * accepting traffic: several gates read the sync predicate (harness
+ * pre-flight, evals), and a fire-and-forget init would let first requests
+ * see a false "unconfigured". Bounded by the bootstrap's fetch timeout and
+ * two retries (~11s worst case, sub-second typical).
+ */
+export async function initComputersStartup(): Promise<void> {
+  await initComputersRuntimeConfigBootstrap();
+  await initComputersRemoteDataPlaneDiscovery();
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  // WHATWG URL bracket-wraps IPv6 hosts (new URL("http://[::1]").hostname
+  // === "[::1]"), so the literal form must be matched too.
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
+}
+
+/**
+ * Normalizes to a bare http(s) origin, matching the policy the backend
+ * already enforces on `/computers/data-plane-url` (mcpjam-backend
+ * `computersDataPlane.ts`): non-http(s) schemes are rejected outright, and
+ * plain `http:` is only allowed for a loopback host — a real deployment
+ * must be `https:`. Applies to BOTH the explicit env override and the
+ * Convex-discovered value, so a misconfigured `COMPUTERS_REMOTE_DATA_PLANE_URL`
+ * can't downgrade this server into forwarding a user's bearer token to a
+ * cleartext, non-loopback origin.
+ */
+function normalizeDataPlaneUrl(raw: string | null | undefined): string | null {
   if (!raw) return null;
   try {
     const url = new URL(raw);
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (url.protocol === "http:" && !isLoopbackHost(url.hostname)) return null;
     return url.origin;
   } catch {
     return null;
   }
+}
+
+/** The explicit env override, or null when unset/invalid. An invalid value
+ *  (e.g. a typo) is treated the same as unset — it does not suppress
+ *  discovery, since it isn't actually overriding anything. */
+function getExplicitRemoteDataPlaneUrl(): string | null {
+  return normalizeDataPlaneUrl(process.env.COMPUTERS_REMOTE_DATA_PLANE_URL?.trim());
+}
+
+/** Populated once by `initComputersRemoteDataPlaneDiscovery`; null until then
+ *  (or forever, if discovery is skipped/fails — same as today's unconfigured
+ *  state). */
+let discoveredRemoteUrl: string | null = null;
+
+/** Memoizes `initComputersRemoteDataPlaneDiscovery` so the underlying fetch
+ *  runs at most once per process no matter how many entrypoints call it. */
+let discoveryPromise: Promise<void> | null = null;
+
+/** Origin of the deployed data plane, or null when unset/undiscovered.
+ *  Stays synchronous — some callers (the harness pre-flight check) need a
+ *  cheap, non-network check — by reading a value resolved ahead of time
+ *  rather than fetching on every call. */
+export function getComputersRemoteDataPlaneUrl(): string | null {
+  return getExplicitRemoteDataPlaneUrl() ?? discoveredRemoteUrl;
+}
+
+export function resetComputersRemoteDataPlaneDiscoveryForTests(): void {
+  discoveredRemoteUrl = null;
+  discoveryPromise = null;
+}
+
+/**
+ * Resolves the auto-discovered data-plane URL, memoized so repeated calls
+ * (from every process entrypoint that boots a Hono app, plus any request
+ * that needs to await an in-flight lookup) share one underlying fetch.
+ *
+ * Skips the network call entirely when a valid explicit override is already
+ * set, or when this server holds real secrets itself
+ * (`isComputersDataPlaneConfigured`) — a deployed data plane never
+ * delegates, so it has nothing to discover. Never throws: a failed or
+ * skipped lookup just leaves Computers unconfigured, same as today's
+ * behavior with no env var set.
+ */
+export function initComputersRemoteDataPlaneDiscovery(): Promise<void> {
+  if (discoveryPromise) return discoveryPromise;
+  discoveryPromise = (async () => {
+    if (getExplicitRemoteDataPlaneUrl()) return;
+    if (isComputersDataPlaneConfigured()) return;
+    const base = getConvexHttpUrl();
+    if (!base) return;
+    try {
+      const response = await fetch(
+        new URL("/computers/data-plane-url", base).toString(),
+        { signal: AbortSignal.timeout(5000) }
+      );
+      if (!response.ok) return;
+      const payload = (await response.json()) as { url?: unknown };
+      discoveredRemoteUrl = normalizeDataPlaneUrl(
+        typeof payload.url === "string" ? payload.url : null
+      );
+    } catch (error) {
+      logger.error("[computers] data-plane auto-discovery failed", error);
+    }
+  })();
+  return discoveryPromise;
+}
+
+/**
+ * Awaits any in-flight/completed discovery (kicking it off if nothing has
+ * yet, e.g. in a test) then returns the resolved URL. Use this at the one
+ * call site whose FIRST answer the client caches for the whole SPA session
+ * (`GET /api/web/computers/config`) — that response must never be a false
+ * "unconfigured" raced against startup discovery still in flight.
+ */
+export async function resolveComputersRemoteDataPlaneUrl(): Promise<string | null> {
+  await initComputersRemoteDataPlaneDiscovery();
+  return getComputersRemoteDataPlaneUrl();
 }
 
 function isExecResult(payload: unknown): payload is RunComputerCommandResult {
@@ -53,6 +185,8 @@ export async function execViaRemoteDataPlane(args: {
   /** Bearer authorization forwarded verbatim (the remote re-validates it). */
   authHeader: string;
   projectId: string;
+  /** Phase 3 scope forwarded so the remote reserve re-resolves live access. */
+  executionScope?: ExecutionScope;
   command: string;
   commandId: string;
   workdir?: string;
@@ -76,6 +210,7 @@ export async function execViaRemoteDataPlane(args: {
       headers: { "content-type": "application/json", authorization },
       body: JSON.stringify({
         projectId: args.projectId,
+        ...(args.executionScope ? { executionScope: args.executionScope } : {}),
         command: args.command,
         commandId: args.commandId,
         ...(args.workdir ? { workdir: args.workdir } : {}),

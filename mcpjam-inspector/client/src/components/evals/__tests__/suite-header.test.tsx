@@ -113,6 +113,22 @@ describe("SuiteHeader", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps suite overview chrome when run identity is omitted and run actions are hidden", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        hideRunActions
+        showTestCaseCtas
+        omitRunDetailIdentity
+      />
+    );
+
+    expect(screen.getByText("Asana MCP Evals")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: /Run run-1/i })
+    ).not.toBeInTheDocument();
+  });
+
   it("hides compact run stats when the KPI strip is shown", () => {
     renderWithProviders(
       <SuiteHeader
@@ -366,6 +382,26 @@ describe("SuiteHeader", () => {
     expect(runAll).toBeDisabled();
     await user.click(runAll);
     expect(onRerun).not.toHaveBeenCalled();
+  });
+
+  it("keeps overview toolbar controls in one horizontal row", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        runsViewMode="runs"
+        hideRunActions
+        unifiedSuiteDashboard
+        onCreateTestCase={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+      />
+    );
+
+    const header = screen.getByTestId("suite-overview-header");
+    expect(header).toHaveClass("flex");
+    expect(header.querySelector(".flex-nowrap")).toBeTruthy();
   });
 
   it("forwards iterationOverride on Run all even without a match-options override", async () => {

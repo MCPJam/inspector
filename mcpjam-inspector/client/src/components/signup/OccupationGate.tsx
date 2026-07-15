@@ -4,7 +4,7 @@ import { usePostHog } from "posthog-js/react";
 import { ArrowRight, Check, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 
 const OCCUPATION_SUGGESTIONS = [
@@ -44,8 +44,8 @@ export function OccupationGate({ userId, email }: OccupationGateProps) {
       await updateOccupation({ occupation: trimmedOccupation });
       try {
         posthog.setPersonProperties({ occupation: trimmedOccupation });
-        posthog.capture("signup_occupation_submitted", {
-          ...standardEventProps("signup_occupation_gate"),
+        track("signup_occupation_submitted", {
+          location: "signup_occupation_gate",
           occupation: trimmedOccupation,
         });
         posthog.register({ occupation: trimmedOccupation });

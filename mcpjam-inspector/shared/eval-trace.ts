@@ -1,6 +1,6 @@
 import type { ModelMessage } from "ai";
 import { z } from "zod";
-import type { PromptTurnToolCall } from "./prompt-turns";
+import type { PromptTurnToolCall } from "./steps";
 import type { PredicateResult } from "@mcpjam/sdk/predicates";
 
 /** Persisted eval trace span categories (Convex: use the same literals in traceSpanValidator). */
@@ -16,6 +16,9 @@ export type EvalTraceSpan = {
   endMs: number;
   promptIndex?: number;
   stepIndex?: number;
+  /** Authored `TestStep.id` of the step that produced this span (when emitted
+   *  during a unified step run). Absent for legacy/model-driven spans. */
+  authoredStepId?: string;
   status?: EvalTraceSpanStatus;
   toolCallId?: string;
   toolName?: string;
@@ -271,7 +274,7 @@ const EVAL_TRACE_BROWSER_STEP_NOTES: ReadonlySet<string> = new Set([
  * unrecognized note.
  */
 export function isEvalTraceBrowserStepNote(
-  value: unknown,
+  value: unknown
 ): value is EvalTraceBrowserStepNote {
   return typeof value === "string" && EVAL_TRACE_BROWSER_STEP_NOTES.has(value);
 }
@@ -282,6 +285,19 @@ export type EvalTraceWidgetToolCall = {
   ok: boolean;
   error?: string;
   elapsedMs: number;
+  /**
+   * Raw MCP `CallToolResult` the server returned (success path only), so the
+   * Chat tab can render the widget call's output as an app-attributed card.
+   * Sanitized at the trace boundary like `args` (`$`-key escaping). Absent on
+   * the error path and on legacy runs recorded before this field existed.
+   */
+  result?: unknown;
+  /**
+   * SEP-1865 `_meta.ui.visibility` for the called tool. `undefined` ⇒ the spec
+   * default `["model", "app"]` (model-visible). An explicit `["app"]` marks a
+   * UI-only call that must NOT enter model context (PR2 routing).
+   */
+  visibility?: Array<"model" | "app">;
 };
 
 /**
@@ -301,6 +317,10 @@ export type RunnerWidgetRenderObservation = {
   elapsedMs: number;
   ts: number;
   promptIndex: number; // stamped by the runner
+  /** Authored `TestStep.id` of the step active when this render was recorded
+   *  (the prompt/toolCall step that triggered it). Absent for legacy/non-step
+   *  runs; the Steps view falls back to promptIndex/toolCallId bucketing. */
+  authoredStepId?: string;
 };
 
 /**
@@ -308,6 +328,14 @@ export type RunnerWidgetRenderObservation = {
  * stamped by the runner) plus the transient base64 screenshot until finalize
  * uploads it.
  */
+/** Outcome of a scripted `assert` step, carried on the interaction step it
+ *  produced so the replay can show pass/fail + reason. */
+export type EvalTraceScriptedAssertion = {
+  type: string;
+  passed: boolean;
+  reason?: string;
+};
+
 export type RunnerBrowserInteractionStep = {
   toolCallId: string;
   stepIndex: number; // monotonic per (toolCallId), stamped by the runner
@@ -321,9 +349,37 @@ export type RunnerBrowserInteractionStep = {
   duration?: number;
   screenshotBase64?: string; // transient; uploaded in finalizeEvalIteration
   widgetToolCalls?: EvalTraceWidgetToolCall[];
+  /**
+   * `ui/message` follow-up text the widget sent to the host during this action
+   * (e.g. a "Show my cart" button). The runner drives each as a model turn; this
+   * field is the human-facing record so the Trace/Steps UI can show "this click
+   * sent this message". Bounded at the inspector boundary (count + per-string
+   * length) before persistence.
+   */
+  followUps?: string[];
   elapsedMs: number;
   note?: EvalTraceBrowserStepNote;
   ts: number;
+  // Scripted "Widget interaction checks" (model-free authored steps). Absent ⇒
+  // a model-driven Computer Use step (back-compat). `action` carries the verb
+  // (an `assert` step maps to `"screenshot"`); `assertion` is set only on assert
+  // steps; `locatorLabel` is the human-readable target.
+  source?: "computer_use" | "scripted";
+  locatorLabel?: string;
+  assertion?: EvalTraceScriptedAssertion;
+  // Per-step outcome for a pure action (click/type/key/scroll/wait): `true` when
+  // the harness step succeeded, `false` when it failed (e.g. locator unresolved).
+  // Absent ⇒ legacy step or a Computer Use step where success wasn't tracked.
+  // Authored `assert` steps carry their verdict in `assertion` instead.
+  ok?: boolean;
+  /** Authored `TestStep.id` of the interact/assert step that produced this row
+   *  (when run through the unified step executor). Absent for legacy/Computer
+   *  Use steps; the Steps view falls back to promptIndex/toolCallId bucketing. */
+  authoredStepId?: string;
+  /** Offset (ms) of this step into the iteration's replay video, from the
+   *  recording-start origin. Lets the replay seek the `.webm` to this step.
+   *  Absent when no video was recorded. */
+  videoOffsetMs?: number;
 };
 
 /**
@@ -378,6 +434,9 @@ export type EvalTraceWidgetRenderObservationView = {
   blockedRequests?: string[];
   elapsedMs: number;
   ts: number;
+  /** Authored `TestStep.id` (see RunnerWidgetRenderObservation). Absent ⇒
+   *  fall back to promptIndex/toolCallId bucketing. */
+  authoredStepId?: string;
 };
 
 export type EvalTraceBrowserInteractionStepView = {
@@ -394,9 +453,26 @@ export type EvalTraceBrowserInteractionStepView = {
   screenshotBlobId?: string;
   screenshotUrl?: string | null;
   widgetToolCalls?: EvalTraceWidgetToolCall[];
+  /** `ui/message` follow-up text the widget sent during this action (see
+   *  RunnerBrowserInteractionStep.followUps). Rendered as "↳ sent message: …". */
+  followUps?: string[];
   elapsedMs: number;
   note?: EvalTraceBrowserStepNote;
   ts: number;
+  // Scripted "Widget interaction checks" replay fields (see
+  // RunnerBrowserInteractionStep). Absent ⇒ a Computer Use step.
+  source?: "computer_use" | "scripted";
+  locatorLabel?: string;
+  assertion?: EvalTraceScriptedAssertion;
+  // Per-step action outcome (see RunnerBrowserInteractionStep.ok). Absent ⇒
+  // unknown (legacy/Computer Use). Authored asserts use `assertion` instead.
+  ok?: boolean;
+  /** Authored `TestStep.id` (see RunnerBrowserInteractionStep). Absent ⇒
+   *  fall back to promptIndex/toolCallId bucketing. */
+  authoredStepId?: string;
+  /** Offset (ms) into the replay video (see RunnerBrowserInteractionStep).
+   *  Lets the Steps view seek the `.webm` to this step. */
+  videoOffsetMs?: number;
 };
 
 /** Versioned blob written by `testSuites:updateTestIteration` when messages are stored. */
@@ -406,6 +482,12 @@ export type EvalTraceBlobV1 = {
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
   spans?: EvalTraceSpan[];
   prompts?: PromptTraceSummary[];
+  /**
+   * Convex storageId for the iteration's Playwright replay `.webm`.
+   * Iteration-level (one video per iteration). Resolved to a `videoUrl` by the
+   * backend when the trace envelope is read for the replay UI.
+   */
+  videoBlobId?: string;
 };
 
 /** Zod mirror of Convex `traceSpanValidator` for client/server tests and optional runtime checks. */
@@ -418,6 +500,7 @@ export const evalTraceSpanZ = z.object({
   endMs: z.number(),
   promptIndex: z.number().optional(),
   stepIndex: z.number().optional(),
+  authoredStepId: z.string().optional(),
   status: z.enum(["ok", "error"]).optional(),
   toolCallId: z.string().optional(),
   toolName: z.string().optional(),
@@ -457,7 +540,7 @@ const promptTraceSummaryZ = z.object({
       expected: traceToolCallZ,
       actual: traceToolCallZ,
       mismatchedArguments: z.array(z.string()),
-    }),
+    })
   ),
 });
 
@@ -504,18 +587,19 @@ export const evalTraceBlobV1Z = z.object({
   widgetSnapshots: z.array(evalTraceWidgetSnapshotZ).optional(),
   spans: z.array(evalTraceSpanZ).optional(),
   prompts: z.array(promptTraceSummaryZ).optional(),
+  videoBlobId: z.string().optional(),
 });
 
 export function msOffsetFromRunStart(
   runStartedAt: number,
-  absoluteMs: number,
+  absoluteMs: number
 ): number {
   return absoluteMs - runStartedAt;
 }
 
 export function normalizeSpanInterval(
   startMs: number,
-  endMs: number,
+  endMs: number
 ): { startMs: number; endMs: number } {
   if (endMs <= startMs) return { startMs, endMs: startMs + 1 };
   return { startMs, endMs };
@@ -524,11 +608,11 @@ export function normalizeSpanInterval(
 export function createOffsetInterval(
   runStartedAt: number,
   startAbs: number,
-  endAbs: number,
+  endAbs: number
 ): { startMs: number; endMs: number } {
   return normalizeSpanInterval(
     msOffsetFromRunStart(runStartedAt, startAbs),
-    msOffsetFromRunStart(runStartedAt, endAbs),
+    msOffsetFromRunStart(runStartedAt, endAbs)
   );
 }
 
@@ -545,7 +629,7 @@ function messageDedupeKey(message: ModelMessage): string {
 /** Append `incoming` to `acc`, skipping duplicates (by `id` or JSON identity). */
 export function appendDedupedModelMessages(
   acc: ModelMessage[],
-  incoming: ModelMessage[],
+  incoming: ModelMessage[]
 ): void {
   const seen = new Set(acc.map(messageDedupeKey));
   for (const m of incoming) {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  extractIterationVideoUrl,
   extractRenderedScreenshots,
   screenshotFilename,
 } from "../src/lib/eval-screenshots.js";
@@ -75,4 +76,62 @@ test("builds collision-safe, sanitized filenames", () => {
     screenshotFilename({ status: "rendered", screenshotUrl: "x", toolCallId: "../etc" }, 0),
     "widget--etc.png",
   );
+});
+
+test("also extracts per-step browserInteractionSteps screenshots", () => {
+  const result = {
+    trace: {
+      widgetRenderObservations: [
+        {
+          status: "rendered",
+          screenshotUrl: "https://example.com/render.png",
+          toolName: "create_view",
+          toolCallId: "call_1",
+        },
+      ],
+      browserInteractionSteps: [
+        {
+          screenshotUrl: "https://example.com/click.png",
+          action: "click",
+          locatorLabel: "Add to cart",
+          toolCallId: "call_2",
+          promptIndex: 0,
+        },
+        {
+          screenshotUrl: "https://example.com/assert.png",
+          action: "screenshot",
+          assertion: { passed: false, reason: "missing" },
+          toolCallId: "call_3",
+        },
+        // No screenshot URL → dropped.
+        { action: "click", locatorLabel: "nope" },
+      ],
+    },
+  };
+  const shots = extractRenderedScreenshots(result);
+  assert.equal(shots.length, 3);
+  // Render observation first, then interaction steps in order.
+  assert.equal(shots[0].screenshotUrl, "https://example.com/render.png");
+  assert.deepEqual(
+    { url: shots[1].screenshotUrl, status: shots[1].status, label: shots[1].toolName },
+    { url: "https://example.com/click.png", status: "click", label: "Add to cart" },
+  );
+  assert.deepEqual(
+    { url: shots[2].screenshotUrl, status: shots[2].status },
+    { url: "https://example.com/assert.png", status: "assert:failed" },
+  );
+});
+
+test("extractIterationVideoUrl reads the resolved video URL (or undefined)", () => {
+  assert.equal(
+    extractIterationVideoUrl({ trace: { videoUrl: "https://example.com/run.webm" } }),
+    "https://example.com/run.webm",
+  );
+  // Bare trace object works too.
+  assert.equal(
+    extractIterationVideoUrl({ videoUrl: "https://example.com/run.webm" }),
+    "https://example.com/run.webm",
+  );
+  assert.equal(extractIterationVideoUrl({ trace: {} }), undefined);
+  assert.equal(extractIterationVideoUrl(null), undefined);
 });

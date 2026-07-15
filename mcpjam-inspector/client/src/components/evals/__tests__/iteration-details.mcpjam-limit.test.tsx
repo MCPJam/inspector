@@ -6,6 +6,7 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 vi.mock("convex/react", () => ({
   useAction: () => vi.fn(),
+  useQuery: () => undefined,
 }));
 
 vi.mock("@/components/ui/json-editor", () => ({

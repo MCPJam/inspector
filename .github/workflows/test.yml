@@ -85,6 +85,9 @@ jobs:
       - name: Run Playwright smoke
         run: npm run test:e2e -w @mcpjam/inspector
 
+      - name: Run OAuth Debugger e2e
+        run: npm run test:e2e:oauth-debugger -w @mcpjam/inspector
+
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v4

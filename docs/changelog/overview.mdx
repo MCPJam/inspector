@@ -9,6 +9,16 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-06-26
+
+#### Added
+
+- **Compatibility destination** — a new Inspector page that evaluates your connected MCP server against a catalog of AI hosts (Claude, ChatGPT, Cursor, Copilot, Codex, and others). Shows conformance gates, per-host findings split into Apps and Server lanes, and live widget rendering. Accessible from the left sidebar when a server is connected.
+
+- **OTLP/OpenInference trace export** — export eval run traces as OTLP JSON from the run detail page. Compatible with Arize Phoenix, Datadog, and any OTLP-compatible observability backend. Supports exporting a single run or the whole project, with an opt-in to include content and artifacts.
+
+- **`@mcpjam/sdk/host-compat` subpackage** — the shared host-compatibility engine is now importable directly. Use `deriveServerRequirements`, `evaluateHostCompat`, `evaluateAllHosts`, `scanWidgetSource`, and `detectHostCompatBridgeFromMeta` to build your own compatibility checks in CI or custom tooling.
+
 ### Version 1.1.0
 
 #### Improved
@@ -17,6 +27,37 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
   - Improved code consistency and maintainability
 
 ### Recent Updates
+
+#### Added
+
+- **VS Code and Notion market hosts (`@mcpjam/sdk` minor)**
+  - **VS Code** (GitHub Copilot chat panel) is now a market host in the SDK's host-compat catalog. It renders MCP UI inline and supports all display modes (`inline`, `fullscreen`, `pip`). Capabilities mirror the VS Code client template; `updateModelContext` and `message` are not advertised. Provenance: probe.
+  - **Notion** is now a market host. It is a tools-only/headless client (no widget rendering) that supports protocol version `2025-11-25`. Provenance: probe.
+  - Both hosts are available via `buildMarketHostProfiles()` / `evaluateMarketHosts()` and carry logos in the inspector's host-compat UI.
+
+- **`imageSupport` dimension on all market hosts (`@mcpjam/sdk` minor)**
+  - Every market host now carries an `imageSupport` field on its `HostCompatProfile` describing how it handles MCP tool-result images.
+  - Three image sources are tracked per host: `toolImageContent` (direct MCP image blocks), `embeddedResourceImages` (image blobs inside MCP resources), and `resourceLinkImages` (image links resolved via `resources/read`).
+  - Each source records `model` (whether the image is passed to the model) and `ui` (whether the host UI renders it).
+  - A single `placement` value (`"inline"` | `"collapsed"` | `"none"`) describes where rendered previews appear in the host UI.
+  - New exported types: `HostImageSupport`, `ImageSourceSupport`, `ImagePlacement` from `@mcpjam/sdk/host-compat`.
+  - New capability matrix: `MCP_APPS_VSCODE` exported from `@mcpjam/sdk/host-compat`.
+
+  | Host | Tool image (model / UI) | Placement |
+  |------|------------------------|-----------|
+  | Claude | ✓ / ✓ | inline |
+  | ChatGPT | ✓ / ✓ | inline |
+  | Cursor | ✓ / ✗ | none |
+  | Copilot | ✓ / ✗ | none |
+  | VS Code | ✓ / ✓ | inline |
+  | Notion | ✗ / ✓ | collapsed |
+  | Goose | ✓ / ✓ | collapsed |
+  | Codex | ✓ / ✓ | collapsed |
+  | Cline | ✓ / ✗ | none |
+  | Slack | ✗ / ✗ | none |
+  | Mistral | ✗ / ✗ | none |
+  | n8n | ✗ / ✗ | none |
+  | Perplexity | ✗ / ✗ | none |
 
 #### Changed
 

@@ -22,11 +22,17 @@ const sdkHostConfigInternalEntry = path.resolve(
   "../sdk/src/host-config/internal.ts",
 );
 // Node-safe host-template seeds. Aliased to source (mirrors the internal alias
-// above) so the client's delegating `client-templates.ts` resolves it without a
-// prior `npm run build -w @mcpjam/sdk`.
+// above) so clean checkout builds resolve it without a prior
+// `npm run build -w @mcpjam/sdk`.
 const sdkHostConfigTemplatesEntry = path.resolve(
   rootDir,
   "../sdk/src/host-config/templates/index.ts",
+);
+// Host catalog helpers must resolve from source in dev. Otherwise the client
+// can use stale SDK dist output and miss newly-derived template fields.
+const sdkHostCompatEntry = path.resolve(
+  rootDir,
+  "../sdk/src/host-compat/index.ts",
 );
 // Tier B Phase 2: @mcpjam/sdk/widget-runtime resolves to dist via package
 // exports; alias it to source so dev:client / build:client resolve it without a
@@ -102,6 +108,7 @@ export default defineConfig(({ mode }) => {
         "@mcpjam/widget-react": widgetReactEntry,
         "@mcpjam/sdk/browser": sdkBrowserEntry,
         "@mcpjam/sdk/widget-runtime": sdkWidgetRuntimeEntry,
+        "@mcpjam/sdk/host-compat": sdkHostCompatEntry,
         "@mcpjam/sdk/host-config/templates": sdkHostConfigTemplatesEntry,
         "@mcpjam/sdk/host-config/internal": sdkHostConfigInternalEntry,
         "@modelcontextprotocol/sdk/client/auth.js": mcpSdkClientAuthEntry,
@@ -128,6 +135,7 @@ export default defineConfig(({ mode }) => {
       exclude: [
         "@modelcontextprotocol/sdk/client/auth.js",
         "@modelcontextprotocol/sdk/shared/auth.js",
+        "@mcpjam/sdk/host-compat",
       ],
       // Force re-optimization to clear any cached conflicts
       force: env.FORCE_OPTIMIZE === "true",
@@ -156,11 +164,20 @@ export default defineConfig(({ mode }) => {
             });
           },
         },
-        // Proxy WorkOS API calls during local dev to avoid browser CORS errors
+        // Proxy AuthKit calls through the local server so refresh tokens stay
+        // in an HttpOnly local session cookie instead of browser storage.
         "/user_management": {
-          target: "https://api.workos.com",
+          target: env.VITE_API_BASE_URL || "http://localhost:6274",
           changeOrigin: true,
-          secure: true,
+          secure: false,
+        },
+        // PostHog same-origin relay (server/routes/relay.ts). In dev the
+        // client origin is Vite, not the Hono server, so /relay must be
+        // proxied or analytics/flags silently break in dev only.
+        "/relay": {
+          target: env.VITE_API_BASE_URL || "http://localhost:6274",
+          changeOrigin: true,
+          secure: false,
         },
         ...(() => {
           const siteUrlFromEnv = env.VITE_CONVEX_SITE_URL;

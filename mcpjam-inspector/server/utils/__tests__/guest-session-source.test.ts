@@ -5,6 +5,7 @@ const mockLogger = {
   warn: vi.fn(),
 };
 const mockProvisionGuestAuthConfigToConvex = vi.fn();
+const mockIsConvexProvisioningUnavailable = vi.fn();
 const mockGetGuestSessionSharedSecret = vi.fn();
 
 vi.mock("../logger", () => ({
@@ -13,6 +14,7 @@ vi.mock("../logger", () => ({
 
 vi.mock("../convex-guest-auth-sync.js", () => ({
   provisionGuestAuthConfigToConvex: mockProvisionGuestAuthConfigToConvex,
+  isConvexProvisioningUnavailable: mockIsConvexProvisioningUnavailable,
 }));
 
 vi.mock("../guest-session-secret.js", () => ({
@@ -33,6 +35,7 @@ describe("guest-session-source", () => {
     delete process.env.MCPJAM_GUEST_SESSION_URL;
     delete process.env.MCPJAM_GUEST_JWKS_URL;
     mockProvisionGuestAuthConfigToConvex.mockResolvedValue(undefined);
+    mockIsConvexProvisioningUnavailable.mockReturnValue(false);
     mockGetGuestSessionSharedSecret.mockReturnValue(
       "test-guest-session-secret"
     );
@@ -121,6 +124,43 @@ describe("guest-session-source", () => {
         method: "POST",
         signal: expect.anything(),
       })
+    );
+  });
+
+  it("falls back to the hosted mint when Convex provisioning is unavailable (OSS/local dev)", async () => {
+    mockIsConvexProvisioningUnavailable.mockReturnValue(true);
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          guestId: "guest-hosted",
+          token: "hosted-token",
+          expiresAt: Date.now() + 60_000,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      )
+    );
+
+    const { fetchConvexGuestSession } = await import(
+      "../guest-session-source.js"
+    );
+    const result = await fetchConvexGuestSession();
+
+    expect(result.kind).toBe("session");
+    if (result.kind !== "session") return;
+    expect(result.session.token).toBe("hosted-token");
+    // Provisioning is still awaited (it's what sets the unavailable flag), but
+    // the mint hits the hosted endpoint, not the deployment we can't write to.
+    expect(mockProvisionGuestAuthConfigToConvex).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://app.mcpjam.com/api/web/guest-session",
+      expect.objectContaining({ method: "POST", signal: expect.anything() })
+    );
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      "https://test-deployment.convex.site/guest/session",
+      expect.anything()
     );
   });
 
