@@ -2813,6 +2813,118 @@ describe("syncServerToConvex name-collision recovery", () => {
     expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
   });
 
+  it("renames in place instead of forking a duplicate row", async () => {
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const dispatch = vi.fn();
+
+    mockCreateServerIfMissing.mockResolvedValue("srv_renamed");
+
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      activeProjectServersFlat: undefined,
+    });
+
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting(
+        {
+          name: "demo-server-renamed",
+          type: "http",
+          url: "https://example.com/mcp",
+        },
+        { originalServerName: "demo-server" }
+      );
+    });
+
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "REMOVE_SERVER", name: "demo-server" })
+    );
+    // enabled carries over from demo-server, so the pre-rename lookup resolved
+    // against the original name rather than building a fresh entry.
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "UPSERT_SERVER",
+        name: "demo-server-renamed",
+        server: expect.objectContaining({ enabled: true }),
+      })
+    );
+  });
+
+  it("keeps the original server when a rename's sync fails", async () => {
+    // The old row used to be removed before the write, so a failed sync left
+    // the rename with neither row and nothing to retry from.
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const dispatch = vi.fn();
+
+    mockCreateServerIfMissing.mockRejectedValue(new Error("network down"));
+
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      activeProjectServersFlat: undefined,
+    });
+
+    let saved: boolean | void;
+    await act(async () => {
+      saved = await result.current.saveServerConfigWithoutConnecting(
+        {
+          name: "demo-server-renamed",
+          type: "http",
+          url: "https://example.com/mcp",
+        },
+        { originalServerName: "demo-server" }
+      );
+    });
+
+    expect(saved).toBe(false);
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "REMOVE_SERVER", name: "demo-server" })
+    );
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "UPSERT_SERVER" })
+    );
+  });
+
+  it("rejects a rename onto another server's name", async () => {
+    const appState = createAppState();
+    appState.projects.default.servers["taken-name"] = {
+      ...appState.projects.default.servers["demo-server"],
+      name: "taken-name",
+    } as ServerWithName;
+    const dispatch = vi.fn();
+
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      activeProjectServersFlat: undefined,
+    });
+
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting(
+        { name: "taken-name", type: "http", url: "https://example.com/mcp" },
+        { originalServerName: "demo-server" }
+      );
+    });
+
+    expect(toastError).toHaveBeenCalledWith(
+      errorToastMessage(
+        'A server named "taken-name" already exists. Choose a different name.'
+      ),
+      { duration: Infinity }
+    );
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "REMOVE_SERVER" })
+    );
+  });
+
   it("skips the loading-window project servers query until the user row is ready", async () => {
     const appState = createAppState();
     appState.projects.default.sharedProjectId = "project_default";

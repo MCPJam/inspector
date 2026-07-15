@@ -832,6 +832,12 @@ export function useServerState({
   const activeProjectServersFlatRef = useRef(activeProjectServersFlat);
   activeProjectServersFlatRef.current = activeProjectServersFlat;
   const persistRuntimeDedupeKeysRef = useRef<Set<string>>(new Set());
+  // handleRemoveServer is declared further down the hook, so the rename branch
+  // in saveServerConfigWithoutConnecting reaches it through a ref rather than a
+  // dependency (a dep array entry would evaluate before the const initializes).
+  const handleRemoveServerRef = useRef<
+    ((serverName: string) => Promise<void>) | null
+  >(null);
 
   async function sleep(ms: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, ms));
@@ -3257,21 +3263,42 @@ export function useServerState({
   const saveServerConfigWithoutConnecting = useCallback(
     async (
       formData: ServerFormData,
-      options?: { oauthProfile?: OAuthTestProfile; suppressToast?: boolean }
+      options?: {
+        oauthProfile?: OAuthTestProfile;
+        suppressToast?: boolean;
+        // The name the server was saved under before this edit. Callers editing
+        // an existing server must pass it: every lookup here keys off the name,
+        // so without it a rename reads as a brand-new server and forks a second
+        // row. Mirrors handleUpdate's originalServerName argument.
+        originalServerName?: string;
+      }
     ) => {
       const validationError = validateForm(formData);
       if (validationError) {
         toast.error(validationError);
-        return;
+        return false;
       }
 
       const serverName = formData.name.trim();
       if (!serverName) {
         toast.error("Server name is required");
-        return;
+        return false;
       }
 
-      const existingServer = appState.servers[serverName];
+      const originalServerName = options?.originalServerName?.trim();
+      const isRename = Boolean(
+        originalServerName && originalServerName !== serverName
+      );
+      const activeProjectServers =
+        effectiveProjects[effectiveActiveProjectId]?.servers ?? {};
+      if (isRename && activeProjectServers[serverName]) {
+        toast.error(
+          `A server named "${serverName}" already exists. Choose a different name.`
+        );
+        return false;
+      }
+
+      const existingServer = appState.servers[originalServerName ?? serverName];
       const mcpConfig = toMCPConfig(formData);
       const nextOAuthProfile =
         formData.useOAuth || formData.useXaa
@@ -3379,7 +3406,7 @@ export function useServerState({
               error: "Server sync returned no server id",
             });
             toast.error("Could not save the server. Please try again.");
-            return;
+            return false;
           }
         } catch (error) {
           logger.error("Failed to sync server to Convex", {
@@ -3390,10 +3417,22 @@ export function useServerState({
               ? error.message
               : "Could not save the server. Please try again."
           );
-          return;
+          return false;
         }
       } else {
-        persistServerToLocalProject(serverName, serverEntry);
+        persistServerToLocalProject(serverName, serverEntry, {
+          originalServerName: isRename ? originalServerName : undefined,
+        });
+      }
+
+      // Drop the old row only once the new one is stored. Removing first meant
+      // a failed save left the rename with neither row — the server was gone
+      // with nothing to retry from. Safe to run after the write: the sync
+      // resolves its row by the NEW name, so removing the OLD name can't touch
+      // it. (The local branch already dropped it via originalServerName; this
+      // still disconnects the old runtime entry and clears its artifacts.)
+      if (isRename && originalServerName) {
+        await handleRemoveServerRef.current?.(originalServerName);
       }
 
       dispatch({
@@ -3410,6 +3449,7 @@ export function useServerState({
       if (!options?.suppressToast) {
         toast.success(`Saved configuration for ${serverName}`);
       }
+      return true;
     },
     [
       appState.activeProjectId,
@@ -3420,6 +3460,7 @@ export function useServerState({
       isAuthenticated,
       useLocalFallback,
       effectiveActiveProjectId,
+      effectiveProjects,
       syncServerToConvex,
       persistServerToLocalProject,
     ]
@@ -3962,6 +4003,7 @@ export function useServerState({
     },
     [logger, handleDisconnect, removeServerFromStateAndCloud]
   );
+  handleRemoveServerRef.current = handleRemoveServer;
 
   const waitForServerReconnectOutcome = useCallback(
     async (

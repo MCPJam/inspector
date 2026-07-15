@@ -259,7 +259,12 @@ interface XAAFlowTabProps {
   } | null;
   // Shared server-bar callbacks (mirror the OAuth Debugger).
   onSelectServer?: (serverName: string) => void;
-  onSaveServerConfig?: (formData: ServerFormData) => void | Promise<void>;
+  // Resolves false when the save failed (the hook toasts the reason), so
+  // callers can keep the modal open instead of treating every call as saved.
+  onSaveServerConfig?: (
+    formData: ServerFormData,
+    options?: { originalServerName?: string }
+  ) => void | boolean | Promise<void | boolean>;
   /**
    * Bumped by the shell when the header "Add Server" button is clicked while
    * this tab is active, so the Configure-Server-to-Test modal opens instead of
@@ -363,6 +368,15 @@ export function XAAFlowTab({
   openServerModalSignal,
 }: XAAFlowTabProps) {
   const [isServerModalOpen, setIsServerModalOpen] = useState(false);
+  // "edit" opens the modal prefilled with the selected server; "add" opens it
+  // blank so a new target can be saved without touching the current one.
+  const [serverModalMode, setServerModalMode] = useState<"edit" | "add">(
+    "edit"
+  );
+  const openServerModal = useCallback((mode: "edit" | "add") => {
+    setServerModalMode(mode);
+    setIsServerModalOpen(true);
+  }, []);
   const [isRunningAll, setIsRunningAll] = useState(false);
   const [scorecardHasResults, setScorecardHasResults] = useState(false);
   const [compactScorecardContentHeight, setCompactScorecardContentHeight] =
@@ -400,8 +414,10 @@ export function XAAFlowTab({
   useEffect(() => {
     if (openServerModalSignal === prevOpenSignalRef.current) return;
     prevOpenSignalRef.current = openServerModalSignal;
-    setIsServerModalOpen(true);
-  }, [openServerModalSignal]);
+    // The header button reads "Add Server" — open blank, not prefilled with
+    // the current selection.
+    openServerModal("add");
+  }, [openServerModalSignal, openServerModal]);
 
   const selectedServer =
     selectedServerName !== "none"
@@ -1801,7 +1817,7 @@ export function XAAFlowTab({
               <div className="flex items-center justify-center gap-2">
                 <Button
                   type="button"
-                  onClick={() => setIsServerModalOpen(true)}
+                  onClick={() => openServerModal("edit")}
                 >
                   Configure Server to Test
                 </Button>
@@ -1821,7 +1837,7 @@ export function XAAFlowTab({
               <XAASequenceDiagram
                 flowState={flowState}
                 hasProfile={isTestable}
-                onConfigure={() => setIsServerModalOpen(true)}
+                onConfigure={() => openServerModal("edit")}
               />
             </ResizablePanel>
 
@@ -1838,7 +1854,8 @@ export function XAAFlowTab({
                 hasProfile={isTestable}
                 activeStep={flowState.currentStep}
                 actions={{
-                  onConfigure: () => setIsServerModalOpen(true),
+                  onConfigure: () => openServerModal("edit"),
+                  onAddServer: () => openServerModal("add"),
                   onReset: isTestable ? () => resetFlow() : undefined,
                   onContinue: continueDisabled ? undefined : handleAdvance,
                   onRunAll: isTestable ? handleRunAll : undefined,
@@ -1871,7 +1888,7 @@ export function XAAFlowTab({
             flowState={flowState}
             hasProfile={false}
             showConfigurePrompt={areServersHydrated && !hasHeaderServers}
-            onConfigure={() => setIsServerModalOpen(true)}
+            onConfigure={() => openServerModal("edit")}
           />
         )}
       </XAAWorkspaceLayout>
@@ -1879,7 +1896,7 @@ export function XAAFlowTab({
       <XAAServerModal
         open={isServerModalOpen}
         onOpenChange={setIsServerModalOpen}
-        server={selectedServer}
+        server={serverModalMode === "add" ? undefined : selectedServer}
         existingServerNames={Object.keys(serverConfigs)}
         projectDefaultIdentity={
           projectXaaTestDefaults?.defaultIdentity ?? null
@@ -1888,9 +1905,16 @@ export function XAAFlowTab({
         hostedServerId={target.barServerId}
         onSave={async ({ formData }) => {
           // Await so the modal can keep itself open (and preserve the entered
-          // values) if the save rejects. Selection only follows a save that
-          // didn't throw.
-          await onSaveServerConfig?.(formData);
+          // values) if the save fails. The hook reports failure by resolving
+          // false (it toasts the reason), not by throwing, so rethrow here —
+          // otherwise selection follows a server that was never written.
+          const saved = await onSaveServerConfig?.(formData, {
+            originalServerName:
+              serverModalMode === "add" ? undefined : selectedServer?.name,
+          });
+          if (saved === false) {
+            throw new Error("Could not save the server. Please try again.");
+          }
           setConfigurationSaveVersion((version) => version + 1);
           onSelectServer?.(formData.name);
         }}
