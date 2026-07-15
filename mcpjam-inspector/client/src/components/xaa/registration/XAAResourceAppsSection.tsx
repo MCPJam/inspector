@@ -134,8 +134,9 @@ export function XAAResourceAppsSection({
             data-testid="xaa-reg-empty"
             className="rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground"
           >
-            No resource apps registered yet. Register one to run the full flow
-            against it without re-entering config each session.
+            No resource apps registered yet. Register one — you can start
+            straight from an existing server — to run the full flow against it
+            without re-entering config each session.
           </div>
         ) : (
           <ul className="space-y-1.5">

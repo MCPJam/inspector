@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -9,17 +9,28 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
+import { Label } from "@mcpjam/design-system/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@mcpjam/design-system/select";
 import { cn } from "@/lib/utils";
 import { track } from "@/lib/analytics";
 import { useXaaResourceApps } from "@/hooks/useXaaResourceApps";
+import { useOptionalSharedAppState } from "@/state/app-state-context";
 import type { XaaResourceApp } from "@/lib/xaa/types";
 import { BasicInfoStep } from "./BasicInfoStep";
 import { AuthServerStep } from "./AuthServerStep";
 import { ScopesConfigStep } from "./ScopesConfigStep";
 import {
   draftFromResourceApp,
+  draftFromServer,
   draftToInput,
   EMPTY_DRAFT,
+  isPickableServer,
   validateAuthServer,
   validateBasicInfo,
   validateScopesConfig,
@@ -57,8 +68,24 @@ export function XAARegistrationWizard({
 }: XAARegistrationWizardProps) {
   const { upsert } = useXaaResourceApps(organizationId);
 
+  // Project server catalog for the "start from an existing server" picker
+  // (the Okta model: admins pick from the directory instead of re-typing
+  // URLs). Optional context: outside an AppStateProvider (isolated surfaces,
+  // tests) the catalog is empty and the picker simply hides. The project
+  // catalog — not `servers` (runtime connections, which drop the persisted
+  // OAuth config) — carries clientId/oauthScopes/xaaAuthzIssuer.
+  const sharedAppState = useOptionalSharedAppState();
+  const serverOptions = useMemo(() => {
+    const catalog =
+      sharedAppState?.projects[sharedAppState.activeProjectId]?.servers ?? {};
+    return Object.values(catalog)
+      .filter(isPickableServer)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [sharedAppState]);
+
   const [step, setStep] = useState<StepId>(1);
   const [draft, setDraft] = useState<RegistrationDraft>(EMPTY_DRAFT);
+  const [pickedServerName, setPickedServerName] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -73,11 +100,15 @@ export function XAARegistrationWizard({
   useEffect(() => {
     if (open && !wasOpenRef.current) {
       setStep(1);
+      // Prefill (the debugger's "Register this server" banner) seeds the
+      // draft on open; the picker below can still override with a different
+      // server — an explicit pick always wins over the seeded values.
       setDraft(
         editing
           ? draftFromResourceApp(editing)
           : { ...EMPTY_DRAFT, ...(prefill ?? {}) },
       );
+      setPickedServerName("");
       setValidationError(null);
       setSaveError(null);
     }
@@ -95,6 +126,17 @@ export function XAARegistrationWizard({
   const updateDraft = (updates: Partial<RegistrationDraft>) => {
     setDraft((current) => ({ ...current, ...updates }));
     setValidationError(null);
+  };
+
+  // Picking snapshots the server row into the draft (overwriting the
+  // prefillable fields — a pick is an explicit action) and leaves everything
+  // else alone. The user can still edit anything before saving; the stored
+  // registration never references the server row.
+  const handlePickServer = (name: string) => {
+    const server = serverOptions.find((s) => s.name === name);
+    if (!server) return;
+    setPickedServerName(name);
+    updateDraft(draftFromServer(server));
   };
 
   const handleNext = () => {
@@ -176,7 +218,46 @@ export function XAARegistrationWizard({
         </h3>
 
         {step === 1 ? (
-          <BasicInfoStep draft={draft} onChange={updateDraft} />
+          <div className="space-y-4">
+            {/* Registering starts from picking one of the project's servers;
+                manual entry below is the fallback. Hidden while editing (the
+                registration already has its details) and when the project has
+                no HTTP servers to pick from. */}
+            {!editing && serverOptions.length > 0 && (
+              <>
+                <div className="space-y-1.5">
+                  <Label htmlFor="xaa-reg-server-picker">
+                    Start from an existing server
+                  </Label>
+                  <Select
+                    value={pickedServerName}
+                    onValueChange={handlePickServer}
+                  >
+                    <SelectTrigger id="xaa-reg-server-picker">
+                      <SelectValue placeholder="Pick one of your servers" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {serverOptions.map((server) => (
+                        <SelectItem key={server.name} value={server.name}>
+                          {server.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Copies the server&apos;s saved details into the form as a
+                    one-time snapshot — edit anything before saving.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span aria-hidden="true" className="h-px flex-1 bg-border" />
+                  or enter details manually
+                  <span aria-hidden="true" className="h-px flex-1 bg-border" />
+                </div>
+              </>
+            )}
+            <BasicInfoStep draft={draft} onChange={updateDraft} />
+          </div>
         ) : step === 2 ? (
           <AuthServerStep
             draft={draft}
