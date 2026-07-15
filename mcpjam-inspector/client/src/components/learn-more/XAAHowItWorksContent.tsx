@@ -97,7 +97,7 @@ function SectionHeading({
   );
 }
 
-function VideoThumbnail() {
+function XAAVideoThumbnail() {
   const [playing, setPlaying] = useState(false);
 
   if (playing) {
@@ -157,7 +157,7 @@ export function XAAHowItWorksContent({ title }: { title: string }) {
             </p>
           </div>
           <div className="mt-8">
-            <VideoThumbnail />
+            <XAAVideoThumbnail />
           </div>
         </div>
       </div>

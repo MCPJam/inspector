@@ -306,7 +306,7 @@ export function LearnMoreExpandedPanel({
               </div>
             )}
 
-            {entry.videoUrl && (
+            {entry.videoUrl && !isXAAGuide && (
               <div className="px-6 pt-2 pb-4 sm:px-10">
                 <VideoThumbnail entry={entry} />
               </div>
