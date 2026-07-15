@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { Badge } from "@mcpjam/design-system/badge";
+import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
   Select,
   SelectContent,
@@ -21,206 +22,232 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { MessageSquare, X, Check, RefreshCw } from "lucide-react";
 import { DialogElicitation } from "./ToolsTab";
-
-interface FormField {
-  name: string;
-  type: string;
-  description?: string;
-  required: boolean;
-  value: any;
-  enum?: string[];
-  minimum?: number;
-  maximum?: number;
-  pattern?: string;
-}
+import {
+  buildElicitationContent,
+  fieldLabel,
+  initialFormValues,
+  parseElicitationSchema,
+  validateField,
+  type ElicitationField,
+} from "./elicitation/schema";
 
 interface ElicitationDialogProps {
   elicitationRequest: DialogElicitation | null;
   onResponse: (
     action: "accept" | "decline" | "cancel",
-    parameters?: Record<string, any>,
+    parameters?: Record<string, any>
   ) => Promise<void>;
   loading?: boolean;
 }
 
+/**
+ * Input `type` per JSON Schema `format`. Purely a keyboard/affordance hint —
+ * validation is still enforced by `validateField`, never by the browser.
+ */
+const FORMAT_INPUT_TYPES: Record<string, string> = {
+  email: "email",
+  uri: "url",
+  date: "date",
+  "date-time": "datetime-local",
+};
+
+/**
+ * MCP spec MUST: elicitation dialogs never render clickable URLs. Every value,
+ * description and message below is rendered as plain text — no anchors, no
+ * linkification, anywhere in this component.
+ */
 export function ElicitationDialog({
   elicitationRequest,
   onResponse,
   loading = false,
 }: ElicitationDialogProps) {
-  const [fields, setFields] = useState<FormField[]>([]);
+  const fields = useMemo(
+    () => parseElicitationSchema(elicitationRequest?.schema),
+    [elicitationRequest]
+  );
+  const [values, setValues] = useState<Record<string, unknown>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Generate form fields from schema when request changes
-  React.useEffect(() => {
-    if (elicitationRequest?.schema) {
-      generateFormFields(elicitationRequest.schema);
-    } else {
-      setFields([]);
-    }
-  }, [elicitationRequest]);
+  // Reset form state (and prefill schema defaults) whenever the request changes.
+  useEffect(() => {
+    setValues(initialFormValues(fields));
+    setErrors({});
+  }, [fields]);
 
-  const generateFormFields = (schema: any) => {
-    if (!schema || !schema.properties) {
-      setFields([]);
-      return;
-    }
-
-    const formFields: FormField[] = [];
-    const required = schema.required || [];
-
-    Object.entries(schema.properties).forEach(([key, prop]: [string, any]) => {
-      const fieldType = prop.enum ? "enum" : prop.type || "string";
-      formFields.push({
-        name: key,
-        type: fieldType,
-        description: prop.description,
-        required: required.includes(key),
-        value: getDefaultValue(fieldType, prop.enum),
-        enum: prop.enum,
-        minimum: prop.minimum,
-        maximum: prop.maximum,
-        pattern: prop.pattern,
-      });
+  const updateFieldValue = (name: string, value: unknown) => {
+    setValues((prev) => ({ ...prev, [name]: value }));
+    // Clear a shown error as soon as the user edits the field; it is
+    // re-evaluated on the next Accept.
+    setErrors((prev) => {
+      if (!(name in prev)) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
     });
-
-    setFields(formFields);
   };
 
-  const getDefaultValue = (type: string, enumValues?: string[]) => {
-    switch (type) {
-      case "enum":
-        return enumValues?.[0] || "";
-      case "string":
-        return "";
-      case "number":
-      case "integer":
-        return "";
-      case "boolean":
-        return false;
-      case "array":
-        return [];
-      case "object":
-        return {};
-      default:
-        return "";
-    }
-  };
-
-  const updateFieldValue = (fieldName: string, value: any) => {
-    setFields((prev) =>
-      prev.map((field) =>
-        field.name === fieldName ? { ...field, value } : field,
-      ),
+  const toggleMultiValue = (
+    field: ElicitationField,
+    option: string,
+    checked: boolean
+  ) => {
+    const current = Array.isArray(values[field.name])
+      ? (values[field.name] as string[])
+      : [];
+    updateFieldValue(
+      field.name,
+      checked
+        ? current.includes(option)
+          ? current
+          : [...current, option]
+        : current.filter((v) => v !== option)
     );
   };
 
-  const buildParameters = (): Record<string, any> => {
-    const params: Record<string, any> = {};
-    fields.forEach((field) => {
-      if (
-        field.value !== "" &&
-        field.value !== null &&
-        field.value !== undefined
-      ) {
-        let processedValue = field.value;
-
-        if (field.type === "number" || field.type === "integer") {
-          processedValue = Number(field.value);
-        } else if (field.type === "boolean") {
-          processedValue = Boolean(field.value);
-        } else if (field.type === "array" || field.type === "object") {
-          try {
-            processedValue = JSON.parse(field.value);
-          } catch {
-            processedValue = field.value;
-          }
-        }
-
-        params[field.name] = processedValue;
-      }
-    });
-    return params;
-  };
-
   const handleResponse = async (action: "accept" | "decline" | "cancel") => {
-    if (action === "accept") {
-      // Validate required fields
-      const missingFields = fields.filter(
-        (field) => field.required && (!field.value || field.value === ""),
-      );
-
-      if (missingFields.length > 0) {
-        // You could show validation errors here
-        return;
-      }
-
-      const parameters = buildParameters();
-      await onResponse(action, parameters);
-    } else {
+    if (action !== "accept") {
       await onResponse(action);
+      return;
     }
+
+    const nextErrors: Record<string, string> = {};
+    for (const field of fields) {
+      const error = validateField(field, values[field.name]);
+      if (error) nextErrors[field.name] = error;
+    }
+
+    if (Object.keys(nextErrors).length > 0) {
+      // Block submit and surface the errors inline.
+      setErrors(nextErrors);
+      return;
+    }
+
+    setErrors({});
+    await onResponse(action, buildElicitationContent(fields, values));
   };
 
-  const renderField = (field: FormField) => {
-    if (field.type === "enum") {
-      return (
-        <Select
-          value={field.value}
-          onValueChange={(value) => updateFieldValue(field.name, value)}
-        >
-          <SelectTrigger className="w-full">
-            <SelectValue placeholder="Select an option" />
-          </SelectTrigger>
-          <SelectContent>
-            {field.enum?.map((option) => (
-              <SelectItem key={option} value={option}>
-                {option}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      );
-    } else if (field.type === "boolean") {
-      return (
-        <div className="flex items-center space-x-3 py-2">
-          <input
-            type="checkbox"
-            checked={field.value}
-            onChange={(e) => updateFieldValue(field.name, e.target.checked)}
-            className="w-4 h-4 text-primary bg-background border-border rounded focus:ring-ring focus:ring-2"
+  const renderField = (field: ElicitationField) => {
+    const inputId = `elicitation-field-${field.name}`;
+    const errorId = `${inputId}-error`;
+    const invalid = Boolean(errors[field.name]);
+    const describedBy = invalid ? errorId : undefined;
+
+    switch (field.kind) {
+      case "enum":
+        return (
+          <Select
+            value={(values[field.name] as string) ?? ""}
+            onValueChange={(value) => updateFieldValue(field.name, value)}
+          >
+            <SelectTrigger
+              id={inputId}
+              className="w-full"
+              aria-invalid={invalid}
+              aria-describedby={describedBy}
+            >
+              <SelectValue placeholder="Select an option" />
+            </SelectTrigger>
+            <SelectContent>
+              {field.options?.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        );
+
+      case "multi-enum": {
+        const selected = Array.isArray(values[field.name])
+          ? (values[field.name] as string[])
+          : [];
+        return (
+          <div
+            role="group"
+            aria-label={fieldLabel(field)}
+            aria-describedby={describedBy}
+            className="space-y-2 py-1"
+          >
+            {field.options?.map((option) => {
+              const optionId = `${inputId}-${option.value}`;
+              return (
+                <div key={option.value} className="flex items-center gap-2">
+                  <Checkbox
+                    id={optionId}
+                    checked={selected.includes(option.value)}
+                    onCheckedChange={(checked) =>
+                      toggleMultiValue(field, option.value, checked === true)
+                    }
+                  />
+                  <Label htmlFor={optionId} className="text-sm font-normal">
+                    {option.label}
+                  </Label>
+                </div>
+              );
+            })}
+          </div>
+        );
+      }
+
+      case "boolean":
+        return (
+          <div className="flex items-center space-x-3 py-2">
+            <input
+              id={inputId}
+              type="checkbox"
+              checked={Boolean(values[field.name])}
+              onChange={(e) => updateFieldValue(field.name, e.target.checked)}
+              className="w-4 h-4 text-primary bg-background border-border rounded focus:ring-ring focus:ring-2"
+            />
+            <span className="text-sm">
+              {values[field.name] ? "Enabled" : "Disabled"}
+            </span>
+          </div>
+        );
+
+      case "json":
+        return (
+          <Textarea
+            id={inputId}
+            value={String(values[field.name] ?? "")}
+            onChange={(e) => updateFieldValue(field.name, e.target.value)}
+            placeholder="Enter value as JSON"
+            aria-invalid={invalid}
+            aria-describedby={describedBy}
+            className="font-mono text-sm h-20 resize-none"
           />
-          <span className="text-sm">
-            {field.value ? "Enabled" : "Disabled"}
-          </span>
-        </div>
-      );
-    } else if (field.type === "array" || field.type === "object") {
-      return (
-        <Textarea
-          value={
-            typeof field.value === "string"
-              ? field.value
-              : JSON.stringify(field.value, null, 2)
-          }
-          onChange={(e) => updateFieldValue(field.name, e.target.value)}
-          placeholder={`Enter ${field.type} as JSON`}
-          className="font-mono text-sm h-20 resize-none"
-        />
-      );
-    } else {
-      return (
-        <Input
-          type={
-            field.type === "number" || field.type === "integer"
-              ? "number"
-              : "text"
-          }
-          value={field.value}
-          onChange={(e) => updateFieldValue(field.name, e.target.value)}
-          placeholder={`Enter ${field.name}`}
-          className="text-sm"
-        />
-      );
+        );
+
+      case "number":
+      case "integer":
+        return (
+          <Input
+            id={inputId}
+            type="number"
+            step={field.kind === "integer" ? 1 : "any"}
+            value={String(values[field.name] ?? "")}
+            onChange={(e) => updateFieldValue(field.name, e.target.value)}
+            placeholder={`Enter ${fieldLabel(field)}`}
+            aria-invalid={invalid}
+            aria-describedby={describedBy}
+            className="text-sm"
+          />
+        );
+
+      case "string":
+      default:
+        return (
+          <Input
+            id={inputId}
+            type={(field.format && FORMAT_INPUT_TYPES[field.format]) ?? "text"}
+            value={String(values[field.name] ?? "")}
+            onChange={(e) => updateFieldValue(field.name, e.target.value)}
+            placeholder={`Enter ${fieldLabel(field)}`}
+            aria-invalid={invalid}
+            aria-describedby={describedBy}
+            className="text-sm"
+          />
+        );
     }
   };
 
@@ -230,7 +257,7 @@ export function ElicitationDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-sm font-medium">
             <MessageSquare className="h-3 w-3" />
-            Elicitation Request
+            <RequestingServer elicitationRequest={elicitationRequest} />
           </DialogTitle>
           <DialogDescription className="text-md font-bold">
             {elicitationRequest?.message}
@@ -238,32 +265,57 @@ export function ElicitationDialog({
         </DialogHeader>
 
         <div className="space-y-6 py-4">
-          {fields.map((field) => (
-            <div key={field.name}>
-              <div className="flex items-start justify-between mb-2">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <Label className="text-sm font-medium">{field.name}</Label>
-                    {field.required && (
-                      <div
-                        className="w-1.5 h-1.5 bg-red-500 rounded-full"
-                        title="Required field"
-                      />
+          {fields.map((field) => {
+            const label = fieldLabel(field);
+            const showRawKey = Boolean(
+              field.title && field.title !== field.name
+            );
+            const error = errors[field.name];
+            return (
+              <div key={field.name}>
+                <div className="flex items-start justify-between mb-2">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Label
+                        htmlFor={`elicitation-field-${field.name}`}
+                        className="text-sm font-medium"
+                      >
+                        {label}
+                      </Label>
+                      {showRawKey && (
+                        <span className="text-xs font-mono text-muted-foreground">
+                          {field.name}
+                        </span>
+                      )}
+                      {field.required && (
+                        <div
+                          className="w-1.5 h-1.5 bg-red-500 rounded-full"
+                          title="Required field"
+                        />
+                      )}
+                    </div>
+                    {field.description && (
+                      <p className="text-xs text-muted-foreground">
+                        {field.description}
+                      </p>
                     )}
                   </div>
-                  {field.description && (
-                    <p className="text-xs text-muted-foreground">
-                      {field.description}
-                    </p>
-                  )}
+                  <Badge variant="secondary" className="text-xs">
+                    {field.kind}
+                  </Badge>
                 </div>
-                <Badge variant="secondary" className="text-xs">
-                  {field.type}
-                </Badge>
+                {renderField(field)}
+                {error && (
+                  <p
+                    id={`elicitation-field-${field.name}-error`}
+                    className="text-destructive text-xs mt-1"
+                  >
+                    {error}
+                  </p>
+                )}
               </div>
-              {renderField(field)}
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         <DialogFooter className="flex gap-2">
@@ -293,5 +345,37 @@ export function ElicitationDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Spec MUST: "clients MUST provide UI that makes it clear which server is
+ * requesting information".
+ *
+ * `serverName` is an untrusted, server-supplied display label; `serverId` is
+ * the immutable local identifier and therefore the trusted anchor — it stays
+ * visible whenever we have it, even when a prettier name exists. Callers that
+ * supply neither (today's local-mode surfaces) get the generic header.
+ */
+function RequestingServer({
+  elicitationRequest,
+}: {
+  elicitationRequest: DialogElicitation | null;
+}) {
+  const { serverId, serverName } = elicitationRequest ?? {};
+  const displayName = serverName ?? serverId;
+
+  if (!displayName) return <>Elicitation Request</>;
+
+  return (
+    <span className="flex items-center gap-1.5">
+      <strong className="font-semibold">{displayName}</strong>
+      {serverId && serverId !== displayName && (
+        <span className="text-xs font-mono font-normal text-muted-foreground">
+          {serverId}
+        </span>
+      )}
+      <span className="font-normal">is requesting information</span>
+    </span>
   );
 }

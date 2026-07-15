@@ -89,6 +89,16 @@ export type DialogElicitation = {
   message: string;
   schema?: Record<string, unknown>;
   timestamp: string;
+  /**
+   * Identity of the server requesting information (MCP spec MUST: the client
+   * must make it clear which server is asking). Optional and additive: local
+   * surfaces that don't yet plumb it through fall back to a generic header.
+   *
+   * `serverId` is the immutable, locally-assigned identifier — the trusted
+   * anchor. `serverName` is a server-supplied display label and is NOT trusted.
+   */
+  serverId?: string;
+  serverName?: string;
 };
 
 function normalizeElicitationContent(
