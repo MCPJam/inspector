@@ -19,6 +19,8 @@ import {
   handleXaaTokenExchangeGrant,
 } from "./mint/handlers.js";
 import { buildJwtBearerRequest } from "./mint/jwt-bearer.js";
+import { initXaaClientKeyPair } from "./mint/client-keypair.js";
+import { signClientAssertion } from "./mint/client-assertion.js";
 import {
   DEFAULT_NEGATIVE_TEST_MODE,
   isNegativeTestMode,
@@ -255,15 +257,26 @@ export function createInProcessXaaExecutor(
           error: "In-process redemption requires an explicit token endpoint.",
         });
       }
+      const authMethod = isTokenAuthMethod(body.tokenEndpointAuthMethod)
+        ? body.tokenEndpointAuthMethod
+        : undefined;
+      // Confidential CIMD: sign the private_key_jwt client assertion here (Node),
+      // with the local client key. The browser-safe state machine only carries
+      // the method string; key material never leaves the executor.
+      const clientId = str(body.clientId) || undefined;
+      const clientAssertion =
+        authMethod === "private_key_jwt" && clientId
+          ? (initXaaClientKeyPair(),
+            signClientAssertion({ clientId, tokenEndpoint }))
+          : undefined;
       const { headers, body: form } = buildJwtBearerRequest({
         assertion: str(body.assertion),
-        clientId: str(body.clientId) || undefined,
+        clientId,
         clientSecret: str(body.clientSecret) || undefined,
         scope: str(body.scope) || undefined,
         resource: str(body.resource) || undefined,
-        tokenEndpointAuthMethod: isTokenAuthMethod(body.tokenEndpointAuthMethod)
-          ? body.tokenEndpointAuthMethod
-          : undefined,
+        tokenEndpointAuthMethod: authMethod,
+        clientAssertion,
       });
       const upstream = await executeOAuthProxy({
         url: tokenEndpoint,
@@ -337,10 +350,15 @@ export function createInProcessXaaExecutor(
 
 function isTokenAuthMethod(
   value: unknown
-): value is "client_secret_post" | "client_secret_basic" | "none" {
+): value is
+  | "client_secret_post"
+  | "client_secret_basic"
+  | "none"
+  | "private_key_jwt" {
   return (
     value === "client_secret_post" ||
     value === "client_secret_basic" ||
-    value === "none"
+    value === "none" ||
+    value === "private_key_jwt"
   );
 }

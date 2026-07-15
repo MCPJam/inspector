@@ -1,5 +1,10 @@
 import {
   IDENTITY_ASSERTION_FORMATS,
+  XAA_CONFIDENTIAL_CIMD_ORIGIN,
+  buildConfidentialCimdUrl,
+  getXaaClientJwks,
+  initXaaClientKeyPair,
+  isLoopbackHost,
   normalizeIdentityAssertionFormat,
   normalizeRegistrationStrategy,
   runXaaFlow,
@@ -17,9 +22,14 @@ type XaaTokenEndpointAuthMethod =
   | "client_secret_post"
   | "client_secret_basic"
   | "none";
+type XaaClientAuth = "none" | "private_key_jwt";
 type XaaCliFlowConfig = XaaFlowConfig & {
   tokenEndpointAuthMethod?: XaaTokenEndpointAuthMethod;
   timeoutMs?: number;
+  // CLI-only (ignored by runXaaFlow): resolved in the action into the confidential
+  // CIMD metadata URL + the client signing key.
+  clientAuth?: XaaClientAuth;
+  cimdMetadataOrigin?: string;
 };
 
 export interface XaaCommandOptions {
@@ -29,6 +39,8 @@ export interface XaaCommandOptions {
   clientId?: string;
   registration?: RegistrationStrategy;
   clientMetadataUrl?: string;
+  clientAuth?: XaaClientAuth;
+  cimdMetadataOrigin?: string;
   authzServerIssuer?: string;
   tokenEndpoint?: string;
   email?: string;
@@ -71,6 +83,15 @@ export function registerXaaCommands(program: Command): void {
       "CIMD only: the Client ID Metadata Document URL to present as the client_id (default: the hosted XAA debugger document)",
     )
     .option(
+      "--client-auth <method>",
+      "CIMD only: how the client authenticates. none (public, default) or private-key-jwt (confidential — generates a client key, publishes it via the hosted reflector, and signs a client_assertion)",
+      parseClientAuth,
+    )
+    .option(
+      "--cimd-metadata-origin <url>",
+      "Confidential CIMD only: origin hosting the metadata-document reflector (default: the hosted app.mcpjam.com). An http loopback origin is a dev-only opt-in (requires no --https-only)",
+    )
+    .option(
       "--authz-server-issuer <issuer>",
       "Target authorization-server issuer. When set, protected-resource metadata discovery is skipped",
     )
@@ -102,6 +123,7 @@ export function registerXaaCommands(program: Command): void {
         options as XaaCommandOptions,
         globalOptions.timeout,
       );
+      resolveConfidentialCimd(config, globalOptions.quiet);
 
       const isTTY = process.stderr.isTTY && !globalOptions.quiet;
       if (isTTY) {
@@ -274,6 +296,38 @@ export function buildXaaConfig(
     }
   }
 
+  // Confidential CIMD (private_key_jwt): the CLI generates a client key and
+  // publishes it via the hosted reflector, so it serves its own document.
+  const clientAuth: XaaClientAuth = options.clientAuth ?? "none";
+  const cimdMetadataOrigin = options.cimdMetadataOrigin?.trim() || undefined;
+  if (clientAuth === "private_key_jwt" && strategy !== "cimd") {
+    throw usageError(
+      "--client-auth private-key-jwt is only valid with --registration cimd.",
+    );
+  }
+  if (clientAuth === "private_key_jwt" && clientMetadataUrl) {
+    throw usageError(
+      "--client-metadata-url cannot be combined with --client-auth private-key-jwt: the confidential client publishes its own metadata document via the reflector.",
+    );
+  }
+  if (cimdMetadataOrigin) {
+    assertValidUrl(cimdMetadataOrigin, "CIMD metadata origin");
+    if (clientAuth !== "private_key_jwt") {
+      throw usageError(
+        "--cimd-metadata-origin is only valid with --client-auth private-key-jwt.",
+      );
+    }
+    // It must be a bare origin: buildConfidentialCimdUrl concatenates the raw
+    // string with the reflector path, so a trailing path/query/fragment would
+    // produce a client_id that never resolves to the reflector route.
+    const parsed = new URL(cimdMetadataOrigin);
+    if (parsed.pathname !== "/" || parsed.search || parsed.hash) {
+      throw usageError(
+        "--cimd-metadata-origin must be a bare origin (scheme + host[:port]) with no path, query, or fragment.",
+      );
+    }
+  }
+
   const authzServerIssuer = options.authzServerIssuer?.trim() || undefined;
   if (authzServerIssuer) {
     assertValidUrl(authzServerIssuer, "authorization server issuer");
@@ -316,6 +370,8 @@ export function buildXaaConfig(
     ...(clientId ? { clientId } : {}),
     ...(strategy !== "preregistered" ? { registrationStrategy: strategy } : {}),
     ...(clientMetadataUrl ? { clientIdMetadataUrl: clientMetadataUrl } : {}),
+    ...(clientAuth !== "none" ? { clientAuth } : {}),
+    ...(cimdMetadataOrigin ? { cimdMetadataOrigin } : {}),
     ...(authzServerIssuer ? { authzServerIssuer } : {}),
     ...(tokenEndpoint ? { tokenEndpoint } : {}),
     ...(options.email?.trim() ? { email: options.email.trim() } : {}),
@@ -349,6 +405,61 @@ export function parseRegistration(value: string): RegistrationStrategy {
     );
   }
   return strategy;
+}
+
+function isLoopbackHttpOrigin(origin: string): boolean {
+  try {
+    const { protocol, hostname } = new URL(origin);
+    // Reuse the SDK's RFC 6890 loopback check (covers all of 127.0.0.0/8) so the
+    // CLI carve-out and the SDK fetch-time guard never disagree on what counts.
+    return protocol === "http:" && isLoopbackHost(hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Confidential CIMD: load/generate the client key, compute the hosted reflector
+ * URL that publishes its public key, and set it as the client_id metadata URL.
+ * The default reflector origin is HTTPS (app.mcpjam.com); a loopback origin is a
+ * gated, warned dev-only opt-in for a locally-run reflector.
+ */
+export function resolveConfidentialCimd(
+  config: XaaCliFlowConfig,
+  quiet?: boolean,
+): void {
+  if (config.clientAuth !== "private_key_jwt") return;
+  const origin = config.cimdMetadataOrigin ?? XAA_CONFIDENTIAL_CIMD_ORIGIN;
+  const loopback = isLoopbackHttpOrigin(origin);
+
+  // Validate the origin/policy conflict BEFORE touching key material, so an
+  // invocation destined to fail never generates or persists a client key.
+  if (loopback && config.httpsOnly) {
+    throw usageError(
+      "--cimd-metadata-origin is an http loopback URL, but --https-only is set. Use an HTTPS origin, or drop --https-only for local dev.",
+    );
+  }
+
+  initXaaClientKeyPair();
+  config.clientIdMetadataUrl = buildConfidentialCimdUrl(
+    getXaaClientJwks().keys[0],
+    origin,
+  );
+  if (loopback) {
+    config.allowLoopbackClientMetadata = true;
+    if (!quiet) {
+      process.stderr.write(
+        `Note: using a loopback CIMD reflector (${origin}) — dev-only and non-standard (CIMD requires HTTPS); production uses ${XAA_CONFIDENTIAL_CIMD_ORIGIN}.\n`,
+      );
+    }
+  }
+}
+
+export function parseClientAuth(value: string): XaaClientAuth {
+  if (value === "none") return "none";
+  if (value === "private-key-jwt" || value === "private_key_jwt")
+    return "private_key_jwt";
+  throw usageError("--client-auth must be none or private-key-jwt.");
 }
 
 function parseTokenEndpointAuthMethod(
