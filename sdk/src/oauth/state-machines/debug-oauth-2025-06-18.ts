@@ -869,18 +869,10 @@ export const createDebugOAuthStateMachine = (
               const authorizationServerUrl =
                 resourceMetadata.authorization_servers?.[0] || serverUrl;
 
-              // Add info log for Authorization Servers
-              const authServersLog = addInfoLog(
-                state,
-                "received_resource_metadata",
-                "authorization-servers",
-                "Authorization Servers",
-                {
-                  Resource: resourceMetadata.resource,
-                  "Authorization Servers":
-                    resourceMetadata.authorization_servers,
-                },
-              );
+              // The response card is the complete protected-resource metadata.
+              // Keep existing logs only for distinct findings, such as a
+              // resource identifier mismatch below.
+              const existingInfoLogs = state.infoLogs ?? [];
 
               // Resolve the resource indicator ONCE (rejecting/warning per
               // the surface's enforcement mode); every later request and
@@ -892,7 +884,7 @@ export const createDebugOAuthStateMachine = (
                   fallbackServerUrl: serverUrl,
                   prmResource: resourceMetadata.resource,
                   enforcement: resourceIndicatorEnforcement,
-                  infoLogs: authServersLog,
+                  infoLogs: existingInfoLogs,
                 });
 
               updateState({
@@ -1076,42 +1068,6 @@ export const createDebugOAuthStateMachine = (
             const supportedMethods =
               authServerMetadata.code_challenge_methods_supported || [];
 
-            // Add info log for Authorization Server Metadata
-            const metadata: Record<string, any> = {
-              Issuer: authServerMetadata.issuer,
-              "Authorization Endpoint":
-                authServerMetadata.authorization_endpoint,
-              "Token Endpoint": authServerMetadata.token_endpoint,
-            };
-
-            if (authServerMetadata.registration_endpoint) {
-              metadata["Registration Endpoint"] =
-                authServerMetadata.registration_endpoint;
-            }
-            if (authServerMetadata.code_challenge_methods_supported) {
-              metadata["PKCE Methods"] =
-                authServerMetadata.code_challenge_methods_supported;
-            }
-            if (authServerMetadata.grant_types_supported) {
-              metadata["Grant Types"] =
-                authServerMetadata.grant_types_supported;
-            }
-            if (authServerMetadata.response_types_supported) {
-              metadata["Response Types"] =
-                authServerMetadata.response_types_supported;
-            }
-            if (authServerMetadata.scopes_supported) {
-              metadata["Scopes"] = authServerMetadata.scopes_supported;
-            }
-
-            const infoLogs = addInfoLog(
-              getCurrentState(),
-              "received_authorization_server_metadata",
-              "as-metadata",
-              "Authorization Server Metadata",
-              metadata,
-            );
-
             if (!supportedMethods.includes("S256")) {
               console.warn(
                 "Authorization server may not support S256 PKCE method. Supported methods:",
@@ -1123,7 +1079,6 @@ export const createDebugOAuthStateMachine = (
                 authorizationServerMetadata: authServerMetadata,
                 lastResponse: authServerResponseData,
                 httpHistory: updatedHistoryFinal,
-                infoLogs,
                 error:
                   "Warning: Authorization server may not support S256 PKCE method",
                 isInitiatingAuth: false,
@@ -1134,7 +1089,6 @@ export const createDebugOAuthStateMachine = (
                 authorizationServerMetadata: authServerMetadata,
                 lastResponse: authServerResponseData,
                 httpHistory: updatedHistoryFinal,
-                infoLogs,
                 isInitiatingAuth: false,
               });
             }

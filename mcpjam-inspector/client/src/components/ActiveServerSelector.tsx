@@ -3,10 +3,13 @@ import { ServerWithName } from "@/hooks/use-app-state";
 import { cn } from "@/lib/utils";
 import { AddServerModal } from "./connection/AddServerModal";
 import { ServerFormData } from "@/shared/types.js";
-import { Check, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
 import { track } from "@/lib/analytics";
-import { hasOAuthConfig } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
+import {
+  isOAuthDebuggerHeaderServer,
+  isXaaDebuggerHeaderServer,
+} from "@/lib/debugger-header-servers";
 
 const HOSTED_HTTPS_REQUIRED_HINT =
   "Hosted mode requires HTTPS server URLs. Edit this server to use https://.";
@@ -47,6 +50,14 @@ export interface ActiveServerSelectorProps {
   onReconnect?: (serverName: string) => Promise<void>;
   /** Disconnect a connected server (Playground toggle off = unplug). */
   onDisconnect?: (serverName: string) => void;
+  /**
+   * Hide a server from THIS header only (OAuth / XAA debugger). View-only: the
+   * server config, tokens, and Convex row are untouched — it's dropped from this
+   * tab's chip strip until un-hidden. When provided, each chip renders an "x".
+   */
+  onHideServer?: (serverName: string) => void;
+  /** Server names hidden from this header; filtered out of the rendered list. */
+  hiddenServers?: Set<string>;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
   /**
    * When `showOnlyOAuthServers` is on, also admit Cross-App Access (XAA)
@@ -55,7 +66,13 @@ export interface ActiveServerSelectorProps {
    */
   includeXaaServers?: boolean;
   showOnlyServersWithViews?: boolean; // Only show servers that have saved views
-  autoSelectFilteredServer?: boolean; // Auto-select when current selection is hidden by filters
+  /** Auto-select when the current selection is hidden by filters. `true`
+   * replaces an invalid selection with the most recently connected eligible
+   * server. `"when-empty"` only fills a blank selection ("none") and never
+   * replaces an existing one — the debugger tabs use this so their target
+   * (which live auth requests are fired at) can't change without an explicit
+   * click. */
+  autoSelectFilteredServer?: boolean | "when-empty";
   serversWithViews?: Set<string>; // Set of server names that have saved views
   hasMessages?: boolean; // Reserved for callers that still compute this
   className?: string;
@@ -107,6 +124,8 @@ export function ActiveServerSelector({
   onConnect,
   onAddServerRequested,
   onReconnect,
+  onHideServer,
+  hiddenServers,
   showOnlyOAuthServers = false,
   includeXaaServers = false,
   showOnlyServersWithViews = false,
@@ -121,29 +140,13 @@ export function ActiveServerSelector({
   const hasNoServersWithViews =
     showOnlyServersWithViews && (serversWithViews?.size ?? 0) === 0;
 
-  // Helper function to check if a server uses OAuth
-  const isOAuthServer = (server: ServerWithName): boolean => {
-    const isHttpServer = "url" in server.config;
-    if (!isHttpServer) return false;
-    if (server.useOAuth === false) return false;
-
-    // Check if server is configured for OAuth, has OAuth state, or is mid-flow.
-    return !!(
-      server.useOAuth === true ||
-      server.oauthTokens ||
-      hasOAuthConfig(server.name) ||
-      server.connectionStatus === "oauth-flow"
-    );
-  };
-
-  const isXaaServer = (server: ServerWithName): boolean =>
-    "url" in server.config && server.useXaa === true;
-
   const servers = Object.entries(serverConfigs).filter(([name, server]) => {
+    // View-only dismissals from this header (OAuth / XAA debugger x button).
+    if (hiddenServers?.has(name)) return false;
     if (
       showOnlyOAuthServers &&
-      !isOAuthServer(server) &&
-      !(includeXaaServers && isXaaServer(server))
+      !isOAuthDebuggerHeaderServer(server) &&
+      !(includeXaaServers && isXaaDebuggerHeaderServer(server))
     )
       return false;
     if (showOnlyServersWithViews && !serversWithViews?.has(name)) return false;
@@ -162,6 +165,16 @@ export function ActiveServerSelector({
 
     const serverNames = servers.map(([name]) => name);
     const isCurrentSelectionValid = serverNames.includes(selectedServer);
+    const hasExplicitSelection =
+      Boolean(selectedServer) && selectedServer !== "none";
+
+    // "when-empty" fills a blank selection but never replaces one the user
+    // already made — an invalid selection stays put (the tab renders its own
+    // "not testable" state) instead of being silently swapped for a server
+    // the user never clicked.
+    if (autoSelectFilteredServer === "when-empty" && hasExplicitSelection) {
+      return;
+    }
 
     if (!isCurrentSelectionValid && servers.length > 0) {
       // Pick the most recently connected server instead of the first by insertion order
@@ -256,10 +269,12 @@ export function ActiveServerSelector({
               <button
                 key={name}
                 onClick={(e) => {
-                  // Check if click originated from reconnect button
-                  // Using Element to cover SVG elements too
+                  // Ignore clicks from the inline action buttons (reconnect /
+                  // hide). Using Element to cover SVG elements too.
                   if (
-                    (e.target as Element).closest("[data-reconnect-button]")
+                    (e.target as Element).closest(
+                      "[data-reconnect-button],[data-hide-button]",
+                    )
                   ) {
                     return;
                   }
@@ -327,6 +342,30 @@ export function ActiveServerSelector({
                     aria-disabled={isHostedHttpReconnectBlocked}
                   >
                     <RefreshCw className="w-3 h-3" />
+                  </div>
+                )}
+                {onHideServer && (
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    data-hide-button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.nativeEvent.stopImmediatePropagation();
+                      e.preventDefault();
+                      onHideServer(name);
+                    }}
+                    className={cn(
+                      "p-1 rounded-md transition-colors text-muted-foreground",
+                      "hover:bg-destructive/10 hover:text-destructive",
+                      // Right-align the action cluster when there's no
+                      // reconnect button to carry the ml-auto.
+                      onReconnect ? "" : "ml-auto",
+                    )}
+                    title="Hide from this tab"
+                    aria-label={`Hide ${name} from this header`}
+                  >
+                    <X className="w-3 h-3" />
                   </div>
                 )}
               </button>

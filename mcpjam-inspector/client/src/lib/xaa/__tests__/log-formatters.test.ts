@@ -3,6 +3,18 @@ import { generateXAAFlowText } from "../log-formatters";
 import { createInitialXAAFlowState } from "../types";
 
 describe("generateXAAFlowText", () => {
+  it("uses the user-facing current-step title instead of the internal step id", () => {
+    const copied = generateXAAFlowText(
+      createInitialXAAFlowState({ currentStep: "jwt_bearer_request" }),
+      {}
+    );
+
+    expect(copied).toContain(
+      "Current step: Exchange the ID-JAG for an Access Token"
+    );
+    expect(copied).not.toContain("Current step: jwt_bearer_request");
+  });
+
   it("redacts credentials from copied request and response data", () => {
     const copied = generateXAAFlowText(
       createInitialXAAFlowState({
@@ -130,6 +142,163 @@ describe("generateXAAFlowText", () => {
     }
     expect(copied).toContain("[REDACTED]");
     expect(copied).toContain("scope=read");
+  });
+
+  it("prints the request under the request step and the response under the received step once reached", () => {
+    const copied = generateXAAFlowText(
+      createInitialXAAFlowState({
+        currentStep: "received_access_token",
+        httpHistory: [
+          {
+            step: "jwt_bearer_request",
+            timestamp: 1,
+            duration: 40,
+            request: {
+              method: "POST",
+              url: "https://auth.example.com/token",
+              headers: { "Content-Type": "application/json" },
+              body: { scope: "mcp.access" },
+            },
+            response: {
+              status: 200,
+              statusText: "OK",
+              headers: { "content-type": "application/json" },
+              body: { token_type: "Bearer" },
+            },
+          },
+        ],
+      }),
+      {}
+    );
+
+    const requestHeader = copied.indexOf("[jwt_bearer_request]");
+    // lastIndexOf: the request section's pointer line also names the received
+    // step; the section HEADER is the later occurrence.
+    const receivedHeader = copied.lastIndexOf("[received_access_token]");
+    expect(requestHeader).toBeGreaterThan(-1);
+    expect(receivedHeader).toBeGreaterThan(requestHeader);
+
+    const requestSection = copied.slice(requestHeader, receivedHeader);
+    const receivedSection = copied.slice(receivedHeader);
+    // Request half: request fields + a pointer, no status/response fields.
+    expect(requestSection).toContain("Request Body:");
+    expect(requestSection).toContain(
+      "Response: recorded under [received_access_token]"
+    );
+    expect(requestSection).not.toContain("Status: 200");
+    expect(requestSection).not.toContain("Response Body:");
+    // Received half: status/duration/response fields, no request fields.
+    expect(receivedSection).toContain("Response to: POST");
+    expect(receivedSection).toContain("Status: 200 OK");
+    expect(receivedSection).toContain("Duration: 40ms");
+    expect(receivedSection).toContain("Response Body:");
+    expect(receivedSection).not.toContain("Request Body:");
+  });
+
+  it("hides a completed response until the received step is reached", () => {
+    const copied = generateXAAFlowText(
+      createInitialXAAFlowState({
+        currentStep: "jwt_bearer_request",
+        httpHistory: [
+          {
+            step: "jwt_bearer_request",
+            timestamp: 1,
+            request: {
+              method: "POST",
+              url: "https://auth.example.com/token",
+              headers: {},
+            },
+            response: {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: { token_type: "Bearer" },
+            },
+          },
+        ],
+      }),
+      {}
+    );
+
+    // The SDK already has the response, but the raw view follows Continue:
+    // only the request is visible until the received step is reached.
+    expect(copied).not.toContain("Status: 200 OK");
+    expect(copied).not.toContain("Response Body:");
+    expect(copied).toContain(
+      "Response: recorded under [received_access_token]"
+    );
+  });
+
+  it("keeps an HTTP error response with its request while the flow is parked", () => {
+    const copied = generateXAAFlowText(
+      createInitialXAAFlowState({
+        currentStep: "jwt_bearer_request",
+        error: "Authorization server rejected the request",
+        httpHistory: [
+          {
+            step: "jwt_bearer_request",
+            timestamp: 1,
+            duration: 40,
+            request: {
+              method: "POST",
+              url: "https://auth.example.com/token",
+              headers: { "Content-Type": "application/json" },
+              body: { scope: "mcp.access" },
+            },
+            response: {
+              status: 400,
+              statusText: "Bad Request",
+              headers: { "content-type": "application/json" },
+              body: { error: "invalid_grant" },
+            },
+          },
+        ],
+      }),
+      {}
+    );
+
+    expect(copied).toContain("Status: 400 Bad Request");
+    expect(copied).toContain("Request Body:");
+    expect(copied).toContain("Response Headers:");
+    expect(copied).toContain("Response Body:");
+    expect(copied).not.toContain(
+      "Response: recorded under [received_access_token]"
+    );
+  });
+
+  it("keeps a terminal negative-test response with its request", () => {
+    const copied = generateXAAFlowText(
+      createInitialXAAFlowState({
+        currentStep: "jwt_bearer_request",
+        negativeTestMode: "bad_signature",
+        negativeProbe: { outcome: "rejected", status: 400 },
+        httpHistory: [
+          {
+            step: "jwt_bearer_request",
+            timestamp: 1,
+            request: {
+              method: "POST",
+              url: "https://auth.example.com/token",
+              headers: {},
+            },
+            response: {
+              status: 200,
+              statusText: "OK",
+              headers: { "content-type": "application/json" },
+              body: { status: 400, body: { error: "invalid_grant" } },
+            },
+          },
+        ],
+      }),
+      {}
+    );
+
+    expect(copied).toContain("Status: 200 OK");
+    expect(copied).toContain("Response Headers:");
+    expect(copied).toContain("Response Body:");
+    expect(copied).not.toContain(
+      "Response: recorded under [received_access_token]"
+    );
   });
 
   it("redacts failed requests duplicated into info logs and error text", () => {

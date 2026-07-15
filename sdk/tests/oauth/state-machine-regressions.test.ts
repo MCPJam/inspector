@@ -409,7 +409,7 @@ describe("OAuth state machine regressions", () => {
     [false, false],
     [undefined, "false (not advertised, defaults to false per spec)"],
   ])(
-    "2025-11-25 AS metadata summary reports CIMD support when the field is %s",
+    "2025-11-25 preserves the derived CIMD decision when the field is %s",
     async (advertised, expectedRow) => {
       const asMetadata: Record<string, unknown> = {
         issuer: "https://auth.example.com",
@@ -467,9 +467,13 @@ describe("OAuth state machine regressions", () => {
       await machine.proceedToNextStep();
 
       expect(state.currentStep).toBe("received_authorization_server_metadata");
-      const summary = state.infoLogs?.find((log) => log.id === "as-metadata");
-      expect(summary).toBeDefined();
-      expect(summary?.data["CIMD Supported"]).toBe(expectedRow);
+      expect(
+        state.infoLogs?.find((log) => log.id === "as-metadata")
+      ).toBeUndefined();
+      const cimdSupport = state.infoLogs?.find(
+        (log) => log.id === "cimd-support"
+      );
+      expect(cimdSupport?.data["CIMD Supported"]).toBe(expectedRow);
     },
   );
 
@@ -712,6 +716,23 @@ describe("OAuth state machine regressions", () => {
 
     return state;
   };
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "keeps resource metadata only in the HTTP response card in %s",
+    async (protocolVersion) => {
+      const state = await runResourceMetadataStep(protocolVersion, SERVER_URL);
+
+      expect(
+        state.infoLogs?.find(
+          (log: any) => log.id === "authorization-servers",
+        ),
+      ).toBeUndefined();
+      expect(state.httpHistory.at(-1)?.response?.body).toEqual({
+        resource: SERVER_URL,
+        authorization_servers: ["https://auth.example.com"],
+      });
+    },
+  );
 
   it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
     "warns when the PRM resource fails strict validation in %s",

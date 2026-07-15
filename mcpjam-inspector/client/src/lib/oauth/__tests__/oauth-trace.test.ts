@@ -14,7 +14,7 @@ describe("oauth-trace mergeOAuthTraces", () => {
       steps: [
         {
           step: "request_client_registration",
-          title: "Dynamic Client Registration",
+          title: "Request Dynamic Client Registration",
           status: "success",
           message: "Registered OAuth client.",
           startedAt: 100,
@@ -41,7 +41,7 @@ describe("oauth-trace mergeOAuthTraces", () => {
       steps: [
         {
           step: "request_client_registration",
-          title: "Dynamic Client Registration",
+          title: "Request Dynamic Client Registration",
           status: "success",
           startedAt: 500,
           completedAt: 510,
@@ -62,7 +62,7 @@ describe("oauth-trace mergeOAuthTraces", () => {
         },
         {
           step: "token_request",
-          title: "Exchange Authorization Code",
+          title: "Request Tokens with Authorization Code",
           status: "success",
           startedAt: 560,
           completedAt: 580,
@@ -128,7 +128,7 @@ describe("oauth-trace mergeOAuthTraces", () => {
         },
         {
           step: "token_request",
-          title: "Exchange Authorization Code",
+          title: "Request Tokens with Authorization Code",
           status: "pending",
           startedAt: 30,
         },
@@ -144,7 +144,7 @@ describe("oauth-trace mergeOAuthTraces", () => {
       steps: [
         {
           step: "token_request",
-          title: "Exchange Authorization Code",
+          title: "Request Tokens with Authorization Code",
           status: "success",
           message: "Token exchange succeeded.",
           startedAt: 40,
@@ -212,7 +212,7 @@ describe("oauth-trace mergeOAuthTraces", () => {
       "received_client_credentials",
     ]);
     expect(snapshot.steps[0]).toMatchObject({
-      title: "Client Credentials Ready",
+      title: "Client Credentials Received",
       message: "Client ID Metadata Document",
     });
   });

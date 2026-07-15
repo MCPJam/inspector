@@ -962,18 +962,10 @@ export const createDebugOAuthStateMachine = (
               const authorizationServerUrl =
                 resourceMetadata.authorization_servers?.[0] || serverUrl;
 
-              // Add info log for Authorization Servers
-              let infoLogs = addInfoLog(
-                state,
-                "received_resource_metadata",
-                "authorization-servers",
-                "Authorization Servers",
-                {
-                  Resource: resourceMetadata.resource,
-                  "Authorization Servers":
-                    resourceMetadata.authorization_servers,
-                }
-              );
+              // The response card is the complete protected-resource metadata.
+              // Keep existing logs only for distinct findings, such as a
+              // resource identifier mismatch below.
+              let infoLogs = state.infoLogs ?? [];
 
               // Resolve the resource indicator ONCE (rejecting/warning per
               // the surface's enforcement mode); every later request and
@@ -1182,55 +1174,20 @@ export const createDebugOAuthStateMachine = (
               );
             }
 
-            // Add info log for Authorization Server Metadata
-            const metadata: Record<string, any> = {
-              Issuer: authServerMetadata.issuer,
-              "Authorization Endpoint":
-                authServerMetadata.authorization_endpoint,
-              "Token Endpoint": authServerMetadata.token_endpoint,
-            };
-
-            if (authServerMetadata.registration_endpoint) {
-              metadata["Registration Endpoint"] =
-                authServerMetadata.registration_endpoint;
-            }
-            // CIMD support gates the CIMD registration strategy (see the
-            // client_id_metadata_document_supported check below), so surface it
-            // in the summary. Per draft-parecki-oauth-client-id-metadata-document
-            // an omitted field defaults to false, so absence is still reported —
-            // with provenance, to distinguish it from an advertised boolean.
-            if (
+            // The response card already shows the complete metadata document.
+            // Keep only the CIMD decision, which is derived from an absent-or-
+            // boolean field and therefore is not otherwise visible in raw JSON.
+            const cimdSupported =
               typeof authServerMetadata.client_id_metadata_document_supported ===
               "boolean"
-            ) {
-              metadata["CIMD Supported"] =
-                authServerMetadata.client_id_metadata_document_supported;
-            } else {
-              metadata["CIMD Supported"] =
-                "false (not advertised, defaults to false per spec)";
-            }
-            if (authServerMetadata.code_challenge_methods_supported) {
-              metadata["PKCE Methods"] =
-                authServerMetadata.code_challenge_methods_supported;
-            }
-            if (authServerMetadata.grant_types_supported) {
-              metadata["Grant Types"] =
-                authServerMetadata.grant_types_supported;
-            }
-            if (authServerMetadata.response_types_supported) {
-              metadata["Response Types"] =
-                authServerMetadata.response_types_supported;
-            }
-            if (authServerMetadata.scopes_supported) {
-              metadata["Scopes"] = authServerMetadata.scopes_supported;
-            }
-
+                ? authServerMetadata.client_id_metadata_document_supported
+                : "false (not advertised, defaults to false per spec)";
             const infoLogs = addInfoLog(
               getCurrentState(),
               "received_authorization_server_metadata",
-              "as-metadata",
-              "Authorization Server Metadata",
-              metadata
+              "cimd-support",
+              "Derived: CIMD Support",
+              { "CIMD Supported": cimdSupported }
             );
 
             if (!supportedMethods.includes("S256")) {

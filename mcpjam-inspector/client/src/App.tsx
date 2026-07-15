@@ -91,6 +91,11 @@ import {
 } from "./stores/preferences/preferences-provider";
 import { Toaster } from "@mcpjam/design-system/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
+import {
+  useHiddenHeaderServers,
+  type HeaderSurface,
+} from "./hooks/useHiddenHeaderServers";
+import { hasDebuggerHeaderServers } from "./lib/debugger-header-servers";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
@@ -1260,11 +1265,13 @@ export function OAuthFlowRoute() {
   const {
     appState,
     displayServerConfigs,
+    areServersHydrated,
     setSelectedServer,
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
     oauthServerModalNonce,
+    oauthDebuggerHasHeaderServers,
   } = useAppRouteContext();
 
   return (
@@ -1316,6 +1323,8 @@ export function OAuthFlowRoute() {
       <OAuthFlowTab
         serverConfigs={displayServerConfigs}
         selectedServerName={appState.selectedServer}
+        hasHeaderServers={oauthDebuggerHasHeaderServers}
+        areServersHydrated={areServersHydrated}
         onSelectServer={setSelectedServer}
         onSaveServerConfig={saveServerConfigWithoutConnecting}
         onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
@@ -1331,12 +1340,14 @@ export function XAAFlowRoute() {
     xaaEnabled,
     appState,
     displayServerConfigs,
+    areServersHydrated,
     activeOrganizationId,
     activeProject,
     convexProjectId,
     setSelectedServer,
     saveServerConfigWithoutConnecting,
     xaaServerModalNonce,
+    xaaDebuggerHasHeaderServers,
   } = useAppRouteContext();
   if (xaaEnabled !== true) return null;
 
@@ -1355,6 +1366,8 @@ export function XAAFlowRoute() {
         // runner saw a confidential server as a public client with no issuer.
         serverConfigs={displayServerConfigs}
         selectedServerName={appState.selectedServer}
+        hasHeaderServers={xaaDebuggerHasHeaderServers}
+        areServersHydrated={areServersHydrated}
         organizationId={activeOrganizationId ?? null}
         projectId={convexProjectId ?? null}
         projectXaaTestDefaults={activeProject?.xaaTestDefaults ?? null}
@@ -1561,6 +1574,19 @@ export default function App() {
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
+
+  // Per-tab "hide from this header" list for the OAuth / XAA debugger chip strip.
+  // View-only (localStorage) — the x on a chip dismisses it from this header
+  // without touching the server's config, tokens, or Convex row.
+  const headerHiddenSurface: HeaderSurface | null =
+    activeTab === "oauth-flow"
+      ? "oauth"
+      : activeTab === "xaa-flow" && xaaEnabled === true
+        ? "xaa"
+        : null;
+  const { hidden: hiddenHeaderServers, hide: hideHeaderServer } =
+    useHiddenHeaderServers(headerHiddenSurface);
+
   const {
     getAccessToken,
     signIn,
@@ -3281,6 +3307,16 @@ export default function App() {
     (activeTab === "xaa-flow" && xaaEnabled === true) ||
     activeTab === "chat";
 
+  const oauthDebuggerHasHeaderServers = hasDebuggerHeaderServers({
+    serverConfigs: projectServers,
+    hiddenServers: hiddenHeaderServers,
+  });
+  const xaaDebuggerHasHeaderServers = hasDebuggerHeaderServers({
+    serverConfigs: projectServers,
+    hiddenServers: hiddenHeaderServers,
+    includeXaaServers: true,
+  });
+
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
       ? {
@@ -3323,9 +3359,21 @@ export default function App() {
             activeTab === "oauth-flow" ||
             (activeTab === "xaa-flow" && xaaEnabled === true),
           includeXaaServers: activeTab === "xaa-flow" && xaaEnabled === true,
+          // Only the OAuth / XAA debugger headers get the "hide from this tab"
+          // x button; other surfaces omit onHideServer so no x renders.
+          hiddenServers: hiddenHeaderServers,
+          onHideServer: headerHiddenSurface ? hideHeaderServer : undefined,
+          // Debugger tabs: if the header has an eligible target and NOTHING
+          // is selected yet, select it instead of leaving the canvas in a
+          // prompt-less empty state — but never replace an existing
+          // selection, since the debuggers fire live auth requests at their
+          // target and it must not change without an explicit click. Other
+          // tabs keep full auto-select (stale selections get replaced).
           autoSelectFilteredServer:
-            activeTab !== "oauth-flow" &&
-            !(activeTab === "xaa-flow" && xaaEnabled === true),
+            activeTab === "oauth-flow" ||
+            (activeTab === "xaa-flow" && xaaEnabled === true)
+              ? "when-empty"
+              : true,
           showOnlyServersWithViews: false,
           hasMessages: false,
         }
@@ -3342,7 +3390,11 @@ export default function App() {
     // on the publish surface (and a matching pill on other sub-tabs).
     activeTab !== "playground" &&
     activeTab !== "chatboxes" &&
-    activeTab !== "swarms"
+    activeTab !== "swarms" &&
+    // The OAuth / XAA debuggers target a specific server via their own server
+    // picker; the global host/client bar is irrelevant there.
+    activeTab !== "oauth-flow" &&
+    activeTab !== "xaa-flow"
       ? {
           projectId: convexProjectId,
           onEditHost: (hostId: string) => {
@@ -3468,6 +3520,8 @@ export default function App() {
     upgradePlanForActiveTab,
     workOsUser,
     xaaEnabled,
+    oauthDebuggerHasHeaderServers,
+    xaaDebuggerHasHeaderServers,
     xaaServerModalNonce,
     oauthServerModalNonce,
   };

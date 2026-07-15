@@ -5,17 +5,28 @@ import {
   type OAuthFlowStep,
 } from "@mcpjam/sdk/browser";
 import { Circle, CheckCircle2 } from "lucide-react";
+import type { HttpEntryView } from "@/lib/http-entry-views";
+import { getOAuthReceivedStepForRequest } from "@/lib/oauth/step-pairing";
 
 interface StepEntry {
   type: "info" | "http";
   log?: NonNullable<OAuthFlowState["infoLogs"]>[number];
   entry?: NonNullable<OAuthFlowState["httpHistory"]>[number];
+  /** Which half of the exchange this item presents (split display); absent
+   * means the classic combined entry. */
+  view?: HttpEntryView;
+  /** Display timestamp for split items (response items sort at arrival). */
+  timestamp?: number;
 }
 
 interface StepGroup {
   step: OAuthFlowStep;
   entries: StepEntry[];
   firstTimestamp: number;
+}
+
+interface StepCopyOptions {
+  step?: OAuthFlowStep;
 }
 
 const formatTimestamp = (timestamp: number) =>
@@ -57,7 +68,7 @@ const isSensitiveContainerKey = (key: string) => {
   return (
     SENSITIVE_FIELDS.has(normalized) ||
     /(^|_)(token|secret|password|credential|cookie|auth)(_|$)/.test(
-      normalized,
+      normalized
     ) ||
     /(^|_)api_?key(_|$)/.test(normalized)
   );
@@ -78,7 +89,7 @@ const sensitiveStringFieldPattern = [...SENSITIVE_FIELDS]
 
 const sensitiveStringAssignmentPattern = new RegExp(
   `\\b((?:${sensitiveStringFieldPattern})\\s*["']?\\s*[:=]\\s*["']?)([^"'&\\r\\n,}]+)`,
-  "gi",
+  "gi"
 );
 
 function sanitizeCopyString(value: string): unknown {
@@ -108,20 +119,18 @@ function sanitizeCopyValue(value: unknown): unknown {
     Object.entries(value).map(([key, entryValue]) => [
       key,
       isSensitiveField(key) ? REDACTED : sanitizeCopyValue(entryValue),
-    ]),
+    ])
   );
 }
 
 function sanitizeCopyHeaders(
-  headers: Record<string, string>,
+  headers: Record<string, string>
 ): Record<string, string> {
   return Object.fromEntries(
     Object.entries(headers).map(([key, value]) => [
       key,
-      isSensitiveContainerKey(key)
-        ? REDACTED
-        : stringifyCopyValue(value),
-    ]),
+      isSensitiveContainerKey(key) ? REDACTED : stringifyCopyValue(value),
+    ])
   );
 }
 
@@ -151,7 +160,7 @@ const getErrorStack = (
   error:
     | NonNullable<OAuthFlowState["infoLogs"]>[number]["error"]
     | NonNullable<OAuthFlowState["httpHistory"]>[number]["error"]
-    | undefined,
+    | undefined
 ): string | undefined => {
   if (
     error?.details &&
@@ -203,6 +212,7 @@ const getStatusIcon = (step: OAuthFlowStep, currentStepIndex: number) => {
 export function generateGuideText(
   oauthFlowState: OAuthFlowState,
   groups: StepGroup[],
+  options?: StepCopyOptions
 ): string {
   let text = "=== OAuth Debugger - Guide View ===\n\n";
 
@@ -218,6 +228,8 @@ export function generateGuideText(
   const currentStepIndex = getStepIndex(oauthFlowState.currentStep);
 
   groups.forEach((group, groupIndex) => {
+    if (options?.step && group.step !== options.step) return;
+
     const info = getStepInfo(group.step);
     const stepNumber = groupIndex + 1;
     const statusInfo = getStatusIcon(group.step, currentStepIndex);
@@ -259,18 +271,43 @@ export function generateGuideText(
         text += "\n";
       } else if (entry.type === "http" && entry.entry) {
         const httpEntry = entry.entry;
-        text += `[${formatTimestamp(httpEntry.timestamp)}] ${httpEntry.request.method} ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
+        // Mirrors the Guide tab's split: request halves print under the
+        // request step, response halves under the paired received step.
+        const view = entry.view ?? "full";
+        const showRequest = view !== "response";
+        const showResponse = view !== "request";
 
-        if (httpEntry.duration) {
+        if (view === "response") {
+          text += `[${formatTimestamp(
+            entry.timestamp ?? httpEntry.timestamp
+          )}] Response to: ${httpEntry.request.method} ${sanitizeCopyUrl(
+            httpEntry.request.url
+          )}\n`;
+        } else {
+          text += `[${formatTimestamp(httpEntry.timestamp)}] Request: ${
+            httpEntry.request.method
+          } ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
+        }
+
+        if (showResponse && httpEntry.duration) {
           text += `Duration: ${httpEntry.duration}ms\n`;
         }
 
-        if (httpEntry.response?.status) {
-          text += `Status: ${httpEntry.response.status} ${httpEntry.response.statusText || ""}\n`;
+        if (showResponse && httpEntry.response?.status) {
+          text += `Status: ${httpEntry.response.status} ${
+            httpEntry.response.statusText || ""
+          }\n`;
+        }
+
+        if (view === "request" && httpEntry.response) {
+          text += `Response: recorded under [${getOAuthReceivedStepForRequest(
+            httpEntry.step
+          )}]\n`;
         }
 
         // Request details
         if (
+          showRequest &&
           httpEntry.request.headers &&
           Object.keys(httpEntry.request.headers).length > 0
         ) {
@@ -278,17 +315,18 @@ export function generateGuideText(
           text += `${JSON.stringify(
             sanitizeCopyHeaders(httpEntry.request.headers),
             null,
-            2,
+            2
           )}\n`;
         }
 
-        if (httpEntry.request.body) {
+        if (showRequest && httpEntry.request.body) {
           text += "\nRequest Body:\n";
           text += `${stringifyCopyValue(httpEntry.request.body)}\n`;
         }
 
         // Response details
         if (
+          showResponse &&
           httpEntry.response?.headers &&
           Object.keys(httpEntry.response.headers).length > 0
         ) {
@@ -296,11 +334,11 @@ export function generateGuideText(
           text += `${JSON.stringify(
             sanitizeCopyHeaders(httpEntry.response.headers),
             null,
-            2,
+            2
           )}\n`;
         }
 
-        if (httpEntry.response?.body) {
+        if (showResponse && httpEntry.response?.body) {
           text += "\nResponse Body:\n";
           text += `${stringifyCopyValue(httpEntry.response.body)}\n`;
         }
@@ -333,22 +371,36 @@ export function generateRawText(
         type: "http";
         timestamp: number;
         entry: NonNullable<OAuthFlowState["httpHistory"]>[number];
+        /** Display step/view; omitted by older callers to preserve full view. */
+        step?: OAuthFlowStep;
+        view?: HttpEntryView;
         key: string;
       }
   >,
+  options?: StepCopyOptions
 ): string {
   let text = "=== OAuth Debugger - Raw Logs ===\n\n";
 
-  if (timelineEntries.length === 0) {
+  const entriesToCopy = options?.step
+    ? timelineEntries.filter((entry) =>
+        entry.type === "info"
+          ? entry.log.step === options.step
+          : (entry.step ?? entry.entry.step) === options.step
+      )
+    : timelineEntries;
+
+  if (entriesToCopy.length === 0) {
     text += "No activity yet.\n";
     return text;
   }
 
-  timelineEntries.forEach((entry) => {
+  entriesToCopy.forEach((entry) => {
     if (entry.type === "info") {
       const log = entry.log;
       const level = log.level ?? "info";
-      text += `[${formatTimestamp(log.timestamp)}] [${level.toUpperCase()}] ${log.step}\n`;
+      text += `[${formatTimestamp(log.timestamp)}] [${level.toUpperCase()}] ${
+        log.step
+      }\n`;
       text += `${log.label || "Info"}\n`;
       if (log.data) {
         text += `${stringifyCopyValue(log.data)}\n`;
@@ -363,21 +415,40 @@ export function generateRawText(
       text += "\n";
     } else {
       const httpEntry = entry.entry;
+      const view = entry.view ?? "full";
+      const displayStep = entry.step ?? httpEntry.step;
+      const showRequest = view !== "response";
+      const showResponse = view !== "request";
       const status = httpEntry.response?.status;
       const statusLabel =
-        status !== undefined
-          ? `${status}${httpEntry.response?.statusText ? ` ${httpEntry.response?.statusText}` : ""}`
+        view === "request" && status !== undefined
+          ? "request sent"
+          : status !== undefined
+          ? `${status}${
+              httpEntry.response?.statusText
+                ? ` ${httpEntry.response?.statusText}`
+                : ""
+            }`
           : "pending";
 
-      text += `[${formatTimestamp(httpEntry.timestamp)}] [${httpEntry.request.method}] [${statusLabel}] ${httpEntry.step}\n`;
-      text += `URL: ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
+      text += `[${formatTimestamp(entry.timestamp)}] [${
+        httpEntry.request.method
+      }] [${statusLabel}] ${displayStep}\n`;
+      if (view === "response") {
+        text += `Response to: ${httpEntry.request.method} ${sanitizeCopyUrl(
+          httpEntry.request.url
+        )}\n`;
+      } else {
+        text += `Request URL: ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
+      }
 
-      if (httpEntry.duration) {
+      if (showResponse && httpEntry.duration) {
         text += `Duration: ${httpEntry.duration}ms\n`;
       }
 
       // Request details
       if (
+        showRequest &&
         httpEntry.request.headers &&
         Object.keys(httpEntry.request.headers).length > 0
       ) {
@@ -385,17 +456,24 @@ export function generateRawText(
         text += `${JSON.stringify(
           sanitizeCopyHeaders(httpEntry.request.headers),
           null,
-          2,
+          2
         )}\n`;
       }
 
-      if (httpEntry.request.body) {
+      if (showRequest && httpEntry.request.body) {
         text += "\nRequest Body:\n";
         text += `${stringifyCopyValue(httpEntry.request.body)}\n`;
       }
 
+      if (view === "request" && httpEntry.response) {
+        text += `Response: recorded under [${getOAuthReceivedStepForRequest(
+          httpEntry.step
+        )}]\n`;
+      }
+
       // Response details
       if (
+        showResponse &&
         httpEntry.response?.headers &&
         Object.keys(httpEntry.response.headers).length > 0
       ) {
@@ -403,11 +481,11 @@ export function generateRawText(
         text += `${JSON.stringify(
           sanitizeCopyHeaders(httpEntry.response.headers),
           null,
-          2,
+          2
         )}\n`;
       }
 
-      if (httpEntry.response?.body) {
+      if (showResponse && httpEntry.response?.body) {
         text += "\nResponse Body:\n";
         text += `${stringifyCopyValue(httpEntry.response.body)}\n`;
       }

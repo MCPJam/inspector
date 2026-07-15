@@ -18,8 +18,7 @@ describe("OAuth copy log formatters", () => {
         body: "client_secret=info-client-secret&code=info-code-secret",
         request:
           "clientSecret=camel-client-secret&accessToken=camel-access-secret&authorization=text-auth-secret&cookie=text-cookie-secret&credential=text-credential-secret&setCookie=text-set-cookie-secret",
-        basicAuthorization:
-          "Authorization: Basic dXNlcjpwYXNzd29yZA==",
+        basicAuthorization: "Authorization: Basic dXNlcjpwYXNzd29yZA==",
       },
       error: {
         message: "Bearer info-error-secret",
@@ -119,5 +118,155 @@ describe("OAuth copy log formatters", () => {
     expect(infoLog.data.token).toBe("exact-token-secret");
     expect(httpEntry.request.url).toContain("url-user-secret");
     expect(httpEntry.response.body).toContain("response-access-secret");
+  });
+
+  it("prints split request/response halves under their own step sections", () => {
+    // The logger splits a reached exchange into a request item on the request
+    // step and a response item on the paired received step; the guide text
+    // must mirror that placement.
+    const httpEntry = {
+      step: "token_request" as OAuthFlowStep,
+      timestamp: 10,
+      duration: 25,
+      request: {
+        method: "POST",
+        url: "https://auth.example.com/token",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "grant_type=authorization_code",
+      },
+      response: {
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token_type: "Bearer" }),
+      },
+    } as any;
+    const state = {
+      currentStep: "received_access_token",
+      infoLogs: [],
+      httpHistory: [httpEntry],
+    } as unknown as OAuthFlowState;
+
+    const guide = generateGuideText(state, [
+      {
+        step: "token_request" as OAuthFlowStep,
+        entries: [
+          { type: "http", entry: httpEntry, view: "request", timestamp: 10 },
+        ],
+        firstTimestamp: 10,
+      },
+      {
+        step: "received_access_token" as OAuthFlowStep,
+        entries: [
+          { type: "http", entry: httpEntry, view: "response", timestamp: 35 },
+        ],
+        firstTimestamp: 35,
+      },
+    ]);
+
+    const requestHeader = guide.indexOf(
+      "Request Tokens with Authorization Code"
+    );
+    const receivedHeader = guide.indexOf("Tokens Received");
+    expect(requestHeader).toBeGreaterThan(-1);
+    expect(receivedHeader).toBeGreaterThan(requestHeader);
+
+    const requestSection = guide.slice(requestHeader, receivedHeader);
+    const receivedSection = guide.slice(receivedHeader);
+    expect(requestSection).toContain("Request Body:");
+    expect(requestSection).toContain(
+      "Response: recorded under [received_access_token]"
+    );
+    expect(requestSection).not.toContain("Status: 200");
+    expect(requestSection).not.toContain("Response Body:");
+    expect(receivedSection).toContain("Response to: POST");
+    expect(receivedSection).toContain("Status: 200 OK");
+    expect(receivedSection).toContain("Duration: 25ms");
+    expect(receivedSection).toContain("Response Body:");
+    expect(receivedSection).not.toContain("Request Body:");
+  });
+
+  it("keeps the original guide step number when copying one step", () => {
+    const state = { currentStep: "token_request" } as OAuthFlowState;
+    const groups = [
+      {
+        step: "request_without_token" as OAuthFlowStep,
+        entries: [],
+        firstTimestamp: 1,
+      },
+      {
+        step: "received_401_unauthorized" as OAuthFlowStep,
+        entries: [],
+        firstTimestamp: 2,
+      },
+      {
+        step: "token_request" as OAuthFlowStep,
+        entries: [],
+        firstTimestamp: 3,
+      },
+    ];
+
+    const copied = generateGuideText(state, groups, {
+      step: "token_request",
+    });
+
+    expect(copied).toContain("3. Request Tokens with Authorization Code");
+    expect(copied).not.toContain("1. Request Tokens with Authorization Code");
+  });
+
+  it("prints raw request and response halves under their own steps", () => {
+    const httpEntry = {
+      step: "request_without_token" as OAuthFlowStep,
+      timestamp: 10,
+      duration: 25,
+      request: {
+        method: "POST",
+        url: "https://mcp.example.com/mcp",
+        headers: { Accept: "application/json" },
+        body: { jsonrpc: "2.0" },
+      },
+      response: {
+        status: 401,
+        statusText: "Unauthorized",
+        headers: { "www-authenticate": "Bearer" },
+        body: { error: "unauthorized" },
+      },
+    } as any;
+    const raw = generateRawText({} as OAuthFlowState, [
+      {
+        type: "http",
+        timestamp: 10,
+        entry: httpEntry,
+        step: "request_without_token",
+        view: "request",
+        key: "request",
+      },
+      {
+        type: "http",
+        timestamp: 35,
+        entry: httpEntry,
+        step: "received_401_unauthorized",
+        view: "response",
+        key: "response",
+      },
+    ]);
+
+    const requestSection = raw.indexOf("[request sent]");
+    const responseSection = raw.lastIndexOf("[401 Unauthorized]");
+    expect(requestSection).toBeGreaterThan(-1);
+    expect(responseSection).toBeGreaterThan(requestSection);
+    const requestText = raw.slice(requestSection, responseSection);
+    const responseText = raw.slice(responseSection);
+    expect(raw).toContain("request_without_token");
+    expect(raw).toContain("received_401_unauthorized");
+    expect(requestText).toContain("Request Body:");
+    expect(requestText).toContain(
+      "Response: recorded under [received_401_unauthorized]"
+    );
+    expect(requestText).not.toContain("Response Headers:");
+    expect(responseText).toContain("[401 Unauthorized]");
+    expect(responseText).toContain("Response to: POST");
+    expect(responseText).toContain("Response Headers:");
+    expect(responseText).not.toContain("Request Body:");
   });
 });

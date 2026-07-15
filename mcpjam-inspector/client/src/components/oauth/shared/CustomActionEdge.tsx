@@ -25,14 +25,33 @@ export const CustomActionEdge = memo(
 
     const labelX = (sourceX + targetX) / 2;
     const labelY = (sourceY + targetY) / 2;
+    // Keep the label inside the edge so the arrow remains visible on both
+    // sides. Long values (especially MCP URLs) should not cover the entire
+    // request/response line.
+    const labelMaxWidth = Math.max(
+      160,
+      Math.min(420, Math.abs(targetX - sourceX) * 0.8)
+    );
+    // code_challenge and resource reappear as chips on the very next
+    // authorization_request arrow, so trimming them here just avoids a
+    // duplicate. `method` (code_challenge_method, e.g. S256) has no other
+    // labeled home anywhere in the diagram or logs — keep it.
+    const details =
+      data.stepId === "generate_pkce_parameters"
+        ? data.details?.filter(
+            (detail) => !["code_challenge", "resource"].includes(detail.label)
+          )
+        : data.details;
 
     return (
       <>
-        <BaseEdge
-          path={`M ${sourceX},${sourceY} L ${targetX},${targetY}`}
-          style={style}
-          markerEnd={markerEnd}
-        />
+        {!data.isInternal && (
+          <BaseEdge
+            path={`M ${sourceX},${sourceY} L ${targetX},${targetY}`}
+            style={style}
+            markerEnd={markerEnd}
+          />
+        )}
         <EdgeLabelRenderer>
           <div
             style={{
@@ -44,16 +63,30 @@ export const CustomActionEdge = memo(
           >
             <div
               className={cn(
-                "px-3 py-1.5 rounded border text-xs shadow-sm backdrop-blur-sm",
-                statusColor,
+                "w-fit max-w-full overflow-hidden rounded border px-2 py-1 text-[11px] leading-tight shadow-sm backdrop-blur-sm",
+                statusColor
               )}
+              style={{ maxWidth: labelMaxWidth }}
             >
-              <div className="font-medium">{data.label}</div>
-              {data.details && data.details.length > 0 && (
-                <div className="text-[10px] text-muted-foreground mt-0.5">
-                  {data.details.map((d, i) => (
-                    <div key={i}>
-                      {d.label}: {d.value}
+              <div className="truncate font-medium" title={data.label}>
+                {data.label}
+              </div>
+              {details && details.length > 0 && (
+                <div className="mt-0.5 flex min-w-0 flex-col gap-0.5 text-[9px] leading-tight text-muted-foreground">
+                  {details.map((d, i) => (
+                    <div
+                      key={i}
+                      className="flex min-w-0 items-baseline gap-1 whitespace-nowrap"
+                    >
+                      <span className="shrink-0">{d.label}:</span>
+                      <span
+                        className="min-w-0 truncate"
+                        title={
+                          typeof d.value === "string" ? d.value : undefined
+                        }
+                      >
+                        {d.value}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -63,7 +96,7 @@ export const CustomActionEdge = memo(
         </EdgeLabelRenderer>
       </>
     );
-  },
+  }
 );
 
 CustomActionEdge.displayName = "CustomActionEdge";
