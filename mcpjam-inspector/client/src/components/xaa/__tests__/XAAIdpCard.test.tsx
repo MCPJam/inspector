@@ -265,21 +265,26 @@ describe("XAAIdpCard (non-hosted mode)", () => {
       copyToClipboard: async () => true,
     }));
     const { XAAIdpCard: LocalIdpCard } = await import("../XAAIdpCard");
+    const user = userEvent.setup();
 
     render(<LocalIdpCard />);
 
-    expect(
-      screen.getByText(/Expose\s+MCPJam with a public tunnel/i)
-    ).toBeInTheDocument();
+    await user.hover(
+      screen.getByRole("button", { name: /about local issuer urls/i })
+    );
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      /Expose\s+MCPJam with a public tunnel/i
+    );
   });
 
-  it("badges the hosted-issuer toggle for guest sessions (anonymous kind)", async () => {
+  it("keeps the hosted-issuer toggle usable for guest sessions (anonymous kind)", async () => {
     vi.resetModules();
     vi.doMock("@/lib/config", () => ({ HOSTED_MODE: false }));
     vi.doMock("@/lib/clipboard", () => ({
       copyToClipboard: async () => true,
     }));
     const { XAAIdpCard: LocalIdpCard } = await import("../XAAIdpCard");
+    const user = userEvent.setup();
 
     render(
       <LocalIdpCard
@@ -291,10 +296,12 @@ describe("XAAIdpCard (non-hosted mode)", () => {
       />
     );
 
-    expect(screen.getByTestId("anonymous-issuer-badge")).toHaveTextContent(
-      /anonymous test issuer/i
+    await user.hover(
+      screen.getByRole("button", { name: /about the hosted issuer/i })
     );
-    expect(screen.getByText(/must explicitly allowlist/i)).toBeInTheDocument();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      /must explicitly allowlist/i
+    );
     // The toggle itself stays usable for guests with an org.
     expect(
       screen.getByRole("switch", { name: /use hosted issuer/i })
