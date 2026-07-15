@@ -41,7 +41,6 @@ import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
 import { HostCompatPage } from "./components/compat/HostCompatPage";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
-import { XAASetupPage } from "./components/xaa/setup/XAASetupPage";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
 import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
@@ -210,6 +209,7 @@ import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import {
   getDefaultClientCapabilities,
   isKnownProtocolVersion,
+  readXaaEnterprisePolicy,
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import {
@@ -1379,26 +1379,6 @@ export function XAAFlowRoute() {
   );
 }
 
-export function XAASetupRoute() {
-  const { xaaEnabled, activeOrganizationId } = useAppRouteContext();
-  // Same gates as the surfaces that link here: the debugger flag plus the
-  // registration flag (the setup center manages registered resource apps).
-  if (xaaEnabled !== true) return null;
-
-  return (
-    <ErrorBoundary
-      fallback={
-        <div className="flex items-center justify-center h-full text-muted-foreground">
-          Something went wrong in the XAA setup center. Try refreshing the
-          page.
-        </div>
-      }
-    >
-      <XAASetupPage organizationId={activeOrganizationId ?? null} />
-    </ErrorBoundary>
-  );
-}
-
 export function TracingRoute() {
   return <TracingTab />;
 }
@@ -2534,6 +2514,14 @@ export default function App() {
       mcpProtocolVersionsByServerId[serverId] = effective;
     }
 
+    // Enterprise-managed authorization policy — sent only when validly ON.
+    // An `invalid` stored value is NOT silently dropped to off: host-bound
+    // turns hit the server-authoritative 409, and interactive connects
+    // fail in buildResolverConnectionDefaults with an actionable message.
+    const xaaPolicyState = readXaaEnterprisePolicy(activeMcpProfile);
+    const xaaPolicy =
+      xaaPolicyState.kind === "on" ? xaaPolicyState.policy : undefined;
+
     return {
       clientInfo,
       supportedProtocolVersions,
@@ -2541,6 +2529,7 @@ export default function App() {
         Object.keys(mcpProtocolVersionsByServerId).length > 0
           ? mcpProtocolVersionsByServerId
           : undefined,
+      xaaPolicy,
     };
   }, [
     activeHost?.serverConnectionOverrides,
@@ -2556,6 +2545,7 @@ export default function App() {
     supportedProtocolVersions: hostedMcpProfilePins.supportedProtocolVersions,
     mcpProtocolVersionsByServerId:
       hostedMcpProfilePins.mcpProtocolVersionsByServerId,
+    xaaPolicy: hostedMcpProfilePins.xaaPolicy,
     clientConfigSyncPending:
       isClientConfigSyncPending || isProjectServerConfigLoading,
     getAccessToken,

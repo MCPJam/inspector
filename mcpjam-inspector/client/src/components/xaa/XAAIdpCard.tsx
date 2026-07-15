@@ -1,24 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  AlertTriangle,
-  Check,
-  Copy,
-  Info,
-  KeyRound,
-  Settings2,
-} from "lucide-react";
+import { AlertTriangle, Check, Copy, Info, KeyRound } from "lucide-react";
 import { Switch } from "@mcpjam/design-system/switch";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
+import { SegmentedControl } from "@/components/ui/json-editor/segmented-control";
 import { HOSTED_MODE } from "@/lib/config";
 import { copyToClipboard } from "@/lib/clipboard";
-import { buildXaaSetupPath, useAppNavigate } from "@/lib/app-navigation";
 import {
   fetchXaaIdpUrls,
   getHostedXaaIdpUrls,
   getXaaIdpUrls,
 } from "@/lib/xaa/idp-endpoints";
 import type { XaaIssuerMode } from "@/hooks/useXaaRunSettings";
+import type { IdentityAssertionFormat } from "@/shared/xaa.js";
+import { IDENTITY_ASSERTION_FORMAT_HINTS } from "./xaa-server-form";
 
 // A compact click-to-copy chip: shows only the label to keep the bar minimal —
 // the long URL stays hidden (revealed on hover via the native title) and the
@@ -113,6 +108,9 @@ export function XAAIdpCard({
   canUseHostedIssuer = false,
   hostedIssuerDisabledReason,
   issuerKind = "org",
+  identityAssertionFormat,
+  onIdentityAssertionFormatChange,
+  identityAssertionFormatDisabledReason = null,
 }: {
   organizationId?: string | null;
   /** LOCAL builds only: which issuer mints this run's assertions. */
@@ -128,16 +126,18 @@ export function XAAIdpCard({
    * explicitly allowlist; NOT enterprise-managed-authorization
    * conformance). */
   issuerKind?: "org" | "anonymous";
+  /**
+   * The active target's identity-assertion preset (per-server, persisted).
+   * The OIDC/SAML control renders only when the change handler is provided —
+   * surfaces without a persistence path (e.g. the setup center) omit it.
+   */
+  identityAssertionFormat?: IdentityAssertionFormat;
+  onIdentityAssertionFormatChange?: (format: IdentityAssertionFormat) => void;
+  /** Non-null disables the format control and explains why (native title). */
+  identityAssertionFormatDisabledReason?: string | null;
 }) {
   const hostedIssuerOn =
     !HOSTED_MODE && issuerMode === "hosted" && canUseHostedIssuer;
-
-  // Entry point to the setup center (org People / app connections / access
-  // policy). Hosted + org + registration flag: exactly the surface the setup
-  // routes require, so the gear never links to a blank page.
-  const navigate = useAppNavigate();
-  const showSetupLink =
-    HOSTED_MODE && Boolean(organizationId);
 
   // Start from the browser-origin guess, then swap in the server-advertised
   // issuer once resolved — see fetchXaaIdpUrls for why the guess can be wrong.
@@ -204,23 +204,57 @@ export function XAAIdpCard({
               <CopyField label="OpenID Config" value={openidConfigUrl} />
               <CopyField label="JWKS URL" value={jwksUrl} />
             </div>
+            {identityAssertionFormat && onIdentityAssertionFormatChange && (
+              <div
+                className="flex shrink-0 items-center gap-1.5"
+                title={identityAssertionFormatDisabledReason ?? undefined}
+                data-testid="identity-assertion-toggle"
+              >
+                <span className="text-xs text-muted-foreground">
+                  Identity assertion
+                </span>
+                <SegmentedControl
+                  options={[
+                    {
+                      value: "oidc",
+                      label: "OIDC",
+                      title: IDENTITY_ASSERTION_FORMAT_HINTS.oidc,
+                    },
+                    {
+                      value: "saml",
+                      label: "SAML",
+                      title: IDENTITY_ASSERTION_FORMAT_HINTS.saml,
+                    },
+                  ]}
+                  value={identityAssertionFormat}
+                  onChange={onIdentityAssertionFormatChange}
+                  disabled={Boolean(identityAssertionFormatDisabledReason)}
+                />
+              </div>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {showSetupLink ? (
-            <button
-              type="button"
-              aria-label="Open XAA setup"
-              title="XAA setup — people, app connections, access policy"
-              onClick={() => navigate(buildXaaSetupPath())}
-              className="inline-flex shrink-0 items-center rounded-md border border-border bg-muted/20 p-2 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <Settings2 className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
           <SetupGuidance />
         </div>
       </div>
+
+      {/* The chips above stay valid in SAML mode — the ID-JAG is a JWT under
+          this issuer either way; only the identity assertion changes shape.
+          Say so, or the "OpenID Config" labels next to a SAML selection read
+          as a contradiction. */}
+      {identityAssertionFormat === "saml" &&
+        onIdentityAssertionFormatChange && (
+          <div
+            className="mt-2 text-xs text-muted-foreground"
+            data-testid="saml-format-note"
+          >
+            This server's identity assertions are SAML 2.0 (the ID-JAG carries
+            a saml-nameid subject identifier). The ID-JAG itself is still a
+            JWT minted under this issuer, so the discovery and JWKS URLs above
+            are unchanged.
+          </div>
+        )}
 
       {!HOSTED_MODE && (
         <div className="mt-3 space-y-2 text-xs text-muted-foreground">

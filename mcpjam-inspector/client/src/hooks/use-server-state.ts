@@ -9,6 +9,7 @@ import type {
 import {
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
+  readXaaEnterprisePolicy,
 } from "@mcpjam/sdk/browser";
 import { normalizeRegistrationMode } from "@/shared/xaa.js";
 import type {
@@ -1256,6 +1257,18 @@ export function useServerState({
       if (effective !== undefined) {
         defaults.mcpProtocolVersion = effective;
       }
+      // Enterprise-managed authorization policy from the active host's
+      // mcpProfile. Sent only when validly ON; an `invalid` stored policy
+      // fails the connect client-side with an actionable message instead of
+      // silently connecting unenforced (fail-closed — the server re-gates).
+      const policyState = readXaaEnterprisePolicy(mcpProfile);
+      if (policyState.kind === "on") {
+        defaults.xaaPolicy = policyState.policy;
+      } else if (policyState.kind === "invalid") {
+        throw new Error(
+          `This host has an unsupported enterprise-managed authorization policy (${policyState.reason}). Fix it on the host's MCP Protocol tab, or turn the policy off.`
+        );
+      }
       return Object.keys(defaults).length > 0 ? defaults : undefined;
     },
     [activeHostConfig]
@@ -1634,6 +1647,9 @@ export function useServerState({
           : {}),
         ...(serverEntry.xaaIdentityAssertionFormat !== undefined
           ? { xaaIdentityAssertionFormat: serverEntry.xaaIdentityAssertionFormat }
+          : {}),
+        ...(serverEntry.xaaClientAuth !== undefined
+          ? { xaaClientAuth: serverEntry.xaaClientAuth }
           : {}),
         ...(serverEntry.registrationMode !== undefined
           ? { registrationMode: serverEntry.registrationMode }
@@ -2836,6 +2852,8 @@ export function useServerState({
         xaaIdentityAssertionFormat:
           formData.xaaIdentityAssertionFormat ??
           existingServerForSave?.xaaIdentityAssertionFormat,
+        xaaClientAuth:
+          formData.xaaClientAuth ?? existingServerForSave?.xaaClientAuth,
         registrationMode:
           formData.registrationMode ??
           existingServerForSave?.registrationMode,
@@ -3316,6 +3334,8 @@ export function useServerState({
         xaaIdentityAssertionFormat:
           formData.xaaIdentityAssertionFormat ??
           existingServer?.xaaIdentityAssertionFormat,
+        xaaClientAuth:
+          formData.xaaClientAuth ?? existingServer?.xaaClientAuth,
         registrationMode:
           formData.registrationMode ??
           existingServer?.registrationMode,
@@ -4962,6 +4982,8 @@ export function useServerState({
           xaaIdentityAssertionFormat:
             formData.xaaIdentityAssertionFormat ??
             originalServer?.xaaIdentityAssertionFormat,
+          xaaClientAuth:
+            formData.xaaClientAuth ?? originalServer?.xaaClientAuth,
           registrationMode:
             formData.registrationMode ??
             originalServer?.registrationMode,

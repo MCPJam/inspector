@@ -118,12 +118,6 @@ export interface NegativeTestsInput {
   // the token endpoint from the server's own config.
   serverId?: string;
   projectId?: string;
-  // Managed-IdP policy context (org-scoped scorecards only) — the server
-  // evaluates policy ONCE before firing the broken-token matrix and 403s a
-  // denied person's scorecard.
-  policyMode?: "managed" | "unmanaged";
-  testIdentityId?: string;
-  resourceAppId?: string;
   // Hosted runs mint the broken assertions under the org-scoped issuer so
   // they carry the same `iss` the positive run used.
   organizationId?: string | null;

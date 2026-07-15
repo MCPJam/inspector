@@ -25,7 +25,10 @@ vi.mock("@/hooks/use-available-models", () => ({
 }));
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
-  useFeatureFlagEnabled: () => false,
+  // Flag-aware: ProtocolTab's enterprise-managed policy toggle is gated on
+  // `xaa` (same flag as the per-server XAA auth option). Other tabs' flags
+  // stay off, as before.
+  useFeatureFlagEnabled: (flag: string) => flag === "xaa",
 }));
 vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
   ProviderLogo: ({ provider }: { provider: string }) => (
@@ -144,7 +147,7 @@ describe("Client editor tabs — readOnly prop wiring", () => {
     expect(fieldset).not.toBeDisabled();
   });
 
-  it("ProtocolTab readOnly disables the EMA advertise switch", () => {
+  it("ProtocolTab readOnly disables the enterprise-managed authorization switch", () => {
     render(
       <ProtocolTab
         draft={emptyHostConfigInputV2()}
@@ -154,12 +157,12 @@ describe("Client editor tabs — readOnly prop wiring", () => {
       />
     );
     const emaSwitch = screen.getByRole("switch", {
-      name: /advertise ema support by default/i,
+      name: /enterprise-managed authorization/i,
     });
     expect(emaSwitch).toBeDisabled();
   });
 
-  it("ProtocolTab without readOnly leaves the EMA switch enabled", () => {
+  it("ProtocolTab without readOnly leaves the enterprise-managed authorization switch enabled", () => {
     render(
       <ProtocolTab
         draft={emptyHostConfigInputV2()}
@@ -168,7 +171,7 @@ describe("Client editor tabs — readOnly prop wiring", () => {
       />
     );
     const emaSwitch = screen.getByRole("switch", {
-      name: /advertise ema support by default/i,
+      name: /enterprise-managed authorization/i,
     });
     expect(emaSwitch).not.toBeDisabled();
   });

@@ -1,8 +1,6 @@
-// The jwt-bearer (RFC 7523) token-request body posted to the resource
-// authorization server to redeem an ID-JAG. SINGLE SOURCE OF TRUTH — the
-// inspector's `/proxy/token` debugger route, the connect-page mint, and the
-// CLI's headless redemption all build their request body here so every surface
-// stays byte-identical on the wire.
+// Pure jwt-bearer (RFC 7523) request encoding shared by every XAA surface.
+// Node callers that also need private_key_jwt signing use the higher-level
+// buildXaaJwtBearerRequest wrapper from confidential-cimd-provider.ts.
 export function buildJwtBearerBody(args: {
   assertion: string;
   clientId?: string | null;

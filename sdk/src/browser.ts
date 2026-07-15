@@ -98,6 +98,16 @@ export {
   selectResourceURL,
   startAuthorization,
 } from "./oauth/browser-auth.js";
+export {
+  canonicalizeResourceUrl,
+  evaluateResourceIndicator,
+  resolveResourceIndicatorValue,
+} from "./oauth/resource-policy.js";
+export type {
+  ResourceIndicatorDecision,
+  ResourceIndicatorSource,
+  ResourceIndicatorStatus,
+} from "./oauth/resource-policy.js";
 export type {
   OAuthClientInformation,
   OAuthClientInformationFull,
@@ -185,7 +195,11 @@ export type {
   DynamicClientRegistrationCredentials,
   DynamicClientRegistrationOutcome,
 } from "./oauth/state-machines/shared/dynamic-client-registration.js";
-export { validateClientIdMetadataUrl } from "./oauth/state-machines/shared/client-id-metadata.js";
+export {
+  validateClientIdMetadataUrl,
+  isLoopbackClientMetadataUrl,
+  isLoopbackHost,
+} from "./oauth/state-machines/shared/client-id-metadata.js";
 export {
   decodeJWT,
   decodeJWTParts,
@@ -205,11 +219,15 @@ export {
   SUBJECT_IDENTIFIER_FORMATS,
   DEFAULT_SUBJECT_IDENTIFIER_FORMAT,
   normalizeSubjectIdentifierFormat,
+  XAA_CLIENT_AUTH_METHODS,
+  DEFAULT_XAA_CLIENT_AUTH,
+  normalizeXaaClientAuth,
 } from "./xaa/constants.js";
 export type {
   NegativeTestMode,
   IdentityAssertionFormat,
   SubjectIdentifierFormat,
+  XaaClientAuthMethod,
 } from "./xaa/constants.js";
 // Shared client-registration vocabulary (single source of truth for OAuth
 // flows AND the XAA debugger's Client↔Resource-AS leg).
@@ -251,6 +269,18 @@ export type {
   McpInitializeRequest,
   XaaCapabilityEvidence,
 } from "./xaa/mcp-init.js";
+export {
+  readXaaEnterprisePolicy,
+  withXaaEnterprisePolicy,
+  withoutXaaEnterprisePolicy,
+  XAA_ENTERPRISE_POLICY_EXTENSION,
+  XAA_ENTERPRISE_POLICY_IDPS,
+} from "./xaa/enterprise-policy.js";
+export type {
+  XaaEnterprisePolicy,
+  XaaEnterprisePolicyIdp,
+  XaaEnterprisePolicyState,
+} from "./xaa/enterprise-policy.js";
 // XAA flow-core types + capability preflight (browser-safe engine primitives).
 export * from "./xaa/state-machines/index.js";
 export { EMPTY_OAUTH_FLOW_STATE } from "./oauth/state-machines/types.js";

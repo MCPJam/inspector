@@ -2,7 +2,6 @@ import { useMemo } from "react";
 import { useConvexAuth } from "convex/react";
 import type { HttpServerConfig } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
-import type { XaaResourceApp } from "@/lib/xaa/types";
 import {
   resolveXaaTestIdentity,
   type XaaIdentityPair,
@@ -16,8 +15,7 @@ import { useProjectServers } from "./useProjects";
  * secret is never carried here — server-target runs resolve it server-side.
  */
 export interface XAAFlowInput {
-  mode: "hosted-registration" | "local-profile";
-  registrationId?: string;
+  mode: "local-profile";
   serverUrl: string;
   authzServerIssuer: string;
   clientId: string;
@@ -26,32 +24,21 @@ export interface XAAFlowInput {
   userId: string;
   email: string;
   negativeTestMode: NegativeTestMode;
-  /** Managed-IdP policy context — filled only on registration targets when
-   * the caller resolved a policy mode (managed-capable org). Unset ⇒ legacy
-   * behavior, the mint carries no managed context. */
-  policyMode?: "managed" | "unmanaged";
-  /** The selected org person's xaaTestIdentities id. Sent whenever a policy
-   * mode is active and an org person is selected — the evaluator validates
-   * the identity in BOTH modes (the unmanaged bypass still checks claims). */
-  testIdentityId?: string;
-  /** The registered resource app the managed run targets. */
-  resourceAppId?: string;
 }
 
-export type XaaTargetSource = "registration" | "bar_server" | "none";
+export type XaaTargetSource = "bar_server" | "none";
 
 export interface XaaTestTarget {
   targetSource: XaaTargetSource;
   runInput: XAAFlowInput;
   /** Stable identity for the positive-run gate + reset effect. Distinct per
-   * server/registration so a green run on one can't unlock another. */
+   * server so a green run on one can't unlock another. */
   targetKey: string;
   /** RemoteServer id — only for a confidential bar_server run. */
   serverId?: string;
   projectId?: string;
-  /** Hosted identity of the selected server in the server bar. This remains
-   * available when a resource registration overrides the active run target,
-   * so editing that bar server can still reveal its saved secret. */
+  /** Hosted identity of the selected server in the server bar, so editing
+   * that bar server can reveal its saved secret. */
   barServerId?: string;
   barServerProjectId?: string;
   /** bar_server with a stored secret → resolve it (and the token endpoint)
@@ -102,8 +89,6 @@ interface UseXaaTestTargetParams {
   /** The currently selected bar server (from app state). */
   server?: ServerWithName;
   selectedServerName: string;
-  /** A selected registered resource app — overrides the bar server. */
-  selectedRegistration: XaaResourceApp | null;
   runSettings: {
     userId: string;
     email: string;
@@ -120,10 +105,6 @@ interface UseXaaTestTargetParams {
    * (atomic pair), threaded from the owning page. Sits between the
    * per-server override and the run-settings fallback in precedence. */
   projectDefault?: XaaIdentityPair | null;
-  /** Resolved managed-IdP policy mode (managed-capable org ± admin bypass).
-   * Only registration targets carry it into the run input — bar-server and
-   * empty targets stay policy-free regardless. */
-  policyMode?: "managed" | "unmanaged";
 }
 
 /** Identity precedence (all ATOMIC pairs — never one source's subject with
@@ -162,19 +143,16 @@ function resolveIdentityForRun(
 
 /**
  * Resolve the active XAA target behind one seam so the tab doesn't inline the
- * precedence. A selected registration wins over the bar server. The runInput
- * is derived from the server's primitive fields (not the ServerWithName
- * object) to avoid churn.
+ * precedence. The runInput is derived from the server's primitive fields (not
+ * the ServerWithName object) to avoid churn.
  */
 export function useXaaTestTarget({
   server,
   selectedServerName,
-  selectedRegistration,
   runSettings,
   selectedPerson,
   projectId,
   projectDefault = null,
-  policyMode,
 }: UseXaaTestTargetParams): XaaTestTarget {
   const { isAuthenticated } = useConvexAuth();
   const { servers: remoteServers, isLoading: serversLoading } =
@@ -218,51 +196,6 @@ export function useXaaTestTarget({
       barServerId: remoteServerId,
       barServerProjectId: remoteProjectId ?? projectId ?? undefined,
     };
-
-    if (selectedRegistration) {
-      // A registration target has no per-server override, so the chain is
-      // person → project default → run fallback (never an identity error).
-      const identity = resolveIdentityForRun(
-        selectedPerson,
-        undefined,
-        projectDefault,
-        userId,
-        email,
-      );
-      return {
-        ...barServerContext,
-        targetSource: "registration",
-        runInput: {
-          mode: "hosted-registration",
-          registrationId: selectedRegistration.id,
-          serverUrl: selectedRegistration.resourceUrl,
-          authzServerIssuer: selectedRegistration.issuer ?? "",
-          clientId: selectedRegistration.targetClientId ?? "",
-          clientSecret: "",
-          scope: (selectedRegistration.scopes ?? []).join(" "),
-          userId: identity.userId,
-          email: identity.email,
-          negativeTestMode,
-          // Managed context rides only on registration targets. The person id
-          // is sent in both modes when selected — the issuer's evaluator
-          // validates identity claims even on the unmanaged (admin) bypass.
-          ...(policyMode
-            ? {
-                policyMode,
-                resourceAppId: selectedRegistration.id,
-                ...(selectedPerson
-                  ? { testIdentityId: selectedPerson._id }
-                  : {}),
-              }
-            : {}),
-        },
-        targetKey: `registration:${selectedRegistration.id}`,
-        usesServerSideSecret: false,
-        secretUnavailable: false,
-        serversLoading,
-        isTestable: true,
-      };
-    }
 
     const hasServer = selectedServerName !== "none" && Boolean(server);
     if (!hasServer) {
@@ -340,7 +273,6 @@ export function useXaaTestTarget({
     };
   }, [
     serversLoading,
-    selectedRegistration,
     server,
     selectedServerName,
     serverUrl,
@@ -356,6 +288,5 @@ export function useXaaTestTarget({
     runSettings,
     selectedPerson,
     projectDefault,
-    policyMode,
   ]);
 }

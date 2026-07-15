@@ -13,6 +13,7 @@ import type {
   OAuthTokens,
   OpenIdProviderDiscoveryMetadata,
 } from "@modelcontextprotocol/client";
+import { evaluateResourceIndicator } from "./resource-policy.js";
 
 const AUTHORIZATION_CODE_RESPONSE_TYPE = "code";
 const AUTHORIZATION_CODE_CHALLENGE_METHOD = "S256";
@@ -74,7 +75,7 @@ type StartAuthorizationOptions = {
   redirectUrl: string | URL;
   scope?: string;
   state?: string;
-  resource?: URL;
+  resource?: URL | string;
 };
 
 type ExchangeAuthorizationOptions = {
@@ -83,14 +84,18 @@ type ExchangeAuthorizationOptions = {
   authorizationCode: string;
   codeVerifier: string;
   redirectUri: string | URL;
-  resource?: URL;
+  // A string is sent verbatim (echoing an advertised identifier exactly);
+  // a URL is serialized via .href.
+  resource?: URL | string;
   addClientAuthentication?: OAuthClientProvider["addClientAuthentication"];
   fetchFn?: FetchFn;
 };
 
 type FetchTokenOptions = {
   metadata?: OAuthMetadata | AuthorizationServerMetadata;
-  resource?: URL;
+  // A string is sent verbatim (echoing an advertised identifier exactly);
+  // a URL is serialized via .href.
+  resource?: URL | string;
   authorizationCode?: string;
   scope?: string;
   fetchFn?: FetchFn;
@@ -140,40 +145,6 @@ function resourceUrlFromServerUrl(url: string | URL): URL {
   const resourceUrl = typeof url === "string" ? new URL(url) : new URL(url.href);
   resourceUrl.hash = "";
   return resourceUrl;
-}
-
-function checkResourceAllowed({
-  requestedResource,
-  configuredResource,
-}: {
-  requestedResource: string | URL;
-  configuredResource: string | URL;
-}): boolean {
-  const requested =
-    typeof requestedResource === "string"
-      ? new URL(requestedResource)
-      : new URL(requestedResource.href);
-  const configured =
-    typeof configuredResource === "string"
-      ? new URL(configuredResource)
-      : new URL(configuredResource.href);
-
-  if (requested.origin !== configured.origin) {
-    return false;
-  }
-
-  if (requested.pathname.length < configured.pathname.length) {
-    return false;
-  }
-
-  const requestedPath = requested.pathname.endsWith("/")
-    ? requested.pathname
-    : `${requested.pathname}/`;
-  const configuredPath = configured.pathname.endsWith("/")
-    ? configured.pathname
-    : `${configured.pathname}/`;
-
-  return requestedPath.startsWith(configuredPath);
 }
 
 function selectClientAuthMethod(
@@ -441,7 +412,7 @@ async function executeTokenRequest(
     tokenRequestParams: URLSearchParams;
     clientInformation?: OAuthClientInformationMixed;
     addClientAuthentication?: OAuthClientProvider["addClientAuthentication"];
-    resource?: URL;
+    resource?: URL | string;
     fetchFn?: FetchFn;
   },
 ) {
@@ -456,7 +427,10 @@ async function executeTokenRequest(
   });
 
   if (resource) {
-    tokenRequestParams.set("resource", resource.href);
+    tokenRequestParams.set(
+      "resource",
+      typeof resource === "string" ? resource : resource.href,
+    );
   }
 
   if (addClientAuthentication) {
@@ -499,7 +473,7 @@ async function refreshAuthorization(
     metadata?: OAuthMetadata | AuthorizationServerMetadata;
     clientInformation: OAuthClientInformationMixed;
     refreshToken: string;
-    resource?: URL;
+    resource?: URL | string;
     addClientAuthentication?: OAuthClientProvider["addClientAuthentication"];
     fetchFn?: FetchFn;
   },
@@ -627,7 +601,15 @@ async function authInternal(
     } satisfies OAuthDiscoveryState);
   }
 
-  const resource = await selectResourceURL(serverUrl, provider, resourceMetadata);
+  // Preserve a PRM-advertised identifier as a string on the wire. The public
+  // selectResourceURL() helper retains its historical URL return contract,
+  // but URL construction can normalize an advertised value (for example by
+  // adding a root slash or removing a default port).
+  const resource = await selectResourceForAuth(
+    serverUrl,
+    provider,
+    resourceMetadata,
+  );
 
   let clientInformation = await provider.clientInformation();
   if (!clientInformation) {
@@ -728,11 +710,11 @@ async function authInternal(
   return "REDIRECT";
 }
 
-export async function selectResourceURL(
+async function selectResourceForAuth(
   serverUrl: string | URL,
   provider: OAuthClientProvider,
   resourceMetadata?: OAuthProtectedResourceMetadata,
-): Promise<URL | undefined> {
+): Promise<URL | string | undefined> {
   const defaultResource = resourceUrlFromServerUrl(serverUrl);
 
   if (provider.validateResourceURL) {
@@ -743,18 +725,48 @@ export async function selectResourceURL(
     return undefined;
   }
 
-  if (
-    !checkResourceAllowed({
-      requestedResource: defaultResource,
-      configuredResource: resourceMetadata.resource,
-    })
-  ) {
+  // RFC 9728 §2 makes `resource` REQUIRED; a PRM document without one is
+  // broken metadata, not license to fall back to the server URL.
+  if (!resourceMetadata.resource?.trim()) {
     throw new Error(
-      `Protected resource ${resourceMetadata.resource} does not match expected ${defaultResource} (or origin)`,
+      `Protected resource metadata for ${defaultResource} is missing its required "resource" identifier (RFC 9728 §2)`,
     );
   }
 
-  return new URL(resourceMetadata.resource);
+  // This mirrors the official MCP SDK's auth(), so it keeps the SDK's full
+  // strict binding (origin + path prefix) — unlike Quick OAuth and the debug
+  // flows, which accept same-origin values and warn instead.
+  const decision = evaluateResourceIndicator({
+    serverUrl: defaultResource.href,
+    prmResource: resourceMetadata.resource,
+  });
+
+  if (!decision.strictClientCompatible) {
+    throw new Error(
+      `Protected resource ${resourceMetadata.resource} does not match expected ${defaultResource} (or origin)${
+        decision.reason ? `: ${decision.reason}` : ""
+      }`,
+    );
+  }
+
+  return decision.value;
+}
+
+export async function selectResourceURL(
+  serverUrl: string | URL,
+  provider: OAuthClientProvider,
+  resourceMetadata?: OAuthProtectedResourceMetadata,
+): Promise<URL | undefined> {
+  const resource = await selectResourceForAuth(
+    serverUrl,
+    provider,
+    resourceMetadata,
+  );
+
+  // Backward compatibility for direct consumers of this public helper. auth()
+  // uses selectResourceForAuth() above so its authorization, exchange, and
+  // refresh requests retain the advertised string verbatim.
+  return typeof resource === "string" ? new URL(resource) : resource;
 }
 
 export async function discoverOAuthProtectedResourceMetadata(
@@ -980,7 +992,10 @@ export async function startAuthorization(
     authorizationUrl.searchParams.append("prompt", "consent");
   }
   if (resource) {
-    authorizationUrl.searchParams.set("resource", resource.href);
+    authorizationUrl.searchParams.set(
+      "resource",
+      typeof resource === "string" ? resource : resource.href,
+    );
   }
 
   return {

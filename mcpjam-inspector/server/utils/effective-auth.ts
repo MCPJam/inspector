@@ -23,7 +23,13 @@
  * canonical method fall back to the boolean pair.
  */
 
-import { XAA_MCP_EXTENSION } from "@mcpjam/sdk";
+import {
+  readXaaEnterprisePolicy,
+  XAA_ENTERPRISE_POLICY_IDPS,
+  XAA_MCP_EXTENSION,
+  type XaaEnterprisePolicy,
+} from "@mcpjam/sdk";
+import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 
 export type EffectiveAuthMethod =
   | "oauth"
@@ -80,8 +86,23 @@ export function withXaaExtensionCapability(
   };
 }
 
+/**
+ * @param xaaPolicy The active host's enterprise-managed authorization policy
+ * (validated `on` value; callers surface `invalid` as a configuration error
+ * BEFORE resolving — never pass an unvalidated value through). The policy
+ * rewrites ONLY the `auto` branch: under an enterprise-managed host, every
+ * `auto` server resolves to XAA regardless of whether it is XAA-configured —
+ * an unconfigured server then fails with XAA_CONNECTION_NOT_CONFIGURED at
+ * the connect surface instead of taking the discover ladder (no silent
+ * downgrade). Explicit methods and legacy boolean rows are per-server
+ * overrides and win over the policy. Connect-time input only: the backend's
+ * `deriveAuthBooleans` (serverAuthFields.ts) is intentionally unaware of
+ * host policy — a server attaches to many hosts, so the persisted compat
+ * booleans cannot encode a per-connection decision.
+ */
 export function resolveEffectiveAuthMethod(
-  sc: AuthConfigFields
+  sc: AuthConfigFields,
+  xaaPolicy?: XaaEnterprisePolicy
 ): EffectiveAuthMethod {
   switch (sc.authMethod) {
     case "oauth":
@@ -90,13 +111,83 @@ export function resolveEffectiveAuthMethod(
     case "none":
       return sc.authMethod;
     case "auto":
+      if (xaaPolicy) return "xaa";
       return xaaConfigured(sc) ? "xaa" : "discover";
     default:
       // Legacy rows: the boolean pair governs. Same precedence the dispatch
       // gates used before authMethod existed (`useXaa === true && useOAuth
-      // !== true` → XAA never collides with the OAuth branch).
+      // !== true` → XAA never collides with the OAuth branch). Pre-`auto`
+      // relics resolving "none" by absence stay outside the policy.
       if (sc.useXaa === true && sc.useOAuth !== true) return "xaa";
       if (sc.useOAuth === true) return "oauth";
       return "none";
   }
+}
+
+/**
+ * Whether a server resolves to XAA *because of the host policy* while
+ * lacking the stored client registration the mint needs. This is the
+ * XAA_CONNECTION_NOT_CONFIGURED trigger: "not configured", deliberately NOT
+ * "not enrolled" — `xaaConfigured` proves an IdP mode + a client id
+ * registered at the resource authorization server, not IdP enrollment
+ * (enrollment verdicts belong to the future issuer-policy evaluator).
+ * Explicit `authMethod: "xaa"` servers missing credentials keep their
+ * existing mint-failure path and are not this predicate's business.
+ */
+export function xaaPolicyRequiresConfiguration(
+  sc: AuthConfigFields,
+  xaaPolicy: XaaEnterprisePolicy | undefined
+): boolean {
+  return xaaPolicy != null && sc.authMethod === "auto" && !xaaConfigured(sc);
+}
+
+/**
+ * Strict trust-boundary gate for a bare wire `xaaPolicy` value (request
+ * bodies / ConnectionDefaults). UNLIKE advisory connect fields, enforcement
+ * is never silently dropped: absent → undefined (off); a well-formed
+ * `{ idp: <supported> }` → the policy; anything else → 409 — fail-open
+ * would un-enforce a policy the host believes is on.
+ */
+export function parseXaaPolicyValue(
+  raw: unknown
+): XaaEnterprisePolicy | undefined {
+  if (raw === undefined) return undefined;
+  const idp =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>).idp
+      : undefined;
+  if (
+    typeof idp !== "string" ||
+    !(XAA_ENTERPRISE_POLICY_IDPS as readonly string[]).includes(idp)
+  ) {
+    throw new WebRouteError(
+      409,
+      ErrorCode.VALIDATION_ERROR,
+      `Unsupported enterprise-managed authorization policy on this host: expected { idp: ${XAA_ENTERPRISE_POLICY_IDPS.join(
+        " | "
+      )} }. Fix the host's MCP Protocol settings or turn the policy off.`,
+      { reason: "xaa_policy_invalid" }
+    );
+  }
+  return { idp: idp as XaaEnterprisePolicy["idp"] };
+}
+
+/**
+ * Server-authoritative policy read from a BACKEND-PROJECTED host config's
+ * `mcpProfile` (chatbox turns, host-bound turns, swarm snapshots, eval host
+ * configs). Three-state: off → undefined, on → the policy, invalid →
+ * explicit 409 configuration error (never treated as off).
+ */
+export function xaaPolicyFromMcpProfile(
+  mcpProfile: unknown
+): XaaEnterprisePolicy | undefined {
+  const state = readXaaEnterprisePolicy(mcpProfile);
+  if (state.kind === "off") return undefined;
+  if (state.kind === "on") return state.policy;
+  throw new WebRouteError(
+    409,
+    ErrorCode.VALIDATION_ERROR,
+    `This host has an unsupported enterprise-managed authorization policy (${state.reason}). Fix the host's MCP Protocol settings or turn the policy off.`,
+    { reason: "xaa_policy_invalid" }
+  );
 }

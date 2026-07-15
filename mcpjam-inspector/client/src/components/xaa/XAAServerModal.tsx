@@ -22,33 +22,23 @@ import type { ServerWithName } from "@/hooks/use-app-state";
 import {
   DEFAULT_IDENTITY_ASSERTION_FORMAT,
   DEFAULT_REGISTRATION_STRATEGY,
+  DEFAULT_XAA_CLIENT_AUTH,
   IDENTITY_ASSERTION_FORMATS,
-  normalizeIdentityAssertionFormat,
-  normalizeRegistrationStrategy,
   type IdentityAssertionFormat,
   type RegistrationStrategy,
+  type XaaClientAuthMethod,
 } from "@/shared/xaa.js";
 import { XAA_STRATEGY_OPTIONS } from "@/lib/registration-strategy";
-import { deriveOAuthProfileFromServer } from "../oauth/utils";
+import { HOSTED_MODE } from "@/lib/config";
 import { XaaCredentialFields } from "../connection/shared/XaaCredentialFields";
 import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
-
-// UI copy for the identity-assertion preset (input axis of the ID-JAG draft).
-// One selector sets both axes at flow time: "saml" mints a SAML assertion AND
-// asks for a saml-nameid `sub_id` on the ID-JAG; "oidc" keeps both defaults.
-const IDENTITY_ASSERTION_FORMAT_LABELS: Record<
-  IdentityAssertionFormat,
-  string
-> = {
-  oidc: "OIDC ID token",
-  saml: "SAML assertion",
-};
-
-const IDENTITY_ASSERTION_FORMAT_HINTS: Record<IdentityAssertionFormat, string> =
-  {
-    oidc: "The MCPJam IdP mints an OIDC ID token as the identity assertion.",
-    saml: "The MCPJam IdP mints a signed SAML 2.0 assertion; the ID-JAG carries a saml-nameid subject identifier.",
-  };
+import {
+  IDENTITY_ASSERTION_FORMAT_HINTS,
+  IDENTITY_ASSERTION_FORMAT_LABELS,
+  buildXaaServerFormData,
+  deriveXaaServerFormSeed,
+  splitXaaScopes,
+} from "./xaa-server-form";
 
 interface XAAServerModalProps {
   open: boolean;
@@ -66,6 +56,8 @@ interface XAAServerModalProps {
   /** Hosted secret context used to reveal an existing saved client secret. */
   projectId?: string | null;
   hostedServerId?: string | null;
+  /** Whether this inspector process has a Node-side confidential-CIMD provider. */
+  confidentialCimdAvailable?: boolean;
 }
 
 export function XAAServerModal({
@@ -77,8 +69,11 @@ export function XAAServerModal({
   projectDefaultIdentity = null,
   projectId,
   hostedServerId,
+  confidentialCimdAvailable = !HOSTED_MODE,
 }: XAAServerModalProps) {
-  const derived = useMemo(() => deriveOAuthProfileFromServer(server), [server]);
+  // One shared derivation with the flow-header format toggle's untouched
+  // resave, so both surfaces read the same unedited field values.
+  const seed = useMemo(() => deriveXaaServerFormSeed(server), [server]);
   const hasSavedSecret = Boolean(server?.hasClientSecret);
   const isEditing = Boolean(server);
 
@@ -102,6 +97,11 @@ export function XAAServerModal({
   // always sends the displayed value.
   const [identityAssertionFormat, setIdentityAssertionFormat] =
     useState<IdentityAssertionFormat>(DEFAULT_IDENTITY_ASSERTION_FORMAT);
+  // CIMD client authentication: public (none) or confidential (private_key_jwt).
+  // Only surfaced/sent for the cimd strategy.
+  const [clientAuth, setClientAuth] = useState<XaaClientAuthMethod>(
+    DEFAULT_XAA_CLIENT_AUTH
+  );
   const [clientId, setClientId] = useState("");
   const [scopes, setScopes] = useState("");
   const [authzIssuer, setAuthzIssuer] = useState("");
@@ -122,31 +122,26 @@ export function XAAServerModal({
 
   useEffect(() => {
     if (!open) return;
-    setServerName(server?.name ?? "");
-    setServerUrl(derived.serverUrl ?? "");
-    setRegistrationStrategy(
-      normalizeRegistrationStrategy(server?.registrationMode) ??
-        DEFAULT_REGISTRATION_STRATEGY
-    );
+    setServerName(seed.serverName);
+    setServerUrl(seed.serverUrl);
+    setRegistrationStrategy(seed.registrationStrategy);
     setRegistrationStrategyDirty(false);
-    setIdentityAssertionFormat(
-      normalizeIdentityAssertionFormat(server?.xaaIdentityAssertionFormat) ??
-        DEFAULT_IDENTITY_ASSERTION_FORMAT
-    );
-    setClientId(derived.clientId ?? "");
-    // Scopes can be stored comma- or space-separated upstream; normalize to
-    // the space-separated form this modal edits.
-    setScopes((derived.scopes ?? "").replace(/,/g, " ").trim());
-    setAuthzIssuer(server?.xaaAuthzIssuer ?? "");
-    setAllowPathScopedIssuer(server?.xaaAllowPathScopedIssuer === true);
+    setIdentityAssertionFormat(seed.identityAssertionFormat);
+    setClientAuth(seed.clientAuth);
+    setClientId(seed.clientId);
+    // Scopes arrive space-separated from the seed (stored comma- or
+    // space-separated forms normalized there).
+    setScopes(seed.scopes);
+    setAuthzIssuer(seed.authzIssuer);
+    setAllowPathScopedIssuer(seed.allowPathScopedIssuer);
     setClientSecret("");
     setClearClientSecret(false);
-    setXaaSubject(server?.xaaSubject ?? "");
-    setXaaEmail(server?.xaaEmail ?? "");
+    setXaaSubject(seed.xaaSubject);
+    setXaaEmail(seed.xaaEmail);
     setXaaIdentityDirty(false);
     setError(null);
     setSaving(false);
-  }, [open, server, derived]);
+  }, [open, seed]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -196,16 +191,6 @@ export function XAAServerModal({
       }
     }
 
-    const scopesArray = scopes
-      .split(/\s+/)
-      .map((scope) => scope.trim())
-      .filter((scope) => scope.length > 0);
-
-    // A typed value replaces the saved secret; the Clear toggle removes it. A
-    // typed replacement always wins over Clear (the save path rejects both).
-    const trimmedSecret = clientSecret.trim();
-    const submittedClearSecret = clearClientSecret && !trimmedSecret;
-
     // The identity override is atomic: block a partial pair rather than
     // saving a mixed identity or silently dropping one member.
     const trimmedXaaSubject = xaaSubject.trim();
@@ -220,41 +205,34 @@ export function XAAServerModal({
 
     setError(null);
 
-    const formData: ServerFormData = {
+    // Field semantics (secret sentinels, preserve-by-omission for the
+    // identity pair and registrationMode) live in the shared builder — the
+    // flow-header format toggle saves through the same one.
+    const formData: ServerFormData = buildXaaServerFormData({
       name: trimmedName,
-      type: "http",
       url: trimmedUrl,
-      // Cross-App Access discriminator — identical to the /servers Connect
-      // page so a server configured in either surface is unambiguously XAA and
-      // editing it in one place never flips it back to plain OAuth.
-      useXaa: true,
-      useOAuth: false,
-      authServerMode: "mcpjam",
       clientId: trimmedClientId,
-      ...(trimmedSecret ? { clientSecret: trimmedSecret } : {}),
-      ...(submittedClearSecret ? { clearClientSecret: true } : {}),
+      clientSecret,
+      clearClientSecret,
       hasClientSecret: server?.hasClientSecret,
-      oauthScopes: scopesArray,
-      // Always send the issuer (possibly empty) so clearing it persists.
-      xaaAuthzIssuer: trimmedIssuer,
-      xaaAllowPathScopedIssuer: allowPathScopedIssuer,
-      // Atomic identity override, identical to the Connect page: untouched →
-      // omit both keys (the save path preserves stored values); edited
-      // complete pair → both trimmed values; explicit clear → both "" (the
-      // backend normalizes the empty pair away).
-      ...(xaaIdentityDirty
-        ? { xaaSubject: trimmedXaaSubject, xaaEmail: trimmedXaaEmail }
-        : {}),
-      // Identity assertion preset — always sent (absent stored value = oidc).
-      xaaIdentityAssertionFormat: identityAssertionFormat,
-      // Unified registration mode — written ONLY on explicit user edit (see
-      // the auto-clobber guard above); an untouched selector omits the field
-      // so the save-path `?? existing` merge preserves the stored value
-      // (which may be "auto", shared with the OAuth flow).
-      ...(registrationStrategyDirty
-        ? { registrationMode: registrationStrategy }
-        : {}),
-    };
+      oauthScopes: splitXaaScopes(scopes),
+      authzIssuer: trimmedIssuer,
+      allowPathScopedIssuer,
+      identity: {
+        dirty: xaaIdentityDirty,
+        subject: trimmedXaaSubject,
+        email: trimmedXaaEmail,
+      },
+      identityAssertionFormat,
+      // CIMD client-auth — the builder emits it only for the cimd strategy.
+      // Resolve to "none" when no confidential provider is available (hosted)
+      // so a stale imported private_key_jwt is actively cleared.
+      clientAuth: confidentialCimdAvailable ? clientAuth : "none",
+      registration: {
+        dirty: registrationStrategyDirty,
+        strategy: registrationStrategy,
+      },
+    });
 
     // Final gate: the exact validator the save path runs. Any rule added there
     // is enforced here too, so a new rule can never pass this form and then be
@@ -344,6 +322,40 @@ export function XAAServerModal({
                 </SelectContent>
               </Select>
             </div>
+
+            {/* CIMD client authentication. Public presents the metadata URL and
+                proves nothing; confidential signs a private_key_jwt assertion
+                with a server-held client key (published via the reflector doc)
+                so an authorization server that requires a confidential client
+                accepts the run. Only meaningful for the cimd strategy. */}
+            {registrationStrategy === "cimd" && confidentialCimdAvailable && (
+              <div className="space-y-2">
+                <Label htmlFor="xaa-client-auth">Client authentication</Label>
+                <Select
+                  value={clientAuth}
+                  onValueChange={(value) =>
+                    setClientAuth(value as XaaClientAuthMethod)
+                  }
+                >
+                  <SelectTrigger id="xaa-client-auth" className="h-10">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">
+                      Public (no client auth)
+                    </SelectItem>
+                    <SelectItem value="private_key_jwt">
+                      Confidential (private_key_jwt)
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {clientAuth === "private_key_jwt"
+                    ? "The local inspector holds a client key and signs a client_assertion; the client_id is a reflector document publishing the matching public key. Use when the server requires a confidential client."
+                    : "Presents MCPJam's hosted metadata URL as the client_id with no client authentication (requires advertised CIMD support)."}
+                </p>
+              </div>
+            )}
 
             {/* Identity assertion format (input axis). A per-server preset the
                 debugger flow reads; changing it resets the current run. */}

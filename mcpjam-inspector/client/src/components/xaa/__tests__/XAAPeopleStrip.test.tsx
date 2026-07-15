@@ -25,14 +25,6 @@ vi.mock("@/hooks/useXaaPeople", () => ({
   }),
 }));
 
-// Org-mode affordances navigate to the setup center; stub only the navigate
-// hook and keep buildXaaSetupPath real so the asserted path stays honest.
-const navigateMock = vi.fn();
-vi.mock("@/lib/app-navigation", async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  useAppNavigate: () => navigateMock,
-}));
-
 const bob: RemoteXaaPerson = {
   _id: "person_bob",
   name: "Bob Tables",
@@ -74,7 +66,6 @@ describe("XAAPeopleStrip", () => {
     createMock.mockReset();
     updateMock.mockReset();
     removeMock.mockReset();
-    navigateMock.mockReset();
   });
 
   it("renders nothing when the roster is unavailable (signed out / no project)", () => {
@@ -148,22 +139,6 @@ describe("XAAPeopleStrip", () => {
     expect(screen.getByText(/Rejected · invalid_grant/)).toBeInTheDocument();
   });
 
-  it("renders the stage-aware IdP badges (denied · reasonCode, downscoped)", () => {
-    renderStrip({
-      outcomeFor: (id) =>
-        id === bob._id
-          ? {
-              status: "idp_denied",
-              oauthErrorCode: "access_denied",
-              reasonCode: "not_assigned",
-              failedStep: "token_exchange_request",
-            }
-          : { status: "idp_downscoped" },
-    });
-    expect(screen.getByText(/IdP denied · not_assigned/)).toBeInTheDocument();
-    expect(screen.getByText("IdP downscoped")).toBeInTheDocument();
-  });
-
   it("renders the RAS downscope badge with the original copy", () => {
     renderStrip({
       outcomeFor: (id) =>
@@ -200,54 +175,6 @@ describe("XAAPeopleStrip", () => {
         email: "amara@tables.test",
       }),
     );
-  });
-
-  describe("org mode (managed roster)", () => {
-    const orgBob = { ...bob, status: "active" as const };
-    const suspendedJonah = { ...jonah, status: "suspended" as const };
-
-    it("hides suspended people from selection", () => {
-      renderStrip({
-        mode: "org",
-        people: [orgBob, suspendedJonah],
-      });
-      expect(
-        screen.getByRole("button", { name: /bob tables/i, pressed: false }),
-      ).toBeInTheDocument();
-      expect(screen.queryByText("Jonah Kim")).not.toBeInTheDocument();
-    });
-
-    it("renders without a projectId (org roster is project-independent)", () => {
-      renderStrip({
-        mode: "org",
-        projectId: null,
-        people: [orgBob],
-      });
-      expect(screen.getByText("Bob Tables")).toBeInTheDocument();
-    });
-
-    it("the edit affordance navigates to the setup center instead of an inline form", async () => {
-      const user = userEvent.setup();
-      renderStrip({ mode: "org", people: [orgBob] });
-
-      await user.click(
-        screen.getByRole("button", { name: /edit bob tables in xaa setup/i }),
-      );
-      expect(navigateMock).toHaveBeenCalledWith("/xaa-flow/setup");
-      // No inline edit form opened.
-      expect(screen.queryByLabelText(/subject/i)).not.toBeInTheDocument();
-    });
-
-    it("the add affordance is a 'Manage people' link to the setup center", async () => {
-      const user = userEvent.setup();
-      renderStrip({ mode: "org", people: [orgBob] });
-
-      await user.click(
-        screen.getByRole("button", { name: /manage people/i }),
-      );
-      expect(navigateMock).toHaveBeenCalledWith("/xaa-flow/setup");
-      expect(createMock).not.toHaveBeenCalled();
-    });
   });
 
   it("deleting the selected person clears the selection", async () => {

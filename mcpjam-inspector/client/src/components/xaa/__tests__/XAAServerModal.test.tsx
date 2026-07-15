@@ -393,6 +393,100 @@ describe("XAAServerModal", () => {
     expect(formData.registrationMode).toBe("dcr");
   });
 
+  it("surfaces the Client authentication control only for CIMD and saves the confidential choice", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderModal();
+
+    await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://staging.mcp.example.com"
+    );
+    // Pre-registered: no client-auth control.
+    expect(
+      screen.queryByLabelText("Client authentication")
+    ).not.toBeInTheDocument();
+
+    // Switch to CIMD → the control appears.
+    await user.click(screen.getByLabelText("Registration"));
+    await user.click(
+      screen.getByRole("option", { name: /client metadata url/i })
+    );
+    expect(
+      screen.getByLabelText("Client authentication")
+    ).toBeInTheDocument();
+
+    // Choose Confidential (private_key_jwt).
+    await user.click(screen.getByLabelText("Client authentication"));
+    await user.click(
+      screen.getByRole("option", { name: /confidential/i })
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" })
+    );
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    const { formData } = onSave.mock.calls[0][0];
+    expect(formData.registrationMode).toBe("cimd");
+    expect(formData.xaaClientAuth).toBe("private_key_jwt");
+  });
+
+  it("does not offer confidential CIMD when no credential provider is available", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderModal({ confidentialCimdAvailable: false });
+
+    await user.type(screen.getByLabelText(/Server Name/), "hosted-mcp");
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://hosted.example.com"
+    );
+    await user.click(screen.getByLabelText("Registration"));
+    await user.click(
+      screen.getByRole("option", { name: /client metadata url/i })
+    );
+
+    expect(
+      screen.queryByLabelText("Client authentication")
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" })
+    );
+    const { formData } = onSave.mock.calls[0][0];
+    expect(formData.registrationMode).toBe("cimd");
+    // Saved as "none" (not omitted) so a stale imported private_key_jwt is
+    // actively cleared on a build with no confidential provider.
+    expect(formData.xaaClientAuth).toBe("none");
+  });
+
+  it("clears a stale imported private_key_jwt when no provider is available", async () => {
+    const user = userEvent.setup();
+    const server = {
+      name: "imported",
+      config: { url: "https://imported.example.com/mcp" },
+      useXaa: true,
+      registrationMode: "cimd",
+      xaaClientAuth: "private_key_jwt",
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+    } as unknown as ServerWithName;
+    const { onSave } = renderModal({
+      server,
+      confidentialCimdAvailable: false,
+    });
+
+    // The control is hidden; saving must overwrite the stored confidential value.
+    expect(
+      screen.queryByLabelText("Client authentication")
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" })
+    );
+    const { formData } = onSave.mock.calls[0][0];
+    expect(formData.xaaClientAuth).toBe("none");
+  });
+
   it("prefills the persisted registration strategy when editing", async () => {
     const user = userEvent.setup();
     const server = {

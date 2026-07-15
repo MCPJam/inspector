@@ -64,6 +64,10 @@ export interface RemoteServer {
   xaaEmail?: string;
   xaaIdentityAssertionFormat?: string;
   registrationMode?: string;
+  // CIMD client authentication ("none" | "private_key_jwt"). Requires the Convex
+  // schema + `servers:getProjectServers` query to persist/return it for hosted
+  // round-trip, mirroring xaaIdentityAssertionFormat.
+  xaaClientAuth?: string;
   authMethod?: string;
   createdAt: number;
   updatedAt: number;

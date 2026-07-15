@@ -55,7 +55,11 @@ import {
   formatProviderOverloadError,
   isProviderOverloadError,
 } from "../../utils/provider-error-normalization";
-import { describeError, describeAsSlug } from "@mcpjam/sdk";
+import {
+  describeError,
+  describeAsSlug,
+  readXaaEnterprisePolicy,
+} from "@mcpjam/sdk";
 import { type LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import { isAbortError } from "@/shared/abort-errors";
 import {
@@ -671,6 +675,14 @@ chatV2.post("/", async (c) => {
           String(modelDefinition.id),
           modelDefinition.provider,
         ),
+        // Fail closed rather than let a harness turn bypass the host's
+        // enterprise-managed policy: the harness proxy token carries no
+        // host, so that route can't enforce it (see the flag's docstring).
+        // Read from the server-resolved host config, never the body.
+        xaaEnterprisePolicyOn:
+          readXaaEnterprisePolicy(
+            (hostRuntimeConfig as { mcpProfile?: unknown } | null)?.mcpProfile,
+          ).kind !== "off",
       });
       if (!availability.ok) {
         return c.json(

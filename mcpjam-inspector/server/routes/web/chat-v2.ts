@@ -5,7 +5,7 @@ import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
 import { isMCPAuthError } from "@mcpjam/sdk";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
-import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
+import { HOSTED_MODE, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import {
   validateAppToolEntries,
   AppToolValidationError,
@@ -34,6 +34,11 @@ import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
+import {
+  parseXaaPolicyValue,
+  xaaPolicyFromMcpProfile,
+} from "../../utils/effective-auth.js";
+import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
@@ -193,6 +198,20 @@ chatV2.post("/", async (c) => {
         );
       }
     }
+    // Enterprise-managed authorization policy. Server-authoritative wherever
+    // a backend host config exists (chatbox / host-bound turns above — the
+    // same fail-closed fetch that owns harness/computer): a tampered body
+    // can neither add the policy (409 DoS on auto servers) nor drop it
+    // (downgrading an unconfigured auto server from xaa to the discover/
+    // OAuth ladder). The body value is honored ONLY on ad-hoc turns, where
+    // the caller is tampering with their own session. Both reads fail
+    // closed on a malformed/unsupported policy (409, never silently off).
+    const xaaPolicy = hostRuntimeConfig
+      ? xaaPolicyFromMcpProfile(
+          (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+        )
+      : parseXaaPolicyValue((body as Record<string, unknown>).xaaPolicy);
+
     const resolvedExecution = resolveExecutionContext({
       hostConfig: hostRuntimeConfig,
       overrides: {
@@ -322,6 +341,10 @@ chatV2.post("/", async (c) => {
           String(modelDefinition.id),
           modelDefinition.provider,
         ),
+        // Fail closed rather than let a harness turn bypass the host's
+        // enterprise-managed policy: the harness proxy token carries no
+        // host, so that route can't enforce it (see the flag's docstring).
+        xaaEnterprisePolicyOn: xaaPolicy != null,
       });
       if (!availability.ok) {
         throw new WebRouteError(
@@ -410,6 +433,11 @@ chatV2.post("/", async (c) => {
         serverNames: selectedServerNames,
         initializePins,
         mcpProtocolVersionsByServerId,
+        xaaPolicy,
+        // Required for any XAA server in the batch (policy-forced or
+        // per-server configured) — without it the builder 500s rather than
+        // connecting tokenless.
+        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
       },
     );
     oauthServerUrls = urls;

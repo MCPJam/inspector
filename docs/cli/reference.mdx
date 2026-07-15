@@ -232,6 +232,60 @@ Plus shared connection flags.
 
 ---
 
+## `xaa` commands
+
+### `xaa run`
+
+Run the Cross-App Access (ID-JAG) debugger: self-issue an ID-JAG, redeem it at the target authorization server (RFC 7523), and call the MCP server with the resulting access token. See the [XAA Debugger guide](/cli/xaa) for the trust setup, registration strategies, and CI usage.
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--url <url>` | Yes | | Target MCP server URL (the protected resource) |
+| `--issuer-base-url <url>` | Yes | | Origin the local mock IdP issues from. It must publish the CLI's local signing key — typically a running [local inspector](/cli/xaa#before-you-run-make-the-issuer-reachable), not your real IdP |
+| `--sub <subject>` | Yes | | Simulated end-user subject identifier |
+| `--client-id <id>` | No | | OAuth client ID. Required for `preregistered`; rejected for `dcr`/`cimd` |
+| `--registration <method>` | No | `preregistered` | `preregistered`, `dcr`, or `cimd` |
+| `--client-metadata-url <url>` | No | | CIMD only: the Client ID Metadata Document URL to present as the `client_id` |
+| `--client-auth <method>` | No | `none` | CIMD only: `none` (public) or `private-key-jwt` (confidential — generates a local EC P-256 key, publishes it via the hosted reflector, and signs a `client_assertion`) |
+| `--cimd-metadata-origin <url>` | No | `https://app.mcpjam.com` | Confidential CIMD only: bare origin hosting the metadata-document reflector. An `http://` loopback origin is a dev-only opt-in; rejected when `--https-only` is set |
+| `--authz-server-issuer <issuer>` | No | | Target AS issuer. When set, protected-resource metadata discovery is skipped |
+| `--token-endpoint <url>` | No | | AS token endpoint. When set, AS-metadata discovery is skipped. Not valid with `dcr` or `cimd` |
+| `--email <email>` | No | | Simulated end-user email claim |
+| `--client-secret <secret>` | No | | OAuth client secret presented at redemption |
+| `--token-endpoint-auth-method <method>` | No | | `client_secret_basic`, `client_secret_post`, or `none`. Not valid with `dcr` or `cimd` |
+| `--assertion-format <format>` | No | `oidc` | Identity assertion format: `oidc` (ID token) or `saml` (SAML 2.0 assertion) |
+| `--scopes <scopes>` | No | | Space-separated scope string |
+| `--https-only` | No | | Reject non-HTTPS / private targets |
+
+#### Registration strategies
+
+| Strategy | Description |
+|----------|-------------|
+| `preregistered` | Supply a pre-registered `--client-id` (and optional `--client-secret`) |
+| `dcr` | Dynamic Client Registration (RFC 7591) — the CLI registers a client at the RAS each run |
+| `cimd` | Client ID Metadata Document — the client publishes its identity at a URL |
+
+#### Confidential CIMD (`--client-auth private-key-jwt`)
+
+When `--registration cimd --client-auth private-key-jwt` is used, the CLI loads or generates a local EC P-256 key pair (stored in `~/.mcpjam`). The public key is encoded into a reflector URL on `app.mcpjam.com`, which becomes the `client_id`. The CLI signs a `client_assertion` with the private key at token-redemption time; the private key never leaves the machine.
+
+```bash
+mcpjam inspector start   # serves the issuer at http://localhost:6274/api/mcp/xaa
+
+mcpjam xaa run \
+  --url http://localhost:8080/mcp \
+  --issuer-base-url http://localhost:6274/api/mcp \
+  --sub user@example.com \
+  --registration cimd \
+  --client-auth private-key-jwt
+```
+
+For a cloud authorization server, expose the inspector origin through a tunnel and pass the public origin as `--issuer-base-url` — see [making the issuer reachable](/cli/xaa#before-you-run-make-the-issuer-reachable).
+
+**Key rotation:** the key is the identity. Deleting `~/.mcpjam/xaa-client-private.pem` or changing the `XAA_CLIENT_PRIVATE_KEY` environment variable generates a new `client_id`; any RAS-side allowlisting must be updated after rotation.
+
+---
+
 ## `oauth` commands
 
 ### `oauth login`

@@ -158,3 +158,34 @@ describe("web routes — auth enforcement", () => {
     expect(data.code).toBe("VALIDATION_ERROR");
   });
 });
+
+// The single-server/multi-server route schemas are stripping z.objects, so
+// the enterprise-auth policy is deliberately read from the PRE-PARSE raw
+// body in createManualHostedConnection — a route schema that forgets to
+// declare xaaPolicy must not silently drop enforcement (fail-open). This
+// pins the raw-body read: a schema that strips the field still 409s on a
+// malformed policy.
+describe("createManualHostedConnection — xaaPolicy survives schema stripping", () => {
+  it("rejects a malformed policy that a stripping schema would have removed", async () => {
+    const { createManualHostedConnection } = await import("../auth.js");
+    const { z } = await import("zod");
+    const strippingSchema = z.object({ projectId: z.string() });
+    const c = {
+      get: () => undefined,
+      req: { header: () => "Bearer test-bearer" },
+    } as any;
+
+    let thrown: any;
+    try {
+      await createManualHostedConnection(
+        c,
+        { projectId: "proj-1", xaaPolicy: { idp: "okta" } },
+        strippingSchema
+      );
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown?.status).toBe(409);
+    expect(thrown?.details?.reason).toBe("xaa_policy_invalid");
+  });
+});

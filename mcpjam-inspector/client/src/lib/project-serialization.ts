@@ -7,6 +7,7 @@ import {
   normalizeAuthMethod,
   normalizeIdentityAssertionFormat,
   normalizeRegistrationMode,
+  normalizeXaaClientAuth,
 } from "@/shared/xaa.js";
 
 type SerializeOptions = {
@@ -86,6 +87,9 @@ function serializeServersInternal(
     }
     if (server.registrationMode !== undefined) {
       serializedServer.registrationMode = server.registrationMode;
+    }
+    if (server.xaaClientAuth !== undefined) {
+      serializedServer.xaaClientAuth = server.xaaClientAuth;
     }
     if (server.authMethod !== undefined) {
       serializedServer.authMethod = server.authMethod;
@@ -301,6 +305,12 @@ export function deserializeServersFromConvex(
     );
     if (registrationMode !== undefined) {
       server.registrationMode = registrationMode;
+    }
+    // Narrow the CIMD client-auth method; drop anything unknown so the debugger
+    // falls back to public CIMD.
+    const xaaClientAuth = normalizeXaaClientAuth(serverData.xaaClientAuth);
+    if (xaaClientAuth !== undefined) {
+      server.xaaClientAuth = xaaClientAuth;
     }
     const authMethod = normalizeAuthMethod(serverData.authMethod);
     if (authMethod !== undefined) {

@@ -13,15 +13,6 @@ vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
 }));
 
-const navigateMock = vi.fn();
-vi.mock("@/lib/app-navigation", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/app-navigation")>();
-  return {
-    ...actual,
-    useAppNavigate: () => navigateMock,
-  };
-});
-
 describe("XAAIdpCard", () => {
   // jsdom serves the suite from a fixed origin; derive the expected URLs from
   // it rather than forcing a cross-origin replaceState (which jsdom rejects).
@@ -29,7 +20,6 @@ describe("XAAIdpCard", () => {
 
   beforeEach(() => {
     copyToClipboard.mockClear();
-    navigateMock.mockClear();
   });
 
   // Only unstub globals (e.g. the fetch stub) — NOT restoreAllMocks, which
@@ -192,20 +182,74 @@ describe("XAAIdpCard", () => {
     });
   });
 
-  it("shows the setup gear for org members and navigates to the setup center", async () => {
-    const user = userEvent.setup();
-    render(<XAAIdpCard organizationId="org_a1B2" />);
+  // ── Identity-assertion (OIDC/SAML) header control ────────────────────
+  // Renders only when the flow tab wires a persistence handler; other card
+  // consumers (setup center) omit it and see no control.
 
-    await user.click(screen.getByRole("button", { name: /open xaa setup/i }));
-    expect(navigateMock).toHaveBeenCalledWith("/xaa-flow/setup");
-  });
-
-  it("hides the setup gear without an org", () => {
-    render(<XAAIdpCard />);
+  it("hides the identity-assertion control without a change handler", () => {
+    render(<XAAIdpCard identityAssertionFormat="oidc" />);
     expect(
-      screen.queryByRole("button", { name: /open xaa setup/i })
-    ).toBeNull();
+      screen.queryByTestId("identity-assertion-toggle")
+    ).not.toBeInTheDocument();
   });
+
+  it("renders the OIDC/SAML control and fires the change handler", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <XAAIdpCard
+        identityAssertionFormat="oidc"
+        onIdentityAssertionFormatChange={onChange}
+      />
+    );
+
+    const toggle = screen.getByTestId("identity-assertion-toggle");
+    expect(toggle).toHaveTextContent("Identity assertion");
+    // OIDC is the active option; SAML is offered.
+    expect(screen.getByRole("button", { name: "OIDC" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    await user.click(screen.getByRole("button", { name: "SAML" }));
+    expect(onChange).toHaveBeenCalledWith("saml");
+  });
+
+  it("disables the control with the reason as its tooltip", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <XAAIdpCard
+        identityAssertionFormat="oidc"
+        onIdentityAssertionFormatChange={onChange}
+        identityAssertionFormatDisabledReason="Wait for the current run to finish."
+      />
+    );
+
+    expect(screen.getByTestId("identity-assertion-toggle")).toHaveAttribute(
+      "title",
+      "Wait for the current run to finish."
+    );
+    const samlButton = screen.getByRole("button", { name: "SAML" });
+    expect(samlButton).toBeDisabled();
+    await user.click(samlButton);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("explains that the chips stay valid when SAML is active", () => {
+    render(
+      <XAAIdpCard
+        identityAssertionFormat="saml"
+        onIdentityAssertionFormatChange={() => {}}
+      />
+    );
+
+    // The ID-JAG is a JWT under this issuer in both formats — the note keeps
+    // the "OpenID Config"/"JWKS" chips from reading as a contradiction.
+    const note = screen.getByTestId("saml-format-note");
+    expect(note).toHaveTextContent(/SAML 2\.0/);
+    expect(note).toHaveTextContent(/still a\s+JWT/i);
+  });
+
 });
 
 describe("XAAIdpCard (non-hosted mode)", () => {

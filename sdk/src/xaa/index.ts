@@ -13,9 +13,13 @@ export {
   SUBJECT_IDENTIFIER_FORMATS,
   DEFAULT_SUBJECT_IDENTIFIER_FORMAT,
   normalizeSubjectIdentifierFormat,
+  XAA_CLIENT_AUTH_METHODS,
+  DEFAULT_XAA_CLIENT_AUTH,
+  normalizeXaaClientAuth,
   type NegativeTestMode,
   type IdentityAssertionFormat,
   type SubjectIdentifierFormat,
+  type XaaClientAuthMethod,
 } from "./constants.js";
 export {
   REGISTRATION_STRATEGIES,
@@ -92,6 +96,12 @@ export {
   type XaaTokenEndpointAuthMethod,
 } from "./mint/jwt-bearer.js";
 export {
+  buildXaaJwtBearerRequest,
+  getLocalConfidentialCimdProvider,
+  type BuildXaaJwtBearerRequestArgs,
+  type ConfidentialCimdProvider,
+} from "./confidential-cimd-provider.js";
+export {
   canonicalizeMcpResource,
   buildProtectedResourceMetadataCandidates,
   buildAuthorizationServerMetadataCandidates,
@@ -107,6 +117,16 @@ export {
   XAA_MCP_EXTENSION,
   type McpInitializeRequest,
 } from "./mcp-init.js";
+export {
+  readXaaEnterprisePolicy,
+  withXaaEnterprisePolicy,
+  withoutXaaEnterprisePolicy,
+  XAA_ENTERPRISE_POLICY_EXTENSION,
+  XAA_ENTERPRISE_POLICY_IDPS,
+  type XaaEnterprisePolicy,
+  type XaaEnterprisePolicyIdp,
+  type XaaEnterprisePolicyState,
+} from "./enterprise-policy.js";
 export { createInProcessXaaExecutor } from "./in-process-executor.js";
 export type { InProcessXaaExecutorOptions } from "./in-process-executor.js";
 export { runXaaFlow } from "./run-xaa-flow.js";

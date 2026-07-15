@@ -678,21 +678,22 @@ describe("OAuth state machine regressions", () => {
     infoLogs: [],
   });
 
-  const prmExecutor = (resource: string) =>
+  const prmExecutor = (resource: string | undefined) =>
     jest.fn().mockResolvedValue({
       ok: true,
       status: 200,
       statusText: "OK",
       headers: { "content-type": "application/json" },
       body: {
-        resource,
+        ...(resource !== undefined ? { resource } : {}),
         authorization_servers: ["https://auth.example.com"],
       },
     });
 
   const runResourceMetadataStep = async (
     protocolVersion: OAuthProtocolVersion,
-    resource: string,
+    resource: string | undefined,
+    enforcement?: "warn" | "reject" | "reject-rfc9728",
   ) => {
     let state: any = seedResourceMetadataFetch();
 
@@ -708,6 +709,7 @@ describe("OAuth state machine regressions", () => {
       serverName: "Test Server",
       redirectUrl: REDIRECT_URI,
       requestExecutor: prmExecutor(resource),
+      ...(enforcement ? { resourceIndicatorEnforcement: enforcement } : {}),
     });
 
     await machine.proceedToNextStep(); // fetch protected resource metadata
@@ -760,6 +762,162 @@ describe("OAuth state machine regressions", () => {
           (log: any) => log.id === "resource-identifier-mismatch",
         ),
       ).toBeUndefined();
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "persists the resolved resource-indicator decision at PRM discovery in %s",
+    async (protocolVersion) => {
+      const state = await runResourceMetadataStep(
+        protocolVersion,
+        RESOURCE_URN,
+      );
+
+      expect(state.resourceIndicator).toEqual({
+        value: RESOURCE_URN,
+        source: "prm",
+        status: "invalid",
+        strictClientCompatible: false,
+        rfc9728Compliant: false,
+        rfc9728Reason: expect.stringContaining("https URL"),
+        reason: expect.stringContaining("https URL"),
+      });
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "warns but proceeds on a same-origin non-prefix resource even under reject enforcement in %s",
+    async (protocolVersion) => {
+      // Asana shape: PRM advertises a same-host resource on a different path
+      // than the transport endpoint. Same-origin is the security boundary;
+      // the official-SDK strictness gap is a warning, not a failure.
+      const state = await runResourceMetadataStep(
+        protocolVersion,
+        "https://mcp.example.com/v2/other",
+        "reject",
+      );
+
+      expect(state.currentStep).toBe("received_resource_metadata");
+      expect(state.resourceIndicator?.status).toBe("valid");
+      expect(state.resourceIndicator?.strictClientCompatible).toBe(false);
+      expect(state.resourceIndicator?.rfc9728Compliant).toBe(false);
+      expect(
+        state.infoLogs?.find(
+          (log: any) => log.id === "resource-identifier-mismatch",
+        )?.level,
+      ).toBe("warning");
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "rejects a same-origin non-prefix resource under RFC 9728 enforcement in %s",
+    async (protocolVersion) => {
+      const state = await runResourceMetadataStep(
+        protocolVersion,
+        "https://mcp.example.com/v2/other",
+        "reject-rfc9728",
+      );
+
+      expect(state.error).toMatch(/RFC 9728 conformance/);
+      expect(state.currentStep).not.toBe("received_resource_metadata");
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "rejects same-origin HTTP metadata under RFC 9728 enforcement in %s",
+    async (protocolVersion) => {
+      let state: any = {
+        ...seedResourceMetadataFetch(),
+        serverUrl: "http://localhost:8000/mcp",
+      };
+
+      const machine = createOAuthStateMachine({
+        protocolVersion,
+        registrationStrategy: "preregistered" as any,
+        state,
+        getState: () => state,
+        updateState: (updates) => {
+          state = { ...state, ...updates };
+        },
+        serverUrl: state.serverUrl,
+        serverName: "Test Server",
+        redirectUrl: REDIRECT_URI,
+        requestExecutor: prmExecutor("http://localhost:8000/mcp"),
+        resourceIndicatorEnforcement: "reject-rfc9728",
+      });
+
+      await machine.proceedToNextStep();
+
+      expect(state.error).toMatch(/https scheme/);
+      expect(state.currentStep).not.toBe("received_resource_metadata");
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "fails the discovery step on an unusable PRM resource under reject enforcement in %s",
+    async (protocolVersion) => {
+      const state = await runResourceMetadataStep(
+        protocolVersion,
+        RESOURCE_URN,
+        "reject",
+      );
+
+      // The machine surfaces step failures via state.error, which the
+      // connect-like drivers (oauth-login, conformance runner) treat as a
+      // failed flow.
+      expect(state.error).toMatch(/https URL/);
+      expect(state.currentStep).not.toBe("received_resource_metadata");
+      expect(state.resourceIndicator).toBeUndefined();
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "fails discovery under reject enforcement when PRM omits its resource in %s",
+    async (protocolVersion) => {
+      const state = await runResourceMetadataStep(
+        protocolVersion,
+        undefined,
+        "reject",
+      );
+
+      expect(state.error).toMatch(/missing its required "resource"/);
+      expect(state.currentStep).not.toBe("received_resource_metadata");
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "warns and falls back to the server URL when PRM omits its resource in %s",
+    async (protocolVersion) => {
+      const state = await runResourceMetadataStep(protocolVersion, undefined);
+
+      expect(state.currentStep).toBe("received_resource_metadata");
+      expect(state.resourceIndicator).toMatchObject({
+        source: "server",
+        status: "valid",
+        value: SERVER_URL,
+        rfc9728Compliant: true,
+      });
+      expect(
+        state.infoLogs?.find(
+          (log: any) => log.id === "resource-identifier-mismatch",
+        )?.level,
+      ).toBe("warning");
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "reject enforcement still accepts a valid PRM resource in %s",
+    async (protocolVersion) => {
+      const state = await runResourceMetadataStep(
+        protocolVersion,
+        SERVER_URL,
+        "reject",
+      );
+
+      expect(state.currentStep).toBe("received_resource_metadata");
+      expect(state.resourceIndicator?.status).toBe("valid");
+      expect(state.resourceIndicator?.value).toBe(SERVER_URL);
+      expect(state.resourceIndicator?.rfc9728Compliant).toBe(true);
     },
   );
 });

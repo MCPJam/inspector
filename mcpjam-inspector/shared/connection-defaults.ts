@@ -61,4 +61,16 @@ export type ConnectionDefaults = {
    * never has to gate on transport here.
    */
   mcpProtocolVersion?: import("@mcpjam/sdk/browser").McpProtocolVersion;
+  /**
+   * The host's enterprise-managed authorization policy, resolved client-side
+   * via `readXaaEnterprisePolicy(hostConfig.mcpProfile)`. Present only when
+   * the policy is validly ON — the client surfaces an `invalid` policy as a
+   * configuration error before connecting, and the resolver re-validates.
+   * Under the policy every HTTP `auto` server resolves to XAA; explicit
+   * per-server auth methods override. Local connections are the user's own
+   * session, so a body-supplied value here is self-tampering only (hosted
+   * surfaces read the policy from the backend-projected host config
+   * instead).
+   */
+  xaaPolicy?: import("@mcpjam/sdk/browser").XaaEnterprisePolicy;
 };

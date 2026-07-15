@@ -38,6 +38,12 @@ export type HostRuntimeConfig = RuntimeExecutionFields & {
     toolset?: "bash";
     workdir?: string;
   };
+  // Host-level MCP profile envelope from the HostConfigV2 — carries the
+  // enterprise-managed authorization policy under
+  // `extensions["com.mcpjam/enterprise-managed-auth"]`. Server-authoritative
+  // for host-bound turns. Optional so a backend that predates the projection
+  // returns omitted → policy off (safe: matches pre-feature behavior).
+  mcpProfile?: Record<string, unknown>;
 };
 
 export type HostRuntimeConfigResult =

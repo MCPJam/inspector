@@ -18,7 +18,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { resolveAuthorizationPlan } from "@mcpjam/sdk/browser";
+import {
+  readXaaEnterprisePolicy,
+  resolveAuthorizationPlan,
+} from "@mcpjam/sdk/browser";
+import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 import type { RegistrationMode } from "@/shared/xaa.js";
 import type {
   ServerFormAuthType,
@@ -140,6 +144,14 @@ export function AuthenticationSection({
   projectDefaultIdentity = null,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
+  // Active host's enterprise-managed authorization policy (ProtocolTab
+  // Switch → mcpProfile.extensions). When on, Auto routes this server
+  // through XAA regardless of per-server configuration and an explicit
+  // method here overrides — the helper copy under the select says which.
+  // `invalid` renders as off here; the connect path surfaces the config
+  // error, this component only shapes helper text.
+  const hostPolicyEnterpriseManaged =
+    readXaaEnterprisePolicy(useActiveMcpProfile()).kind === "on";
   const [revealedClientSecret, setRevealedClientSecret] = useState<
     string | null
   >(null);
@@ -334,9 +346,19 @@ export function AuthenticationSection({
           </Select>
           {authType === "auto" && (
             <p className="text-xs text-muted-foreground/80">
-              {autoSelectsXaa
-                ? "Uses Cross-App Access for this server."
-                : "Anonymous first, then OAuth if required."}
+              {hostPolicyEnterpriseManaged
+                ? autoSelectsXaa
+                  ? "Host policy: enterprise-managed — uses Cross-App Access for this server."
+                  : "Host policy: enterprise-managed — fails to connect until an XAA client registration is added or an explicit method overrides."
+                : autoSelectsXaa
+                  ? "Uses Cross-App Access for this server."
+                  : "Anonymous first, then OAuth if required."}
+            </p>
+          )}
+          {hostPolicyEnterpriseManaged && authType !== "auto" && (
+            <p className="text-xs text-muted-foreground/80">
+              Overrides the host&apos;s enterprise-managed authorization
+              policy.
             </p>
           )}
         </div>

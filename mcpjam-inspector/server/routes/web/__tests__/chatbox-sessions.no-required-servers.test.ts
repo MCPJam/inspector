@@ -51,6 +51,21 @@ describe("web routes — chatbox-sessions with no required servers", () => {
     generatePersonasMock.mockResolvedValue([
       { id: "p-1", name: "Curious First-Time User", role: "user", notes: "" },
     ]);
+    // generate-personas now reads the chatbox host config for the
+    // enterprise-managed authorization policy before connecting; the
+    // baseline stub has no policy (mcpProfile omitted → policy off).
+    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        chatboxId: "cbx-1",
+        accessVersion: 0,
+        modelId: "openai/gpt-4o-mini",
+        systemPrompt: "",
+        temperature: 0.7,
+        requireToolApproval: false,
+        hostStyle: "default",
+      },
+    });
   });
 
   afterEach(() => {

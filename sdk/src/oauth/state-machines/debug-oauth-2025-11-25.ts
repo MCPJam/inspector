@@ -34,11 +34,11 @@ import {
   generateRandomString,
   generateCodeChallenge,
 } from "./shared/pkce.js";
+import { buildResourceMetadataUrl } from "./shared/urls.js";
 import {
-  buildResourceMetadataUrl,
-  canonicalizeResourceUrl,
-  resourceMatchesServerUrl,
-} from "./shared/urls.js";
+  resolveDiscoveryResourceIndicator,
+  resolveFlowResourceValue,
+} from "./shared/resource-indicator.js";
 import {
   buildInitializeRequestBody,
   resolveInitializeProtocolVersion,
@@ -69,6 +69,12 @@ export interface DebugOAuthStateMachineConfig
   registrationStrategy?: RegistrationStrategy2025_11_25; // cimd | dcr | preregistered
 }
 
+
+// Sequence-diagram previews must show the resource value the flow actually
+// sends (the decision persisted at PRM discovery), not the raw server URL.
+const previewResourceValue = (
+  flowState: OAuthFlowState,
+): string | undefined => resolveFlowResourceValue(flowState);
 
 /**
  * Build the sequence of actions for the 2025-11-25 OAuth flow
@@ -333,9 +339,7 @@ export function buildActions_2025_11_25(
             },
             {
               label: "resource",
-              value: flowState.serverUrl
-                ? canonicalizeResourceUrl(flowState.serverUrl)
-                : "—",
+              value: previewResourceValue(flowState) || "—",
             },
             { label: "Protocol", value: "2025-11-25" },
           ]
@@ -357,9 +361,7 @@ export function buildActions_2025_11_25(
             },
             {
               label: "resource",
-              value: flowState.serverUrl
-                ? canonicalizeResourceUrl(flowState.serverUrl)
-                : "",
+              value: previewResourceValue(flowState) || "",
             },
           ]
         : undefined,
@@ -416,9 +418,7 @@ export function buildActions_2025_11_25(
             { label: "grant_type", value: "authorization_code" },
             {
               label: "resource",
-              value: flowState.serverUrl
-                ? canonicalizeResourceUrl(flowState.serverUrl)
-                : "",
+              value: previewResourceValue(flowState) || "",
             },
           ]
         : undefined,
@@ -537,11 +537,10 @@ export const createDebugOAuthStateMachine = (
     authMode,
     hasClientSecret = false,
     strictConformance = false,
+    resourceIndicatorEnforcement = "warn",
     registrationStrategy = "cimd", // Default to CIMD for 2025-11-25
   } = config;
 
-  // Canonicalize the server URL once at initialization (per RFC 8707)
-  const canonicalServerUrl = canonicalizeResourceUrl(serverUrl);
   const redirectUri = redirectUrl;
   const initializeProtocolVersion = resolveInitializeProtocolVersion("2025-11-25");
   const dynamicRegistrationDefaults = dynamicRegistration ?? {};
@@ -567,17 +566,13 @@ export const createDebugOAuthStateMachine = (
   // Helper to get current state (use getState if provided, otherwise use initial state)
   const getCurrentState = () => (getState ? getState() : initialState);
 
-  // Per RFC 8707 and the MCP Authorization spec, the OAuth `resource` indicator
-  // must use the identifier advertised in the server's Protected Resource
-  // Metadata when one was discovered. That identifier may be any URI (including
-  // a URN) and is not required to equal the MCP endpoint URL, so the client must
-  // not overwrite it with the canonicalized server URL. Only fall back to the
-  // canonical server URL when no PRM `resource` is available. Resolving through a
-  // single helper also guarantees the authorization request and the token
-  // request send an identical resource value — some authorization servers reject
-  // a mismatch between the two.
+  // The resource indicator is decided once at PRM discovery and persisted as
+  // state.resourceIndicator (see resource-policy.ts). Reading through this
+  // helper keeps every request site — authorization URL, token body, token
+  // POST — on the identical value, and re-evaluates lazily for flows seeded
+  // past the discovery step.
   const resolveResourceParameter = (): string =>
-    getCurrentState().resourceMetadata?.resource ?? canonicalServerUrl;
+    resolveFlowResourceValue(getCurrentState(), serverUrl);
 
   const executeRequest = (url: string, options: RequestInit = {}) =>
     requestExecutor({
@@ -970,32 +965,26 @@ export const createDebugOAuthStateMachine = (
               // The response card is the complete protected-resource metadata.
               // Keep existing logs only for distinct findings, such as a
               // resource identifier mismatch below.
-              let infoLogs = state.infoLogs;
+              let infoLogs = state.infoLogs ?? [];
 
-              if (
-                resourceMetadata.resource &&
-                !resourceMatchesServerUrl(
-                  resourceMetadata.resource,
-                  state.serverUrl
-                )
-              ) {
-                infoLogs = addInfoLog(
-                  { ...state, infoLogs },
-                  "received_resource_metadata",
-                  "resource-identifier-mismatch",
-                  "Resource identifier mismatch",
-                  {
-                    "Advertised resource": resourceMetadata.resource,
-                    "Server URL": state.serverUrl,
-                    Note: "The debugger will send the advertised resource as-is (RFC 8707), but strict MCP clients — including MCPJam's Quick OAuth and the official MCP SDK — validate it against the server URL (RFC 9728 §3.3) and will refuse to connect.",
-                  },
-                  { level: "warning" }
-                );
-              }
+              // Resolve the resource indicator ONCE (rejecting/warning per
+              // the surface's enforcement mode); every later request and
+              // preview site reads state.resourceIndicator instead of
+              // re-deriving it.
+              const discoveryResource = resolveDiscoveryResourceIndicator({
+                state,
+                fallbackServerUrl: serverUrl,
+                prmResource: resourceMetadata.resource,
+                enforcement: resourceIndicatorEnforcement,
+                infoLogs,
+              });
+              const resourceIndicator = discoveryResource.resourceIndicator;
+              infoLogs = discoveryResource.infoLogs;
 
               updateState({
                 currentStep: "received_resource_metadata",
                 resourceMetadata,
+                resourceIndicator,
                 resourceMetadataUrl:
                   lastAttempt?.request?.url || state.resourceMetadataUrl,
                 authorizationServerUrl,
