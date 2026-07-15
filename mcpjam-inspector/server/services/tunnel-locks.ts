@@ -1,9 +1,9 @@
 /**
  * Per-server serialization for tunnel lifecycle operations (create, rotate,
- * close). Provisioning spans several non-atomic steps — backend token mint
- * (which revokes the previous credential), ngrok listen, state recording —
- * so two overlapping requests for the same server could otherwise leave the
- * live listener enforcing one secret while persistence holds another.
+ * close). Provisioning spans several non-atomic steps — backend grant mint
+ * (which rotates the secret server-side) and the relay connect — so two
+ * overlapping requests for the same server could otherwise leave the live
+ * connection bound to one grant while the edge enforces another.
  *
  * Callers must re-check current state (e.g. "does a listener already
  * exist?") inside the locked section: the second of two racing creates

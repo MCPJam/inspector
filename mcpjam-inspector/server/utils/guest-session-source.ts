@@ -1,4 +1,7 @@
-import { provisionGuestAuthConfigToConvex } from "./convex-guest-auth-sync.js";
+import {
+  isConvexProvisioningUnavailable,
+  provisionGuestAuthConfigToConvex,
+} from "./convex-guest-auth-sync.js";
 import { logger } from "./logger.js";
 import {
   GUEST_SESSION_SECRET_HEADER,
@@ -188,8 +191,14 @@ async function performGuestSessionFetch(
   }
 }
 
+// Default per-fetch timeout. Callers may shorten this (e.g. the document
+// bootstrap path) as defense-in-depth so the inner fetch can't outlive a
+// shorter whole-helper deadline. NOT a substitute for racing the whole mint.
+const DEFAULT_GUEST_FETCH_TIMEOUT_MS = 10_000;
+
 export async function fetchRemoteGuestSession(
-  context?: GuestSessionFetchContext
+  context?: GuestSessionFetchContext,
+  timeoutMs: number = DEFAULT_GUEST_FETCH_TIMEOUT_MS
 ): Promise<GuestSessionFetchResult> {
   return performGuestSessionFetch(
     getRemoteGuestSessionUrl(),
@@ -197,7 +206,7 @@ export async function fetchRemoteGuestSession(
       method: "POST",
       headers: buildForwardedHeaders(context, {}),
       body: buildRequestBody(context),
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(timeoutMs),
     },
     "MCPJam",
     context?.body?.mode
@@ -205,7 +214,8 @@ export async function fetchRemoteGuestSession(
 }
 
 export async function fetchConvexGuestSession(
-  context?: GuestSessionFetchContext
+  context?: GuestSessionFetchContext,
+  timeoutMs: number = DEFAULT_GUEST_FETCH_TIMEOUT_MS
 ): Promise<GuestSessionFetchResult> {
   try {
     await provisionGuestAuthConfigToConvex();
@@ -217,6 +227,13 @@ export async function fetchConvexGuestSession(
     return { kind: "error", status: 503, setCookies: [] };
   }
 
+  // Can't administer the deployment (OSS/local dev against MCPJam's shared
+  // deployment): our locally-generated shared secret was never written to it,
+  // so a direct Convex mint would be rejected. Use the hosted mint instead.
+  if (isConvexProvisioningUnavailable()) {
+    return fetchRemoteGuestSession(context, timeoutMs);
+  }
+
   return performGuestSessionFetch(
     getConvexGuestSessionUrl(),
     {
@@ -225,7 +242,7 @@ export async function fetchConvexGuestSession(
         [GUEST_SESSION_SECRET_HEADER]: getGuestSessionSharedSecret(),
       }),
       body: buildRequestBody(context),
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(timeoutMs),
     },
     "Convex",
     context?.body?.mode
@@ -327,6 +344,10 @@ export async function fetchConvexGuestSessionRevoke(
       `[guest-auth] Failed to provision Convex guest auth env: ${errMsg}`
     );
     return { status: 503, setCookies: [], body: null };
+  }
+
+  if (isConvexProvisioningUnavailable()) {
+    return fetchRemoteGuestSessionRevoke(context);
   }
 
   return performGuestSessionRevoke(
@@ -451,6 +472,10 @@ export async function fetchConvexGuestPromotionProof(
       `[guest-auth] Failed to provision Convex guest auth env: ${errMsg}`
     );
     return { kind: "error", status: 503 };
+  }
+
+  if (isConvexProvisioningUnavailable()) {
+    return fetchRemoteGuestPromotionProof(context);
   }
 
   return performGuestPromotionProofFetch(

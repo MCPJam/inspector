@@ -91,6 +91,49 @@ describe("Host — public surface", () => {
     }
   });
 
+  it("serializes explicit MCP image policies", () => {
+    const json = new Host({
+      style: "mcpjam",
+      model: "test-model",
+      modelVisibleMcpToolResults: {
+        directContent: { image: false },
+        embeddedResources: { blob: { image: true } },
+        linkedResources: { blob: { image: false } },
+      },
+      mcpToolResultImageRendering: { placement: "collapsed" },
+    }).toJSON();
+
+    expect(json.modelVisibleMcpToolResults).toEqual({
+      directContent: { image: false },
+      embeddedResources: { blob: { image: true } },
+      linkedResources: { blob: { image: false } },
+    });
+    expect(json.mcpToolResultImageRendering).toEqual({
+      placement: "collapsed",
+    });
+  });
+
+  it("supports MCP image policy setters", () => {
+    const host = new Host({
+      style: "mcpjam",
+      model: "test-model",
+    })
+      .setModelVisibleMcpToolResults({
+        directContent: { image: false },
+        embeddedResources: { blob: { image: false } },
+        linkedResources: { blob: { image: true } },
+      })
+      .setMcpToolResultImageRendering({ placement: "none" });
+
+    const json = host.toJSON();
+    expect(json.modelVisibleMcpToolResults).toEqual({
+      directContent: { image: false },
+      embeddedResources: { blob: { image: false } },
+      linkedResources: { blob: { image: true } },
+    });
+    expect(json.mcpToolResultImageRendering).toEqual({ placement: "none" });
+  });
+
   it("validates lazily at toJSON() (invalid profile throws)", () => {
     const host = new Host({ style: "mcpjam", model: "test-model" });
     host.mcp.apps = { mcpAppsOverrides: { availableDisplayModes: [] } };

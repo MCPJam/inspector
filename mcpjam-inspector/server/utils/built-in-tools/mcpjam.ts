@@ -32,20 +32,34 @@ import { tool, type ToolSet } from "ai";
 import {
   callServerToolOperation,
   diagnoseServerOperation,
+  cancelEvalRunOperation,
+  getChatboxOperation,
+  getEvalIterationTraceOperation,
+  getEvalRunOperation,
+  getEvalRunStepsOperation,
   getServerPromptOperation,
+  listChatboxesOperation,
+  listChatSessionsOperation,
+  listEvalRunIterationsOperation,
+  listEvalSuiteRunsOperation,
+  listEvalSuitesOperation,
+  listProjectsOperation,
   listProjectServersOperation,
   listServerPromptsOperation,
   listServerResourcesOperation,
   listServerToolsOperation,
   readServerResourceOperation,
+  runEvalCaseOperation,
+  runEvalSuiteOperation,
   type PlatformApiClient,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 
-// The workspace toolset, in advertise order. Backend catalog rows
-// (mcpjam-backend convex/builtInTools/catalog.ts SEED_ROWS) must carry these
-// exact operation names — a catalog id doubles as the AI SDK tool name.
+// The workspace toolset, in advertise order. Mirrors PLATFORM_CATALOG_OPERATIONS
+// in mcp/src/tools/platformTools.ts — both surfaces pull from the same SDK
+// operations. showServersOperation is intentionally omitted (MCP Apps widget only).
 const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
+  listProjectsOperation,
   listProjectServersOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
@@ -54,6 +68,18 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getServerPromptOperation,
   listServerResourcesOperation,
   readServerResourceOperation,
+  listEvalSuitesOperation,
+  listEvalSuiteRunsOperation,
+  runEvalCaseOperation,
+  runEvalSuiteOperation,
+  getEvalRunOperation,
+  listEvalRunIterationsOperation,
+  getEvalIterationTraceOperation,
+  getEvalRunStepsOperation,
+  cancelEvalRunOperation,
+  listChatboxesOperation,
+  getChatboxOperation,
+  listChatSessionsOperation,
 ];
 
 const OPERATIONS_BY_ID = new Map(
@@ -68,11 +94,26 @@ export function isMcpjamToolId(id: string): boolean {
   return OPERATIONS_BY_ID.has(id);
 }
 
-// Every operation except the pure platform read opens an ephemeral
-// connection to a saved MCP server, so it honors the host's approval policy.
-const CONNECTION_OPENING_IDS = new Set(
-  MCPJAM_TOOL_IDS.filter((id) => id !== listProjectServersOperation.name)
-);
+// Operations that open an ephemeral connection to a user's saved MCP server
+// inherit the host's requireToolApproval. Pure platform API reads (project,
+// eval, chatbox) never need approval.
+const CONNECTION_OPENING_IDS = new Set([
+  diagnoseServerOperation.name,
+  listServerToolsOperation.name,
+  callServerToolOperation.name,
+  listServerPromptsOperation.name,
+  getServerPromptOperation.name,
+  listServerResourcesOperation.name,
+  readServerResourceOperation.name,
+]);
+
+// Operations that mutate state and therefore require user approval when the
+// host enables it — connection-opening tools plus state-changing writes like
+// cancelling an in-flight eval run.
+const APPROVAL_REQUIRED_IDS = new Set([
+  ...CONNECTION_OPENING_IDS,
+  cancelEvalRunOperation.name,
+]);
 
 // Surface note appended to each operation's description: in-app, an omitted
 // `project` means the chat's project, not the catalog's "most recently
@@ -137,7 +178,7 @@ export function buildMcpjamTool(
   if (!operation) return null;
 
   const needsApproval =
-    CONNECTION_OPENING_IDS.has(id) && opts.requireToolApproval === true;
+    APPROVAL_REQUIRED_IDS.has(id) && opts.requireToolApproval === true;
 
   return tool({
     description: `${operation.description}${AMBIENT_PROJECT_NOTE}`,

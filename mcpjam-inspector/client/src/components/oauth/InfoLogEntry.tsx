@@ -51,7 +51,7 @@ export function InfoLogEntry({
   > = {
     info: {
       icon: Info,
-      accent: "border-blue-300 dark:border-blue-600",
+      accent: "border-border",
       text: "text-blue-600 dark:text-blue-300",
     },
     warning: {

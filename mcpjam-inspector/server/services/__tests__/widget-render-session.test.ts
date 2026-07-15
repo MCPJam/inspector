@@ -1,0 +1,489 @@
+import { describe, it, expect, vi } from "vitest";
+import {
+  WidgetRenderSessionRegistry,
+  WidgetSessionBusyError,
+  WidgetSessionCapacityError,
+  WidgetSessionNotFoundError,
+  WidgetSessionUnavailableError,
+  type SessionHarness,
+} from "../widget-render-session";
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+type FakeHarness = SessionHarness & {
+  executeAction: ReturnType<typeof vi.fn>;
+  dispose: ReturnType<typeof vi.fn>;
+};
+
+/** A harness whose action/dispose resolution is caller-controlled, for racing
+ *  the registry's lifecycle against in-flight work. */
+function makeControllableHarness(): {
+  harness: FakeHarness;
+  resolveAction: (result?: unknown) => void;
+  resolveDispose: () => void;
+} {
+  const actionGate = deferred<unknown>();
+  const disposeGate = deferred<void>();
+  const harness = {
+    executeAction: vi.fn(() => actionGate.promise),
+    dispose: vi.fn(() => disposeGate.promise),
+  } as unknown as FakeHarness;
+  return {
+    harness,
+    resolveAction: (result) =>
+      actionGate.resolve(
+        result ?? { action: { action: "screenshot" }, widgetToolCalls: [], elapsedMs: 1 },
+      ),
+    resolveDispose: () => disposeGate.resolve(),
+  };
+}
+
+/**
+ * Lifecycle tests for the interactive widget-session registry. The registry is
+ * render-agnostic — it only owns the harness lifecycle — so these drive it with
+ * fake harnesses (no browser) and an injected clock (no real timers).
+ */
+
+function makeFakeHarness(): SessionHarness & {
+  executeAction: ReturnType<typeof vi.fn>;
+  dispose: ReturnType<typeof vi.fn>;
+} {
+  return {
+    executeAction: vi.fn(
+      async (input: { toolCallId: string; action: unknown }) => ({
+        action: input.action,
+        screenshotBase64: "shot",
+        widgetToolCalls: [
+          { name: "reserve", args: { seat: 1 }, ok: true, elapsedMs: 1 },
+        ],
+        elapsedMs: 2,
+      }),
+    ),
+    dispose: vi.fn(async () => {}),
+  } as unknown as SessionHarness & {
+    executeAction: ReturnType<typeof vi.fn>;
+    dispose: ReturnType<typeof vi.fn>;
+  };
+}
+
+function register(
+  registry: WidgetRenderSessionRegistry,
+  harness: SessionHarness,
+  widgetId = "widget-1",
+) {
+  return registry.register({
+    harness,
+    serverId: "srv",
+    mountedWidgetId: widgetId,
+    viewport: { width: 800, height: 600 },
+  });
+}
+
+/** Register a session that consumes a held reservation. */
+function register2(
+  registry: WidgetRenderSessionRegistry,
+  reservation: import("../widget-render-session").WidgetSessionReservation,
+  widgetId = "widget-r",
+) {
+  return registry.register(
+    {
+      harness: makeFakeHarness(),
+      serverId: "srv",
+      mountedWidgetId: widgetId,
+      viewport: { width: 800, height: 600 },
+    },
+    reservation,
+  );
+}
+
+describe("WidgetRenderSessionRegistry", () => {
+  it("registers a session and exposes a public (harness-free) view", () => {
+    let now = 1_000;
+    const registry = new WidgetRenderSessionRegistry({
+      now: () => now,
+      idleTimeoutMs: 5_000,
+      sweepIntervalMs: 0,
+    });
+    const harness = makeFakeHarness();
+
+    const session = register(registry, harness);
+    expect(session.sessionId).toBeTruthy();
+    expect(session.serverId).toBe("srv");
+    expect(session.mountedWidgetId).toBe("widget-1");
+    expect(session.viewport).toEqual({ width: 800, height: 600 });
+    expect(session.expiresAt).toBe(now + 5_000);
+    expect((session as unknown as Record<string, unknown>).harness).toBeUndefined();
+    expect(registry.size()).toBe(1);
+  });
+
+  it("drives an action on the mounted widget and refreshes the TTL", async () => {
+    let now = 1_000;
+    const registry = new WidgetRenderSessionRegistry({
+      now: () => now,
+      idleTimeoutMs: 5_000,
+      sweepIntervalMs: 0,
+    });
+    const harness = makeFakeHarness();
+    const session = register(registry, harness, "widget-xyz");
+
+    now = 3_000;
+    const { result, expiresAt } = await registry.executeAction(
+      session.sessionId,
+      { action: "left_click", coordinate: [10, 20] },
+    );
+
+    expect(harness.executeAction).toHaveBeenCalledWith({
+      toolCallId: "widget-xyz",
+      action: { action: "left_click", coordinate: [10, 20] },
+    });
+    expect(result.screenshotBase64).toBe("shot");
+    expect(result.widgetToolCalls).toHaveLength(1);
+    // TTL refreshed off the action time (now=3000), not the create time.
+    expect(expiresAt).toBe(3_000 + 5_000);
+  });
+
+  it("closes a session and disposes its harness", async () => {
+    const registry = new WidgetRenderSessionRegistry({ sweepIntervalMs: 0 });
+    const harness = makeFakeHarness();
+    const session = register(registry, harness);
+
+    expect(await registry.close(session.sessionId)).toBe(true);
+    expect(harness.dispose).toHaveBeenCalledTimes(1);
+    expect(registry.size()).toBe(0);
+    // Closing an unknown session is a no-op.
+    expect(await registry.close(session.sessionId)).toBe(false);
+  });
+
+  it("enforces the max-session cap", () => {
+    const registry = new WidgetRenderSessionRegistry({
+      maxSessions: 2,
+      sweepIntervalMs: 0,
+    });
+    register(registry, makeFakeHarness());
+    register(registry, makeFakeHarness());
+
+    expect(() => registry.reserve()).toThrow(WidgetSessionCapacityError);
+    expect(() => register(registry, makeFakeHarness())).toThrow(
+      WidgetSessionCapacityError,
+    );
+    expect(registry.size()).toBe(2);
+  });
+
+  it("reserves slots so concurrent starts can't exceed the cap", () => {
+    const registry = new WidgetRenderSessionRegistry({
+      maxSessions: 2,
+      sweepIntervalMs: 0,
+    });
+    // Both slots held before ANY register — a third start is rejected up front,
+    // before a browser is launched (the real bug: parallel starts each passing
+    // a point-in-time check).
+    const r1 = registry.reserve();
+    const r2 = registry.reserve();
+    expect(() => registry.reserve()).toThrow(WidgetSessionCapacityError);
+
+    // Releasing a held slot frees capacity.
+    registry.release(r1);
+    const r3 = registry.reserve();
+    expect(r3.active).toBe(true);
+
+    // Registering consumes a reservation without double-counting: cap is now
+    // 1 live session + 1 reserved (r3) = 2, so the next reserve is rejected.
+    register2(registry, r2);
+    expect(registry.size()).toBe(1);
+    expect(() => registry.reserve()).toThrow(WidgetSessionCapacityError);
+
+    // release is idempotent.
+    registry.release(r3);
+    registry.release(r3);
+    expect(() => registry.reserve()).not.toThrow();
+  });
+
+  it("ignores forged reservations so the cap can't be bypassed", () => {
+    const registry = new WidgetRenderSessionRegistry({
+      maxSessions: 1,
+      sweepIntervalMs: 0,
+    });
+    const real = registry.reserve(); // fills the only slot
+    // A structurally-valid but un-issued reservation must not free a slot or
+    // drive reservedCount negative.
+    registry.release({ id: "forged", active: true });
+    expect(() => registry.reserve()).toThrow(WidgetSessionCapacityError);
+    // Registering with a forged reservation falls back to the real cap check.
+    expect(() => register2(registry, { id: "forged", active: true })).toThrow(
+      WidgetSessionCapacityError,
+    );
+
+    // The genuine reservation still frees its slot exactly once.
+    registry.release(real);
+    expect(() => registry.reserve()).not.toThrow();
+  });
+
+  it("reclaims idle sessions on sweep and frees capacity", async () => {
+    let now = 0;
+    const registry = new WidgetRenderSessionRegistry({
+      now: () => now,
+      idleTimeoutMs: 1_000,
+      maxSessions: 1,
+      sweepIntervalMs: 0,
+    });
+    const harness = makeFakeHarness();
+    const session = register(registry, harness);
+
+    // Within TTL: still live.
+    now = 999;
+    registry.sweepExpired();
+    expect(registry.size()).toBe(1);
+
+    // Past TTL: swept + disposed.
+    now = 1_001;
+    registry.sweepExpired();
+    // sweepExpired schedules disposal asynchronously; flush microtasks.
+    await Promise.resolve();
+    expect(harness.dispose).toHaveBeenCalledTimes(1);
+    expect(registry.size()).toBe(0);
+    expect(registry.get(session.sessionId)).toBeUndefined();
+
+    // Capacity freed.
+    registry.release(registry.reserve());
+    expect(registry.size()).toBe(0);
+  });
+
+  it("keeps a session alive when an action refreshes the TTL before expiry", async () => {
+    let now = 0;
+    const registry = new WidgetRenderSessionRegistry({
+      now: () => now,
+      idleTimeoutMs: 1_000,
+      sweepIntervalMs: 0,
+    });
+    const session = register(registry, makeFakeHarness());
+
+    now = 800;
+    await registry.executeAction(session.sessionId, { action: "screenshot" });
+
+    // Past the ORIGINAL expiry (1000) but within the refreshed one (1800).
+    now = 1_500;
+    registry.sweepExpired();
+    await Promise.resolve();
+    expect(registry.size()).toBe(1);
+  });
+
+  it("rejects actions on unknown or expired sessions", async () => {
+    let now = 0;
+    const registry = new WidgetRenderSessionRegistry({
+      now: () => now,
+      idleTimeoutMs: 1_000,
+      sweepIntervalMs: 0,
+    });
+
+    await expect(
+      registry.executeAction("nope", { action: "screenshot" }),
+    ).rejects.toBeInstanceOf(WidgetSessionNotFoundError);
+
+    const session = register(registry, makeFakeHarness());
+    now = 2_000; // expired
+    await expect(
+      registry.executeAction(session.sessionId, { action: "screenshot" }),
+    ).rejects.toBeInstanceOf(WidgetSessionNotFoundError);
+  });
+
+  it("counts still-disposing sessions against the cap", async () => {
+    // A closed session's browser isn't freed until dispose() resolves, so a
+    // concurrent start must not slip past the cap during teardown.
+    const registry = new WidgetRenderSessionRegistry({
+      maxSessions: 1,
+      sweepIntervalMs: 0,
+    });
+    const { harness, resolveDispose } = makeControllableHarness();
+    const session = register(registry, harness);
+
+    // Begin close — dispose is pending (browser still tearing down).
+    const closePromise = registry.close(session.sessionId);
+    expect(registry.size()).toBe(0);
+    // Capacity is still consumed by the disposing browser.
+    expect(() => registry.reserve()).toThrow(WidgetSessionCapacityError);
+
+    // Teardown finishes -> capacity freed.
+    resolveDispose();
+    await closePromise;
+    registry.release(registry.reserve());
+    expect(registry.size()).toBe(0);
+  });
+
+  it("does not idle-sweep a session with an in-flight action, and refreshes its TTL", async () => {
+    let now = 0;
+    const registry = new WidgetRenderSessionRegistry({
+      now: () => now,
+      idleTimeoutMs: 1_000,
+      sweepIntervalMs: 0,
+    });
+    const { harness, resolveAction } = makeControllableHarness();
+    const session = register(registry, harness);
+
+    // Start a long action (pending), then let the clock pass the TTL.
+    const actionPromise = registry.executeAction(session.sessionId, {
+      action: "screenshot",
+    });
+    now = 5_000;
+    registry.sweepExpired();
+    await Promise.resolve();
+    // Busy -> not swept.
+    expect(registry.size()).toBe(1);
+    expect(harness.dispose).not.toHaveBeenCalled();
+
+    // Action settles -> TTL refreshed off the settle time.
+    resolveAction();
+    const { expiresAt } = await actionPromise;
+    expect(expiresAt).toBe(5_000 + 1_000);
+    expect(registry.size()).toBe(1);
+  });
+
+  it("rejects an action whose session is closed mid-flight (no false success)", async () => {
+    const registry = new WidgetRenderSessionRegistry({ sweepIntervalMs: 0 });
+    const { harness, resolveAction, resolveDispose } = makeControllableHarness();
+    const session = register(registry, harness);
+
+    const actionPromise = registry.executeAction(session.sessionId, {
+      action: "left_click",
+      coordinate: [1, 2],
+    });
+    // Close mid-action.
+    resolveDispose();
+    await registry.close(session.sessionId);
+    expect(registry.size()).toBe(0);
+
+    // The in-flight action now resolves — but the session is gone, so it must
+    // not report success.
+    resolveAction();
+    await expect(actionPromise).rejects.toBeInstanceOf(
+      WidgetSessionNotFoundError,
+    );
+  });
+
+  it("rejects an overlapping action on the same session", async () => {
+    const registry = new WidgetRenderSessionRegistry({ sweepIntervalMs: 0 });
+    const { harness, resolveAction } = makeControllableHarness();
+    const session = register(registry, harness);
+
+    // First action in flight (pending).
+    const first = registry.executeAction(session.sessionId, {
+      action: "screenshot",
+    });
+    // A second action on the same single-page session while the first runs is
+    // rejected rather than interleaved.
+    await expect(
+      registry.executeAction(session.sessionId, {
+        action: "left_click",
+        coordinate: [1, 2],
+      }),
+    ).rejects.toBeInstanceOf(WidgetSessionBusyError);
+    expect(harness.executeAction).toHaveBeenCalledTimes(1);
+
+    resolveAction();
+    await first;
+  });
+
+  it("disposes the session when an action returns a terminal note", async () => {
+    const registry = new WidgetRenderSessionRegistry({ sweepIntervalMs: 0 });
+    const { harness, resolveAction, resolveDispose } = makeControllableHarness();
+    const session = register(registry, harness);
+
+    const actionPromise = registry.executeAction(session.sessionId, {
+      action: "left_click",
+      coordinate: [1, 2],
+    });
+    // The per-widget step budget force-dismissed the widget — terminal.
+    resolveAction({
+      action: { action: "left_click", coordinate: [1, 2] },
+      widgetToolCalls: [],
+      elapsedMs: 1,
+      note: "step_budget_exceeded",
+    });
+    resolveDispose();
+    const { result } = await actionPromise;
+    expect(result.note).toBe("step_budget_exceeded");
+
+    // A terminal note disposes the session — its slot + browser are freed rather
+    // than held alive (and TTL-refreshed) by retries.
+    expect(registry.size()).toBe(0);
+    expect(harness.dispose).toHaveBeenCalledTimes(1);
+    await expect(
+      registry.executeAction(session.sessionId, { action: "screenshot" }),
+    ).rejects.toBeInstanceOf(WidgetSessionNotFoundError);
+  });
+
+  it("keeps the session on a non-terminal screenshot-budget note", async () => {
+    let now = 0;
+    const registry = new WidgetRenderSessionRegistry({
+      now: () => now,
+      idleTimeoutMs: 1_000,
+      sweepIntervalMs: 0,
+    });
+    const { harness, resolveAction } = makeControllableHarness();
+    const session = register(registry, harness);
+
+    const actionPromise = registry.executeAction(session.sessionId, {
+      action: "screenshot",
+    });
+    now = 500;
+    // The screenshot budget leaves the widget mounted — NOT terminal.
+    resolveAction({
+      action: { action: "screenshot" },
+      widgetToolCalls: [],
+      elapsedMs: 1,
+      note: "screenshot_budget_exceeded",
+    });
+    const { result, expiresAt } = await actionPromise;
+
+    expect(result.note).toBe("screenshot_budget_exceeded");
+    expect(registry.size()).toBe(1);
+    expect(harness.dispose).not.toHaveBeenCalled();
+    expect(expiresAt).toBe(500 + 1_000); // TTL refreshed
+  });
+
+  it("refuses new sessions once shutting down", async () => {
+    const registry = new WidgetRenderSessionRegistry({ sweepIntervalMs: 0 });
+    const harness = makeFakeHarness();
+    register(registry, harness);
+
+    await registry.disposeAll({ permanent: true });
+    expect(harness.dispose).toHaveBeenCalledTimes(1);
+    expect(registry.size()).toBe(0);
+
+    expect(() => registry.reserve()).toThrow(WidgetSessionUnavailableError);
+    expect(() => register(registry, makeFakeHarness())).toThrow(
+      WidgetSessionUnavailableError,
+    );
+  });
+
+  it("refuses to register an in-flight start that finished after shutdown", async () => {
+    const registry = new WidgetRenderSessionRegistry({ sweepIntervalMs: 0 });
+    // A start reserves a slot, then shutdown begins, then its render completes
+    // and tries to register a (would-be surviving) browser.
+    const reservation = registry.reserve();
+    await registry.disposeAll({ permanent: true });
+    expect(() => register2(registry, reservation)).toThrow(
+      WidgetSessionUnavailableError,
+    );
+    expect(registry.size()).toBe(0);
+  });
+
+  it("disposes every session on shutdown (orphan cleanup)", async () => {
+    const registry = new WidgetRenderSessionRegistry({ sweepIntervalMs: 0 });
+    const harnesses = [makeFakeHarness(), makeFakeHarness(), makeFakeHarness()];
+    harnesses.forEach((h, i) => register(registry, h, `widget-${i}`));
+    expect(registry.size()).toBe(3);
+
+    await registry.disposeAll();
+
+    for (const h of harnesses) {
+      expect(h.dispose).toHaveBeenCalledTimes(1);
+    }
+    expect(registry.size()).toBe(0);
+  });
+});

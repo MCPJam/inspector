@@ -27,7 +27,6 @@ import {
 } from "react";
 import type { Tool } from "@modelcontextprotocol/client";
 import { useReducedMotion } from "framer-motion";
-import { usePostHog } from "posthog-js/react";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { listTools } from "@/lib/apis/mcp-tools-api";
@@ -38,7 +37,11 @@ import {
 } from "@/lib/tool-form";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ProjectHostContextDraft } from "@/lib/client-config";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "@/lib/client-config-v2";
+import { track } from "@/lib/analytics";
 import { waitForUiCommit } from "@/lib/wait-for-ui-commit";
 import { useOnboarding } from "@/hooks/use-onboarding";
 import type { ServerFormData } from "@/shared/types.js";
@@ -98,6 +101,8 @@ export interface UsePlaygroundStateOptions {
   ensureServersReady?: (
     serverNames: string[]
   ) => Promise<EnsureServersReadyResult>;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   onOnboardingChange?: (isOnboarding: boolean) => void;
   /**
    * Active multi-server selection. When non-empty, the Playground tools pane
@@ -173,7 +178,6 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     [selectedServerNames, serverName, servers]
   );
 
-  const posthog = usePostHog();
   const prefersReducedMotion = useReducedMotion();
   const serverKey = useServerKey(serverConfig);
 
@@ -251,10 +255,8 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   // Event name `app_builder_tab_viewed` is kept for analytics continuity
   // (the only surface that still mounts this hook is the Playground tab).
   useEffect(() => {
-    posthog.capture("app_builder_tab_viewed", {
+    track("app_builder_tab_viewed", {
       location: "app_builder_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -278,6 +280,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     setExecutionError,
     setToolOutput,
     setToolResponseMetadata,
+    modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
   });
 
   const executionInjectionWaitersRef = useRef<ExecutionInjectionWaiter[]>([]);
@@ -813,6 +816,9 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   }, [serverName, isServerSyncing]);
 
   const isResolvingRemoteCompletion = onboarding.isResolvingRemoteCompletion;
+  const isConnectingFirstRunExcalidraw =
+    onboarding.phase === "connecting_excalidraw" &&
+    !onboarding.isGuidedPostConnect;
   const isBootstrappingFirstRunConnection =
     onboarding.isBootstrappingFirstRunConnection && !!onConnect;
   const isWaitingForServerSync =
@@ -833,6 +839,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
 
   const loadingState: PlaygroundLoadingState =
     isResolvingRemoteCompletion ||
+    isConnectingFirstRunExcalidraw ||
     isBootstrappingFirstRunConnection ||
     isWaitingForServerSync
       ? { kind: "skeleton" }

@@ -18,6 +18,9 @@ export type ComputerStatus =
   | "deleted"
   | "error";
 
+/** Why a computer is currently asleep, when the backend knows (COMP-7). */
+export type ComputerHibernatedReason = "idle" | "billing";
+
 export interface ComputerView {
   computerId: string;
   status: ComputerStatus;
@@ -25,6 +28,17 @@ export interface ComputerView {
   lastError?: string;
   provisionedAt?: number;
   lastActiveAt?: number;
+  /** The custom environment this computer boots from, if any (absent ⇒ base
+   * image). See `computerEnvironments` / the Image picker. */
+  environmentId?: string;
+  /**
+   * Why the machine is currently asleep, when known (COMP-7). Only meaningful
+   * while `status === "hibernating"`. `"billing"` ⇒ paused because the compute
+   * allowance ran out and the wallet couldn't cover the overage — waking it
+   * would just bounce, so the UI shows the remedy instead. Absent (older
+   * backends, or a clean idle sleep) ⇒ treat as inactivity.
+   */
+  hibernatedReason?: ComputerHibernatedReason;
 }
 
 export interface TerminalTokenResult {
@@ -32,6 +46,32 @@ export interface TerminalTokenResult {
   expiresAt: number;
   computerId: string;
   status: ComputerStatus;
+}
+
+/**
+ * Org-level awake-time meter surfaced by `getComputerUsage`: settled awake
+ * time for the current UTC month against the plan's free allowance, plus the
+ * posted credits-per-hour rate. `allowanceMs: null` means unlimited hours.
+ * `mode` is the deployment's billing posture — `off` means the backend isn't
+ * metering and the UI should hide the meter.
+ */
+export interface ComputerUsageView {
+  mode: "off" | "shadow" | "enforce";
+  creditsPerHour: number;
+  windowStartAt: number;
+  resetsAt: number;
+  awakeMs: number;
+  allowanceMs: number | null;
+  billedCredits: number;
+  forgivenCredits: number;
+  /**
+   * COMP-7: true when the org has burned >= 80% of a finite allowance AND the
+   * wallet can't absorb the overage that begins once it's exhausted — i.e. the
+   * computer will pause for billing when the hours run out. Always false for
+   * unlimited (enterprise) orgs. Optional so a backend predating this field
+   * (or an older client) degrades to "no warning".
+   */
+  billingPauseWarning?: boolean;
 }
 
 /**
@@ -48,6 +88,21 @@ export function useComputerStatus(
   ) as ComputerView | null | undefined;
 }
 
+/**
+ * The org's computer-time meter for a project, or `null` when the backend
+ * can't resolve it. `undefined` while loading or when `projectId` is absent.
+ * Throws during render (like any Convex query error) against a backend that
+ * predates `getComputerUsage` — mount it behind an error boundary.
+ */
+export function useComputerUsage(
+  projectId: string | null
+): ComputerUsageView | null | undefined {
+  return useQuery(
+    "projectComputers:getComputerUsage" as never,
+    projectId ? ({ projectId } as never) : "skip"
+  ) as ComputerUsageView | null | undefined;
+}
+
 /** Reserve (provision-on-first-use / wake) the caller's computer. */
 export function useReserveComputer(): (args: {
   projectId: string;
@@ -60,6 +115,17 @@ export function useDeleteComputer(): (args: {
   projectId: string;
 }) => Promise<{ deleted: boolean }> {
   return useMutation("projectComputers:deleteComputer" as never) as never;
+}
+
+/**
+ * Manually hibernate the caller's `ready` computer (non-destructive; state is
+ * preserved and the box auto-resumes on next use). Returns `{ hibernated:false }`
+ * when there's no live machine to pause.
+ */
+export function useHibernateComputer(): (args: {
+  projectId: string;
+}) => Promise<{ hibernated: boolean }> {
+  return useMutation("projectComputers:hibernateComputerNow" as never) as never;
 }
 
 /**

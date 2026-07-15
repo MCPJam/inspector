@@ -118,4 +118,32 @@ describe("summarizePredicate", () => {
     expect(() => summarizePredicate(future)).not.toThrow();
     expect(summarizePredicate(future)).toBe("");
   });
+
+  it("preserves a valid per-turn scope and drops a malformed one", () => {
+    const parsed = parseIterationPredicates({
+      predicates: [
+        {
+          predicate: { type: "responseContains", needle: "weather" },
+          passed: true,
+          reason: "turn 1 contains weather",
+          scope: { kind: "turn", promptIndex: 1 },
+        },
+        {
+          predicate: { type: "noToolErrors" },
+          passed: true,
+          reason: "bad scope dropped, row still case-level",
+          scope: { kind: "iteration", promptIndex: 0 },
+        },
+        {
+          predicate: { type: "noToolErrors" },
+          passed: true,
+          reason: "case level",
+        },
+      ],
+    });
+    expect(parsed).not.toBeNull();
+    expect(parsed![0].scope).toEqual({ kind: "turn", promptIndex: 1 });
+    expect(parsed![1].scope).toBeUndefined();
+    expect(parsed![2].scope).toBeUndefined();
+  });
 });

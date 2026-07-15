@@ -23,6 +23,17 @@ const renderWithHost = (
     ),
   );
 
+// Thread wraps the persistent <WidgetSurfaceHost> in <InspectorWidgetHostProvider>
+// (which composes the host from ~14 stores/contexts). These tests exercise Thread
+// message rendering, not widget hosting, so stub the provider to a pass-through.
+vi.mock("../thread/mcp-apps/use-widget-host", () => ({
+  InspectorWidgetHostProvider: ({
+    children,
+  }: {
+    children: import("react").ReactNode;
+  }) => children,
+}));
+
 // Mock child components
 vi.mock("../thread/message-view", () => ({
   MessageView: (props: { message: UIMessage; model: ModelDefinition }) => {

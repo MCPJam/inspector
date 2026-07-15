@@ -20,7 +20,7 @@ import {
 } from "@/lib/apis/web/context";
 import { getConvexSiteUrl } from "@/lib/convex-site-url";
 import { forceRefreshGuestSession } from "@/lib/guest-session";
-import posthog from "posthog-js";
+import { track } from "@/lib/analytics";
 
 // Extend window type for the injected token
 declare global {
@@ -164,6 +164,38 @@ export async function initializeSessionToken(): Promise<string> {
 }
 
 /**
+ * Force a re-fetch of the dev session token.
+ *
+ * The local backend mints a fresh session token on every restart (see
+ * `services/session-token.ts#generateSessionToken`). After a dev-server
+ * restart the browser still holds the token cached at page load, so every
+ * `/api/*` call 401s until a hard refresh. Clearing the cache and re-fetching
+ * recovers transparently.
+ *
+ * In production the token is injected into the HTML and can't be refreshed at
+ * runtime, so the injected value is returned as-is.
+ *
+ * @returns The refreshed token, or null if it couldn't be obtained.
+ */
+export async function refreshSessionToken(): Promise<string | null> {
+  if (window.__MCP_SESSION_TOKEN__) {
+    cachedToken = window.__MCP_SESSION_TOKEN__;
+    return cachedToken;
+  }
+
+  // Drop the stale cache + any in-flight init so initializeSessionToken
+  // actually hits /api/session-token again instead of returning the old token.
+  cachedToken = null;
+  initPromise = null;
+
+  try {
+    return await initializeSessionToken();
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Get the session token synchronously.
  * Returns empty string if not yet initialized (will cause 401).
  *
@@ -241,7 +273,9 @@ function shouldAttachSessionHeaders(input: RequestInfo | URL): boolean {
 
   const parsed = resolveRequestUrl(input);
   if (parsed) {
-    return isLoopbackHostname(parsed.hostname) && parsed.pathname.startsWith("/api/");
+    return (
+      isLoopbackHostname(parsed.hostname) && parsed.pathname.startsWith("/api/")
+    );
   }
   return typeof input === "string" && input.startsWith("/api/");
 }
@@ -261,9 +295,33 @@ function shouldAttachSessionHeaders(input: RequestInfo | URL): boolean {
 // crosses to a foreign origin.
 const HOSTED_AUTH_PATH_PREFIXES = [
   "/api/web/",
+  // The first-party UI calling its own public harness endpoint
+  // (`/api/v1/harness/:id/builtin-tools`) to list a harness's native tools.
+  // `/api/v1/*` is bearer-gated (bearerAuthMiddleware reads `Authorization`),
+  // and the UI doesn't otherwise call the public API, so this is the only v1
+  // path that needs the user's bearer attached. Scoped to `/harness/` — not all
+  // of `/api/v1/` — so unrelated public-API routes don't get the UI bearer.
+  "/api/v1/harness/",
   // Local resolver path that calls Convex /web/authorize-batch-local.
   "/api/mcp/connect",
   "/api/mcp/servers/reconnect",
+  // Local XAA proxy paths whose server-target / registration runs resolve a
+  // Convex-stored secret on the user's behalf (the hosted `/api/web/xaa/*`
+  // equivalents are already covered by the `/api/web/` prefix above).
+  "/api/mcp/xaa/proxy/token",
+  "/api/mcp/xaa/negative-tests",
+  // Local XAA mint paths for the "use hosted issuer" opt-in: the local
+  // server forwards these to app.mcpjam.com with the caller's bearer.
+  // Attaching via authFetch (rather than injecting the header manually) keeps
+  // the on-401 bearer-refresh-and-retry so a stale/expired hosted token
+  // self-heals instead of stranding the flow until a page refresh. Harmless
+  // in pure-local mode: the local mint ignores the header.
+  "/api/mcp/xaa/authenticate",
+  "/api/mcp/xaa/token-exchange",
+  // The standards-track RFC 8693 grant the debugger drives on the happy path;
+  // needs the bearer for the hosted-issuer forward (harmless locally).
+  // Boundary matching keeps this from also matching /token-exchange.
+  "/api/mcp/xaa/token",
   // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
   "/web/oauth/",
 ];
@@ -387,6 +445,28 @@ export async function authFetch(
   const mergedInit = buildAuthFetchInit(input, init, hostedAuthHeader);
   const response = await fetch(input, mergedInit);
 
+  // Local session-token recovery (non-hosted). The dev backend regenerates its
+  // session token on every restart; if it restarted since page load the
+  // browser holds a stale token and each /api/* call 401s with a cryptic
+  // "Backend debug proxy error: 401 Unauthorized" until a manual page refresh.
+  // Re-fetch the current token and retry once so a backend restart doesn't
+  // strand the session. Skipped when the caller set its own Authorization, and
+  // when the 401 is the upstream MCP server demanding OAuth (refreshing the
+  // session token wouldn't change that outcome).
+  if (
+    response.status === 401 &&
+    shouldAttachSessionHeaders(input) &&
+    !callerProvidedAuthorization &&
+    response.headers?.get("X-MCP-Auth-Required") !== "oauth"
+  ) {
+    const staleToken = getSessionToken();
+    const refreshedToken = await refreshSessionToken();
+    if (refreshedToken && refreshedToken !== staleToken) {
+      const retryInit = buildAuthFetchInit(input, init, hostedAuthHeader);
+      return fetch(input, retryInit);
+    }
+  }
+
   // Retry on 401 only for paths we actually attached a hosted bearer to —
   // a 401 from `/api/health` shouldn't trigger a guest-session refresh.
   // Also skip when the server flagged the 401 as OAuth-required: that's the
@@ -408,7 +488,8 @@ export async function authFetch(
   const refreshedGuestToken = await forceRefreshGuestSession();
   if (!refreshedGuestToken) {
     if (surface) {
-      posthog.capture("guest_refresh_failure", {
+      track("guest_refresh_failure", {
+        location: "auth_fetch",
         surface,
         auth_mode: "guest",
         status: "failure",
@@ -419,7 +500,8 @@ export async function authFetch(
   }
 
   if (surface) {
-    posthog.capture("guest_refresh_success", {
+    track("guest_refresh_success", {
+      location: "auth_fetch",
       surface,
       auth_mode: "guest",
       status: "success",
@@ -429,7 +511,7 @@ export async function authFetch(
   const retryInit = buildAuthFetchInit(
     input,
     init,
-    `Bearer ${refreshedGuestToken}`,
+    `Bearer ${refreshedGuestToken}`
   );
   return fetch(input, retryInit);
 }

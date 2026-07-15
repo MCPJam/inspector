@@ -15,6 +15,7 @@ import {
   type PlatformWidgetPayloadMap,
 } from "../shared/platform-widgets.js";
 import {
+  getResultErrorCode,
   getResultText,
   MessageBox,
   Shell,
@@ -81,10 +82,17 @@ function WidgetContent({
   }
 
   if (toolResult.isError) {
+    const message = getResultText(toolResult) ?? "The tool returned an error.";
+    // A NOT_FOUND result (no accessible projects, or a selector that matched
+    // nothing — e.g. an anonymous guest connection) is an empty state, not a
+    // failure. Render it calmly instead of as a destructive error.
+    if (getResultErrorCode(toolResult) === "NOT_FOUND") {
+      return <MessageBox label="Nothing to show yet" message={message} />;
+    }
     return (
       <MessageBox
         label="Unable to load data"
-        message={getResultText(toolResult) ?? "The tool returned an error."}
+        message={message}
         variant="destructive"
       />
     );

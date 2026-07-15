@@ -8,15 +8,20 @@ export type PaymentHistoryStatus =
   | "failed"
   | "refunded"
   | "partially_refunded"
-  | "disputed";
+  | "disputed"
+  | "credited"
+  | "refunded_and_credited"
+  | "pending_refund";
 
 export interface PaymentHistoryEntry {
   id: string;
   sessionId: string;
   pricePaidCents: number;
   displayCredits: string;
+  details: string;
   /** Paid cents handed back when refunded/charged back. Reversed rows only. */
   reversedPaidCents?: number;
+  accountCreditedCents?: number;
   status: PaymentHistoryStatus;
   occurredAt: number;
   receiptUrl?: string;
@@ -27,7 +32,9 @@ interface RawEntry {
   sessionId?: unknown;
   pricePaidCents?: unknown;
   displayCredits?: unknown;
+  details?: unknown;
   reversedPaidCents?: unknown;
+  accountCreditedCents?: unknown;
   status?: unknown;
   occurredAt?: unknown;
   receiptUrl?: unknown;
@@ -40,6 +47,9 @@ const VALID_STATUSES = new Set<PaymentHistoryStatus>([
   "refunded",
   "partially_refunded",
   "disputed",
+  "credited",
+  "refunded_and_credited",
+  "pending_refund",
 ]);
 
 const isValidStatus = (value: unknown): value is PaymentHistoryStatus =>
@@ -73,10 +83,15 @@ const normalize = (raw: unknown): PaymentHistoryEntry[] | undefined => {
       sessionId: item.sessionId,
       pricePaidCents: item.pricePaidCents,
       displayCredits: item.displayCredits,
+      details:
+        typeof item.details === "string" ? item.details : "Credit top-up",
       status: item.status,
       occurredAt: item.occurredAt,
       ...(typeof item.reversedPaidCents === "number"
         ? { reversedPaidCents: item.reversedPaidCents }
+        : {}),
+      ...(typeof item.accountCreditedCents === "number"
+        ? { accountCreditedCents: item.accountCreditedCents }
         : {}),
       ...(typeof item.receiptUrl === "string" && item.receiptUrl.length > 0
         ? { receiptUrl: item.receiptUrl }

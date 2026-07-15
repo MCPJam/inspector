@@ -6,7 +6,7 @@ import {
   useState,
   type Dispatch,
 } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   createLocalProjectId,
   type AppAction,
@@ -285,20 +285,64 @@ export function useProjectState({
   // reference `shouldUseLocalFallback` collapse cleanly without renames.
   const shouldUseLocalFallback = false as const;
 
+  const scopedLocalProjects = useMemo((): Record<string, Project> => {
+    if (!shouldScopeLocalFallbackByOrganization) {
+      return appState.projects;
+    }
+
+    return Object.fromEntries(
+      Object.entries(appState.projects).filter(
+        ([, project]) => project.organizationId === projectOrganizationId,
+      ),
+    );
+  }, [
+    appState.projects,
+    shouldScopeLocalFallbackByOrganization,
+    projectOrganizationId,
+  ]);
+
+  const activeScopedLocalProject = useMemo(
+    () => scopedLocalProjects[appState.activeProjectId],
+    [scopedLocalProjects, appState.activeProjectId],
+  );
+
+  const activeScopedRemoteProjectId =
+    activeScopedLocalProject?.sharedProjectId ?? null;
+
   const clearConvexActiveProjectSelection = useCallback(() => {
     setConvexActiveProjectId(null);
     writeStoredActiveProjectId(activeProjectActorKeyRef.current, null);
   }, []);
 
-  // Project id that the flat-server query should target. We can't wait for
-  // the auto-set effect to copy convexActiveProjectId from remoteProjects[0]
-  // — the consumer renders one frame earlier with effectiveActiveProjectId
-  // resolving to the same fallback, so the flat query has to fire on that
-  // same frame or the project briefly renders as "no servers". Falling back
-  // to remoteProjects[0] mirrors what the auto-set effect would land on.
-  const resolvedActiveProjectIdForServers = shouldTreatRemoteProjectsAsEmpty
-    ? null
-    : (convexActiveProjectId ?? remoteProjects?.[0]?._id ?? null);
+  // Project id that the flat-server query should target. The stored active
+  // project id is per actor, while the visible project list is org-scoped. Only
+  // let the flat server query use a stored id after the current scoped project
+  // list proves it belongs to this org; otherwise stale server snapshots from a
+  // different org can drive existing-server detection in the add/connect flow.
+  const resolvedActiveProjectIdForServers = useMemo(() => {
+    if (shouldTreatRemoteProjectsAsEmpty) return null;
+    if (isAuthenticated && !shouldUseLocalFallback) {
+      if (remoteProjects === undefined) return null;
+      const hasProject = (projectId: string | null | undefined) =>
+        !!projectId &&
+        remoteProjects.some((project) => project._id === projectId);
+      if (hasProject(activeScopedRemoteProjectId)) {
+        return activeScopedRemoteProjectId;
+      }
+      if (hasProject(convexActiveProjectId)) {
+        return convexActiveProjectId;
+      }
+      return remoteProjects[0]?._id ?? null;
+    }
+    return convexActiveProjectId ?? remoteProjects?.[0]?._id ?? null;
+  }, [
+    activeScopedRemoteProjectId,
+    convexActiveProjectId,
+    isAuthenticated,
+    remoteProjects,
+    shouldTreatRemoteProjectsAsEmpty,
+    shouldUseLocalFallback,
+  ]);
 
   const { servers: activeProjectServersFlat, isLoading: isLoadingServers } =
     useProjectServers({
@@ -469,6 +513,7 @@ export function useProjectState({
             sharedProjectId: rw._id,
             organizationId: rw.organizationId,
             visibility: rw.visibility,
+            xaaTestDefaults: rw.xaaTestDefaults,
           } as Project,
         ];
       }),
@@ -500,18 +545,6 @@ export function useProjectState({
     }
   }, [clearPendingClientConfigSync, convexProjects]);
 
-  const scopedLocalProjects = useMemo((): Record<string, Project> => {
-    if (!shouldScopeLocalFallbackByOrganization) {
-      return appState.projects;
-    }
-
-    return Object.fromEntries(
-      Object.entries(appState.projects).filter(
-        ([, project]) => project.organizationId === projectOrganizationId,
-      ),
-    );
-  }, [appState.projects, shouldScopeLocalFallbackByOrganization, projectOrganizationId]);
-
   // Legacy fallback memo. Convex is the only source of truth post-unification;
   // `useLocalFallback` is permanently false. Kept as a stable empty/identity
   // reference so the dead-code branches below collapse without renames.
@@ -523,14 +556,6 @@ export function useProjectState({
     // below, but they must not render after actor or organization changes.
     return convexProjects;
   }, [convexProjects]);
-
-  const activeScopedLocalProject = useMemo(
-    () => scopedLocalProjects[appState.activeProjectId],
-    [scopedLocalProjects, appState.activeProjectId],
-  );
-
-  const activeScopedRemoteProjectId =
-    activeScopedLocalProject?.sharedProjectId ?? null;
 
   // Authenticated users never keep local-fallback projects in the rendered
   // project list. Their canonical project set lives in Convex; local rows are
@@ -1039,6 +1064,11 @@ export function useProjectState({
           if (updates.icon !== undefined) updateData.icon = updates.icon;
           if (updates.visibility !== undefined) {
             updateData.visibility = updates.visibility;
+          }
+          if (updates.xaaTestDefaults !== undefined) {
+            // Atomic replace; an explicit `null` clears the stored default
+            // (omitting the key preserves it, per the mutation contract).
+            updateData.xaaTestDefaults = updates.xaaTestDefaults;
           }
           if (updates.servers !== undefined) {
             logger.warn(

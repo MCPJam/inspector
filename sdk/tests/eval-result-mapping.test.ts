@@ -178,7 +178,7 @@ describe("iterationToEvalResult", () => {
     expect(messages[3]).toEqual({ role: "assistant", content: "reply 2" });
   });
 
-  it("includes per-prompt trace summaries when advancedConfig.promptTurns is provided", () => {
+  it("includes per-prompt trace summaries when advancedConfig.steps is provided", () => {
     const p1 = makePrompt({
       prompt: "turn 1",
       toolCalls: [{ toolName: "tool_a", arguments: { x: 1 } }],
@@ -192,16 +192,28 @@ describe("iterationToEvalResult", () => {
       caseTitle: "multi-turn",
       passed: true,
       advancedConfig: {
-        promptTurns: [
+        // The unified test-step model: a `prompt` step opens a turn; the
+        // `toolCalledWith` assert that follows it supplies the expected call.
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "turn 1" },
           {
-            id: "turn-1",
-            prompt: "turn 1",
-            expectedToolCalls: [{ toolName: "tool_a", arguments: { x: 1 } }],
+            id: "s2",
+            kind: "assert",
+            assertion: {
+              type: "toolCalledWith",
+              toolName: "tool_a",
+              args: { args: { x: 1 } },
+            },
           },
+          { id: "s3", kind: "prompt", prompt: "turn 2" },
           {
-            id: "turn-2",
-            prompt: "turn 2",
-            expectedToolCalls: [{ toolName: "tool_b", arguments: { y: 2 } }],
+            id: "s4",
+            kind: "assert",
+            assertion: {
+              type: "toolCalledWith",
+              toolName: "tool_b",
+              args: { args: { y: 2 } },
+            },
           },
         ],
       },

@@ -11,12 +11,16 @@ import type {
   RegistrationStrategy2025_11_25,
 } from "./state-machines/types.js";
 
+/** @deprecated Use {@link RegistrationStrategy} from `@mcpjam/sdk` — the
+ * shared vocabulary for OAuth and XAA. Structurally identical. */
 export type OAuthRegistrationStrategy =
   | RegistrationStrategy2025_03_26
   | RegistrationStrategy2025_06_18
   | RegistrationStrategy2025_11_25;
 
 export type OAuthProtocolMode = "auto" | OAuthProtocolVersion;
+/** @deprecated Use {@link RegistrationMode} from `@mcpjam/sdk` — the shared
+ * vocabulary for OAuth and XAA. Structurally identical. */
 export type OAuthRegistrationMode = "auto" | OAuthRegistrationStrategy;
 
 export interface AuthorizationDiscoverySnapshot {

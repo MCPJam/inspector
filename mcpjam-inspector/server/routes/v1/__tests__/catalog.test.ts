@@ -209,9 +209,22 @@ describe("v1 catalog read proxies", () => {
     );
   });
 
-  it("rejects guests at the v1 boundary", async () => {
+  it("admits guests on allowlisted catalog reads (projects) and forwards the guest bearer", async () => {
     validateGuestTokenMock.mockResolvedValue({ valid: true, guestId: "g1" });
+    fetchMock.mockResolvedValue(jsonResponse({ items: [] }));
     const res = await request(makeApp(), "/api/v1/projects");
+    expect(res.status).toBe(200);
+    const [target, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(String(target)).toBe("https://convex-http.example.com/v1/projects");
+    // The guest JWT is forwarded verbatim so Convex authedV1 resolves the guest.
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe(
+      "Bearer tok"
+    );
+  });
+
+  it("rejects guests on non-allowlisted catalog reads (/me)", async () => {
+    validateGuestTokenMock.mockResolvedValue({ valid: true, guestId: "g1" });
+    const res = await request(makeApp(), "/api/v1/me");
     expect(res.status).toBe(401);
     expect(fetchMock).not.toHaveBeenCalled();
   });

@@ -142,6 +142,10 @@ export interface OAuthHttpRequest {
   url: string;
   headers: Record<string, string>;
   body?: any;
+  /** Redirect handling for executors that proxy this request. Hosted
+   * (httpsOnly) proxy execution always uses "manual"; otherwise an explicit
+   * value is honored and omission preserves the historical "follow". */
+  redirect?: "follow" | "manual";
 }
 
 export interface OAuthHttpResponse {
