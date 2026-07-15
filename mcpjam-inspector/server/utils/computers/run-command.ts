@@ -21,6 +21,7 @@ import {
 } from "./control-plane-client.js";
 import { detectAuthUrls } from "./auth-urls.js";
 import { logger } from "../logger.js";
+import { type ExecutionScope } from "../execution-scope.js";
 
 // Caps on what the model sees; the Convex log stores its own (smaller)
 // preview and full-output archival is a backend follow-up.
@@ -93,6 +94,11 @@ export interface RunComputerCommandArgs {
   authHeader: string;
   /** Project whose (project, user) computer this command runs on. */
   projectId: string;
+  /**
+   * Phase 3 execution scope from runtime-config; forwarded to the reserve call
+   * so the backend re-resolves live access. Absent ⇒ legacy `projectId` reserve.
+   */
+  executionScope?: ExecutionScope;
   command: string;
   /** Idempotency key for the durable command log (tool call id). */
   commandId: string;
@@ -113,6 +119,7 @@ export async function runComputerCommand(
   const ready = await ensureComputerReady({
     bearer: args.authHeader,
     projectId: args.projectId,
+    executionScope: args.executionScope,
     signal: args.signal,
   });
   if (!ready.ok) {

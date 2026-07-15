@@ -32,6 +32,27 @@ import type {
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 
+function isRecorderDebugEnabled() {
+  try {
+    return (
+      typeof window !== "undefined" &&
+      window.localStorage?.getItem("mcpjam:recorder-debug") === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function recorderDebug(message: string, details?: Record<string, unknown>) {
+  try {
+    if (isRecorderDebugEnabled()) {
+      console.info(`[recorder:sandboxed-iframe] ${message}`, details ?? {});
+    }
+  } catch {
+    // best-effort debug logging only
+  }
+}
+
 export interface SandboxedIframeHandle {
   postMessage: (data: unknown) => void;
   getIframeElement: () => HTMLIFrameElement | null;
@@ -70,6 +91,12 @@ interface SandboxedIframeProps {
   cspDirectives?: Record<string, string[]>;
   /** Skip CSP injection entirely (for permissive/testing mode) */
   permissive?: boolean;
+  /**
+   * Tier 2 recorder: when true, the proxy injects a recorder shim into the
+   * guest that posts `recorder:step` / `recorder:ready` messages (forwarded via
+   * `onMessage`). Default off — only the eval authoring preview sets it.
+   */
+  recordMode?: boolean;
   /** Callback when sandbox proxy is ready */
   onProxyReady?: () => void;
   /** Callback for messages from guest UI (excluding sandbox-internal messages) */
@@ -119,6 +146,7 @@ export const SandboxedIframe = forwardRef<
     allowFeatures,
     cspDirectives,
     permissive,
+    recordMode,
     onProxyReady,
     onMessage,
     className,
@@ -128,11 +156,15 @@ export const SandboxedIframe = forwardRef<
     hostedMode = false,
     sandboxOrigin = "",
   },
-  ref,
+  ref
 ) {
   const outerRef = useRef<HTMLIFrameElement>(null);
   const [proxyReady, setProxyReady] = useState(false);
   const lastResourceReadyKeyRef = useRef<string | null>(null);
+  const onMessageRef = useRef(onMessage);
+  const onProxyReadyRef = useRef(onProxyReady);
+  onMessageRef.current = onMessage;
+  onProxyReadyRef.current = onProxyReady;
 
   // SEP-1865: Host and Sandbox MUST have different origins.
   //
@@ -171,13 +203,13 @@ export const SandboxedIframe = forwardRef<
             " sandbox iframe is falling back to same-origin." +
             " This is a security regression — the sandbox shares cookies and" +
             " storage with the host app. Configure a distinct origin" +
-            " (e.g. https://sandbox.mcpjam.com) and redeploy.",
+            " (e.g. https://sandbox.mcpjam.com) and redeploy."
         );
       } else {
         console.warn(
           "[SandboxedIframe] Cross-origin isolation not available for hostname:",
           currentHost,
-          "- falling back to same-origin sandbox",
+          "- falling back to same-origin sandbox"
         );
       }
       sandboxHost = currentHost;
@@ -203,7 +235,7 @@ export const SandboxedIframe = forwardRef<
       },
       getIframeElement: () => outerRef.current,
     }),
-    [sandboxProxyOrigin],
+    [sandboxProxyOrigin]
   );
 
   const handleMessage = useCallback(
@@ -215,7 +247,7 @@ export const SandboxedIframe = forwardRef<
 
       // CSP violation messages (not JSON-RPC) - forward directly
       if (event.data?.type === "mcp-apps:csp-violation") {
-        onMessage(event);
+        onMessageRef.current(event);
         return;
       }
 
@@ -226,7 +258,20 @@ export const SandboxedIframe = forwardRef<
         event.data?.type === "openai:setWidgetState" ||
         event.data?.type === "openai:setOpenInAppUrl"
       ) {
-        onMessage(event);
+        onMessageRef.current(event);
+        return;
+      }
+
+      // Tier 2 recorder messages (not JSON-RPC) — forward to the host so the
+      // eval authoring preview can capture recorded steps / detect readiness,
+      // and receive per-step results from a host-driven replay.
+      if (
+        event.data?.type === "recorder:step" ||
+        event.data?.type === "recorder:ready" ||
+        event.data?.type === "recorder:replay-result"
+      ) {
+        recorderDebug(`forward ${event.data.type}`);
+        onMessageRef.current(event);
         return;
       }
 
@@ -236,7 +281,7 @@ export const SandboxedIframe = forwardRef<
 
       if (method === "ui/notifications/sandbox-proxy-ready") {
         setProxyReady(true);
-        onProxyReady?.();
+        onProxyReadyRef.current?.();
         return;
       }
 
@@ -244,9 +289,9 @@ export const SandboxedIframe = forwardRef<
         return;
       }
 
-      onMessage(event);
+      onMessageRef.current(event);
     },
-    [onMessage, onProxyReady, sandboxProxyOrigin],
+    [sandboxProxyOrigin]
   );
 
   useEffect(() => {
@@ -273,7 +318,7 @@ export const SandboxedIframe = forwardRef<
   // Per Permissions Policy spec, `;` separates features.
   const outerAllowAttribute = useMemo(
     () => buildOuterAllowAttribute({ permissions, allowFeatures }),
-    [permissions, allowFeatures],
+    [permissions, allowFeatures]
   );
 
   // Outer iframe `sandbox=` value.
@@ -293,7 +338,7 @@ export const SandboxedIframe = forwardRef<
   // only" intent, mirroring the canonicalizer's preservation contract.
   const outerSandboxAttribute = useMemo(
     () => buildOuterSandboxAttribute({ sandbox, sandboxAttrs }),
-    [sandbox, sandboxAttrs],
+    [sandbox, sandboxAttrs]
   );
 
   const resourceReadyKey = useMemo(
@@ -306,6 +351,9 @@ export const SandboxedIframe = forwardRef<
         permissions: permissions ?? null,
         sandbox,
         sandboxAttrs: sandboxAttrs ?? null,
+        // Include recordMode so record-capable surfaces receive the recorder
+        // shim, and stale/non-recordable surfaces reload without it.
+        recordMode: recordMode ?? null,
       }),
     [
       csp,
@@ -315,7 +363,8 @@ export const SandboxedIframe = forwardRef<
       permissions,
       sandbox,
       sandboxAttrs,
-    ],
+      recordMode,
+    ]
   );
 
   useEffect(() => {
@@ -349,10 +398,19 @@ export const SandboxedIframe = forwardRef<
           cspDirectives,
           permissive,
           colorScheme,
+          recordMode,
+          recorderDebug: isRecorderDebugEnabled(),
         },
       },
-      sandboxProxyOrigin,
+      sandboxProxyOrigin
     );
+    recorderDebug("sent resource ready", {
+      recordMode: !!recordMode,
+      recorderDebug: isRecorderDebugEnabled(),
+      proxyReady,
+      hasHtml: !!html,
+      sandboxProxyOrigin,
+    });
     // This effect intentionally depends on the semantic payload key instead
     // of raw object props. Re-sending `sandbox-resource-ready` makes the
     // proxy assign inner `srcdoc` again, which restarts the app even when the
@@ -373,12 +431,7 @@ export const SandboxedIframe = forwardRef<
     //     payload at all (see the comment above the field). Re-including
     //     it here would silently full-reload the widget every time a
     //     user toggles an entry in the AppExtensionTab editor.
-  }, [
-    proxyReady,
-    html,
-    resourceReadyKey,
-    sandboxProxyOrigin,
-  ]);
+  }, [proxyReady, html, resourceReadyKey, sandboxProxyOrigin]);
 
   // Keep iframe color-scheme in sync without reloading the widget document.
   useEffect(() => {
@@ -390,7 +443,7 @@ export const SandboxedIframe = forwardRef<
         method: "ui/notifications/sandbox-color-scheme-changed",
         params: { colorScheme },
       },
-      sandboxProxyOrigin,
+      sandboxProxyOrigin
     );
   }, [proxyReady, colorScheme, sandboxProxyOrigin]);
 

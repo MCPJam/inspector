@@ -18,6 +18,11 @@ import {
 } from "./hosted-rpc-logs.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { setRequestLogContext } from "../../utils/request-logger.js";
+import { logger } from "../../utils/logger.js";
+import {
+  resolveEffectiveAuthMethod,
+  withXaaExtensionCapability,
+} from "../../utils/effective-auth.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import {
   type InternalLogContext,
@@ -34,7 +39,15 @@ import {
   parseWithSchema,
 } from "./errors.js";
 import { buildHostedOAuthUnauthorizedHandler } from "../../utils/hosted-oauth-refresh.js";
-import { fetchRuntimeServerSecrets } from "../../utils/server-secrets.js";
+import {
+  fetchRuntimeServerSecrets,
+  fetchServerClientSecret,
+} from "../../utils/server-secrets.js";
+import {
+  buildXaaMintArgs,
+  mintXaaAccessToken,
+  resolveXaaIssuer,
+} from "../../services/xaa-mint.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
@@ -230,6 +243,26 @@ export type ConvexAuthorizeResponse = {
     headers?: Record<string, string>;
     hasHeaders?: boolean;
     useOAuth?: boolean;
+    // Cross-App Access (XAA) discriminator + non-secret config, surfaced by the
+    // hosted authorize endpoint. The confidential client secret + token endpoint
+    // are resolved separately at mint time via the hardened reveal-secret path.
+    useXaa?: boolean;
+    oauthScopes?: string[];
+    xaaSubject?: string;
+    xaaEmail?: string;
+    // Backend-resolved identity failure: a LEGACY partial per-server
+    // override (one member stored) can't resolve an atomic identity, so the
+    // backend omits BOTH identity fields and sends this actionable,
+    // value-free message instead. The mint must fail with it — never
+    // silently fall back to the demo identity.
+    xaaIdentityError?: string;
+    // Which IdP mints the XAA assertion — on the wire from the backend
+    // projection; needed by the C2 effective-auth resolver's `auto` branch.
+    authServerMode?: "mcpjam" | "own";
+    // Unified canonical auth fields (the booleans above are their derived
+    // compat mirrors). Absent on legacy rows.
+    authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
+    registrationMode?: "auto" | "preregistered" | "cimd" | "dcr";
   };
   internalLogContext?: InternalLogContext;
 };
@@ -775,6 +808,23 @@ export async function createAuthorizedManager(
      * undefined (SDK chooses at request time).
      */
     mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+    /**
+     * Per-server request-timeout overrides keyed by serverId, in milliseconds.
+     * Used by the swarm runner to honor each pinned server's
+     * `requestTimeoutOverride` from the run snapshot instead of applying the
+     * single host-level `timeoutMs` uniformly. Resolution per server:
+     * `requestTimeoutByServerId[serverId]` (if a positive finite number) →
+     * `timeoutMs` (the batch-uniform host default). The manager's
+     * `defaultTimeout` stays `timeoutMs`.
+     */
+    requestTimeoutByServerId?: Record<string, number>;
+    /**
+     * Pre-resolved MCPJam test-IdP issuer (`resolveXaaIssuer(c, HOSTED_MODE)`)
+     * for Cross-App Access servers. Supplied by callers that have the request
+     * `Context`. Required whenever the batch contains a `useXaa` server — the
+     * builder throws a 500 rather than connecting tokenless if it's missing.
+     */
+    xaaIssuer?: string;
   }
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
@@ -828,8 +878,21 @@ export async function createAuthorizedManager(
 
       const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
       const displayServerName = serverNamesById?.[serverId] ?? serverId;
+      // One resolver decides the flow for every dispatch below: canonical
+      // authMethod wins ("auto" selects XAA when configured, "discover"
+      // otherwise); legacy rows fall back to the boolean pair. Must match
+      // the local resolver's dispatch (hosted/local/swarm parity).
+      const effectiveAuth = resolveEffectiveAuthMethod(auth.serverConfig);
+      const usesOAuthFlow = effectiveAuth === "oauth";
+      // "discover" (non-XAA auto) rides the OAuth rails only when a stored
+      // token exists; tokenless discover connects unauthenticated instead of
+      // failing pre-connect — a live 401 then surfaces from the connect
+      // itself (mapRuntimeError gives it a 401 status; only the interactive
+      // validate route tags it oauthRequired for client escalation).
+      const usesStoredTokenFlow =
+        usesOAuthFlow || (effectiveAuth === "discover" && !!oauthToken);
       const onUnauthorized =
-        auth.serverConfig.useOAuth && auth.oauthAccessToken
+        usesStoredTokenFlow && auth.oauthAccessToken
           ? buildHostedOAuthUnauthorizedHandler({
               bearerToken,
               projectId,
@@ -842,15 +905,122 @@ export async function createAuthorizedManager(
             })
           : undefined;
 
-      if (auth.serverConfig.useOAuth) {
-        if (auth.serverConfig.url) {
-          oauthServerUrls[serverId] = auth.serverConfig.url;
+      if (usesStoredTokenFlow && auth.serverConfig.url) {
+        oauthServerUrls[serverId] = auth.serverConfig.url;
+      }
+      if (usesOAuthFlow && !oauthToken) {
+        throw new WebRouteError(
+          401,
+          ErrorCode.UNAUTHORIZED,
+          `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
+          {
+            oauthRequired: true,
+            serverId,
+            serverName: serverNamesById?.[serverId] ?? null,
+            serverUrl: auth.serverConfig.url,
+          }
+        );
+      }
+
+      // Cross-App Access: mint the resource access token server-side (MCPJam as
+      // the test IdP) and inject it through the same `oauthAccessToken` channel
+      // that sets the Bearer header. The effective method is a hard selection
+      // (auto picked XAA because the server is XAA-configured, or the row says
+      // xaa) — it can never collide with the OAuth branch above. The XAA token
+      // always overrides whatever the authorize batch returned: a server
+      // converted from OAuth still has a stored OAuth token, and reusing it
+      // would inject the wrong credential.
+      let connectToken = oauthToken;
+      let connectOnUnauthorized = onUnauthorized;
+      const useXaa =
+        auth.serverConfig.transportType === "http" && effectiveAuth === "xaa";
+      if (useXaa) {
+        // XAA connect runs on stored pre-registered credentials only; a
+        // dynamic registrationMode (dcr/cimd) applies to the debugger and
+        // OAuth flows.
+        if (
+          auth.serverConfig.registrationMode === "dcr" ||
+          auth.serverConfig.registrationMode === "cimd"
+        ) {
+          logger.info(
+            "[XAA connect] registrationMode is dynamic; connect uses stored pre-registered credentials — the mode applies to the debugger and OAuth flows only",
+            { serverId, registrationMode: auth.serverConfig.registrationMode }
+          );
         }
-        if (!oauthToken) {
+        // Backend-resolved identity failure (legacy partial per-server
+        // override): a distinct configuration error, surfaced BEFORE any
+        // mint AND before the issuer guard below — eval routes omit
+        // `xaaIssuer`, so checking it first would mask this actionable 400
+        // behind the caller-contract 500. No silent fallback to the demo
+        // identity, no silent XAA→OAuth fallback.
+        if (auth.serverConfig.xaaIdentityError) {
+          throw new WebRouteError(
+            400,
+            ErrorCode.VALIDATION_ERROR,
+            auth.serverConfig.xaaIdentityError,
+            { serverId, serverName: displayServerName }
+          );
+        }
+        if (!options?.xaaIssuer) {
+          // Caller-contract violation: a `useXaa` server reached a manager
+          // builder that didn't thread the issuer (only callers holding the
+          // request `Context` can resolve it). Fail loud here rather than
+          // connecting tokenless and surfacing a confusing downstream 401.
+          throw new WebRouteError(
+            500,
+            ErrorCode.INTERNAL_ERROR,
+            `Missing XAA issuer for server "${displayServerName}". This connect surface must pass options.xaaIssuer.`
+          );
+        }
+        const mintArgs = buildXaaMintArgs({
+          issuer: options.xaaIssuer,
+          hostedMode: HOSTED_MODE,
+          serverConfig: auth.serverConfig,
+          serverId,
+          projectId,
+          bearerToken,
+          resolveServerSecret: fetchServerClientSecret,
+        });
+        try {
+          connectToken = (await mintXaaAccessToken(mintArgs)).accessToken;
+        } catch (error) {
+          logger.error("[XAA connect] mint failed", error, {
+            serverId,
+            serverName: displayServerName,
+            resource: auth.serverConfig.url,
+          });
+          throw error;
+        }
+        // Bounded re-mint: the SDK invokes this once on a 401 and retries; a
+        // second 401 surfaces rather than looping mint→401→mint.
+        let reMinted = false;
+        connectOnUnauthorized = async () => {
+          if (reMinted) {
+            throw new WebRouteError(
+              401,
+              ErrorCode.UNAUTHORIZED,
+              `Server "${displayServerName}" rejected the cross-app access token. Reconnect to retry.`
+            );
+          }
+          reMinted = true;
+          return { accessToken: (await mintXaaAccessToken(mintArgs)).accessToken };
+        };
+      }
+
+      // Tokenless "discover" (non-XAA auto): connect unauthenticated, and if
+      // the target answers 401, convert it into the same tagged oauthRequired
+      // shape the pre-connect throw produces. The SDK invokes onUnauthorized
+      // exactly when a request 401s, which is the one moment we have both the
+      // per-server identity and proof the server actually demands auth —
+      // interactive clients escalate into the OAuth flow on this shape, and
+      // the non-interactive chat surfaces already render it as their
+      // "complete OAuth first" affordance.
+      if (effectiveAuth === "discover" && !connectToken) {
+        connectOnUnauthorized = async () => {
           throw new WebRouteError(
             401,
             ErrorCode.UNAUTHORIZED,
-            `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
+            `Server "${displayServerName}" requires authorization.`,
             {
               oauthRequired: true,
               serverId,
@@ -858,7 +1028,7 @@ export async function createAuthorizedManager(
               serverUrl: auth.serverConfig.url,
             }
           );
-        }
+        };
       }
 
       const effectiveInitializePins = resolveEffectiveInitializePinsForServer(
@@ -866,6 +1036,16 @@ export async function createAuthorizedManager(
         options?.initializePins,
         options?.mcpProtocolVersionsByServerId
       );
+      // Per-server timeout: a pinned `requestTimeoutOverride` (threaded by the
+      // swarm runner) wins over the batch-uniform host default. Guard against a
+      // malformed snapshot value falling through to a non-positive timeout.
+      const perServerTimeout = options?.requestTimeoutByServerId?.[serverId];
+      const effectiveTimeoutMs =
+        typeof perServerTimeout === "number" &&
+        Number.isFinite(perServerTimeout) &&
+        perServerTimeout > 0
+          ? perServerTimeout
+          : timeoutMs;
       const authForConfig =
         auth.serverConfig.hasHeaders === true &&
         !hasNonEmptyStringRecord(auth.serverConfig.headers)
@@ -904,14 +1084,21 @@ export async function createAuthorizedManager(
             }
           : auth;
 
+      // Spec (MCP enterprise-managed authorization): a client whose access is
+      // enterprise-managed MUST advertise the extension in initialize. Merged
+      // — never overwriting — into the caller-configured capabilities.
+      const perServerCapabilities = useXaa
+        ? withXaaExtensionCapability(clientCapabilities)
+        : clientCapabilities;
+
       return [
         serverId,
         toHttpConfig(
           authForConfig,
-          timeoutMs,
-          oauthToken,
-          clientCapabilities,
-          onUnauthorized,
+          effectiveTimeoutMs,
+          connectToken,
+          perServerCapabilities,
+          connectOnUnauthorized,
           effectiveInitializePins
         ),
       ] as const;
@@ -1124,6 +1311,40 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
   }
 ): Promise<T> {
+  const { manager, body } = await createManualHostedConnection(
+    c,
+    rawBody,
+    schema,
+    options
+  );
+
+  try {
+    return await fn(manager, body);
+  } finally {
+    await manager.disconnectAllServers();
+  }
+}
+
+/**
+ * Authorize and create a hosted ephemeral MCP manager without binding it to the
+ * HTTP response lifecycle. Use only when the caller will keep the manager alive
+ * after returning a Response, and will explicitly disconnect it when background
+ * work settles.
+ */
+export async function createManualHostedConnection<S extends z.ZodTypeAny>(
+  c: any,
+  rawBody: Record<string, unknown>,
+  schema: S,
+  options?: {
+    timeoutMs?: number;
+    guestUnsupportedMessage?: string;
+    rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
+  }
+): Promise<{
+  manager: InstanceType<typeof MCPClientManager>;
+  body: z.infer<S>;
+  convexAuthToken: string;
+}> {
   // Both guest and signed-in actors flow through the same Convex
   // authorization path: the bearer token (guest JWT or WorkOS bearer) is
   // forwarded to /web/authorize-batch, which dispatches to the right
@@ -1167,28 +1388,30 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
   const { initializePins, mcpProtocolVersionsByServerId } =
     extractMcpInitializeOptions(raw);
 
-  return await withManager(
-    createAuthorizedManager(
-      callerContextFromHono(c),
-      bearerToken,
-      raw.projectId as string,
-      serverIds,
-      timeoutMs,
-      oauthTokens,
-      (raw.clientCapabilities as Record<string, unknown> | undefined) ??
-        undefined,
-      {
-        accessScope,
-        chatboxId,
-        accessVersion,
-        rpcLogger: options?.rpcLogger,
-        serverNames,
-        initializePins,
-        mcpProtocolVersionsByServerId,
-      }
-    ),
-    (manager) => fn(manager, body as z.infer<S>)
+  const { manager } = await createAuthorizedManager(
+    callerContextFromHono(c),
+    bearerToken,
+    raw.projectId as string,
+    serverIds,
+    timeoutMs,
+    oauthTokens,
+    (raw.clientCapabilities as Record<string, unknown> | undefined) ??
+      undefined,
+    {
+      accessScope,
+      chatboxId,
+      accessVersion,
+      rpcLogger: options?.rpcLogger,
+      serverNames,
+      initializePins,
+      mcpProtocolVersionsByServerId,
+      // Resolve the XAA issuer here (we hold the request `Context`) so the
+      // manager builder can mint Cross-App Access tokens for `useXaa` servers.
+      xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+    }
   );
+
+  return { manager, body: body as z.infer<S>, convexAuthToken: bearerToken };
 }
 
 export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(

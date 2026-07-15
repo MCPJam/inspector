@@ -20,6 +20,11 @@ export interface MultiModelCardSummary {
   durationMs: number | null;
   tokens: number;
   toolCount: number;
+  /**
+   * Count of app-side widget interaction steps (clicks/types) recorded this
+   * run. Optional/back-compat: absent ⇒ 0 (the Interactions row is hidden).
+   */
+  interactionCount?: number;
   status: MultiModelCardStatus;
   hasMessages: boolean;
 }
@@ -51,6 +56,12 @@ export function ModelCompareCardHeader({
   compactCompareHeader = true,
   result,
   showToolsTab = false,
+  showStepsTab = false,
+  stepsActive = false,
+  onSelectSteps,
+  showBrowserTab = false,
+  browserActive = false,
+  onSelectBrowser,
   tabsInline = false,
   actionsSlot,
   className,
@@ -83,6 +94,17 @@ export function ModelCompareCardHeader({
   result?: "passed" | "failed" | null;
   /** Include a Results tab alongside Trace/Chat/Raw. Only applies when `tabsInline` is true. */
   showToolsTab?: boolean;
+  /** Step-aligned "Steps" tab — rides the out-of-union `stepsActive` /
+   *  `onSelectSteps` props (see TraceViewModeTabs doc). */
+  showStepsTab?: boolean;
+  stepsActive?: boolean;
+  onSelectSteps?: () => void;
+  /** Include the eval-only "Browser" tab (headless render observations / replay
+   *  video). Rides the out-of-union `browserActive` / `onSelectBrowser` props so
+   *  the shared `TraceViewMode` union stays narrow (see TraceViewModeTabs doc). */
+  showBrowserTab?: boolean;
+  browserActive?: boolean;
+  onSelectBrowser?: () => void;
   /**
    * When true, tabs are rendered inline inside the metrics block (with `actionsSlot`) rather
    * than as a full-width strip below it. Use this for eval playground cards.
@@ -105,7 +127,7 @@ export function ModelCompareCardHeader({
       item.status !== "error" &&
       item.status !== "cancelled" &&
       item.durationMs != null &&
-      item.durationMs > 0,
+      item.durationMs > 0
   );
   const durationValues = comparableSummaries
     .map((item) => item.durationMs ?? 0)
@@ -126,7 +148,7 @@ export function ModelCompareCardHeader({
   const minToolCount = toolValues.length > 0 ? Math.min(...toolValues) : 0;
   const hasComparison = comparableSummaries.length > 1;
   const hasRunningSummary = allSummaries.some(
-    (item) => item.status === "running",
+    (item) => item.status === "running"
   );
   const canHighlightWinner = hasComparison && !hasRunningSummary;
 
@@ -164,24 +186,90 @@ export function ModelCompareCardHeader({
     summary?.status === "running"
       ? "size-3 bg-amber-500/45 dark:bg-amber-400/40 animate-pulse motion-reduce:animate-none"
       : summary?.status === "cancelled"
-        ? "size-3 bg-amber-500/45 dark:bg-amber-400/40"
-        : summary?.status === "error"
-          ? "size-3 bg-rose-500/45 dark:bg-rose-400/40"
-          : summary?.status === "ready"
-            ? "size-3 bg-primary/22 dark:bg-primary/20"
-            : "size-3 bg-muted";
+      ? "size-3 bg-amber-500/45 dark:bg-amber-400/40"
+      : summary?.status === "error"
+      ? "size-3 bg-rose-500/45 dark:bg-rose-400/40"
+      : summary?.status === "ready"
+      ? "size-3 bg-primary/22 dark:bg-primary/20"
+      : "size-3 bg-muted";
   const statusLabel =
     summary?.status === "running"
       ? "Running"
       : summary?.status === "cancelled"
-        ? "Stopped"
-        : summary?.status === "error"
-          ? "Failed"
-          : summary?.status === "ready"
-            ? "Ready"
-            : "Idle";
+      ? "Stopped"
+      : summary?.status === "error"
+      ? "Failed"
+      : summary?.status === "ready"
+      ? "Ready"
+      : "Idle";
   const toolCallLabel =
     currentToolCount === 1 ? "1 tool call" : `${currentToolCount} tool calls`;
+  const currentInteractionCount = summary?.interactionCount ?? 0;
+  const interactionLabel =
+    currentInteractionCount === 1
+      ? "1 interaction"
+      : `${currentInteractionCount} interactions`;
+
+  const showResultPill =
+    !compactCompareHeader && (result === "passed" || result === "failed");
+  const showStatusDot = !compactCompareHeader && result == null;
+
+  const resultPill =
+    showResultPill && result === "passed" ? (
+      <span
+        className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300"
+        aria-label="Passed"
+      >
+        Passed
+      </span>
+    ) : showResultPill && result === "failed" ? (
+      <span
+        className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300"
+        aria-label="Failed"
+      >
+        Failed
+      </span>
+    ) : null;
+
+  const inlineTraceTabsRow =
+    showTraceTabs && tabsInline ? (
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        {resultPill || showStatusDot ? (
+          <div className="flex shrink-0 items-center gap-1.5">
+            {resultPill}
+            {showStatusDot ? (
+              <span
+                role="img"
+                className={cn(
+                  "inline-flex shrink-0 rounded-full",
+                  statusIndicatorClass
+                )}
+                aria-label={statusLabel}
+                title={statusLabel}
+              />
+            ) : null}
+          </div>
+        ) : null}
+        <div className="min-w-0 flex-1">
+          <TraceViewModeTabs
+            mode={mode}
+            onModeChange={onModeChange}
+            showToolsTab={showToolsTab}
+            showStepsTab={showStepsTab}
+            stepsActive={stepsActive}
+            onSelectSteps={onSelectSteps}
+            showBrowserTab={showBrowserTab}
+            browserActive={browserActive}
+            onSelectBrowser={onSelectBrowser}
+            appearance="segment"
+            className="w-full [&_button]:min-h-7 [&_button]:px-2 [&_button]:py-1 [&_button]:text-[11px] [&_svg]:h-3 [&_svg]:w-3"
+          />
+        </div>
+        {actionsSlot ? (
+          <div className="flex shrink-0 items-center gap-1">{actionsSlot}</div>
+        ) : null}
+      </div>
+    ) : null;
 
   return (
     <>
@@ -190,7 +278,7 @@ export function ModelCompareCardHeader({
           className={cn(
             "shrink-0 border-b border-border/60 px-3 py-2",
             showTraceTabs && !tabsInline && "border-b-0",
-            className,
+            className
           )}
         >
           <div className="flex items-start justify-between gap-2">
@@ -199,21 +287,7 @@ export function ModelCompareCardHeader({
                 <div className="truncate text-sm font-semibold leading-tight">
                   {displayName}
                 </div>
-                {!compactCompareHeader && result === "passed" ? (
-                  <span
-                    className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/20 dark:text-emerald-300"
-                    aria-label="Passed"
-                  >
-                    Passed
-                  </span>
-                ) : !compactCompareHeader && result === "failed" ? (
-                  <span
-                    className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-rose-500/15 text-rose-700 dark:bg-rose-400/20 dark:text-rose-300"
-                    aria-label="Failed"
-                  >
-                    Failed
-                  </span>
-                ) : null}
+                {showResultPill ? resultPill : null}
               </div>
               {compareSubLabel ? (
                 <div className="truncate text-[11px] leading-tight text-muted-foreground">
@@ -221,12 +295,12 @@ export function ModelCompareCardHeader({
                 </div>
               ) : null}
             </div>
-            {!compactCompareHeader && result == null ? (
+            {showStatusDot ? (
               <span
                 role="img"
                 className={cn(
                   "inline-flex shrink-0 rounded-full",
-                  statusIndicatorClass,
+                  statusIndicatorClass
                 )}
                 aria-label={statusLabel}
                 title={statusLabel}
@@ -254,7 +328,7 @@ export function ModelCompareCardHeader({
                         "h-full rounded-sm transition-all duration-300",
                         isFastest
                           ? "bg-emerald-500/25 dark:bg-emerald-400/20"
-                          : "bg-sidebar-accent",
+                          : "bg-sidebar-accent"
                       )}
                       style={{
                         width: `${hasComparison ? durationBarPct : 100}%`,
@@ -267,7 +341,7 @@ export function ModelCompareCardHeader({
                     "absolute inset-0 flex items-center px-1.5 text-[10px] font-medium tabular-nums",
                     isFastest
                       ? "text-emerald-700 dark:text-emerald-400"
-                      : "text-foreground",
+                      : "text-foreground"
                   )}
                 >
                   {formatCardDuration(summary?.durationMs ?? null)}
@@ -294,7 +368,7 @@ export function ModelCompareCardHeader({
                         "h-full rounded-sm transition-all duration-300",
                         isFewestTokens
                           ? "bg-emerald-500/25 dark:bg-emerald-400/20"
-                          : "bg-sidebar-accent",
+                          : "bg-sidebar-accent"
                       )}
                       style={{
                         width: `${hasComparison ? tokensBarPct : 100}%`,
@@ -307,7 +381,7 @@ export function ModelCompareCardHeader({
                     "absolute inset-0 flex items-center px-1.5 text-[10px] font-medium tabular-nums",
                     isFewestTokens
                       ? "text-emerald-700 dark:text-emerald-400"
-                      : "text-foreground",
+                      : "text-foreground"
                   )}
                 >
                   {currentTokens > 0 ? currentTokens.toLocaleString() : "—"}
@@ -325,37 +399,43 @@ export function ModelCompareCardHeader({
                     "px-1.5 text-[10px] font-medium tabular-nums",
                     isFewestTools
                       ? "text-emerald-700 dark:text-emerald-400"
-                      : "text-foreground",
+                      : "text-foreground"
                   )}
                 >
                   {summary?.hasMessages ? toolCallLabel : "—"}
                 </span>
               </div>
             ) : null}
+
+            {!compactCompareHeader && currentInteractionCount > 0 ? (
+              <div className="flex items-center gap-2">
+                <span className="w-[52px] shrink-0 text-[10px] text-muted-foreground">
+                  Interactions
+                </span>
+                <span className="px-1.5 text-[10px] font-medium tabular-nums text-foreground">
+                  {interactionLabel}
+                </span>
+              </div>
+            ) : null}
           </div>
 
-          {showTraceTabs && tabsInline ? (
-            <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                <TraceViewModeTabs
-                  mode={mode}
-                  onModeChange={onModeChange}
-                  showToolsTab={showToolsTab}
-                  className="[&_button]:px-1.5 [&_button]:py-0.5 [&_button]:text-[11px] [&_svg]:h-3 [&_svg]:w-3"
-                />
-              </div>
-              {actionsSlot ? (
-                <div className="flex items-center gap-1">{actionsSlot}</div>
-              ) : null}
-            </div>
+          {inlineTraceTabsRow ? (
+            <div className="mt-1.5">{inlineTraceTabsRow}</div>
           ) : null}
         </div>
+      ) : null}
+
+      {!showComparisonChrome && showTraceTabs && tabsInline ? (
+        <div className={cn("shrink-0", className)}>{inlineTraceTabsRow}</div>
       ) : null}
 
       {showTraceTabs && !tabsInline ? (
         <ChatTraceViewModeHeaderBar
           mode={mode}
           onModeChange={onModeChange}
+          showBrowserTab={showBrowserTab}
+          browserActive={browserActive}
+          onSelectBrowser={onSelectBrowser}
           className={!showComparisonChrome ? className : undefined}
         />
       ) : null}

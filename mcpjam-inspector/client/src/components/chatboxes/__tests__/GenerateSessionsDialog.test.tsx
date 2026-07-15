@@ -26,6 +26,19 @@ vi.mock("@/lib/PosthogUtils", () => ({
   standardEventProps: () => ({}),
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
+}));
+
+// The dialog reads the persona roster via Convex (usePersonaRoster -> useQuery).
+// These configure-stage tests render it without a ConvexProvider, so stub the
+// roster hooks: an undefined roster simply hides the stage-1 roster section.
+vi.mock("@/components/chatboxes/personas", () => ({
+  usePersonaRoster: () => undefined,
+  useSortedRoster: (roster: unknown) => roster,
+  PersonaCard: () => null,
+}));
+
 const baseChatbox: ChatboxSettings = {
   chatboxId: "cb_1",
   projectId: "proj_1",
@@ -145,5 +158,31 @@ describe("GenerateSessionsDialog — plan v4 §J affordances", () => {
       (screen.getByRole("button", { name: "Generate personas" }) as HTMLButtonElement)
         .disabled,
     ).toBe(false);
+  });
+
+  it("blocks a modelless chatbox: fix-it notice shown, Generate disabled, no false BYOK warning", () => {
+    // An unpinned host persists modelId "" — synthetic runs have no picker
+    // fallback, so the dialog gates instead of leading into a doomed run.
+    // Pre-fix, isMCPJamProvidedModel("") → false also showed the misleading
+    // org-key spend warning for a chatbox with no model at all.
+    const modellessChatbox = { ...baseChatbox, modelId: "" };
+    render(
+      <GenerateSessionsDialog
+        isOpen
+        onClose={() => {}}
+        chatbox={modellessChatbox}
+      />,
+    );
+    expect(
+      screen.getByText(/client has no model selected/i),
+    ).toBeInTheDocument();
+    expect(
+      (screen.getByRole("button", { name: "Generate personas" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      screen.queryByText(/will consume your provider credits/i),
+    ).toBeNull();
+    expect(screen.queryByText(/Rough cost estimate/i)).toBeNull();
   });
 });

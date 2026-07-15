@@ -37,6 +37,10 @@ vi.mock("@/lib/PosthogUtils", () => ({
   detectPlatform: vi.fn(() => "web"),
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
+}));
+
 vi.mock("@/hooks/use-json-rpc-panel", () => ({
   useJsonRpcPanelVisibility: () => ({
     isVisible: false,
@@ -343,6 +347,48 @@ describe("ChatTabV2 trace views", () => {
     rerender(<ChatTabV2 {...defaultProps} enableTraceViews={true} />);
 
     expect(screen.queryByTestId("trace-view-tabs")).not.toBeInTheDocument();
+  });
+
+  it("sends a handoff's pendingUserMessage after the seeded conversation is applied", async () => {
+    // The eval preview hands off a widget `ui/message` follow-up via the
+    // handoff's `pendingUserMessage`; ChatTabV2 must seed the conversation and
+    // THEN send the message so the playground replies live.
+    mockUseChatSession.startChatWithMessages = vi
+      .fn()
+      .mockResolvedValue(undefined);
+
+    render(
+      <ChatTabV2
+        {...defaultProps}
+        evalChatHandoff={
+          {
+            id: "handoff-1",
+            messages: [
+              {
+                id: "u1",
+                role: "user",
+                parts: [{ type: "text", text: "Show me a redbull" }],
+              },
+            ],
+            serverNames: ["server-1"],
+            // No modelId → skip model matching; relies on selectedModel.
+            executionConfig: {},
+            pendingUserMessage: "Show my cart",
+          } as any
+        }
+        onEvalChatHandoffConsumed={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockUseChatSession.startChatWithMessages).toHaveBeenCalled();
+    });
+    // The follow-up is sent live only after the seed promise resolves.
+    await waitFor(() => {
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "Show my cart" }),
+      );
+    });
   });
 
   it("shows trace tabs on an empty thread when trace views are supported", () => {

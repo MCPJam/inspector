@@ -23,6 +23,8 @@ import xaa from "./xaa";
 import command from "./command";
 import subscribe from "./subscribe";
 import widgetRender from "./widget-render";
+import widgetSession from "./widget-session";
+import audioTranscriptions from "./audio-transcriptions";
 
 const mcp = new Hono();
 
@@ -37,6 +39,9 @@ mcp.get("/health", (c) => {
 
 // Chat v2 endpoint
 mcp.route("/chat-v2", chatV2);
+
+// Speech-to-text endpoint
+mcp.route("/audio", audioTranscriptions);
 
 // Elicitation endpoints
 mcp.route("/elicitation", elicitation);
@@ -107,5 +112,9 @@ mcp.route("/conformance", conformance);
 // verdict) via the eval browser harness. Local-mode only (mounted under
 // /api/mcp/*); backs the CLI's `mcpjam apps render`.
 mcp.route("/widget-render", widgetRender);
+
+// Interactive headless widget sessions (keepMounted) - start/action/close with
+// strict browser lifecycle. Local-mode only; backs `mcpjam apps session`.
+mcp.route("/widget-session", widgetSession);
 
 export default mcp;

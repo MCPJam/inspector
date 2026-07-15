@@ -39,7 +39,7 @@ function iterationDurationMs(iteration: EvalIteration): number | null {
 function iterationOutcome(iteration: EvalIteration): RunCaseIterationOutcome {
   const result = computeIterationResult(iteration);
   if (result === "passed") return "pass";
-  if (result === "failed") return "fail";
+  if (result === "failed" || result === "timed_out") return "fail";
   if (result === "cancelled") return "cancelled";
   return "pending";
 }
@@ -86,7 +86,7 @@ export function groupRunIterationsByTestCase(
     // visual bar and the numeric counts can never disagree.
     const result = computeIterationResult(iteration);
     if (result === "passed") group.passed += 1;
-    else if (result === "failed") group.failed += 1;
+    else if (result === "failed" || result === "timed_out") group.failed += 1;
     else if (result === "cancelled") group.cancelled += 1;
     else group.pending += 1;
     group.total += 1;

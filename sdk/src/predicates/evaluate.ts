@@ -10,6 +10,7 @@
  */
 
 import { argMatch } from "./argMatcher.js";
+import { isTurnScopablePredicateKind } from "./types.js";
 import type {
   IterationTranscript,
   Predicate,
@@ -547,4 +548,45 @@ export function evaluatePredicates(
  */
 export function allPredicatesPassed(results: PredicateResult[]): boolean {
   return results.every((r) => r.passed);
+}
+
+/** One prompt turn's checks plus the turn-scoped transcript to run them on. */
+export interface TurnChecksInput {
+  /** Zero-based index of the turn in the case's `promptTurns`. */
+  promptIndex: number;
+  /** The turn's per-turn checks (already restricted to turn-scopable kinds). */
+  checks: Predicate[] | undefined;
+  /** The turn-scoped transcript (see `buildTurnTranscript`). */
+  transcript: IterationTranscript;
+}
+
+/**
+ * Evaluate per-turn checks across a case's turns, reusing the same
+ * {@link evaluatePredicates} engine against each turn's slice. Every result is
+ * tagged with `scope: { kind: "turn", promptIndex }` so the UI and persisted
+ * metadata can attribute it to the turn. Turns with no checks contribute
+ * nothing. Order is preserved (turn order, then check order within a turn).
+ *
+ * Defense in depth: non-turn-scopable kinds (e.g. `tokenBudgetUnder`) are
+ * dropped here even though the backend rejects them at the write boundary —
+ * the evaluator must never silently treat a case-only check as turn-scoped if
+ * one reaches it directly (a different write path, a test, a future caller).
+ */
+export function evaluateTurnChecks(
+  turns: TurnChecksInput[],
+): PredicateResult[] {
+  const results: PredicateResult[] = [];
+  for (const turn of turns) {
+    if (!turn.checks || turn.checks.length === 0) continue;
+    const turnScopable = turn.checks.filter((check) =>
+      isTurnScopablePredicateKind(check.type),
+    );
+    for (const result of evaluatePredicates(turn.transcript, turnScopable)) {
+      results.push({
+        ...result,
+        scope: { kind: "turn", promptIndex: turn.promptIndex },
+      });
+    }
+  }
+  return results;
 }

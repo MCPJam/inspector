@@ -37,12 +37,22 @@ export function ComputerTab({
   const update = (patch: Partial<HostConfigInputV2>) =>
     onDraftChange((prev) => ({ ...prev, ...patch }));
 
+  // The Claude Code harness runs inside this computer, so it can't be detached
+  // while a harness is selected (the backend enforces `harness ⇒ computer`).
+  // Remove the harness first (e.g. on the Behavior tab) to free the toggle.
+  const lockedByHarness =
+    draft.harness !== undefined && draft.computer !== undefined;
+
   return (
     <div className="flex flex-col gap-4">
       <FocusBlock title="Computer">
         <FieldRow
           label="Personal computer"
-          description="Attach a per-member cloud workstation (a persistent Linux sandbox). Required by computer-backed tools like Bash, which you enable in the Tools tab."
+          description={
+            lockedByHarness
+              ? "Required by the Claude Code harness — remove the harness to detach. A per-member cloud workstation (a persistent Linux sandbox) the real Claude Code runtime runs inside."
+              : "Attach a per-member cloud workstation (a persistent Linux sandbox). Required by computer-backed tools like Bash, which you enable in the Tools tab."
+          }
           control={
             <Switch
               checked={draft.computer !== undefined}
@@ -54,7 +64,7 @@ export function ComputerTab({
                 )
               }
               aria-label="Personal computer"
-              disabled={readOnly}
+              disabled={readOnly || lockedByHarness}
             />
           }
         />

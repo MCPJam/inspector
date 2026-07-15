@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@mcpjam/design-system/dialog";
 import { Label } from "@mcpjam/design-system/label";
@@ -7,8 +7,7 @@ import { Card } from "@mcpjam/design-system/card";
 import { Upload } from "lucide-react";
 import { parseJsonConfig, validateJsonConfig } from "@/lib/json-config-parser";
 import { ServerFormData } from "@/shared/types.js";
-import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { JsonEditor } from "../ui/json-editor";
 
 interface JsonImportModalProps {
@@ -29,7 +28,6 @@ export function JsonImportModal({
   } | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const posthog = usePostHog();
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -198,10 +196,8 @@ export function JsonImportModal({
             type="button"
             onClick={() => {
               if (!isImporting) {
-                posthog.capture("connecting_server", {
+                track("connecting_server", {
                   location: "json_import_modal",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
                 });
               }
               handleImport();

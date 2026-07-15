@@ -10,7 +10,7 @@ import { getLoadingIndicatorForStyle } from "@/lib/client-styles";
 import { cn } from "@/lib/utils";
 
 function modelProviderToHostStyle(
-  provider: string | null | undefined,
+  provider: string | null | undefined
 ): ChatboxHostStyle | null {
   if (!provider) return null;
   const normalized = provider.toLowerCase();
@@ -29,7 +29,7 @@ function modelProviderToHostStyle(
  * a generic fallback in that case.
  */
 export function useResolvedHostStyleForIndicator(
-  modelProvider?: string | null,
+  modelProvider?: string | null
 ): ChatboxHostStyle | null {
   const chatboxHostStyle = useChatboxHostStyle();
   return chatboxHostStyle ?? modelProviderToHostStyle(modelProvider);
@@ -37,7 +37,7 @@ export function useResolvedHostStyleForIndicator(
 
 /** Claude paints its mark beneath the last assistant bubble while streaming. */
 export function usesClaudeInlineStreamingFooter(
-  hostStyle: ChatboxHostStyle | null,
+  hostStyle: ChatboxHostStyle | null
 ): boolean {
   return (
     hostStyle != null &&
@@ -47,13 +47,18 @@ export function usesClaudeInlineStreamingFooter(
     // generic LoadingIndicatorContent path), not the claude.ai mark painted
     // beneath the assistant bubble. Same opt-out shape as "mcpjam".
     hostStyle !== "claude-code" &&
+    // AgentCore likewise borrows the "claude" family for warm bubble chrome
+    // but is a text-only AWS runtime, not claude.ai — it shows a generic
+    // shimmer indicator, so it must NOT paint the Anthropic mark beneath the
+    // bubble while streaming. Same opt-out shape as "claude-code".
+    hostStyle !== "agentcore" &&
     getChatboxHostFamily(hostStyle) === "claude"
   );
 }
 
 /** MCPJam uses its own dot indicator in the same footer slot. */
 export function usesMcpjamInlineStreamingFooter(
-  hostStyle: ChatboxHostStyle | null,
+  hostStyle: ChatboxHostStyle | null
 ): boolean {
   return hostStyle === "mcpjam";
 }
@@ -84,8 +89,12 @@ export function LoadingIndicatorContent({
       Thinking
       <span aria-hidden="true" className="inline-flex">
         <span className="animate-[blink_1.4s_ease-in-out_infinite]">.</span>
-        <span className="animate-[blink_1.4s_ease-in-out_0.2s_infinite]">.</span>
-        <span className="animate-[blink_1.4s_ease-in-out_0.4s_infinite]">.</span>
+        <span className="animate-[blink_1.4s_ease-in-out_0.2s_infinite]">
+          .
+        </span>
+        <span className="animate-[blink_1.4s_ease-in-out_0.4s_infinite]">
+          .
+        </span>
       </span>
     </span>
   );

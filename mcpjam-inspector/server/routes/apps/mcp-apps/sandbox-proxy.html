@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -196,8 +196,7 @@
             typeof cspDirectives === "object" &&
             Object.values(cspDirectives).some(
               (tokens) =>
-                Array.isArray(tokens) &&
-                tokens.some(cspDirectiveTokenSurvives),
+                Array.isArray(tokens) && tokens.some(cspDirectiveTokenSurvives)
             );
           if (hasCspOverrides) {
             // Helper: if cspDirectives names this directive, emit ONLY
@@ -295,7 +294,10 @@
 
           directives = [
             mergeDirective("default-src", ["'none'"]),
-            mergeDirective("script-src", ["'unsafe-inline'", ...resourceTokens]),
+            mergeDirective("script-src", [
+              "'unsafe-inline'",
+              ...resourceTokens,
+            ]),
             mergeDirective("style-src", ["'unsafe-inline'", ...resourceTokens]),
             mergeDirective("img-src", resourceTokens),
             mergeDirective("font-src", resourceTokens),
@@ -380,13 +382,62 @@ document.addEventListener('securitypolicyviolation', function(e) {
        * @param {string} cspValue - CSP policy string
        * @returns {string} HTML with CSP meta tag and violation listener injected
        */
-      function injectCSP(html, cspValue) {
+      // Tier 2 recorder shim source, injected at serve time (see index.ts).
+      // Stays the placeholder string when recording is unavailable.
+      const RECORDER_SHIM = "__MCPJAM_RECORDER_SHIM__";
+      let recorderDebugEnabled = false;
+      function recorderDebug(message, details) {
+        try {
+          if (recorderDebugEnabled) {
+            console.info("[recorder:proxy] " + message, details || {});
+          }
+        } catch (error) {
+          // debug logging is best-effort
+        }
+      }
+      function buildRecorderScript(recordMode) {
+        if (
+          !recordMode ||
+          !RECORDER_SHIM ||
+          RECORDER_SHIM === "__MCPJAM_RECORDER_SHIM__"
+        ) {
+          recorderDebug("skip shim", {
+            recordMode: !!recordMode,
+            hasShim: !!RECORDER_SHIM,
+            placeholder: RECORDER_SHIM === "__MCPJAM_RECORDER_SHIM__",
+          });
+          return "";
+        }
+        recorderDebug("inject shim");
+        return "<scr" + "ipt>" + RECORDER_SHIM + "</scr" + "ipt>";
+      }
+
+      function injectCSP(html, cspValue, extraScript) {
+        // Tier 2 recorder: the capture shim is an INLINE <script>. A widget that
+        // ships its own `<meta http-equiv="Content-Security-Policy">` adds a
+        // second policy, and browsers enforce the INTERSECTION of all policies —
+        // so a widget CSP lacking `'unsafe-inline'` silently blocks the shim even
+        // though our injected policy allows it (the recorder then times out and
+        // misreports "CSP blocked"). When recording (extraScript present), strip
+        // the widget's own CSP metas so only our permissive policy governs. This
+        // relaxation is scoped to the eval editor's armed record target only.
+        if (extraScript) {
+          html = html.replace(
+            /<meta[^>]+http-equiv\s*=\s*["']?content-security-policy["']?[^>]*>/gi,
+            ""
+          );
+        }
         const cspMeta =
           '<meta http-equiv="Content-Security-Policy" content="' +
           cspValue +
           '">';
         const violationListener = buildViolationListenerScript();
-        const injection = cspMeta + violationListener;
+        // Run the recorder shim before the generated CSP meta is parsed. The
+        // proxy strips widget-authored CSP metas above, but putting the shim
+        // first also avoids browser ordering edge cases where the injected CSP
+        // could block the very inline script that is supposed to announce
+        // `recorder:ready`.
+        const injection = (extraScript || "") + cspMeta + violationListener;
 
         if (html.includes("<head>")) {
           return html.replace("<head>", "<head>" + injection);
@@ -400,7 +451,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
           // Insert after doctype
           return html.replace(
             /(<!DOCTYPE[^>]*>|<!doctype[^>]*>)/i,
-            "$1<head>" + injection + "</head>",
+            "$1<head>" + injection + "</head>"
           );
         } else {
           // Prepend CSP meta tag and listener
@@ -433,7 +484,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
       // Default minimal sandbox before HTML arrives
       inner.setAttribute(
         "sandbox",
-        "allow-scripts allow-same-origin allow-forms",
+        "allow-scripts allow-same-origin allow-forms"
       );
       document.body.appendChild(inner);
 
@@ -463,8 +514,27 @@ document.addEventListener('securitypolicyviolation', function(e) {
               cspDirectives,
               permissive,
               colorScheme,
+              recordMode,
+              recorderDebug: nextRecorderDebug,
             } = event.data.params || {};
+            recorderDebugEnabled = !!nextRecorderDebug;
+            try {
+              if (recorderDebugEnabled) {
+                window.localStorage?.setItem("mcpjam:recorder-debug", "1");
+              } else {
+                window.localStorage?.removeItem("mcpjam:recorder-debug");
+              }
+            } catch (error) {
+              // debug flag propagation is best-effort
+            }
             inner.style.colorScheme = applyColorScheme(colorScheme);
+            // Tier 2: inject the recorder shim into the guest when recording.
+            const recorderScript = buildRecorderScript(recordMode);
+            recorderDebug("resource ready", {
+              recordMode: !!recordMode,
+              recorderScript: !!recorderScript,
+              htmlLength: typeof html === "string" ? html.length : null,
+            });
 
             // Inner iframe `sandbox=` value.
             //
@@ -505,7 +575,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
             }
             inner.setAttribute(
               "sandbox",
-              Array.from(sandboxTokens).sort().join(" "),
+              Array.from(sandboxTokens).sort().join(" ")
             );
 
             // Set Permission Policy `allow=` attribute for the inner iframe
@@ -539,14 +609,18 @@ document.addEventListener('securitypolicyviolation', function(e) {
                   "base-uri *",
                   "form-action *",
                 ].join("; ");
-                const processedHtml = injectCSP(html, permissiveCsp);
+                const processedHtml = injectCSP(
+                  html,
+                  permissiveCsp,
+                  recorderScript
+                );
                 inner.srcdoc = processedHtml;
               } else {
                 // Build CSP and inject into HTML (SEP-1865). cspDirectives
                 // is the inspector-only per-directive source-expression
                 // override map (e.g. `script-src` adds `'unsafe-eval'`).
                 const cspValue = buildCSP(csp, cspDirectives);
-                const processedHtml = injectCSP(html, cspValue);
+                const processedHtml = injectCSP(html, cspValue, recorderScript);
                 inner.srcdoc = processedHtml;
               }
             }
@@ -576,8 +650,20 @@ document.addEventListener('securitypolicyviolation', function(e) {
               data.type === "openai:uploadFile" ||
               data.type === "openai:getFileDownloadUrl" ||
               data.type === "openai:setWidgetState" ||
-              data.type === "openai:setOpenInAppUrl"
+              data.type === "openai:setOpenInAppUrl" ||
+              // Tier 2 recorder: guest → host recorded steps + readiness ping.
+              data.type === "recorder:step" ||
+              data.type === "recorder:ready" ||
+              // Replay: guest → host per-step result for a host-driven replay.
+              data.type === "recorder:replay-result"
             ) {
+              if (
+                data.type === "recorder:step" ||
+                data.type === "recorder:ready" ||
+                data.type === "recorder:replay-result"
+              ) {
+                recorderDebug("forward " + data.type);
+              }
               window.parent.postMessage(data, "*");
             }
           }
@@ -591,7 +677,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
           method: "ui/notifications/sandbox-proxy-ready",
           params: {},
         },
-        "*",
+        "*"
       );
     </script>
   </body>

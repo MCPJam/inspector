@@ -20,6 +20,14 @@ export type TestCaseType = (typeof TEST_CASE_TYPES)[number];
 export const MAX_PROBE_RENDER_TIMEOUT_MS = 120_000;
 
 /**
+ * Max serialized size (chars) of a probe's pinned arguments — matches
+ * `MAX_PROBE_ARGS_CHARS` in the mcpjam-backend validator (`convex/lib/probeConfig.ts`).
+ * Arguments are stored verbatim and snapshotted into every iteration, so an
+ * unbounded blob would bloat rows.
+ */
+export const MAX_PROBE_ARGS_CHARS = 100_000;
+
+/**
  * Placeholder toolName stamped by "New case → Widget probe" (the backend
  * requires a non-empty toolName at rest, but no tool inventory is loaded at
  * create time). Deliberately not a plausible tool identifier so a real tool
@@ -41,7 +49,22 @@ export const probeConfigSchema = z.object({
   serverId: z.string().min(1).optional(),
   serverName: z.string().min(1),
   toolName: z.string().min(1),
-  arguments: z.record(z.string(), z.unknown()),
+  arguments: z
+    .record(z.string(), z.unknown())
+    .refine(
+      (v) => {
+        // JSON.stringify throws on circular refs; treat unserializable args as
+        // invalid rather than letting the exception escape the validator.
+        try {
+          return JSON.stringify(v).length <= MAX_PROBE_ARGS_CHARS;
+        } catch {
+          return false;
+        }
+      },
+      {
+        message: `arguments must be ≤ ${MAX_PROBE_ARGS_CHARS} characters when serialized`,
+      },
+    ),
   /** Per-probe render budget override in ms; harness default applies when absent. */
   renderTimeoutMs: z
     .number()
