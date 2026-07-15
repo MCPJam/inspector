@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import {
@@ -18,11 +19,12 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { resolveAuthorizationPlan } from "@mcpjam/sdk/browser";
+import type { RegistrationMode } from "@/shared/xaa.js";
 import type {
   ServerFormAuthType,
   ServerFormOAuthProtocolMode,
-  ServerFormOAuthRegistrationMode,
 } from "@/shared/types.js";
+import { REGISTRATION_MODE_OPTIONS } from "@/lib/registration-strategy";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 import { XaaCredentialFields } from "./XaaCredentialFields";
 
@@ -43,9 +45,9 @@ interface AuthenticationSectionProps {
   onOauthScopesChange: (value: string) => void;
   oauthProtocolMode: ServerFormOAuthProtocolMode;
   onOauthProtocolModeChange: (value: ServerFormOAuthProtocolMode) => void;
-  oauthRegistrationMode: ServerFormOAuthRegistrationMode;
+  registrationMode: RegistrationMode;
   onOauthRegistrationModeChange: (
-    value: ServerFormOAuthRegistrationMode,
+    value: RegistrationMode,
   ) => void;
   useCustomClientId: boolean;
   onUseCustomClientIdChange: (value: boolean) => void;
@@ -66,12 +68,20 @@ interface AuthenticationSectionProps {
   // above; these are XAA-specific.
   xaaAuthzIssuer?: string;
   onXaaAuthzIssuerChange?: (value: string) => void;
+  xaaAllowPathScopedIssuer?: boolean;
+  onXaaAllowPathScopedIssuerChange?: (value: boolean) => void;
   xaaSubject?: string;
   onXaaSubjectChange?: (value: string) => void;
   xaaEmail?: string;
   onXaaEmailChange?: (value: string) => void;
-  /** Signed-in user's email — shown as the default for the simulated identity. */
-  signedInEmail?: string;
+  /**
+   * True when Auto would select XAA for this server (an IdP mode is chosen
+   * and a client id is stored — same rule as the server's xaaConfigured).
+   * Drives the helper copy under the select.
+   */
+  autoSelectsXaa?: boolean;
+  /** Project default test identity — shown as the override placeholders. */
+  projectDefaultIdentity?: { subject: string; email: string } | null;
 }
 
 const PROTOCOL_OPTIONS: Array<{
@@ -83,15 +93,9 @@ const PROTOCOL_OPTIONS: Array<{
   { value: "2025-03-26", label: "2025-03-26 (Legacy)" },
 ];
 
-const REGISTRATION_OPTIONS: Array<{
-  value: ServerFormOAuthRegistrationMode;
-  label: string;
-}> = [
-  { value: "auto", label: "Automatic" },
-  { value: "preregistered", label: "Preregistration (Client Credentials)" },
-  { value: "cimd", label: "Client ID Metadata Documents (CIMD)" },
-  { value: "dcr", label: "Dynamic Client Registration (DCR)" },
-];
+// Options come from the shared registration-vocabulary label module, so the
+// Connect page and the XAA debugger stay keyed on the same union.
+const REGISTRATION_OPTIONS = REGISTRATION_MODE_OPTIONS;
 
 export function AuthenticationSection({
   serverUrl,
@@ -108,7 +112,7 @@ export function AuthenticationSection({
   onOauthScopesChange,
   oauthProtocolMode,
   onOauthProtocolModeChange,
-  oauthRegistrationMode,
+  registrationMode,
   onOauthRegistrationModeChange,
   useCustomClientId,
   onUseCustomClientIdChange,
@@ -126,11 +130,14 @@ export function AuthenticationSection({
   hostedServerId = null,
   xaaAuthzIssuer = "",
   onXaaAuthzIssuerChange,
+  xaaAllowPathScopedIssuer = false,
+  onXaaAllowPathScopedIssuerChange,
   xaaSubject = "",
   onXaaSubjectChange,
   xaaEmail = "",
   onXaaEmailChange,
-  signedInEmail,
+  autoSelectsXaa = false,
+  projectDefaultIdentity = null,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
   const [revealedClientSecret, setRevealedClientSecret] = useState<
@@ -147,6 +154,13 @@ export function AuthenticationSection({
   // itself if they clear it back to empty).
   const [isReplacingSecret, setIsReplacingSecret] = useState(false);
   const [isBearerTokenVisible, setIsBearerTokenVisible] = useState(false);
+
+  const xaaFlagEnabled = useFeatureFlagEnabled("xaa");
+  // Keep the XAA option visible if a server is already configured with it,
+  // even when the flag is off, so the trigger doesn't render blank for it.
+  // Auto is un-gated: its discover behavior (no auth first, OAuth on 401) is
+  // for everyone — only the XAA leg and its mention stay behind the flag.
+  const showXaaOption = xaaFlagEnabled === true || authType === "xaa";
 
   const canRevealClientSecret =
     hasStoredClientSecret &&
@@ -256,15 +270,15 @@ export function AuthenticationSection({
     ? clientSecret
     : (visibleRevealedClientSecret ?? "");
   const showClientCredentials =
-    oauthRegistrationMode === "preregistered" || useCustomClientId;
+    registrationMode === "preregistered" || useCustomClientId;
   const effectiveOauthProtocolMode =
     oauthProtocolMode === "auto" ? "2025-11-25" : oauthProtocolMode;
   const oauthPlan =
-    authType === "oauth"
+    authType === "oauth" || authType === "auto"
       ? resolveAuthorizationPlan({
           serverUrl,
           protocolMode: effectiveOauthProtocolMode,
-          registrationMode: oauthRegistrationMode,
+          registrationMode: registrationMode,
           clientId: showClientCredentials ? clientId : undefined,
           clientSecret: showClientCredentials ? clientSecret : undefined,
           hasClientSecret: showClientCredentials
@@ -279,7 +293,7 @@ export function AuthenticationSection({
       ? (oauthPlan.blockerDetails ?? []).filter(
           (blocker) =>
             !(
-              oauthRegistrationMode === "preregistered" &&
+              registrationMode === "preregistered" &&
               clientId.trim() === "" &&
               blocker.code === "PREREGISTERED_MISSING_CLIENT_ID"
             ),
@@ -299,7 +313,7 @@ export function AuthenticationSection({
           <Select
             value={authType}
             onValueChange={(value: ServerFormAuthType) => {
-              if (value !== "oauth") {
+              if (value !== "oauth" && value !== "auto") {
                 setShowAdvancedOAuth(false);
               }
               onAuthTypeChange(value);
@@ -309,12 +323,45 @@ export function AuthenticationSection({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="none">No Authentication</SelectItem>
-              <SelectItem value="bearer">Bearer Token</SelectItem>
-              <SelectItem value="oauth">OAuth</SelectItem>
-              <SelectItem value="xaa">Cross-App Access (XAA)</SelectItem>
+              <SelectItem
+                value="auto"
+                description={
+                  showXaaOption
+                    ? "Cross-App Access when configured — otherwise connects without credentials, then OAuth if required"
+                    : "Connects without credentials, then OAuth if the server requires it"
+                }
+              >
+                Auto
+              </SelectItem>
+              <SelectItem value="none" description="Connect without credentials">
+                No Authentication
+              </SelectItem>
+              <SelectItem
+                value="bearer"
+                description="Send a static token you provide"
+              >
+                Bearer Token
+              </SelectItem>
+              <SelectItem value="oauth" description="Interactive browser sign-in">
+                OAuth
+              </SelectItem>
+              {showXaaOption && (
+                <SelectItem
+                  value="xaa"
+                  description="Server-side token exchange via your IdP"
+                >
+                  Cross-App Access (XAA)
+                </SelectItem>
+              )}
             </SelectContent>
           </Select>
+          {authType === "auto" && (
+            <p className="text-xs text-muted-foreground">
+              {autoSelectsXaa
+                ? "Cross-App Access is configured — connecting mints a cross-app token."
+                : "Connects without credentials first; if the server requires authorization, you'll be prompted to continue with OAuth."}
+            </p>
+          )}
         </div>
 
         {/* Bearer Token Settings */}
@@ -384,7 +431,7 @@ export function AuthenticationSection({
         )}
 
         {/* OAuth Settings */}
-        {showAuthSettings && authType === "oauth" && (
+        {showAuthSettings && (authType === "oauth" || authType === "auto") && (
           <div className="border-t border-border bg-muted/30">
             {oauthPlan && showOauthPlanBanner && (
               <div className="px-3 py-3 space-y-2 border-b border-border bg-background/60">
@@ -447,9 +494,9 @@ export function AuthenticationSection({
                       Registration Strategy
                     </label>
                     <Select
-                      value={oauthRegistrationMode}
+                      value={registrationMode}
                       onValueChange={(
-                        value: ServerFormOAuthRegistrationMode,
+                        value: RegistrationMode,
                       ) => {
                         onOauthRegistrationModeChange(value);
                         onUseCustomClientIdChange(
@@ -468,7 +515,7 @@ export function AuthenticationSection({
                         ))}
                       </SelectContent>
                     </Select>
-                    {oauthRegistrationMode === "cimd" &&
+                    {registrationMode === "cimd" &&
                       oauthPlan?.clientIdMetadataUrl && (
                         <p className="text-xs text-muted-foreground break-all">
                           SDK client metadata URL:{" "}
@@ -486,6 +533,11 @@ export function AuthenticationSection({
                     value={oauthScopesInput}
                     onChange={(e) => onOauthScopesChange(e.target.value)}
                     placeholder="Optional scopes separated by spaces"
+                    spellCheck={false}
+                    autoComplete="off"
+                    data-1p-ignore
+                    data-lpignore="true"
+                    data-form-type="other"
                     className="h-10"
                   />
                 </div>
@@ -495,7 +547,7 @@ export function AuthenticationSection({
                     <div className="space-y-2">
                       <label className="block text-sm font-medium text-foreground">
                         Client ID
-                        {oauthRegistrationMode === "preregistered" ? (
+                        {registrationMode === "preregistered" ? (
                           <span className="text-destructive" aria-hidden="true">
                             {" *"}
                           </span>
@@ -506,10 +558,15 @@ export function AuthenticationSection({
                         onChange={(e) => onClientIdChange(e.target.value)}
                         placeholder="Your OAuth Client ID"
                         aria-required={
-                          oauthRegistrationMode === "preregistered"
+                          registrationMode === "preregistered"
                             ? true
                             : undefined
                         }
+                        spellCheck={false}
+                        autoComplete="off"
+                        data-1p-ignore
+                        data-lpignore="true"
+                        data-form-type="other"
                         className={`h-10 ${clientIdError ? "border-red-500" : ""}`}
                       />
                       {clientIdError && (
@@ -594,6 +651,11 @@ export function AuthenticationSection({
                               }}
                               placeholder="Enter a new value to replace."
                               data-testid="revealed-client-secret"
+                              spellCheck={false}
+                              autoComplete="off"
+                              data-1p-ignore
+                              data-lpignore="true"
+                              data-form-type="other"
                               className={`h-10 pr-16 font-mono ${clientSecretError ? "border-red-500" : ""}`}
                             />
                             <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
@@ -659,6 +721,11 @@ export function AuthenticationSection({
                               ? "Enter a new value to replace."
                               : "Your OAuth Client Secret"
                           }
+                          spellCheck={false}
+                          autoComplete="off"
+                          data-1p-ignore
+                          data-lpignore="true"
+                          data-form-type="other"
                           className={`h-10 ${clientSecretError ? "border-red-500" : ""}`}
                         />
                       )}
@@ -696,11 +763,15 @@ export function AuthenticationSection({
               onScopesChange={onOauthScopesChange}
               xaaAuthzIssuer={xaaAuthzIssuer}
               onXaaAuthzIssuerChange={(v) => onXaaAuthzIssuerChange?.(v)}
+              xaaAllowPathScopedIssuer={xaaAllowPathScopedIssuer}
+              onXaaAllowPathScopedIssuerChange={(v) =>
+                onXaaAllowPathScopedIssuerChange?.(v)
+              }
               xaaSubject={xaaSubject}
               onXaaSubjectChange={(v) => onXaaSubjectChange?.(v)}
               xaaEmail={xaaEmail}
               onXaaEmailChange={(v) => onXaaEmailChange?.(v)}
-              signedInEmail={signedInEmail}
+              projectDefaultIdentity={projectDefaultIdentity}
               projectId={projectId}
               hostedServerId={hostedServerId}
             />

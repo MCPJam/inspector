@@ -9,7 +9,7 @@ const TABS: ReadonlyArray<{
   label: string;
   Icon: typeof Layers;
 }> = [
-  { value: "host", label: "Host", Icon: SlidersHorizontal },
+  { value: "host", label: "Client", Icon: SlidersHorizontal },
   { value: "compare", label: "Compare", Icon: Layers },
 ];
 
@@ -42,7 +42,7 @@ export function HostSectionTabs({
       <LayoutGroup id="host-section-tabs">
         <div
           role="tablist"
-          aria-label="Host section"
+          aria-label="Client section"
           className="inline-flex items-center gap-0.5 rounded-full border border-border/60 bg-muted/40 p-1 shadow-[inset_0_1px_2px_rgba(0,0,0,0.03)] backdrop-blur-sm"
         >
           {TABS.map(({ value: v, label, Icon }) => {

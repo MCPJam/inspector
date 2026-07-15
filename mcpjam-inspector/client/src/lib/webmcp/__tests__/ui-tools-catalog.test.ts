@@ -179,6 +179,27 @@ describe("buildUiToolsCatalog", () => {
     ).toBeUndefined();
   });
 
+  it("ui_set_app_context accepts 'fill' — the store default is expressible", async () => {
+    const setContext = getTool("ui_set_app_context");
+    const schema = setContext.inputSchema as {
+      properties: { deviceType: { enum: string[] } };
+    };
+    expect(schema.properties.deviceType.enum).toContain("fill");
+
+    await setContext.execute({ deviceType: "fill" });
+    expect(dispatchedCommands()[0]).toMatchObject({
+      type: "setAppContext",
+      payload: { deviceType: "fill" },
+    });
+  });
+
+  it("ui_select_tool leads with prefill (do not run); ui_execute_tool says it really runs", () => {
+    // Chrome WebMCP guidance: names/descriptions must distinguish
+    // initiation from execution.
+    expect(getTool("ui_select_tool").description).toMatch(/^Prefill \(do not run\)/);
+    expect(getTool("ui_execute_tool").description).toContain("REALLY runs");
+  });
+
   it("ui_snapshot_app dispatches a playground snapshot when the playground is open", async () => {
     await getTool("ui_snapshot_app").execute({});
     expect(dispatchedCommands()[0]).toMatchObject({

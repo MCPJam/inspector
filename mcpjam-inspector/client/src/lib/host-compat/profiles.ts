@@ -1,5 +1,11 @@
-import { buildMarketHostProfiles } from "@mcpjam/sdk/host-compat";
+import {
+  buildHostProfilesFromCatalog,
+  buildMarketHostProfiles,
+  type HostCompatCatalog,
+  type HostCompatProfile as SdkHostCompatProfile,
+} from "@mcpjam/sdk/host-compat";
 import type { HostCompatProfile } from "./types";
+import { getHostLogoSrc, HOST_LOGO_OPTIONS } from "@/lib/host-ui-metadata";
 
 /**
  * Client presentation join for the SDK's market-host catalog.
@@ -10,33 +16,17 @@ import type { HostCompatProfile } from "./types";
  * one piece of presentation the SDK deliberately doesn't carry — joined by
  * host id.
  */
-const LOGO_BY_ID: Record<
-  string,
-  { logoSrc: string; logoSrcByTheme?: { light: string; dark: string } }
-> = {
-  claude: { logoSrc: "/claude_logo.png" },
-  chatgpt: { logoSrc: "/openai_logo.png" },
-  mistral: { logoSrc: "/mistral_logo.png" },
-  goose: {
-    logoSrc: "/goose_logo_light.png",
-    logoSrcByTheme: {
-      light: "/goose_logo_light.png",
-      dark: "/goose_logo_dark.png",
-    },
-  },
-  cursor: { logoSrc: "/cursor_logo.png" },
-  copilot: { logoSrc: "/copilot_logo.png" },
-  codex: { logoSrc: "/codex-logo.svg" },
-  n8n: { logoSrc: "/n8n_logo.svg" },
-  perplexity: { logoSrc: "/perplexity_logo.svg" },
-  cline: {
-    logoSrc: "/cline_logo_light.svg",
-    logoSrcByTheme: {
-      light: "/cline_logo_light.svg",
-      dark: "/cline_logo_dark.svg",
-    },
-  },
-};
+const LOGO_THEME_BY_ID = Object.fromEntries(
+  HOST_LOGO_OPTIONS.map((option) => [option.id, option.logoSrcByTheme])
+);
+
+function joinLogo(p: SdkHostCompatProfile): HostCompatProfile {
+  return {
+    ...p,
+    logoSrc: getHostLogoSrc(p.id),
+    logoSrcByTheme: LOGO_THEME_BY_ID[p.id],
+  };
+}
 
 // The joined profile array is a pure function of the SDK catalog + the static
 // logo map, so build it once. Every connected server's memoized
@@ -47,12 +37,21 @@ let cachedProfiles: HostCompatProfile[] | null = null;
 
 export function buildHostCompatProfiles(): HostCompatProfile[] {
   if (cachedProfiles) return cachedProfiles;
-  cachedProfiles = buildMarketHostProfiles().map((p) => ({
-    ...p,
-    logoSrc: LOGO_BY_ID[p.id]?.logoSrc ?? "",
-    logoSrcByTheme: LOGO_BY_ID[p.id]?.logoSrcByTheme,
-  }));
+  cachedProfiles = buildMarketHostProfiles().map(joinLogo);
   return cachedProfiles;
+}
+
+/**
+ * Logo-joined profiles for an explicit catalog (the live fetch from
+ * `useHostCatalog`); no catalog = the cached bundled profiles. Live catalogs
+ * aren't cached here — `useHostCatalog` resolves once per page load and
+ * consumers memoize on its state.
+ */
+export function getHostProfiles(
+  catalog?: HostCompatCatalog | null
+): HostCompatProfile[] {
+  if (!catalog) return buildHostCompatProfiles();
+  return buildHostProfilesFromCatalog(catalog).map(joinLogo);
 }
 
 /**

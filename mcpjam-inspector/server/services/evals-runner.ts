@@ -54,17 +54,19 @@ import {
 import {
   getCanonicalModelId,
   getModelById,
-  isMCPJamProvidedModel,
   type ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
+import { isHostedCatalogModel } from "./hosted-model-catalog.js";
 import {
+  hasSkillTools,
   mergeToolCallsByPromptIndex,
   summarizeRenderObservations,
   widgetToolCallsByPromptIndex,
   type PredicateResult,
   type ToolErrorRecord,
 } from "@/shared/eval-matching";
+import type { PinnableSkill } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
 import {
@@ -106,6 +108,11 @@ import type {
   LocalEvalTurnSinks,
 } from "./evals/drive-local-eval-turn.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
+import { emitPinnedTurnSse } from "./evals/pinned-turn-sse.js";
+import {
+  emitPinnedTurnSse,
+  type PinnedTurnSsePayload,
+} from "./evals/pinned-turn-sse.js";
 import {
   finalizeEvalIteration,
   buildIterationFinishParams,
@@ -278,6 +285,14 @@ export type RunEvalSuiteOptions = {
    * to read `advancedConfig.system` only and ignore the suite default.
    */
   suiteHostConfig?: Record<string, unknown> | null;
+  /**
+   * Skills PINNED for this run (from `startTestSuiteRun`'s `pinnedSkills`,
+   * content joined from `evalSkillSnapshots`). Threaded into every iteration
+   * runner as `skillsSource: pinned`. Absent ⇒ the runners pass
+   * `skillsSource: none` (eval runs never use local-FS skills — decision 10);
+   * quick-run stays `none` (no run row = no pinning carrier).
+   */
+  pinnedSkills?: PinnableSkill[];
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -1055,6 +1070,13 @@ type RunIterationBaseParams = {
   /** Run caller's Convex bearer — used to provision/release the reproducible
    * eval sandbox when the suite pins a computerEnvironment. */
   convexAuthToken: string;
+  /**
+   * Skills PINNED for this run (frozen SKILL.md content from the run's
+   * `configSnapshot.pinnedSkills`). When present, the runner mints in-memory
+   * pinned skill tools (zero network). Eval runs NEVER use local-FS skills
+   * (decision 10) — the runner always passes `skillsSource: pinned|none`.
+   */
+  pinnedSkills?: PinnableSkill[];
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1220,10 +1242,21 @@ async function resolveOrgByokEvalRuntime(args: {
 const runHostedIteration = async (
   params: RunIterationBackendParams & { emit?: StreamEmit }
 ): Promise<EvalIterationOutcome> => {
+  // First pinned turn's per-call render-budget override (mirrors the local
+  // runner's harness creation).
+  const pinnedRenderTimeoutMs = resolveEvalTestCase(
+    params.test
+  ).promptTurns.find(
+    (t) =>
+      isPinnedTurn(t) && typeof t.pinnedToolCall?.renderTimeoutMs === "number"
+  )?.pinnedToolCall?.renderTimeoutMs;
   const browser = await createBrowserSessionContext({
     model: params.test.model,
     mcpClientManager: params.mcpClientManager,
     injectOpenAiCompat: params.injectOpenAiCompat,
+    ...(pinnedRenderTimeoutMs
+      ? { renderTimeoutMs: pinnedRenderTimeoutMs }
+      : {}),
   });
   try {
     return await runHostedIterationWithBrowser(params, browser);
@@ -1395,12 +1428,14 @@ const executeTestCase = async (params: {
   /** Raw suite hostConfig record. PR 4d — see RunIterationBaseParams. */
   suiteHostConfig?: Record<string, unknown> | null;
   /**
-   * Run environment snapshot (servers + serverBindings). Only consulted by
-   * the widget-probe fork below to resolve the probe's pinned server
-   * reference to a manager key; the LLM path receives its servers
-   * pre-resolved via `selectedServers`.
+   * Run environment snapshot (servers + serverBindings). Consulted to resolve
+   * pinned (`toolCall`) server references to a manager key — by the model-free
+   * fork below and by both iteration paths' step handlers; the LLM path
+   * receives its servers pre-resolved via `selectedServers`.
    */
   environment?: RunEvalSuiteOptions["config"]["environment"];
+  /** Pinned skills for this run (see RunEvalSuiteOptions.pinnedSkills). */
+  pinnedSkills?: PinnableSkill[];
 }) => {
   const {
     test,
@@ -1426,6 +1461,7 @@ const executeTestCase = async (params: {
     toolSignals,
     suiteHostConfig,
     environment,
+    pinnedSkills,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const streaming = emit != null;
@@ -1507,6 +1543,7 @@ const executeTestCase = async (params: {
         toolSignals,
         suiteHostConfig,
         environment,
+        pinnedSkills,
       };
       outcomes.push(
         await runSingleIteration(
@@ -1524,22 +1561,12 @@ const executeTestCase = async (params: {
     return outcomes;
   }
 
-  // Hybrid (model turns + pinned turns) on a hosted model is not yet wired:
-  // the backend engine drives turns server-side and cannot interleave a
-  // locally-executed pinned turn. Local BYOK hybrids work (the pinned branch
-  // lives in runIterationWithAiSdk). Fail loudly rather than silently send a
-  // pinned turn's empty prompt to the model.
-  // Steps-aware: resolveEvalTestCase bridges `steps` → turns, so a `toolCall`
-  // step is correctly seen as a pinned turn here.
-  const caseHasPinnedTurn =
-    resolveEvalTestCase(normalizedTest).promptTurns.some(isPinnedTurn);
-
   const modelDefinition = buildModelDefinition(test);
   const resolvedModelId = getCanonicalModelId(
     String(modelDefinition.id),
     modelDefinition.provider
   );
-  const isJamModel = isMCPJamProvidedModel(
+  const isJamModel = isHostedCatalogModel(
     resolvedModelId,
     modelDefinition.provider
   );
@@ -1558,12 +1585,6 @@ const executeTestCase = async (params: {
   const jamBillingTarget = isJamModel
     ? resolveOrgTargetForEval(test, orgModelConfigTarget)
     : undefined;
-
-  if (caseHasPinnedTurn && (isJamModel || orgByokRuntime?.kind === "cloud")) {
-    throw new Error(
-      "Pinned tool-call turns are not yet supported with hosted models. Use a BYOK (local) model for cases that pin a tool call."
-    );
-  }
 
   const outcomes: EvalIterationOutcome[] = [];
 
@@ -1645,6 +1666,7 @@ const executeTestCase = async (params: {
         toolSignals,
         suiteHostConfig,
         environment,
+        pinnedSkills,
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -1692,6 +1714,7 @@ const executeTestCase = async (params: {
         toolSignals,
         suiteHostConfig,
         environment,
+        pinnedSkills,
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -1736,6 +1759,7 @@ const executeTestCase = async (params: {
       // for prompt-only cases.
       environment,
       convexAuthToken,
+      pinnedSkills,
     };
     const iterationOutcome = await runSingleIteration(
       () =>
@@ -1776,6 +1800,7 @@ export const runEvalSuiteWithAiSdk = async ({
   suiteInjectOpenAiCompat,
   hostExecutionPolicy,
   suiteHostConfig,
+  pinnedSkills,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
@@ -1900,6 +1925,7 @@ export const runEvalSuiteWithAiSdk = async ({
         toolSignals: resolvedToolSignals,
         suiteHostConfig,
         environment: config.environment,
+        ...(pinnedSkills ? { pinnedSkills } : {}),
       });
     const testPromises = tests.map((test) =>
       // Cap concurrent headless browsers for every model-free render check
@@ -2149,10 +2175,15 @@ const runLocalIteration = async ({
   suiteHostConfig,
   environment,
   convexAuthToken,
+  pinnedSkills,
 }: RunIterationAiSdkParams & {
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
+  // Eval runs NEVER use local-FS skills (decision 10): always explicit.
+  const skillsSource = pinnedSkills?.length
+    ? ({ kind: "pinned", skills: pinnedSkills } as const)
+    : ({ kind: "none" } as const);
 
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
@@ -2423,6 +2454,18 @@ const runLocalIteration = async ({
         ...(resolvedExecution.harness
           ? { harness: resolvedExecution.harness }
           : {}),
+        skillsSource,
+        // Host progressive-discovery toggle, same conversion as the chat-v2
+        // routes and the session-sim runner. Only an explicit host value is
+        // forwarded — absent stays undefined so prepareChatV2 keeps its
+        // "auto" threshold behavior.
+        ...(resolvedExecution.progressiveToolDiscovery !== undefined
+          ? {
+              progressiveToolDiscovery: {
+                enabled: resolvedExecution.progressiveToolDiscovery,
+              },
+            }
+          : {}),
         customProviders: modelRuntime!.customProviders,
         priorMessages: [],
       });
@@ -2462,12 +2505,12 @@ const runLocalIteration = async ({
       if (pinnedEnvironmentId && runId !== null) {
         // Don't provision unless this server is a fully-configured data plane.
         // Provisioning only needs the user bearer, but EXEC needs E2B_API_KEY
-        // and RELEASE needs COMPUTERS_DATA_PLANE_SECRET — without them
+        // and RELEASE needs a server-to-server credential — without them
         // releaseEvalSandbox silently no-ops, so each iteration would boot a
         // paid box only the backend TTL GC could reap. Fail loudly instead.
         if (!isComputersDataPlaneConfigured()) {
           throw new Error(
-            "This eval pins a reproducible computer environment, but this server isn't configured as a computers data plane (needs CONVEX_HTTP_URL, COMPUTERS_DATA_PLANE_SECRET, and E2B_API_KEY) — it could provision a sandbox but not exec or release it."
+            "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
           );
         }
         evalSandbox = await provisionEvalSandbox({
@@ -2597,65 +2640,11 @@ const runLocalIteration = async ({
               status: "ok",
             });
           },
-          onPinnedTurn: ({
-            prompt: pinnedPrompt,
-            messages,
-            spans,
-            usage,
-            toolCall,
-            toolCallId,
-            toolResult,
-            toolResultIsError,
-            toolError,
-            iterationError: pinnedErr,
-          }) => {
-            const failureDetail =
-              pinnedErr ??
-              toolError?.message ??
-              (toolResultIsError ? "Pinned tool call failed" : undefined);
-            emit({ type: "turn_start", turnIndex, prompt: pinnedPrompt });
-            emit({
-              type: "step_status",
-              turnIndex,
-              kind: "toolCall",
-              status: "running",
-            });
-            if (toolCall && toolCallId) {
-              emit({
-                type: "tool_call",
-                toolName: toolCall.toolName,
-                toolCallId,
-                args: toolCall.arguments,
-              });
-              emit({
-                type: "tool_result",
-                toolCallId,
-                result: toolResult,
-                ...(toolResultIsError ? { isError: true } : {}),
-              });
-            }
-            emit(
-              buildTraceSnapshotEvent({
-                turnIndex,
-                snapshotKind: failureDetail ? "failure" : "turn_finish",
-                messages: withSystemPrefix(messages),
-                spans,
-                actualToolCalls: toolCall ? [toolCall] : [],
-                usage,
-              })
-            );
-            emit({ type: "turn_finish", turnIndex });
-            emit({
-              type: "step_status",
-              turnIndex,
-              kind: "toolCall",
-              status: failureDetail ? "fail" : "ok",
-              ...(failureDetail ? { detail: failureDetail } : {}),
-            });
-            if (failureDetail) {
-              emit({ type: "error", message: failureDetail });
-            }
-          },
+          onPinnedTurn: (ctx) =>
+            emitPinnedTurnSse(
+              { emit, withSystemPrefix, buildTraceSnapshotEvent },
+              { turnIndex, ...ctx }
+            ),
         })
       : undefined;
 
@@ -2782,6 +2771,9 @@ const runLocalIteration = async ({
       toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
       isNegativeTest: test.isNegativeTest,
       matchOptions: test.matchOptions,
+      // Skill-tool calls are exempt from tool-call expectations (a skill load is
+      // agent housekeeping); active only when skill tools were advertised.
+      skillToolsActive: hasSkillTools(Object.keys(prepared?.allTools ?? {})),
       turnCheckResults,
       effectivePredicates,
       trace: traceForGate,
@@ -3083,12 +3075,17 @@ const runHostedIterationWithBrowser = async (
     // iteration eval-sandbox provisioning + the bash tool (hosted parity with
     // the local runner).
     environment,
+    pinnedSkills,
   }: RunIterationBackendParams & {
     emit?: StreamEmit;
   },
   browser: BrowserSessionContext
 ): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
+  // Eval runs NEVER use local-FS skills (decision 10): always explicit.
+  const skillsSource = pinnedSkills?.length
+    ? ({ kind: "pinned", skills: pinnedSkills } as const)
+    : ({ kind: "none" } as const);
 
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
@@ -3285,9 +3282,21 @@ const runHostedIterationWithBrowser = async (
       ...(resolvedExecution.harness
         ? { harness: resolvedExecution.harness }
         : {}),
+      // Host progressive-discovery toggle, same conversion as the chat-v2
+      // routes and the session-sim runner. Only an explicit host value is
+      // forwarded — absent stays undefined so prepareChatV2 keeps its
+      // "auto" threshold behavior.
+      ...(resolvedExecution.progressiveToolDiscovery !== undefined
+        ? {
+            progressiveToolDiscovery: {
+              enabled: resolvedExecution.progressiveToolDiscovery,
+            },
+          }
+        : {}),
       ...(backendCustomProviders?.length
         ? { customProviders: backendCustomProviders }
         : {}),
+      skillsSource,
       priorMessages: [],
       ...(builtInTools ? { builtInTools } : {}),
     });
@@ -3304,7 +3313,7 @@ const runHostedIterationWithBrowser = async (
     if (pinnedEnvironmentId && runId !== null) {
       if (!isComputersDataPlaneConfigured()) {
         throw new Error(
-          "This eval pins a reproducible computer environment, but this server isn't configured as a computers data plane (needs CONVEX_HTTP_URL, COMPUTERS_DATA_PLANE_SECRET, and E2B_API_KEY) — it could provision a sandbox but not exec or release it."
+          "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
         );
       }
       evalSandbox = await provisionEvalSandbox({
@@ -3423,6 +3432,10 @@ const runHostedIterationWithBrowser = async (
   let hostedStepSkippedSteps: unknown[] = [];
   let hostedStepResults: unknown[] = [];
   let hostedStepScriptedFailures: { toolName: string; reason: string }[] = [];
+  // Pinned (`toolCall`) steps run model-free inspector-side; their tool
+  // failures accumulate here for the verdict's `failOnToolError` gate (the
+  // hosted analogue of `LocalEvalTurnAcc.pinnedToolErrors`).
+  const pinnedToolErrors: ToolErrorRecord[] = [];
   // Hosted unify: drive the iteration through executeSteps; the handlers wrap
   // driveHostedEvalTurn (which mutates the acc), so the post-loop verdict +
   // finishParams below consume `acc` + the executor's StepExecutionState.
@@ -3457,6 +3470,24 @@ const runHostedIterationWithBrowser = async (
       toolsCalledByPrompt,
     },
     buildSinks: hostedBuildSinks,
+    // Same closure shape the local step handlers use (see runLocalIteration).
+    resolvePinnedServerKey: (pinned) =>
+      resolvePinnedServerKey(
+        pinned,
+        environment,
+        selectedServers,
+        mcpClientManager
+      ),
+    pinnedToolErrors,
+    ...(emit
+      ? {
+          emitPinnedTurn: (payload: PinnedTurnSsePayload) =>
+            emitPinnedTurnSse(
+              { emit, withSystemPrefix, buildTraceSnapshotEvent },
+              payload
+            ),
+        }
+      : {}),
   });
   const stepState = createStepExecutionState();
   let result: Awaited<ReturnType<typeof executeSteps>>;
@@ -3491,6 +3522,9 @@ const runHostedIterationWithBrowser = async (
     iterationError = result.iterationError;
     iterationErrorDetails = result.iterationErrorDetails;
   }
+  // Pinned setup failure (server not connected) — drives status:"failed" below,
+  // mirroring the local runner.
+  const pinnedSetupFailure = result.setupFailure;
   hostedStepSkippedSteps = stepState.skippedSteps;
   hostedStepResults = buildStepResultRecords(stepState, steps);
   hostedStepScriptedFailures = buildStepScriptedCheckFailures(stepState);
@@ -3534,6 +3568,8 @@ const runHostedIterationWithBrowser = async (
     toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
     isNegativeTest: test.isNegativeTest,
     matchOptions: test.matchOptions,
+    // Skill-tool calls are exempt from tool-call expectations (see local path).
+    skillToolsActive: hasSkillTools(Object.keys(prepared.allTools)),
     turnCheckResults,
     effectivePredicates,
     trace: traceForGate,
@@ -3541,9 +3577,10 @@ const runHostedIterationWithBrowser = async (
     renderObservations: summarizeRenderObservations(
       browser.widgetRenderObservations
     ),
+    toolErrors: pinnedToolErrors,
     iterationError,
     failOnToolError,
-    pinnedToolErrors: [],
+    pinnedToolErrors,
     // §2: legacy push-model failures + executeSteps interact/widget-assert failures.
     scriptedCheckFailures: [
       ...browser.scriptedCheckFailures,
@@ -3585,7 +3622,10 @@ const runHostedIterationWithBrowser = async (
     // (see the non-stream backend runner).
     widgetRenderObservations: browser.widgetRenderObservations,
     browserInteractionSteps: browser.browserInteractionSteps,
-    status: "completed",
+    // A model-free pinned setup failure (server not connected) records as
+    // "failed"; everything else completes (a failed verdict is still a
+    // completed run). Mirrors the local runner.
+    status: pinnedSetupFailure ? "failed" : "completed",
     startedAt: runStartedAt,
     ...(iterationError ? { error: iterationError } : {}),
     ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),

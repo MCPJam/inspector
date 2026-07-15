@@ -254,7 +254,7 @@ export function BehaviorTab({
 
   return (
     <div className="flex flex-col gap-4">
-      <FocusBlock title="Model & sampling">
+      <FocusBlock title="Agent tooling">
         <FieldRow
           label={fModel.label}
           description={fModel.description}

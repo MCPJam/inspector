@@ -4,8 +4,7 @@ import { cn } from "@/lib/utils";
 import { AddServerModal } from "./connection/AddServerModal";
 import { ServerFormData } from "@/shared/types.js";
 import { Check, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { hasOAuthConfig } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
 
@@ -119,7 +118,6 @@ export function ActiveServerSelector({
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const posthog = usePostHog();
   const hasNoServersWithViews =
     showOnlyServersWithViews && (serversWithViews?.size ?? 0) === 0;
 
@@ -362,10 +360,8 @@ export function ActiveServerSelector({
           isOpen={isAddModalOpen}
           onClose={() => setIsAddModalOpen(false)}
           onSubmit={(formData) => {
-            posthog.capture("connecting_server", {
+            track("connecting_server", {
               location: "active_server_selector",
-              platform: detectPlatform(),
-              environment: detectEnvironment(),
             });
             onConnect(formData);
           }}

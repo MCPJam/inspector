@@ -5,7 +5,11 @@ import {
   type ListToolsResultWithMetadata,
 } from "@/lib/apis/mcp-tools-api";
 import { evaluateAllHosts, type HostCompatEvaluation } from "./engine";
+import { useHostCatalog } from "./use-host-catalog";
 import { useWidgetUsage } from "./use-widget-usage";
+import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { filterReportsByFeatureFlags } from "./feature-visibility";
 
 const TOOLS_FETCH_MAX_ATTEMPTS = 3;
 
@@ -72,10 +76,33 @@ export function useHostCompatReports(
 ): HostCompatEvaluation {
   const toolsData = useServerToolsData(server);
   const widgetUsage = useWidgetUsage(server.name, toolsData);
+  // Live catalog in the deps: verdicts render immediately from the bundled
+  // catalog, then recompute once the live fetch lands.
+  const catalogState = useHostCatalog();
+  const claudeCodeEnabled = useClaudeCodeHostEnabled();
+  const codexEnabled = useCodexHostEnabled();
 
   const protocolVersion = server.initializationInfo?.protocolVersion;
-  return useMemo(
-    () => evaluateAllHosts(toolsData, widgetUsage, { protocolVersion }),
-    [toolsData, widgetUsage, protocolVersion],
-  );
+  return useMemo(() => {
+    const evaluation = evaluateAllHosts(
+      toolsData,
+      widgetUsage,
+      { protocolVersion },
+      catalogState?.catalog
+    );
+    return {
+      ...evaluation,
+      reports: filterReportsByFeatureFlags(evaluation.reports, {
+        claudeCode: claudeCodeEnabled,
+        codex: codexEnabled,
+      }),
+    };
+  }, [
+    toolsData,
+    widgetUsage,
+    protocolVersion,
+    catalogState,
+    claudeCodeEnabled,
+    codexEnabled,
+  ]);
 }

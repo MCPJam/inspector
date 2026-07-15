@@ -5,6 +5,7 @@ import {
   emptyHostConfigInputV2,
   type HostTemplateId,
 } from "../src/host-config/templates/index.js";
+import { XAA_MCP_EXTENSION } from "../src/xaa/mcp-init.js";
 
 const ALL_IDS: HostTemplateId[] = [
   "mcpjam",
@@ -40,6 +41,31 @@ describe("seedHostTemplate", () => {
         expect(config.clientCapabilities).toBeTypeOf("object");
       }
     }
+  });
+
+  // The MCPJam persona is the inspector's own client and supports the full
+  // XAA path, so it declares the enterprise-managed-authorization extension.
+  // Every real-host persona must NOT — a seed refactor that leaks the key
+  // into inheriting templates (claude/chatgpt/cursor/copilot/vscode all
+  // derive their clientCapabilities from the empty-input base) fails here.
+  it("advertises EMA on the mcpjam template and on no other", () => {
+    for (const id of ALL_IDS) {
+      const config = seedHostTemplate(id, { theme: "dark" });
+      const exts =
+        (config.clientCapabilities as { extensions?: unknown })?.extensions;
+      const hasEma =
+        typeof exts === "object" &&
+        exts !== null &&
+        Object.prototype.hasOwnProperty.call(exts, XAA_MCP_EXTENSION);
+      expect(hasEma, `template ${id}`).toBe(id === "mcpjam");
+    }
+    // The MCP UI default rides along untouched on the mcpjam seed.
+    const mcpjam = seedHostTemplate("mcpjam", { theme: "dark" });
+    const mcpjamExts = (
+      mcpjam.clientCapabilities as { extensions: Record<string, unknown> }
+    ).extensions;
+    expect(mcpjamExts["io.modelcontextprotocol/ui"]).toBeDefined();
+    expect(mcpjamExts[XAA_MCP_EXTENSION]).toEqual({});
   });
 
   it("matches the documented model + style for the claude template", () => {
@@ -179,13 +205,10 @@ describe("seedHostTemplate", () => {
   });
 
   // Golden-output guard. The committed snapshot was captured when these seeds
-  // were extracted from the inspector client, at which point a client-side
-  // parity test verified them byte-identical to the pre-refactor
-  // `seedFromHostTemplate` implementation (running against the live client
-  // modules). It now locks the seed output so any accidental drift in the
-  // extracted seeds — a changed default, a dropped field — fails CI and must
-  // be re-blessed deliberately. `appVersion` is pinned so the snapshot is
-  // deterministic.
+  // were extracted from the old inspector client template adapter. It now locks
+  // the fallback seed output so any accidental drift — a changed default, a
+  // dropped field — fails CI and must be re-blessed deliberately. `appVersion`
+  // is pinned so the snapshot is deterministic.
   it("seed output matches the committed golden snapshot", () => {
     const golden: Record<string, unknown> = {};
     for (const id of ALL_IDS) {

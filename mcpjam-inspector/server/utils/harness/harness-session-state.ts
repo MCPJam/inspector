@@ -8,6 +8,7 @@
  * `convex/http.ts:/web/harness/session-state/{claim,heartbeat,release,commit}`.
  */
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
+import type { ExecutionScope } from "../execution-scope.js";
 import { logger } from "../logger.js";
 import type { HarnessResetReason } from "@/shared/harness-session";
 
@@ -15,6 +16,11 @@ export type HarnessOwnerType =
   | "direct-chat"
   | "chatbox-chat"
   | "eval-case"
+  // Journey-runner multi-turn continuity (swarm). Keyed on the journey run +
+  // pinned host + chatSessionId server-side (see backend `resolveHarnessOwner
+  // Scope`), so a swarm harness session never collides with a Direct/Chatbox
+  // lane. Distinct from the reserved guest-execution `swarm-worker` owner.
+  | "swarm-chat"
   | "swarm-worker";
 
 /** Owner-identifying fields sent on every session-state call. Spread into the
@@ -28,6 +34,17 @@ export type HarnessOwnerRef = {
   ownerType: HarnessOwnerType;
   chatSessionId?: string;
   chatboxId?: string;
+  /** Swarm (`swarm-chat`) owner key dimensions: the journey run + pinned host.
+   *  REQUIRED alongside `chatSessionId` when `ownerType === "swarm-chat"` — the
+   *  backend `resolveHarnessOwnerScope` throws without them. Spread into every
+   *  session-state body so claim/heartbeat/release re-resolve the same lane. */
+  journeyRunId?: string;
+  hostId?: string;
+  /** Phase 3 scope. When present, the backend resolves the owner lane via
+   *  resolveExecutionAccess (guest / swarm grant) instead of the member-only
+   *  project-role gate. Spread into every session-state body (claim / heartbeat
+   *  / release / commit) so all four re-resolve identically. */
+  executionScope?: ExecutionScope;
 };
 
 export type HarnessResumePayload = {
@@ -48,7 +65,10 @@ export type HarnessResumePayload = {
  * request identity (the same dimensions it keys the transcript on).
  */
 export type HarnessSessionCommitPayload = {
-  ownerType: "direct-chat" | "chatbox-chat";
+  // `swarm-chat` = journey-runner continuity. The backend derives the lane's
+  // journeyRunId/hostId from the ingest payload's top-level swarm attribution,
+  // so they are NOT carried on the commit object itself.
+  ownerType: "direct-chat" | "chatbox-chat" | "swarm-chat";
   chatSessionId: string;
   chatboxId?: string;
   leaseId: string;
@@ -60,6 +80,9 @@ export type HarnessSessionCommitPayload = {
   runtimeFingerprint: string;
   /** Omit on a failed/skipped skills fetch so the stored hash is preserved. */
   skillsHash?: string;
+  /** Phase 3 scope forwarded to /ingest-chat so the commit resolves the guest's
+   *  own lane via resolveExecutionAccess (re-verified live). */
+  executionScope?: ExecutionScope;
   /** WS3: the committed state is a paused-for-approval continuation (see
    *  HarnessResumePayload.awaitingApproval). */
   awaitingApproval?: boolean;
@@ -134,13 +157,13 @@ async function postSessionState(
   pathSuffix: string,
   bearer: string,
   body: Record<string, unknown>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<
   { ok: true; payload: any } | { ok: false; status: number; error: string }
 > {
   const url = new URL(
     `/web/harness/session-state/${pathSuffix}`,
-    getConvexHttpUrl()
+    getConvexHttpUrl(),
   ).toString();
   const authorization = bearer.startsWith("Bearer ")
     ? bearer
@@ -207,7 +230,7 @@ export async function claimHarnessSessionState(args: {
       leasedBy: args.leasedBy,
       leaseTtlMs: args.leaseTtlMs,
     },
-    args.signal
+    args.signal,
   );
   if (!res.ok) return res;
   return {

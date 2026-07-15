@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { captureServerEvent } from "../../utils/analytics.js";
 import { z } from "zod";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
@@ -136,6 +137,12 @@ evals.post("/run", async (c) =>
           projectId: body.projectId,
         },
         cleanup: () => manager.disconnectAllServers(),
+      });
+
+      // Server twin of the client's `eval_suite_run_started`.
+      captureServerEvent(c, "eval_suite_run_started_server", {
+        suite_id: prepared.suiteId,
+        run_id: prepared.runId,
       });
 
       return {

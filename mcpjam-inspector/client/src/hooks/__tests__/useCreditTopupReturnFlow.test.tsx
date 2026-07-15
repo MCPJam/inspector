@@ -15,8 +15,8 @@ vi.mock("sonner", () => ({
   toast: { success: toastSuccessMock, error: toastErrorMock },
 }));
 
-vi.mock("posthog-js/react", () => ({
-  usePostHog: () => ({ capture: posthogCaptureMock }),
+vi.mock("@/lib/analytics", () => ({
+  track: posthogCaptureMock,
 }));
 
 import {
@@ -104,7 +104,7 @@ describe("useCreditTopupReturnFlow", () => {
     // Telemetry: cancelled with stash present.
     expect(posthogCaptureMock).toHaveBeenCalledWith(
       "credit_topup_return_cancelled",
-      { had_pending_stash: true },
+      { location: "credit_topup_return", had_pending_stash: true },
     );
   });
 
@@ -129,6 +129,7 @@ describe("useCreditTopupReturnFlow", () => {
     expect(posthogCaptureMock).toHaveBeenCalledWith(
       "credit_topup_return_success",
       {
+        location: "credit_topup_return",
         had_pending_stash: true,
         chat_session_matched: true,
         resend_executed: true,
@@ -158,6 +159,7 @@ describe("useCreditTopupReturnFlow", () => {
     expect(posthogCaptureMock).toHaveBeenCalledWith(
       "credit_topup_return_success",
       {
+        location: "credit_topup_return",
         had_pending_stash: true,
         chat_session_matched: false,
         resend_executed: false,
@@ -189,6 +191,7 @@ describe("useCreditTopupReturnFlow", () => {
     expect(posthogCaptureMock).toHaveBeenCalledWith(
       "credit_topup_return_success",
       {
+        location: "credit_topup_return",
         had_pending_stash: true,
         chat_session_matched: true,
         resend_executed: false,
@@ -215,6 +218,7 @@ describe("useCreditTopupReturnFlow", () => {
     expect(posthogCaptureMock).toHaveBeenCalledWith(
       "credit_topup_return_success",
       {
+        location: "credit_topup_return",
         had_pending_stash: false,
         chat_session_matched: false,
         resend_executed: false,

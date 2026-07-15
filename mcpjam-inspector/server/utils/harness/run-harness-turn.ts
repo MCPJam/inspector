@@ -85,10 +85,17 @@ import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
 import { resolveHarnessSandbox } from "./resolve-sandbox.js";
 import {
   fetchRuntimeSkills,
+  fetchRuntimeSkillFiles,
   skillsFingerprint,
   claudeCodeSafeSkills,
 } from "./runtime-skills.js";
-import { reconcileSkillDirs } from "./reconcile-skill-dirs.js";
+import { materializeSkillFiles } from "./materialize-skill-files.js";
+import { materializeSkillFrontmatter } from "./materialize-skill-frontmatter.js";
+import {
+  reconcileSkillDirs,
+  appendManagedSkills,
+} from "./reconcile-skill-dirs.js";
+import { adoptSandboxSkills } from "./adopt-sandbox-skills.js";
 import {
   claimHarnessSessionState,
   commitHarnessSessionState,
@@ -156,7 +163,7 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
   const configured = selectedServerIds.filter((id) => {
     if (manager.getServerConfig(id)) return true;
     logger.warn(
-      `[harness] selected server has no live config; skipping serverId=${id}`,
+      `[harness] selected server has no live config; skipping serverId=${id}`
     );
     return false;
   });
@@ -174,7 +181,7 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
     });
     if (!minted.ok) {
       throw new Error(
-        `Couldn't mint harness MCP proxy tokens (${minted.status}): ${minted.error}`,
+        `Couldn't mint harness MCP proxy tokens (${minted.status}): ${minted.error}`
       );
     }
     // Hard-fail, never skip: the harness must run with every selected server or
@@ -186,10 +193,14 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
       const token = minted.tokens[id];
       if (!token) {
         throw new Error(
-          `Harness MCP proxy: no token minted for selected serverId=${id} — refusing to run with missing MCP tools`,
+          `Harness MCP proxy: no token minted for selected serverId=${id} — refusing to run with missing MCP tools`
         );
       }
-      const url = await resolveHarnessProxyUrl({ strategy, serverId: id, authHeader });
+      const url = await resolveHarnessProxyUrl({
+        strategy,
+        serverId: id,
+        authHeader,
+      });
       inputs.push({ name: id, proxyUrl: url, proxyToken: token });
     }
   } else if (configured.length > 0) {
@@ -198,7 +209,11 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
     // The tunnel's `?k=` secret is the auth (adapter-http validate-when-present)
     // — no Convex identity token to mint.
     for (const id of configured) {
-      const url = await resolveHarnessProxyUrl({ strategy, serverId: id, authHeader });
+      const url = await resolveHarnessProxyUrl({
+        strategy,
+        serverId: id,
+        authHeader,
+      });
       inputs.push({ name: id, proxyUrl: url });
     }
   }
@@ -247,7 +262,7 @@ const TYPED_TOOL_OUTPUT_TYPES: ReadonlySet<string> = new Set([
  *  anything else is wrapped once as `{type:"json", value}`. */
 export function toToolResultOutput(
   rawOutput: unknown,
-  isError: boolean,
+  isError: boolean
 ): { type: string; value: unknown } {
   if (isError) {
     return {
@@ -339,9 +354,12 @@ export async function runHarnessTurn(
     chatSessionId,
     chatboxId,
     sourceType,
+    journeyRunId,
+    hostId,
     harness,
     harnessMcpProxy,
     builtInTools,
+    executionScope,
   } = options;
   // Canonicalize the model id up front (bare hosted ids like `gpt-5-nano` →
   // `openai/gpt-5-nano`). Everything downstream — supportsModel, the adapter's
@@ -374,6 +392,22 @@ export async function runHarnessTurn(
   const promptIndex = getPromptIndex(messages);
   let aborted = false;
   let runSucceeded = false;
+  // The file-capable sandbox session, captured from `onSandboxSession` so the
+  // turn-end adoption pass (in the finally, before the box is released) can read
+  // `~/.claude/skills` and write the managed-skills manifest. The finally's own
+  // `session` is the AI-SDK AGENT session (detach/destroy), which has no file I/O.
+  let sandboxFileSession:
+    | {
+        readTextFile(args: { path: string }): PromiseLike<string | null>;
+        writeTextFile(args: {
+          path: string;
+          content: string;
+        }): PromiseLike<unknown>;
+        run(args: {
+          command: string;
+        }): PromiseLike<{ exitCode: number; stdout: string; stderr: string }>;
+      }
+    | undefined;
   // WS3: the turn paused awaiting a tool approval (a third terminal alongside
   // success/abort). Treated like a clean end that happens to await input — the
   // continuation is committed with `awaitingApproval` and the next request
@@ -486,9 +520,10 @@ export async function runHarnessTurn(
       // Detect an approval-response resume up front (the inbound messages carry
       // the user's decision as trailing tool-approval-response parts); a resume
       // continues the paused turn rather than starting a new prompt.
-      const approvalContinuations = collectHarnessAgentToolApprovalContinuations(
-        { messages: messages as never },
-      );
+      const approvalContinuations =
+        collectHarnessAgentToolApprovalContinuations({
+          messages: messages as never,
+        });
       const isApprovalResume = approvalContinuations.length > 0;
 
       // Phase timing — log where a turn spends its wall-clock (credential /
@@ -530,6 +565,18 @@ export async function runHarnessTurn(
       // into E2B's egress transform AFTER the sandbox id is known (step 3b) and
       // the CLI runs with dummy creds, so auth is deferred.
       const useBroker = harnessBrokerDeliveryEnabled();
+      // Secure Guest Harness Enablement — a host-funded swarm guest must NEVER
+      // run via the client-lease path (that would return a raw model lease to
+      // the guest's inspector session). Broker delivery installs the lease into
+      // the E2B egress transform OUTSIDE the VM, so require it and fail closed
+      // when it's off for a swarm-scoped turn.
+      if (executionScope?.kind === "swarm" && !useBroker) {
+        throw new Error(
+          "Guest harness requires broker credential delivery " +
+            "(MCPJAM_HARNESS_BROKER_DELIVERY=true) — refusing to start a " +
+            "host-funded harness turn without it."
+        );
+      }
       let auth: HarnessAuth | undefined = useBroker
         ? undefined
         : await harnessAdapter.resolveAuth({
@@ -561,7 +608,7 @@ export async function runHarnessTurn(
       // harness would silently get zero MCP tools (the exact failure we hit).
       if ((selectedServers?.length ?? 0) > 0 && !harnessMcpProxy) {
         throw new Error(
-          "harness turn has MCP servers but no harnessMcpProxy strategy — the caller route must set options.harnessMcpProxy",
+          "harness turn has MCP servers but no harnessMcpProxy strategy — the caller route must set options.harnessMcpProxy"
         );
       }
       const { mcpJson, keyToServerId } =
@@ -590,7 +637,7 @@ export async function runHarnessTurn(
       // "unknown" (failure) is distinguishable from "" (empty project).
       const skillsFetch =
         projectId && authHeader
-          ? await fetchRuntimeSkills(authHeader, projectId)
+          ? await fetchRuntimeSkills(authHeader, projectId, executionScope)
           : { ok: true as const, skills: [] };
       const runtimeSkills = skillsFetch.ok ? skillsFetch.skills : null;
       const skillsHash =
@@ -617,9 +664,27 @@ export async function runHarnessTurn(
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
         sourceType === "chatbox"
           ? "chatbox-chat"
+          : sourceType === "swarm"
+          ? "swarm-chat"
           : sourceType === "eval" || sourceType === "sandbox"
           ? undefined
           : "direct-chat";
+      // FAIL CLOSED on incomplete swarm continuity identity. The `swarm-chat`
+      // lane is keyed on (journeyRunId, hostId, chatSessionId); if the swarm
+      // runner reached a harness turn without ALL of them, silently skipping
+      // continuity would run a fresh un-keyed session — losing multi-turn
+      // resume AND emitting a transcript whose harness sidecar can't be
+      // attributed to its run. That's a runner wiring bug; surface it.
+      if (
+        ownerType === "swarm-chat" &&
+        !(journeyRunId && hostId && chatSessionId)
+      ) {
+        throw new Error(
+          "Swarm harness turn is missing continuity identity " +
+            "(journeyRunId, hostId, and chatSessionId are all required for " +
+            "the swarm-chat owner lane)"
+        );
+      }
       let continuity:
         | {
             owner: HarnessOwnerRef;
@@ -638,7 +703,10 @@ export async function runHarnessTurn(
         projectId &&
         authHeader &&
         ownerType &&
-        (ownerType !== "chatbox-chat" || chatboxId)
+        (ownerType !== "chatbox-chat" || chatboxId) &&
+        // swarm-chat completeness is enforced (throw) above, so reaching here
+        // with ownerType === "swarm-chat" implies all three key dimensions.
+        (ownerType !== "swarm-chat" || (journeyRunId && hostId))
       ) {
         const owner: HarnessOwnerRef = {
           projectId,
@@ -649,6 +717,13 @@ export async function runHarnessTurn(
           ownerType,
           chatSessionId,
           ...(chatboxId ? { chatboxId } : {}),
+          // Swarm continuity lane — the run + pinned host key the owner so a
+          // multi-turn swarm harness session resumes ONLY its own sidecar.
+          ...(ownerType === "swarm-chat" && journeyRunId ? { journeyRunId } : {}),
+          ...(ownerType === "swarm-chat" && hostId ? { hostId } : {}),
+          // Phase 3: route owner resolution through resolveExecutionAccess so a
+          // host-funded swarm guest can claim/resume their OWN lane.
+          ...(executionScope ? { executionScope } : {}),
         };
         const leaseId = crypto.randomUUID();
         const claim = await claimHarnessSessionState({
@@ -706,6 +781,7 @@ export async function runHarnessTurn(
       const { computerId, sandboxId } = await resolveHarnessSandbox({
         bearer: authHeader,
         projectId,
+        ...(executionScope ? { executionScope } : {}),
         signal: abortSignal,
       });
       tSandbox = Date.now();
@@ -727,6 +803,7 @@ export async function runHarnessTurn(
           harnessId: harnessAdapter.id,
           modelId,
           runId: brokerRunId,
+          ...(executionScope ? { executionScope } : {}),
           bearer: authHeader,
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
@@ -793,13 +870,17 @@ export async function runHarnessTurn(
         Object.keys(hostExecutedTools).length
           ? {
               toolApproval: Object.fromEntries(
-                Object.keys(hostExecutedTools).map((n) => [n, "user-approval"]),
+                Object.keys(hostExecutedTools).map((n) => [n, "user-approval"])
               ) as NonNullable<
                 ConstructorParameters<typeof HarnessAgent>[0]["toolApproval"]
               >,
             }
           : {}),
         onSandboxSession: async ({ session, sessionWorkDir }) => {
+          // Capture the file-capable sandbox session for the turn-end adoption
+          // pass (the finally's agent session has no file I/O). Stays valid until
+          // the box is detached/destroyed, which happens AFTER adoption.
+          sandboxFileSession = session;
           // Deliver the host's MCP servers into the session before the runtime
           // starts, via the adapter's own strategy (Claude Code writes a
           // `.mcp.json`). Codex v1 has no delivery (`supportsSelectedMcpServers:
@@ -836,6 +917,32 @@ export async function runHarnessTurn(
               skillsHash: skillsHash ?? "",
               ...(abortSignal ? { signal: abortSignal } : {}),
             }).catch(() => {});
+            // Materialize supporting files AFTER reconcile (the adapter wrote each
+            // SKILL.md; reconcile removed stale managed dirs). Fetched here rather
+            // than at turn start to keep the zero-file fast path free. Fully
+            // fail-soft; guest/swarm scope uses the execution-scoped file query.
+            if (projectId && authHeader && runtimeSkills.length > 0) {
+              // Tri-state: `{ ok: false }` ⇒ the fetch FAILED (transient). Skip
+              // materialization then — an empty file set would otherwise prune
+              // every delivered skill's on-box files. `{ ok: true, files: [] }`
+              // is a successful "no files" and still runs, so a skill whose last
+              // file was removed gets pruned.
+              const fileResult = await fetchRuntimeSkillFiles(
+                authHeader,
+                projectId,
+                executionScope
+              ).catch(() => ({ ok: false } as const));
+              if (fileResult.ok) {
+                await materializeSkillFiles({
+                  session,
+                  files: fileResult.files,
+                  skillNamesById: new Map(
+                    runtimeSkills.map((s) => [s.skillId, s.name])
+                  ),
+                  ...(abortSignal ? { signal: abortSignal } : {}),
+                }).catch(() => {});
+              }
+            }
           }
           // Stream the workdir to the client (transient) so the Playground Shell
           // can open a terminal here instead of the box's home. The client keys
@@ -870,16 +977,18 @@ export async function runHarnessTurn(
         sandboxId,
       });
       const resumable = eligibility.resume
-        ? (continuity?.state ?? undefined)
+        ? continuity?.state ?? undefined
         : undefined;
       // Categorical reason to surface to the client (never a raw sandbox id).
       // Only hard resets are shown; legacy-cold-resume is a logged attempt.
       let resetReason: HarnessResetReason | undefined =
-        eligibility.reason === "sandbox-replaced" ? "sandbox-replaced" : undefined;
+        eligibility.reason === "sandbox-replaced"
+          ? "sandbox-replaced"
+          : undefined;
       if (eligibility.reason === "legacy-cold-resume") {
         logger.warn(
           "[harness] resuming a pre-detach sidecar (cold/disk resume; continuity not guaranteed)",
-          { harnessSessionId: continuity?.state?.harnessSessionId },
+          { harnessSessionId: continuity?.state?.harnessSessionId }
         );
       }
       // WS3: resuming a turn the user just approved/denied. The committed state
@@ -930,6 +1039,27 @@ export async function runHarnessTurn(
       // Session is up: the finalizer + heartbeat now own the continuity lane, so
       // the pre-session cleanup in onFinishEngine no longer needs to free it.
       sessionEstablished = true;
+
+      // Re-write SKILL.md WITH preserved extra frontmatter (allowed-tools /
+      // license / …) for skills that carry it. The adapter's `skills` param
+      // structurally can't deliver those fields, and the adapter writes its
+      // own (extras-less) SKILL.md during createSession — AFTER
+      // `onSandboxSession` — so this must run here, post-createSession, or a
+      // fresh start (exactly when the adapter writes) would clobber it.
+      // Fail-soft (never fails the turn); zero session calls when no skill
+      // has extras; same gating as the onSandboxSession skill passes.
+      if (
+        harnessAdapter.supportsSkills &&
+        runtimeSkills !== null &&
+        runtimeSkills.length > 0 &&
+        sandboxFileSession
+      ) {
+        await materializeSkillFrontmatter({
+          session: sandboxFileSession,
+          skills: runtimeSkills,
+          ...(abortSignal ? { signal: abortSignal } : {}),
+        }).catch(() => {});
+      }
 
       // Heartbeat the lease while we stream (turns can outlive the TTL). The
       // heartbeat is the liveness guard: it aborts the turn on a DEFINITIVE
@@ -1101,9 +1231,9 @@ export async function runHarnessTurn(
                     ? {
                         providerOptions: mergeMcpToolOriginMetadata(
                           undefined,
-                          tr.serverId,
+                          tr.serverId
                         ),
-                    }
+                      }
                     : {}),
                 },
               ],
@@ -1184,7 +1314,7 @@ export async function runHarnessTurn(
             } else {
               if (reasoningId === undefined) {
                 reasoningId = String(
-                  (part as { id?: unknown }).id ?? crypto.randomUUID(),
+                  (part as { id?: unknown }).id ?? crypto.randomUUID()
                 );
                 emitReasoningStart(writer, reasoningId);
               }
@@ -1192,7 +1322,7 @@ export async function runHarnessTurn(
                 const rDelta = String(
                   (part as { text?: unknown; delta?: unknown }).text ??
                     (part as { delta?: unknown }).delta ??
-                    "",
+                    ""
                 );
                 if (rDelta) emitReasoningDelta(writer, reasoningId, rDelta);
               }
@@ -1463,10 +1593,10 @@ export async function runHarnessTurn(
             // confirmation; host-tool `toolApproval` reliably emits this part.
             const approvalId = String(
               (part as { approvalId?: unknown }).approvalId ??
-                crypto.randomUUID(),
+                crypto.randomUUID()
             );
             const toolCallId = String(
-              (part as { toolCallId?: unknown }).toolCallId ?? "",
+              (part as { toolCallId?: unknown }).toolCallId ?? ""
             );
             closeReasoning();
             if (textId !== undefined) {
@@ -1502,7 +1632,7 @@ export async function runHarnessTurn(
         // Close any open text block first so BOTH the cancelled and normal
         // paths leave a balanced UI stream.
         closeReasoning();
-      if (textId !== undefined) emitTextEnd(writer, textId);
+        if (textId !== undefined) emitTextEnd(writer, textId);
 
         // Cancelled mid-stream: do NOT drain res.text (it would block until the
         // full harness run finishes). The finally below destroys the harness
@@ -1607,6 +1737,47 @@ export async function runHarnessTurn(
       } finally {
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         try {
+          // Turn-end adoption: sync filesystem-installed skills up into Convex
+          // while the session is still LIVE (before detach/destroy below). Only on
+          // a clean success — never on abort/error/pausedForApproval — and only
+          // for a skills-capable adapter with a healthy fetch (`runtimeSkills`),
+          // outside guest/swarm scopes (v1 skips `executionScope`). Fully
+          // fail-soft. NOTE: a fresh adoption adds a new skillId to the runtime set
+          // NEXT turn, so the runtime fingerprint intentionally forks then (the
+          // adapter (re)writes on the fresh start) — expected, not a bug.
+          if (
+            runSucceeded &&
+            !aborted &&
+            !pausedForApproval &&
+            harnessAdapter.supportsSkills &&
+            runtimeSkills !== null &&
+            !executionScope &&
+            authHeader &&
+            projectId &&
+            sandboxFileSession &&
+            process.env.HARNESS_SKILL_ADOPTION_DISABLED !== "1"
+          ) {
+            const fileSession = sandboxFileSession;
+            const { adopted } = await adoptSandboxSkills({
+              session: fileSession,
+              authHeader,
+              projectId,
+              // Names already delivered as cloud skills this turn are the adapter's
+              // own dirs — not adoptions.
+              managedNames: new Set(runtimeSkills.map((s) => s.name)),
+              ...(abortSignal ? { signal: abortSignal } : {}),
+            }).catch(() => ({
+              adopted: [] as { skillId: string; name: string }[],
+            }));
+            // Only TRUE 'adopted' dirs become managed (decision 3b): never convert
+            // a hand-placed dir into a cloud-deletable cache.
+            if (adopted.length > 0) {
+              await appendManagedSkills({
+                session: fileSession,
+                skills: adopted,
+              }).catch(() => {});
+            }
+          }
           // On a clean turn with continuity: detach to park the live bridge and
           // get a warm resume payload, then BUILD the commit (don't send it
           // here). The commit rides /ingest-chat atomically with the transcript
@@ -1637,7 +1808,8 @@ export async function runHarnessTurn(
             capturedHarnessCommit = {
               ownerType: continuity.owner.ownerType as
                 | "direct-chat"
-                | "chatbox-chat",
+                | "chatbox-chat"
+                | "swarm-chat",
               chatSessionId: continuity.owner.chatSessionId as string,
               ...(continuity.owner.chatboxId
                 ? { chatboxId: continuity.owner.chatboxId }
@@ -1652,6 +1824,8 @@ export async function runHarnessTurn(
               // Persist only a real (ok:true) hash; omit on failure so the
               // backend keeps the prior stored hash (no empty-hash regression).
               ...(skillsHash !== undefined ? { skillsHash } : {}),
+              // Phase 3: the ingest commit re-resolves the guest's own lane.
+              ...(executionScope ? { executionScope } : {}),
             };
           } else {
             await session.destroy();

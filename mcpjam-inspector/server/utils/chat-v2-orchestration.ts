@@ -31,10 +31,17 @@ import {
   type CustomProviderConfig,
 } from "./chat-helpers.js";
 import { getSkillToolsAndPrompt } from "./skill-tools.js";
-import { getCloudSkillToolsAndPrompt } from "./computers/cloud-skill-tools.js";
+import {
+  getCloudSkillToolsAndPrompt,
+  getPinnedSkillToolsAndPrompt,
+} from "./computers/cloud-skill-tools.js";
+import type { PinnableSkill } from "../../shared/skill-types.js";
 import { logger } from "./logger.js";
 import { isGPT5Model, type ModelDefinition } from "@/shared/types";
-import { UI_TOOL_NAME_REGEX } from "@/shared/client-fulfilled-tools";
+import {
+  UI_TOOL_NAME_REGEX,
+  uiToolCallNeedsApproval,
+} from "@/shared/client-fulfilled-tools";
 import { HOSTED_MODE } from "../config.js";
 import {
   buildToolCatalog,
@@ -618,6 +625,16 @@ export interface PrepareChatV2Options {
    * Takes precedence over the local/HOSTED_MODE skill branches.
    */
   cloudSkills?: { authHeader: string; projectId: string };
+  /**
+   * Explicit skill source, ABOVE the cloud/HOSTED/local chain. Set ONLY by eval
+   * runners: `pinned` mints frozen in-memory tools over snapshotted content
+   * (zero network in execute), `none` suppresses skills entirely. Chat callers
+   * never set it → the existing precedence is byte-identical. `pinned` tools
+   * bypass approval (pure reads of frozen content under an auto-deny eval run).
+   */
+  skillsSource?:
+    | { kind: "pinned"; skills: PinnableSkill[] }
+    | { kind: "none" };
 }
 
 /**
@@ -628,6 +645,7 @@ export interface PrepareChatV2Options {
 function toNoExecuteAiSdkTool(args: {
   description: string;
   inputSchema?: Record<string, unknown>;
+  needsApproval?: boolean;
 }) {
   return tool({
     description: args.description,
@@ -638,6 +656,7 @@ function toNoExecuteAiSdkTool(args: {
         additionalProperties: false,
       }
     ),
+    ...(args.needsApproval ? { needsApproval: true } : {}),
     // No execute — client fulfills via onToolCall.
   });
 }
@@ -648,6 +667,9 @@ function toNoExecuteAiSdkTool(args: {
  * All app-provided tools are emitted. `readOnly` is preserved in the snapshot
  * for policy/telemetry, but MCPJam does not force approval for app-provided
  * tools here; normal server-tool approval remains scoped to server tools.
+ * (UI tools DO gate on approval now — see `buildUiTools`. Extending the same
+ * treatment to app tools is a deliberate follow-up: `app_<8hex>` aliases need
+ * their own fulfillment UX in the iframe bridge first.)
  */
 export function buildAppTools(appTools: AppToolEntry[] | undefined): ToolSet {
   if (!appTools || appTools.length === 0) return {};
@@ -663,16 +685,31 @@ export function buildAppTools(appTools: AppToolEntry[] | undefined): ToolSet {
 
 /**
  * Build no-execute AI SDK tool entries for the WebMCP UI tools snapshot.
- * Same client-fulfilled contract as {@link buildAppTools}; like app tools,
- * UI tools do not participate in the server-tool approval flow (v1).
+ * Same client-fulfilled contract as {@link buildAppTools}.
+ *
+ * When the turn's `requireToolApproval` flag is on, non-readOnly UI tools
+ * get `needsApproval` so the BYOK `streamText` path pauses and emits a
+ * `tool-approval-request` the client renders as the Approve/Deny pill.
+ * NOTE the client resolves an APPROVED `ui_*` call by executing it and
+ * supplying the tool-result directly (never a bare approval response) —
+ * the server cannot execute a no-execute tool, so an approval response
+ * without a result would strand the turn. Denials use the normal approval
+ * response and the existing denial machinery.
  */
-export function buildUiTools(uiTools: UiToolEntry[] | undefined): ToolSet {
+export function buildUiTools(
+  uiTools: UiToolEntry[] | undefined,
+  opts?: { requireToolApproval?: boolean }
+): ToolSet {
   if (!uiTools || uiTools.length === 0) return {};
   const out: ToolSet = {};
   for (const t of uiTools) {
     out[t.name] = toNoExecuteAiSdkTool({
       description: t.description,
       inputSchema: t.inputSchema,
+      needsApproval: uiToolCallNeedsApproval({
+        readOnly: t.readOnly,
+        requireToolApproval: opts?.requireToolApproval === true,
+      }),
     });
   }
   return out;
@@ -683,14 +720,21 @@ export function buildUiTools(uiTools: UiToolEntry[] | undefined): ToolSet {
  * snapshotted, so surfaces without UI tools keep a byte-identical prompt.
  */
 export function buildUiToolsSystemPrompt(
-  uiTools: UiToolEntry[] | undefined
+  uiTools: UiToolEntry[] | undefined,
+  opts?: { requireToolApproval?: boolean }
 ): string {
   if (!uiTools || uiTools.length === 0) return "";
   return [
     "## MCPJam UI tools",
     "You can drive the MCPJam inspector itself with the `ui_*` tools. Every action happens in the user's open app and is immediately visible to them.",
-    "Prefer `ui_open_playground` before `ui_select_tool` / `ui_execute_tool` / `ui_snapshot_app`. `ui_execute_tool` REALLY runs a tool against the user's connected MCP server — treat it as side-effectful.",
+    "Prefer `ui_open_playground` before `ui_select_tool` / `ui_execute_tool` / `ui_snapshot_app`. `ui_execute_tool` REALLY runs a tool against the user's connected MCP server — treat it as side-effectful; when the user hasn't clearly asked to run a tool, prefill it with `ui_select_tool` instead.",
+    "`ui_snapshot_app` is read-only and needs the playground open — use it to observe state before mutating it.",
     "When a `ui_*` tool returns an error, relay the reason instead of retrying blindly.",
+    ...(opts?.requireToolApproval
+      ? [
+          "Mutating `ui_*` actions pause for the user's explicit approval before they run. A denial is final — explain what you wanted to do instead of retrying the call.",
+        ]
+      : []),
   ].join("\n");
 }
 
@@ -731,6 +775,7 @@ export async function prepareChatV2(
     uiTools,
     builtInTools,
     cloudSkills,
+    skillsSource,
     harness,
   } = options;
 
@@ -776,31 +821,50 @@ export async function prepareChatV2(
     filterAppOnlyTools(mcpTools, mcpClientManager);
   }
   // Skills source, in precedence order:
+  //   0. skillsSource set (EVAL RUNNERS ONLY) ⇒ pinned frozen tools or none.
+  //      Above everything; chat callers never set it, so the chain below is
+  //      byte-identical for them. Pinned tools bypass approval (decision 12).
   //   1. cloudSkills set ⇒ the caller's Computer (E2B sandbox) — hosted path
   //      with a provisioned computer. Lazy discovery (no upfront wake).
   //   2. HOSTED_MODE without a computer ⇒ no skills (local FS unavailable).
   //   3. local ⇒ the inspector's own filesystem.
+  const skillsArePinned = skillsSource?.kind === "pinned";
+  // Decision 11: harness eval turns live-fetch skills, so a pinned set would
+  // falsify the snapshot claim. Harness is stripped from suite configs already;
+  // this throw is belt-and-suspenders at the single point both paths funnel through.
+  if (harness && skillsArePinned) {
+    throw new Error(
+      "Pinned skills are not supported on harness runs (they live-fetch skills).",
+    );
+  }
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
-    cloudSkills
-      ? getCloudSkillToolsAndPrompt({
-          authHeader: cloudSkills.authHeader,
-          projectId: cloudSkills.projectId,
-        })
-      : HOSTED_MODE
-        ? { tools: {}, systemPromptSection: "" }
-        : await getSkillToolsAndPrompt();
+    skillsSource
+      ? skillsSource.kind === "pinned"
+        ? getPinnedSkillToolsAndPrompt(skillsSource.skills)
+        : { tools: {}, systemPromptSection: "" }
+      : cloudSkills
+        ? getCloudSkillToolsAndPrompt({
+            authHeader: cloudSkills.authHeader,
+            projectId: cloudSkills.projectId,
+          })
+        : HOSTED_MODE
+          ? { tools: {}, systemPromptSection: "" }
+          : await getSkillToolsAndPrompt();
 
-  const finalSkillTools: Record<string, unknown> = requireToolApproval
-    ? Object.fromEntries(
-        Object.entries(skillTools).map(([name, tool]) => [
-          name,
-          {
-            ...(tool && typeof tool === "object" ? tool : {}),
-            needsApproval: true,
-          },
-        ])
-      )
-    : (skillTools as Record<string, unknown>);
+  // Pinned skill tools NEVER require approval (pure reads of frozen content; the
+  // eval run is auto-deny). Otherwise the normal approval wrap applies.
+  const finalSkillTools: Record<string, unknown> =
+    requireToolApproval && !skillsArePinned
+      ? Object.fromEntries(
+          Object.entries(skillTools).map(([name, tool]) => [
+            name,
+            {
+              ...(tool && typeof tool === "object" ? tool : {}),
+              needsApproval: true,
+            },
+          ])
+        )
+      : (skillTools as Record<string, unknown>);
 
   // SEP-1865 App-Provided Tools (Host → App direction). Client supplies
   // the snapshot per chat POST; we register them as no-execute entries so
@@ -811,7 +875,7 @@ export async function prepareChatV2(
   const appToolEntries = buildAppTools(appTools);
   // WebMCP UI tools — client-fulfilled like app tools, but with curated
   // `ui_*` names instead of opaque aliases.
-  const uiToolEntries = buildUiTools(uiTools);
+  const uiToolEntries = buildUiTools(uiTools, { requireToolApproval });
   const builtInToolEntries = builtInTools ?? {};
   // UI tools are host-curated like built-ins, but `ui_` is a guessable
   // prefix any third-party MCP server could ship — failing closed would let
@@ -954,7 +1018,7 @@ export async function prepareChatV2(
   const enhancedSystemPrompt = [
     systemPrompt,
     skillsPromptSection,
-    buildUiToolsSystemPrompt(uiTools),
+    buildUiToolsSystemPrompt(uiTools, { requireToolApproval }),
   ]
     .filter((section): section is string => Boolean(section?.trim()))
     .map((section) => section.trim())

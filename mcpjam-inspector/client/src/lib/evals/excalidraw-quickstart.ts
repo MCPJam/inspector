@@ -1,12 +1,11 @@
 import { toast } from "sonner";
-import posthog from "posthog-js";
+import { track } from "@/lib/analytics";
 import type { ConvexReactClient } from "convex/react";
 import {
   EXCALIDRAW_SERVER_CONFIG,
   EXCALIDRAW_SERVER_NAME,
 } from "@/lib/excalidraw-quick-connect";
 import { QUICKSTART_SUITE_TAG } from "@/components/evals/constants";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { navigatePlaygroundEvalsRoute } from "@/components/evals/create-suite-navigation";
 import { EXCALIDRAW_QUICKSTART_CASES } from "./excalidraw-quickstart-cases";
 import type { ServerFormData } from "@/shared/types.js";
@@ -179,10 +178,8 @@ export async function runExcalidrawQuickstart(
     previewedHostId,
   } = options;
 
-  posthog.capture("eval_excalidraw_quickstart_clicked", {
+  track("eval_excalidraw_quickstart_clicked", {
     location: "playground_tab_empty",
-    platform: detectPlatform(),
-    environment: detectEnvironment(),
     project_id: projectId,
     already_connected: isExcalidrawConnected,
     existing_suite: existingQuickstartSuiteId !== null,
@@ -273,10 +270,8 @@ export async function runExcalidrawQuickstart(
     }
   }
 
-  posthog.capture("eval_excalidraw_quickstart_completed", {
+  track("eval_excalidraw_quickstart_completed", {
     location: "playground_tab_empty",
-    platform: detectPlatform(),
-    environment: detectEnvironment(),
     project_id: projectId,
     suite_id: createdSuiteId,
     cases_created: createdCases,

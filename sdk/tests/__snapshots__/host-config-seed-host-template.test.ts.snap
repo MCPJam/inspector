@@ -1995,6 +1995,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "chatUiOverride": undefined,
     "clientCapabilities": {
       "extensions": {
+        "io.modelcontextprotocol/enterprise-managed-authorization": {},
         "io.modelcontextprotocol/ui": {
           "mimeTypes": [
             "text/html;profile=mcp-app",
@@ -2180,6 +2181,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "chatUiOverride": undefined,
     "clientCapabilities": {
       "extensions": {
+        "io.modelcontextprotocol/enterprise-managed-authorization": {},
         "io.modelcontextprotocol/ui": {
           "mimeTypes": [
             "text/html;profile=mcp-app",

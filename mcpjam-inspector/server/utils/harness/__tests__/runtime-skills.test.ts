@@ -1,18 +1,32 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-vi.mock("../../computers/convex-skills-client", () => ({
+vi.mock("../../computers/convex-skills-client", async (importOriginal) => ({
+  // Keep the real pure helpers (e.g. normalizeProvenance); only the two network
+  // query fns are stubbed below.
+  ...(await importOriginal<
+    typeof import("../../computers/convex-skills-client")
+  >()),
   convexListSkillsForRuntime: vi.fn(),
+  convexListSkillsForRuntimeExecution: vi.fn(),
+  convexListSkillFilesForRuntime: vi.fn(),
+  convexListSkillFilesForRuntimeExecution: vi.fn(),
 }));
 
 import {
   fetchRuntimeSkills,
+  fetchRuntimeSkillFiles,
   skillsFingerprint,
   toHarnessSkills,
+  toPinnableSkill,
   claudeCodeSafeSkills,
   toYamlDoubleQuoted,
   type RuntimeSkill,
 } from "../runtime-skills";
-import { convexListSkillsForRuntime } from "../../computers/convex-skills-client";
+import {
+  convexListSkillsForRuntime,
+  convexListSkillsForRuntimeExecution,
+  convexListSkillFilesForRuntime,
+} from "../../computers/convex-skills-client";
 
 function skill(p: Partial<RuntimeSkill> & { skillId: string }): RuntimeSkill {
   return {
@@ -42,6 +56,61 @@ describe("fetchRuntimeSkills (tri-state)", () => {
     const res = await fetchRuntimeSkills("Bearer x", "proj_1");
     expect(res).toEqual({ ok: false });
     // critically, not { ok: true, skills: [] }
+    expect(res.ok).toBe(false);
+  });
+
+  // Secure Guest Harness Enablement — the execution-scoped query is used when a
+  // scope is present (guest / swarm grant), so a guest never hits the member
+  // `projectId` query (which would reject them).
+  it("uses the member projectId query when no executionScope is given", async () => {
+    vi.mocked(convexListSkillsForRuntime).mockResolvedValue([
+      skill({ skillId: "s1" }),
+    ]);
+    const res = await fetchRuntimeSkills("Bearer x", "proj_1");
+    expect(convexListSkillsForRuntime).toHaveBeenCalledWith(
+      "Bearer x",
+      "proj_1"
+    );
+    expect(convexListSkillsForRuntimeExecution).not.toHaveBeenCalled();
+    expect(res).toEqual({ ok: true, skills: [skill({ skillId: "s1" })] });
+  });
+
+  it("uses the execution-scoped query when an executionScope is present", async () => {
+    const scope = {
+      kind: "swarm" as const,
+      swarmId: "cb_1",
+      accessVersion: 3,
+      projectId: "proj_1",
+      workspaceId: "ws_1",
+    };
+    vi.mocked(convexListSkillsForRuntimeExecution).mockResolvedValue([
+      skill({ skillId: "s2" }),
+    ]);
+    const res = await fetchRuntimeSkills("Bearer x", "proj_1", scope);
+    expect(convexListSkillsForRuntimeExecution).toHaveBeenCalledWith(
+      "Bearer x",
+      scope
+    );
+    expect(convexListSkillsForRuntime).not.toHaveBeenCalled();
+    expect(res).toEqual({ ok: true, skills: [skill({ skillId: "s2" })] });
+  });
+});
+
+describe("fetchRuntimeSkillFiles (tri-state)", () => {
+  it("returns { ok: true, files } on success (empty array is a valid 'no files')", async () => {
+    vi.mocked(convexListSkillFilesForRuntime).mockResolvedValue([]);
+    const res = await fetchRuntimeSkillFiles("Bearer x", "proj_1");
+    expect(res).toEqual({ ok: true, files: [] });
+  });
+
+  it("returns { ok: false } on failure — NEVER [] (so the caller skips prune)", async () => {
+    vi.mocked(convexListSkillFilesForRuntime).mockRejectedValue(
+      new Error("convex down")
+    );
+    const res = await fetchRuntimeSkillFiles("Bearer x", "proj_1");
+    // Critically distinct from { ok: true, files: [] } — an empty set on a
+    // failure would make materialize prune every delivered skill's files.
+    expect(res).toEqual({ ok: false });
     expect(res.ok).toBe(false);
   });
 });
@@ -76,6 +145,50 @@ describe("skillsFingerprint", () => {
       skillsFingerprint([skill({ skillId: "s1", name: "renamed" })])
     ).not.toBe(base); // rename
     expect(skillsFingerprint([])).not.toBe(base); // delete
+  });
+
+  it("is UNCHANGED for a provenance-only difference (metadata, not box state)", () => {
+    const base = skillsFingerprint([
+      skill({ skillId: "s1", provenance: "authored" }),
+    ]);
+    const adopted = skillsFingerprint([
+      skill({ skillId: "s1", provenance: "computer-adopted" }),
+    ]);
+    expect(adopted).toBe(base);
+  });
+});
+
+describe("toPinnableSkill", () => {
+  it("maps aggregateHash → contentHash and normalizes provenance", () => {
+    expect(
+      toPinnableSkill(
+        skill({
+          skillId: "s1",
+          name: "pdf",
+          description: "Process PDFs",
+          content: "body",
+          aggregateHash: "agg",
+          provenance: "computer-adopted",
+        })
+      )
+    ).toEqual({
+      name: "pdf",
+      description: "Process PDFs",
+      content: "body",
+      contentHash: "agg",
+      provenance: "computer-adopted",
+    });
+  });
+
+  it("defaults an absent/unknown provenance to 'authored'", () => {
+    expect(toPinnableSkill(skill({ skillId: "s1" })).provenance).toBe(
+      "authored"
+    );
+    expect(
+      toPinnableSkill(
+        skill({ skillId: "s1", provenance: "future-value" as never })
+      ).provenance
+    ).toBe("authored");
   });
 });
 

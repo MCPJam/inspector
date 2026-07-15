@@ -13,6 +13,7 @@ vi.mock("../logger", () => ({
 
 vi.mock("../convex-guest-auth-sync.js", () => ({
   provisionGuestAuthConfigToConvex: mockProvisionGuestAuthConfigToConvex,
+  isConvexProvisioningUnavailable: vi.fn(() => false),
 }));
 
 vi.mock("../guest-session-secret.js", () => ({
@@ -146,6 +147,34 @@ describe("guest-auth", () => {
     const { getProductionGuestAuthHeader } = await import("../guest-auth.js");
     expect(await getProductionGuestAuthHeader()).toBe("Bearer cached-token");
     expect(await getProductionGuestAuthHeader()).toBe("Bearer cached-token");
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns the guest id with the cached guest auth session", async () => {
+    process.env.NODE_ENV = "production";
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          guestId: "guest-prod",
+          token: "cached-session-token",
+          expiresAt: Date.now() + 60 * 60 * 1000,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const { getProductionGuestAuthSession } = await import("../guest-auth.js");
+    await expect(getProductionGuestAuthSession()).resolves.toEqual({
+      authHeader: "Bearer cached-session-token",
+      guestId: "guest-prod",
+    });
+    await expect(getProductionGuestAuthSession()).resolves.toEqual({
+      authHeader: "Bearer cached-session-token",
+      guestId: "guest-prod",
+    });
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 

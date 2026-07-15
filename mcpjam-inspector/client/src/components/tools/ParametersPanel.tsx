@@ -12,9 +12,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { usePostHog } from "posthog-js/react";
 import type { FormField } from "@/lib/tool-form";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 
 interface ParametersPanelProps {
   selectedTool: string;
@@ -54,8 +53,6 @@ export function ParametersPanel({
   onTaskTtlChange,
   serverSupportsTaskToolCalls,
 }: ParametersPanelProps) {
-  const posthog = usePostHog();
-
   // Handle Enter key in input fields
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && !loading) {
@@ -151,10 +148,8 @@ export function ParametersPanel({
             ) : null}
             <Button
               onClick={() => {
-                posthog.capture("execute_tool", {
+                track("execute_tool", {
                   location: "parameters_panel",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
                   as_task: executeAsTask ?? false,
                 });
                 onExecute();
@@ -177,10 +172,8 @@ export function ParametersPanel({
             </Button>
             <Button
               onClick={() => {
-                posthog.capture("save_tool_button_clicked", {
+                track("save_tool_button_clicked", {
                   location: "parameters_panel",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
                 });
                 onSave();
               }}

@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { flushSync } from "react-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { errorToastMessage } from "@/test/utils";
 import type { AppState, AppAction, ServerWithName } from "@/state/app-types";
 import {
   buildElectronMcpCallbackUrl,
@@ -20,6 +21,7 @@ import { readCliSignInReturnPath } from "@/lib/cli-signin-return-path";
 const {
   toastError,
   toastSuccess,
+  toastWarning,
   completeHostedOAuthCallbackMock,
   handleOAuthCallbackMock,
   initiateOAuthMock,
@@ -42,6 +44,7 @@ const {
 } = vi.hoisted(() => ({
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
+  toastWarning: vi.fn(),
   completeHostedOAuthCallbackMock: vi.fn(),
   handleOAuthCallbackMock: vi.fn(),
   initiateOAuthMock: vi.fn(),
@@ -69,6 +72,7 @@ vi.mock("sonner", () => ({
   toast: {
     error: toastError,
     success: toastSuccess,
+    warning: toastWarning,
   },
 }));
 
@@ -957,6 +961,120 @@ describe("useServerState OAuth callback failures", () => {
     expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
   });
 
+  it("forwards the discovered authorization server url so the hosted backend can refresh unreachable (e.g. localhost) targets", async () => {
+    mockHostedMode.mockReturnValue(true);
+    reconnectServerMock.mockResolvedValueOnce({
+      success: true,
+      initInfo: null,
+    });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnectWithTokensFromOAuthFlow(
+        "demo-server",
+        {
+          accessToken: "hosted-access-token",
+          tokenType: "Bearer",
+          expiresIn: 300,
+          clientId: "hosted-client-id",
+          authorizationServerUrl: "http://127.0.0.1:8000",
+        },
+        "http://127.0.0.1:8000/mcp"
+      );
+    });
+
+    expect(importHostedOAuthTokensMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverUrl: "http://127.0.0.1:8000/mcp",
+        authorizationServerUrl: "http://127.0.0.1:8000",
+      })
+    );
+  });
+
+  it("warns after hosted connect when the authorization server is on a private address", async () => {
+    mockHostedMode.mockReturnValue(true);
+    reconnectServerMock.mockResolvedValueOnce({
+      success: true,
+      initInfo: null,
+    });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnectWithTokensFromOAuthFlow(
+        "demo-server",
+        {
+          accessToken: "hosted-access-token",
+          tokenType: "Bearer",
+          expiresIn: 300,
+          clientId: "hosted-client-id",
+          authorizationServerUrl: "http://127.0.0.1:8000",
+        },
+        "http://127.0.0.1:8000/mcp"
+      );
+    });
+
+    expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
+    expect(toastWarning).toHaveBeenCalledWith(
+      expect.stringContaining("can't auto-refresh in hosted mode")
+    );
+  });
+
+  it("does not warn after hosted connect when the authorization server is publicly reachable", async () => {
+    mockHostedMode.mockReturnValue(true);
+    reconnectServerMock.mockResolvedValueOnce({
+      success: true,
+      initInfo: null,
+    });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnectWithTokensFromOAuthFlow(
+        "demo-server",
+        {
+          accessToken: "hosted-access-token",
+          tokenType: "Bearer",
+          expiresIn: 300,
+          clientId: "hosted-client-id",
+          authorizationServerUrl: "https://auth.example.com",
+        },
+        "http://127.0.0.1:8000/mcp"
+      );
+    });
+
+    expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
+    expect(toastWarning).not.toHaveBeenCalled();
+  });
+
+  it("does not warn about refresh outside hosted mode even for a localhost authorization server", async () => {
+    mockHostedMode.mockReturnValue(false);
+    reconnectServerMock.mockResolvedValueOnce({
+      success: true,
+      initInfo: null,
+    });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnectWithTokensFromOAuthFlow(
+        "demo-server",
+        {
+          accessToken: "local-access-token",
+          tokenType: "Bearer",
+          expiresIn: 300,
+          clientId: "local-client-id",
+          authorizationServerUrl: "http://127.0.0.1:8000",
+        },
+        "http://127.0.0.1:8000/mcp"
+      );
+    });
+
+    expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
+    expect(toastWarning).not.toHaveBeenCalled();
+  });
+
   it("marks the pending server as failed when authorization is denied", async () => {
     localStorage.setItem("mcp-oauth-pending", "demo-server");
     localStorage.setItem("mcp-oauth-return-hash", "#demo-server");
@@ -978,7 +1096,9 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(toastError).toHaveBeenCalledWith(
-      "OAuth authorization failed: access_denied: User denied access",
+      errorToastMessage(
+        "OAuth authorization failed: access_denied: User denied access",
+      ),
       { duration: Infinity }
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
@@ -1008,7 +1128,7 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(toastError).toHaveBeenCalledWith(
-      "Error completing OAuth flow: Token exchange failed",
+      errorToastMessage("Error completing OAuth flow: Token exchange failed"),
       { duration: Infinity }
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
@@ -1554,7 +1674,7 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(toastError).toHaveBeenCalledWith(
-      CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
+      errorToastMessage(CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE),
       { duration: Infinity }
     );
     expect(
@@ -1578,7 +1698,7 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(toastError).toHaveBeenCalledWith(
-      PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
+      errorToastMessage(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE),
       { duration: Infinity }
     );
     expect(testConnectionMock).not.toHaveBeenCalled();
@@ -1615,7 +1735,7 @@ describe("useServerState OAuth callback failures", () => {
       error: PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
     });
     expect(toastError).toHaveBeenCalledWith(
-      PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
+      errorToastMessage(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE),
       { duration: Infinity }
     );
   });
@@ -1688,6 +1808,65 @@ describe("useServerState OAuth callback failures", () => {
         sampling: {},
       },
     });
+  });
+
+  it("treats a superseded client-switch reconnect as in-progress, not a failure", async () => {
+    // Repro of the client-switch toast bug: when the user switches clients
+    // faster than a reconnect completes, the in-flight reconnect's op token
+    // goes stale (a newer op now owns the server). That must NOT surface as a
+    // reconnect failure — `reconnectServerForClientSwitch` should resolve, so
+    // the auto-connect recycle never toasts "Failed to reconnect".
+    const { ensureAuthorizedForReconnect } = await import(
+      "@/state/oauth-orchestrator"
+    );
+    vi.mocked(ensureAuthorizedForReconnect).mockResolvedValue({
+      kind: "ready",
+      serverConfig: createAppState().projects.default.servers["demo-server"]
+        .config,
+      tokens: undefined,
+    } as any);
+
+    // The first reconnect hangs inside guardedReconnectServer so a second op
+    // can bump the per-server op token and mark the first one stale.
+    let releaseFirst: (value: unknown) => void = () => {};
+    const firstReconnect = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    reconnectServerMock
+      .mockReturnValueOnce(firstReconnect)
+      .mockResolvedValue({
+        success: true,
+        initInfo: { clientCapabilities: {} },
+      } as any);
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, createAppState());
+
+    let firstOpOutcome: unknown = "pending";
+    await act(async () => {
+      // op1: starts, calls reconnectServer, then blocks on `firstReconnect`.
+      const firstOp = result.current
+        .reconnectServerForClientSwitch("demo-server")
+        .then(() => {
+          firstOpOutcome = "resolved";
+        })
+        .catch((error) => {
+          firstOpOutcome = error;
+        });
+      await flushAsyncWork();
+
+      // op2: a newer reconnect for the SAME server bumps the op token, which
+      // makes op1 stale. It completes on its own success path.
+      await result.current.reconnectServerForClientSwitch("demo-server");
+
+      // Let op1 resume; it observes the stale token and returns "superseded".
+      releaseFirst({ success: true, initInfo: { clientCapabilities: {} } });
+      await firstOp;
+    });
+
+    // Superseded is not a failure: op1 resolves (does not reject), so the
+    // caller has nothing to aggregate into a "Failed to reconnect" toast.
+    expect(firstOpOutcome).toBe("resolved");
   });
 
   it("strips OAuth bearer headers from reconnect fallback configs", async () => {
@@ -1902,7 +2081,7 @@ describe("useServerState OAuth callback failures", () => {
       }),
     });
     expect(toastError).not.toHaveBeenCalledWith(
-      "No hosted OAuth credential found"
+      errorToastMessage("No hosted OAuth credential found"),
     );
   });
 
@@ -1969,7 +2148,9 @@ describe("useServerState OAuth callback failures", () => {
       error: "Failed to resolve registry OAuth config: registry lookup failed",
     });
     expect(toastError).toHaveBeenCalledWith(
-      "Network error: Failed to resolve registry OAuth config: registry lookup failed",
+      errorToastMessage(
+        "Network error: Failed to resolve registry OAuth config: registry lookup failed",
+      ),
       { duration: Infinity }
     );
   });
@@ -2762,7 +2943,9 @@ describe("syncServerToConvex name-collision recovery", () => {
       expect.objectContaining({ type: "UPSERT_SERVER" })
     );
     expect(toastError.mock.calls[0]?.[0]).toEqual(
-      expect.stringContaining("selected project is not in the active organization")
+      errorToastMessage(
+        "Cannot save server: the selected project is not in the active organization. Refresh and try again."
+      )
     );
   });
 
@@ -2910,6 +3093,209 @@ describe("syncServerToConvex name-collision recovery", () => {
       })
     );
     expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+  });
+});
+
+// NOTE: keep this describe BEFORE "persistRuntimeServerToProjectIfNeeded" —
+// its dedupe test intentionally overlaps act() scopes (a pending act promise
+// awaited later), which leaves React's act queue unable to flush effects for
+// hooks rendered afterwards in this file.
+describe("useServerState XAA identity pair — shared save semantics across all three save paths", () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+    // Earlier describes install hanging mockImplementations on the server
+    // mutations (e.g. the persist-dedupe test's never-resolving
+    // createServerIfMissing) — clearAllMocks keeps implementations, so
+    // reset these fully.
+    mockCreateServer.mockReset();
+    mockCreateServerIfMissing.mockReset();
+    mockCreateServerWithClientSecret.mockReset();
+    mockUpdateServer.mockReset();
+    mockUpdateServerWithClientSecret.mockReset();
+    localStorage.clear();
+    sessionStorage.clear();
+    window.history.replaceState({}, "", "/");
+    useClientConfigStore.setState({
+      activeProjectId: null,
+      defaultConfig: null,
+      savedConfig: undefined,
+      draftConfig: null,
+      connectionDefaultsText: "{}",
+      clientCapabilitiesText: "{}",
+      clientCapabilitiesError: null,
+      connectionDefaultsError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingProjectId: null,
+      pendingSavedConfig: undefined,
+      isAwaitingRemoteEcho: false,
+    });
+    useHostContextStore.setState({
+      activeProjectId: null,
+      defaultHostContext: {},
+      savedHostContext: undefined,
+      draftHostContext: {},
+      hostContextText: "{}",
+      hostContextError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingProjectId: null,
+      pendingSavedHostContext: undefined,
+      isAwaitingRemoteEcho: false,
+    });
+    getStoredTokensMock.mockReturnValue(undefined);
+    testConnectionMock.mockResolvedValue({ success: true, initInfo: null });
+    readStoredOAuthConfigMock.mockReturnValue({
+      registryServerId: undefined,
+      useRegistryOAuthProxy: false,
+    });
+    mockConvexQuery.mockResolvedValue(null);
+  });
+
+  function createXaaAppState(): AppState {
+    const xaaServer: ServerWithName = {
+      name: "xaa-server",
+      config: { url: "https://xaa.example.com/mcp" } as any,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+      useOAuth: false,
+      useXaa: true,
+      authServerMode: "mcpjam",
+      xaaSubject: "stored-sub",
+      xaaEmail: "stored@example.com",
+    } as unknown as ServerWithName;
+    return {
+      projects: {
+        default: {
+          id: "default",
+          name: "Default",
+          servers: { "xaa-server": xaaServer },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          isDefault: true,
+        },
+      },
+      activeProjectId: "default",
+      servers: { "xaa-server": xaaServer },
+      selectedServer: "xaa-server",
+      selectedMultipleServers: [],
+      isMultiSelectMode: false,
+    };
+  }
+
+  const baseXaaFormData = {
+    name: "xaa-server",
+    type: "http" as const,
+    url: "https://xaa.example.com/mcp",
+    useXaa: true,
+    useOAuth: false,
+    authServerMode: "mcpjam" as const,
+    clientId: "xaa-client",
+  };
+
+  function findUpsertedServer(dispatch: ReturnType<typeof vi.fn>) {
+    const action = dispatch.mock.calls
+      .map(([a]) => a)
+      .find(
+        (a): a is Extract<AppAction, { type: "UPSERT_SERVER" }> =>
+          a.type === "UPSERT_SERVER"
+      );
+    expect(action).toBeDefined();
+    return action!.server as ServerWithName;
+  }
+
+  it("saveServerConfigWithoutConnecting preserves the stored pair when the form omits it and clears on explicit empty strings", async () => {
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, createXaaAppState());
+
+    // Omitted pair → preserve.
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting(baseXaaFormData);
+    });
+    let saved = findUpsertedServer(dispatch);
+    expect(saved.xaaSubject).toBe("stored-sub");
+    expect(saved.xaaEmail).toBe("stored@example.com");
+    expect(saved.authServerMode).toBe("mcpjam");
+
+    // Explicit "" pair → clear reaches the persisted entry (and the wire).
+    dispatch.mockClear();
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting({
+        ...baseXaaFormData,
+        xaaSubject: "",
+        xaaEmail: "",
+      });
+    });
+    saved = findUpsertedServer(dispatch);
+    expect(saved.xaaSubject).toBe("");
+    expect(saved.xaaEmail).toBe("");
+    expect(saved.authServerMode).toBe("mcpjam");
+  });
+
+  it("handleUpdate (skipAutoConnect) preserves the stored pair when omitted and clears on explicit empty strings", async () => {
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, createXaaAppState());
+
+    await act(async () => {
+      await result.current.handleUpdate("xaa-server", baseXaaFormData, true);
+    });
+    let updated = findUpsertedServer(dispatch);
+    expect(updated.xaaSubject).toBe("stored-sub");
+    expect(updated.xaaEmail).toBe("stored@example.com");
+    expect(updated.authServerMode).toBe("mcpjam");
+
+    dispatch.mockClear();
+    await act(async () => {
+      await result.current.handleUpdate(
+        "xaa-server",
+        { ...baseXaaFormData, xaaSubject: "", xaaEmail: "" },
+        true
+      );
+    });
+    updated = findUpsertedServer(dispatch);
+    expect(updated.xaaSubject).toBe("");
+    expect(updated.xaaEmail).toBe("");
+  });
+
+  it("handleConnect preserves the stored pair when omitted and clears on explicit empty strings", async () => {
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, createXaaAppState());
+
+    const findProjectServerEntry = () => {
+      const action = dispatch.mock.calls
+        .map(([a]) => a)
+        .find(
+          (a): a is Extract<AppAction, { type: "UPDATE_PROJECT" }> =>
+            a.type === "UPDATE_PROJECT"
+        );
+      expect(action).toBeDefined();
+      return (action!.updates.servers as Record<string, ServerWithName>)[
+        "xaa-server"
+      ];
+    };
+
+    await act(async () => {
+      await result.current.handleConnect(baseXaaFormData);
+    });
+    let entry = findProjectServerEntry();
+    expect(entry.xaaSubject).toBe("stored-sub");
+    expect(entry.xaaEmail).toBe("stored@example.com");
+    expect(entry.authServerMode).toBe("mcpjam");
+
+    dispatch.mockClear();
+    await act(async () => {
+      await result.current.handleConnect({
+        ...baseXaaFormData,
+        xaaSubject: "",
+        xaaEmail: "",
+      });
+    });
+    entry = findProjectServerEntry();
+    expect(entry.xaaSubject).toBe("");
+    expect(entry.xaaEmail).toBe("");
   });
 });
 

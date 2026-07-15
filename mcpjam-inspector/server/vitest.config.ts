@@ -4,6 +4,10 @@ import tsconfigPaths from "vite-tsconfig-paths";
 
 const rootDir = path.resolve(__dirname, "..");
 const sdkIndexEntry = path.resolve(rootDir, "../sdk/src/index.ts");
+// Browser-safe entry. shared/xaa.ts re-exports XAA primitives from here (so the
+// client never pulls the node bundle); the server consumes the same file, so
+// vitest must resolve the /browser subpath to source too.
+const sdkBrowserEntry = path.resolve(rootDir, "../sdk/src/browser.ts");
 const sdkOperationsEntry = path.resolve(rootDir, "../sdk/src/operations.ts");
 const sdkSkillReferenceEntry = path.resolve(
   rootDir,
@@ -27,6 +31,10 @@ const sdkHostConfigTemplatesEntry = path.resolve(
   "../sdk/src/host-config/templates/index.ts",
 );
 const sdkPlatformEntry = path.resolve(rootDir, "../sdk/src/platform/index.ts");
+const sdkHostCompatEntry = path.resolve(
+  rootDir,
+  "../sdk/src/host-compat/index.ts",
+);
 const sdkPublicApiEntry = path.resolve(
   rootDir,
   "../sdk/src/public-api/index.ts",
@@ -64,6 +72,7 @@ export default defineConfig({
       deps: {
         inline: [
           "@mcpjam/sdk",
+          "@mcpjam/sdk/browser",
           "@mcpjam/sdk/operations",
           "@mcpjam/sdk/model-factory",
           "@mcpjam/sdk/matchers",
@@ -72,6 +81,7 @@ export default defineConfig({
           "@mcpjam/sdk/host-config/templates",
           "@mcpjam/sdk/platform",
           "@mcpjam/sdk/public-api",
+          "@mcpjam/sdk/host-compat",
         ],
       },
     },
@@ -106,7 +116,9 @@ export default defineConfig({
         replacement: sdkHostConfigTemplatesEntry,
       },
       { find: "@mcpjam/sdk/platform", replacement: sdkPlatformEntry },
+      { find: "@mcpjam/sdk/host-compat", replacement: sdkHostCompatEntry },
       { find: "@mcpjam/sdk/public-api", replacement: sdkPublicApiEntry },
+      { find: "@mcpjam/sdk/browser", replacement: sdkBrowserEntry },
       { find: "@mcpjam/sdk", replacement: sdkIndexEntry },
     ],
   },

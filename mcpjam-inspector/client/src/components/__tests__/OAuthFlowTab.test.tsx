@@ -3,16 +3,10 @@ import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { OAuthFlowTab } from "../OAuthFlowTab";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import { createInspectorOAuthStateMachine } from "@/lib/oauth/debug-state-machine-adapter";
 
-vi.mock("posthog-js", () => ({
-  default: {
-    capture: vi.fn(),
-  },
-}));
-
-vi.mock("@/lib/PosthogUtils", () => ({
-  detectEnvironment: vi.fn().mockReturnValue("test"),
-  detectPlatform: vi.fn().mockReturnValue("web"),
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
 }));
 
 vi.mock("@mcpjam/sdk/browser", () => ({
@@ -148,6 +142,78 @@ describe("OAuthFlowTab", () => {
     );
     expect(screen.getByTestId("oauth-flow-logger")).toHaveTextContent(
       "https://example.com/mcp",
+    );
+  });
+
+  it("passes the profile's pre-registered credentials to the state machine (#3029)", () => {
+    vi.mocked(createInspectorOAuthStateMachine).mockClear();
+
+    const serverConfigs = {
+      "prereg-server": createServer({
+        name: "prereg-server",
+        useOAuth: true,
+        config: {
+          url: "https://example.com/mcp",
+        },
+        oauthFlowProfile: {
+          serverUrl: "https://example.com/mcp",
+          clientId: "client_prereg",
+          clientSecret: "prereg-secret",
+          scopes: "openid profile email",
+          customHeaders: [],
+          protocolVersion: "2025-11-25",
+          registrationStrategy: "preregistered",
+        } as ServerWithName["oauthFlowProfile"],
+      }),
+    };
+
+    render(
+      <OAuthFlowTab
+        serverConfigs={serverConfigs}
+        selectedServerName="prereg-server"
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    expect(createInspectorOAuthStateMachine).toHaveBeenCalledWith(
+      expect.objectContaining({
+        registrationStrategy: "preregistered",
+        preregisteredClientId: "client_prereg",
+        preregisteredClientSecret: "prereg-secret",
+      }),
+    );
+  });
+
+  it("passes hasClientSecret to the state machine for confidential clients", () => {
+    vi.mocked(createInspectorOAuthStateMachine).mockClear();
+    const serverConfigs = {
+      "oauth-server": createServer({
+        name: "oauth-server",
+        useOAuth: true,
+        hasClientSecret: true,
+        config: {
+          url: "https://example.com/mcp",
+        },
+        oauthFlowProfile: {
+          serverUrl: "",
+          clientId: "client-from-profile",
+          scopes: "read",
+          protocolVersion: "2025-11-25",
+          registrationStrategy: "preregistered",
+        } as ServerWithName["oauthFlowProfile"],
+      }),
+    };
+
+    render(
+      <OAuthFlowTab
+        serverConfigs={serverConfigs}
+        selectedServerName="oauth-server"
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    expect(createInspectorOAuthStateMachine).toHaveBeenCalledWith(
+      expect.objectContaining({ hasClientSecret: true }),
     );
   });
 });

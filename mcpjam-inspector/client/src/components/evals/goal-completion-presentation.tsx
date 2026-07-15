@@ -1,8 +1,22 @@
-import { useState } from "react";
-import { ChevronDown, Gavel, Wrench } from "lucide-react";
+import { Gavel, Wrench } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EvalSuiteRun } from "./types";
 import type { RunCaseGroup } from "./run-case-groups";
+import {
+  formatScore,
+  parseJudgeReason,
+  JudgeVerdictCard,
+  ScoreBadge,
+} from "@/components/shared/session-quality/judge-presentation";
+
+// Generic judge presentation now lives in the product-neutral module (the
+// Swarms session viewer renders the same backend judge's verdicts). Re-export
+// under the historical names so every eval call site keeps compiling.
+export {
+  formatScore,
+  parseJudgeReason,
+  ScoreBadge,
+} from "@/components/shared/session-quality/judge-presentation";
 
 /** Per-(case×host) server-quality workflow finding, keyed by caseKey on a run. */
 export type WorkflowInsight = NonNullable<
@@ -18,52 +32,6 @@ export type WorkflowInsight = NonNullable<
  */
 
 export type JudgeCase = NonNullable<EvalSuiteRun["goalCompletion"]>["cases"][number];
-
-/**
- * The judge prefixes objective-mode reasons with "no rubric:" — internal
- * jargon for the lower-confidence (≤85%) mode used when a case has neither an
- * Expected Output nor derivable assertions. Parse it out so the UI can show a
- * friendly "no expected output" tag and a clean reason instead of leaking the
- * prefix. (Most cases now derive a rubric from their assertions, so this is
- * rare — but when it appears it shouldn't read as gibberish.)
- */
-const NO_RUBRIC_PREFIX = /^\s*no rubric\s*[:—-]\s*/i;
-export function parseJudgeReason(reason: string | undefined): {
-  noRubric: boolean;
-  text: string;
-} {
-  const raw = reason ?? "";
-  return {
-    noRubric: NO_RUBRIC_PREFIX.test(raw),
-    text: raw.replace(NO_RUBRIC_PREFIX, "").trim(),
-  };
-}
-
-export function formatScore(score: number): string {
-  // Don't route the score through clampThreshold: its NaN→DEFAULT_THRESHOLD
-  // fallback is right for the threshold input but would render a corrupt/NaN
-  // score as "70%" (the pass cutoff). Show a neutral dash instead, and clamp
-  // finite scores into [0,1].
-  if (!Number.isFinite(score)) {
-    return "—";
-  }
-  return `${Math.round(Math.min(1, Math.max(0, score)) * 100)}%`;
-}
-
-export function ScoreBadge({ passed }: { passed: boolean }) {
-  return (
-    <span
-      className={cn(
-        "rounded-sm px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide",
-        passed
-          ? "bg-success/50 text-foreground"
-          : "bg-warning/50 text-foreground",
-      )}
-    >
-      {passed ? "meets goal" : "below threshold"}
-    </span>
-  );
-}
 
 /**
  * Build a `caseKey → judge verdict` map from a run's goal-completion result.
@@ -251,70 +219,16 @@ export function resolveIterationJudge(
  * the per-case home.
  */
 export function JudgeVerdictPanel({ judgeCase }: { judgeCase: JudgeCase }) {
-  const { noRubric, text: reason } = parseJudgeReason(judgeCase.reason);
-  const canExpand = Boolean(reason);
-  const [expanded, setExpanded] = useState(false);
-
-  const header = (
-    <>
-      <Gavel className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-      <span className="font-medium uppercase tracking-wide text-muted-foreground">
-        Judge · advisory
-      </span>
-      <span className="font-semibold tabular-nums text-foreground">
-        {formatScore(judgeCase.score)}
-      </span>
-      <ScoreBadge passed={judgeCase.passed} />
-      {noRubric ? (
-        <span
-          className="shrink-0 rounded-sm bg-muted/70 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-          title="No expected output or assertions to grade against — graded loosely against the request, score capped at 85%. Add assertions or an Expected Output for stricter grading."
-        >
-          no expected output
-        </span>
-      ) : null}
-      {canExpand && !expanded ? (
-        <span className="min-w-0 flex-1 truncate text-muted-foreground">
-          {reason}
-        </span>
-      ) : null}
-      {canExpand ? (
-        <ChevronDown
-          className={cn(
-            "ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform",
-            expanded && "rotate-180",
-          )}
-          aria-hidden
-        />
-      ) : null}
-    </>
-  );
-
+  // Thin adapter: the panel itself is product-neutral (shared with the Swarms
+  // session viewer); this keeps the historical eval-shaped signature.
   return (
-    <div className="shrink-0 rounded-lg border border-border/50 bg-muted/15 text-xs">
-      {canExpand ? (
-        <button
-          type="button"
-          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-muted/25"
-          onClick={() => setExpanded((value) => !value)}
-          aria-expanded={expanded}
-          aria-label={
-            expanded ? "Collapse judge reason" : "Expand judge reason"
-          }
-        >
-          {header}
-        </button>
-      ) : (
-        <div className="flex items-center gap-2 px-3 py-2">{header}</div>
-      )}
-      {canExpand && expanded ? (
-        <div
-          className="border-t border-border/40 px-3 py-2 text-muted-foreground leading-relaxed whitespace-pre-wrap break-words"
-        >
-          {reason}
-        </div>
-      ) : null}
-    </div>
+    <JudgeVerdictCard
+      verdict={{
+        score: judgeCase.score,
+        passed: judgeCase.passed,
+        reason: judgeCase.reason,
+      }}
+    />
   );
 }
 

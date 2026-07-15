@@ -27,13 +27,23 @@ vi.mock("@/hooks/useViews", () => ({
   useProjectServers: () => ({ servers: [] }),
 }));
 
-vi.mock("@/stores/preferences/preferences-provider", () => ({
-  usePreferencesStore: (selector: (state: { themeMode: "light" | "dark" }) => unknown) =>
-    selector({ themeMode: "light" }),
+vi.mock("@/lib/host-compat/use-host-catalog", () => ({
+  useHostCatalog: () => ({
+    status: "loading",
+    catalog: null,
+    version: null,
+    source: null,
+  }),
 }));
 
-vi.mock("posthog-js/react", () => ({
-  usePostHog: () => ({ capture: vi.fn() }),
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: (
+    selector: (state: { themeMode: "light" | "dark" }) => unknown
+  ) => selector({ themeMode: "light" }),
+}));
+
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
 }));
 
 const oneHost = [
@@ -74,7 +84,7 @@ describe("HostOverlayBar", () => {
         previewedHostId="host-a"
         onChangePreviewedHostId={vi.fn()}
         onEditHost={vi.fn()}
-      />,
+      />
     );
 
     const bar = screen.getByTestId("host-overlay-bar");
@@ -88,12 +98,12 @@ describe("HostOverlayBar", () => {
         previewedHostId="host-a"
         onChangePreviewedHostId={vi.fn()}
         onEditHost={vi.fn()}
-      />,
+      />
     );
 
     expect(screen.getByTestId("host-overlay-prev")).toBeInTheDocument();
     expect(screen.getByTestId("host-overlay-current")).toHaveTextContent(
-      "MCPJam",
+      "MCPJam"
     );
     expect(screen.getByTestId("host-overlay-next")).toBeInTheDocument();
   });
@@ -106,17 +116,21 @@ describe("HostOverlayBar", () => {
         previewedHostId="host-a"
         onChangePreviewedHostId={vi.fn()}
         onEditHost={vi.fn()}
-      />,
+      />
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Host used for preview" }),
+      screen.getByRole("button", { name: "Client used for preview" })
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("host-overlay-edit-host-a")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("host-overlay-edit-host-a")
+      ).toBeInTheDocument();
     });
-    expect(screen.getByTestId("host-overlay-delete-host-a")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("host-overlay-delete-host-a")
+    ).toBeInTheDocument();
     expect(screen.getByTestId("host-overlay-save-as-new")).toBeVisible();
   });
 
@@ -131,7 +145,7 @@ describe("HostOverlayBar", () => {
         previewedHostId="host-a"
         onChangePreviewedHostId={onChange}
         onEditHost={vi.fn()}
-      />,
+      />
     );
 
     await user.click(screen.getByTestId("host-overlay-next"));
@@ -149,7 +163,7 @@ describe("HostOverlayBar", () => {
         previewedHostId="host-a"
         onChangePreviewedHostId={onChange}
         onEditHost={vi.fn()}
-      />,
+      />
     );
 
     await user.click(screen.getByTestId("host-overlay-prev"));
@@ -165,7 +179,7 @@ describe("HostOverlayBar", () => {
         previewedHostId="host-a"
         onChangePreviewedHostId={vi.fn()}
         onEditHost={vi.fn()}
-      />,
+      />
     );
 
     expect(screen.getByTestId("host-overlay-prev")).toBeDisabled();
@@ -180,18 +194,18 @@ describe("HostOverlayBar", () => {
         previewedHostId="host-a"
         onChangePreviewedHostId={vi.fn()}
         onEditHost={vi.fn()}
-      />,
+      />
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Host used for preview" }),
+      screen.getByRole("button", { name: "Client used for preview" })
     );
 
     const deleteBtn = await screen.findByTestId("host-overlay-delete-host-a");
     expect(deleteBtn).toBeDisabled();
     expect(deleteBtn).toHaveAttribute(
       "title",
-      expect.stringContaining("at least one host"),
+      expect.stringContaining("at least one client")
     );
   });
 
@@ -205,11 +219,11 @@ describe("HostOverlayBar", () => {
         previewedHostId="host-a"
         onChangePreviewedHostId={vi.fn()}
         onEditHost={vi.fn()}
-      />,
+      />
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Host used for preview" }),
+      screen.getByRole("button", { name: "Client used for preview" })
     );
 
     const deleteBtn = await screen.findByTestId("host-overlay-delete-host-a");
