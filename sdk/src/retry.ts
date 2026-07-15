@@ -1,4 +1,7 @@
-import { isMethodUnavailableError } from "./mcp-client-manager/error-utils.js";
+import {
+  isMethodUnavailableError,
+  isNonRetryableMarkedError,
+} from "./mcp-client-manager/error-utils.js";
 import { isAuthError } from "./mcp-client-manager/errors.js";
 import {
   extractNodeErrno,
@@ -116,6 +119,12 @@ export function normalizeRetryPolicy(policy?: RetryPolicy): RetryPolicy {
 }
 
 export function isRetryableTransientError(error: unknown): boolean {
+  // Deliberate, final verdicts from this SDK (e.g. the elicitation-aware tool
+  // timeout) are timeout-shaped by design but must never be retried.
+  if (isNonRetryableMarkedError(error)) {
+    return false;
+  }
+
   if (isAuthError(error).isAuth) {
     return false;
   }

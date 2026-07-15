@@ -3,10 +3,84 @@
  */
 
 import type { ElicitResult } from "@modelcontextprotocol/client";
-import type { ElicitationHandler, ElicitationCallback } from "./types.js";
+import {
+  getSupportedElicitationModes,
+  ProtocolError,
+  ProtocolErrorCode,
+} from "@modelcontextprotocol/client";
+import type {
+  ElicitationHandler,
+  ElicitationCallback,
+  ElicitationMode,
+} from "./types.js";
 import type { ManagedMcpClient } from "./managed-mcp-client.js";
 
 export const ElicitRequestMethod = "elicitation/create" as const;
+
+/**
+ * The `elicitation` client capability actually advertised on the wire for a
+ * server, exactly as it appeared in `initialize`. `undefined` means we have no
+ * record of one (legacy call sites; capability negotiation not tracked).
+ */
+export type DeclaredElicitationCapability = Record<string, unknown> | undefined;
+
+/**
+ * Reads the requested mode off an inbound `elicitation/create`.
+ *
+ * Absent ⇒ `"form"`: `mode` is optional in the form-params schema and every
+ * pre-2025-11-25 elicitation is a form. An unrecognized string is returned
+ * verbatim so the caller can reject it as undeclared.
+ */
+function readElicitationMode(params: unknown): string {
+  const mode = (params as { mode?: unknown } | undefined)?.mode;
+  return typeof mode === "string" ? mode : "form";
+}
+
+/**
+ * Enforces the spec MUST: a client rejects an elicitation whose mode it did
+ * not declare, with JSON-RPC `-32602` (InvalidParams).
+ *
+ * Thrown from inside a request handler, `ProtocolError` surfaces to the server
+ * as a JSON-RPC error response carrying `error.code` verbatim (upstream maps
+ * `error.code` whenever it is a safe integer).
+ *
+ * Mode-vs-declaration semantics come from upstream's own
+ * `getSupportedElicitationModes`, so this cannot drift from the shape the
+ * upstream `Client` enforces: bare `{}` ≡ form-only, `{form:{}}` form-only,
+ * `{form:{},url:{}}` both, `{url:{}}` url-only.
+ *
+ * This duplicates a check the upstream `Client` already performs for real
+ * connections — deliberately. It is the ONLY enforcement on the stateless
+ * preview client (which stores raw handlers), and it keeps the rejection
+ * identical across both client adapters.
+ */
+function assertElicitationModeDeclared(
+  serverId: string,
+  mode: string,
+  declaredCapability: DeclaredElicitationCapability
+): asserts mode is ElicitationMode {
+  if (declaredCapability === undefined) {
+    // No declaration on record. Form is the legacy default and stays allowed
+    // for back-compat; url mode requires an explicit declaration.
+    if (mode === "form") return;
+    throw new ProtocolError(
+      ProtocolErrorCode.InvalidParams,
+      `Client did not declare support for "${mode}"-mode elicitation (server "${serverId}").`
+    );
+  }
+
+  const { supportsFormMode, supportsUrlMode } = getSupportedElicitationModes(
+    declaredCapability as Parameters<typeof getSupportedElicitationModes>[0]
+  );
+
+  if (mode === "form" && supportsFormMode) return;
+  if (mode === "url" && supportsUrlMode) return;
+
+  throw new ProtocolError(
+    ProtocolErrorCode.InvalidParams,
+    `Client did not declare support for "${mode}"-mode elicitation (server "${serverId}").`
+  );
+}
 
 /**
  * Manages elicitation handlers and callbacks for MCP servers.
@@ -22,6 +96,12 @@ export class ElicitationManager {
       reject: (error: unknown) => void;
     }
   >();
+  /**
+   * In-flight elicitation handler invocations per server. Drives
+   * {@link hasPendingForServer}, which the elicitation-aware tool timeout uses
+   * to decide whether the clock is running.
+   */
+  private pendingCountByServer = new Map<string, number>();
 
   /**
    * Sets a server-specific elicitation handler.
@@ -85,6 +165,34 @@ export class ElicitationManager {
   }
 
   /**
+   * Whether an elicitation handler invocation is currently in flight for a
+   * server — i.e. whether we are waiting on a human rather than on the server.
+   *
+   * Per-server, not per-call: see the note in `elicitation-timeout.ts`.
+   *
+   * @param serverId - The server ID
+   */
+  hasPendingForServer(serverId: string): boolean {
+    return (this.pendingCountByServer.get(serverId) ?? 0) > 0;
+  }
+
+  private beginPending(serverId: string): void {
+    this.pendingCountByServer.set(
+      serverId,
+      (this.pendingCountByServer.get(serverId) ?? 0) + 1
+    );
+  }
+
+  private endPending(serverId: string): void {
+    const next = (this.pendingCountByServer.get(serverId) ?? 0) - 1;
+    if (next > 0) {
+      this.pendingCountByServer.set(serverId, next);
+    } else {
+      this.pendingCountByServer.delete(serverId);
+    }
+  }
+
+  /**
    * Gets the pending elicitations map.
    * Useful for external code that needs to add resolvers.
    *
@@ -126,8 +234,16 @@ export class ElicitationManager {
    *
    * @param serverId - The server ID
    * @param client - The MCP client
+   * @param declaredCapability - The `elicitation` client capability actually
+   *   advertised to this server on the wire. Used to reject undeclared modes
+   *   with `-32602`. Omit only when no declaration is on record — form mode is
+   *   then allowed for back-compat and url mode rejected.
    */
-  applyToClient(serverId: string, client: ManagedMcpClient): void {
+  applyToClient(
+    serverId: string,
+    client: ManagedMcpClient,
+    declaredCapability?: DeclaredElicitationCapability
+  ): void {
     const serverSpecific = this.handlers.get(serverId);
 
     if (serverSpecific) {
@@ -140,32 +256,64 @@ export class ElicitationManager {
         const params = (request as { params?: unknown }).params as
           | Parameters<ElicitationHandler>[0]
           | undefined;
-        return serverSpecific(
-          params ?? ({} as Parameters<ElicitationHandler>[0]),
+
+        assertElicitationModeDeclared(
+          serverId,
+          readElicitationMode(params),
+          declaredCapability
         );
+
+        this.beginPending(serverId);
+        try {
+          return await serverSpecific(
+            params ?? ({} as Parameters<ElicitationHandler>[0])
+          );
+        } finally {
+          this.endPending(serverId);
+        }
       });
       return;
     }
 
     if (this.globalCallback) {
       client.setRequestHandler(ElicitRequestMethod, async (request) => {
+        const params = (request as { params?: unknown }).params as
+          | Record<string, any>
+          | undefined;
+
+        const mode = readElicitationMode(params);
+        assertElicitationModeDeclared(serverId, mode, declaredCapability);
+
         const reqId = `elicit_${Date.now()}_${Math.random()
           .toString(36)
           .slice(2, 9)}`;
 
         // Extract related task ID from _meta per MCP Tasks spec (2025-11-25)
-        const meta = (request.params as any)?._meta;
+        const meta = params?._meta;
         const relatedTask = meta?.["io.modelcontextprotocol/related-task"];
         const relatedTaskId = relatedTask?.taskId as string | undefined;
 
-        return await this.globalCallback!({
-          requestId: reqId,
-          message: (request.params as any)?.message,
-          schema:
-            (request.params as any)?.requestedSchema ??
-            (request.params as any)?.schema,
-          relatedTaskId,
-        });
+        this.beginPending(serverId);
+        try {
+          return await this.globalCallback!({
+            requestId: reqId,
+            serverId,
+            mode,
+            message: params?.message,
+            // Form mode only. `schema` is the legacy alias some servers
+            // still send; url-mode params carry neither.
+            schema: params?.requestedSchema ?? params?.schema,
+            // URL mode only — absent for form requests.
+            url: typeof params?.url === "string" ? params.url : undefined,
+            elicitationId:
+              typeof params?.elicitationId === "string"
+                ? params.elicitationId
+                : undefined,
+            relatedTaskId,
+          });
+        } finally {
+          this.endPending(serverId);
+        }
       });
     }
   }
@@ -186,5 +334,9 @@ export class ElicitationManager {
    */
   clearServer(serverId: string): void {
     this.handlers.delete(serverId);
+    // Drop any pending count: the server is gone, so a handler invocation that
+    // never settles must not pin `hasPendingForServer` true forever. A late
+    // `endPending` from an in-flight handler is harmless (floors at delete).
+    this.pendingCountByServer.delete(serverId);
   }
 }
