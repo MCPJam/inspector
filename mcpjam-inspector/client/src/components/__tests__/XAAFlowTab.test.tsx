@@ -22,67 +22,6 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
 }));
 
-// The "Run as" people strip rides the xaa-registration flag (the debugger
-// extras are hidden together until launch). Default it on so the suite
-// exercises the strip; the gate itself is asserted below by flipping it.
-let registrationFlag: boolean | undefined = true;
-vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: () => registrationFlag,
-}));
-
-// Controllable org list — drives the admin derivation (owner/admin/creator).
-let organizationsState: Array<{
-  _id: string;
-  myRole?: string;
-  isCreator?: boolean;
-  updatedAt: number;
-}> = [];
-vi.mock("@/hooks/useOrganizations", () => ({
-  useOrganizationQueries: () => ({
-    sortedOrganizations: organizationsState,
-    isLoading: false,
-    createdCount: 0,
-    canCreateOrganization: true,
-  }),
-}));
-
-// Controllable ORG roster (managed test IdP identities).
-type TestOrgPerson = {
-  _id: string;
-  name: string;
-  subject: string;
-  email: string;
-  status: "active" | "suspended";
-  createdAt: number;
-  updatedAt: number;
-};
-let orgPeopleState: {
-  people: TestOrgPerson[];
-  isLoading: boolean;
-  isAuthenticated: boolean;
-} = { people: [], isLoading: false, isAuthenticated: false };
-vi.mock("@/hooks/useOrgXaaPeople", () => ({
-  useOrgXaaPeople: () => ({
-    ...orgPeopleState,
-    error: null,
-    create: vi.fn(),
-    update: vi.fn(),
-    setStatus: vi.fn(),
-    archive: vi.fn(),
-    importFromProject: vi.fn(),
-  }),
-}));
-
-let capturedWizardProps: any = null;
-vi.mock("../xaa/registration/XAARegistrationWizard", () => ({
-  XAARegistrationWizard: (props: any) => {
-    capturedWizardProps = props;
-    return props.open ? (
-      <div data-testid="xaa-registration-wizard" />
-    ) : null;
-  },
-}));
-
 let capturedIdpCardProps: any = null;
 vi.mock("../xaa/XAAIdpCard", () => ({
   XAAIdpCard: (props: any) => {
@@ -99,21 +38,9 @@ vi.mock("../xaa/XAAServerModal", () => ({
   },
 }));
 
-let resourceApps: unknown[] = [];
-vi.mock("@/hooks/useXaaResourceApps", () => ({
-  useXaaResourceApps: () => ({
-    resourceApps,
-    isLoading: false,
-    isAuthenticated: true,
-    error: null,
-    upsert: vi.fn(),
-    remove: vi.fn(),
-  }),
-}));
-
 // Controllable resolved target. Each test sets it before render. The params
-// the tab passes in are captured so managed-mode wiring (policyMode reaching
-// the flow-input resolver) is assertable despite the wholesale mock.
+// the tab passes in are captured so the tab→resolver wiring (e.g. the selected
+// person) is assertable despite the wholesale mock.
 let currentTarget: XaaTestTarget;
 let capturedTargetParams: any = null;
 vi.mock("@/hooks/useXaaTestTarget", () => ({
@@ -131,24 +58,20 @@ let runSettingsState: {
   negativeTestMode: "valid" | "expired" | "wrong_audience" | "bad_signature";
 } = { userId: "u", email: "e@example.com", negativeTestMode: "valid" };
 let personSelectionState: Record<string, string> = {};
-let orgPersonSelectionState: Record<string, string> = {};
 let issuerModeState: "local" | "hosted" = "local";
 const setIdentityMock = vi.fn();
 const setNegativeTestModeMock = vi.fn();
 const setSelectedPersonIdMock = vi.fn();
-const setSelectedOrgPersonIdMock = vi.fn();
 vi.mock("@/hooks/useXaaRunSettings", () => ({
   useXaaRunSettings: () => ({
     ...runSettingsState,
     issuerMode: issuerModeState,
     selectedPersonIdByProject: personSelectionState,
-    selectedOrgPersonIdByOrg: orgPersonSelectionState,
     isDefaultIdentity: false,
     setIdentity: setIdentityMock,
     setNegativeTestMode: setNegativeTestModeMock,
     setIssuerMode: vi.fn(),
     setSelectedPersonId: setSelectedPersonIdMock,
-    setSelectedOrgPersonId: setSelectedOrgPersonIdMock,
   }),
 }));
 
@@ -252,22 +175,6 @@ vi.mock("../xaa/XAAFlowLogger", () => ({
         {actions.continueLabel}
       </button>
     </div>
-  ),
-}));
-
-vi.mock("../xaa/registration/XAAResourceAppsSection", () => ({
-  XAAResourceAppsSection: ({
-    onSelect,
-  }: {
-    onSelect: (app: { id: string }) => void;
-  }) => (
-    <button
-      type="button"
-      data-testid="select-registration"
-      onClick={() => onSelect({ id: "app_1" })}
-    >
-      select registration
-    </button>
   ),
 }));
 
@@ -375,8 +282,6 @@ describe("XAAFlowTab", () => {
     // authUser to null (guest), and a mid-test failure must not leak that into
     // later tests.
     authUser = { email: "tester@example.com" };
-    registrationFlag = true;
-    resourceApps = [];
     localStorage.clear();
     runSettingsState = {
       userId: "u",
@@ -384,19 +289,14 @@ describe("XAAFlowTab", () => {
       negativeTestMode: "valid",
     };
     personSelectionState = {};
-    orgPersonSelectionState = {};
     issuerModeState = "local";
-    organizationsState = [];
-    orgPeopleState = { people: [], isLoading: false, isAuthenticated: false };
     peopleState = { people: undefined, isLoading: false, isAvailable: false };
     capturedPeopleStripProps = null;
     capturedTargetParams = null;
-    capturedWizardProps = null;
     capturedScorecardInput = null;
     setIdentityMock.mockClear();
     setNegativeTestModeMock.mockClear();
     setSelectedPersonIdMock.mockClear();
-    setSelectedOrgPersonIdMock.mockClear();
     confidentialCimdUrlResult = null;
     currentTarget = makeTarget();
   });
@@ -518,7 +418,6 @@ describe("XAAFlowTab", () => {
   });
 
   it("fires xaa_tab_viewed once per mount with a target_count", () => {
-    resourceApps = [{ id: "a" }];
     render(
       <XAAFlowTab
         serverConfigs={{ s1: {} as any, s2: {} as any }}
@@ -530,8 +429,7 @@ describe("XAAFlowTab", () => {
       ([event]) => event === "xaa_tab_viewed"
     );
     expect(viewed).toHaveLength(1);
-    // 1 registration + 2 servers.
-    expect(viewed[0][1]).toMatchObject({ target_count: 3 });
+    expect(viewed[0][1]).toMatchObject({ target_count: 2 });
   });
 
   it("Run all drives the machine and fires telemetry carrying target_source", async () => {
@@ -781,63 +679,6 @@ describe("XAAFlowTab", () => {
     expect(
       screen.queryByText(/Configure XAA Debugger/i)
     ).not.toBeInTheDocument();
-  });
-
-  it("surfaces the registration override with a clear control", async () => {
-    const user = userEvent.setup();
-    resourceApps = [
-      {
-        id: "app_1",
-        name: "AcmeApp",
-        resourceType: "mcp",
-        resourceUrl: "https://acme.example.com/mcp",
-        authServerMode: "own",
-        issuer: "https://acme-as.example.com",
-        scopes: [],
-        hasSecret: true,
-        createdAt: 0,
-        updatedAt: 0,
-      },
-    ];
-    currentTarget = makeTarget({
-      targetSource: "registration",
-      targetKey: "registration:app_1",
-      runInput: { ...makeTarget().runInput, mode: "hosted-registration" },
-    });
-
-    render(<XAAFlowTab serverConfigs={{}} selectedServerName="none" />);
-    await user.click(screen.getByTestId("select-registration"));
-
-    expect(
-      screen.getByText(/Using registered app — overrides the bar selection/i)
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /use bar server/i })
-    ).toBeInTheDocument();
-  });
-
-  it("keeps the selected bar server context for the configuration modal during a registration run", () => {
-    currentTarget = makeTarget({
-      targetSource: "registration",
-      targetKey: "registration:app_1",
-      serverId: undefined,
-      projectId: undefined,
-      barServerId: "srv_bar",
-      barServerProjectId: "proj_bar",
-      runInput: { ...makeTarget().runInput, mode: "hosted-registration" },
-    });
-
-    render(
-      <XAAFlowTab
-        serverConfigs={{ staging: {} as any }}
-        selectedServerName="staging"
-      />
-    );
-
-    expect(capturedServerModalProps).toMatchObject({
-      projectId: "proj_bar",
-      hostedServerId: "srv_bar",
-    });
   });
 
   it("xaa_flow_started carries a salted target_id (no raw name/url)", async () => {
@@ -1296,22 +1137,6 @@ describe("XAAFlowTab", () => {
       );
     });
 
-    it("forces preregistered for registration-backed targets regardless of persisted strategy", () => {
-      currentTarget = makeTarget({
-        targetSource: "registration",
-        runInput: {
-          ...makeTarget().runInput,
-          registrationId: "app_1",
-        },
-      } as Partial<XaaTestTarget>);
-      render(
-        <XAAFlowTab
-          serverConfigs={withStrategy("dcr")}
-          selectedServerName="staging"
-        />
-      );
-      expect(capturedMachineConfig.registrationStrategy).toBe("preregistered");
-    });
   });
 
   describe("identity assertion header toggle (write-through)", () => {
@@ -1408,35 +1233,6 @@ describe("XAAFlowTab", () => {
       expect(onSaveServerConfig).not.toHaveBeenCalled();
     });
 
-    it("disables the control (OIDC shown) for registration-backed targets", () => {
-      currentTarget = makeTarget({
-        targetSource: "registration",
-        runInput: {
-          ...makeTarget().runInput,
-          registrationId: "app_1",
-        },
-      } as Partial<XaaTestTarget>);
-      render(
-        <XAAFlowTab
-          serverConfigs={{
-            staging: {
-              ...storedServer().staging,
-              xaaIdentityAssertionFormat: "saml",
-            },
-          }}
-          selectedServerName="staging"
-          onSaveServerConfig={vi.fn()}
-        />
-      );
-
-      // The per-server preset must not leak onto a registration run — the
-      // control shows the OIDC default and says why it's disabled.
-      expect(capturedIdpCardProps.identityAssertionFormat).toBe("oidc");
-      expect(
-        capturedIdpCardProps.identityAssertionFormatDisabledReason
-      ).toMatch(/registered app/i);
-    });
-
     it("hides the control when no save path is wired", () => {
       render(
         <XAAFlowTab serverConfigs={storedServer()} selectedServerName="staging" />
@@ -1494,24 +1290,6 @@ describe("XAAFlowTab", () => {
       expect(capturedPeopleStripProps.disabled).toBe(false);
       capturedPeopleStripProps.onSelectPerson(null);
       expect(setSelectedPersonIdMock).toHaveBeenCalledWith("proj_1", null);
-    });
-
-    // The gate itself: the strip is an unreleased debugger extra, hidden
-    // unless the flag resolves explicitly true. `undefined` (flag still
-    // loading, or PostHog unavailable) must hide it too — the strict
-    // `=== true` check is the point, so an unresolved flag never leaks the
-    // surface.
-    it.each([
-      ["off", false],
-      ["unresolved", undefined],
-    ])("hides the people strip when the flag is %s", (_label, flagValue) => {
-      registrationFlag = flagValue as boolean | undefined;
-      seedRoster();
-      currentTarget = personTarget();
-      renderTab();
-
-      expect(screen.queryByTestId("xaa-people-strip")).not.toBeInTheDocument();
-      expect(capturedPeopleStripProps).toBeNull();
     });
 
     it("a person switch resets a completed flow immediately (no debounce)", async () => {
@@ -1896,419 +1674,4 @@ describe("XAAFlowTab", () => {
     });
   });
 
-  describe("managed IdP mode", () => {
-    const acmeApp = {
-      id: "app_1",
-      name: "AcmeApp",
-      resourceType: "mcp",
-      resourceUrl: "https://acme.example.com/mcp",
-      authServerMode: "own",
-      issuer: "https://acme-as.example.com",
-      scopes: ["tasks:read", "tasks:write"],
-      hasSecret: true,
-      createdAt: 0,
-      updatedAt: 0,
-    };
-    const alice: TestOrgPerson = {
-      _id: "xperson_alice",
-      name: "Alice Chen",
-      subject: "alice-001",
-      email: "alice@example.test",
-      status: "active",
-      createdAt: 1,
-      updatedAt: 5,
-    };
-    const suspendedSam: TestOrgPerson = {
-      _id: "xperson_sam",
-      name: "Sam Doe",
-      subject: "sam-002",
-      email: "sam@example.test",
-      status: "suspended",
-      createdAt: 1,
-      updatedAt: 5,
-    };
-
-    // Managed-capable = registration target + org + hosted issuer. The tests
-    // run a non-hosted build, so the org-scoped issuer comes from the local
-    // hosted-issuer opt-in (issuerMode "hosted") — the equivalent branch of
-    // (HOSTED_MODE || hostedIssuerOptIn).
-    function seedManagedOrg({ admin = true }: { admin?: boolean } = {}) {
-      organizationsState = [
-        { _id: "org_1", myRole: admin ? "admin" : "member", updatedAt: 0 },
-      ];
-      issuerModeState = "hosted";
-      resourceApps = [acmeApp];
-      orgPeopleState = {
-        people: [alice, suspendedSam],
-        isLoading: false,
-        isAuthenticated: true,
-      };
-    }
-
-    /** Registration-shaped resolved target whose runInput already carries the
-     * managed context (the real useXaaTestTarget is mocked wholesale). */
-    function managedTarget(extra: Record<string, unknown> = {}) {
-      return makeTarget({
-        targetSource: "registration",
-        targetKey: "registration:app_1",
-        runInput: {
-          ...makeTarget().runInput,
-          mode: "hosted-registration",
-          registrationId: "app_1",
-          serverUrl: acmeApp.resourceUrl,
-          authzServerIssuer: acmeApp.issuer,
-          clientId: "acme-client",
-          scope: "tasks:read tasks:write",
-          userId: alice.subject,
-          email: alice.email,
-          policyMode: "managed",
-          testIdentityId: alice._id,
-          resourceAppId: acmeApp.id,
-          ...extra,
-        },
-      } as Partial<XaaTestTarget>);
-    }
-
-    async function renderManagedTab(
-      user: ReturnType<typeof userEvent.setup>,
-    ) {
-      const view = render(
-        <XAAFlowTab
-          serverConfigs={{}}
-          selectedServerName="none"
-          organizationId="org_1"
-          projectId="proj_1"
-        />,
-      );
-      // Select the registered app — the managed-capable trigger.
-      await user.click(screen.getByTestId("select-registration"));
-      return view;
-    }
-
-    it("auto-enables managed mode: policyMode 'managed' reaches the target resolver and the machine config", async () => {
-      const user = userEvent.setup();
-      seedManagedOrg();
-      orgPersonSelectionState = { org_1: alice._id };
-      currentTarget = managedTarget();
-      await renderManagedTab(user);
-
-      // The resolver receives the mode + the ORG-selected person…
-      expect(capturedTargetParams.policyMode).toBe("managed");
-      expect(capturedTargetParams.selectedPerson?._id).toBe(alice._id);
-      // …and the machine config carries the resolved policy context.
-      expect(capturedMachineConfig).toMatchObject({
-        policyMode: "managed",
-        testIdentityId: alice._id,
-        resourceAppId: "app_1",
-      });
-    });
-
-    it("admin 'bypass org policy' toggle flips the mode to unmanaged; non-admins never see it", async () => {
-      const user = userEvent.setup();
-      seedManagedOrg();
-      currentTarget = managedTarget();
-      const { unmount } = await renderManagedTab(user);
-
-      await user.click(
-        screen.getByRole("checkbox", { name: /bypass org policy/i }),
-      );
-      expect(capturedTargetParams.policyMode).toBe("unmanaged");
-      unmount();
-
-      // A member gets no toggle and the mode stays managed (the server
-      // enforces the admin check regardless — this is pure UX).
-      seedManagedOrg({ admin: false });
-      await renderManagedTab(user);
-      expect(
-        screen.queryByRole("checkbox", { name: /bypass org policy/i }),
-      ).not.toBeInTheDocument();
-      expect(capturedTargetParams.policyMode).toBe("managed");
-    });
-
-    it("toggling the bypass after a completed run resets through the confirm path — no artifact minted under the previous mode survives", async () => {
-      const user = userEvent.setup();
-      seedManagedOrg();
-      orgPersonSelectionState = { org_1: alice._id };
-      currentTarget = managedTarget();
-      await renderManagedTab(user);
-
-      await user.click(screen.getByRole("button", { name: /run all/i }));
-      await waitFor(() =>
-        expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
-          "Flow Complete",
-        ),
-      );
-
-      // Flipping the policy mode goes through the single target-reset owner:
-      // the completed run holds artifacts (an already-minted ID-JAG) produced
-      // under managed policy, so the switch must confirm first…
-      await user.click(
-        screen.getByRole("checkbox", { name: /bypass org policy/i }),
-      );
-      await user.click(
-        await screen.findByRole("button", { name: /switch and reset/i }),
-      );
-      // …and confirming rebuilds the flow from idle, so the next step can't
-      // send anything minted under the previous mode.
-      expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
-        "Start",
-      );
-
-      // Toggling back with the flow idle rebuilds immediately — no dialog.
-      await user.click(
-        screen.getByRole("checkbox", { name: /bypass org policy/i }),
-      );
-      expect(
-        screen.queryByRole("button", { name: /switch and reset/i }),
-      ).not.toBeInTheDocument();
-      expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
-        "Start",
-      );
-    });
-
-    it("switches the strip to the org roster and routes selection to the org map", async () => {
-      const user = userEvent.setup();
-      seedManagedOrg();
-      currentTarget = managedTarget();
-      await renderManagedTab(user);
-
-      expect(capturedPeopleStripProps.mode).toBe("org");
-      // The strip receives the full org roster (it hides suspended itself).
-      expect(
-        capturedPeopleStripProps.people.map((p: TestOrgPerson) => p._id),
-      ).toEqual([alice._id, suspendedSam._id]);
-
-      capturedPeopleStripProps.onSelectPerson(alice._id);
-      expect(setSelectedOrgPersonIdMock).toHaveBeenCalledWith(
-        "org_1",
-        alice._id,
-      );
-      expect(setSelectedPersonIdMock).not.toHaveBeenCalled();
-    });
-
-    it("a suspended person can't be the run identity — a stale selection is cleared", async () => {
-      const user = userEvent.setup();
-      seedManagedOrg();
-      orgPersonSelectionState = { org_1: suspendedSam._id };
-      currentTarget = managedTarget();
-      await renderManagedTab(user);
-
-      // Not resolvable as the run identity…
-      expect(capturedTargetParams.selectedPerson).toBeNull();
-      // …and tidied from the persisted org map like a deleted person.
-      expect(setSelectedOrgPersonIdMock).toHaveBeenCalledWith("org_1", null);
-    });
-
-    it("records 'idp_denied' with the policy reasonCode when the IdP refuses the mint", async () => {
-      const user = userEvent.setup();
-      seedManagedOrg();
-      orgPersonSelectionState = { org_1: alice._id };
-      currentTarget = managedTarget();
-      machineFailure = {
-        currentStep: "token_exchange_request",
-        error: "Token exchange failed (403 access_denied)",
-        idpPolicy: {
-          outcome: "denied",
-          errorCode: "access_denied",
-          reasonCode: "not_assigned",
-        },
-      };
-      await renderManagedTab(user);
-
-      await user.click(screen.getByRole("button", { name: /run all/i }));
-      await waitFor(() =>
-        expect(capturedPeopleStripProps.outcomeFor(alice._id)).toMatchObject({
-          status: "idp_denied",
-          reasonCode: "not_assigned",
-          failedStep: "token_exchange_request",
-        }),
-      );
-    });
-
-    it("an evaluator outage (temporarily_unavailable) is a test_error, never an IdP ruling", async () => {
-      const user = userEvent.setup();
-      seedManagedOrg();
-      orgPersonSelectionState = { org_1: alice._id };
-      currentTarget = managedTarget();
-      machineFailure = {
-        currentStep: "token_exchange_request",
-        error: "Token exchange failed (503)",
-        idpPolicy: {
-          outcome: "denied",
-          errorCode: "temporarily_unavailable",
-          reasonCode: "temporarily_unavailable",
-        },
-      };
-      await renderManagedTab(user);
-
-      await user.click(screen.getByRole("button", { name: /run all/i }));
-      await waitFor(() =>
-        expect(capturedPeopleStripProps.outcomeFor(alice._id)).toMatchObject({
-          status: "test_error",
-          failedStep: "token_exchange_request",
-        }),
-      );
-    });
-
-    it("an IdP downscope wins over the RAS comparison (baseline shifts to the ID-JAG grant)", async () => {
-      const user = userEvent.setup();
-      seedManagedOrg();
-      orgPersonSelectionState = { org_1: alice._id };
-      currentTarget = managedTarget();
-      // IdP narrowed the mint to tasks:read; the RAS honored exactly that.
-      // Against the ORIGINAL request this still looks narrower — the shifted
-      // baseline must prevent it from double-reporting as a RAS downscope.
-      machineCompleteExtras = {
-        grantedScope: "tasks:read",
-        idpPolicy: {
-          outcome: "downscoped",
-          requestedScope: "tasks:read tasks:write",
-          grantedScope: "tasks:read",
-        },
-      };
-      await renderManagedTab(user);
-
-      await user.click(screen.getByRole("button", { name: /run all/i }));
-      await waitFor(() =>
-        expect(capturedPeopleStripProps.outcomeFor(alice._id)).toMatchObject({
-          status: "idp_downscoped",
-        }),
-      );
-    });
-
-    it("records 'ras_downscoped' when the IdP granted in full but the RAS narrowed", async () => {
-      const user = userEvent.setup();
-      seedManagedOrg();
-      orgPersonSelectionState = { org_1: alice._id };
-      currentTarget = managedTarget();
-      machineCompleteExtras = {
-        grantedScope: "tasks:read",
-        idpPolicy: {
-          outcome: "granted",
-          requestedScope: "tasks:read tasks:write",
-          grantedScope: "tasks:read tasks:write",
-        },
-      };
-      await renderManagedTab(user);
-
-      await user.click(screen.getByRole("button", { name: /run all/i }));
-      await waitFor(() =>
-        expect(capturedPeopleStripProps.outcomeFor(alice._id)).toMatchObject({
-          status: "ras_downscoped",
-        }),
-      );
-    });
-
-    it("keeps managed and unmanaged outcomes apart (fingerprint/gate separation)", async () => {
-      const user = userEvent.setup();
-      seedManagedOrg();
-      orgPersonSelectionState = { org_1: alice._id };
-      currentTarget = managedTarget();
-      await renderManagedTab(user);
-
-      await user.click(screen.getByRole("button", { name: /run all/i }));
-      await waitFor(() =>
-        expect(capturedPeopleStripProps.outcomeFor(alice._id)).toMatchObject({
-          status: "allowed",
-        }),
-      );
-
-      // Flip to the unmanaged bypass: the managed ruling must not render as
-      // if it validated the unmanaged run.
-      await user.click(
-        screen.getByRole("checkbox", { name: /bypass org policy/i }),
-      );
-      currentTarget = managedTarget({ policyMode: "unmanaged" });
-      expect(capturedPeopleStripProps.outcomeFor(alice._id)).toBeUndefined();
-    });
-
-    it("the managed scorecard input carries subject AND email plus the policy fields", async () => {
-      const user = userEvent.setup();
-      seedManagedOrg();
-      orgPersonSelectionState = { org_1: alice._id };
-      currentTarget = managedTarget();
-      await renderManagedTab(user);
-
-      expect(capturedScorecardInput).toMatchObject({
-        registrationId: "app_1",
-        subject: alice.subject,
-        email: alice.email,
-        policyMode: "managed",
-        testIdentityId: alice._id,
-        resourceAppId: "app_1",
-      });
-    });
-
-    describe("bar-server register prompt", () => {
-      function seedBarServerOrg({ admin = true }: { admin?: boolean } = {}) {
-        organizationsState = [
-          { _id: "org_1", myRole: admin ? "admin" : "member", updatedAt: 0 },
-        ];
-        issuerModeState = "hosted";
-        currentTarget = makeTarget(); // testable bar server
-      }
-
-      function renderBarTab() {
-        return render(
-          <XAAFlowTab
-            serverConfigs={{}}
-            selectedServerName="staging"
-            organizationId="org_1"
-            projectId="proj_1"
-          />,
-        );
-      }
-
-      it("offers registering the target (admin) without blocking runs", async () => {
-        const user = userEvent.setup();
-        seedBarServerOrg();
-        renderBarTab();
-
-        expect(
-          screen.getByText(/isn't registered with your org's test IdP/i),
-        ).toBeInTheDocument();
-        // Runs are NOT blocked by the prompt.
-        expect(
-          screen.getByRole("button", { name: /run all/i }),
-        ).toBeEnabled();
-
-        await user.click(
-          screen.getByRole("button", { name: /register this server/i }),
-        );
-        expect(capturedWizardProps.open).toBe(true);
-        // The wizard is prefilled from the current bar-server target.
-        expect(capturedWizardProps.prefill).toMatchObject({
-          name: "staging",
-          resourceUrl: "https://staging.mcp.example.com",
-          targetClientId: "staging-client",
-        });
-      });
-
-      it("'Run unmanaged' dismisses the prompt; non-admins get no register button", async () => {
-        const user = userEvent.setup();
-        seedBarServerOrg({ admin: false });
-        renderBarTab();
-
-        expect(
-          screen.queryByRole("button", { name: /register this server/i }),
-        ).not.toBeInTheDocument();
-
-        await user.click(
-          screen.getByRole("button", { name: /run unmanaged/i }),
-        );
-        expect(
-          screen.queryByText(/isn't registered with your org's test IdP/i),
-        ).not.toBeInTheDocument();
-      });
-
-      it("never shows for a bar server without the org-scoped issuer", () => {
-        seedBarServerOrg();
-        issuerModeState = "local"; // no hosted issuer → no evaluator
-        renderBarTab();
-        expect(
-          screen.queryByText(/isn't registered with your org's test IdP/i),
-        ).not.toBeInTheDocument();
-      });
-    });
-  });
 });

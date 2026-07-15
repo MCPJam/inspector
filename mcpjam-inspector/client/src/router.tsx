@@ -32,7 +32,6 @@ import App, {
   ToolsRoute,
   TracingRoute,
   XAAFlowRoute,
-  XAASetupRoute,
 } from "./App";
 import { getAppRouter, setAppRouter } from "./router-ref";
 import { buildHostsPath } from "./lib/app-navigation";
@@ -104,11 +103,6 @@ export function createAppRouter(): AppRouter {
         { path: "compatibility", element: <CompatibilityRoute /> },
         { path: "oauth-flow", element: <OAuthFlowRoute /> },
         { path: "xaa-flow", element: <XAAFlowRoute /> },
-        // Managed test-IdP setup center. Sections (people | apps | access)
-        // are URL segments so each is deep-linkable; the first segment stays
-        // "xaa-flow" so `pathnameToActiveTab` highlights the debugger tab.
-        { path: "xaa-flow/setup", element: <XAASetupRoute /> },
-        { path: "xaa-flow/setup/:section", element: <XAASetupRoute /> },
         { path: "tracing", element: <TracingRoute /> },
         { path: "chat", element: <ChatAliasRoute /> },
         // Catch sub-paths like `/chat/thread-1` so old bookmarks land on

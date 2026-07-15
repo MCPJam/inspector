@@ -13,21 +13,6 @@ vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
 }));
 
-// The setup gear is gated on the xaa-registration flag (plus hosted + org).
-let registrationFlag: boolean | undefined = true;
-vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: () => registrationFlag,
-}));
-
-const navigateMock = vi.fn();
-vi.mock("@/lib/app-navigation", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/app-navigation")>();
-  return {
-    ...actual,
-    useAppNavigate: () => navigateMock,
-  };
-});
-
 describe("XAAIdpCard", () => {
   // jsdom serves the suite from a fixed origin; derive the expected URLs from
   // it rather than forcing a cross-origin replaceState (which jsdom rejects).
@@ -35,8 +20,6 @@ describe("XAAIdpCard", () => {
 
   beforeEach(() => {
     copyToClipboard.mockClear();
-    navigateMock.mockClear();
-    registrationFlag = true;
   });
 
   // Only unstub globals (e.g. the fetch stub) — NOT restoreAllMocks, which
@@ -267,27 +250,6 @@ describe("XAAIdpCard", () => {
     expect(note).toHaveTextContent(/still a\s+JWT/i);
   });
 
-  it("shows the setup gear for org members and navigates to the setup center", async () => {
-    const user = userEvent.setup();
-    render(<XAAIdpCard organizationId="org_a1B2" />);
-
-    await user.click(screen.getByRole("button", { name: /open xaa setup/i }));
-    expect(navigateMock).toHaveBeenCalledWith("/xaa-flow/setup");
-  });
-
-  it("hides the setup gear without an org or without the registration flag", () => {
-    const { unmount } = render(<XAAIdpCard />);
-    expect(
-      screen.queryByRole("button", { name: /open xaa setup/i })
-    ).toBeNull();
-    unmount();
-
-    registrationFlag = false;
-    render(<XAAIdpCard organizationId="org_a1B2" />);
-    expect(
-      screen.queryByRole("button", { name: /open xaa setup/i })
-    ).toBeNull();
-  });
 });
 
 describe("XAAIdpCard (non-hosted mode)", () => {
