@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { XAAFlowTab } from "../xaa/XAAFlowTab";
+import { fetchConfidentialCimdClientUrl } from "@/lib/xaa/idp-endpoints";
 import type { XaaTestTarget } from "@/hooks/useXaaTestTarget";
 import { buildXaaDcrCredentialCacheKey } from "@/lib/xaa/types";
 
@@ -301,6 +302,16 @@ let machineCompleteExtras: Record<string, unknown> = {};
 let machineCompletionUpdates: Record<string, unknown> = {};
 // When set, runAll parks this failure state instead of completing.
 let machineFailure: Record<string, unknown> | null = null;
+// Controllable confidential-CIMD reflector URL fetch. null ⇒ the fetch failed
+// (or hasn't resolved), which must fail the run closed rather than fall back to
+// public CIMD. Preserve every other real export so the issuer-resolution paths
+// the rest of the suite exercises behave unchanged.
+let confidentialCimdUrlResult: string | null = null;
+vi.mock("@/lib/xaa/idp-endpoints", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/xaa/idp-endpoints")>()),
+  fetchConfidentialCimdClientUrl: vi.fn(async () => confidentialCimdUrlResult),
+}));
+
 vi.mock("@/lib/xaa/debug-state-machine-adapter", () => ({
   createInspectorXAAStateMachine: (config: any) => {
     capturedMachineConfig = config;
@@ -386,7 +397,74 @@ describe("XAAFlowTab", () => {
     setNegativeTestModeMock.mockClear();
     setSelectedPersonIdMock.mockClear();
     setSelectedOrgPersonIdMock.mockClear();
+    confidentialCimdUrlResult = null;
     currentTarget = makeTarget();
+  });
+
+  const CONFIDENTIAL_SERVER = {
+    staging: { registrationMode: "cimd", xaaClientAuth: "private_key_jwt" },
+  } as any;
+
+  it("fails a confidential CIMD run closed when the reflector URL can't load", async () => {
+    const user = userEvent.setup();
+    confidentialCimdUrlResult = null; // fetch fails
+    render(
+      <XAAFlowTab
+        serverConfigs={CONFIDENTIAL_SERVER}
+        selectedServerName="staging"
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+
+    // Blocked: the machine is NOT run, and it was never configured as public
+    // CIMD (no clientIdMetadataUrl) that would omit the client_assertion.
+    expect(runAllMock).not.toHaveBeenCalled();
+    expect(capturedMachineConfig?.clientIdMetadataUrl).toBeUndefined();
+  });
+
+  it("a blocked click retries the reflector fetch (transient-failure recovery)", async () => {
+    const user = userEvent.setup();
+    confidentialCimdUrlResult = null; // first fetch fails
+    render(
+      <XAAFlowTab
+        serverConfigs={CONFIDENTIAL_SERVER}
+        selectedServerName="staging"
+      />
+    );
+    await waitFor(() =>
+      expect(fetchConfidentialCimdClientUrl).toHaveBeenCalled()
+    );
+    const callsBefore = vi.mocked(fetchConfidentialCimdClientUrl).mock.calls
+      .length;
+
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+
+    await waitFor(() =>
+      expect(
+        vi.mocked(fetchConfidentialCimdClientUrl).mock.calls.length
+      ).toBeGreaterThan(callsBefore)
+    );
+    expect(runAllMock).not.toHaveBeenCalled();
+  });
+
+  it("threads the reflector URL into the machine for a confidential CIMD run", async () => {
+    const user = userEvent.setup();
+    const reflectorUrl =
+      "https://app.mcpjam.com/.well-known/oauth/xaa-cimd/AbC123";
+    confidentialCimdUrlResult = reflectorUrl;
+    render(
+      <XAAFlowTab
+        serverConfigs={CONFIDENTIAL_SERVER}
+        selectedServerName="staging"
+      />
+    );
+
+    await waitFor(() =>
+      expect(capturedMachineConfig?.clientIdMetadataUrl).toBe(reflectorUrl)
+    );
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+    expect(runAllMock).toHaveBeenCalled();
   });
 
   it("places the negative-test scorecard behind a vertical resize handle", () => {

@@ -6,6 +6,23 @@
 /** JWKS `kid` the mock IdP signs with and publishes. */
 export const XAA_IDP_KID = "xaa-idp-1";
 
+/** Client-authentication methods supported by an XAA CIMD client. */
+export const XAA_CLIENT_AUTH_METHODS = ["none", "private_key_jwt"] as const;
+
+export type XaaClientAuthMethod = (typeof XAA_CLIENT_AUTH_METHODS)[number];
+
+export const DEFAULT_XAA_CLIENT_AUTH: XaaClientAuthMethod = "none";
+
+/** Narrow a persisted or wire value to a supported CIMD client-auth method. */
+export function normalizeXaaClientAuth(
+  value: unknown
+): XaaClientAuthMethod | undefined {
+  return typeof value === "string" &&
+    (XAA_CLIENT_AUTH_METHODS as readonly string[]).includes(value)
+    ? (value as XaaClientAuthMethod)
+    : undefined;
+}
+
 /** The tamper modes the debugger can apply when minting a broken ID-JAG. */
 export const NEGATIVE_TEST_MODES = [
   "valid",

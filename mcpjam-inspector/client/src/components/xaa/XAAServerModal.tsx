@@ -22,11 +22,14 @@ import type { ServerWithName } from "@/hooks/use-app-state";
 import {
   DEFAULT_IDENTITY_ASSERTION_FORMAT,
   DEFAULT_REGISTRATION_STRATEGY,
+  DEFAULT_XAA_CLIENT_AUTH,
   IDENTITY_ASSERTION_FORMATS,
   type IdentityAssertionFormat,
   type RegistrationStrategy,
+  type XaaClientAuthMethod,
 } from "@/shared/xaa.js";
 import { XAA_STRATEGY_OPTIONS } from "@/lib/registration-strategy";
+import { HOSTED_MODE } from "@/lib/config";
 import { XaaCredentialFields } from "../connection/shared/XaaCredentialFields";
 import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
 import {
@@ -53,6 +56,8 @@ interface XAAServerModalProps {
   /** Hosted secret context used to reveal an existing saved client secret. */
   projectId?: string | null;
   hostedServerId?: string | null;
+  /** Whether this inspector process has a Node-side confidential-CIMD provider. */
+  confidentialCimdAvailable?: boolean;
 }
 
 export function XAAServerModal({
@@ -64,6 +69,7 @@ export function XAAServerModal({
   projectDefaultIdentity = null,
   projectId,
   hostedServerId,
+  confidentialCimdAvailable = !HOSTED_MODE,
 }: XAAServerModalProps) {
   // One shared derivation with the flow-header format toggle's untouched
   // resave, so both surfaces read the same unedited field values.
@@ -91,6 +97,11 @@ export function XAAServerModal({
   // always sends the displayed value.
   const [identityAssertionFormat, setIdentityAssertionFormat] =
     useState<IdentityAssertionFormat>(DEFAULT_IDENTITY_ASSERTION_FORMAT);
+  // CIMD client authentication: public (none) or confidential (private_key_jwt).
+  // Only surfaced/sent for the cimd strategy.
+  const [clientAuth, setClientAuth] = useState<XaaClientAuthMethod>(
+    DEFAULT_XAA_CLIENT_AUTH
+  );
   const [clientId, setClientId] = useState("");
   const [scopes, setScopes] = useState("");
   const [authzIssuer, setAuthzIssuer] = useState("");
@@ -116,6 +127,7 @@ export function XAAServerModal({
     setRegistrationStrategy(seed.registrationStrategy);
     setRegistrationStrategyDirty(false);
     setIdentityAssertionFormat(seed.identityAssertionFormat);
+    setClientAuth(seed.clientAuth);
     setClientId(seed.clientId);
     // Scopes arrive space-separated from the seed (stored comma- or
     // space-separated forms normalized there).
@@ -212,6 +224,10 @@ export function XAAServerModal({
         email: trimmedXaaEmail,
       },
       identityAssertionFormat,
+      // CIMD client-auth — the builder emits it only for the cimd strategy.
+      // Resolve to "none" when no confidential provider is available (hosted)
+      // so a stale imported private_key_jwt is actively cleared.
+      clientAuth: confidentialCimdAvailable ? clientAuth : "none",
       registration: {
         dirty: registrationStrategyDirty,
         strategy: registrationStrategy,
@@ -306,6 +322,40 @@ export function XAAServerModal({
                 </SelectContent>
               </Select>
             </div>
+
+            {/* CIMD client authentication. Public presents the metadata URL and
+                proves nothing; confidential signs a private_key_jwt assertion
+                with a server-held client key (published via the reflector doc)
+                so an authorization server that requires a confidential client
+                accepts the run. Only meaningful for the cimd strategy. */}
+            {registrationStrategy === "cimd" && confidentialCimdAvailable && (
+              <div className="space-y-2">
+                <Label htmlFor="xaa-client-auth">Client authentication</Label>
+                <Select
+                  value={clientAuth}
+                  onValueChange={(value) =>
+                    setClientAuth(value as XaaClientAuthMethod)
+                  }
+                >
+                  <SelectTrigger id="xaa-client-auth" className="h-10">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">
+                      Public (no client auth)
+                    </SelectItem>
+                    <SelectItem value="private_key_jwt">
+                      Confidential (private_key_jwt)
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {clientAuth === "private_key_jwt"
+                    ? "The local inspector holds a client key and signs a client_assertion; the client_id is a reflector document publishing the matching public key. Use when the server requires a confidential client."
+                    : "Presents MCPJam's hosted metadata URL as the client_id with no client authentication (requires advertised CIMD support)."}
+                </p>
+              </div>
+            )}
 
             {/* Identity assertion format (input axis). A per-server preset the
                 debugger flow reads; changing it resets the current run. */}

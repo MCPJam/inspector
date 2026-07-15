@@ -20,7 +20,11 @@ export {
   SUBJECT_IDENTIFIER_FORMATS,
   DEFAULT_SUBJECT_IDENTIFIER_FORMAT,
   normalizeSubjectIdentifierFormat,
+  XAA_CLIENT_AUTH_METHODS,
+  DEFAULT_XAA_CLIENT_AUTH,
+  normalizeXaaClientAuth,
   SAML2_TOKEN_TYPE,
+  isLoopbackClientMetadataUrl,
 } from "@mcpjam/sdk/browser";
 export type {
   NegativeTestMode,
@@ -29,6 +33,7 @@ export type {
   AuthMethod,
   IdentityAssertionFormat,
   SubjectIdentifierFormat,
+  XaaClientAuthMethod,
 } from "@mcpjam/sdk/browser";
 
 /**

@@ -18,9 +18,11 @@ import {
   handleXaaJsonTokenExchange,
   handleXaaTokenExchangeGrant,
 } from "./mint/handlers.js";
-import { buildJwtBearerRequest } from "./mint/jwt-bearer.js";
-import { initXaaClientKeyPair } from "./mint/client-keypair.js";
-import { signClientAssertion } from "./mint/client-assertion.js";
+import {
+  buildXaaJwtBearerRequest,
+  getLocalConfidentialCimdProvider,
+  type ConfidentialCimdProvider,
+} from "./confidential-cimd-provider.js";
 import {
   DEFAULT_NEGATIVE_TEST_MODE,
   isNegativeTestMode,
@@ -40,6 +42,10 @@ export interface InProcessXaaExecutorOptions {
   httpsOnly?: boolean;
   /** Per-request timeout (ms) applied to every outbound proxy request. */
   timeoutMs?: number;
+  /** Node-side confidential-CIMD credential capability. Defaults to the local
+   * filesystem-backed provider; inject a different provider for another key
+   * store or omit private_key_jwt from the flow. */
+  confidentialCimdProvider?: ConfidentialCimdProvider;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -110,6 +116,8 @@ export function createInProcessXaaExecutor(
 ): XAARequestExecutor {
   const httpsOnly = options.httpsOnly ?? false;
   const timeoutMs = options.timeoutMs;
+  const confidentialCimdProvider =
+    options.confidentialCimdProvider ?? getLocalConfidentialCimdProvider();
 
   // Ensure the keypair is loaded, then return the canonical /xaa issuer.
   const resolveIssuer = (): string => {
@@ -264,24 +272,22 @@ export function createInProcessXaaExecutor(
       const authMethod = isTokenAuthMethod(body.tokenEndpointAuthMethod)
         ? body.tokenEndpointAuthMethod
         : undefined;
-      // Confidential CIMD: sign the private_key_jwt client assertion here (Node),
-      // with the local client key. The browser-safe state machine only carries
-      // the method string; key material never leaves the executor.
       const clientId = str(body.clientId) || undefined;
-      const clientAssertion =
-        authMethod === "private_key_jwt" && clientId
-          ? (initXaaClientKeyPair(),
-            signClientAssertion({ clientId, tokenEndpoint }))
-          : undefined;
-      const { headers, body: form } = buildJwtBearerRequest({
-        assertion: str(body.assertion),
-        clientId,
-        clientSecret: str(body.clientSecret) || undefined,
-        scope: str(body.scope) || undefined,
-        resource: str(body.resource) || undefined,
-        tokenEndpointAuthMethod: authMethod,
-        clientAssertion,
-      });
+      // The shared Node-side builder applies the selected client-auth method.
+      // The browser-safe state machine carries only strings; key material never
+      // leaves the injected confidential-CIMD provider.
+      const { headers, body: form } = buildXaaJwtBearerRequest(
+        {
+          assertion: str(body.assertion),
+          tokenEndpoint,
+          clientId,
+          clientSecret: str(body.clientSecret) || undefined,
+          scope: str(body.scope) || undefined,
+          resource: str(body.resource) || undefined,
+          tokenEndpointAuthMethod: authMethod,
+        },
+        confidentialCimdProvider
+      );
       const upstream = await executeOAuthProxy({
         url: tokenEndpoint,
         method: "POST",

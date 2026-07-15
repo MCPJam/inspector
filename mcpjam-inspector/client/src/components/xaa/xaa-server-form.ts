@@ -3,10 +3,13 @@ import type { ServerWithName } from "@/hooks/use-app-state";
 import {
   DEFAULT_IDENTITY_ASSERTION_FORMAT,
   DEFAULT_REGISTRATION_STRATEGY,
+  DEFAULT_XAA_CLIENT_AUTH,
   normalizeIdentityAssertionFormat,
   normalizeRegistrationStrategy,
+  normalizeXaaClientAuth,
   type IdentityAssertionFormat,
   type RegistrationStrategy,
+  type XaaClientAuthMethod,
 } from "@/shared/xaa.js";
 import { deriveOAuthProfileFromServer } from "../oauth/utils";
 
@@ -42,6 +45,8 @@ export interface XaaServerFormSeed {
   serverUrl: string;
   registrationStrategy: RegistrationStrategy;
   identityAssertionFormat: IdentityAssertionFormat;
+  /** CIMD client-auth ("none" | "private_key_jwt"); only meaningful for cimd. */
+  clientAuth: XaaClientAuthMethod;
   clientId: string;
   /** Space-separated (stored comma- or space-separated forms normalized). */
   scopes: string;
@@ -64,6 +69,8 @@ export function deriveXaaServerFormSeed(
     identityAssertionFormat:
       normalizeIdentityAssertionFormat(server?.xaaIdentityAssertionFormat) ??
       DEFAULT_IDENTITY_ASSERTION_FORMAT,
+    clientAuth:
+      normalizeXaaClientAuth(server?.xaaClientAuth) ?? DEFAULT_XAA_CLIENT_AUTH,
     clientId: derived.clientId ?? "",
     scopes: (derived.scopes ?? "").replace(/,/g, " ").trim(),
     authzIssuer: server?.xaaAuthzIssuer ?? "",
@@ -100,6 +107,13 @@ export interface XaaServerFormInput {
    */
   identity: { dirty: boolean; subject: string; email: string };
   identityAssertionFormat: IdentityAssertionFormat;
+  /**
+   * CIMD client-authentication to persist. Emitted ONLY when the strategy is
+   * cimd; the caller resolves it to "none" when no confidential provider is
+   * available so a stale imported `private_key_jwt` is actively cleared. Absent
+   * (e.g. the header format toggle) preserves the stored value.
+   */
+  clientAuth?: XaaClientAuthMethod;
   /**
    * Unified registration mode — written ONLY on explicit user edit
    * (auto-clobber guard): an untouched selector omits the field so the
@@ -145,6 +159,12 @@ export function buildXaaServerFormData(
       : {}),
     // Identity assertion preset — always sent (absent stored value = oidc).
     xaaIdentityAssertionFormat: input.identityAssertionFormat,
+    // CIMD client-auth — only for the cimd strategy so switching away preserves
+    // the stored value; the caller passes "none" when no provider is available
+    // to clear a stale imported private_key_jwt.
+    ...(input.registration.strategy === "cimd" && input.clientAuth !== undefined
+      ? { xaaClientAuth: input.clientAuth }
+      : {}),
     ...(input.registration.dirty
       ? { registrationMode: input.registration.strategy }
       : {}),

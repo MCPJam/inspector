@@ -13,9 +13,13 @@ export {
   SUBJECT_IDENTIFIER_FORMATS,
   DEFAULT_SUBJECT_IDENTIFIER_FORMAT,
   normalizeSubjectIdentifierFormat,
+  XAA_CLIENT_AUTH_METHODS,
+  DEFAULT_XAA_CLIENT_AUTH,
+  normalizeXaaClientAuth,
   type NegativeTestMode,
   type IdentityAssertionFormat,
   type SubjectIdentifierFormat,
+  type XaaClientAuthMethod,
 } from "./constants.js";
 export {
   REGISTRATION_STRATEGIES,
@@ -91,6 +95,12 @@ export {
   buildJwtBearerRequest,
   type XaaTokenEndpointAuthMethod,
 } from "./mint/jwt-bearer.js";
+export {
+  buildXaaJwtBearerRequest,
+  getLocalConfidentialCimdProvider,
+  type BuildXaaJwtBearerRequestArgs,
+  type ConfidentialCimdProvider,
+} from "./confidential-cimd-provider.js";
 export {
   canonicalizeMcpResource,
   buildProtectedResourceMetadataCandidates,
