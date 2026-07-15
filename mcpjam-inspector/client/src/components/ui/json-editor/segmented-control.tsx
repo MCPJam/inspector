@@ -5,6 +5,8 @@ interface SegmentedControlOption<T extends string> {
   value: T;
   label: string;
   icon?: React.ReactNode;
+  /** Native tooltip describing what selecting this option does. */
+  title?: string;
 }
 
 type SegmentedControlSize = "sm" | "default";
@@ -15,6 +17,7 @@ interface SegmentedControlProps<T extends string> {
   onChange: (value: T) => void;
   className?: string;
   size?: SegmentedControlSize;
+  disabled?: boolean;
 }
 
 export function SegmentedControl<T extends string>({
@@ -23,6 +26,7 @@ export function SegmentedControl<T extends string>({
   onChange,
   className,
   size = "sm",
+  disabled = false,
 }: SegmentedControlProps<T>) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [indicatorStyle, setIndicatorStyle] = useState<React.CSSProperties>({});
@@ -49,6 +53,7 @@ export function SegmentedControl<T extends string>({
       className={cn(
         "relative inline-flex items-center rounded-md bg-muted/50",
         size === "default" ? "p-1" : "p-0.5",
+        disabled && "opacity-50",
         className,
       )}
     >
@@ -69,6 +74,9 @@ export function SegmentedControl<T extends string>({
         <button
           key={option.value}
           type="button"
+          disabled={disabled}
+          title={option.title}
+          aria-pressed={value === option.value}
           onClick={() => onChange(option.value)}
           className={cn(
             "relative z-10 flex items-center rounded-md font-medium transition-colors duration-200",
@@ -78,6 +86,7 @@ export function SegmentedControl<T extends string>({
             value === option.value
               ? "text-foreground"
               : "text-muted-foreground hover:text-foreground/80",
+            disabled && "cursor-not-allowed",
           )}
         >
           {option.icon}
