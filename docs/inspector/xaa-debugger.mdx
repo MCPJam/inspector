@@ -124,12 +124,20 @@ authorization server URL and the metadata issuer differ but belong to the same
 origin. [RFC 8414](https://www.rfc-editor.org/rfc/rfc8414) requires an exact
 match, so enabling this setting relaxes that check.
 
-#### Simulated Identity
+#### Override identity for this server
 
-The **Simulated identity** fields let you choose the user that MCPJam, acting
-as the test identity provider, puts in the ID token. Leave them blank to use
-your signed-in account. Change them to test how your authorization server
-handles a specific user.
+The **Override identity for this server** fields let you set a specific subject
+(`sub`) and email that MCPJam, acting as the test identity provider, puts in
+the ID token for this server. Both fields must be filled or both must be empty
+— a partial pair blocks the save with an actionable error.
+
+Leave both fields blank to use the identity resolved from the following
+precedence order:
+
+1. **Selected person** (Run as) — the person selected in the XAA Flow tab, if any.
+2. **Server override** — the subject and email saved on this server's configuration.
+3. **Project default** — the project-level XAA test identity default set by a project admin (Convex-backed projects only).
+4. **MCPJam demo identity** — the terminal fallback when none of the above is configured.
 
 Your authorization server must validate MCPJam's ID-JAG before issuing an
 access token. It may also apply its own policy to decide which users are
