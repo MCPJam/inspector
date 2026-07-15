@@ -65,6 +65,30 @@ const FORMATS: readonly ElicitationFieldFormat[] = [
   "date-time",
 ];
 
+/**
+ * `pattern` is chosen by the MCP server, and `RegExp.test` runs unbounded on
+ * the UI thread with a backtracking engine. A hostile (or merely careless)
+ * server can send a catastrophic pattern — `(a+)+$` already costs ~160ms
+ * against 24 characters and doubles per extra char — which would freeze the tab
+ * as the user types.
+ *
+ * Without a safe (RE2-style) engine available, this refuses to run patterns
+ * carrying the shape that makes backtracking explode: a quantifier applied to a
+ * group that itself contains a quantifier or an alternation, e.g. `(a+)+`,
+ * `(a*)*`, `(a|aa)+`. Skipping validation is the safe failure — the MCP server
+ * re-validates its own schema, so the worst case is that a bad value round-trips
+ * instead of being caught early. Freezing the renderer is not a safe failure.
+ *
+ * Bounded input alone wouldn't save us: maxLength is also server-supplied.
+ */
+const NESTED_QUANTIFIER_RE = /\([^()]*[+*{|][^()]*\)\s*[+*]|\([^()]*\)\s*\{\d+,\s*\}/;
+
+export function isSafeUserFacingPattern(pattern: string): boolean {
+  // Long patterns are themselves a smell and cost more to analyze than to skip.
+  if (pattern.length > 300) return false;
+  return !NESTED_QUANTIFIER_RE.test(pattern);
+}
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // Tolerates the `datetime-local` input's timezone-less value as well as full
@@ -360,7 +384,7 @@ function validateString(
       field.maxLength === 1 ? "" : "s"
     }`;
   }
-  if (field.pattern !== undefined) {
+  if (field.pattern !== undefined && isSafeUserFacingPattern(field.pattern)) {
     let re: RegExp | undefined;
     try {
       re = new RegExp(field.pattern);
@@ -420,7 +444,12 @@ export function buildElicitationContent(
   fields: ElicitationField[],
   values: Record<string, unknown>
 ): Record<string, ElicitationContentValue> {
-  const content: Record<string, ElicitationContentValue> = {};
+  // Null-prototype: field names come from the server, and a field literally
+  // named `__proto__` would otherwise mutate this object's prototype instead of
+  // creating a key — the answer would silently never reach the server.
+  const content: Record<string, ElicitationContentValue> = Object.create(
+    null
+  ) as Record<string, ElicitationContentValue>;
 
   for (const field of fields) {
     const value = values[field.name];
@@ -477,7 +506,12 @@ export function buildElicitationContent(
 export function initialFormValues(
   fields: ElicitationField[]
 ): Record<string, unknown> {
-  const values: Record<string, unknown> = {};
+  // Null-prototype for the same reason as buildElicitationContent: a server can
+  // name a field `__proto__`, and a plain object would swallow it.
+  const values: Record<string, unknown> = Object.create(null) as Record<
+    string,
+    unknown
+  >;
   for (const field of fields) {
     values[field.name] = defaultValueFor(field);
   }

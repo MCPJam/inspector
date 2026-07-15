@@ -436,4 +436,73 @@ describe("ElicitationDialog", () => {
     // The URL text is still shown — just never as a link.
     expect(screen.getByText("See https://evil.example.com/docs")).toBeTruthy();
   });
+
+  it("keeps typed input when the parent rerenders with an equivalent request", () => {
+    // The P1: chat surfaces build the request wrapper inline and rerender on
+    // every streamed token. Keying the schema parse on the object identity made
+    // `fields` new each render, retriggering the reset effect and erasing the
+    // user's answer mid-typing.
+    const makeRequest = () => ({
+      requestId: "req-1",
+      message: "Pick a branch",
+      timestamp: new Date().toISOString(),
+      // Fresh object each call — exactly what the inline wrapper does.
+      schema: {
+        type: "object",
+        properties: { branch: { type: "string", title: "Branch" } },
+      },
+    });
+
+    const { rerender } = render(
+      <ElicitationDialog
+        elicitationRequest={makeRequest()}
+        onResponse={vi.fn()}
+      />,
+    );
+
+    const input = screen.getByLabelText(/Branch/i);
+    fireEvent.change(input, { target: { value: "main" } });
+    expect(input).toHaveValue("main");
+
+    rerender(
+      <ElicitationDialog
+        elicitationRequest={makeRequest()}
+        onResponse={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText(/Branch/i)).toHaveValue("main");
+  });
+
+  it("still resets when a genuinely different request arrives", () => {
+    // The flip side: the reset must not be so sticky that a new elicitation
+    // inherits the previous answer.
+    const base = {
+      message: "Pick a branch",
+      timestamp: new Date().toISOString(),
+      schema: {
+        type: "object",
+        properties: { branch: { type: "string", title: "Branch" } },
+      },
+    };
+
+    const { rerender } = render(
+      <ElicitationDialog
+        elicitationRequest={{ ...base, requestId: "req-1" }}
+        onResponse={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText(/Branch/i), {
+      target: { value: "main" },
+    });
+
+    rerender(
+      <ElicitationDialog
+        elicitationRequest={{ ...base, requestId: "req-2" }}
+        onResponse={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText(/Branch/i)).toHaveValue("");
+  });
 });

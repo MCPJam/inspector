@@ -61,26 +61,45 @@ export function ElicitationDialog({
   onResponse,
   loading = false,
 }: ElicitationDialogProps) {
+  const requestId = elicitationRequest?.requestId;
+  const schema = elicitationRequest?.schema;
   const fields = useMemo(
-    () => parseElicitationSchema(elicitationRequest?.schema),
-    [elicitationRequest]
+    () => parseElicitationSchema(schema),
+    // Keyed on requestId, NOT the request object. Callers build that wrapper
+    // inline, so it is a fresh reference on every parent render — and chat
+    // surfaces rerender constantly while a turn streams. Depending on it made
+    // `fields` new each time, which retriggered the reset effect below and
+    // wiped whatever the user had typed. An elicitation is immutable: same id,
+    // same schema.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [requestId]
   );
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Reset form state (and prefill schema defaults) whenever the request changes.
+  // Reset form state (and prefill schema defaults) when a DIFFERENT request
+  // arrives — `fields` is now stable for the life of one request, so this no
+  // longer fires on unrelated rerenders.
   useEffect(() => {
     setValues(initialFormValues(fields));
     setErrors({});
   }, [fields]);
 
   const updateFieldValue = (name: string, value: unknown) => {
-    setValues((prev) => ({ ...prev, [name]: value }));
+    // Object.assign onto a null-prototype base, not a spread literal: field
+    // names are server-chosen and a literal `{...prev, __proto__: v}` would
+    // mutate the prototype instead of storing the answer.
+    setValues((prev) =>
+      Object.assign(Object.create(null), prev, { [name]: value })
+    );
     // Clear a shown error as soon as the user edits the field; it is
     // re-evaluated on the next Accept.
     setErrors((prev) => {
-      if (!(name in prev)) return prev;
-      const next = { ...prev };
+      if (!Object.prototype.hasOwnProperty.call(prev, name)) return prev;
+      const next: Record<string, string> = Object.assign(
+        Object.create(null),
+        prev
+      );
       delete next[name];
       return next;
     });
@@ -110,7 +129,10 @@ export function ElicitationDialog({
       return;
     }
 
-    const nextErrors: Record<string, string> = {};
+    // Null-prototype: a field named `__proto__` would otherwise write to the
+    // prototype, leaving Object.keys empty — the error would vanish and the
+    // submit would go through unvalidated.
+    const nextErrors: Record<string, string> = Object.create(null);
     for (const field of fields) {
       const error = validateField(field, values[field.name]);
       if (error) nextErrors[field.name] = error;

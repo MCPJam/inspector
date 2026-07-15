@@ -1,3 +1,4 @@
+import { isSafeUserFacingPattern } from "../schema";
 import { describe, it, expect } from "vitest";
 import {
   buildElicitationContent,
@@ -463,5 +464,67 @@ describe("buildElicitationContent", () => {
     expect(buildElicitationContent(fields, { tags: ["x", 3, null] })).toEqual({
       tags: ["x"],
     });
+  });
+});
+
+
+describe("isSafeUserFacingPattern", () => {
+  it.each([
+    ["^[a-z]+$"],
+    ["^\\d{4}-\\d{2}$"],
+    ["^(cat|dog)$"],
+    ["[A-Z][a-z]*"],
+  ])("allows an ordinary pattern: %s", (pattern) => {
+    expect(isSafeUserFacingPattern(pattern)).toBe(true);
+  });
+
+  it.each([
+    ["(a+)+$"],
+    ["(a*)*$"],
+    ["(a|aa)+$"],
+    ["^(\\w+\\s?)*$"],
+    ["(x+){10,}"],
+  ])("refuses a catastrophic pattern: %s", (pattern) => {
+    // These backtrack exponentially. Running them on the UI thread lets any
+    // connected server freeze the tab as the user types.
+    expect(isSafeUserFacingPattern(pattern)).toBe(false);
+  });
+
+  it("refuses an absurdly long pattern", () => {
+    expect(isSafeUserFacingPattern("a".repeat(301))).toBe(false);
+  });
+});
+
+describe("__proto__ field names", () => {
+  // Built via JSON.parse, exactly how a schema reaches us: JSON.parse creates a
+  // real own `__proto__` key, whereas an object *literal* would just set the
+  // prototype and the field would silently not exist. (Writing this test the
+  // literal way hid the bug entirely.)
+  const schema = JSON.parse(
+    '{"type":"object","properties":{"__proto__":{"type":"string"},"safe":{"type":"string"}},"required":["__proto__"]}'
+  );
+
+  it("parses a __proto__ property as a real field", () => {
+    const fields = parseElicitationSchema(schema);
+    expect(fields.map((f) => f.name)).toContain("__proto__");
+  });
+
+  it("keeps a __proto__ answer as an own key, not a prototype mutation", () => {
+    // A plain object would swallow this assignment and the server would never
+    // receive the answer to a field it marked required.
+    const fields = parseElicitationSchema(schema);
+    const values = initialFormValues(fields);
+    values["__proto__"] = "hello";
+    const content = buildElicitationContent(fields, values);
+
+    expect(Object.prototype.hasOwnProperty.call(content, "__proto__")).toBe(true);
+    expect(content["__proto__"]).toBe("hello");
+    expect(Object.keys(content)).toContain("__proto__");
+    // And nothing leaked onto Object.prototype.
+    expect(({} as any).__proto__).not.toBe("hello");
+  });
+
+  it("initialFormValues returns a null-prototype map", () => {
+    expect(Object.getPrototypeOf(initialFormValues([]))).toBeNull();
   });
 });
