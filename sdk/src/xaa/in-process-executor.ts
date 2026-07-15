@@ -167,7 +167,11 @@ export function createInProcessXaaExecutor(
     // assertion for sub/email and mints (applying the negative-test tamper
     // when requested). Like the server route, a missing/malformed assertion
     // or one without a subject is a 400 — never a silently minted
-    // empty-subject ID-JAG.
+    // empty-subject ID-JAG. Intentional divergence: the server's
+    // managed-policy-gated response additionally echoes a granted `scope`
+    // field, but the managed context (policyMode/testIdentityId/
+    // resourceAppId) never reaches this in-process CLI path, so no scope is
+    // echoed here.
     if (path.endsWith("/token-exchange")) {
       const identityAssertion = nonEmptyString(body.identityAssertion);
       if (!identityAssertion) {

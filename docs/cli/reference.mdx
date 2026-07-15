@@ -628,6 +628,68 @@ Stop the local Inspector if it is running.
 
 ---
 
+## `eval` commands
+
+Author and run eval suites in your hosted MCPJam projects. All `eval` subcommands require an MCPJam API key (`--api-key` or `MCPJAM_API_KEY`).
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+
+### `eval create`
+
+Create a runnable eval suite from authored test cases. The suite is persisted and returned with a `suiteId`; it is **not** run. Execute it afterward with `eval run`.
+
+| Flag | Description |
+|------|-------------|
+| `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
+| `--file <path>` | Path to a suite definition JSON file (or `-` for stdin) |
+| `--json <json>` | Inline suite definition JSON (or `@file`, or `-` for stdin) |
+| `--name <name>` | Suite name (overrides the file) |
+| `--model <model>` | Suite-level default model, e.g. `anthropic/claude-haiku-4.5` (overrides the file) |
+| `--provider <provider>` | Suite-level default provider (overrides the file; needed for bare or custom model ids) |
+| `--server <name...>` | Project HTTP server names or IDs (overrides the file; repeatable) |
+
+Provide the suite definition via `--file` or `--json` (not both). The definition is a JSON object with at minimum `name`, `model`, `servers`, and `cases`. Servers must be HTTP; stdio servers are rejected before any write.
+
+```bash
+mcpjam eval create \
+  --json '{"name":"smoke","model":"anthropic/claude-haiku-4.5","servers":["My Server"],"cases":[{"title":"echo works","query":"Use the echo tool to say hi","expectedToolCalls":["echo"]}]}' \
+  --api-key $MCPJAM_API_KEY
+```
+
+### `eval list`
+
+List the eval suites saved in a project.
+
+| Flag | Description |
+|------|-------------|
+| `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
+
+### `eval run`
+
+Start an asynchronous eval run of an existing suite. Responds immediately with a `runId`; poll status with `eval status`.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--server <name...>` | No | Override the suite's saved server selection (HTTP servers only; repeatable) |
+
+### `eval status`
+
+Get the status and summary of an eval run.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--project <id-or-name>` | Yes | Project name or ID |
+
+---
+
 ## `tunnel`
 
 Expose a local MCP server through an MCPJam relay tunnel and register it as a server in your hosted project, so evals and chatboxes can target it. Requires an `sk_` API key or a prior `mcpjam login`. The tunnel stays up until Ctrl-C; the server record outlives the session (calls fail fast at the edge until you re-run, which revives the same URL slug with a fresh secret).
@@ -656,6 +718,211 @@ With `--format json`, a single machine-readable startup object (public URL, serv
   server record so the platform can call it. Every re-run rotates the secret
   and disconnects any previous tunnel session for the same server.
 </Warning>
+
+---
+
+## `eval` commands
+
+All `eval` commands accept the shared platform flags below.
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+
+### `eval create`
+
+Create a runnable eval suite from authored test cases (does not run it).
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--file <path>` | No | Path to a suite definition JSON file (or `-` for stdin) |
+| `--json <json>` | No | Inline suite definition JSON (or `@file`, or `-` for stdin) |
+| `--name <name>` | No | Suite name (overrides the file) |
+| `--model <model>` | No | Suite-level default model (overrides the file) |
+| `--provider <provider>` | No | Suite-level default provider (overrides the file) |
+| `--server <name...>` | No | Project HTTP server names or IDs (overrides the file) |
+
+### `eval list`
+
+List the eval suites saved in a project.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+### `eval run`
+
+Start an eval run of an existing suite (asynchronous).
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--server <name...>` | No | Override the suite's saved server selection (HTTP servers only) |
+
+### `eval status`
+
+Get the status and summary of an eval run.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--project <id-or-name>` | Yes | Project name or ID |
+
+### `eval iterations`
+
+List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency). Results are paginated.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--project <id-or-name>` | Yes | Project the run belongs to (name or ID) |
+| `--cursor <cursor>` | No | Pagination cursor from a previous response |
+| `--limit <n>` | No | Max iterations per page (1–200) |
+
+### `eval trace`
+
+Fetch the full trace for one eval iteration (complete message history and spans). Can be large.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--iteration <id>` | Yes | Iteration ID (from `eval iterations`) |
+| `--project <id-or-name>` | Yes | Project the run belongs to (name or ID) |
+
+### `eval get`
+
+Show an eval suite's full settings.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+### `eval update`
+
+Edit an eval suite's settings (only the flags you pass change).
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--file <path>` | No | Suite-update JSON body (or `-` for stdin) |
+| `--json <json>` | No | Inline suite-update JSON (or `@file`, or `-`) |
+| `--name <name>` | No | Rename the suite |
+| `--description <text>` | No | Suite description |
+| `--server <name...>` | No | Replace the suite's server selection (project server names) |
+| `--host <name...>` | No | Replace host attachments (by name/ID) |
+| `--model <id>` | No | Execution model ID |
+| `--system-prompt <text>` | No | Execution system prompt |
+| `--temperature <n>` | No | Execution temperature |
+| `--min-accuracy <pct>` | No | Minimum accuracy, 0–100 |
+| `--tool-call-order <any\|in-order\|exact>` | No | Tool call order |
+| `--arguments <ignore\|partial\|exact>` | No | Argument matching |
+| `--extra-tool-calls <unlimited\|N>` | No | Allowed extra tool calls |
+| `--judge <on\|off>` | No | Enable/disable LLM-as-judge grading |
+| `--judge-model <id>` | No | Judge model ID |
+
+### `eval delete`
+
+Permanently delete an eval suite (and its cases and runs).
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+### `eval schedule`
+
+Enable or disable scheduled runs for a suite.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--enable` | No | Enable scheduled runs |
+| `--disable` | No | Disable scheduled runs |
+| `--interval <minutes>` | No | Run interval in minutes (5–10080) |
+
+Pass either `--enable` or `--disable` (not both).
+
+### `eval cases` subcommands
+
+#### `eval cases list`
+
+List a suite's test cases.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+#### `eval cases get`
+
+Show one test case.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--case <id-or-title>` | Yes | Eval case title or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+#### `eval cases create`
+
+Add a test case to a suite (definition via `--file`/`--json`).
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--file <path>` | No | Case JSON body (or `-` for stdin) |
+| `--json <json>` | No | Inline case JSON (or `@file`, or `-`) |
+| `--title <title>` | No | Case title (overrides the body) |
+
+#### `eval cases update`
+
+Edit a test case (definition via `--file`/`--json`).
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--case <id-or-title>` | Yes | Eval case title or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--file <path>` | No | Case JSON body (or `-` for stdin) |
+| `--json <json>` | No | Inline case JSON (or `@file`, or `-`) |
+| `--title <title>` | No | Rename the case |
+
+#### `eval cases delete`
+
+Permanently delete a test case.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--case <id-or-title>` | Yes | Eval case title or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+#### `eval cases generate`
+
+AI-generate test cases from the suite's tools (spends credits).
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--mode <normal\|negative>` | No | Generation mode (default `normal`) |
+| `--server <name...>` | No | Servers to discover tools from (default: suite's) |
+| `--case-model <id...>` | No | Execution model(s) for the generated cases |
+| `--simple <n>` | No | How many easy, single-tool cases |
+| `--multi-tool <n>` | No | How many medium, 2+ tool cases |
+| `--multi-turn <n>` | No | How many multi-turn follow-up cases |
+| `--complex <n>` | No | How many hard / cross-server cases |
+| `--negative <n>` | No | How many negative (no-tool) cases |
+| `--vary-user-styles` | No | Vary query phrasing across a realistic range of user styles |
 
 ---
 
@@ -688,6 +955,39 @@ Persistently disables anonymous CLI telemetry by writing `enabled: false` to the
 ### `telemetry enable`
 
 Persistently enables anonymous CLI telemetry. If no install ID exists yet, this command creates a random install UUID.
+
+---
+
+## `login` / `logout` / `whoami` commands
+
+These commands manage your MCPJam platform session. `login` opens a browser for OAuth and stores the session locally; `logout` removes it; `whoami` shows the account behind the current credentials.
+
+### `login`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--api-url <url>` | `https://app.mcpjam.com/api/v1` | MCPJam API base URL. The value is persisted with the session so subsequent cloud commands target the same deployment without needing `--api-url` again. Must be a valid `http(s)` URL — an invalid value exits with code `2` before any network call. |
+| `--no-browser` | | Print the login URL to stderr instead of opening a browser. |
+
+The `MCPJAM_API_URL` environment variable is equivalent to `--api-url`. An invalid value in either source is a hard error (exit 2).
+
+**URL resolution order for cloud commands after login:**
+
+1. Explicit `--api-url` flag
+2. `MCPJAM_API_URL` environment variable
+3. The `apiUrl` stored with the OAuth session (only when the stored login is the credential; `sk_` API keys do not inherit the stored URL)
+4. Production default (`https://app.mcpjam.com/api/v1`)
+
+### `logout`
+
+No additional flags. Removes the stored MCPJam session.
+
+### `whoami`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--api-key <key>` | | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`). |
+| `--api-url <url>` | `https://app.mcpjam.com/api/v1` | MCPJam API base URL. |
 
 ---
 

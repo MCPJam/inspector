@@ -112,10 +112,8 @@ describe("useServerForm", () => {
     });
   });
 
-  it("defaults the XAA simulated identity to the signed-in user when the fields are blank", () => {
-    const { result } = renderHook(() =>
-      useServerForm(undefined, { signedInEmail: "john@mcpjam.com" })
-    );
+  it("omits the identity pair entirely when the override fields are untouched (no force-default)", () => {
+    const { result } = renderHook(() => useServerForm());
 
     act(() => {
       result.current.setName("XAA server");
@@ -124,30 +122,125 @@ describe("useServerForm", () => {
       result.current.setClientId("resource-client-id");
     });
 
-    expect(result.current.buildFormData()).toMatchObject({
+    // Untouched pair → BOTH keys omitted so the save path preserves stored
+    // values; nothing is force-defaulted (to the signed-in user or anything
+    // else).
+    const built = result.current.buildFormData();
+    expect(built.useXaa).toBe(true);
+    expect("xaaSubject" in built).toBe(false);
+    expect("xaaEmail" in built).toBe(false);
+  });
+
+  it("omits the identity pair on an untouched edit of a server with a stored override", async () => {
+    const server = {
+      name: "Saved XAA server",
+      config: { url: "https://example.com/mcp" },
       useXaa: true,
-      xaaSubject: "john@mcpjam.com",
-      xaaEmail: "john@mcpjam.com",
+      useOAuth: false,
+      authServerMode: "mcpjam",
+      xaaSubject: "stored-sub",
+      xaaEmail: "stored@example.com",
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+    await waitFor(() => {
+      expect(result.current.xaaSubject).toBe("stored-sub");
+    });
+
+    act(() => {
+      result.current.setOauthScopesInput("read:tools");
+    });
+
+    // An unrelated edit leaves the identity pair untouched → omitted, so the
+    // save path preserves the stored values instead of re-writing them.
+    const built = result.current.buildFormData();
+    expect("xaaSubject" in built).toBe(false);
+    expect("xaaEmail" in built).toBe(false);
+  });
+
+  it("emits the complete trimmed pair when both override fields are edited", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("XAA server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setClientId("resource-client-id");
+      result.current.setXaaSubject("  alice  ");
+      result.current.setXaaEmail(" alice@example.com ");
+    });
+
+    expect(result.current.validateForm()).toBeNull();
+    expect(result.current.buildFormData()).toMatchObject({
+      xaaSubject: "alice",
+      xaaEmail: "alice@example.com",
     });
   });
 
-  it("uses an explicit XAA subject/email override instead of the signed-in default", () => {
-    const { result } = renderHook(() =>
-      useServerForm(undefined, { signedInEmail: "john@mcpjam.com" })
-    );
+  it('emits "" for both fields on an explicit clear of a stored override', async () => {
+    const server = {
+      name: "Saved XAA server",
+      config: { url: "https://example.com/mcp" },
+      useXaa: true,
+      useOAuth: false,
+      authServerMode: "mcpjam",
+      xaaSubject: "stored-sub",
+      xaaEmail: "stored@example.com",
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+    await waitFor(() => {
+      expect(result.current.xaaSubject).toBe("stored-sub");
+    });
+
+    act(() => {
+      result.current.setXaaSubject("");
+      result.current.setXaaEmail("");
+    });
+
+    expect(result.current.validateForm()).toBeNull();
+    // The explicit empty pair reaches the backend, which normalizes it away.
+    expect(result.current.buildFormData()).toMatchObject({
+      xaaSubject: "",
+      xaaEmail: "",
+    });
+  });
+
+  it("blocks save with an actionable validation error on a partial identity pair", () => {
+    const { result } = renderHook(() => useServerForm());
 
     act(() => {
       result.current.setName("XAA server");
       result.current.setUrl("https://example.com/mcp");
       result.current.setAuthType("xaa");
       result.current.setClientId("resource-client-id");
-      result.current.setXaaSubject("john");
+      result.current.setXaaSubject("alice");
     });
 
-    expect(result.current.buildFormData()).toMatchObject({
-      xaaSubject: "john",
-      xaaEmail: "john@mcpjam.com",
+    expect(result.current.validateForm()).toBe(
+      "Complete or clear the server identity override"
+    );
+
+    // Completing the pair clears the error…
+    act(() => {
+      result.current.setXaaEmail("alice@example.com");
     });
+    expect(result.current.validateForm()).toBeNull();
+
+    // …and so does clearing both.
+    act(() => {
+      result.current.setXaaSubject("");
+      result.current.setXaaEmail("");
+    });
+    expect(result.current.validateForm()).toBeNull();
   });
 
   it("resolves an XAA server (useXaa, useOAuth false) to authType=xaa and never downgrades it to oauth on save", async () => {

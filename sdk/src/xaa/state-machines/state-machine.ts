@@ -36,7 +36,11 @@ import type {
   XAARequestResult,
   XAAStateMachine,
 } from "./types.js";
-import { createInitialXAAFlowState } from "./types.js";
+import {
+  buildXaaDcrCredentialCacheKey,
+  createInitialXAAFlowState,
+  isXaaDcrClientSecretExpired,
+} from "./types.js";
 import {
   analyzeAsCompatibility,
   selectTokenEndpointAuthMethod,
@@ -280,6 +284,68 @@ function extractErrorMessage(body: any, fallback: string): string {
   );
 }
 
+// The only issuer policy error codes the flow state ever echoes; anything
+// else in a failure body is dropped rather than surfaced as a policy ruling.
+const IDP_POLICY_ERROR_CODES = [
+  "access_denied",
+  "invalid_target",
+  "invalid_client",
+  "invalid_scope",
+  "temporarily_unavailable",
+] as const;
+
+type IdpPolicyState = NonNullable<XAAFlowState["idpPolicy"]>;
+
+function scopeTokens(scope: string | undefined): string[] {
+  return scope ? scope.split(/\s+/).filter(Boolean) : [];
+}
+
+/** Policy denial from a failed managed mint: allowlisted `error` code plus a
+ * truncated `error_description` reason enum. Only called when the run sent a
+ * managed context — legacy failures never fabricate policy state. */
+function buildIdpPolicyDenial(body: any): IdpPolicyState {
+  const rawError =
+    body && typeof body === "object" ? (body as any).error : undefined;
+  const errorCode = (IDP_POLICY_ERROR_CODES as readonly string[]).includes(
+    rawError
+  )
+    ? (rawError as IdpPolicyState["errorCode"])
+    : undefined;
+  const reasonCode =
+    body && typeof body === "object" && typeof body.error_description === "string"
+      ? body.error_description.slice(0, 120)
+      : undefined;
+  return {
+    outcome: "denied",
+    ...(errorCode ? { errorCode } : {}),
+    ...(reasonCode ? { reasonCode } : {}),
+  };
+}
+
+/** Policy outcome from a successful managed mint: the response `scope` is the
+ * GRANTED scope (the issuer echoes it); missing echo means nothing was
+ * narrowed. Downscoped ⇔ some requested scope token is absent from the grant. */
+function buildIdpPolicyOutcome(
+  responseScope: unknown,
+  requestedScope: string | undefined
+): IdpPolicyState {
+  const grantedScope =
+    typeof responseScope === "string" ? responseScope : requestedScope;
+  const granted = new Set(scopeTokens(grantedScope));
+  const downscoped = scopeTokens(requestedScope).some(
+    (token) => !granted.has(token)
+  );
+  return {
+    outcome: downscoped ? "downscoped" : "granted",
+    ...(requestedScope ? { requestedScope } : {}),
+    // An explicit "" is a grant of ZERO scopes and must be preserved:
+    // dropping it would make `idpPolicy?.grantedScope ?? state.scope` fall
+    // back to the ORIGINAL request, so inspection and the jwt-bearer
+    // redemption would use scopes the IdP just stripped.
+    ...(grantedScope !== undefined ? { grantedScope } : {}),
+  };
+}
+
 function asRecord(value: unknown, label: string): Record<string, any> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} did not return a JSON object`);
@@ -450,6 +516,9 @@ export function createXAAStateMachine(
     mintPathPrefix = "",
     issuerMode,
     organizationId,
+    policyMode,
+    testIdentityId,
+    resourceAppId,
     issuerKind,
     specTokenEndpointAvailable = true,
     requestExecutor,
@@ -493,6 +562,31 @@ export function createXAAStateMachine(
             : {}),
         }
       : {};
+
+  // Managed-IdP policy context for the ID-JAG mint. Keyed on `policyMode`
+  // PRESENCE, deliberately NOT on `issuerMode === "hosted"`: that flag is only
+  // the LOCAL server's forwarding opt-in — on a direct hosted run (org-scoped
+  // mintPathPrefix) issuerMode stays "local", and gating on it would silently
+  // disable enforcement on the primary managed path. Headers carry it on the
+  // spec form endpoint (the RFC 8693 body stays spec-pure); body fields carry
+  // it on the legacy JSON mint. Absent policyMode ⇒ both stay empty and the
+  // mint requests are byte-identical to legacy.
+  const managedPolicyHeaders: Record<string, string> = policyMode
+    ? {
+        "x-mcpjam-policy-mode": policyMode,
+        ...(testIdentityId
+          ? { "x-mcpjam-test-identity-id": testIdentityId }
+          : {}),
+        ...(resourceAppId ? { "x-mcpjam-resource-app-id": resourceAppId } : {}),
+      }
+    : {};
+  const managedPolicyBodyExtras = policyMode
+    ? {
+        policyMode,
+        ...(testIdentityId ? { testIdentityId } : {}),
+        ...(resourceAppId ? { resourceAppId } : {}),
+      }
+    : {};
 
   const state: Partial<XAAFlowState> = initialState ?? {};
 
@@ -953,22 +1047,11 @@ export function createXAAStateMachine(
   // component is encodeURIComponent-escaped (which escapes ":") so a "::" inside
   // any component can't collide with the "::" delimiter between components.
   const dcrCacheKeyFor = (registrationEndpoint: string) =>
-    [
-      dcrCacheTargetKey ?? serverUrl,
+    buildXaaDcrCredentialCacheKey({
+      targetKey: dcrCacheTargetKey ?? serverUrl,
       registrationEndpoint,
-      currentState().scope ?? "",
-    ]
-      .map(encodeURIComponent)
-      .join("::");
-
-  const dcrSecretExpired = (creds: {
-    clientSecret?: string;
-    clientSecretExpiresAt?: number;
-  }) =>
-    Boolean(creds.clientSecret) &&
-    typeof creds.clientSecretExpiresAt === "number" &&
-    creds.clientSecretExpiresAt !== 0 &&
-    creds.clientSecretExpiresAt <= Math.floor(Date.now() / 1000);
+      scope: currentState().scope,
+    });
 
   const registerClientDynamically = async () => {
     const state = currentState();
@@ -986,7 +1069,7 @@ export function createXAAStateMachine(
 
     const cacheKey = dcrCacheKeyFor(registrationEndpoint);
     const cached = dcrCredentialCache?.get(cacheKey);
-    if (cached && dcrSecretExpired(cached)) {
+    if (cached && isXaaDcrClientSecretExpired(cached)) {
       // The registered remote client still exists; only its secret died.
       // Replacing it means minting ANOTHER remote client, so gate that behind
       // the same "Register another client" confirmation as every other
@@ -1714,12 +1797,26 @@ export function createXAAStateMachine(
         const result = await runRequest("token_exchange_request", request, () =>
           requestExecutor.internalRequest(`${mintPathPrefix}/token`, {
             method: "POST",
-            headers: { ...request.headers, ...transportHeaders },
+            // The managed-policy headers ride ALONGSIDE the hosted-forwarding
+            // opt-in headers, never inside its issuerMode gate — see the
+            // managedPolicyHeaders comment.
+            headers: {
+              ...request.headers,
+              ...transportHeaders,
+              ...managedPolicyHeaders,
+            },
             body: new URLSearchParams(params).toString(),
           })
         );
 
         if (!result.ok) {
+          // A managed run's failure is a policy ruling (denial codes ride the
+          // OAuth error body); record it before parking at the request step.
+          if (policyMode) {
+            machine.updateState({
+              idpPolicy: buildIdpPolicyDenial(result.body),
+            });
+          }
           throw new Error(
             extractErrorMessage(
               result.body,
@@ -1739,6 +1836,11 @@ export function createXAAStateMachine(
           currentStep: "received_id_jag",
           idJag: body.access_token,
           idJagDecoded: null,
+          // The response `scope` is the granted scope; compare against the
+          // requested one to surface an IdP downscope.
+          ...(policyMode
+            ? { idpPolicy: buildIdpPolicyOutcome(body.scope, state.scope) }
+            : {}),
           error: undefined,
         });
 
@@ -1785,6 +1887,10 @@ export function createXAAStateMachine(
           assertionFormat,
           subjectIdFormat,
           ...hostedIssuerBodyExtras,
+          // Managed-policy context rides ALONGSIDE the hosted-forwarding
+          // opt-in fields, never inside its issuerMode gate — see the
+          // managedPolicyBodyExtras comment.
+          ...managedPolicyBodyExtras,
         },
       };
 
@@ -1797,6 +1903,13 @@ export function createXAAStateMachine(
       );
 
       if (!result.ok) {
+        // Same policy-denial capture as the spec branch: managed context was
+        // sent, so a failure body carries the issuer's ruling.
+        if (policyMode) {
+          machine.updateState({
+            idpPolicy: buildIdpPolicyDenial(result.body),
+          });
+        }
         throw new Error(
           extractErrorMessage(
             result.body,
@@ -1814,6 +1927,10 @@ export function createXAAStateMachine(
         currentStep: "received_id_jag",
         idJag: body.id_jag,
         idJagDecoded: null,
+        // Gated mints echo the granted scope as a `scope` response field.
+        ...(policyMode
+          ? { idpPolicy: buildIdpPolicyOutcome(body.scope, state.scope) }
+          : {}),
         error: undefined,
       });
 
@@ -1846,7 +1963,9 @@ export function createXAAStateMachine(
       audience: state.authzServerIssuer,
       resource: state.resourceUrl || state.serverUrl || serverUrl,
       clientId: state.clientId,
-      scope: state.scope,
+      // A managed downscope narrows the minted scope by policy — lint against
+      // what the IdP actually granted, not the original request.
+      scope: state.idpPolicy?.grantedScope ?? state.scope,
       negativeTestMode: state.negativeTestMode,
     });
 
@@ -1909,7 +2028,7 @@ export function createXAAStateMachine(
         // secret), so registering another is what recovery requires — and the
         // flag is what keeps the "Register another client" action visible, which
         // this error tells the user to use.
-        if (dcrSecretExpired(cached)) {
+        if (isXaaDcrClientSecretExpired(cached)) {
           if (cacheKey) dcrCredentialCache?.delete(cacheKey);
           machine.updateState({
             currentStep: "jwt_bearer_request",
@@ -1929,6 +2048,11 @@ export function createXAAStateMachine(
       }
     }
 
+    // A managed downscope narrows the ID-JAG's scope by IdP policy; the
+    // jwt-bearer request must ask the RAS for that granted scope, not the
+    // broader original request the IdP already refused.
+    const redemptionScope = state.idpPolicy?.grantedScope ?? state.scope;
+
     // Registration- and server-target runs send only an opaque id: the server
     // resolves the stored secret and forces the outbound URL server-side, so
     // neither the secret nor the destination ever rides in from the browser.
@@ -1938,7 +2062,7 @@ export function createXAAStateMachine(
       ? {
           registrationId,
           assertion: state.idJag,
-          scope: state.scope,
+          scope: redemptionScope,
           resource: state.resourceUrl || state.serverUrl,
         }
       : serverId
@@ -1946,7 +2070,7 @@ export function createXAAStateMachine(
             serverId,
             ...(projectId ? { projectId } : {}),
             assertion: state.idJag,
-            scope: state.scope,
+            scope: redemptionScope,
             resource: state.resourceUrl || state.serverUrl,
           }
         : {
@@ -1957,7 +2081,7 @@ export function createXAAStateMachine(
             ...(manualAuthMethod
               ? { tokenEndpointAuthMethod: manualAuthMethod }
               : {}),
-            scope: state.scope,
+            scope: redemptionScope,
             resource: state.resourceUrl || state.serverUrl,
           };
 
@@ -2070,6 +2194,10 @@ export function createXAAStateMachine(
             typeof tokenResponse.expires_in === "number"
               ? tokenResponse.expires_in
               : undefined,
+          grantedScope:
+            typeof tokenResponse.scope === "string"
+              ? tokenResponse.scope
+              : undefined,
           error: undefined,
           negativeProbe: { outcome: "accepted", status: upstreamStatus },
         });
@@ -2093,6 +2221,10 @@ export function createXAAStateMachine(
         expiresIn:
           typeof tokenResponse.expires_in === "number"
             ? tokenResponse.expires_in
+            : undefined,
+        grantedScope:
+          typeof tokenResponse.scope === "string"
+            ? tokenResponse.scope
             : undefined,
         error: undefined,
       });

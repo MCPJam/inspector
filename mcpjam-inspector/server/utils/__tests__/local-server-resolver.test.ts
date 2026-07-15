@@ -814,3 +814,74 @@ describe("executeLocalServerConnect — live 401 handling", () => {
     expect(headers["X-MCP-Auth-Required"]).toBeUndefined();
   });
 });
+
+describe("resolveLocalServerForConnect — backend-resolved XAA identity error", () => {
+  beforeEach(() => {
+    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
+    }
+    vi.unstubAllGlobals();
+  });
+
+  const fakeContext = { set: () => {}, get: () => undefined } as any;
+
+  it("fails the connect with the backend's message and never mints", async () => {
+    const identityError =
+      "Complete or clear the server identity override: this server has a partial legacy override";
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return new Response(
+          JSON.stringify({
+            results: {
+              "srv-xaa": {
+                ok: true,
+                role: "owner",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                serverConfig: {
+                  transportType: "http",
+                  url: "https://xaa.example.com/mcp",
+                  headers: {},
+                  useOAuth: false,
+                  useXaa: true,
+                  authServerMode: "mcpjam",
+                  clientId: "xaa-client",
+                  // Backend omitted BOTH identity members and sent the
+                  // actionable error instead (legacy partial override).
+                  xaaIdentityError: identityError,
+                },
+                oauthAccessToken: null,
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      resolveLocalServerForConnect(fakeContext, "bearer-xyz", "proj-1", "srv-xaa", {
+        serverDisplayName: "Legacy XAA server",
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: "VALIDATION_ERROR",
+      message: identityError,
+    });
+
+    // Exactly one outbound call — the authorize batch. No secret reveal, no
+    // token-endpoint discovery, no mint: the configuration error is
+    // surfaced BEFORE any mint work (and there is no silent fallback to the
+    // demo identity or to OAuth).
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});

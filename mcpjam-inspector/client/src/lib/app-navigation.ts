@@ -402,6 +402,53 @@ function decodePathSegment(segment: string): string {
   }
 }
 
+// ── XAA setup center (`/xaa-flow/setup[/:section]`) ─────────────────────────
+
+export type XaaSetupSection = "people" | "apps" | "access";
+
+const XAA_SETUP_BASE_PATH = `${routePaths.xaaFlow}/setup`;
+
+/** Build a deep-linkable setup-center path. `people` is the default section
+ * and canonicalizes to the bare `/xaa-flow/setup`. */
+export function buildXaaSetupPath(section?: XaaSetupSection): string {
+  return section && section !== "people"
+    ? `${XAA_SETUP_BASE_PATH}/${section}`
+    : XAA_SETUP_BASE_PATH;
+}
+
+/** Resolve the active setup section from a pathname; null when the pathname
+ * is not a setup-center route. Unknown section segments fall back to the
+ * default section rather than 404ing a shared link. */
+export function parseXaaSetupSection(pathname: string): XaaSetupSection | null {
+  const segments = pathname.replace(/^\/+/, "").split("/");
+  if (segments[0] !== "xaa-flow" || segments[1] !== "setup") return null;
+  const sectionSegment = segments[2];
+  return sectionSegment === "apps" || sectionSegment === "access"
+    ? sectionSegment
+    : "people";
+}
+
+/**
+ * Deep link into the XAA debugger with a registered resource app
+ * preselected. A full navigation (not a client-side route push): the
+ * debugger captures the `resource` query param at module load, so an SPA
+ * push after boot would be ignored.
+ */
+export function openXaaAppInDebugger(appId: string): void {
+  window.location.assign(
+    `${routePaths.xaaFlow}?resource=${encodeURIComponent(appId)}`
+  );
+}
+
+/** Active setup section from the current location (pattern: useCurrentOrgRoute). */
+export function useXaaSetupSection(): XaaSetupSection {
+  const locationContext = useContext(UNSAFE_LocationContext);
+  const pathname =
+    locationContext?.location.pathname ??
+    (typeof window === "undefined" ? "/" : window.location.pathname);
+  return parseXaaSetupSection(pathname) ?? "people";
+}
+
 export function navigationTargetToPath(
   rawTarget: string,
   fallback: string = routePaths.servers

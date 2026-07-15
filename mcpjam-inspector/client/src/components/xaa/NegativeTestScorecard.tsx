@@ -29,6 +29,9 @@ interface NegativeTestScorecardProps {
    * external auth server to test (MCPJam-issuer-only, or the token endpoint
    * isn't known yet). */
   input: NegativeTestsInput | null;
+  /** Resolve session-only credentials immediately before the request. The
+   * returned secret is never retained in component state or rendered props. */
+  resolveInput?: () => NegativeTestsInput;
   /** A successful positive run has completed for this target this session. */
   unlocked: boolean;
   /** Why `input` is null — shown when the scorecard can't run at all. */
@@ -141,6 +144,7 @@ function VerdictRow({ row }: { row: NegativeTestCase }) {
 
 export function NegativeTestScorecard({
   input,
+  resolveInput,
   unlocked,
   unavailableReason,
   onResultsReady,
@@ -161,13 +165,19 @@ export function NegativeTestScorecard({
         input.registrationId ?? input.serverId ?? input.tokenEndpoint ?? "",
         input.audience,
         input.resource,
-        // Issuer mode, org, and kind all change the minted `iss`, so they are
-        // part of the target identity: switching any of them must reset a
-        // prior run's results (e.g. a guest→signed-in promotion keeps the org
-        // but flips the kind /g/→/o/).
+        input.clientId ?? "",
+        input.tokenEndpointAuthMethod ?? "",
+        input.scope ?? "",
+        // Client auth and issuer identity both affect the request under test,
+        // so switching either must reset a prior run's results.
         input.issuerMode ?? "local",
         input.organizationId ?? "",
         input.issuerKind ?? "org",
+        // Managed-policy context: managed and unmanaged runs go through
+        // different evaluators, and a managed ruling is per person — completed
+        // rows from one mode/person must not survive a switch to the other.
+        input.policyMode ?? "",
+        input.testIdentityId ?? "",
       ].join("|")
     : "";
   useEffect(() => {
@@ -182,7 +192,7 @@ export function NegativeTestScorecard({
     if (!input) return;
     setRun({ status: "loading" });
     try {
-      const result = await runNegativeTests(input);
+      const result = await runNegativeTests(resolveInput?.() ?? input);
       setRun({ status: "done", result });
       onResultsReady?.();
     } catch (error) {

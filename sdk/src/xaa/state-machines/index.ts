@@ -20,7 +20,12 @@ export type {
   BaseXAAStateMachineConfig,
   XAAStateMachine,
 } from "./types.js";
-export { EMPTY_XAA_FLOW_STATE, createInitialXAAFlowState } from "./types.js";
+export {
+  EMPTY_XAA_FLOW_STATE,
+  buildXaaDcrCredentialCacheKey,
+  createInitialXAAFlowState,
+  isXaaDcrClientSecretExpired,
+} from "./types.js";
 export type {
   XAAVendor,
   XAAVendorVerdict,

@@ -2560,3 +2560,84 @@ describe("useProjectState cold-share data-loss guard", () => {
     expect(migrateCall![1].extra.sourceProjectId).toBe("local-1");
   });
 });
+
+describe("handleUpdateProject — xaaTestDefaults whitelist", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    updateProjectMock.mockResolvedValue("remote-1");
+    ensureDefaultProjectMock.mockResolvedValue("remote-1");
+    useProjectServersMock.mockImplementation(() => projectServersState);
+    useOrganizationBillingStatusMock.mockImplementation(
+      () => organizationBillingStatusState.value,
+    );
+    projectQueryState.allProjects = [
+      {
+        _id: "remote-1",
+        name: "Remote project",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-a",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    projectQueryState.isLoading = false;
+    projectServersState.servers = [];
+    projectServersState.isLoading = false;
+  });
+
+  it("forwards an atomic xaaTestDefaults object to updateProject", async () => {
+    const { result } = renderUseProjectState({
+      appState: createAppState({}),
+      activeOrganizationId: "org-a",
+    });
+
+    await act(async () => {
+      await result.current.handleUpdateProject("remote-1", {
+        xaaTestDefaults: {
+          defaultIdentity: {
+            subject: "proj-sub-1",
+            email: "proj@example.com",
+          },
+        },
+      });
+    });
+
+    expect(updateProjectMock).toHaveBeenCalledWith({
+      projectId: "remote-1",
+      xaaTestDefaults: {
+        defaultIdentity: { subject: "proj-sub-1", email: "proj@example.com" },
+      },
+    });
+  });
+
+  it("forwards an explicit null clear and omits the key when untouched", async () => {
+    const { result } = renderUseProjectState({
+      appState: createAppState({}),
+      activeOrganizationId: "org-a",
+    });
+
+    await act(async () => {
+      await result.current.handleUpdateProject("remote-1", {
+        xaaTestDefaults: null,
+      });
+    });
+    expect(updateProjectMock).toHaveBeenCalledWith({
+      projectId: "remote-1",
+      xaaTestDefaults: null,
+    });
+
+    updateProjectMock.mockClear();
+    await act(async () => {
+      await result.current.handleUpdateProject("remote-1", {
+        name: "Renamed",
+      });
+    });
+    const payload = updateProjectMock.mock.calls[0][0];
+    expect(payload).toMatchObject({ projectId: "remote-1", name: "Renamed" });
+    // Omitted updates must not clobber the stored default.
+    expect("xaaTestDefaults" in payload).toBe(false);
+  });
+});
