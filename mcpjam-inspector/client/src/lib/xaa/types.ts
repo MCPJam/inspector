@@ -1,198 +1,37 @@
-import type { InfoLogLevel, LogErrorDetails } from "@mcpjam/sdk/browser";
-import {
-  DEFAULT_NEGATIVE_TEST_MODE,
-  type NegativeTestMode,
-} from "@/shared/xaa.js";
-import type { XAACompatibilityReport } from "./capability-preflight";
+import type { RemoteXaaPerson } from "@/hooks/useXaaPeople";
 
-export type XAAFlowStep =
-  | "idle"
-  | "discover_resource_metadata"
-  | "received_resource_metadata"
-  | "discover_authz_metadata"
-  | "received_authz_metadata"
-  | "user_authentication"
-  | "received_identity_assertion"
-  | "token_exchange_request"
-  | "received_id_jag"
-  | "inspect_id_jag"
-  | "jwt_bearer_request"
-  | "received_access_token"
-  | "authenticated_mcp_request"
-  | "complete";
-
-export interface XAAJWTInspectionIssue {
-  section: "header" | "payload" | "signature";
-  field: string;
-  label: string;
-  expected: string;
-  actual: string;
-}
-
-export interface XAADecodedJwt {
-  header: Record<string, unknown> | null;
-  payload: Record<string, unknown> | null;
-  signature: string;
-  issues: XAAJWTInspectionIssue[];
-}
-
-export interface XAAInfoLogEntry {
-  id: string;
-  step: XAAFlowStep;
-  label: string;
-  data: any;
-  timestamp: number;
-  level: InfoLogLevel;
-  error?: LogErrorDetails;
-}
-
-export interface XAAHttpHistoryEntry {
-  step: XAAFlowStep;
-  timestamp: number;
-  duration?: number;
-  request: {
-    method: string;
-    url: string;
-    headers: Record<string, string>;
-    body?: any;
-  };
-  response?: {
-    status: number;
-    statusText: string;
-    headers: Record<string, string>;
-    body: any;
-  };
-  error?: LogErrorDetails;
-}
-
-export interface XAAFlowState {
-  isBusy: boolean;
-  currentStep: XAAFlowStep;
-  serverUrl?: string;
-  resourceUrl?: string;
-  resourceMetadataUrl?: string;
-  resourceMetadata?: {
-    resource?: string;
-    authorization_servers?: string[];
-    bearer_methods_supported?: string[];
-    scopes_supported?: string[];
-  };
-  authzServerIssuer?: string;
-  authzMetadata?: {
-    issuer: string;
-    token_endpoint?: string;
-    grant_types_supported?: string[];
-    response_types_supported?: string[];
-    scopes_supported?: string[];
-    token_endpoint_auth_methods_supported?: string[];
-  };
-  tokenEndpoint?: string;
-  negativeTestMode: NegativeTestMode;
-  userId?: string;
-  email?: string;
-  clientId?: string;
-  /** Test-credential secret for the jwt-bearer grant; never rendered — the
-   * logged copy of any request carrying it is masked. */
-  clientSecret?: string;
-  scope?: string;
-  identityAssertion?: string;
-  idJag?: string;
-  idJagDecoded?: XAADecodedJwt | null;
-  accessToken?: string;
-  tokenType?: string;
-  expiresIn?: number;
-  lastRequest?: {
-    method: string;
-    url: string;
-    headers: Record<string, string>;
-    body?: any;
-  };
-  lastResponse?: {
-    status: number;
-    statusText: string;
-    headers: Record<string, string>;
-    body: any;
-  };
-  httpHistory?: Array<XAAHttpHistoryEntry>;
-  infoLogs?: Array<XAAInfoLogEntry>;
-  error?: string;
-  /** Outcome of a deliberately-broken (negative-mode) run once it reaches the
-   * authorization server. `rejected` is the success case — the server caught
-   * the broken assertion; `accepted` is the security risk — it issued a token
-   * anyway. Unset for the happy-path (valid) flow. */
-  negativeProbe?: { outcome: "rejected" | "accepted"; status?: number };
-  compatibilityReport?: XAACompatibilityReport;
-}
-
-export interface XAARequestResult {
-  status: number;
-  statusText: string;
-  headers: Record<string, string>;
-  body: any;
-  ok: boolean;
-}
-
-export interface XAARequestExecutor {
-  internalRequest: (
-    path: string,
-    init?: RequestInit
-  ) => Promise<XAARequestResult>;
-  externalRequest: (
-    url: string,
-    init?: RequestInit
-  ) => Promise<XAARequestResult>;
-}
-
-export interface BaseXAAStateMachineConfig {
-  /** Initial state. Optional — prefer `getState` so the machine never holds a
-   * stale snapshot read during render. */
-  state?: XAAFlowState;
-  getState?: () => XAAFlowState;
-  updateState: (updates: Partial<XAAFlowState>) => void;
-  serverUrl: string;
-  issuerBaseUrl: string;
-  /** Path prefix for the mint endpoints (`/authenticate`, `/token-exchange`),
-   * e.g. `/o/<orgId>` for the hosted org-scoped issuer. Never applied to the
-   * token proxy, which has no scoped variant. Defaults to "" (unscoped). */
-  mintPathPrefix?: string;
-  /** LOCAL runs only: "hosted" adds `issuerMode`/`organizationId` to the mint
-   * request bodies so the local server forwards them to the hosted issuer. */
-  issuerMode?: "local" | "hosted";
-  organizationId?: string | null;
-  requestExecutor: XAARequestExecutor;
-  scheduleAutoAdvance?: (next: () => void) => void;
-  negativeTestMode?: NegativeTestMode;
-  userId?: string;
-  email?: string;
-  clientId?: string;
-  clientSecret?: string;
-  scope?: string;
-  authzServerIssuer?: string;
-  /** Hosted registration-backed runs: sent to the token proxy instead of an
-   * inline client secret; the server resolves the stored secret and forces
-   * the outbound URL to the registration's stored token endpoint. */
-  registrationId?: string;
-  /** Server-target confidential runs: sent to the token proxy instead of an
-   * inline client secret or token endpoint. The server resolves the stored
-   * secret AND discovers the token endpoint from the server's own config, so
-   * neither the secret nor the destination rides in from the browser. */
-  serverId?: string;
-  projectId?: string;
-}
-
-export interface XAAStateMachine {
-  state: XAAFlowState;
-  updateState: (updates: Partial<XAAFlowState>) => void;
-  proceedToNextStep: () => Promise<void>;
-  /** Drive every remaining step until the flow completes or a step fails. */
-  runAll: () => Promise<void>;
-  resetFlow: () => void;
-}
+// XAA flow-core types moved to @mcpjam/sdk (browser-safe). Re-exported here so
+// existing `@/lib/xaa/types` importers keep their path. The hosted test-bench
+// resource-app types stay client-owned (below) — they are inspector wire types,
+// not engine types.
+export type {
+  XAAFlowStep,
+  RegistrationStrategy,
+  XaaTokenEndpointAuthMethod,
+  XaaRegistrationWarningCode,
+  XaaRegistrationWarning,
+  XaaEphemeralDcrCredentials,
+  XaaDcrCredentialCache,
+  XAAJWTInspectionIssue,
+  XAADecodedJwt,
+  XAAInfoLogEntry,
+  XAAHttpHistoryEntry,
+  XAAFlowState,
+  XAARequestResult,
+  XAARequestExecutor,
+  BaseXAAStateMachineConfig,
+  XAAStateMachine,
+  XAACompatibilityReport,
+} from "@mcpjam/sdk/browser";
+export {
+  EMPTY_XAA_FLOW_STATE,
+  createInitialXAAFlowState,
+} from "@mcpjam/sdk/browser";
 
 // ---------------------------------------------------------------------------
 // Registered resource apps (hosted test bench). The wire shape mirrors the
 // backend's sanitized projection: the client secret is never returned, only a
-// `hasSecret` boolean.
+// `hasSecret` boolean. Client-owned — not part of the shared engine.
 // ---------------------------------------------------------------------------
 
 export type XaaResourceType = "rest" | "mcp";
@@ -230,45 +69,67 @@ export interface XaaResourceAppInput {
   healthCheckUrl?: string;
 }
 
-export const EMPTY_XAA_FLOW_STATE: XAAFlowState = {
-  isBusy: false,
-  currentStep: "idle",
-  serverUrl: undefined,
-  resourceUrl: undefined,
-  resourceMetadataUrl: undefined,
-  resourceMetadata: undefined,
-  authzServerIssuer: undefined,
-  authzMetadata: undefined,
-  tokenEndpoint: undefined,
-  negativeTestMode: DEFAULT_NEGATIVE_TEST_MODE,
-  userId: undefined,
-  email: undefined,
-  clientId: undefined,
-  clientSecret: undefined,
-  scope: undefined,
-  identityAssertion: undefined,
-  idJag: undefined,
-  idJagDecoded: undefined,
-  accessToken: undefined,
-  tokenType: undefined,
-  expiresIn: undefined,
-  lastRequest: undefined,
-  lastResponse: undefined,
-  httpHistory: [],
-  infoLogs: [],
-  error: undefined,
-  negativeProbe: undefined,
-  compatibilityReport: undefined,
+// ---------------------------------------------------------------------------
+// Managed test IdP (setup center). Org-scoped synthetic People, per-app
+// connections for the fixed MCPJam Agent, and per-person scope assignments.
+// Hand-mirrored from the backend `xaaTestIdentities` /
+// `xaaManagedConnections` serializers (two-repo layout). Client-owned.
+// ---------------------------------------------------------------------------
+
+/** Archived identities never reach the wire — `list` filters them out. */
+export type XaaOrgPersonStatus = "active" | "suspended";
+
+/**
+ * Org-scoped synthetic person: the project fixture shape plus a status the
+ * policy evaluator enforces at mint time (suspend blocks new ID-JAGs).
+ */
+export type RemoteOrgXaaPerson = RemoteXaaPerson & {
+  status: XaaOrgPersonStatus;
 };
 
-export function createInitialXAAFlowState(
-  overrides: Partial<XAAFlowState> = {}
-): XAAFlowState {
-  return {
-    ...EMPTY_XAA_FLOW_STATE,
-    ...overrides,
-    negativeTestMode: overrides.negativeTestMode ?? DEFAULT_NEGATIVE_TEST_MODE,
-    httpHistory: overrides.httpHistory ?? [],
-    infoLogs: overrides.infoLogs ?? [],
-  };
+/** `selected` requires an explicit scope subset; empty selected = deny-all. */
+export type XaaScopeMode = "all" | "selected";
+
+export interface XaaManagedAssignment {
+  _id: string;
+  connectionId: string;
+  testIdentityId: string;
+  scopeMode: XaaScopeMode;
+  /** Present iff scopeMode === "selected"; ⊆ connection-effective scopes. */
+  selectedScopes?: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Connection row joined with its assignments (listWithAssignments shape). */
+export interface XaaManagedConnection {
+  _id: string;
+  resourceAppId: string;
+  enabled: boolean;
+  scopeMode: XaaScopeMode;
+  /** Present iff scopeMode === "selected"; ⊆ the app's scopes. */
+  selectedScopes?: string[];
+  assignments: XaaManagedAssignment[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Result of copying a project's fixtures into the org roster. */
+export interface XaaImportFromProjectResult {
+  imported: number;
+  skippedExisting: number;
+  skippedOverCap: number;
+}
+
+/**
+ * The scopes a connection lets through, given its parent app's scope catalog.
+ * `all` mirrors the parent; `selected` uses the explicit subset (an absent
+ * subset is deny-all, never silently "all").
+ */
+export function effectiveXaaScopes(
+  scopeMode: XaaScopeMode,
+  selectedScopes: string[] | undefined,
+  parentScopes: string[],
+): string[] {
+  return scopeMode === "all" ? parentScopes : (selectedScopes ?? []);
 }

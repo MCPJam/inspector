@@ -68,6 +68,7 @@ import {
   isMCPJamProvidedModel,
 } from "@/shared/types";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
+import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
@@ -1399,6 +1400,7 @@ export function useChatSession(
   // uses (see `composeAvailableModels`); only the org-config source is
   // chat-specific (chatbox embeds resolve a host-provided project context).
   const outOfCredits = useOutOfCredits();
+  const { hostedCatalog } = useHostedModelCatalog();
   const availableModels = useMemo(
     () =>
       composeAvailableModels({
@@ -1411,6 +1413,7 @@ export function useChatSession(
         getAzureBaseUrl,
         customProviders,
         outOfCredits,
+        hostedCatalog,
       }),
     [
       hasToken,
@@ -1422,6 +1425,7 @@ export function useChatSession(
       customProviders,
       hostedOrgModelConfig,
       outOfCredits,
+      hostedCatalog,
     ]
   );
 

@@ -24,9 +24,23 @@ import {
   resolveHostModelDefinition,
   resolveSyntheticModelSource,
 } from "../org-model-config";
+import {
+  __resetHostedModelCatalogForTests,
+  __setHostedCatalogForTests,
+} from "../../services/hosted-model-catalog";
+
+// A hosted model the dynamic backend catalog knows about but the static seed
+// (MCPJAM_PROVIDED_MODEL_IDS) does NOT — i.e. a backend bulk-add the inspector
+// hasn't shipped a seed for. This is the case the whole dynamic-catalog PR
+// exists for; a seed id would classify identically under the legacy check.
+const CATALOG_ONLY_MODEL = "futurevendor/brand-new-model";
 
 describe("resolveSyntheticModelSource", () => {
-  it("returns `mcpjam` source with no orgRuntime for MCPJam-catalog models", async () => {
+  afterEach(() => {
+    __resetHostedModelCatalogForTests();
+  });
+
+  it("returns `mcpjam` source with no orgRuntime for static-seed models", async () => {
     const result = await resolveSyntheticModelSource({
       modelDefinition: {
         id: "openai/gpt-oss-120b",
@@ -37,6 +51,42 @@ describe("resolveSyntheticModelSource", () => {
     });
 
     expect(result).toEqual({ source: "mcpjam" });
+  });
+
+  it("dispatches a catalog-only model (absent from the seed) to `mcpjam` once the catalog is warm", async () => {
+    // Guards the swap at org-model-config.ts (isMCPJamProvidedModel →
+    // isHostedCatalogModel). Reverting it would make this catalog-only id fall
+    // through to BYOK key derivation and throw here — the seed-only test above
+    // would NOT catch that regression.
+    __setHostedCatalogForTests([CATALOG_ONLY_MODEL]);
+
+    const result = await resolveSyntheticModelSource({
+      modelDefinition: {
+        id: CATALOG_ONLY_MODEL,
+        name: "Future JAM model",
+        provider: "openai",
+      } as ModelDefinition,
+      projectId: "proj-1",
+    });
+
+    expect(result).toEqual({ source: "mcpjam" });
+  });
+
+  it("a catalog-only model is NOT mcpjam on a cold catalog (byte-identical to the legacy seed-only check)", async () => {
+    // Cold start / catalog unreachable = pre-service behavior: a non-seed id
+    // must fall through to BYOK. `futurevendor/...` isn't local-runtime
+    // eligible and isn't `custom:`, so it short-circuits to cloud BYOK without
+    // a Convex round-trip (no CONVEX_HTTP_URL needed).
+    const result = await resolveSyntheticModelSource({
+      modelDefinition: {
+        id: CATALOG_ONLY_MODEL,
+        name: "Future JAM model",
+        provider: "openai",
+      } as ModelDefinition,
+      projectId: "proj-1",
+    });
+
+    expect(result.source).toBe("byok");
   });
 
   it("returns `byok` + cloud orgRuntime for non-MCPJam providers that aren't local-runtime-eligible (no Convex round-trip)", async () => {
@@ -71,24 +121,24 @@ describe("resolveSyntheticModelSource", () => {
           // intentionally no customProviderName
         } as ModelDefinition,
         projectId: "proj-1",
-      }),
+      })
     ).rejects.toThrow(/derive org provider key/i);
   });
 });
 
 describe("buildSyntheticModelDefinition", () => {
-  it("returns the catalog definition unchanged for a SUPPORTED_MODELS id", () => {
-    const result = buildSyntheticModelDefinition("openai/gpt-oss-120b");
-    expect(result.id).toBe("openai/gpt-oss-120b");
+  it("returns the catalog definition unchanged for a SUPPORTED_MODELS (BYOK) id", () => {
+    // BYOK static entries still carry contextLength. Hosted models are no
+    // longer in SUPPORTED_MODELS — their metadata comes from the live catalog.
+    const result = buildSyntheticModelDefinition("gpt-5");
+    expect(result.id).toBe("gpt-5");
     expect(result.provider).toBe("openai");
-    // Catalog hits carry contextLength and other fields the BYOK fallbacks
-    // can't derive — locking that round-trip stays intact.
     expect(result.contextLength).toBeDefined();
   });
 
   it("parses custom:NAME/... into provider='custom' + customProviderName", () => {
     const result = buildSyntheticModelDefinition(
-      "custom:my-provider/some-model",
+      "custom:my-provider/some-model"
     );
     expect(result).toEqual({
       id: "custom:my-provider/some-model",
@@ -113,23 +163,21 @@ describe("buildSyntheticModelDefinition", () => {
     // Model segment may itself contain a slash.
     expect(
       buildSyntheticModelDefinition("custom:acme:meta/llama-3.1")
-        .customProviderName,
+        .customProviderName
     ).toBe("acme");
   });
 
   it("derives provider from prefix for non-catalog known prefixes", () => {
     expect(
-      buildSyntheticModelDefinition("anthropic/claude-3.5-sonnet").provider,
+      buildSyntheticModelDefinition("anthropic/claude-3.5-sonnet").provider
     ).toBe("anthropic");
     expect(
-      buildSyntheticModelDefinition("meta-llama/llama-3.1-405b").provider,
+      buildSyntheticModelDefinition("meta-llama/llama-3.1-405b").provider
     ).toBe("meta");
-    expect(
-      buildSyntheticModelDefinition("x-ai/grok-4").provider,
-    ).toBe("xai");
-    expect(
-      buildSyntheticModelDefinition("ollama/llama-3:8b").provider,
-    ).toBe("ollama");
+    expect(buildSyntheticModelDefinition("x-ai/grok-4").provider).toBe("xai");
+    expect(buildSyntheticModelDefinition("ollama/llama-3:8b").provider).toBe(
+      "ollama"
+    );
   });
 
   it("derives provider='bedrock' for bare Bedrock-shaped ids", () => {
@@ -137,40 +185,40 @@ describe("buildSyntheticModelDefinition", () => {
     // so chatbox runtime configs store them without a "bedrock/" prefix.
     expect(
       buildSyntheticModelDefinition(
-        "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-      ),
+        "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+      )
     ).toEqual({
       id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
       name: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
       provider: "bedrock",
     });
     // No geo prefix
-    expect(
-      buildSyntheticModelDefinition("amazon.nova-pro-v1:0").provider,
-    ).toBe("bedrock");
+    expect(buildSyntheticModelDefinition("amazon.nova-pro-v1:0").provider).toBe(
+      "bedrock"
+    );
     // Hyphenated geo prefix
     expect(
       buildSyntheticModelDefinition(
-        "us-gov.anthropic.claude-3-5-haiku-20241022-v1:0",
-      ).provider,
+        "us-gov.anthropic.claude-3-5-haiku-20241022-v1:0"
+      ).provider
     ).toBe("bedrock");
     // Legacy ids without a ":N" revision suffix
     expect(buildSyntheticModelDefinition("anthropic.claude-v2").provider).toBe(
-      "bedrock",
+      "bedrock"
     );
     expect(
-      buildSyntheticModelDefinition("amazon.titan-tg1-large").provider,
+      buildSyntheticModelDefinition("amazon.titan-tg1-large").provider
     ).toBe("bedrock");
     // Bedrock ARNs (inference profiles, imported models) — any AWS partition
     expect(
       buildSyntheticModelDefinition(
-        "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.amazon.nova-pro-v1:0",
-      ).provider,
+        "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.amazon.nova-pro-v1:0"
+      ).provider
     ).toBe("bedrock");
     expect(
       buildSyntheticModelDefinition(
-        "arn:aws-us-gov:bedrock:us-gov-west-1:123456789012:inference-profile/us-gov.anthropic.claude-3-5-haiku-20241022-v1:0",
-      ).provider,
+        "arn:aws-us-gov:bedrock:us-gov-west-1:123456789012:inference-profile/us-gov.anthropic.claude-3-5-haiku-20241022-v1:0"
+      ).provider
     ).toBe("bedrock");
   });
 
@@ -185,13 +233,13 @@ describe("buildSyntheticModelDefinition", () => {
     });
     // Ollama ids with dots/tags must not be mistaken for Bedrock ids.
     expect(buildSyntheticModelDefinition("llama3.1:8b").provider).toBe(
-      "ollama",
+      "ollama"
     );
     expect(buildSyntheticModelDefinition("qwen2.5:7b-instruct").provider).toBe(
-      "ollama",
+      "ollama"
     );
     expect(buildSyntheticModelDefinition("mistral:latest").provider).toBe(
-      "ollama",
+      "ollama"
     );
   });
 
@@ -199,7 +247,7 @@ describe("buildSyntheticModelDefinition", () => {
     // Unknown-prefix BYOK ids are vanishingly rare in practice but still
     // get a sensible default that deriveOrgProviderKey can act on.
     const result = buildSyntheticModelDefinition(
-      "experimentalprovider/some-model",
+      "experimentalprovider/some-model"
     );
     expect(result.provider).toBe("ollama");
   });
@@ -209,10 +257,10 @@ describe("buildSyntheticModelDefinition", () => {
     // bare-id branch, produced a bogus ollama definition, and the failure
     // surfaced many hops later as an opaque backend "model is required".
     expect(() => buildSyntheticModelDefinition("")).toThrow(
-      /no model selected/i,
+      /no model selected/i
     );
     expect(() => buildSyntheticModelDefinition("   ")).toThrow(
-      /no model selected/i,
+      /no model selected/i
     );
   });
 });
@@ -248,7 +296,7 @@ describe("matchOrgProviderForModelId", () => {
     // The whole point: `anthropic/claude-3.5-sonnet` as an org OpenRouter
     // selection must NOT route to the org's anthropic key.
     expect(
-      matchOrgProviderForModelId(ORG_CONFIG, "anthropic/claude-3.5-sonnet"),
+      matchOrgProviderForModelId(ORG_CONFIG, "anthropic/claude-3.5-sonnet")
     ).toEqual({
       id: "anthropic/claude-3.5-sonnet",
       name: "anthropic/claude-3.5-sonnet",
@@ -258,17 +306,16 @@ describe("matchOrgProviderForModelId", () => {
 
   it("matches bedrock/ollama list entries to their providers", () => {
     expect(
-      matchOrgProviderForModelId(ORG_CONFIG, "amazon.nova-micro-v1:0")
-        ?.provider,
+      matchOrgProviderForModelId(ORG_CONFIG, "amazon.nova-micro-v1:0")?.provider
     ).toBe("bedrock");
-    expect(
-      matchOrgProviderForModelId(ORG_CONFIG, "llama3.2")?.provider,
-    ).toBe("ollama");
+    expect(matchOrgProviderForModelId(ORG_CONFIG, "llama3.2")?.provider).toBe(
+      "ollama"
+    );
   });
 
   it("matches custom ids with the custom:<slug>: prefix stripped", () => {
     expect(
-      matchOrgProviderForModelId(ORG_CONFIG, "custom:acme:acme-large"),
+      matchOrgProviderForModelId(ORG_CONFIG, "custom:acme:acme-large")
     ).toEqual({
       id: "custom:acme:acme-large",
       name: "custom:acme:acme-large",
@@ -279,7 +326,7 @@ describe("matchOrgProviderForModelId", () => {
 
   it("returns null when no provider lists the id", () => {
     expect(
-      matchOrgProviderForModelId(ORG_CONFIG, "google/gemini-9000"),
+      matchOrgProviderForModelId(ORG_CONFIG, "google/gemini-9000")
     ).toBeNull();
   });
 });
@@ -305,8 +352,10 @@ describe("resolveHostModelDefinition", () => {
   });
 
   it("returns the catalog definition without needing a projectId", async () => {
+    // A BYOK static hit resolves by shape alone; hosted ids now resolve their
+    // metadata from the live catalog, not SUPPORTED_MODELS.
     const result = await resolveHostModelDefinition({
-      modelId: "openai/gpt-oss-120b",
+      modelId: "gpt-5",
     });
     expect(result.provider).toBe("openai");
     expect(result.contextLength).toBeDefined();
@@ -360,7 +409,7 @@ describe("resolveHostModelDefinition", () => {
         {
           status: 200,
           headers: { "Content-Type": "application/json" },
-        },
+        }
       );
     });
     vi.stubGlobal("fetch", fetchMock);

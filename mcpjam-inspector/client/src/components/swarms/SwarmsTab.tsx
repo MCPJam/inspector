@@ -15,11 +15,14 @@ import {
   launchJourneyRun,
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
+  type GoalScoreRollup,
   type JourneyRun,
   type JourneySessionRow,
   type PersonaTrackRecord,
   type JourneyRollup,
+  type SessionGoalScore,
 } from "@/lib/swarm-api";
+import { formatScore } from "@/components/shared/session-quality/judge-presentation";
 import {
   EMPTY_SESSION_FILTER,
   sessionMatchesFilter,
@@ -32,10 +35,13 @@ import {
 } from "@/components/chatboxes/session-readiness";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import {
+  buildEvalsPath,
   buildSwarmSessionPath,
+  navigateApp,
   parseSwarmSessionParams,
 } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
+import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
 import { SegmentedControl } from "@/components/ui/json-editor/segmented-control";
 import { SwarmHostsPanel } from "@/components/swarms/SwarmHostsPanel";
 import {
@@ -75,6 +81,81 @@ function toSessionReadiness(
         ? raw.issueCount
         : 0,
   };
+}
+
+// Judge-verdict guard, same philosophy as `toSessionReadiness`: the backend
+// denormalizes a WIDE `goalScore` subset; validate the status enum + score
+// before rendering so a malformed record degrades to "no badge".
+const GOAL_SCORE_STATUSES = ["running", "completed", "failed"] as const;
+type GoalScoreStatus = (typeof GOAL_SCORE_STATUSES)[number];
+
+export function toSessionGoalScore(raw: JourneySessionRow["goalScore"]):
+  | (SessionGoalScore & { status: GoalScoreStatus })
+  | undefined {
+  if (!raw) return undefined;
+  if (!(GOAL_SCORE_STATUSES as readonly string[]).includes(raw.status ?? "")) {
+    return undefined;
+  }
+  const status = raw.status as GoalScoreStatus;
+  // A completed verdict must carry BOTH a finite score and a boolean passed —
+  // a malformed `passed` must not silently render as "below threshold".
+  if (
+    status === "completed" &&
+    (!Number.isFinite(raw.score) || typeof raw.passed !== "boolean")
+  ) {
+    return undefined;
+  }
+  return { ...raw, status };
+}
+
+/**
+ * Per-session judge score badge, rendered next to the readiness badge.
+ * completed → "82% · meets goal"; running → "judging…"; failed → "judge
+ * unavailable" (never silently hidden — the viewer offers Retry); absent →
+ * nothing.
+ */
+export function SessionGoalScoreBadge({
+  goalScore,
+}: {
+  goalScore: JourneySessionRow["goalScore"];
+}) {
+  const gs = toSessionGoalScore(goalScore);
+  if (!gs) return null;
+  if (gs.status === "running") {
+    return (
+      <span className="rounded-sm bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+        judging…
+      </span>
+    );
+  }
+  if (gs.status === "failed") {
+    return (
+      <span
+        className="rounded-sm bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
+        title={gs.error ?? "Judge run failed — open the session to retry"}
+      >
+        judge unavailable
+      </span>
+    );
+  }
+  return (
+    <span
+      className={`rounded-sm px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide ${
+        gs.passed ? "bg-success/50 text-foreground" : "bg-warning/50 text-foreground"
+      }`}
+      title={gs.reason ?? undefined}
+    >
+      {formatScore(gs.score ?? NaN)} · {gs.passed ? "meets goal" : "below threshold"}
+    </span>
+  );
+}
+
+/** `· goal 78% avg (4 judged)` — shared by the run card + persona strip. */
+export function goalScoreAvgLabel(rollup: GoalScoreRollup | undefined): string | null {
+  if (!rollup || rollup.gradedCount === 0 || rollup.avgScore === null) {
+    return null;
+  }
+  return `goal ${formatScore(rollup.avgScore)} avg (${rollup.gradedCount} judged)`;
 }
 
 type Persona = {
@@ -336,6 +417,9 @@ function PersonaTrackRecordStrip({ personaRefId }: { personaRefId: string }) {
       <span className="text-muted-foreground">
         {record.sessionCount} session{record.sessionCount === 1 ? "" : "s"} ·{" "}
         {record.runCount} run{record.runCount === 1 ? "" : "s"}
+        {goalScoreAvgLabel(record.goalScore)
+          ? ` · ${goalScoreAvgLabel(record.goalScore)}`
+          : ""}
       </span>
     </div>
   );
@@ -481,6 +565,9 @@ function JourneyCard({
                   {r.summary.failed > 0 && ` · ${r.summary.failed} failed`}
                   {r.summary.rateLimited > 0 &&
                     ` · ${r.summary.rateLimited} rate-limited`}
+                  {goalScoreAvgLabel(r.goalScoreSummary)
+                    ? ` · ${goalScoreAvgLabel(r.goalScoreSummary)}`
+                    : ""}
                 </span>
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -559,6 +646,8 @@ function RunSessionsView({
   );
   const [filter, setFilter] = useState<SessionFilterState>(EMPTY_SESSION_FILTER);
   const [selected, setSelected] = useState<JourneySessionRow | null>(null);
+  const [sessionToPromote, setSessionToPromote] =
+    useState<JourneySessionRow | null>(null);
 
   const hostName = (id: string) =>
     hosts.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
@@ -629,6 +718,7 @@ function RunSessionsView({
                   {s.modelId ? ` · ${s.modelId}` : ""}
                 </span>
               </span>
+              <SessionGoalScoreBadge goalScore={s.goalScore} />
               <SessionReadinessBadge readiness={toSessionReadiness(s.readiness)} />
             </button>
           ))}
@@ -648,18 +738,49 @@ function RunSessionsView({
       {/* Reuse the existing project-scoped session viewer — do NOT build a new
           one. `ShareUsageThreadDetail` takes the session row's `id`. */}
       {selected && (
-        <div className="mt-2 h-[420px] overflow-hidden rounded-lg border">
-          <ShareUsageThreadDetail
-            threadId={selected.id}
-            sessionLink={`${getShareableAppOrigin()}${buildSwarmSessionPath({
-              personaRefId,
-              runId,
-              hostId: selected.hostId,
-              threadId: selected.id,
-            })}`}
-          />
+        <div className="mt-2">
+          <div className="mb-1 flex justify-end">
+            <button
+              type="button"
+              className="text-[11px] font-medium text-primary hover:underline"
+              onClick={() => setSessionToPromote(selected)}
+            >
+              Promote to test case
+            </button>
+          </div>
+          <div className="h-[420px] overflow-hidden rounded-lg border">
+            <ShareUsageThreadDetail
+              threadId={selected.id}
+              sessionLink={`${getShareableAppOrigin()}${buildSwarmSessionPath({
+                personaRefId,
+                runId,
+                hostId: selected.hostId,
+                threadId: selected.id,
+              })}`}
+            />
+          </div>
         </div>
       )}
+
+      <ConvertSwarmSessionDialog
+        open={sessionToPromote !== null}
+        session={sessionToPromote}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSessionToPromote(null);
+          }
+        }}
+        onImported={({ suiteId, testCaseId }) => {
+          setSessionToPromote(null);
+          navigateApp(
+            buildEvalsPath({
+              type: "test-edit",
+              suiteId,
+              testId: testCaseId,
+            }),
+          );
+        }}
+      />
     </div>
   );
 }

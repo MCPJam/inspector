@@ -4,8 +4,13 @@
 // assembly here (see `buildJwtBearerBody`) is what prevents the two surfaces
 // from drifting on the wire.
 import type { Context } from "hono";
-import { issueIdJag } from "./xaa-idjag-signer.js";
-import { getXAAIssuerUrl } from "./xaa-idp-keypair.js";
+import {
+  buildJwtBearerBody,
+  buildJwtBearerRequest,
+  getXAAIssuerUrl,
+  issueIdJag,
+  type XaaTokenEndpointAuthMethod,
+} from "@mcpjam/sdk";
 import {
   buildDiscoveryCandidates,
   buildResourceMetadataCandidates,
@@ -41,6 +46,7 @@ type ResolveServerSecretFn = (args: {
   serverId: string;
   projectId: string;
   bearerToken: string;
+  clientIp?: string | null;
 }) => Promise<ServerClientSecretResult>;
 
 // RFC 9728: ask the resource (the MCP server URL) which authorization server
@@ -222,6 +228,7 @@ export async function resolveServerTarget(deps: {
   serverId: string;
   projectId?: string;
   bearerToken: string;
+  clientIp?: string | null;
 }): Promise<ResolvedServerTarget> {
   if (!deps.resolveServerSecret) {
     throw new WebRouteError(
@@ -242,6 +249,7 @@ export async function resolveServerTarget(deps: {
     serverId: deps.serverId,
     projectId: deps.projectId,
     bearerToken: deps.bearerToken,
+    clientIp: deps.clientIp,
   });
 
   if (!resolved.xaaAuthzIssuer && !resolved.serverUrl) {
@@ -270,26 +278,13 @@ export async function resolveServerTarget(deps: {
   };
 }
 
-// The jwt-bearer (RFC 7523) token-request body posted to the resource
-// authorization server. SINGLE SOURCE OF TRUTH — both `/proxy/token` (debugger)
-// and `mintXaaAccessToken` (connect) build their request body here so the two
-// surfaces stay byte-identical on the wire.
-export function buildJwtBearerBody(args: {
-  assertion: string;
-  clientId?: string | null;
-  clientSecret?: string | null;
-  scope?: string | null;
-  resource?: string | null;
-}): Record<string, string> {
-  return {
-    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-    assertion: args.assertion,
-    ...(args.clientId ? { client_id: args.clientId } : {}),
-    ...(args.clientSecret ? { client_secret: args.clientSecret } : {}),
-    ...(args.scope ? { scope: args.scope } : {}),
-    ...(args.resource ? { resource: args.resource } : {}),
-  };
-}
+// `buildJwtBearerBody`, `buildJwtBearerRequest`, and `XaaTokenEndpointAuthMethod`
+// (the single-source jwt-bearer request body + method-aware client-auth request)
+// now live in @mcpjam/sdk and are re-exported here so existing importers keep
+// their path. This is the ONE implementation shared by the debugger's
+// `/proxy/token` endpoint, the connect-page server-side mint, and the CLI.
+export { buildJwtBearerBody, buildJwtBearerRequest };
+export type { XaaTokenEndpointAuthMethod };
 
 // Derive the MCPJam test-IdP issuer from the inbound request. Shared by the XAA
 // router endpoints and the connect-page mint so the signed ID-JAG `iss` matches
