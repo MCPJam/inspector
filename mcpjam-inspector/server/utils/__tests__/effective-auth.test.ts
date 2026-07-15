@@ -28,11 +28,11 @@ describe("resolveEffectiveAuthMethod", () => {
         authMethod: "auto",
         authServerMode: "mcpjam",
       }),
-    ).toBe("oauth");
+    ).toBe("discover");
     expect(
       resolveEffectiveAuthMethod({ authMethod: "auto", clientId: "c1" }),
-    ).toBe("oauth");
-    expect(resolveEffectiveAuthMethod({ authMethod: "auto" })).toBe("oauth");
+    ).toBe("discover");
+    expect(resolveEffectiveAuthMethod({ authMethod: "auto" })).toBe("discover");
   });
 
   it("canonical method wins over contradictory legacy booleans", () => {

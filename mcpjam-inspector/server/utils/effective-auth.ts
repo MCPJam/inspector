@@ -3,10 +3,20 @@
  * predicate all three surfaces (local resolver, hosted web/auth routes, swarm
  * runs) must share so `auto` behaves identically everywhere.
  *
- * `auto` SELECTS a flow before it starts (XAA when the server is
- * XAA-configured, OAuth otherwise); it is never a fallback after a failed
- * attempt — a failed XAA mint surfaces the error rather than retrying as
- * OAuth (a silent fallback would mask config errors as confusing OAuth 401s).
+ * `auto` resolves to XAA when the server is XAA-configured — a hard selection
+ * before the flow starts, never a fallback after a failed attempt (a failed
+ * XAA mint surfaces the error rather than retrying as OAuth, which would mask
+ * config errors as confusing OAuth 401s). Otherwise `auto` resolves to
+ * "discover": use a stored OAuth token when one exists, else connect
+ * UNAUTHENTICATED and let a 401 from the target escalate to the interactive
+ * OAuth flow. That is the MCP spec's canonical client sequence
+ * (unauthenticated request → 401 + WWW-Authenticate → discovery → OAuth),
+ * not a fallback-after-failure.
+ *
+ * NOTE: dispatch sites branch on equality (`=== "oauth"`), not exhaustive
+ * switches — adding a member here does NOT produce compile errors at
+ * unhandled sites. Every consumer must be audited by hand (currently
+ * local-server-resolver.ts and routes/web/auth.ts).
  *
  * The canonical `authMethod` WINS over the derived/legacy `useOAuth`/`useXaa`
  * booleans (see feedback: canonical-wins-every-read-site); only rows with no
@@ -15,7 +25,12 @@
 
 import { XAA_MCP_EXTENSION } from "@mcpjam/sdk";
 
-export type EffectiveAuthMethod = "oauth" | "xaa" | "bearer" | "none";
+export type EffectiveAuthMethod =
+  | "oauth"
+  | "xaa"
+  | "bearer"
+  | "none"
+  | "discover";
 
 type AuthConfigFields = {
   authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
@@ -75,7 +90,7 @@ export function resolveEffectiveAuthMethod(
     case "none":
       return sc.authMethod;
     case "auto":
-      return xaaConfigured(sc) ? "xaa" : "oauth";
+      return xaaConfigured(sc) ? "xaa" : "discover";
     default:
       // Legacy rows: the boolean pair governs. Same precedence the dispatch
       // gates used before authMethod existed (`useXaa === true && useOAuth

@@ -727,9 +727,11 @@ export type ServerFormOAuthRegistrationMode = RegistrationMode;
  * The auth type a server-form row is configured with. "xaa" (Cross-App Access)
  * is a distinct flow from "oauth": the inspector server mints the access token
  * server-side via token-exchange rather than running a browser OAuth flow.
- * "auto" SELECTS between them at connect time — XAA when the server is
- * XAA-configured (IdP mode + stored client id), OAuth otherwise. A selection
- * before the flow starts, never a fallback after a failed attempt.
+ * "auto" resolves at connect time: XAA when the server is XAA-configured
+ * (IdP mode + stored client id) — a hard selection, never a fallback after a
+ * failed mint — and otherwise "discover": use a stored OAuth token when one
+ * exists, else connect unauthenticated and escalate to interactive OAuth only
+ * when the server answers 401 (the MCP spec's canonical discovery sequence).
  */
 export type ServerFormAuthType = "auto" | "oauth" | "bearer" | "none" | "xaa";
 
@@ -750,8 +752,9 @@ export interface ServerFormData {
   /**
    * Canonical auth method (Convex `authMethod` column). The useOAuth/useXaa
    * booleans are its derived compat mirrors — the backend re-derives them on
-   * every write. "auto" selects XAA when the server is XAA-configured,
-   * OAuth otherwise (see server/utils/effective-auth.ts).
+   * every write. "auto" selects XAA when the server is XAA-configured, and
+   * otherwise "discover" (stored token if present, else unauthenticated with
+   * OAuth escalation on 401) — see server/utils/effective-auth.ts.
    */
   authMethod?: AuthMethod;
   /**

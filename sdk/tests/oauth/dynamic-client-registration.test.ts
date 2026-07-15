@@ -10,9 +10,12 @@ import { validateClientIdMetadataUrl } from "../../src/oauth/state-machines/shar
 import {
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   XAA_DEBUG_CLIENT_ID_METADATA_URL,
+  buildConfidentialCimdUrl,
+  decodeConfidentialCimdKey,
   evaluateIdJagClientMetadata,
   getXaaDebugClientMetadata,
 } from "../../src/oauth/client-identity.js";
+import { generateKeyPairSync, type JsonWebKey } from "crypto";
 import type { OAuthHttpRequest } from "../../src/oauth/state-machines/types.js";
 
 const REGISTRATION_ENDPOINT = "https://auth.example.com/register";
@@ -292,6 +295,94 @@ describe("executeDynamicClientRegistration", () => {
   });
 });
 
+describe("confidential CIMD key encode/decode", () => {
+  function publicJwk() {
+    const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    return publicKey.export({ format: "jwk" }) as JsonWebKey;
+  }
+
+  function encodedKeyOf(jwk: object): string {
+    return new URL(buildConfidentialCimdUrl(jwk as JsonWebKey, "https://h"))
+      .pathname.split("/")
+      .pop() as string;
+  }
+
+  // Raw base64url of an arbitrary object, bypassing buildConfidentialCimdUrl's
+  // guard — used to exercise what the reflector's decoder does with a hostile
+  // URL an attacker could craft by hand.
+  function rawEncode(obj: object): string {
+    return Buffer.from(JSON.stringify(obj)).toString("base64url");
+  }
+
+  it("round-trips a valid P-256 public key into a canonical public JWK", () => {
+    const jwk = publicJwk();
+    const decoded = decodeConfidentialCimdKey(encodedKeyOf(jwk));
+    expect(decoded).not.toBeNull();
+    expect(decoded).toMatchObject({
+      kty: "EC",
+      crv: "P-256",
+      x: jwk.x,
+      y: jwk.y,
+      alg: "ES256",
+      use: "sig",
+    });
+  });
+
+  it("buildConfidentialCimdUrl refuses to encode a private JWK (never leak `d`)", () => {
+    const jwk = publicJwk();
+    expect(() =>
+      buildConfidentialCimdUrl({ ...jwk, d: "AAAA" } as JsonWebKey),
+    ).toThrow(/private JWK|`d`/);
+  });
+
+  it("buildConfidentialCimdUrl encodes only canonical public members", () => {
+    const jwk = publicJwk();
+    const encoded = encodedKeyOf({ ...jwk, kid: "xaa-client-1", evil: "1" });
+    const raw = JSON.parse(
+      Buffer.from(encoded, "base64url").toString("utf-8"),
+    ) as Record<string, unknown>;
+    expect(raw.evil).toBeUndefined();
+    expect(raw.kid).toBe("xaa-client-1");
+    expect(raw.d).toBeUndefined();
+  });
+
+  it("decoder rejects a hand-encoded private JWK (fails closed on `d`)", () => {
+    const jwk = publicJwk();
+    expect(decodeConfidentialCimdKey(rawEncode({ ...jwk, d: "AAAA" }))).toBeNull();
+  });
+
+  it("decoder strips unknown members and preserves a safe kid", () => {
+    const jwk = publicJwk();
+    const decoded = decodeConfidentialCimdKey(
+      rawEncode({ ...jwk, kid: "xaa-client-1", evil: "1" }),
+    ) as Record<string, unknown> | null;
+    expect(decoded).not.toBeNull();
+    expect(decoded!.evil).toBeUndefined();
+    expect(decoded!.kid).toBe("xaa-client-1");
+  });
+
+  it("drops an unsafe kid", () => {
+    const jwk = publicJwk();
+    const decoded = decodeConfidentialCimdKey(
+      rawEncode({ ...jwk, kid: "bad kid\nwith junk" }),
+    ) as Record<string, unknown>;
+    expect(decoded.kid).toBeUndefined();
+  });
+
+  it.each([
+    ["not base64url json", "not-valid"],
+    ["wrong curve", encodedKeyOf({ kty: "EC", crv: "P-384", x: "a", y: "b" })],
+    [
+      "malformed coordinate length",
+      encodedKeyOf({ kty: "EC", crv: "P-256", x: "short", y: "short" }),
+    ],
+    ["non-EC kty", encodedKeyOf({ kty: "RSA", n: "abc", e: "AQAB" })],
+    ["missing y", encodedKeyOf({ kty: "EC", crv: "P-256", x: "a".repeat(43) })],
+  ])("rejects %s", (_label, encoded) => {
+    expect(decodeConfidentialCimdKey(encoded)).toBeNull();
+  });
+});
+
 describe("getXaaDebugClientMetadata + evaluateIdJagClientMetadata", () => {
   it.each(["client_secret_post", "none"] as const)(
     "builder output with %s self-evaluates to all-present",
@@ -419,6 +510,74 @@ describe("validateClientIdMetadataUrl (CIMD draft-02)", () => {
     expect(() => validateClientIdMetadataUrl(url)).toThrow(
       new RegExp(messageFragment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")
     );
+  });
+
+  describe("allowLoopback (gated local-dev carve-out for confidential CIMD)", () => {
+    it.each([
+      "http://localhost:6274/.well-known/oauth/xaa-cimd/key",
+      "http://127.0.0.1:6274/.well-known/oauth/xaa-cimd/key",
+      "http://[::1]:6274/.well-known/oauth/xaa-cimd/key",
+      "http://dev.localhost:6274/.well-known/oauth/xaa-cimd/key",
+    ])("permits http:// to a loopback host: %s", (url) => {
+      expect(validateClientIdMetadataUrl(url, { allowLoopback: true })).toBe(
+        url
+      );
+    });
+
+    it("still rejects http:// to a loopback host when the opt-in is absent", () => {
+      const url = "http://localhost:6274/.well-known/oauth/xaa-cimd/key";
+      expect(() => validateClientIdMetadataUrl(url)).toThrow(
+        /absolute HTTPS URL/i
+      );
+    });
+
+    it("does not relax https requirements for non-loopback hosts even when opted in", () => {
+      // The carve-out is loopback-only; a public http:// URL is still rejected.
+      const url = "http://example.com/.well-known/oauth/xaa-cimd/key";
+      expect(() =>
+        validateClientIdMetadataUrl(url, { allowLoopback: true })
+      ).toThrow(/absolute HTTPS URL/i);
+    });
+
+    it("permits any 127.0.0.0/8 loopback address (RFC 6890), not just 127.0.0.1", () => {
+      const url = "http://127.0.0.2:6274/.well-known/oauth/xaa-cimd/key";
+      expect(validateClientIdMetadataUrl(url, { allowLoopback: true })).toBe(
+        url
+      );
+    });
+
+    it.each([
+      // Non-empty userinfo (caught by parsed username).
+      ["http://u@localhost:6274/doc", "userinfo"],
+      // EMPTY userinfo — parsed username is "" (falsy), so this only fails if the
+      // raw-authority parser strips the http:// prefix correctly under the
+      // carve-out (the bug fix).
+      ["http://@localhost:6274/doc", "userinfo"],
+      // Triple-slash: WHATWG promotes the next token to the host; the raw
+      // authority is empty and must be rejected.
+      ["http:///localhost:6274/doc", "host"],
+      // Single-slash scheme is rejected for loopback too.
+      ["http:/localhost/doc", "scheme"],
+      ["http://localhost:6274/a/../doc", "dot path segments"],
+      ["http://localhost:6274/doc#frag", "fragment"],
+    ])(
+      "still applies structural checks to a loopback URL: %s",
+      (url, messageFragment) => {
+        expect(() =>
+          validateClientIdMetadataUrl(url, { allowLoopback: true })
+        ).toThrow(
+          new RegExp(
+            messageFragment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+            "i"
+          )
+        );
+      }
+    );
+
+    it("accepts a plain https loopback URL without the opt-in", () => {
+      const url = "https://localhost:6274/.well-known/oauth/xaa-cimd/key";
+      expect(validateClientIdMetadataUrl(url)).toBe(url);
+    });
   });
 });
 

@@ -199,6 +199,47 @@ function decodeJwtPayloadUnsafe(token: string): Record<string, unknown> {
 }
 
 /**
+ * Format-aware subject/email extraction from an UNVERIFIED identity
+ * assertion — the shared front half of the JSON mint route, exported so
+ * adapters that must inspect the claims BEFORE minting (e.g. the managed
+ * policy gate, which evaluates the subject against org policy and may deny
+ * or downscope the mint) resolve them exactly the way the mint core does.
+ * Throws on a malformed assertion or an empty subject.
+ */
+export function decodeIdentityAssertionClaimsUnsafe(
+  identityAssertion: string,
+  assertionFormat?: IdentityAssertionFormat
+): { subject: string; email?: string } {
+  if ((assertionFormat ?? DEFAULT_IDENTITY_ASSERTION_FORMAT) === "saml") {
+    // Lenient like the JWT path: no signature enforcement (the decode itself
+    // still size-caps and rejects DTDs).
+    const decoded = decodeSamlAssertionSubjectUnsafe(identityAssertion);
+    const subject = decoded.nameid.trim();
+    if (!subject) {
+      throw new Error("Identity assertion must contain a non-empty NameID");
+    }
+    return { subject, email: decoded.email };
+  }
+  const identityPayload = decodeJwtPayloadUnsafe(identityAssertion);
+  const subject =
+    typeof identityPayload.sub === "string" ? identityPayload.sub.trim() : "";
+  if (!subject) {
+    throw new Error(
+      "Identity assertion payload must contain a non-empty `sub` claim"
+    );
+  }
+  // Carry the ID token's email into the ID-JAG (spec RECOMMENDED) so the
+  // Resource AS can use it for subject resolution / JIT provisioning.
+  return {
+    subject,
+    email:
+      typeof identityPayload.email === "string"
+        ? identityPayload.email
+        : undefined,
+  };
+}
+
+/**
  * Token exchange → ID-JAG. Decodes the identity assertion (unverified — see
  * decodeJwtPayloadUnsafe) for sub/email, then mints, applying the
  * negative-test tamper when requested. A malformed assertion or one without a
@@ -208,36 +249,10 @@ function decodeJwtPayloadUnsafe(token: string): Record<string, unknown> {
 export function handleXaaJsonTokenExchange(
   params: XaaJsonTokenExchangeParams
 ): XaaMintHandlerResult {
-  let subject: string;
-  let email: string | undefined;
-
-  if (
-    (params.assertionFormat ?? DEFAULT_IDENTITY_ASSERTION_FORMAT) === "saml"
-  ) {
-    // Lenient like the JWT path: no signature enforcement (the decode itself
-    // still size-caps and rejects DTDs).
-    const decoded = decodeSamlAssertionSubjectUnsafe(params.identityAssertion);
-    subject = decoded.nameid.trim();
-    if (!subject) {
-      throw new Error("Identity assertion must contain a non-empty NameID");
-    }
-    email = decoded.email;
-  } else {
-    const identityPayload = decodeJwtPayloadUnsafe(params.identityAssertion);
-    subject =
-      typeof identityPayload.sub === "string" ? identityPayload.sub.trim() : "";
-    if (!subject) {
-      throw new Error(
-        "Identity assertion payload must contain a non-empty `sub` claim"
-      );
-    }
-    // Carry the ID token's email into the ID-JAG (spec RECOMMENDED) so the
-    // Resource AS can use it for subject resolution / JIT provisioning.
-    email =
-      typeof identityPayload.email === "string"
-        ? identityPayload.email
-        : undefined;
-  }
+  const { subject, email } = decodeIdentityAssertionClaimsUnsafe(
+    params.identityAssertion,
+    params.assertionFormat
+  );
 
   const mintParams = {
     issuer: params.issuer,
@@ -292,12 +307,32 @@ export function handleXaaJsonTokenExchange(
  * registry; the mock has none, so the debugger states it explicitly. Omitted
  * (or `oauth-sub`) keeps the exchange byte-identical to the pre-SAML wire.
  */
-export function handleXaaTokenExchangeGrant(
+/** The verified subject of an RFC 8693 exchange, plus the output-axis format
+ * — everything the mint half needs. Exposed so adapters can run a policy
+ * gate BETWEEN validation and issuance (deny or downscope the mint) without
+ * duplicating either half. */
+export type XaaValidatedTokenExchangeGrant =
+  | { ok: false; result: XaaMintHandlerResult }
+  | {
+      ok: true;
+      subject: { subject: string; email?: string; resourceClientId: string };
+      subjectIdFormat: SubjectIdentifierFormat;
+    };
+
+export function validateXaaTokenExchangeGrant(
   issuer: string,
   form: Record<string, string>
-): XaaMintHandlerResult {
+): XaaValidatedTokenExchangeGrant {
+  const fail = (
+    status: number,
+    error: string,
+    description: string
+  ): XaaValidatedTokenExchangeGrant => ({
+    ok: false,
+    result: oauthErrorResult(status, error, description),
+  });
   if (form.requested_token_type !== ID_JAG_TOKEN_TYPE) {
-    return oauthErrorResult(
+    return fail(
       400,
       "invalid_request",
       `requested_token_type must be ${ID_JAG_TOKEN_TYPE}`
@@ -307,7 +342,7 @@ export function handleXaaTokenExchangeGrant(
     form.subject_token_type !== ID_TOKEN_TOKEN_TYPE &&
     form.subject_token_type !== SAML2_TOKEN_TYPE
   ) {
-    return oauthErrorResult(
+    return fail(
       400,
       "invalid_request",
       `subject_token_type must be ${ID_TOKEN_TOKEN_TYPE} or ${SAML2_TOKEN_TYPE}`
@@ -320,7 +355,7 @@ export function handleXaaTokenExchangeGrant(
       ? DEFAULT_SUBJECT_IDENTIFIER_FORMAT
       : normalizeSubjectIdentifierFormat(form.subject_id_format);
   if (subjectIdFormat === undefined) {
-    return oauthErrorResult(
+    return fail(
       400,
       "invalid_request",
       "subject_id_format must be oauth-sub or saml-nameid"
@@ -328,20 +363,16 @@ export function handleXaaTokenExchangeGrant(
   }
   const clientId = form.client_id;
   if (!clientId) {
-    return oauthErrorResult(400, "invalid_request", "client_id is required");
+    return fail(400, "invalid_request", "client_id is required");
   }
   // This endpoint models the Client-to-IdP exchange. Its client_id is the
   // public debugger client registered at the mock IdP, not the separate
   // client identity that the RAS expects in the resulting ID-JAG.
   if (clientId !== XAA_DEBUG_IDP_CLIENT_ID) {
-    return oauthErrorResult(
-      401,
-      "invalid_client",
-      "Unknown mock IdP client_id"
-    );
+    return fail(401, "invalid_client", "Unknown mock IdP client_id");
   }
   if (!form.subject_token || !form.audience) {
-    return oauthErrorResult(
+    return fail(
       400,
       "invalid_request",
       "subject_token and audience are required"
@@ -379,12 +410,29 @@ export function handleXaaTokenExchangeGrant(
       );
     }
   } catch (error) {
-    return oauthErrorResult(
+    return fail(
       400,
       "invalid_grant",
       error instanceof Error ? error.message : "Invalid subject_token"
     );
   }
+  return { ok: true, subject, subjectIdFormat };
+}
+
+/**
+ * The mint half of the RFC 8693 grant. `scope` is what the mint actually
+ * authorizes AND what the response echoes — a policy-gated adapter passes
+ * the GRANTED scope here (RFC 8693: the response `scope` is what was
+ * authorized, not what was requested); the ungated composition below passes
+ * the requested scope, byte-identical to the pre-gate wire.
+ */
+export function mintXaaTokenExchangeGrant(
+  issuer: string,
+  form: Record<string, string>,
+  validated: Extract<XaaValidatedTokenExchangeGrant, { ok: true }>,
+  scope: string | undefined
+): XaaMintHandlerResult {
+  const { subject, subjectIdFormat } = validated;
   const issued = issueIdJag({
     issuer,
     subject: subject.subject,
@@ -392,7 +440,8 @@ export function handleXaaTokenExchangeGrant(
     audience: form.audience,
     resource: form.resource || undefined,
     clientId: subject.resourceClientId,
-    scope: form.scope || undefined,
+    // An empty authorized scope mints a scopeless ID-JAG (no scope claim).
+    scope: scope || undefined,
     // Output axis, independent of the subject token's format. Never derived
     // from the subject token's own NameID/audience.
     ...(subjectIdFormat === "saml-nameid"
@@ -413,7 +462,31 @@ export function handleXaaTokenExchangeGrant(
       access_token: issued.token,
       token_type: "N_A",
       expires_in: expiresInSeconds(issued.expiresAt),
-      ...(form.scope ? { scope: form.scope } : {}),
+      // Echo the authorized scope verbatim, INCLUDING an explicit "" for a
+      // policy grant of zero scopes — callers must be able to distinguish
+      // "everything stripped" from a legacy scopeless response. Absent
+      // (undefined) stays absent, byte-identical to the pre-gate wire.
+      ...(scope !== undefined ? { scope } : {}),
     },
   };
+}
+
+/**
+ * Standards-track RFC 8693 token exchange, composed from the two halves
+ * above. Behavior-identical to the pre-split function: validate, then mint
+ * echoing the requested scope. Adapters that gate the mint (managed policy)
+ * call the halves directly and pass the granted scope instead.
+ */
+export function handleXaaTokenExchangeGrant(
+  issuer: string,
+  form: Record<string, string>
+): XaaMintHandlerResult {
+  const validated = validateXaaTokenExchangeGrant(issuer, form);
+  if (!validated.ok) return validated.result;
+  return mintXaaTokenExchangeGrant(
+    issuer,
+    form,
+    validated,
+    form.scope || undefined
+  );
 }

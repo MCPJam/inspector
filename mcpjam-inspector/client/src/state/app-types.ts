@@ -129,6 +129,18 @@ export interface Project {
   sharedProjectId?: string;
   organizationId?: string;
   visibility?: ProjectVisibility;
+  /**
+   * Project-level default synthetic identity for the MCPJam test IdP,
+   * applied when an authenticated member connects an XAA server without a
+   * complete per-server override. Admin-controlled, atomic (both members or
+   * neither) and Convex-backed only — local-only projects never persist it.
+   * In update payloads `null` means "explicitly clear"; stored rows carry
+   * the object or nothing. This is NOT enterprise SSO / BYO-IdP
+   * configuration.
+   */
+  xaaTestDefaults?: {
+    defaultIdentity: { subject: string; email: string };
+  } | null;
 }
 
 /**
