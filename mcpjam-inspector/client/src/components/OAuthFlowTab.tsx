@@ -92,7 +92,7 @@ interface OAuthFlowTabProps {
   onSelectServer: (serverName: string) => void;
   onSaveServerConfig?: (
     formData: ServerFormData,
-    options?: { oauthProfile?: OAuthTestProfile },
+    options?: { oauthProfile?: OAuthTestProfile; originalServerName?: string },
   ) => void;
   onConnectWithTokens?: (
     serverName: string,
@@ -124,6 +124,15 @@ export const OAuthFlowTab = ({
   openProfileModalSignal,
 }: OAuthFlowTabProps) => {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  // "edit" opens the modal prefilled with the selected server; "add" opens it
+  // blank so a new target can be saved without touching the current one.
+  const [profileModalMode, setProfileModalMode] = useState<"edit" | "add">(
+    "edit",
+  );
+  const openProfileModal = useCallback((mode: "edit" | "add") => {
+    setProfileModalMode(mode);
+    setIsProfileModalOpen(true);
+  }, []);
 
   // Open the modal when the shell bumps the signal (header "Add Server"). Skip
   // the initial value so it doesn't pop open on mount.
@@ -131,8 +140,10 @@ export const OAuthFlowTab = ({
   useEffect(() => {
     if (openProfileModalSignal === prevOpenSignalRef.current) return;
     prevOpenSignalRef.current = openProfileModalSignal;
-    setIsProfileModalOpen(true);
-  }, [openProfileModalSignal]);
+    // The header button reads "Add Server" — open blank, not prefilled with
+    // the current selection.
+    openProfileModal("add");
+  }, [openProfileModalSignal, openProfileModal]);
   const [pendingServerSelection, setPendingServerSelection] = useState<
     string | null
   >(null);
@@ -581,7 +592,7 @@ export const OAuthFlowTab = ({
                 protocolVersion={protocolVersion}
                 focusedStep={focusedStep}
                 hasProfile={hasProfile}
-                onConfigure={() => setIsProfileModalOpen(true)}
+                onConfigure={() => openProfileModal("edit")}
               />
             </ResizablePanel>
 
@@ -619,7 +630,8 @@ export const OAuthFlowTab = ({
                     : undefined,
                 }}
                 actions={{
-                  onConfigure: () => setIsProfileModalOpen(true),
+                  onConfigure: () => openProfileModal("edit"),
+                  onAddServer: () => openProfileModal("add"),
                   onReset: hasProfile ? () => resetOAuthFlow() : undefined,
                   // Hide Continue button when showing Connect/Refresh buttons
                   onContinue:
@@ -656,7 +668,7 @@ export const OAuthFlowTab = ({
             focusedStep={focusedStep}
             hasProfile={false}
             showConfigurePrompt={areServersHydrated && !hasHeaderServers}
-            onConfigure={() => setIsProfileModalOpen(true)}
+            onConfigure={() => openProfileModal("edit")}
           />
         )}
       </div>
@@ -672,10 +684,14 @@ export const OAuthFlowTab = ({
       <OAuthProfileModal
         open={isProfileModalOpen}
         onOpenChange={setIsProfileModalOpen}
-        server={activeServer}
+        server={profileModalMode === "add" ? undefined : activeServer}
         existingServerNames={Object.keys(serverConfigs)}
         onSave={({ formData, profile: savedProfile }) => {
-          onSaveServerConfig?.(formData, { oauthProfile: savedProfile });
+          onSaveServerConfig?.(formData, {
+            oauthProfile: savedProfile,
+            originalServerName:
+              profileModalMode === "add" ? undefined : activeServer?.name,
+          });
           setPendingServerSelection(formData.name);
           resetOAuthFlow(formData.url);
         }}

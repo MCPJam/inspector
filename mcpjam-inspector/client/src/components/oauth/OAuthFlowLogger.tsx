@@ -27,6 +27,7 @@ import {
   Copy,
   AlertTriangle,
   Pencil,
+  Plus,
   RotateCcw,
 } from "lucide-react";
 import { generateGuideText, generateRawText } from "@/lib/oauth/log-formatters";
@@ -57,6 +58,8 @@ interface OAuthFlowLoggerProps {
   };
   actions?: {
     onConfigure?: () => void;
+    /** Open the profile modal blank to add a new target. */
+    onAddServer?: () => void;
     onReset?: () => void;
     onContinue?: () => void;
     continueLabel?: string;
@@ -392,6 +395,17 @@ export function OAuthFlowLogger({
                 </span>
               </button>
               <div className="flex items-center gap-1 shrink-0">
+                {actions?.onAddServer && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={actions.onAddServer}
+                    className="h-7"
+                  >
+                    <Plus className="h-3 w-3 mr-1" />
+                    Add
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   size="sm"

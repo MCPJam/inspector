@@ -151,9 +151,13 @@ export function XAAServerModal({
       setError("Server name is required.");
       return;
     }
+    // Renaming has to collide-check too: only the server being edited is exempt
+    // from its own name. Without the second clause a rename onto another
+    // server's name would silently overwrite that server.
     if (
-      !isEditing &&
-      existingServerNames.some((name) => name === trimmedName)
+      existingServerNames.some(
+        (name) => name === trimmedName && name !== server?.name
+      )
     ) {
       setError(`A server named "${trimmedName}" already exists.`);
       return;

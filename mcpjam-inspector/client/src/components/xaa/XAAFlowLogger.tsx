@@ -10,6 +10,7 @@ import {
   Loader2,
   Pencil,
   Play,
+  Plus,
   RotateCcw,
   ShieldAlert,
   ShieldCheck,
@@ -65,6 +66,8 @@ interface XAAFlowLoggerProps {
   activeStep?: XAAFlowStep | null;
   actions: {
     onConfigure: () => void;
+    /** Open the server modal blank to add a new target. */
+    onAddServer?: () => void;
     onReset?: () => void;
     onContinue?: () => void;
     /** Run the whole flow — surfaced in the Continue split-button's menu. */
@@ -660,6 +663,17 @@ export function XAAFlowLogger({
           </button>
           {hasProfile && (
             <div className="flex shrink-0 items-center justify-end gap-1">
+              {actions.onAddServer && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={actions.onAddServer}
+                  className="h-7"
+                >
+                  <Plus className="h-3 w-3 mr-1" />
+                  Add
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="sm"

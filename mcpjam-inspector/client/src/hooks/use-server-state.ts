@@ -832,6 +832,12 @@ export function useServerState({
   const activeProjectServersFlatRef = useRef(activeProjectServersFlat);
   activeProjectServersFlatRef.current = activeProjectServersFlat;
   const persistRuntimeDedupeKeysRef = useRef<Set<string>>(new Set());
+  // handleRemoveServer is declared further down the hook, so the rename branch
+  // in saveServerConfigWithoutConnecting reaches it through a ref rather than a
+  // dependency (a dep array entry would evaluate before the const initializes).
+  const handleRemoveServerRef = useRef<
+    ((serverName: string) => Promise<void>) | null
+  >(null);
 
   async function sleep(ms: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, ms));
@@ -3257,7 +3263,15 @@ export function useServerState({
   const saveServerConfigWithoutConnecting = useCallback(
     async (
       formData: ServerFormData,
-      options?: { oauthProfile?: OAuthTestProfile; suppressToast?: boolean }
+      options?: {
+        oauthProfile?: OAuthTestProfile;
+        suppressToast?: boolean;
+        // The name the server was saved under before this edit. Callers editing
+        // an existing server must pass it: every lookup here keys off the name,
+        // so without it a rename reads as a brand-new server and forks a second
+        // row. Mirrors handleUpdate's originalServerName argument.
+        originalServerName?: string;
+      }
     ) => {
       const validationError = validateForm(formData);
       if (validationError) {
@@ -3271,7 +3285,20 @@ export function useServerState({
         return;
       }
 
-      const existingServer = appState.servers[serverName];
+      const originalServerName = options?.originalServerName?.trim();
+      const isRename = Boolean(
+        originalServerName && originalServerName !== serverName
+      );
+      const activeProjectServers =
+        effectiveProjects[effectiveActiveProjectId]?.servers ?? {};
+      if (isRename && activeProjectServers[serverName]) {
+        toast.error(
+          `A server named "${serverName}" already exists. Choose a different name.`
+        );
+        return;
+      }
+
+      const existingServer = appState.servers[originalServerName ?? serverName];
       const mcpConfig = toMCPConfig(formData);
       const nextOAuthProfile =
         formData.useOAuth || formData.useXaa
@@ -3349,6 +3376,13 @@ export function useServerState({
         clearOAuthData(serverName);
       }
 
+      // serverEntry already carries the old row's data, so drop the old row
+      // before writing the new name. Without this the name-keyed lookups below
+      // miss and leave the original behind as a duplicate.
+      if (isRename && originalServerName) {
+        await handleRemoveServerRef.current?.(originalServerName);
+      }
+
       if (
         isAuthenticated &&
         !useLocalFallback &&
@@ -3393,7 +3427,9 @@ export function useServerState({
           return;
         }
       } else {
-        persistServerToLocalProject(serverName, serverEntry);
+        persistServerToLocalProject(serverName, serverEntry, {
+          originalServerName: isRename ? originalServerName : undefined,
+        });
       }
 
       dispatch({
@@ -3420,6 +3456,7 @@ export function useServerState({
       isAuthenticated,
       useLocalFallback,
       effectiveActiveProjectId,
+      effectiveProjects,
       syncServerToConvex,
       persistServerToLocalProject,
     ]
@@ -3962,6 +3999,7 @@ export function useServerState({
     },
     [logger, handleDisconnect, removeServerFromStateAndCloud]
   );
+  handleRemoveServerRef.current = handleRemoveServer;
 
   const waitForServerReconnectOutcome = useCallback(
     async (
