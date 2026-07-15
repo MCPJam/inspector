@@ -190,6 +190,43 @@ describe("PlatformApiClient", () => {
     expect(created.status).toBe("running");
   });
 
+  it("posts eval-suite creation bodies and parses the 201 envelope", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(
+        {
+          suiteId: "suite-9",
+          name: "Authored",
+          servers: [{ id: "s1" }],
+          caseUpsert: { committed: [{ name: "c1" }], failed: [] },
+        },
+        { status: 201 }
+      )
+    );
+    const client = makeClient(fetchMock);
+
+    const created = await client.createEvalSuite({
+      projectId: "p1",
+      body: {
+        name: "Authored",
+        serverIds: ["s1"],
+        model: "anthropic/claude-haiku-4.5",
+        tests: [{ title: "t", query: "q" }],
+      },
+    });
+
+    const { url, init } = requestOf(fetchMock);
+    expect(url.pathname).toBe("/api/v1/projects/p1/eval-suites");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      name: "Authored",
+      serverIds: ["s1"],
+      model: "anthropic/claude-haiku-4.5",
+      tests: [{ title: "t", query: "q" }],
+    });
+    expect(created.suiteId).toBe("suite-9");
+    expect(created.name).toBe("Authored");
+  });
+
   it("builds eval polling URLs and forwards cursor/limit query params", async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ items: [] }));
     const client = makeClient(fetchMock);

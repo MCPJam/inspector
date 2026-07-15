@@ -11,6 +11,8 @@ import {
 const SECRET = "test-secret";
 const PUBLIC_ORIGIN = "https://app.example.com";
 const CLIENT_ID = "client_01TESTTESTTESTTESTTESTTEST";
+// A distinct WorkOS Connect OAuth-application client id (CLI_AUTH_CLIENT_ID).
+const OAUTH_APP_CLIENT_ID = "client_01OAUTHAPPOAUTHAPPOAUTHAP";
 const LOOPBACK = "http://127.0.0.1:43217/callback";
 // 43 unreserved chars — the minimum valid S256 challenge length.
 const CHALLENGE = "a".repeat(43);
@@ -42,6 +44,7 @@ function startUrl(
 const MANAGED_ENV_KEYS = [
   "CLI_AUTH_STATE_SECRET",
   "CLI_AUTH_PUBLIC_ORIGIN",
+  "CLI_AUTH_CLIENT_ID",
   "WORKOS_CLIENT_ID",
   "VITE_WORKOS_CLIENT_ID",
   "AUTHKIT_DOMAIN",
@@ -166,6 +169,18 @@ describe("GET /api/cli/auth/config", () => {
       scope: "openid profile email offline_access",
     });
   });
+
+  it("advertises CLI_AUTH_CLIENT_ID while deriving the issuer from the AuthKit client", async () => {
+    process.env.CLI_AUTH_CLIENT_ID = OAUTH_APP_CLIENT_ID;
+    const response = await makeApp().request("/api/cli/auth/config");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      issuer: "https://login.example.com",
+      clientId: OAUTH_APP_CLIENT_ID,
+      tokenEndpoint: "https://login.example.com/oauth2/token",
+    });
+  });
 });
 
 describe("GET /api/cli/auth/start", () => {
@@ -190,6 +205,20 @@ describe("GET /api/cli/auth/start", () => {
       cliRedirectUri: LOOPBACK,
       cliState: "cli-state-123",
     });
+  });
+
+  it("authorizes with CLI_AUTH_CLIENT_ID against the AuthKit issuer", async () => {
+    process.env.CLI_AUTH_CLIENT_ID = OAUTH_APP_CLIENT_ID;
+    const response = await makeApp().request(startUrl());
+
+    expect(response.status).toBe(302);
+    const location = new URL(response.headers.get("location")!);
+    expect(location.origin).toBe("https://login.example.com");
+    expect(location.pathname).toBe("/oauth2/authorize");
+    expect(location.searchParams.get("client_id")).toBe(OAUTH_APP_CLIENT_ID);
+    expect(location.searchParams.get("redirect_uri")).toBe(
+      `${PUBLIC_ORIGIN}/api/cli/auth/callback`
+    );
   });
 
   it.each([

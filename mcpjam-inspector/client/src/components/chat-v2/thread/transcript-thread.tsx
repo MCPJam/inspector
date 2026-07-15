@@ -247,10 +247,11 @@ export function TranscriptThread({
   onDisplayModeChange,
   onToolApprovalResponse,
   toolRenderOverrides,
-  showSaveViewButton = true,
+  showInlineEdit = true,
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
+  mcpToolResultImageRendering,
   focusMessageId = null,
   highlightedMessageIds = [],
   navigationKey = null,
@@ -263,6 +264,7 @@ export function TranscriptThread({
   renderUserMessageActions,
   showSenderAvatars = false,
   resolveSenderAvatar,
+  recorder,
 }: TranscriptThreadProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -271,13 +273,13 @@ export function TranscriptThread({
   // assistant bubble (the "footer" treatment). MCPJam shares the claude
   // visual family for bubbles but owns its own footer indicator.
   const resolvedIndicatorHostStyle = useResolvedHostStyleForIndicator(
-    model.provider,
+    model.provider
   );
   const isClaudeFamily = usesClaudeInlineStreamingFooter(
-    resolvedIndicatorHostStyle,
+    resolvedIndicatorHostStyle
   );
   const isMcpjamHost = usesMcpjamInlineStreamingFooter(
-    resolvedIndicatorHostStyle,
+    resolvedIndicatorHostStyle
   );
   const highlightedMessageIdSet = useMemo(
     () => new Set(highlightedMessageIds),
@@ -565,15 +567,17 @@ export function TranscriptThread({
               onDisplayModeChange={onDisplayModeChange}
               onToolApprovalResponse={onToolApprovalResponse}
               toolRenderOverrides={toolRenderOverrides}
-              showSaveViewButton={showSaveViewButton}
+              showInlineEdit={showInlineEdit}
               minimalMode={minimalMode}
               interactive={interactive}
               reasoningDisplayMode={reasoningDisplayMode}
+              mcpToolResultImageRendering={mcpToolResultImageRendering}
               claudeFooterMode={claudeFooterMode}
               mcpjamFooterActive={mcpjamFooterActive}
               renderUserMessageActions={renderUserMessageActions}
               senderAvatar={senderAvatar}
               showSenderAvatar={showSenderAvatarForMessage}
+              recorder={recorder}
             />
             {messageAppToolInvocations.length > 0 && (
               <div className="mt-3 space-y-2">

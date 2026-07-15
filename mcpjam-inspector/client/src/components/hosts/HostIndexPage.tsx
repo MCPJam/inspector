@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Plus, Loader2, Server } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useHostList, useHostMutations, type HostListItem } from "@/hooks/useClients";
@@ -68,7 +68,7 @@ export function HostIndexPage({
     <div className="flex h-full flex-col gap-6 p-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Hosts</h1>
+          <h1 className="text-2xl font-bold">Clients</h1>
           <p className="text-sm text-muted-foreground">
             Named configurations combining a model, system prompt, and server
             selection.
@@ -76,19 +76,19 @@ export function HostIndexPage({
         </div>
         <Button onClick={() => setShowCreate(true)}>
           <Plus className="mr-2 h-4 w-4" />
-          New Host
+          New Client
         </Button>
       </div>
 
       {hosts.length === 0 ? (
         <EmptyState
           icon={Server}
-          title="No hosts yet"
-          description="Create a named host to reuse across Chat, Chatboxes, and Evals."
+          title="No clients yet"
+          description="Create a named client to reuse across Chat, Swarms, and Evals."
         >
           <Button onClick={() => setShowCreate(true)}>
             <Plus className="mr-2 h-4 w-4" />
-            New Host
+            New Client
           </Button>
         </EmptyState>
       ) : (

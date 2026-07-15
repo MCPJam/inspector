@@ -16,6 +16,7 @@ import {
 } from "@/hooks/useOrganizations";
 import { readStoredActiveOrganizationId } from "@/lib/active-organization-storage";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
+import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 import { useAppNavigate } from "@/lib/app-navigation";
 
 export function MCPJamLimitDialog() {
@@ -82,10 +83,11 @@ export function MCPJamLimitDialog() {
   };
 
   const handleBYOK = () => {
-    const orgId = resolveBillingOrgId();
-    if (!orgId) return;
+    // Don't yank the user to the org settings page — just close the dialog
+    // and pop open the chat model picker on its "Your providers" tab so they
+    // can switch to an own-key model in place. The free models stay grayed.
     close();
-    appNavigate(`/organizations/${orgId}/models`);
+    useModelPickerIntentStore.getState().requestOpenProvidersTab();
   };
 
   // Guest variant — only renders for unauthenticated users.

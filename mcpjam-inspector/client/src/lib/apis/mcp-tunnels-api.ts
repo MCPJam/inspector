@@ -4,8 +4,6 @@
 
 import { authFetch } from "@/lib/session-token";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:6274";
-
 export interface ServerTunnelResponse {
   // Full bearer URL (contains the ?k= secret enforced at the relay edge).
   // Only ever returned from the local inspector server's in-memory state
@@ -45,7 +43,7 @@ export async function createServerTunnel(
   }
 
   const response = await authFetch(
-    `${API_BASE}/api/mcp/tunnels/create/${encodeURIComponent(serverId)}`,
+    `/api/mcp/tunnels/create/${encodeURIComponent(serverId)}`,
     {
       method: "POST",
       headers,
@@ -78,7 +76,7 @@ export async function getServerTunnel(
   }
 
   const response = await authFetch(
-    `${API_BASE}/api/mcp/tunnels/server/${encodeURIComponent(serverId)}`,
+    `/api/mcp/tunnels/server/${encodeURIComponent(serverId)}`,
     {
       method: "GET",
       headers,
@@ -115,7 +113,7 @@ export async function closeServerTunnel(
   }
 
   const response = await authFetch(
-    `${API_BASE}/api/mcp/tunnels/server/${encodeURIComponent(serverId)}`,
+    `/api/mcp/tunnels/server/${encodeURIComponent(serverId)}`,
     {
       method: "DELETE",
       headers,
@@ -149,7 +147,7 @@ export async function rotateServerTunnel(
   }
 
   const response = await authFetch(
-    `${API_BASE}/api/mcp/tunnels/rotate/${encodeURIComponent(serverId)}`,
+    `/api/mcp/tunnels/rotate/${encodeURIComponent(serverId)}`,
     {
       method: "POST",
       headers,
@@ -183,7 +181,7 @@ export async function getTunnelRequests(
   }
 
   const response = await authFetch(
-    `${API_BASE}/api/mcp/tunnels/requests/${encodeURIComponent(serverId)}`,
+    `/api/mcp/tunnels/requests/${encodeURIComponent(serverId)}`,
     {
       method: "GET",
       headers,

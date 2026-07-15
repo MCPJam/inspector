@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ExternalLink, XIcon, Play } from "lucide-react";
 import { learnMoreContent } from "@/lib/learn-more-content";
+import { XAAHowItWorksContent } from "./XAAHowItWorksContent";
 
 interface LearnMoreExpandedPanelProps {
   tabId: string | null;
@@ -10,6 +11,7 @@ interface LearnMoreExpandedPanelProps {
 }
 
 const PANEL_WIDTH = 900;
+const XAA_PANEL_WIDTH = 1180;
 const PANEL_GUTTER = 16;
 const EASING: [number, number, number, number] = [0.16, 1, 0.3, 1]; // ease-out-expo
 
@@ -21,10 +23,14 @@ function getViewportSize() {
   return { width: window.innerWidth, height: window.innerHeight };
 }
 
-export function getLearnMorePanelLayout(viewWidth: number, viewHeight: number) {
+export function getLearnMorePanelLayout(
+  viewWidth: number,
+  viewHeight: number,
+  preferredWidth = PANEL_WIDTH
+) {
   const width = Math.min(
-    PANEL_WIDTH,
-    Math.max(viewWidth - PANEL_GUTTER * 2, 0),
+    preferredWidth,
+    Math.max(viewWidth - PANEL_GUTTER * 2, 0)
   );
   const left = Math.max((viewWidth - width) / 2, PANEL_GUTTER);
   const top = Math.max(viewHeight * 0.1, PANEL_GUTTER);
@@ -80,7 +86,9 @@ function VideoThumbnail({
           />
         ) : (
           <iframe
-            src={`${entry.videoUrl}${entry.videoUrl.includes("?") ? "&" : "?"}autoplay=1`}
+            src={`${entry.videoUrl}${
+              entry.videoUrl.includes("?") ? "&" : "?"
+            }autoplay=1`}
             className="h-full w-full"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen
@@ -95,10 +103,10 @@ function VideoThumbnail({
   const thumbnailSrc = entry.videoThumbnail
     ? entry.videoThumbnail
     : isMP4
-      ? undefined
-      : isYouTube && youtubeId
-        ? `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg`
-        : undefined;
+    ? undefined
+    : isYouTube && youtubeId
+    ? `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg`
+    : undefined;
 
   return (
     <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-neutral-900 group">
@@ -166,9 +174,14 @@ export function LearnMoreExpandedPanel({
   onClose,
 }: LearnMoreExpandedPanelProps) {
   const entry = tabId ? learnMoreContent[tabId] : null;
+  const isXAAGuide = tabId === "xaa-idp";
   const panelRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState(getViewportSize);
-  const panelLayout = getLearnMorePanelLayout(viewport.width, viewport.height);
+  const panelLayout = getLearnMorePanelLayout(
+    viewport.width,
+    viewport.height,
+    isXAAGuide ? XAA_PANEL_WIDTH : PANEL_WIDTH
+  );
 
   // Close on Escape
   useEffect(() => {
@@ -237,6 +250,9 @@ export function LearnMoreExpandedPanel({
             ref={panelRef}
             key="learn-more-panel"
             className="fixed z-50 bg-background rounded-lg border shadow-lg overflow-y-auto overflow-x-hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="learn-more-panel-title"
             style={{
               top: panelLayout.top,
               left: panelLayout.left,
@@ -268,32 +284,41 @@ export function LearnMoreExpandedPanel({
             </button>
 
             {/* Title + docs link */}
-            <div className="px-10 pt-8 pb-2 flex items-start justify-between gap-4">
-              <h2 className="text-3xl font-bold leading-tight">
+            <div className="px-6 pt-8 pb-2 sm:px-10 flex items-start justify-between gap-4">
+              <h2
+                id="learn-more-panel-title"
+                className="text-3xl font-bold leading-tight"
+              >
                 {entry.title}
               </h2>
-              <a
-                href={entry.docsUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="shrink-0 mt-1 flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
-              >
-                Docs
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
+              {entry.docsUrl && (
+                <a
+                  href={entry.docsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 mt-1 flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Docs
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              )}
             </div>
 
-            {/* Video / Thumbnail */}
-            <div className="px-10 pt-2 pb-4">
-              <VideoThumbnail entry={entry} />
-            </div>
+            {entry.videoUrl && (
+              <div className="px-6 pt-2 pb-4 sm:px-10">
+                <VideoThumbnail entry={entry} />
+              </div>
+            )}
 
-            {/* Description */}
-            <div className="px-10 pb-8">
-              <p className="text-base text-muted-foreground leading-relaxed">
-                {entry.expandedDescription ?? entry.description}
-              </p>
-            </div>
+            {isXAAGuide ? (
+              <XAAHowItWorksContent />
+            ) : (
+              <div className="px-6 pb-8 sm:px-10">
+                <p className="text-base text-muted-foreground leading-relaxed">
+                  {entry.expandedDescription ?? entry.description}
+                </p>
+              </div>
+            )}
           </motion.div>
         </>
       )}

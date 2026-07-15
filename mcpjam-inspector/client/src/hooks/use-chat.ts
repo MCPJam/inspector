@@ -1,7 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { ChatMessage, ChatState, Attachment } from "@/lib/types/chat-types";
 import { createMessage } from "@/lib/chat-utils";
 import {
@@ -50,7 +49,6 @@ export function useChat(options: UseChatOptions = {}) {
     getAzureBaseUrl,
   } = useAiProviderKeys();
   const { customProviders, getCustomProviderByName } = useCustomProviders();
-  const posthog = usePostHog();
 
   const {
     initialMessages = [],
@@ -92,7 +90,7 @@ export function useChat(options: UseChatOptions = {}) {
       setIsOllamaRunning(isRunning);
 
       if (isRunning) {
-        posthog.capture("ollama_running", standardEventProps("chat_tab"));
+        track("ollama_running", { location: "chat_tab" });
       }
 
       const toolCapableModels = isRunning

@@ -13,14 +13,25 @@ import { fetchGuestSessionForServerSideAuth } from "./guest-session-source.js";
 /** Buffer before expiry to trigger a refresh (5 minutes in ms). */
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
-let cachedToken: { token: string; expiresAt: number } | null = null;
+type GuestAuthSession = {
+  authHeader: string;
+  guestId?: string;
+};
+
+let cachedToken: { token: string; expiresAt: number; guestId?: string } | null =
+  null;
 
 /**
- * Returns a Bearer authorization header for unauthenticated MCPJam model calls.
+ * Returns a Bearer authorization session for unauthenticated MCPJam model calls.
  */
-export async function getProductionGuestAuthHeader(): Promise<string | null> {
+export async function getProductionGuestAuthSession(): Promise<
+  GuestAuthSession | null
+> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + REFRESH_BUFFER_MS) {
-    return `Bearer ${cachedToken.token}`;
+    return {
+      authHeader: `Bearer ${cachedToken.token}`,
+      ...(cachedToken.guestId ? { guestId: cachedToken.guestId } : {}),
+    };
   }
 
   const session = await fetchGuestSessionForServerSideAuth();
@@ -29,12 +40,29 @@ export async function getProductionGuestAuthHeader(): Promise<string | null> {
       logger.warn(
         "[guest-auth] Failed to refresh guest token; reusing cached token until expiry",
       );
-      return `Bearer ${cachedToken.token}`;
+      return {
+        authHeader: `Bearer ${cachedToken.token}`,
+        ...(cachedToken.guestId ? { guestId: cachedToken.guestId } : {}),
+      };
     }
     return null;
   }
 
-  cachedToken = { token: session.token, expiresAt: session.expiresAt };
+  cachedToken = {
+    token: session.token,
+    expiresAt: session.expiresAt,
+    ...(session.guestId ? { guestId: session.guestId } : {}),
+  };
   logger.info("[guest-auth] Fetched guest token for MCPJam model request");
-  return `Bearer ${session.token}`;
+  return {
+    authHeader: `Bearer ${session.token}`,
+    ...(session.guestId ? { guestId: session.guestId } : {}),
+  };
+}
+
+/**
+ * Returns a Bearer authorization header for unauthenticated MCPJam model calls.
+ */
+export async function getProductionGuestAuthHeader(): Promise<string | null> {
+  return (await getProductionGuestAuthSession())?.authHeader ?? null;
 }

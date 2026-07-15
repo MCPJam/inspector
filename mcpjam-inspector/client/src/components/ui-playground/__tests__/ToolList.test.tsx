@@ -392,4 +392,100 @@ describe("ToolList", () => {
 
     expect(onSearchQueryChange).toHaveBeenCalledWith("read");
   });
+
+  // ── Harness built-in tools (selectable, like server tools) ──
+
+  const makeBuiltin = (key: string, name: string) => ({
+    key,
+    name,
+    description: `${name} description`,
+    toolUseKind: "bash",
+    inputSchema: {
+      type: "object",
+      properties: { command: { type: "string" } },
+      required: ["command"],
+    } as Record<string, unknown>,
+  });
+
+  it("renders the built-in section instead of 'No tools found' for a harness host with no server tools", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        toolNames={[]}
+        filteredToolNames={[]}
+        builtinTools={[makeBuiltin("bash", "Bash")]}
+        onSelectBuiltin={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Built-in tools")).toBeInTheDocument();
+    expect(screen.getByText("runs in sandbox")).toBeInTheDocument();
+    expect(screen.getByText("Bash")).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "No tools found. Try refreshing and make sure the server is running.",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not render the built-in section for an emulated host (no built-in tools)", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        tools={{ read_me: makeTool("read_me") }}
+        toolNames={["read_me"]}
+        filteredToolNames={["read_me"]}
+      />,
+    );
+    expect(screen.queryByText("Built-in tools")).not.toBeInTheDocument();
+  });
+
+  it("clicking a built-in row selects it via onSelectBuiltin (not onSelectTool)", () => {
+    const onSelectTool = vi.fn();
+    const onSelectBuiltin = vi.fn();
+    render(
+      <ToolList
+        {...defaultProps}
+        toolNames={[]}
+        filteredToolNames={[]}
+        onSelectTool={onSelectTool}
+        builtinTools={[makeBuiltin("bash", "Bash")]}
+        onSelectBuiltin={onSelectBuiltin}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Bash/i }));
+    expect(onSelectBuiltin).toHaveBeenCalledWith("bash");
+    expect(onSelectTool).not.toHaveBeenCalled();
+  });
+
+  it("filters built-in tools with the shared search box", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        toolNames={[]}
+        filteredToolNames={[]}
+        searchQuery="grep"
+        builtinTools={[makeBuiltin("bash", "Bash"), makeBuiltin("grep", "Grep")]}
+        onSelectBuiltin={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Grep")).toBeInTheDocument();
+    expect(screen.queryByText("Bash")).not.toBeInTheDocument();
+  });
+
+  it("does not render a source filter chip bar", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        tools={{ read_me: makeTool("read_me") }}
+        toolNames={["read_me"]}
+        filteredToolNames={["read_me"]}
+        builtinTools={[makeBuiltin("bash", "Bash")]}
+        onSelectBuiltin={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("Source:")).not.toBeInTheDocument();
+  });
 });
