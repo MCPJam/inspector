@@ -87,9 +87,9 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
     ],
   },
   request_authorization_server_metadata: {
-    title: "Fetch Authorization Server Metadata",
+    title: "Request Authorization Server Metadata",
     summary:
-      "The client queries the authorization server's well-known endpoint (RFC8414 or OIDC).",
+      "The client requests the authorization server's well-known metadata endpoint (RFC8414 or OIDC).",
     teachableMoments: [
       "Different protocol versions prioritize different discovery strategies (path insertion, appending, etc.).",
       "Failure here often points to misconfigured issuer URLs or CORS/proxy issues.",
