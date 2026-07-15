@@ -404,7 +404,7 @@ function decodePathSegment(segment: string): string {
 
 // ── XAA setup center (`/xaa-flow/setup[/:section]`) ─────────────────────────
 
-export type XaaSetupSection = "people" | "apps" | "access";
+export type XaaSetupSection = "people" | "apps";
 
 const XAA_SETUP_BASE_PATH = `${routePaths.xaaFlow}/setup`;
 
@@ -418,13 +418,14 @@ export function buildXaaSetupPath(section?: XaaSetupSection): string {
 
 /** Resolve the active setup section from a pathname; null when the pathname
  * is not a setup-center route. Unknown section segments fall back to the
- * default section rather than 404ing a shared link. */
+ * default section rather than 404ing a shared link. The retired `access`
+ * section was absorbed into `apps`, so old deep links land on the app list. */
 export function parseXaaSetupSection(pathname: string): XaaSetupSection | null {
   const segments = pathname.replace(/^\/+/, "").split("/");
   if (segments[0] !== "xaa-flow" || segments[1] !== "setup") return null;
   const sectionSegment = segments[2];
   return sectionSegment === "apps" || sectionSegment === "access"
-    ? sectionSegment
+    ? "apps"
     : "people";
 }
 

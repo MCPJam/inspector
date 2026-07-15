@@ -13,22 +13,23 @@ import {
 } from "@/lib/app-navigation";
 import { HOSTED_MODE } from "@/lib/config";
 import { MCPJamAgentCard } from "./MCPJamAgentCard";
-import { XAASetupAccessSection } from "./XAASetupAccessSection";
 import { XAASetupAppsSection } from "./XAASetupAppsSection";
 import { XAASetupPeopleSection } from "./XAASetupPeopleSection";
 
 const SECTION_OPTIONS: { value: XaaSetupSection; label: string }[] = [
   { value: "people", label: "People" },
-  { value: "apps", label: "Apps" },
-  { value: "access", label: "Access" },
+  { value: "apps", label: "Servers" },
 ];
 
 /**
  * Setup center for the managed test IdP (`/xaa-flow/setup`): org People, the
- * fixed MCPJam Agent, per-app connections, and access policy. Sections are
- * URL segments so each is deep-linkable. Org admins (owner/admin/creator —
- * mirrors XAAResourceAppsSection) manage; everyone else gets a read-only
- * view with locked affordances.
+ * fixed MCPJam Agent, and one consolidated server list — a people × servers
+ * access matrix (registration + connection + assignments per row; scope
+ * details behind each row's "Advanced access" disclosure). Sections are URL
+ * segments so each is deep-linkable (the servers section keeps the `apps`
+ * segment for old links). Org admins (owner/admin/creator — mirrors
+ * XAAResourceAppsSection) manage; everyone else gets a read-only view with
+ * locked affordances.
  */
 export function XAASetupPage({
   organizationId,
@@ -73,7 +74,8 @@ export function XAASetupPage({
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold">XAA setup</h2>
           <p className="truncate text-xs text-muted-foreground">
-            Manage who your test IdP lets the MCPJam Agent act as, per app.
+            Manage who your test IdP lets the MCPJam Agent act as, per
+            server.
           </p>
         </div>
         {!canManage && (
@@ -106,13 +108,8 @@ export function XAASetupPage({
             organizationId={organizationId}
             canManage={canManage}
           />
-        ) : section === "apps" ? (
-          <XAASetupAppsSection
-            organizationId={organizationId}
-            canManage={canManage}
-          />
         ) : (
-          <XAASetupAccessSection
+          <XAASetupAppsSection
             organizationId={organizationId}
             canManage={canManage}
           />

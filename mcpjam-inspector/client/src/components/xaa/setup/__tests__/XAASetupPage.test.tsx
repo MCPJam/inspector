@@ -38,11 +38,6 @@ vi.mock("../XAASetupAppsSection", () => ({
     <div data-testid="apps-section" data-can-manage={String(canManage)} />
   ),
 }));
-vi.mock("../XAASetupAccessSection", () => ({
-  XAASetupAccessSection: ({ canManage }: { canManage: boolean }) => (
-    <div data-testid="access-section" data-can-manage={String(canManage)} />
-  ),
-}));
 vi.mock("../MCPJamAgentCard", () => ({
   MCPJamAgentCard: () => <div data-testid="agent-card" />,
 }));
@@ -95,11 +90,9 @@ describe("XAASetupPage", () => {
     const user = userEvent.setup();
     render(<XAASetupPage organizationId={ORG_ID} />);
 
-    await user.click(screen.getByRole("button", { name: "Apps" }));
+    // The servers section keeps the historical `apps` URL segment.
+    await user.click(screen.getByRole("button", { name: "Servers" }));
     expect(navigateMock).toHaveBeenCalledWith("/xaa-flow/setup/apps");
-
-    await user.click(screen.getByRole("button", { name: "Access" }));
-    expect(navigateMock).toHaveBeenCalledWith("/xaa-flow/setup/access");
 
     // The default section canonicalizes to the bare setup path.
     await user.click(screen.getByRole("button", { name: "People" }));
@@ -107,10 +100,10 @@ describe("XAASetupPage", () => {
   });
 
   it("renders the section resolved from the URL (deep link)", () => {
-    currentSection = "access";
+    currentSection = "apps";
     render(<XAASetupPage organizationId={ORG_ID} />);
 
-    expect(screen.getByTestId("access-section")).toBeInTheDocument();
+    expect(screen.getByTestId("apps-section")).toBeInTheDocument();
     expect(screen.queryByTestId("people-section")).not.toBeInTheDocument();
   });
 
@@ -137,15 +130,18 @@ describe("setup deep-link paths", () => {
     expect(buildXaaSetupPath()).toBe("/xaa-flow/setup");
     expect(buildXaaSetupPath("people")).toBe("/xaa-flow/setup");
     expect(buildXaaSetupPath("apps")).toBe("/xaa-flow/setup/apps");
-    expect(buildXaaSetupPath("access")).toBe("/xaa-flow/setup/access");
   });
 
   it("parses section segments, defaulting unknown segments to people", () => {
     expect(parseXaaSetupSection("/xaa-flow/setup")).toBe("people");
     expect(parseXaaSetupSection("/xaa-flow/setup/apps")).toBe("apps");
-    expect(parseXaaSetupSection("/xaa-flow/setup/access")).toBe("access");
     expect(parseXaaSetupSection("/xaa-flow/setup/bogus")).toBe("people");
     expect(parseXaaSetupSection("/xaa-flow")).toBeNull();
     expect(parseXaaSetupSection("/servers")).toBeNull();
+  });
+
+  it("lands retired /setup/access deep links on the server list", () => {
+    // The access section was absorbed into the servers (apps) section.
+    expect(parseXaaSetupSection("/xaa-flow/setup/access")).toBe("apps");
   });
 });
