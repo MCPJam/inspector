@@ -107,6 +107,7 @@
               "cli/server-inspection",
               "cli/oauth-conformance",
               "cli/oauth-login",
+              "cli/xaa",
               "cli/apps-conformance",
               "cli/tools-resources-prompts",
               "cli/ci",

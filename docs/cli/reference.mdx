@@ -236,12 +236,12 @@ Plus shared connection flags.
 
 ### `xaa run`
 
-Run the Cross-App Access (ID-JAG) debugger: self-issue an ID-JAG, redeem it at the target authorization server (RFC 7523), and call the MCP server with the resulting access token.
+Run the Cross-App Access (ID-JAG) debugger: self-issue an ID-JAG, redeem it at the target authorization server (RFC 7523), and call the MCP server with the resulting access token. See the [XAA Debugger guide](/cli/xaa) for the trust setup, registration strategies, and CI usage.
 
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
 | `--url <url>` | Yes | | Target MCP server URL (the protected resource) |
-| `--issuer-base-url <url>` | Yes | | Origin the local mock IdP issues from (the AS must be able to fetch its JWKS from here) |
+| `--issuer-base-url <url>` | Yes | | Origin the local mock IdP issues from. It must publish the CLI's local signing key — typically a running [local inspector](/cli/xaa#before-you-run-make-the-issuer-reachable), not your real IdP |
 | `--sub <subject>` | Yes | | Simulated end-user subject identifier |
 | `--client-id <id>` | No | | OAuth client ID. Required for `preregistered`; rejected for `dcr`/`cimd` |
 | `--registration <method>` | No | `preregistered` | `preregistered`, `dcr`, or `cimd` |
@@ -270,13 +270,17 @@ Run the Cross-App Access (ID-JAG) debugger: self-issue an ID-JAG, redeem it at t
 When `--registration cimd --client-auth private-key-jwt` is used, the CLI loads or generates a local EC P-256 key pair (stored in `~/.mcpjam`). The public key is encoded into a reflector URL on `app.mcpjam.com`, which becomes the `client_id`. The CLI signs a `client_assertion` with the private key at token-redemption time; the private key never leaves the machine.
 
 ```bash
+mcpjam inspector start   # serves the issuer at http://localhost:6274/api/mcp/xaa
+
 mcpjam xaa run \
-  --url https://your-mcp-server.com/mcp \
-  --issuer-base-url https://your-idp.example.com \
+  --url http://localhost:8080/mcp \
+  --issuer-base-url http://localhost:6274/api/mcp \
   --sub user@example.com \
   --registration cimd \
   --client-auth private-key-jwt
 ```
+
+For a cloud authorization server, expose the inspector origin through a tunnel and pass the public origin as `--issuer-base-url` — see [making the issuer reachable](/cli/xaa#before-you-run-make-the-issuer-reachable).
 
 **Key rotation:** the key is the identity. Deleting `~/.mcpjam/xaa-client-private.pem` or changing the `XAA_CLIENT_PRIVATE_KEY` environment variable generates a new `client_id`; any RAS-side allowlisting must be updated after rotation.
 
