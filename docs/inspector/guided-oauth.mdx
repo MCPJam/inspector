@@ -48,12 +48,16 @@ Use the inline trace for a quick diagnosis of real connection attempts, and swit
 To begin debugging OAuth flows:
 
 1. **Navigate to the OAuth Debugger** - Click the OAuth Flow tab in MCPJam Inspector
-2. **Configure a Target Server** - Click **Configure Target** to open the OAuth Profile Modal
+2. **Configure a Target Server** - Click **Configure** to open the OAuth Profile Modal prefilled with the currently selected server, or click **Add** to open a blank form and save a new target without changing the current one
 3. **Enter Server Details** - Provide your server's base URL and select your protocol version
 4. **Choose Registration Method** - Select CIMD, DCR, or pre-registered based on your implementation
 5. **Start Testing** - Click **Continue** to begin the OAuth flow
 
 The debugger will guide you through each step of the OAuth handshake, providing real-time feedback and educational context.
+
+<Note>
+The header **Add Server** button also opens a blank form so you can add a new target without affecting the server currently selected in the debugger.
+</Note>
 
 ## OAuth trace in server overview
 
