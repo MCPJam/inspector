@@ -90,10 +90,19 @@ authorization extension back. Missing advertisements are reported as findings
 but never fail a flow that operationally succeeds — redemption is the verdict,
 advertisement is evidence.
 
-The decoded ID-JAG claims and a local signature-verification verdict are
-included in the result, so you can inspect exactly what your authorization
-server received. Raw tokens, assertions, and secrets are always redacted from
-the output — including when a server reflects them back inside error bodies.
+Capability evidence fields are three-valued: `advertised`, `not_advertised`
+(the metadata key was present but did not include the expected value), or
+`unknown` (the metadata key was absent entirely). `unknown` is weaker evidence
+than `not_advertised` — the two are not equivalent.
+
+The decoded ID-JAG claims and a local signature-verification verdict
+(`idJag.verified`) are included in the result so you can inspect exactly what
+your authorization server received. `idJag.verified` confirms the CLI's own
+mint was well-formed and correctly signed; it is not evidence that your
+authorization server validated the assertion — the AS's behavior is in the
+`redemption` block. Raw tokens, assertions, and secrets are always
+`[REDACTED]` in the output, including when a server reflects them back inside
+an error body.
 
 ## Registration strategies
 
