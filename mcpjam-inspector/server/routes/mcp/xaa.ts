@@ -56,7 +56,6 @@ import type {
   XaaResourceAppSecretResult,
 } from "../../utils/server-secrets.js";
 import { logger } from "../../utils/logger.js";
-import { confidentialCimdPublicOrigin } from "../xaa-confidential-cimd.js";
 import { getClientIp as getTrustedClientIp } from "../../utils/client-ip.js";
 import { CORS_ORIGINS, MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 
@@ -1046,11 +1045,17 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     // browser holds no key; it presents the URL as client_id and /proxy/token
     // delegates signing to the same provider. Hosted has no provider, so this
     // capability route is absent there.
+    //
+    // The origin is the provider default (the hosted reflector,
+    // XAA_CONFIDENTIAL_CIMD_ORIGIN), NOT this local request's origin: the local
+    // inspector routinely targets a CLOUD authorization server (issuerMode
+    // "hosted"), which could never fetch a http://localhost client_id. The
+    // hosted reflector is stateless and serves whichever public key the URL
+    // encodes — including this local provider's — so a remote AS can reach it,
+    // exactly as `mcpjam xaa run` publishes its local key by default.
     router.get("/confidential-cimd/client", (c) => {
       const clientIdMetadataUrl =
-        confidentialCimdProvider.getClientIdMetadataUrl(
-          confidentialCimdPublicOrigin(c)
-        );
+        confidentialCimdProvider.getClientIdMetadataUrl();
       // The URL encodes the current provider key. Never pair a cached client_id
       // with an assertion produced after local key rotation.
       c.header("Cache-Control", "no-store");

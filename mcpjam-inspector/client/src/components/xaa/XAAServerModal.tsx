@@ -244,10 +244,13 @@ export function XAAServerModal({
       xaaEmail: xaaEmail.trim() || signedInEmail || undefined,
       // Identity assertion preset — always sent (absent stored value = oidc).
       xaaIdentityAssertionFormat: identityAssertionFormat,
-      // CIMD client-auth — sent only for the cimd strategy so switching away
-      // preserves the stored value (the save-path `?? existing` merge).
-      ...(registrationStrategy === "cimd" && confidentialCimdAvailable
-        ? { xaaClientAuth: clientAuth }
+      // CIMD client-auth — sent for the cimd strategy so switching away
+      // preserves the stored value (the save-path `?? existing` merge). When no
+      // provider is available (hosted), send "none" to actively CLEAR a stale
+      // imported `private_key_jwt` rather than omitting it (which would preserve
+      // it and leave the run stuck fetching an absent capability route).
+      ...(registrationStrategy === "cimd"
+        ? { xaaClientAuth: confidentialCimdAvailable ? clientAuth : "none" }
         : {}),
       // Unified registration mode — written ONLY on explicit user edit (see
       // the auto-clobber guard above); an untouched selector omits the field

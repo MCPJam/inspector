@@ -109,10 +109,10 @@ export function getXaaIdpUrls(
 export async function fetchConfidentialCimdClientUrl(
   signal?: AbortSignal,
 ): Promise<string | null> {
-  // authFetch (not plain fetch): in local mode every /api/mcp/xaa/* route
-  // except /.well-known/* requires the X-MCP-Session-Auth token, and it
-  // attaches the hosted bearer + refresh-retry in hosted mode. A bare fetch
-  // would 401 locally and silently break confidential CIMD.
+  // authFetch (not plain fetch): this endpoint is session-protected in local
+  // mode (it requires the X-MCP-Session-Auth token), and authFetch also carries
+  // the hosted bearer + refresh-retry in hosted mode. A bare fetch would 401
+  // locally and silently break confidential CIMD.
   const url = `${getIssuerBasePath()}/confidential-cimd/client`;
   try {
     const response = await authFetch(url, { signal });

@@ -846,7 +846,12 @@ export function XAAFlowTab({
   // presents this URL as its client_id and /proxy/token delegates signing to
   // the same SDK provider. Public CIMD (the default) leaves
   // clientIdMetadataUrl unset and uses the fixed hosted public document.
+  // Gate on !HOSTED_MODE too: only the local inspector injects a confidential
+  // provider, so an imported/migrated config carrying `private_key_jwt` must not
+  // trigger a doomed confidential run on a hosted build (the capability route is
+  // absent → fetch 404s). Hosted falls back to public CIMD.
   const wantsConfidentialCimd =
+    !HOSTED_MODE &&
     effectiveStrategy === "cimd" &&
     selectedServer?.xaaClientAuth === "private_key_jwt";
   const [confidentialCimdUrl, setConfidentialCimdUrl] = useState<
