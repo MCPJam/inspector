@@ -1,0 +1,212 @@
+---
+title: "XAA Debugger (CLI)"
+description: "Run the full Cross-App Access (ID-JAG) grant chain against your authorization server and MCP server, headlessly, from one command"
+icon: "id-card"
+---
+
+`mcpjam xaa run` drives a complete Cross-App Access flow — the
+[Identity Assertion Authorization Grant](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)
+(ID-JAG, an active IETF Internet-Draft) — against your authorization server and
+MCP server. MCPJam plays the **enterprise identity provider** (it mints and
+signs the ID-JAG) and the **client/agent** (it redeems the ID-JAG and calls
+your MCP server with the resulting access token). Your authorization server
+and MCP server are the system under test.
+
+```bash
+mcpjam xaa run \
+  --url http://localhost:8788/mcp \
+  --issuer-base-url http://localhost:6274/api/mcp \
+  --sub alice@example.com \
+  --client-id my-registered-client
+```
+
+## The three parties
+
+Cross-App Access separates trust into three relationships that are easy to
+conflate. The CLI covers two of them and simulates the third:
+
+| Relationship | Who configures it | In this test |
+| --- | --- | --- |
+| Client ↔ IdP | Enterprise SSO registration | Simulated — the CLI **is** the IdP, so this leg always succeeds |
+| RAS ↔ IdP | Your authorization server trusts the IdP's issuer + JWKS | **You set this up once** (see below) |
+| Client ↔ RAS | OAuth client registration at your authorization server | Exercised per run via `--registration` |
+
+## Before you run: make the issuer reachable
+
+The CLI signs ID-JAGs with a local key pair (`~/.mcpjam/xaa-idp-private.pem`;
+override the directory with `XAA_IDP_KEY_DIR`). Your authorization server must
+be able to fetch the matching public key, so `--issuer-base-url` must be an
+origin that **publishes that same key** — not your real IdP's URL.
+
+The local MCPJam inspector serves exactly this: it publishes the issuer
+metadata and JWKS from the same key directory at
+`/api/mcp/xaa/.well-known/openid-configuration` and
+`/api/mcp/xaa/.well-known/jwks.json`, no authentication required.
+
+```bash
+mcpjam inspector start    # serves the issuer at http://localhost:6274/api/mcp/xaa
+```
+
+- **Local authorization server:** pass
+  `--issuer-base-url http://localhost:6274/api/mcp`.
+- **Cloud authorization server:** it cannot reach your localhost. Expose the
+  inspector origin through a tunnel and pass the public origin instead.
+
+Then register the issuer in your authorization server: trust
+`<issuer-base-url>/xaa` as an ID-JAG issuer and point it at the JWKS URL above.
+
+The first flow step, `verify_issuer_publication`, fails fast if the issuer
+origin is unreachable or publishes a different key — nothing is sent to your
+servers until it passes.
+
+## What a run checks
+
+Each run walks the grant chain and reports every step:
+
+1. **`verify_issuer_publication`** — the configured issuer publishes the CLI's
+   local signing key
+2. **`discover_resource_metadata`** — protected-resource metadata
+   ([RFC 9728](https://www.rfc-editor.org/rfc/rfc9728)) names the
+   authorization server protecting `--url`
+3. **`discover_authz_metadata`** — authorization-server metadata
+   ([RFC 8414](https://www.rfc-editor.org/rfc/rfc8414)) provides the token
+   endpoint and capability advertisements
+4. **`mint_id_jag`** — the mock IdP exchanges the simulated user's identity
+   assertion for an ID-JAG (`typ: oauth-id-jag+jwt`, audience = your
+   authorization server, `resource` = your MCP server)
+5. **`redeem_id_jag`** — the ID-JAG is presented at your token endpoint via
+   the JWT bearer grant
+   ([RFC 7523](https://www.rfc-editor.org/rfc/rfc7523)); your server
+   validates it and issues its own access token
+6. **`authenticated_mcp_request`** — an MCP `initialize` with the issued
+   token, advertising the
+   [Enterprise-Managed Authorization extension](https://github.com/modelcontextprotocol/ext-auth/blob/main/specification/stable/enterprise-managed-authorization.mdx)
+
+The result also records **capability evidence** separately from operational
+outcomes: whether your authorization server advertises the ID-JAG grant
+profile and the JWT bearer grant, which token-endpoint auth method was
+selected, and whether your MCP server advertises the enterprise-managed
+authorization extension back. Missing advertisements are reported as findings
+but never fail a flow that operationally succeeds — redemption is the verdict,
+advertisement is evidence.
+
+The decoded ID-JAG claims and a local signature-verification verdict are
+included in the result, so you can inspect exactly what your authorization
+server received. Raw tokens, assertions, and secrets are always redacted from
+the output — including when a server reflects them back inside error bodies.
+
+## Registration strategies
+
+`--registration` selects how the CLI identifies itself to your authorization
+server, mirroring the client-registration models MCP clients use:
+
+| Strategy | Credentials needed | Posture notes |
+| --- | --- | --- |
+| `preregistered` (default) | `--client-id` (+ optional `--client-secret`) | Matches the draft's recommended deployment |
+| `dcr` | none | A diagnostic: the CLI performs open [RFC 7591](https://www.rfc-editor.org/rfc/rfc7591) registration and supplies the IdP→RAS client mapping itself. Each run may leave a registration behind. RFC 7591 conformance findings (e.g. missing `Cache-Control: no-store`) are reported as warnings |
+| `cimd` | none | Public client by default — the run completes but is flagged: the draft recommends confidential clients |
+| `cimd` + `--client-auth private-key-jwt` | none | Confidential CIMD: the CLI generates a local EC P-256 key, publishes it through the hosted reflector, and signs a `client_assertion`. The private key never leaves your machine |
+
+For confidential CIMD, **the key is the identity**: the reflector URL derived
+from the public key becomes the `client_id`. Deleting
+`~/.mcpjam/xaa-client-private.pem` (or changing `XAA_CLIENT_PRIVATE_KEY`)
+mints a new identity, and any allowlisting on your authorization server must
+be updated.
+
+## Identity assertion formats
+
+`--assertion-format` selects the identity rail the simulated enterprise uses:
+
+- `oidc` (default) — the mock IdP mints an OIDC ID token as the
+  token-exchange subject token.
+- `saml` — the mock IdP mints a **SAML 2.0 assertion** as the subject token,
+  and the ID-JAG carries a `saml-nameid` `sub_id` claim so a SAML-federated
+  authorization server can resolve the user.
+
+The ID-JAG itself is always a JWT; the format flag changes the SSO leg and the
+subject identifier, not the grant. Either format composes with **any**
+registration strategy.
+
+Use `--sub` (and optionally `--email`) to control the simulated user, and
+`--scopes` for the permissions requested in both the ID-JAG and the token
+request.
+
+## Scenarios
+
+### First run against a local authorization server
+
+```bash
+mcpjam inspector start   # serves the issuer
+
+mcpjam xaa run \
+  --url http://localhost:8788/mcp \
+  --issuer-base-url http://localhost:6274/api/mcp \
+  --sub alice@example.com \
+  --client-id my-registered-client \
+  --scopes "mcp.access"
+```
+
+### Confidential client without pre-registration
+
+```bash
+mcpjam xaa run \
+  --url http://localhost:8788/mcp \
+  --issuer-base-url http://localhost:6274/api/mcp \
+  --sub alice@example.com \
+  --registration cimd \
+  --client-auth private-key-jwt
+```
+
+### SAML-federated enterprise
+
+```bash
+mcpjam xaa run \
+  --url http://localhost:8788/mcp \
+  --issuer-base-url http://localhost:6274/api/mcp \
+  --sub alice@example.com \
+  --client-id my-registered-client \
+  --assertion-format saml
+```
+
+### CI
+
+The JSON result goes to stdout; progress and advisory notes go to stderr. The
+exit code is `0` when the flow completes and `1` otherwise, so a run can gate
+a pipeline directly. Pass `--quiet` to suppress the advisory notes.
+
+```bash
+mcpjam xaa run \
+  --url "$MCP_SERVER_URL" \
+  --issuer-base-url "$ISSUER_ORIGIN" \
+  --sub ci-probe@example.com \
+  --client-id "$XAA_CLIENT_ID" \
+  --quiet > xaa-result.json
+```
+
+## Skipping discovery
+
+- `--authz-server-issuer` pins the authorization server and skips
+  protected-resource discovery (useful while your MCP server's RFC 9728
+  metadata is still in progress).
+- `--token-endpoint` pins the token endpoint and skips authorization-server
+  discovery entirely. Not valid with `dcr` or `cimd`, which need the metadata
+  document for the registration endpoint / CIMD advertisement.
+- `--https-only` rejects non-HTTPS and private targets; by default the CLI
+  allows `http://localhost` for local development.
+
+## What this is not
+
+These are targeted debugging checks for the current ID-JAG draft, not a
+conformance suite. The negative-test scorecard — sending deliberately broken
+ID-JAGs (bad signature, wrong audience, expired, and six more) and verifying
+your authorization server rejects each — lives in the
+[inspector's XAA Debugger](/inspector/xaa-debugger), which also visualizes the
+flow and inspects the ID-JAG interactively before it is sent.
+
+## Related standards
+
+- [Identity Assertion Authorization Grant (ID-JAG)](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)
+- [OAuth 2.0 Token Exchange (RFC 8693)](https://www.rfc-editor.org/rfc/rfc8693)
+- [JWT Bearer Grant (RFC 7523)](https://www.rfc-editor.org/rfc/rfc7523)
+- [Protected Resource Metadata (RFC 9728)](https://www.rfc-editor.org/rfc/rfc9728)
+- [MCP Enterprise-Managed Authorization](https://github.com/modelcontextprotocol/ext-auth/blob/main/specification/stable/enterprise-managed-authorization.mdx)

@@ -1,7 +1,9 @@
 import { DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL } from "./client-identity.js";
 import {
   canonicalizeResourceUrl,
-} from "./state-machines/shared/urls.js";
+  evaluateResourceIndicator,
+  type ResourceIndicatorDecision,
+} from "./resource-policy.js";
 import { resolvePreregisteredClientAuthMethod } from "./state-machines/shared/client-auth.js";
 import type {
   OAuthAuthMode,
@@ -82,7 +84,13 @@ export interface ResolvedAuthorizationPlan {
   blockers: string[];
   warnings: string[];
   capabilities: AuthorizationPlanCapabilities;
+  // Always the canonicalized server URL (kept stable for existing consumers).
   canonicalResource?: string;
+  // The resolved resource-indicator decision, present only when a discovery
+  // snapshot with Protected Resource Metadata was provided. This is the value
+  // the flow will actually send; `canonicalResource` remains the
+  // server-URL-derived best guess.
+  resourceIndicator?: ResourceIndicatorDecision;
   clientIdMetadataUrl?: string;
   summary: string;
 }
@@ -359,6 +367,15 @@ export function resolveAuthorizationPlan(
     capabilities,
     ...(input.serverUrl
       ? { canonicalResource: canonicalizeResourceUrl(input.serverUrl) }
+      : {}),
+    ...(input.serverUrl &&
+    typeof input.discovery?.resourceMetadata?.resource === "string"
+      ? {
+          resourceIndicator: evaluateResourceIndicator({
+            serverUrl: input.serverUrl,
+            prmResource: input.discovery.resourceMetadata.resource,
+          }),
+        }
       : {}),
     ...((registrationStrategy === "cimd" ||
       registrationMode === "cimd") && clientIdMetadataUrl

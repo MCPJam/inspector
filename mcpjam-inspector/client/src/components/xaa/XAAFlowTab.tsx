@@ -71,6 +71,7 @@ import {
 } from "@/lib/xaa/types";
 import type { XAAFlowStep } from "@/lib/xaa/types";
 import { XAADcrReRegisterControl } from "./XAADcrReRegisterControl";
+import { buildXaaAssertionFormatResave } from "./xaa-server-form";
 import { createInspectorXAAStateMachine } from "@/lib/xaa/debug-state-machine-adapter";
 import {
   fetchConfidentialCimdClientUrl,
@@ -1930,6 +1931,55 @@ export function XAAFlowTab({
   // A server is selected but can't be XAA-tested (STDIO / non-OAuth).
   const showNotTestable = target.targetSource === "bar_server" && !isTestable;
 
+  // ── Header OIDC/SAML toggle ──────────────────────────────────────────
+  // Writes the per-server identity-assertion preset through the SAME save
+  // path as the Configure modal (untouched-resave shape: the format is the
+  // only stored value the save can change). The persisted value flows back
+  // via serverConfigs → effectiveAssertionFormat, so the control always
+  // renders stored state — a failed save simply snaps back — and the single
+  // target-reset owner rebuilds the flow (confirming first if a busy or
+  // completed run would be discarded).
+  const [assertionFormatSaving, setAssertionFormatSaving] = useState(false);
+  const formatToggleApplies =
+    target.targetSource === "bar_server" &&
+    isTestable &&
+    Boolean(selectedServer);
+  const assertionFormatDisabledReason = !formatToggleApplies
+    ? target.targetSource === "registration"
+      ? "Runs against a registered app always use the OIDC ID token."
+      : "Configure a server to test first."
+    : flowState.isBusy || isRunningAll
+    ? "Wait for the current run to finish."
+    : assertionFormatSaving
+    ? "Saving…"
+    : null;
+  const handleAssertionFormatChange = useCallback(
+    async (next: IdentityAssertionFormat) => {
+      if (
+        !selectedServer ||
+        !onSaveServerConfig ||
+        next === effectiveAssertionFormat ||
+        assertionFormatSaving
+      ) {
+        return;
+      }
+      setAssertionFormatSaving(true);
+      try {
+        await onSaveServerConfig(
+          buildXaaAssertionFormatResave(selectedServer, next)
+        );
+      } finally {
+        setAssertionFormatSaving(false);
+      }
+    },
+    [
+      selectedServer,
+      onSaveServerConfig,
+      effectiveAssertionFormat,
+      assertionFormatSaving,
+    ]
+  );
+
   return (
     <div className="h-full flex flex-col bg-background">
       <XAAIdpCard
@@ -1939,6 +1989,12 @@ export function XAAFlowTab({
         canUseHostedIssuer={canUseHostedIssuer}
         hostedIssuerDisabledReason={hostedIssuerDisabledReason}
         issuerKind={hostedIssuerKind}
+        identityAssertionFormat={effectiveAssertionFormat}
+        onIdentityAssertionFormatChange={
+          // No persistence path (parent didn't wire saves) → hide the control.
+          onSaveServerConfig ? handleAssertionFormatChange : undefined
+        }
+        identityAssertionFormatDisabledReason={assertionFormatDisabledReason}
       />
       {registrationEnabled === true && (
         <XAAPeopleStrip

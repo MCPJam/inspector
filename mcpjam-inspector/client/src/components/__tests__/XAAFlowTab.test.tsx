@@ -22,6 +22,14 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
 }));
 
+// The "Run as" people strip rides the xaa-registration flag (the debugger
+// extras are hidden together until launch). Default it on so the suite
+// exercises the strip; the gate itself is asserted below by flipping it.
+let registrationFlag: boolean | undefined = true;
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => registrationFlag,
+}));
+
 // Controllable org list — drives the admin derivation (owner/admin/creator).
 let organizationsState: Array<{
   _id: string;
@@ -75,8 +83,12 @@ vi.mock("../xaa/registration/XAARegistrationWizard", () => ({
   },
 }));
 
+let capturedIdpCardProps: any = null;
 vi.mock("../xaa/XAAIdpCard", () => ({
-  XAAIdpCard: () => <div data-testid="xaa-idp-card" />,
+  XAAIdpCard: (props: any) => {
+    capturedIdpCardProps = props;
+    return <div data-testid="xaa-idp-card" />;
+  },
 }));
 
 let capturedServerModalProps: any = null;
@@ -354,6 +366,7 @@ describe("XAAFlowTab", () => {
     capturedMachineConfig = null;
     capturedServerModalProps = null;
     capturedScorecardProps = null;
+    capturedIdpCardProps = null;
     machineShouldComplete = true;
     machineCompleteExtras = {};
     machineCompletionUpdates = {};
@@ -362,6 +375,7 @@ describe("XAAFlowTab", () => {
     // authUser to null (guest), and a mid-test failure must not leak that into
     // later tests.
     authUser = { email: "tester@example.com" };
+    registrationFlag = true;
     resourceApps = [];
     localStorage.clear();
     runSettingsState = {
@@ -1300,6 +1314,139 @@ describe("XAAFlowTab", () => {
     });
   });
 
+  describe("identity assertion header toggle (write-through)", () => {
+    // A realistic stored XAA server: the toggle's untouched resave derives
+    // url/clientId/scopes from the config and must preserve the rest of the
+    // stored values by omission.
+    const storedServer = () =>
+      ({
+        staging: {
+          name: "staging",
+          config: { url: "https://staging.mcp.example.com" },
+          hasClientSecret: false,
+          xaaAuthzIssuer: "https://as.example.com",
+          // Stored "auto" is shared with the OAuth flow — the resave must
+          // omit registrationMode so the save-path merge preserves it.
+          registrationMode: "auto",
+          xaaSubject: "stored-subject",
+          xaaEmail: "stored@example.com",
+        },
+      } as any);
+
+    it("passes the persisted format and an enabled control for a testable bar server", () => {
+      render(
+        <XAAFlowTab
+          serverConfigs={{
+            staging: {
+              ...storedServer().staging,
+              xaaIdentityAssertionFormat: "saml",
+            },
+          }}
+          selectedServerName="staging"
+          onSaveServerConfig={vi.fn()}
+        />
+      );
+
+      expect(capturedIdpCardProps.identityAssertionFormat).toBe("saml");
+      expect(capturedIdpCardProps.onIdentityAssertionFormatChange).toEqual(
+        expect.any(Function)
+      );
+      expect(
+        capturedIdpCardProps.identityAssertionFormatDisabledReason
+      ).toBeNull();
+    });
+
+    it("persists a flip to SAML through the modal's save path, preserving stored fields by omission", async () => {
+      const onSaveServerConfig = vi.fn();
+      render(
+        <XAAFlowTab
+          serverConfigs={storedServer()}
+          selectedServerName="staging"
+          onSaveServerConfig={onSaveServerConfig}
+        />
+      );
+
+      await act(async () => {
+        await capturedIdpCardProps.onIdentityAssertionFormatChange("saml");
+      });
+
+      expect(onSaveServerConfig).toHaveBeenCalledTimes(1);
+      const formData = onSaveServerConfig.mock.calls[0][0];
+      expect(formData).toMatchObject({
+        name: "staging",
+        type: "http",
+        url: "https://staging.mcp.example.com",
+        useXaa: true,
+        useOAuth: false,
+        authServerMode: "mcpjam",
+        xaaAuthzIssuer: "https://as.example.com",
+        xaaIdentityAssertionFormat: "saml",
+      });
+      // Preserve-by-omission: the format is the ONLY stored value this save
+      // may change. Sending any of these would clobber stored state (identity
+      // pair, shared "auto" registration mode) or the saved secret.
+      expect(formData).not.toHaveProperty("xaaSubject");
+      expect(formData).not.toHaveProperty("xaaEmail");
+      expect(formData).not.toHaveProperty("registrationMode");
+      expect(formData).not.toHaveProperty("clientSecret");
+      expect(formData).not.toHaveProperty("clearClientSecret");
+    });
+
+    it("does not save when the selected format is already active", async () => {
+      const onSaveServerConfig = vi.fn();
+      render(
+        <XAAFlowTab
+          serverConfigs={storedServer()}
+          selectedServerName="staging"
+          onSaveServerConfig={onSaveServerConfig}
+        />
+      );
+
+      await act(async () => {
+        await capturedIdpCardProps.onIdentityAssertionFormatChange("oidc");
+      });
+      expect(onSaveServerConfig).not.toHaveBeenCalled();
+    });
+
+    it("disables the control (OIDC shown) for registration-backed targets", () => {
+      currentTarget = makeTarget({
+        targetSource: "registration",
+        runInput: {
+          ...makeTarget().runInput,
+          registrationId: "app_1",
+        },
+      } as Partial<XaaTestTarget>);
+      render(
+        <XAAFlowTab
+          serverConfigs={{
+            staging: {
+              ...storedServer().staging,
+              xaaIdentityAssertionFormat: "saml",
+            },
+          }}
+          selectedServerName="staging"
+          onSaveServerConfig={vi.fn()}
+        />
+      );
+
+      // The per-server preset must not leak onto a registration run — the
+      // control shows the OIDC default and says why it's disabled.
+      expect(capturedIdpCardProps.identityAssertionFormat).toBe("oidc");
+      expect(
+        capturedIdpCardProps.identityAssertionFormatDisabledReason
+      ).toMatch(/registered app/i);
+    });
+
+    it("hides the control when no save path is wired", () => {
+      render(
+        <XAAFlowTab serverConfigs={storedServer()} selectedServerName="staging" />
+      );
+      expect(
+        capturedIdpCardProps.onIdentityAssertionFormatChange
+      ).toBeUndefined();
+    });
+  });
+
   describe("Run as people", () => {
     const bob: TestPerson = {
       _id: "person_bob",
@@ -1347,6 +1494,24 @@ describe("XAAFlowTab", () => {
       expect(capturedPeopleStripProps.disabled).toBe(false);
       capturedPeopleStripProps.onSelectPerson(null);
       expect(setSelectedPersonIdMock).toHaveBeenCalledWith("proj_1", null);
+    });
+
+    // The gate itself: the strip is an unreleased debugger extra, hidden
+    // unless the flag resolves explicitly true. `undefined` (flag still
+    // loading, or PostHog unavailable) must hide it too — the strict
+    // `=== true` check is the point, so an unresolved flag never leaks the
+    // surface.
+    it.each([
+      ["off", false],
+      ["unresolved", undefined],
+    ])("hides the people strip when the flag is %s", (_label, flagValue) => {
+      registrationFlag = flagValue as boolean | undefined;
+      seedRoster();
+      currentTarget = personTarget();
+      renderTab();
+
+      expect(screen.queryByTestId("xaa-people-strip")).not.toBeInTheDocument();
+      expect(capturedPeopleStripProps).toBeNull();
     });
 
     it("a person switch resets a completed flow immediately (no debounce)", async () => {

@@ -24,35 +24,21 @@ import {
   DEFAULT_REGISTRATION_STRATEGY,
   DEFAULT_XAA_CLIENT_AUTH,
   IDENTITY_ASSERTION_FORMATS,
-  normalizeIdentityAssertionFormat,
-  normalizeRegistrationStrategy,
-  normalizeXaaClientAuth,
   type IdentityAssertionFormat,
   type RegistrationStrategy,
   type XaaClientAuthMethod,
 } from "@/shared/xaa.js";
 import { XAA_STRATEGY_OPTIONS } from "@/lib/registration-strategy";
 import { HOSTED_MODE } from "@/lib/config";
-import { deriveOAuthProfileFromServer } from "../oauth/utils";
 import { XaaCredentialFields } from "../connection/shared/XaaCredentialFields";
 import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
-
-// UI copy for the identity-assertion preset (input axis of the ID-JAG draft).
-// One selector sets both axes at flow time: "saml" mints a SAML assertion AND
-// asks for a saml-nameid `sub_id` on the ID-JAG; "oidc" keeps both defaults.
-const IDENTITY_ASSERTION_FORMAT_LABELS: Record<
-  IdentityAssertionFormat,
-  string
-> = {
-  oidc: "OIDC ID token",
-  saml: "SAML assertion",
-};
-
-const IDENTITY_ASSERTION_FORMAT_HINTS: Record<IdentityAssertionFormat, string> =
-  {
-    oidc: "The MCPJam IdP mints an OIDC ID token as the identity assertion.",
-    saml: "The MCPJam IdP mints a signed SAML 2.0 assertion; the ID-JAG carries a saml-nameid subject identifier.",
-  };
+import {
+  IDENTITY_ASSERTION_FORMAT_HINTS,
+  IDENTITY_ASSERTION_FORMAT_LABELS,
+  buildXaaServerFormData,
+  deriveXaaServerFormSeed,
+  splitXaaScopes,
+} from "./xaa-server-form";
 
 interface XAAServerModalProps {
   open: boolean;
@@ -85,7 +71,9 @@ export function XAAServerModal({
   hostedServerId,
   confidentialCimdAvailable = !HOSTED_MODE,
 }: XAAServerModalProps) {
-  const derived = useMemo(() => deriveOAuthProfileFromServer(server), [server]);
+  // One shared derivation with the flow-header format toggle's untouched
+  // resave, so both surfaces read the same unedited field values.
+  const seed = useMemo(() => deriveXaaServerFormSeed(server), [server]);
   const hasSavedSecret = Boolean(server?.hasClientSecret);
   const isEditing = Boolean(server);
 
@@ -134,34 +122,26 @@ export function XAAServerModal({
 
   useEffect(() => {
     if (!open) return;
-    setServerName(server?.name ?? "");
-    setServerUrl(derived.serverUrl ?? "");
-    setRegistrationStrategy(
-      normalizeRegistrationStrategy(server?.registrationMode) ??
-        DEFAULT_REGISTRATION_STRATEGY
-    );
+    setServerName(seed.serverName);
+    setServerUrl(seed.serverUrl);
+    setRegistrationStrategy(seed.registrationStrategy);
     setRegistrationStrategyDirty(false);
-    setIdentityAssertionFormat(
-      normalizeIdentityAssertionFormat(server?.xaaIdentityAssertionFormat) ??
-        DEFAULT_IDENTITY_ASSERTION_FORMAT
-    );
-    setClientAuth(
-      normalizeXaaClientAuth(server?.xaaClientAuth) ?? DEFAULT_XAA_CLIENT_AUTH
-    );
-    setClientId(derived.clientId ?? "");
-    // Scopes can be stored comma- or space-separated upstream; normalize to
-    // the space-separated form this modal edits.
-    setScopes((derived.scopes ?? "").replace(/,/g, " ").trim());
-    setAuthzIssuer(server?.xaaAuthzIssuer ?? "");
-    setAllowPathScopedIssuer(server?.xaaAllowPathScopedIssuer === true);
+    setIdentityAssertionFormat(seed.identityAssertionFormat);
+    setClientAuth(seed.clientAuth);
+    setClientId(seed.clientId);
+    // Scopes arrive space-separated from the seed (stored comma- or
+    // space-separated forms normalized there).
+    setScopes(seed.scopes);
+    setAuthzIssuer(seed.authzIssuer);
+    setAllowPathScopedIssuer(seed.allowPathScopedIssuer);
     setClientSecret("");
     setClearClientSecret(false);
-    setXaaSubject(server?.xaaSubject ?? "");
-    setXaaEmail(server?.xaaEmail ?? "");
+    setXaaSubject(seed.xaaSubject);
+    setXaaEmail(seed.xaaEmail);
     setXaaIdentityDirty(false);
     setError(null);
     setSaving(false);
-  }, [open, server, derived]);
+  }, [open, seed]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -211,16 +191,6 @@ export function XAAServerModal({
       }
     }
 
-    const scopesArray = scopes
-      .split(/\s+/)
-      .map((scope) => scope.trim())
-      .filter((scope) => scope.length > 0);
-
-    // A typed value replaces the saved secret; the Clear toggle removes it. A
-    // typed replacement always wins over Clear (the save path rejects both).
-    const trimmedSecret = clientSecret.trim();
-    const submittedClearSecret = clearClientSecret && !trimmedSecret;
-
     // The identity override is atomic: block a partial pair rather than
     // saving a mixed identity or silently dropping one member.
     const trimmedXaaSubject = xaaSubject.trim();
@@ -235,49 +205,34 @@ export function XAAServerModal({
 
     setError(null);
 
-    const formData: ServerFormData = {
+    // Field semantics (secret sentinels, preserve-by-omission for the
+    // identity pair and registrationMode) live in the shared builder — the
+    // flow-header format toggle saves through the same one.
+    const formData: ServerFormData = buildXaaServerFormData({
       name: trimmedName,
-      type: "http",
       url: trimmedUrl,
-      // Cross-App Access discriminator — identical to the /servers Connect
-      // page so a server configured in either surface is unambiguously XAA and
-      // editing it in one place never flips it back to plain OAuth.
-      useXaa: true,
-      useOAuth: false,
-      authServerMode: "mcpjam",
       clientId: trimmedClientId,
-      ...(trimmedSecret ? { clientSecret: trimmedSecret } : {}),
-      ...(submittedClearSecret ? { clearClientSecret: true } : {}),
+      clientSecret,
+      clearClientSecret,
       hasClientSecret: server?.hasClientSecret,
-      oauthScopes: scopesArray,
-      // Always send the issuer (possibly empty) so clearing it persists.
-      xaaAuthzIssuer: trimmedIssuer,
-      xaaAllowPathScopedIssuer: allowPathScopedIssuer,
-      // Atomic identity override, identical to the Connect page: untouched →
-      // omit both keys (the save path preserves stored values); edited
-      // complete pair → both trimmed values; explicit clear → both "" (the
-      // backend normalizes the empty pair away).
-      ...(xaaIdentityDirty
-        ? { xaaSubject: trimmedXaaSubject, xaaEmail: trimmedXaaEmail }
-        : {}),
-      // Identity assertion preset — always sent (absent stored value = oidc).
-      xaaIdentityAssertionFormat: identityAssertionFormat,
-      // CIMD client-auth — sent for the cimd strategy so switching away
-      // preserves the stored value (the save-path `?? existing` merge). When no
-      // provider is available (hosted), send "none" to actively CLEAR a stale
-      // imported `private_key_jwt` rather than omitting it (which would preserve
-      // it and leave the run stuck fetching an absent capability route).
-      ...(registrationStrategy === "cimd"
-        ? { xaaClientAuth: confidentialCimdAvailable ? clientAuth : "none" }
-        : {}),
-      // Unified registration mode — written ONLY on explicit user edit (see
-      // the auto-clobber guard above); an untouched selector omits the field
-      // so the save-path `?? existing` merge preserves the stored value
-      // (which may be "auto", shared with the OAuth flow).
-      ...(registrationStrategyDirty
-        ? { registrationMode: registrationStrategy }
-        : {}),
-    };
+      oauthScopes: splitXaaScopes(scopes),
+      authzIssuer: trimmedIssuer,
+      allowPathScopedIssuer,
+      identity: {
+        dirty: xaaIdentityDirty,
+        subject: trimmedXaaSubject,
+        email: trimmedXaaEmail,
+      },
+      identityAssertionFormat,
+      // CIMD client-auth — the builder emits it only for the cimd strategy.
+      // Resolve to "none" when no confidential provider is available (hosted)
+      // so a stale imported private_key_jwt is actively cleared.
+      clientAuth: confidentialCimdAvailable ? clientAuth : "none",
+      registration: {
+        dirty: registrationStrategyDirty,
+        strategy: registrationStrategy,
+      },
+    });
 
     // Final gate: the exact validator the save path runs. Any rule added there
     // is enforced here too, so a new rule can never pass this form and then be
