@@ -8,7 +8,6 @@ import {
   Trash2,
   PanelRightClose,
   Copy,
-  Check,
   Download,
 } from "lucide-react";
 import { JsonEditor } from "@/components/ui/json-editor";
@@ -267,7 +266,6 @@ export function LoggerView({
   const [sourceFilter, setSourceFilter] = useState<"all" | TrafficSource>(
     "all"
   );
-  const [copiedItemId, setCopiedItemId] = useState<string | null>(null);
   const lastIngestedOAuthTraceKeysRef = useRef<Map<string, string>>(new Map());
 
   // Subscribe to UI log store (includes both MCP Apps and MCP Server RPC traffic)
@@ -411,23 +409,6 @@ export function LoggerView({
       toast.success("Logs copied to clipboard");
     } catch {
       toast.error("Failed to copy logs");
-    }
-  };
-
-  const copyItemPayload = async (item: RenderableRpcItem) => {
-    captureLogger("logger_item_copy_clicked", { source: item.source });
-    try {
-      await navigator.clipboard.writeText(
-        JSON.stringify(item.payload, null, 2),
-      );
-      setCopiedItemId(item.id);
-      setTimeout(
-        () => setCopiedItemId((prev) => (prev === item.id ? null : prev)),
-        1500,
-      );
-      toast.success("Log copied to clipboard");
-    } catch {
-      toast.error("Failed to copy log");
     }
   };
 
@@ -850,31 +831,6 @@ export function LoggerView({
                     >
                       {new Date(it.timestamp).toLocaleTimeString()}
                     </span>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className={cn(
-                        // Space is always reserved (no layout shift); the button
-                        // fades in on row hover/focus, and stays visible while
-                        // the log is expanded or right after copying.
-                        "h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground",
-                        "opacity-0 transition-opacity duration-150",
-                        "group-hover:opacity-100 group-focus-within:opacity-100",
-                        (isExpanded || copiedItemId === it.id) && "opacity-100",
-                        showOAuthDebuggerCta && "order-7"
-                      )}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        copyItemPayload(it);
-                      }}
-                      title="Copy this log to clipboard"
-                    >
-                      {copiedItemId === it.id ? (
-                        <Check className="h-3.5 w-3.5 text-green-500" />
-                      ) : (
-                        <Copy className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
                   </div>
                   {isExpanded && (
                     <div className="border-t border-border bg-muted/10 p-2">
