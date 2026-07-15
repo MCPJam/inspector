@@ -250,6 +250,12 @@ export type ConvexAuthorizeResponse = {
     oauthScopes?: string[];
     xaaSubject?: string;
     xaaEmail?: string;
+    // Backend-resolved identity failure: a LEGACY partial per-server
+    // override (one member stored) can't resolve an atomic identity, so the
+    // backend omits BOTH identity fields and sends this actionable,
+    // value-free message instead. The mint must fail with it — never
+    // silently fall back to the demo identity.
+    xaaIdentityError?: string;
     // Which IdP mints the XAA assertion — on the wire from the backend
     // projection; needed by the C2 effective-auth resolver's `auto` branch.
     authServerMode?: "mcpjam" | "own";
@@ -939,6 +945,20 @@ export async function createAuthorizedManager(
           logger.info(
             "[XAA connect] registrationMode is dynamic; connect uses stored pre-registered credentials — the mode applies to the debugger and OAuth flows only",
             { serverId, registrationMode: auth.serverConfig.registrationMode }
+          );
+        }
+        // Backend-resolved identity failure (legacy partial per-server
+        // override): a distinct configuration error, surfaced BEFORE any
+        // mint AND before the issuer guard below — eval routes omit
+        // `xaaIssuer`, so checking it first would mask this actionable 400
+        // behind the caller-contract 500. No silent fallback to the demo
+        // identity, no silent XAA→OAuth fallback.
+        if (auth.serverConfig.xaaIdentityError) {
+          throw new WebRouteError(
+            400,
+            ErrorCode.VALIDATION_ERROR,
+            auth.serverConfig.xaaIdentityError,
+            { serverId, serverName: displayServerName }
           );
         }
         if (!options?.xaaIssuer) {

@@ -74,14 +74,14 @@ interface AuthenticationSectionProps {
   onXaaSubjectChange?: (value: string) => void;
   xaaEmail?: string;
   onXaaEmailChange?: (value: string) => void;
-  /** Signed-in user's email — shown as the default for the simulated identity. */
-  signedInEmail?: string;
   /**
    * True when Auto would select XAA for this server (an IdP mode is chosen
    * and a client id is stored — same rule as the server's xaaConfigured).
    * Drives the helper copy under the select.
    */
   autoSelectsXaa?: boolean;
+  /** Project default test identity — shown as the override placeholders. */
+  projectDefaultIdentity?: { subject: string; email: string } | null;
 }
 
 const PROTOCOL_OPTIONS: Array<{
@@ -136,8 +136,8 @@ export function AuthenticationSection({
   onXaaSubjectChange,
   xaaEmail = "",
   onXaaEmailChange,
-  signedInEmail,
   autoSelectsXaa = false,
+  projectDefaultIdentity = null,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
   const [revealedClientSecret, setRevealedClientSecret] = useState<
@@ -771,7 +771,7 @@ export function AuthenticationSection({
               onXaaSubjectChange={(v) => onXaaSubjectChange?.(v)}
               xaaEmail={xaaEmail}
               onXaaEmailChange={(v) => onXaaEmailChange?.(v)}
-              signedInEmail={signedInEmail}
+              projectDefaultIdentity={projectDefaultIdentity}
               projectId={projectId}
               hostedServerId={hostedServerId}
             />

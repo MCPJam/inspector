@@ -31,6 +31,7 @@ import {
 import { XAA_STRATEGY_OPTIONS } from "@/lib/registration-strategy";
 import { deriveOAuthProfileFromServer } from "../oauth/utils";
 import { XaaCredentialFields } from "../connection/shared/XaaCredentialFields";
+import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
 
 // UI copy for the identity-assertion preset (input axis of the ID-JAG draft).
 // One selector sets both axes at flow time: "saml" mints a SAML assertion AND
@@ -58,11 +59,10 @@ interface XAAServerModalProps {
   // rejects, so a downstream save failure never discards the form.
   onSave: (payload: { formData: ServerFormData }) => void | Promise<void>;
   /**
-   * Signed-in user's email — the default simulated identity when the per-server
-   * subject/email fields are left blank. Same default as the /servers Connect
-   * page so the two surfaces stay in sync.
+   * The project's admin-controlled default test identity — shown as the
+   * override placeholders (same as the /servers Connect page).
    */
-  signedInEmail?: string;
+  projectDefaultIdentity?: { subject: string; email: string } | null;
   /** Hosted secret context used to reveal an existing saved client secret. */
   projectId?: string | null;
   hostedServerId?: string | null;
@@ -74,7 +74,7 @@ export function XAAServerModal({
   server,
   existingServerNames,
   onSave,
-  signedInEmail,
+  projectDefaultIdentity = null,
   projectId,
   hostedServerId,
 }: XAAServerModalProps) {
@@ -110,11 +110,13 @@ export function XAAServerModal({
   // a typed value replaces the saved secret, the Clear toggle removes it.
   const [clientSecret, setClientSecret] = useState("");
   const [clearClientSecret, setClearClientSecret] = useState(false);
-  // Per-server simulated identity — the single source of truth shared with the
-  // /servers Connect page (saved on the server, used by both the debugger run
-  // and the connect mint). Editing it here syncs to /servers and vice versa.
+  // Per-server identity OVERRIDE — one atomic pair shared with the /servers
+  // Connect page (saved on the server, used by both the debugger run and the
+  // connect mint). Only a user edit marks it dirty; an untouched pair is
+  // omitted from the save so the stored values are preserved.
   const [xaaSubject, setXaaSubject] = useState("");
   const [xaaEmail, setXaaEmail] = useState("");
+  const [xaaIdentityDirty, setXaaIdentityDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -141,6 +143,7 @@ export function XAAServerModal({
     setClearClientSecret(false);
     setXaaSubject(server?.xaaSubject ?? "");
     setXaaEmail(server?.xaaEmail ?? "");
+    setXaaIdentityDirty(false);
     setError(null);
     setSaving(false);
   }, [open, server, derived]);
@@ -203,6 +206,18 @@ export function XAAServerModal({
     const trimmedSecret = clientSecret.trim();
     const submittedClearSecret = clearClientSecret && !trimmedSecret;
 
+    // The identity override is atomic: block a partial pair rather than
+    // saving a mixed identity or silently dropping one member.
+    const trimmedXaaSubject = xaaSubject.trim();
+    const trimmedXaaEmail = xaaEmail.trim();
+    if (
+      xaaIdentityDirty &&
+      (trimmedXaaSubject === "") !== (trimmedXaaEmail === "")
+    ) {
+      setError(`${XAA_PARTIAL_OVERRIDE_ERROR}.`);
+      return;
+    }
+
     setError(null);
 
     const formData: ServerFormData = {
@@ -223,10 +238,13 @@ export function XAAServerModal({
       // Always send the issuer (possibly empty) so clearing it persists.
       xaaAuthzIssuer: trimmedIssuer,
       xaaAllowPathScopedIssuer: allowPathScopedIssuer,
-      // Per-server simulated identity, defaulting to the signed-in user when
-      // blank — identical to the Connect page so the two surfaces stay synced.
-      xaaSubject: xaaSubject.trim() || signedInEmail || undefined,
-      xaaEmail: xaaEmail.trim() || signedInEmail || undefined,
+      // Atomic identity override, identical to the Connect page: untouched →
+      // omit both keys (the save path preserves stored values); edited
+      // complete pair → both trimmed values; explicit clear → both "" (the
+      // backend normalizes the empty pair away).
+      ...(xaaIdentityDirty
+        ? { xaaSubject: trimmedXaaSubject, xaaEmail: trimmedXaaEmail }
+        : {}),
       // Identity assertion preset — always sent (absent stored value = oidc).
       xaaIdentityAssertionFormat: identityAssertionFormat,
       // Unified registration mode — written ONLY on explicit user edit (see
@@ -376,10 +394,16 @@ export function XAAServerModal({
               xaaAllowPathScopedIssuer={allowPathScopedIssuer}
               onXaaAllowPathScopedIssuerChange={setAllowPathScopedIssuer}
               xaaSubject={xaaSubject}
-              onXaaSubjectChange={setXaaSubject}
+              onXaaSubjectChange={(value) => {
+                setXaaIdentityDirty(true);
+                setXaaSubject(value);
+              }}
               xaaEmail={xaaEmail}
-              onXaaEmailChange={setXaaEmail}
-              signedInEmail={signedInEmail}
+              onXaaEmailChange={(value) => {
+                setXaaIdentityDirty(true);
+                setXaaEmail(value);
+              }}
+              projectDefaultIdentity={projectDefaultIdentity}
               projectId={projectId}
               hostedServerId={hostedServerId}
             />

@@ -159,6 +159,10 @@ describe("createXAAStateMachine", () => {
               access_token: "access-token",
               token_type: "Bearer",
               expires_in: 300,
+              // The AS narrows the requested scope (read:tools write:tools →
+              // read:tools) — the machine must retain what was actually
+              // granted, from the token RESPONSE, not echo the request.
+              scope: "read:tools",
             },
           },
           ok: true,
@@ -178,7 +182,9 @@ describe("createXAAStateMachine", () => {
       clientId: "mcpjam-debugger",
       userId: "user-12345",
       email: "demo.user@example.com",
-      scope: "read:tools",
+      // Wider than the response's grant so the grantedScope assertion proves
+      // the value comes from the token response, not a request echo.
+      scope: "read:tools write:tools",
     });
 
     for (let index = 0; index < 7; index += 1) {
@@ -187,6 +193,7 @@ describe("createXAAStateMachine", () => {
 
     expect(state.currentStep).toBe("complete");
     expect(state.accessToken).toBe("access-token");
+    expect(state.grantedScope).toBe("read:tools");
     expect(state.identityAssertion).toBe(idToken);
     expect(state.idJag).toBe(idJag);
     expect(state.idJagDecoded?.issues).toHaveLength(0);
@@ -656,6 +663,337 @@ describe("createXAAStateMachine", () => {
       expect(getStateSnapshot().issuerBaseUrl).toBe(
         "https://issuer.example/api/web/xaa"
       );
+    });
+  });
+
+  describe("managed-IdP policy context and outcomes", () => {
+    const MANAGED_CONFIG = {
+      policyMode: "managed",
+      testIdentityId: "xti_alice",
+      resourceAppId: "xra_1",
+    } as const;
+
+    function buildManagedHarness(options: {
+      configExtras?: Record<string, any>;
+      stateExtras?: Partial<XAAFlowState>;
+      /** Response for the mint call; defaults to a valid spec exchange. */
+      mintResult?: (idJag: string) => any;
+      /** Payload overrides for the minted (fake) ID-JAG. */
+      idJagClaims?: Record<string, any>;
+    }) {
+      let state: XAAFlowState = createInitialXAAFlowState({
+        serverUrl: "https://mcp.example.com",
+        authzServerIssuer: "https://auth.example.com",
+        clientId: "mcpjam-debugger",
+        scope: "read:tools",
+        identityAssertion: "id.token.jwt",
+        currentStep: "received_identity_assertion",
+        ...options.stateExtras,
+      });
+
+      const idJag = makeJwt({
+        iss: "https://issuer.example/api/web/xaa",
+        sub: "user-12345",
+        aud: "https://auth.example.com",
+        resource: "https://mcp.example.com",
+        client_id: "mcpjam-debugger",
+        exp: Math.floor(Date.now() / 1000) + 300,
+        ...options.idJagClaims,
+      });
+
+      const executor = {
+        externalRequest: vi.fn(),
+        internalRequest: vi.fn(async (path: string) => {
+          if (path.endsWith("/token")) {
+            return options.mintResult
+              ? options.mintResult(idJag)
+              : specTokenExchangeResult(idJag);
+          }
+          if (path.endsWith("/token-exchange")) {
+            return options.mintResult
+              ? options.mintResult(idJag)
+              : {
+                  status: 200,
+                  statusText: "OK",
+                  headers: {},
+                  body: { id_jag: idJag },
+                  ok: true,
+                };
+          }
+          if (path === "/proxy/token") {
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: {
+                status: 200,
+                body: { access_token: "ras-token", token_type: "Bearer" },
+              },
+              ok: true,
+            };
+          }
+          throw new Error(`Unexpected internal request: ${path}`);
+        }),
+      };
+
+      const machine = createXAAStateMachine({
+        getState: () => state,
+        updateState: (updates) => {
+          state = { ...state, ...updates };
+        },
+        serverUrl: "https://mcp.example.com",
+        issuerBaseUrl: "https://issuer.example/api/web/xaa",
+        requestExecutor: executor,
+        clientId: "mcpjam-debugger",
+        scope: "read:tools",
+        authzServerIssuer: "https://auth.example.com",
+        ...options.configExtras,
+      });
+
+      return { machine, executor, getStateSnapshot: () => state, idJag };
+    }
+
+    it("emits the managed context as headers on a HOSTED_MODE-style run (org-scoped prefix, issuerMode local)", async () => {
+      // The primary managed path: a DIRECT hosted run keeps issuerMode
+      // "local" (the hosted flag is only the local-forwarding opt-in), so the
+      // managed context must key on policyMode presence alone.
+      const { machine, executor, getStateSnapshot } = buildManagedHarness({
+        configExtras: {
+          mintPathPrefix: "/o/org_123",
+          issuerMode: "local",
+          ...MANAGED_CONFIG,
+        },
+      });
+
+      await machine.proceedToNextStep();
+
+      const [path, init] = executor.internalRequest.mock.calls[0];
+      expect(path).toBe("/o/org_123/token");
+      expect((init as RequestInit).headers).toMatchObject({
+        "x-mcpjam-policy-mode": "managed",
+        "x-mcpjam-test-identity-id": "xti_alice",
+        "x-mcpjam-resource-app-id": "xra_1",
+      });
+      // issuerMode is "local", so the hosted-forwarding headers must NOT ride.
+      expect(
+        (init as RequestInit).headers as Record<string, string>
+      ).not.toHaveProperty("x-mcpjam-issuer-mode");
+      // The RFC 8693 form body stays spec-pure.
+      const sent = new URLSearchParams(String((init as RequestInit).body));
+      expect(sent.get("policyMode")).toBeNull();
+      expect(sent.get("testIdentityId")).toBeNull();
+      expect(sent.get("resourceAppId")).toBeNull();
+      // The logged wire request stays clean of transport headers.
+      const entry = (getStateSnapshot().httpHistory || []).find(
+        (item) => item.step === "token_exchange_request"
+      );
+      expect(entry?.request.headers).toEqual({
+        "Content-Type": "application/x-www-form-urlencoded",
+      });
+    });
+
+    it("emits the managed context as body fields on the legacy JSON mint", async () => {
+      const { machine, executor } = buildManagedHarness({
+        configExtras: {
+          specTokenEndpointAvailable: false,
+          ...MANAGED_CONFIG,
+        },
+      });
+
+      await machine.proceedToNextStep();
+
+      const [path, init] = executor.internalRequest.mock.calls[0];
+      expect(path).toBe("/token-exchange");
+      const parsed = JSON.parse(String((init as RequestInit).body));
+      expect(parsed).toMatchObject({
+        policyMode: "managed",
+        testIdentityId: "xti_alice",
+        resourceAppId: "xra_1",
+      });
+    });
+
+    it("emits no managed context when policyMode is unset (byte-identical legacy requests)", async () => {
+      const spec = buildManagedHarness({});
+      await spec.machine.proceedToNextStep();
+      const [, specInit] = spec.executor.internalRequest.mock.calls[0];
+      expect(
+        Object.keys(
+          (specInit as RequestInit).headers as Record<string, string>
+        ).some((name) => name.toLowerCase().startsWith("x-mcpjam-"))
+      ).toBe(false);
+
+      const json = buildManagedHarness({
+        configExtras: { specTokenEndpointAvailable: false },
+      });
+      await json.machine.proceedToNextStep();
+      const [, jsonInit] = json.executor.internalRequest.mock.calls[0];
+      const parsed = JSON.parse(String((jsonInit as RequestInit).body));
+      expect(parsed).not.toHaveProperty("policyMode");
+      expect(parsed).not.toHaveProperty("testIdentityId");
+      expect(parsed).not.toHaveProperty("resourceAppId");
+    });
+
+    it("records an idpPolicy denial and parks at token_exchange_request on a managed policy rejection", async () => {
+      const { machine, getStateSnapshot } = buildManagedHarness({
+        configExtras: { ...MANAGED_CONFIG },
+        mintResult: () => ({
+          status: 403,
+          statusText: "Forbidden",
+          headers: {},
+          body: { error: "access_denied", error_description: "not_assigned" },
+          ok: false,
+        }),
+      });
+
+      await machine.proceedToNextStep();
+
+      const state = getStateSnapshot();
+      expect(state.idpPolicy).toEqual({
+        outcome: "denied",
+        errorCode: "access_denied",
+        reasonCode: "not_assigned",
+      });
+      expect(state.currentStep).toBe("token_exchange_request");
+      expect(state.error).toBe("not_assigned");
+      expect(state.idJag).toBeUndefined();
+    });
+
+    it("drops a non-allowlisted error code from the denial instead of echoing it", async () => {
+      const { machine, getStateSnapshot } = buildManagedHarness({
+        configExtras: { ...MANAGED_CONFIG },
+        mintResult: () => ({
+          status: 400,
+          statusText: "Bad Request",
+          headers: {},
+          body: { error: "server_error", error_description: "boom" },
+          ok: false,
+        }),
+      });
+
+      await machine.proceedToNextStep();
+
+      expect(getStateSnapshot().idpPolicy).toEqual({
+        outcome: "denied",
+        reasonCode: "boom",
+      });
+    });
+
+    it("never fabricates idpPolicy on a legacy (unmanaged-context) failure", async () => {
+      const { machine, getStateSnapshot } = buildManagedHarness({
+        mintResult: () => ({
+          status: 403,
+          statusText: "Forbidden",
+          headers: {},
+          body: { error: "access_denied", error_description: "nope" },
+          ok: false,
+        }),
+      });
+
+      await machine.proceedToNextStep();
+
+      const state = getStateSnapshot();
+      expect(state.idpPolicy).toBeUndefined();
+      expect(state.currentStep).toBe("token_exchange_request");
+    });
+
+    it("records granted (not downscoped) when the issuer echoes the full requested scope", async () => {
+      const { machine, getStateSnapshot, idJag } = buildManagedHarness({
+        configExtras: { ...MANAGED_CONFIG },
+        mintResult: (token) => ({
+          ...specTokenExchangeResult(token),
+          body: { ...specTokenExchangeResult(token).body, scope: "read:tools" },
+        }),
+        idJagClaims: { scope: "read:tools" },
+      });
+
+      await machine.proceedToNextStep();
+
+      expect(getStateSnapshot().idpPolicy).toEqual({
+        outcome: "granted",
+        requestedScope: "read:tools",
+        grantedScope: "read:tools",
+      });
+      expect(getStateSnapshot().idJag).toBe(idJag);
+    });
+
+    it("records a downscope and drives inspection + the jwt-bearer request with the granted scope", async () => {
+      const { machine, executor, getStateSnapshot } = buildManagedHarness({
+        configExtras: { ...MANAGED_CONFIG },
+        stateExtras: {
+          scope: "read:tools write:tools",
+          tokenEndpoint: "https://auth.example.com/oauth/token",
+        },
+        mintResult: (token) => ({
+          ...specTokenExchangeResult(token),
+          body: { ...specTokenExchangeResult(token).body, scope: "read:tools" },
+        }),
+        // The minted ID-JAG carries the NARROWED scope, as the issuer minted it.
+        idJagClaims: { scope: "read:tools" },
+      });
+
+      // Exchange → downscoped policy outcome.
+      await machine.proceedToNextStep();
+      expect(getStateSnapshot().idpPolicy).toEqual({
+        outcome: "downscoped",
+        requestedScope: "read:tools write:tools",
+        grantedScope: "read:tools",
+      });
+
+      // Inspection lints against the GRANTED scope — the narrowed ID-JAG
+      // raises no scope issue (the original request would have).
+      await machine.proceedToNextStep();
+      const inspected = getStateSnapshot();
+      expect(inspected.currentStep).toBe("inspect_id_jag");
+      expect(
+        (inspected.idJagDecoded?.issues || []).filter(
+          (issue) => issue.field === "scope"
+        )
+      ).toEqual([]);
+
+      // The jwt-bearer redemption asks the RAS for the granted scope.
+      await machine.proceedToNextStep();
+      const proxyCall = executor.internalRequest.mock.calls.find(
+        ([path]) => path === "/proxy/token"
+      );
+      expect(proxyCall).toBeDefined();
+      const proxyBody = JSON.parse(String((proxyCall![1] as RequestInit).body));
+      expect(proxyBody.scope).toBe("read:tools");
+    });
+
+    it("preserves an explicit empty granted scope — redemption never falls back to the request", async () => {
+      const { machine, executor, getStateSnapshot } = buildManagedHarness({
+        configExtras: { ...MANAGED_CONFIG },
+        stateExtras: {
+          scope: "read:tools write:tools",
+          tokenEndpoint: "https://auth.example.com/oauth/token",
+        },
+        mintResult: (token) => ({
+          ...specTokenExchangeResult(token),
+          // Zero-scope grant: everything requested was stripped.
+          body: { ...specTokenExchangeResult(token).body, scope: "" },
+        }),
+        // The minted ID-JAG carries no scope claim.
+        idJagClaims: {},
+      });
+
+      await machine.proceedToNextStep();
+      // "" must survive into grantedScope — dropping it would make
+      // `grantedScope ?? state.scope` resurrect the stripped request.
+      expect(getStateSnapshot().idpPolicy).toEqual({
+        outcome: "downscoped",
+        requestedScope: "read:tools write:tools",
+        grantedScope: "",
+      });
+
+      await machine.proceedToNextStep(); // inspect (scopeless JAG, no issue)
+      await machine.proceedToNextStep(); // jwt-bearer redemption
+      const proxyCall = executor.internalRequest.mock.calls.find(
+        ([path]) => path === "/proxy/token"
+      );
+      expect(proxyCall).toBeDefined();
+      const proxyBody = JSON.parse(String((proxyCall![1] as RequestInit).body));
+      // The redemption must NOT request the original scopes the IdP removed.
+      expect(proxyBody.scope ?? "").not.toContain("read:tools");
     });
   });
 
@@ -2197,6 +2535,58 @@ describe("cimd registration strategy", () => {
     });
     await harness.machine.runAll();
     expect(harness.getState().error).toContain("malformed");
+  });
+
+  it("adopts a confidential (private_key_jwt) document and redeems with it, no public_client warning", async () => {
+    const harness = createDynamicHarness({
+      strategy: "cimd",
+      authzMetadataExtras: CIMD_SUPPORTED,
+      cimdResponse: {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        body: {
+          client_id: XAA_DEBUG_CLIENT_ID_METADATA_URL,
+          grant_types: [
+            "urn:ietf:params:oauth:grant-type:token-exchange",
+            "urn:ietf:params:oauth:grant-type:jwt-bearer",
+          ],
+          authorization_grant_profiles_supported: [
+            "urn:ietf:params:oauth:grant-profile:id-jag",
+          ],
+          token_endpoint_auth_method: "private_key_jwt",
+          jwks: {
+            keys: [
+              {
+                kty: "EC",
+                crv: "P-256",
+                x: "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+                y: "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0",
+                kid: "xaa-client-1",
+                alg: "ES256",
+                use: "sig",
+              },
+            ],
+          },
+        },
+      },
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("complete");
+    expect(state.clientId).toBe(XAA_DEBUG_CLIENT_ID_METADATA_URL);
+    expect(state.tokenEndpointAuthMethod).toBe("private_key_jwt");
+    // Confidential clients carry no public_client warning.
+    expect(
+      state.registrationWarnings?.some((w) => w.code === "public_client")
+    ).toBe(false);
+
+    // The method flows to the redemption request, keeping the URL identity and
+    // never a secret. The executor signs the client_assertion from the method.
+    const proxyBody = harness.proxyTokenBody();
+    expect(proxyBody.clientId).toBe(XAA_DEBUG_CLIENT_ID_METADATA_URL);
+    expect(proxyBody.clientSecret).toBeUndefined();
+    expect(proxyBody.tokenEndpointAuthMethod).toBe("private_key_jwt");
   });
 
   const cimdDoc = {

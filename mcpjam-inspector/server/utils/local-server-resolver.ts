@@ -59,6 +59,12 @@ type LocalAuthorizeServerConfig =
       authServerMode?: "mcpjam" | "own";
       xaaSubject?: string;
       xaaEmail?: string;
+      // Backend-resolved identity failure: a LEGACY partial per-server
+      // override (one member stored) can't resolve an atomic identity, so
+      // the backend omits BOTH identity fields and sends this actionable,
+      // value-free message instead. The mint must fail with it — never
+      // silently fall back to the demo identity.
+      xaaIdentityError?: string;
       // Unified canonical auth fields (useOAuth/useXaa are their derived
       // compat mirrors). Absent on legacy rows.
       authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
@@ -692,6 +698,15 @@ export async function resolveLocalServerForConnect(
         "[XAA connect] registrationMode is dynamic; connect uses stored pre-registered credentials — the mode applies to the debugger and OAuth flows only",
         { serverId, registrationMode: sc.registrationMode }
       );
+    }
+    // Backend-resolved identity failure (legacy partial per-server
+    // override): a distinct configuration error, surfaced BEFORE any mint.
+    // No silent fallback to the demo identity, no silent XAA→OAuth fallback.
+    if (sc.xaaIdentityError) {
+      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, sc.xaaIdentityError, {
+        serverId,
+        serverName: options?.serverDisplayName ?? null,
+      });
     }
     const mintArgs = buildXaaMintArgs({
       issuer: resolveXaaIssuer(c, HOSTED_MODE),

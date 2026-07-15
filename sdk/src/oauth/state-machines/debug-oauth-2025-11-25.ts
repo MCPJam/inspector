@@ -37,6 +37,7 @@ import {
 import {
   buildResourceMetadataUrl,
   canonicalizeResourceUrl,
+  resourceMatchesServerUrl,
 } from "./shared/urls.js";
 import {
   buildInitializeRequestBody,
@@ -566,6 +567,18 @@ export const createDebugOAuthStateMachine = (
   // Helper to get current state (use getState if provided, otherwise use initial state)
   const getCurrentState = () => (getState ? getState() : initialState);
 
+  // Per RFC 8707 and the MCP Authorization spec, the OAuth `resource` indicator
+  // must use the identifier advertised in the server's Protected Resource
+  // Metadata when one was discovered. That identifier may be any URI (including
+  // a URN) and is not required to equal the MCP endpoint URL, so the client must
+  // not overwrite it with the canonicalized server URL. Only fall back to the
+  // canonical server URL when no PRM `resource` is available. Resolving through a
+  // single helper also guarantees the authorization request and the token
+  // request send an identical resource value — some authorization servers reject
+  // a mismatch between the two.
+  const resolveResourceParameter = (): string =>
+    getCurrentState().resourceMetadata?.resource ?? canonicalServerUrl;
+
   const executeRequest = (url: string, options: RequestInit = {}) =>
     requestExecutor({
       url,
@@ -955,7 +968,7 @@ export const createDebugOAuthStateMachine = (
                 resourceMetadata.authorization_servers?.[0] || serverUrl;
 
               // Add info log for Authorization Servers
-              const infoLogs = addInfoLog(
+              let infoLogs = addInfoLog(
                 state,
                 "received_resource_metadata",
                 "authorization-servers",
@@ -966,6 +979,27 @@ export const createDebugOAuthStateMachine = (
                     resourceMetadata.authorization_servers,
                 }
               );
+
+              if (
+                resourceMetadata.resource &&
+                !resourceMatchesServerUrl(
+                  resourceMetadata.resource,
+                  state.serverUrl
+                )
+              ) {
+                infoLogs = addInfoLog(
+                  { ...state, infoLogs },
+                  "received_resource_metadata",
+                  "resource-identifier-mismatch",
+                  "Resource identifier mismatch",
+                  {
+                    "Advertised resource": resourceMetadata.resource,
+                    "Server URL": state.serverUrl,
+                    Note: "The debugger will send the advertised resource as-is (RFC 8707), but strict MCP clients — including MCPJam's Quick OAuth and the official MCP SDK — validate it against the server URL (RFC 9728 §3.3) and will refuse to connect.",
+                  },
+                  { level: "warning" }
+                );
+              }
 
               updateState({
                 currentStep: "received_resource_metadata",
@@ -1636,7 +1670,7 @@ export const createDebugOAuthStateMachine = (
               {
                 code_challenge: codeChallenge,
                 method: "S256",
-                resource: canonicalServerUrl,
+                resource: resolveResourceParameter(),
               }
             );
 
@@ -1672,7 +1706,7 @@ export const createDebugOAuthStateMachine = (
             );
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
-            authUrl.searchParams.set("resource", canonicalServerUrl);
+            authUrl.searchParams.set("resource", resolveResourceParameter());
 
             const requestedScopeValue = resolveRequestedScopeValue({
               customScopes,
@@ -1756,7 +1790,7 @@ export const createDebugOAuthStateMachine = (
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
             }
 
-            tokenRequestBodyObj.resource = canonicalServerUrl;
+            tokenRequestBodyObj.resource = resolveResourceParameter();
 
             const tokenRequest = {
               method: "POST",
@@ -1823,8 +1857,9 @@ export const createDebugOAuthStateMachine = (
                 ...clientAuth.bodyParams,
               });
 
-              // Add resource parameter (canonicalized per RFC 8707)
-              tokenRequestBody.set("resource", canonicalServerUrl);
+              // Add resource parameter (per RFC 8707; prefers the PRM-advertised
+              // resource identifier, falling back to the canonical server URL)
+              tokenRequestBody.set("resource", resolveResourceParameter());
 
               // Make the token request via backend proxy. The client-auth
               // Authorization header is applied AFTER the merge: the merge

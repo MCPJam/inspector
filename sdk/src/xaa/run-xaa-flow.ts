@@ -29,6 +29,7 @@ import {
   type XaaCapabilityEvidence,
 } from "./mcp-init.js";
 import { createInProcessXaaExecutor } from "./in-process-executor.js";
+import { isLoopbackClientMetadataUrl } from "../oauth/state-machines/shared/client-id-metadata.js";
 import { createXAAStateMachine } from "./state-machines/state-machine.js";
 import { runXaaStateMachine } from "./state-machines/runner.js";
 import {
@@ -70,6 +71,9 @@ export interface XaaFlowConfig {
   /** CIMD only: the Client ID Metadata Document URL. Defaults to the hosted
    * XAA debugger document. */
   clientIdMetadataUrl?: string;
+  /** Local-dev-only opt-in: permit an http:// loopback CIMD document URL (a
+   * locally-run reflector). Never affects public/remote URLs. */
+  allowLoopbackClientMetadata?: boolean;
   negativeTestMode?: NegativeTestMode;
   /** Input axis: assertion format the mock IdP mints ("oidc" default). */
   identityAssertionFormat?: IdentityAssertionFormat;
@@ -378,6 +382,7 @@ function projectFlowError(state: XAAFlowState): string | undefined {
 interface AttemptContext {
   registrationStrategy: RegistrationStrategy;
   clientIdMetadataUrl?: string;
+  allowLoopbackClientMetadata?: boolean;
   dcrCredentialCache: XaaDcrCredentialCache;
   dcrCacheTargetKey: string;
 }
@@ -501,6 +506,7 @@ async function runSharedAttempt(
     authzServerIssuer: config.authzServerIssuer,
     registrationStrategy: ctx.registrationStrategy,
     clientIdMetadataUrl: ctx.clientIdMetadataUrl,
+    allowLoopbackClientMetadata: ctx.allowLoopbackClientMetadata,
     dcrCredentialCache: ctx.dcrCredentialCache,
     dcrCacheTargetKey: ctx.dcrCacheTargetKey,
   });
@@ -529,6 +535,7 @@ export async function runXaaFlow(
   const ctx: AttemptContext = {
     registrationStrategy: strategy,
     clientIdMetadataUrl: config.clientIdMetadataUrl,
+    allowLoopbackClientMetadata: config.allowLoopbackClientMetadata,
     dcrCredentialCache: dcr.cache,
     dcrCacheTargetKey: config.serverUrl,
   };
@@ -599,7 +606,11 @@ export async function runXaaFlow(
   // the private-host/DNS-resolution path regardless of the local-dev `httpsOnly`
   // default, so an untrusted URL can't turn the preflight into a fetch of an
   // internal address. The hardcoded hosted default is trusted and skips this.
-  if (config.clientIdMetadataUrl) {
+  const skipCimdSsrfForLoopback =
+    config.allowLoopbackClientMetadata === true &&
+    !!config.clientIdMetadataUrl &&
+    isLoopbackClientMetadataUrl(config.clientIdMetadataUrl);
+  if (config.clientIdMetadataUrl && !skipCimdSsrfForLoopback) {
     try {
       await validateUrl(config.clientIdMetadataUrl, true);
     } catch (error) {

@@ -122,6 +122,7 @@ import v1Routes from "./routes/v1/index";
 import cliAuthRoutes from "./routes/cli-auth/index";
 import relayRoutes, { relayBodyLimit } from "./routes/relay";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata";
+import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd";
 import workosAuthkitRoutes from "./routes/workos-authkit";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
@@ -459,6 +460,7 @@ app.route("/relay", relayRoutes);
 // the production static/SPA fallback. Mirror of the mount in
 // server/app.ts::createHonoApp — both production entries must wire this up.
 registerXaaClientMetadataRoute(app);
+registerXaaConfidentialCimdRoute(app);
 
 // Fallback for clients that post to "/sse/message" instead of the rewritten proxy messages URL.
 // We resolve the upstream messages endpoint via sessionId and forward with any injected auth.
