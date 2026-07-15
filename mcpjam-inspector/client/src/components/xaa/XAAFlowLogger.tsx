@@ -476,6 +476,9 @@ export function XAAFlowLogger({
     splitHttpEntriesForDisplay<XAAFlowStep, XAAHttpEntry>({
       entries: flowState.httpHistory || [],
       pairedReceivedStep: getXAAReceivedStepForRequest,
+      keepCompletedExchangeWhole: (entry) =>
+        entry.step === flowState.currentStep &&
+        Boolean(flowState.error || flowState.negativeProbe),
     }).forEach((item) => {
       ensureGroup(item.step).displayItems.push(item);
     });
@@ -483,7 +486,14 @@ export function XAAFlowLogger({
     return Array.from(steps.values())
       .filter((group) => getXAAStepIndex(group.step) <= currentStepIndex)
       .sort((a, b) => getXAAStepIndex(a.step) - getXAAStepIndex(b.step));
-  }, [flowState.httpHistory, flowState.infoLogs, currentStepIndex]);
+  }, [
+    flowState.httpHistory,
+    flowState.infoLogs,
+    flowState.currentStep,
+    flowState.error,
+    flowState.negativeProbe,
+    currentStepIndex,
+  ]);
 
   // Bucket consecutive step groups by phase so each phase renders one header.
   const phasedGroups = useMemo(() => {

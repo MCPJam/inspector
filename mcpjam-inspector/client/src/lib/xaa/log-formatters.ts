@@ -228,6 +228,9 @@ export function generateXAAFlowText(
   >({
     entries: flowState.httpHistory ?? [],
     pairedReceivedStep: getXAAReceivedStepForRequest,
+    keepCompletedExchangeWhole: (entry) =>
+      entry.step === flowState.currentStep &&
+      Boolean(flowState.error || flowState.negativeProbe),
   })) {
     if (getXAAStepIndex(item.step) > currentStepIndex) continue;
     if (options?.step && item.step !== options.step) continue;

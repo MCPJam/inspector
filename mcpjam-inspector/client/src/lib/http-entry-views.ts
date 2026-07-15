@@ -43,8 +43,11 @@ export function splitHttpEntriesForDisplay<
   entries: readonly TEntry[];
   /** Received step paired with a request step; undefined = never split. */
   pairedReceivedStep: (step: TStep) => TStep | undefined;
+  /** Keep a completed exchange together on its request card. Useful when a
+   * flow is parked or terminal and cannot reach the paired received step. */
+  keepCompletedExchangeWhole?: (entry: TEntry) => boolean;
 }): HttpEntryDisplayItem<TStep, TEntry>[] {
-  const { entries, pairedReceivedStep } = options;
+  const { entries, pairedReceivedStep, keepCompletedExchangeWhole } = options;
 
   // Only the LATEST entry per request step splits: earlier entries for the
   // same step are failed discovery candidates whose request+response pair is
@@ -79,9 +82,11 @@ export function splitHttpEntriesForDisplay<
         timestamp: entry.timestamp,
       });
     }
-    // 4. Superseded discovery candidate — keep the pair together.
+    // 4. Parked/terminal exchange — there is no reachable received card.
+    if (keepCompletedExchangeWhole?.(entry)) return full();
+    // 5. Superseded discovery candidate — keep the pair together.
     if (lastIndexForStep.get(entry.step) !== index) return full();
-    // 5. Split as soon as the exchange has a response: request under the
+    // 6. Split as soon as the exchange has a response: request under the
     //    request card, response under the received card. The received card may
     //    still be the current/next step; its status is handled by the logger,
     //    while the response evidence is already available to inspect.

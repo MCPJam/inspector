@@ -73,6 +73,23 @@ describe("splitHttpEntriesForDisplay", () => {
     ]);
   });
 
+  it("keeps a completed exchange whole when its received step is unreachable", () => {
+    const completed = entry({ response: { status: 400 } });
+    const items = splitHttpEntriesForDisplay<Step, Entry>({
+      entries: [completed],
+      pairedReceivedStep,
+      keepCompletedExchangeWhole: () => true,
+    });
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        step: "req_a",
+        view: "full",
+        entry: completed,
+      }),
+    ]);
+  });
+
   it("renders a response-less entry as the request view (genuine pending)", () => {
     // OAuth's prepared-but-not-yet-sent rest.
     const items = split([entry({ response: undefined })]);

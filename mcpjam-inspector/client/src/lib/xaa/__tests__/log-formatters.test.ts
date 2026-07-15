@@ -217,6 +217,78 @@ describe("generateXAAFlowText", () => {
     );
   });
 
+  it("keeps an HTTP error response with its request while the flow is parked", () => {
+    const copied = generateXAAFlowText(
+      createInitialXAAFlowState({
+        currentStep: "jwt_bearer_request",
+        error: "Authorization server rejected the request",
+        httpHistory: [
+          {
+            step: "jwt_bearer_request",
+            timestamp: 1,
+            duration: 40,
+            request: {
+              method: "POST",
+              url: "https://auth.example.com/token",
+              headers: { "Content-Type": "application/json" },
+              body: { scope: "mcp.access" },
+            },
+            response: {
+              status: 400,
+              statusText: "Bad Request",
+              headers: { "content-type": "application/json" },
+              body: { error: "invalid_grant" },
+            },
+          },
+        ],
+      }),
+      {}
+    );
+
+    expect(copied).toContain("Status: 400 Bad Request");
+    expect(copied).toContain("Request Body:");
+    expect(copied).toContain("Response Headers:");
+    expect(copied).toContain("Response Body:");
+    expect(copied).not.toContain(
+      "Response: recorded under [received_access_token]"
+    );
+  });
+
+  it("keeps a terminal negative-test response with its request", () => {
+    const copied = generateXAAFlowText(
+      createInitialXAAFlowState({
+        currentStep: "jwt_bearer_request",
+        negativeTestMode: "bad_signature",
+        negativeProbe: { outcome: "rejected", status: 400 },
+        httpHistory: [
+          {
+            step: "jwt_bearer_request",
+            timestamp: 1,
+            request: {
+              method: "POST",
+              url: "https://auth.example.com/token",
+              headers: {},
+            },
+            response: {
+              status: 200,
+              statusText: "OK",
+              headers: { "content-type": "application/json" },
+              body: { status: 400, body: { error: "invalid_grant" } },
+            },
+          },
+        ],
+      }),
+      {}
+    );
+
+    expect(copied).toContain("Status: 200 OK");
+    expect(copied).toContain("Response Headers:");
+    expect(copied).toContain("Response Body:");
+    expect(copied).not.toContain(
+      "Response: recorded under [received_access_token]"
+    );
+  });
+
   it("redacts failed requests duplicated into info logs and error text", () => {
     const copied = generateXAAFlowText(
       createInitialXAAFlowState({

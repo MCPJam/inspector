@@ -304,7 +304,7 @@ describe("XAAFlowLogger request/response cards", () => {
     expect(screen.getAllByText("POST")).toHaveLength(2);
   });
 
-  it("does not reveal the response card while parked at the request step", () => {
+  it("does not reveal the response card while waiting for the next Continue", () => {
     renderWithExchange({
       currentStep: "jwt_bearer_request",
       infoLogs: [
@@ -328,13 +328,51 @@ describe("XAAFlowLogger request/response cards", () => {
     expect(screen.getAllByText("POST")).toHaveLength(1);
   });
 
-  it("keeps a terminal negative-rejected exchange whole at jwt_bearer_request", () => {
+  it("keeps a terminal negative-rejected exchange whole at jwt_bearer_request", async () => {
+    const user = userEvent.setup();
     renderWithExchange({
       currentStep: "jwt_bearer_request",
       negativeTestMode: "bad_signature",
       negativeProbe: { outcome: "rejected", status: 400 },
+      httpHistory: [
+        {
+          ...JWT_BEARER_EXCHANGE,
+          response: {
+            ...JWT_BEARER_EXCHANGE.response,
+            body: { status: 400, body: { error: "invalid_grant" } },
+          },
+        },
+      ],
     });
-    expect(screen.getByText("response → next step")).toBeInTheDocument();
-    expect(screen.queryByText("Status: 200 OK")).not.toBeInTheDocument();
+    expect(screen.queryByText("response → next step")).not.toBeInTheDocument();
+    expect(screen.getByText("200")).toBeInTheDocument();
+    await user.click(screen.getByText("200"));
+    expect(screen.getByText("Response Headers")).toBeInTheDocument();
+    expect(screen.getByText("Response Body")).toBeInTheDocument();
+  });
+
+  it("keeps an HTTP error response whole while the flow is parked", async () => {
+    const user = userEvent.setup();
+    renderWithExchange({
+      currentStep: "jwt_bearer_request",
+      error: "Authorization server rejected the request",
+      httpHistory: [
+        {
+          ...JWT_BEARER_EXCHANGE,
+          response: {
+            status: 400,
+            statusText: "Bad Request",
+            headers: { "content-type": "application/json" },
+            body: { error: "invalid_grant" },
+          },
+        },
+      ],
+    });
+
+    expect(screen.queryByText("response → next step")).not.toBeInTheDocument();
+    expect(screen.getByText("400")).toBeInTheDocument();
+    await user.click(screen.getByText("400"));
+    expect(screen.getByText("Request Body")).toBeInTheDocument();
+    expect(screen.getByText("Response Body")).toBeInTheDocument();
   });
 });
