@@ -21,6 +21,14 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
 }));
 
+// The "Run as" people strip rides the xaa-registration flag (the debugger
+// extras are hidden together until launch). Default it on so the suite
+// exercises the strip; the gate itself is asserted below by flipping it.
+let registrationFlag: boolean | undefined = true;
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => registrationFlag,
+}));
+
 // Controllable org list — drives the admin derivation (owner/admin/creator).
 let organizationsState: Array<{
   _id: string;
@@ -351,6 +359,7 @@ describe("XAAFlowTab", () => {
     // authUser to null (guest), and a mid-test failure must not leak that into
     // later tests.
     authUser = { email: "tester@example.com" };
+    registrationFlag = true;
     resourceApps = [];
     localStorage.clear();
     runSettingsState = {
@@ -1269,6 +1278,24 @@ describe("XAAFlowTab", () => {
       expect(capturedPeopleStripProps.disabled).toBe(false);
       capturedPeopleStripProps.onSelectPerson(null);
       expect(setSelectedPersonIdMock).toHaveBeenCalledWith("proj_1", null);
+    });
+
+    // The gate itself: the strip is an unreleased debugger extra, hidden
+    // unless the flag resolves explicitly true. `undefined` (flag still
+    // loading, or PostHog unavailable) must hide it too — the strict
+    // `=== true` check is the point, so an unresolved flag never leaks the
+    // surface.
+    it.each([
+      ["off", false],
+      ["unresolved", undefined],
+    ])("hides the people strip when the flag is %s", (_label, flagValue) => {
+      registrationFlag = flagValue as boolean | undefined;
+      seedRoster();
+      currentTarget = personTarget();
+      renderTab();
+
+      expect(screen.queryByTestId("xaa-people-strip")).not.toBeInTheDocument();
+      expect(capturedPeopleStripProps).toBeNull();
     });
 
     it("a person switch resets a completed flow immediately (no debounce)", async () => {
