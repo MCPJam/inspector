@@ -178,10 +178,10 @@ export function HTTPHistoryEntry({
                 <span>{errorMessage}</span>
               </div>
             )}
-            {/* URL */}
+            {/* Request URL */}
             <div>
               <div className="text-xs font-medium text-muted-foreground mb-1">
-                URL
+                Request URL
               </div>
               <ScrollableJsonView
                 value={{ url }}

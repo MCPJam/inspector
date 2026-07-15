@@ -404,7 +404,7 @@ export function generateRawText(
           : "pending";
 
       text += `[${formatTimestamp(entry.timestamp)}] [${httpEntry.request.method}] [${statusLabel}] ${displayStep}\n`;
-      text += `URL: ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
+      text += `Request URL: ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
 
       if (showResponse && httpEntry.duration) {
         text += `Duration: ${httpEntry.duration}ms\n`;
