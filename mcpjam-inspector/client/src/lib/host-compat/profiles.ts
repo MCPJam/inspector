@@ -5,6 +5,7 @@ import {
   type HostCompatProfile as SdkHostCompatProfile,
 } from "@mcpjam/sdk/host-compat";
 import type { HostCompatProfile } from "./types";
+import { getHostLogoSrc, HOST_LOGO_OPTIONS } from "@/lib/host-ui-metadata";
 
 /**
  * Client presentation join for the SDK's market-host catalog.
@@ -15,43 +16,15 @@ import type { HostCompatProfile } from "./types";
  * one piece of presentation the SDK deliberately doesn't carry — joined by
  * host id.
  */
-const LOGO_BY_ID: Record<
-  string,
-  { logoSrc: string; logoSrcByTheme?: { light: string; dark: string } }
-> = {
-  claude: { logoSrc: "/claude_logo.png" },
-  chatgpt: { logoSrc: "/openai_logo.png" },
-  mistral: { logoSrc: "/mistral_logo.png" },
-  goose: {
-    logoSrc: "/goose_logo_light.png",
-    logoSrcByTheme: {
-      light: "/goose_logo_light.png",
-      dark: "/goose_logo_dark.png",
-    },
-  },
-  cursor: { logoSrc: "/cursor_logo.png" },
-  copilot: { logoSrc: "/copilot_logo.png" },
-  codex: { logoSrc: "/codex-logo.svg" },
-  n8n: { logoSrc: "/n8n_logo.svg" },
-  perplexity: { logoSrc: "/perplexity_logo.svg" },
-  cline: {
-    logoSrc: "/cline_logo_light.svg",
-    logoSrcByTheme: {
-      light: "/cline_logo_light.svg",
-      dark: "/cline_logo_dark.svg",
-    },
-  },
-};
-
-// A host published to the live catalog before this client ships its logo —
-// neutral MCP mark instead of a broken <img>.
-const UNKNOWN_HOST_LOGO = "/mcp.svg";
+const LOGO_THEME_BY_ID = Object.fromEntries(
+  HOST_LOGO_OPTIONS.map((option) => [option.id, option.logoSrcByTheme])
+);
 
 function joinLogo(p: SdkHostCompatProfile): HostCompatProfile {
   return {
     ...p,
-    logoSrc: LOGO_BY_ID[p.id]?.logoSrc ?? UNKNOWN_HOST_LOGO,
-    logoSrcByTheme: LOGO_BY_ID[p.id]?.logoSrcByTheme,
+    logoSrc: getHostLogoSrc(p.id),
+    logoSrcByTheme: LOGO_THEME_BY_ID[p.id],
   };
 }
 
@@ -75,7 +48,7 @@ export function buildHostCompatProfiles(): HostCompatProfile[] {
  * consumers memoize on its state.
  */
 export function getHostProfiles(
-  catalog?: HostCompatCatalog | null,
+  catalog?: HostCompatCatalog | null
 ): HostCompatProfile[] {
   if (!catalog) return buildHostCompatProfiles();
   return buildHostProfilesFromCatalog(catalog).map(joinLogo);

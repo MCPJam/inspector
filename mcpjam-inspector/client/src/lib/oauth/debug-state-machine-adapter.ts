@@ -106,6 +106,7 @@ export function createDebugRequestExecutor(): OAuthRequestExecutor {
           ...request.headers,
         },
         body: serializeProxyBody(request.body, request.headers),
+        ...(request.redirect ? { redirect: request.redirect } : {}),
       }),
     });
 

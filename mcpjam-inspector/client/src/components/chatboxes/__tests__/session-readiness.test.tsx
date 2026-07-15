@@ -84,7 +84,7 @@ describe("SessionInsightBar", () => {
     render(
       <SessionInsightBar readiness={ready({ hostLatencyMs: 3500 })} />
     );
-    expect(screen.getByText(/3\.5s host latency/)).toBeInTheDocument();
+    expect(screen.getByText(/3\.5s client latency/)).toBeInTheDocument();
   });
 
   it("flags partial readiness when the tool inventory was unavailable", () => {
@@ -116,5 +116,42 @@ describe("SessionInsightBar", () => {
     );
     expect(screen.getByText(/Readiness analysis failed/i)).toBeInTheDocument();
     expect(screen.getByText(/trace unreadable/)).toBeInTheDocument();
+  });
+
+  it("explains low tool coverage when issues are omitted", () => {
+    render(
+      <SessionInsightBar
+        readiness={ready({
+          verdict: "needs_attention",
+          issueCount: 1,
+          coverageRatio: 0.2,
+          advertisedToolCount: 5,
+          usedToolCount: 1,
+          issues: [],
+        })}
+      />
+    );
+    expect(screen.getByText(/Why this needs attention/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Only 20% of advertised tools were used/i),
+    ).toBeInTheDocument();
+  });
+
+  it("explains when no tools were called on a tool-enabled swarm", () => {
+    render(
+      <SessionInsightBar
+        readiness={ready({
+          verdict: "needs_attention",
+          issueCount: 1,
+          advertisedToolCount: 4,
+          usedToolCount: 0,
+          toolCallCount: 0,
+          issues: [],
+        })}
+      />
+    );
+    expect(
+      screen.getByText(/No tools were called, but 4 tools are advertised/i),
+    ).toBeInTheDocument();
   });
 });

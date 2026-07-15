@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConvex, useQuery } from "convex/react";
-import posthog from "posthog-js";
+import { track } from "@/lib/analytics";
 import { Loader2, Play, Plus, Puzzle, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
@@ -27,7 +27,6 @@ import {
   EVAL_LOW_PASS_RATE_TEXT_CLASS,
 } from "./constants";
 import { ITERATION_RESULT_BADGE_BASE } from "./iteration-result-presentation";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime, getEffectiveSuiteServers } from "./helpers";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
@@ -833,8 +832,18 @@ export function TestCasesOverview({
 
                   const caseAndLast = (
                     <>
-                      <span className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-foreground">
-                        {caseTitle}
+                      <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                        <span className="min-w-0 truncate text-left text-xs font-semibold text-foreground">
+                          {caseTitle}
+                        </span>
+                        {testCase.lastSdkWriteAt != null ? (
+                          <span
+                            className="inline-flex shrink-0 items-center rounded border border-border/50 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-muted-foreground"
+                            title="Synced from CI — the next CI report may overwrite manual edits"
+                          >
+                            CI
+                          </span>
+                        ) : null}
                       </span>
                       {showClientRail ? null : lastPart}
                     </>
@@ -871,10 +880,8 @@ export function TestCasesOverview({
                           e.preventDefault();
                           e.stopPropagation();
                           if (runDisabled) return;
-                          posthog.capture("run_selected_case_button_clicked", {
+                          track("run_selected_case_button_clicked", {
                             location: "test_cases_overview",
-                            platform: detectPlatform(),
-                            environment: detectEnvironment(),
                             test_case_id: testCase._id,
                           });
                           onRunTestCase(testCase);

@@ -649,6 +649,39 @@ export function orderCommitGroupRunsByOutcome(
 }
 
 /**
+ * Metric-label source for a run: CI ('sdk') runs report "Pass Rate"
+ * (per-case summary), everything else — ui/api/schedule — "Accuracy"
+ * (per-iteration). Legacy runs without `source` fall back to the suite's
+ * creation provenance.
+ */
+export function getRunMetricSource(
+  run: { source?: EvalSuiteRun["source"] } | null | undefined,
+  suiteSource?: "ui" | "sdk",
+): "ui" | "sdk" {
+  return (run?.source ?? suiteSource) === "sdk" ? "sdk" : "ui";
+}
+
+/**
+ * Suite-scoped views (hero stats, runs-table header, chart grid) label by
+ * the newest run's source — a mixed suite reads as whatever it did last.
+ */
+export function getLatestRunMetricSource(
+  runs: EvalSuiteRun[],
+  suiteSource?: "ui" | "sdk",
+): "ui" | "sdk" {
+  let latest: EvalSuiteRun | null = null;
+  let latestTs = -1;
+  for (const run of runs) {
+    const ts = run.completedAt ?? run.createdAt ?? 0;
+    if (ts > latestTs) {
+      latest = run;
+      latestTs = ts;
+    }
+  }
+  return getRunMetricSource(latest, suiteSource);
+}
+
+/**
  * Flatten recentRuns across all suites and group by commitSha.
  * Runs without a commitSha go into a "manual" group.
  */

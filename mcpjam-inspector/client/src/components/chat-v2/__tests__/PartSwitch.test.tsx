@@ -487,8 +487,8 @@ describe("PartSwitch", () => {
           input: { title: "Flow" },
           output: { content: "saved" },
         };
-        // Mirrors the Codex template's REPLACE (not spread) of
-        // clientCapabilities — see client-templates.ts:803-810.
+        // Mirrors the Codex catalog host definition's REPLACE (not spread) of
+        // clientCapabilities.
         const codexCaps = { elicitation: {} };
         render(
           <ActiveHostCapsResolverProvider value={() => codexCaps}>

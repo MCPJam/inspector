@@ -1,5 +1,341 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`runner parity (golden Convex payload + event sequence) > hosted-batch hybrid pinned (toolCall + prompt): convex payload > convex 1`] = `
+[
+  {
+    "payload": {
+      "iterationId": "iter-1",
+      "lastActivityAt": "<scrubbed>",
+      "modelId": "eval/unknown",
+      "modelSource": "mcpjam",
+      "startedAt": "<scrubbed>",
+      "turn": {
+        "promptIndex": 0,
+        "prompts": [
+          {
+            "actualToolCalls": [
+              {
+                "arguments": {
+                  "city": "SF",
+                },
+                "toolName": "show_map",
+              },
+            ],
+            "argumentMismatches": [],
+            "expectedOutput": undefined,
+            "expectedToolCalls": [],
+            "missing": [],
+            "passed": true,
+            "prompt": "",
+            "promptIndex": 0,
+            "unexpected": [],
+          },
+        ],
+        "sessionMessages": [
+          {
+            "content": "Pinned tool call: show_map on "srv-1"",
+            "role": "user",
+          },
+          {
+            "content": "Pinned tool call show_map executed",
+            "role": "assistant",
+          },
+        ],
+        "spans": [],
+        "turnEndedAt": "<scrubbed>",
+        "turnStartedAt": "<scrubbed>",
+        "widgets": [],
+      },
+    },
+    "ref": "testSuites:appendEvalTurnTrace",
+  },
+  {
+    "payload": {
+      "iterationId": "iter-1",
+      "lastActivityAt": "<scrubbed>",
+      "modelId": "eval/unknown",
+      "modelSource": "mcpjam",
+      "startedAt": "<scrubbed>",
+      "turn": {
+        "promptIndex": 1,
+        "prompts": [
+          {
+            "actualToolCalls": [],
+            "argumentMismatches": [],
+            "expectedOutput": undefined,
+            "expectedToolCalls": [],
+            "missing": [],
+            "passed": true,
+            "prompt": "Describe the widget",
+            "promptIndex": 1,
+            "unexpected": [],
+          },
+        ],
+        "sessionMessages": [
+          {
+            "content": "Pinned tool call: show_map on "srv-1"",
+            "role": "user",
+          },
+          {
+            "content": "Pinned tool call show_map executed",
+            "role": "assistant",
+          },
+          {
+            "content": "Describe the widget",
+            "role": "user",
+          },
+          {
+            "content": [
+              {
+                "text": "Done",
+                "type": "text",
+              },
+            ],
+            "role": "assistant",
+          },
+        ],
+        "spans": [
+          {
+            "category": "step",
+            "endMs": "<scrubbed>",
+            "finishReason": "stop",
+            "id": "eval-backend-prompt-1-step-0",
+            "inputTokens": 1,
+            "messageEndIndex": 3,
+            "messageStartIndex": 3,
+            "modelId": "anthropic/claude-haiku-4.5",
+            "name": "Step 1",
+            "outputTokens": 2,
+            "promptIndex": 1,
+            "provider": "anthropic",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+            "stepIndex": 0,
+            "totalTokens": 3,
+            "ttfcMs": "<scrubbed>",
+          },
+          {
+            "category": "llm",
+            "endMs": "<scrubbed>",
+            "finishReason": "stop",
+            "id": "eval-backend-prompt-1-step-0-llm",
+            "inputTokens": 1,
+            "messageEndIndex": 3,
+            "messageStartIndex": 3,
+            "modelId": "anthropic/claude-haiku-4.5",
+            "name": "anthropic/claude-haiku-4.5 · response",
+            "outputTokens": 2,
+            "parentId": "eval-backend-prompt-1-step-0",
+            "promptIndex": 1,
+            "provider": "anthropic",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+            "stepIndex": 0,
+            "totalTokens": 3,
+            "ttfcMs": "<scrubbed>",
+          },
+        ],
+        "turnEndedAt": "<scrubbed>",
+        "turnStartedAt": "<scrubbed>",
+        "widgets": [],
+      },
+    },
+    "ref": "testSuites:appendEvalTurnTrace",
+  },
+  {
+    "payload": {
+      "actualToolCalls": [
+        {
+          "arguments": {
+            "city": "SF",
+          },
+          "toolName": "show_map",
+        },
+      ],
+      "error": undefined,
+      "errorDetails": undefined,
+      "iterationId": "iter-1",
+      "metadata": {
+        "argumentMismatchCount": 0,
+        "failedTurnCount": 0,
+        "inputTokens": 1,
+        "mismatchCount": 0,
+        "missingCount": 0,
+        "multiTurn": true,
+        "outputTokens": 2,
+        "stepResults": [
+          {
+            "kind": "toolCall",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
+          },
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-2",
+            "stepIndex": 1,
+          },
+        ],
+        "turnCount": 2,
+        "unexpectedCount": 0,
+      },
+      "result": "passed",
+      "resultSource": "reported",
+      "status": "completed",
+      "tokensUsed": 3,
+    },
+    "ref": "testSuites:updateTestIteration",
+  },
+  {
+    "payload": {
+      "iterationId": "iter-1",
+      "reason": "eval_completed",
+    },
+    "ref": "testSuites:lockEvalSession",
+  },
+]
+`;
+
+exports[`runner parity (golden Convex payload + event sequence) > hosted-batch hybrid pinned setup failure (server not connected): convex payload + status > convex 1`] = `
+[
+  {
+    "payload": {
+      "iterationId": "iter-1",
+      "lastActivityAt": "<scrubbed>",
+      "modelId": "eval/unknown",
+      "modelSource": "mcpjam",
+      "startedAt": "<scrubbed>",
+      "turn": {
+        "promptIndex": 0,
+        "prompts": [
+          {
+            "actualToolCalls": [],
+            "argumentMismatches": [],
+            "expectedOutput": undefined,
+            "expectedToolCalls": [],
+            "missing": [],
+            "passed": true,
+            "prompt": "",
+            "promptIndex": 0,
+            "unexpected": [],
+          },
+        ],
+        "sessionMessages": [
+          {
+            "content": "Pinned tool call: search on "Asana"",
+            "role": "user",
+          },
+          {
+            "content": "Pinned tool call skipped: server "Asana" not connected",
+            "role": "assistant",
+          },
+        ],
+        "spans": [],
+        "turnEndedAt": "<scrubbed>",
+        "turnStartedAt": "<scrubbed>",
+        "widgets": [],
+      },
+    },
+    "ref": "testSuites:appendEvalTurnTrace",
+  },
+  {
+    "payload": {
+      "iterationId": "iter-1",
+      "lastActivityAt": "<scrubbed>",
+      "modelId": "eval/unknown",
+      "modelSource": "mcpjam",
+      "startedAt": "<scrubbed>",
+      "turn": {
+        "promptIndex": 1,
+        "prompts": [
+          {
+            "actualToolCalls": [],
+            "argumentMismatches": [],
+            "expectedOutput": undefined,
+            "expectedToolCalls": [],
+            "missing": [],
+            "passed": true,
+            "prompt": "Describe it",
+            "promptIndex": 1,
+            "unexpected": [],
+          },
+        ],
+        "sessionMessages": [
+          {
+            "content": "Pinned tool call: search on "Asana"",
+            "role": "user",
+          },
+          {
+            "content": "Pinned tool call skipped: server "Asana" not connected",
+            "role": "assistant",
+          },
+        ],
+        "spans": [],
+        "turnEndedAt": "<scrubbed>",
+        "turnStartedAt": "<scrubbed>",
+        "widgets": [],
+      },
+    },
+    "ref": "testSuites:appendEvalTurnTrace",
+  },
+  {
+    "payload": {
+      "actualToolCalls": [],
+      "error": "pinned_server_not_connected: "Asana" is not connected in this run's environment",
+      "errorDetails": undefined,
+      "iterationId": "iter-1",
+      "metadata": {
+        "argumentMismatchCount": 0,
+        "failedTurnCount": 0,
+        "inputTokens": 0,
+        "mismatchCount": 0,
+        "missingCount": 0,
+        "multiTurn": true,
+        "outputTokens": 0,
+        "skippedSteps": [
+          {
+            "kind": "prompt",
+            "reason": "step 0 errored: pinned_server_not_connected: "Asana" is not connected in this run's environment",
+            "stepId": "turn-2",
+            "stepIndex": 1,
+          },
+        ],
+        "stepResults": [
+          {
+            "kind": "toolCall",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
+          },
+          {
+            "kind": "prompt",
+            "reason": "step 0 errored: pinned_server_not_connected: "Asana" is not connected in this run's environment",
+            "status": "skipped",
+            "stepId": "turn-2",
+            "stepIndex": 1,
+          },
+        ],
+        "turnCount": 2,
+        "unexpectedCount": 0,
+      },
+      "result": "failed",
+      "resultSource": "reported",
+      "status": "failed",
+      "tokensUsed": 0,
+    },
+    "ref": "testSuites:updateTestIteration",
+  },
+  {
+    "payload": {
+      "iterationId": "iter-1",
+      "reason": "eval_failed",
+    },
+    "ref": "testSuites:lockEvalSession",
+  },
+]
+`;
+
 exports[`runner parity (golden Convex payload + event sequence) > hosted-batch multi-turn: convex payload > convex 1`] = `
 [
   {
@@ -357,6 +693,254 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
       "reason": "eval_completed",
     },
     "ref": "testSuites:lockEvalSession",
+  },
+]
+`;
+
+exports[`runner parity (golden Convex payload + event sequence) > hosted-stream hybrid pinned (toolCall + prompt): events + convex payload > convex 1`] = `
+[
+  {
+    "payload": {
+      "iterationId": "iter-1",
+      "lastActivityAt": "<scrubbed>",
+      "modelId": "eval/unknown",
+      "modelSource": "mcpjam",
+      "startedAt": "<scrubbed>",
+      "turn": {
+        "promptIndex": 0,
+        "prompts": [
+          {
+            "actualToolCalls": [
+              {
+                "arguments": {
+                  "city": "SF",
+                },
+                "toolName": "show_map",
+              },
+            ],
+            "argumentMismatches": [],
+            "expectedOutput": undefined,
+            "expectedToolCalls": [],
+            "missing": [],
+            "passed": true,
+            "prompt": "",
+            "promptIndex": 0,
+            "unexpected": [],
+          },
+        ],
+        "sessionMessages": [
+          {
+            "content": "Pinned tool call: show_map on "srv-1"",
+            "role": "user",
+          },
+          {
+            "content": "Pinned tool call show_map executed",
+            "role": "assistant",
+          },
+        ],
+        "spans": [],
+        "turnEndedAt": "<scrubbed>",
+        "turnStartedAt": "<scrubbed>",
+        "widgets": [],
+      },
+    },
+    "ref": "testSuites:appendEvalTurnTrace",
+  },
+  {
+    "payload": {
+      "iterationId": "iter-1",
+      "lastActivityAt": "<scrubbed>",
+      "modelId": "eval/unknown",
+      "modelSource": "mcpjam",
+      "startedAt": "<scrubbed>",
+      "turn": {
+        "promptIndex": 1,
+        "prompts": [
+          {
+            "actualToolCalls": [],
+            "argumentMismatches": [],
+            "expectedOutput": undefined,
+            "expectedToolCalls": [],
+            "missing": [],
+            "passed": true,
+            "prompt": "Describe the widget",
+            "promptIndex": 1,
+            "unexpected": [],
+          },
+        ],
+        "sessionMessages": [
+          {
+            "content": "Pinned tool call: show_map on "srv-1"",
+            "role": "user",
+          },
+          {
+            "content": "Pinned tool call show_map executed",
+            "role": "assistant",
+          },
+          {
+            "content": "Describe the widget",
+            "role": "user",
+          },
+          {
+            "content": [
+              {
+                "text": "Done",
+                "type": "text",
+              },
+            ],
+            "role": "assistant",
+          },
+        ],
+        "spans": [
+          {
+            "category": "step",
+            "endMs": "<scrubbed>",
+            "finishReason": "stop",
+            "id": "eval-backend-prompt-1-step-0",
+            "inputTokens": 1,
+            "messageEndIndex": 3,
+            "messageStartIndex": 3,
+            "modelId": "anthropic/claude-haiku-4.5",
+            "name": "Step 1",
+            "outputTokens": 2,
+            "promptIndex": 1,
+            "provider": "anthropic",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+            "stepIndex": 0,
+            "totalTokens": 3,
+            "ttfcMs": "<scrubbed>",
+          },
+          {
+            "category": "llm",
+            "endMs": "<scrubbed>",
+            "finishReason": "stop",
+            "id": "eval-backend-prompt-1-step-0-llm",
+            "inputTokens": 1,
+            "messageEndIndex": 3,
+            "messageStartIndex": 3,
+            "modelId": "anthropic/claude-haiku-4.5",
+            "name": "anthropic/claude-haiku-4.5 · response",
+            "outputTokens": 2,
+            "parentId": "eval-backend-prompt-1-step-0",
+            "promptIndex": 1,
+            "provider": "anthropic",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+            "stepIndex": 0,
+            "totalTokens": 3,
+            "ttfcMs": "<scrubbed>",
+          },
+        ],
+        "turnEndedAt": "<scrubbed>",
+        "turnStartedAt": "<scrubbed>",
+        "widgets": [],
+      },
+    },
+    "ref": "testSuites:appendEvalTurnTrace",
+  },
+  {
+    "payload": {
+      "actualToolCalls": [
+        {
+          "arguments": {
+            "city": "SF",
+          },
+          "toolName": "show_map",
+        },
+      ],
+      "error": undefined,
+      "errorDetails": undefined,
+      "iterationId": "iter-1",
+      "metadata": {
+        "argumentMismatchCount": 0,
+        "failedTurnCount": 0,
+        "inputTokens": 1,
+        "mismatchCount": 0,
+        "missingCount": 0,
+        "multiTurn": true,
+        "outputTokens": 2,
+        "stepResults": [
+          {
+            "kind": "toolCall",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
+          },
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-2",
+            "stepIndex": 1,
+          },
+        ],
+        "turnCount": 2,
+        "unexpectedCount": 0,
+      },
+      "result": "passed",
+      "resultSource": "reported",
+      "status": "completed",
+      "tokensUsed": 3,
+    },
+    "ref": "testSuites:updateTestIteration",
+  },
+  {
+    "payload": {
+      "iterationId": "iter-1",
+      "reason": "eval_completed",
+    },
+    "ref": "testSuites:lockEvalSession",
+  },
+]
+`;
+
+exports[`runner parity (golden Convex payload + event sequence) > hosted-stream hybrid pinned (toolCall + prompt): events + convex payload > events 1`] = `
+[
+  {
+    "kind": "toolCall",
+    "status": "running",
+    "type": "step_status",
+  },
+  "turn_start",
+  {
+    "kind": "toolCall",
+    "status": "running",
+    "type": "step_status",
+  },
+  "tool_call",
+  "tool_result",
+  "trace_snapshot",
+  "turn_finish",
+  {
+    "kind": "toolCall",
+    "status": "ok",
+    "type": "step_status",
+  },
+  {
+    "kind": "toolCall",
+    "status": "ok",
+    "type": "step_status",
+  },
+  {
+    "kind": "prompt",
+    "status": "running",
+    "type": "step_status",
+  },
+  "turn_start",
+  "text_delta",
+  "step_finish",
+  "trace_snapshot",
+  "trace_snapshot",
+  "turn_finish",
+  {
+    "kind": "prompt",
+    "status": "ok",
+    "type": "step_status",
+  },
+  {
+    "kind": "prompt",
+    "status": "ok",
+    "type": "step_status",
   },
 ]
 `;
@@ -1742,6 +2326,211 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
       "reason": "eval_completed",
     },
     "ref": "testSuites:lockEvalSession",
+  },
+]
+`;
+
+exports[`runner parity (golden Convex payload + event sequence) > local-stream hybrid pinned (toolCall + prompt): events + convex payload > convex 1`] = `
+[
+  {
+    "payload": {
+      "iterationId": "iter-1",
+      "lastActivityAt": "<scrubbed>",
+      "modelId": "eval/unknown",
+      "modelSource": "mcpjam",
+      "startedAt": "<scrubbed>",
+      "turn": {
+        "promptIndex": 0,
+        "prompts": [
+          {
+            "actualToolCalls": [
+              {
+                "arguments": {
+                  "city": "SF",
+                },
+                "toolName": "show_map",
+              },
+            ],
+            "argumentMismatches": [],
+            "expectedOutput": undefined,
+            "expectedToolCalls": [],
+            "missing": [],
+            "passed": true,
+            "prompt": "",
+            "promptIndex": 0,
+            "unexpected": [],
+          },
+        ],
+        "sessionMessages": [
+          {
+            "content": "Pinned tool call: show_map on "srv-1"",
+            "role": "user",
+          },
+          {
+            "content": "Pinned tool call show_map executed",
+            "role": "assistant",
+          },
+        ],
+        "spans": [],
+        "turnEndedAt": "<scrubbed>",
+        "turnStartedAt": "<scrubbed>",
+        "widgets": [],
+      },
+    },
+    "ref": "testSuites:appendEvalTurnTrace",
+  },
+  {
+    "payload": {
+      "iterationId": "iter-1",
+      "lastActivityAt": "<scrubbed>",
+      "modelId": "eval/unknown",
+      "modelSource": "mcpjam",
+      "startedAt": "<scrubbed>",
+      "turn": {
+        "promptIndex": 1,
+        "prompts": [
+          {
+            "actualToolCalls": [],
+            "argumentMismatches": [],
+            "expectedOutput": undefined,
+            "expectedToolCalls": [],
+            "missing": [],
+            "passed": true,
+            "prompt": "Describe the widget",
+            "promptIndex": 1,
+            "unexpected": [],
+          },
+        ],
+        "sessionMessages": [
+          {
+            "content": "Pinned tool call: show_map on "srv-1"",
+            "role": "user",
+          },
+          {
+            "content": "Pinned tool call show_map executed",
+            "role": "assistant",
+          },
+          {
+            "content": "Describe the widget",
+            "role": "user",
+          },
+          {
+            "content": "Done",
+            "role": "assistant",
+          },
+        ],
+        "spans": [],
+        "turnEndedAt": "<scrubbed>",
+        "turnStartedAt": "<scrubbed>",
+        "widgets": [],
+      },
+    },
+    "ref": "testSuites:appendEvalTurnTrace",
+  },
+  {
+    "payload": {
+      "actualToolCalls": [
+        {
+          "arguments": {
+            "city": "SF",
+          },
+          "toolName": "show_map",
+        },
+      ],
+      "error": undefined,
+      "errorDetails": undefined,
+      "iterationId": "iter-1",
+      "metadata": {
+        "argumentMismatchCount": 0,
+        "failedTurnCount": 0,
+        "inputTokens": 1,
+        "mismatchCount": 0,
+        "missingCount": 0,
+        "multiTurn": true,
+        "outputTokens": 2,
+        "stepResults": [
+          {
+            "kind": "toolCall",
+            "status": "ok",
+            "stepId": "turn-1",
+            "stepIndex": 0,
+          },
+          {
+            "kind": "prompt",
+            "status": "ok",
+            "stepId": "turn-2",
+            "stepIndex": 1,
+          },
+        ],
+        "turnCount": 2,
+        "unexpectedCount": 0,
+      },
+      "result": "passed",
+      "resultSource": "reported",
+      "status": "completed",
+      "tokensUsed": 3,
+    },
+    "ref": "testSuites:updateTestIteration",
+  },
+  {
+    "payload": {
+      "iterationId": "iter-1",
+      "reason": "eval_completed",
+    },
+    "ref": "testSuites:lockEvalSession",
+  },
+]
+`;
+
+exports[`runner parity (golden Convex payload + event sequence) > local-stream hybrid pinned (toolCall + prompt): events + convex payload > events 1`] = `
+[
+  {
+    "kind": "toolCall",
+    "status": "running",
+    "type": "step_status",
+  },
+  "turn_start",
+  {
+    "kind": "toolCall",
+    "status": "running",
+    "type": "step_status",
+  },
+  "tool_call",
+  "tool_result",
+  "trace_snapshot",
+  "turn_finish",
+  {
+    "kind": "toolCall",
+    "status": "ok",
+    "type": "step_status",
+  },
+  {
+    "kind": "toolCall",
+    "status": "ok",
+    "type": "step_status",
+  },
+  {
+    "kind": "prompt",
+    "status": "running",
+    "type": "step_status",
+  },
+  "turn_start",
+  {
+    "kind": "prompt",
+    "status": "running",
+    "type": "step_status",
+  },
+  "trace_snapshot",
+  "turn_finish",
+  {
+    "kind": "prompt",
+    "status": "ok",
+    "type": "step_status",
+  },
+  {
+    "kind": "prompt",
+    "status": "ok",
+    "type": "step_status",
   },
 ]
 `;

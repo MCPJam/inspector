@@ -49,7 +49,7 @@ describe("HostCapabilityListView", () => {
     // Regression: the `fields` memo must not read `configs[0]` when subjects
     // is empty (selected-but-still-loading) — that would crash the render.
     render(<HostCapabilityListView subjects={[]} />);
-    expect(screen.getByText(/No hosts to compare/i)).toBeInTheDocument();
+    expect(screen.getByText(/No clients to compare/i)).toBeInTheDocument();
   });
 
   it("shows an empty state when the search matches nothing", () => {

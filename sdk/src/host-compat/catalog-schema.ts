@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { McpAppsCapabilities } from "../host-config/types.js";
+import type { SeededHostConfigInput } from "../host-config/templates/index.js";
 
 /**
  * Zod schema for the host-compat catalog document + the envelope the backend
@@ -8,7 +9,7 @@ import type { McpAppsCapabilities } from "../host-config/types.js";
  *
  * Forward-compat policy (schema skew: old SDK, newer catalog):
  *  - Unknown object keys are stripped (Zod default) — the backend may add
- *    fields within `schemaVersion` 1 without breaking older SDKs.
+ *    fields within the current schema version without breaking older SDKs.
  *  - Enum widening is absorbed rather than fatal: unknown display modes are
  *    filtered out; an unknown `provenance` falls back to `assumed` (weakest
  *    trust); an unknown `widgetDisplayModeRequests` reads as unset.
@@ -23,7 +24,7 @@ import type { McpAppsCapabilities } from "../host-config/types.js";
  * below so the caller falls back to the bundled catalog rather than applying a
  * document it can't correctly interpret.
  */
-export const SUPPORTED_CATALOG_SCHEMA_VERSION = 1;
+export const SUPPORTED_CATALOG_SCHEMA_VERSION = 2;
 
 const DISPLAY_MODES = ["inline", "fullscreen", "pip"] as const;
 
@@ -75,7 +76,19 @@ const _capabilityKeyParity: [
 ] = [true, true];
 void _capabilityKeyParity;
 
-const marketHostSchema = z.object({
+const imageSourceSupportSchema = z.object({
+  model: z.boolean(),
+  ui: z.boolean(),
+});
+
+const hostImageSupportSchema = z.object({
+  toolImageContent: imageSourceSupportSchema,
+  embeddedResourceImages: imageSourceSupportSchema,
+  resourceLinkImages: imageSourceSupportSchema,
+  placement: z.enum(["none", "collapsed", "inline"]).catch("none"),
+});
+
+const hostCatalogMetadataSchema = z.object({
   // Plain string by design — a new host on the backend must not require an
   // SDK release to parse.
   id: z.string().min(1),
@@ -90,12 +103,69 @@ const marketHostSchema = z.object({
   rendersMcpApps: z.boolean(),
   supportedProtocolVersions: z.array(z.string()).optional(),
   verifiedAt: z.number().optional(),
+  imageSupport: hostImageSupportSchema.optional(),
 });
 
+const hostConfigMcpProfileSchema = z
+  .object({
+    profileVersion: z.number().optional(),
+    apps: z
+      .object({
+        mcpAppsOverrides: mcpAppsCapabilitiesSchema.optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
+
+const hostConfigTemplateSchema = z.object({
+  hostStyle: z.string().min(1),
+  modelId: z.string(),
+  systemPrompt: z.string(),
+  temperature: z.number(),
+  requireToolApproval: z.boolean(),
+  respectToolVisibility: z.boolean(),
+  progressiveToolDiscovery: z.boolean().optional(),
+  serverIds: z.array(z.string()),
+  optionalServerIds: z.array(z.string()),
+  builtInToolIds: z.array(z.string()),
+  modelVisibleMcpToolResults: z.unknown().optional(),
+  mcpToolResultImageRendering: z.unknown().optional(),
+  computer: z
+    .object({
+      kind: z.literal("personal"),
+      workdir: z.string().optional(),
+    })
+    .optional(),
+  harness: z.enum(["claude-code", "codex"]).optional(),
+  connectionDefaults: z.object({
+    headers: z.record(z.string(), z.string()),
+    requestTimeout: z.number(),
+  }),
+  clientCapabilities: z.record(z.string(), z.unknown()),
+  hostContext: z.record(z.string(), z.unknown()),
+  hostCapabilitiesOverride: z.record(z.string(), z.unknown()).optional(),
+  chatUiOverride: z.record(z.string(), z.unknown()).optional(),
+  mcpProfile: hostConfigMcpProfileSchema.optional(),
+  serverConnectionOverrides: z
+    .record(
+      z.string(),
+      z.object({
+        headersOverride: z.record(z.string(), z.string()).optional(),
+        requestTimeoutOverride: z.number().optional(),
+        mcpProtocolVersionOverride: z.string().optional(),
+      })
+    )
+    .optional(),
+}) as z.ZodType<SeededHostConfigInput>;
+
+const hostCatalogHostSchema = z.intersection(
+  hostCatalogMetadataSchema,
+  hostConfigTemplateSchema
+);
+
 export const hostCompatCatalogSchema = z.object({
-  marketHosts: z.array(marketHostSchema),
-  capabilitiesById: z.record(z.string(), mcpAppsCapabilitiesSchema),
-  openAiCompatByStyle: z.record(z.string(), z.boolean()),
+  hostsById: z.record(z.string(), hostCatalogHostSchema),
 });
 
 /** The wire envelope around a catalog document. `source` is annotated by the

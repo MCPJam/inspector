@@ -25,14 +25,24 @@ export {
 export {
   bundledHostCompatCatalog,
   buildHostProfilesFromCatalog,
+  getCatalogHost,
+  getCatalogHosts,
+  getCatalogTemplate,
+  getTemplateMcpAppsCapabilities,
+  hydrateHostCompatCatalog,
   type EvaluateMarketHostsOptions,
   type HostCompatCatalog,
   type HostCompatCatalogHost,
 } from "./catalog.js";
 export {
+  hostConfigFieldsToImageSupport,
+  imageSupportToHostConfigFields,
+} from "./image-support.js";
+export {
   hostCompatCatalogSchema,
   hostCompatCatalogEnvelopeSchema,
   mcpAppsCapabilitiesSchema,
+  SUPPORTED_CATALOG_SCHEMA_VERSION,
   type HostCompatCatalogEnvelope,
 } from "./catalog-schema.js";
 export {
@@ -47,6 +57,8 @@ export {
   MCP_APPS_CURSOR,
   MCP_APPS_GOOSE,
   MCP_APPS_COPILOT,
+  MCP_APPS_SLACK,
+  MCP_APPS_VSCODE,
   MCP_APPS_NO_CLAIMS,
 } from "./capabilities.js";
 export {
@@ -76,4 +88,7 @@ export type {
   HostCompatReport,
   ServerRequirements,
   HostCompatProfile,
+  ImagePlacement,
+  ImageSourceSupport,
+  HostImageSupport,
 } from "./types.js";

@@ -4,11 +4,14 @@
  *   GET  /config  (open)    Which data plane serves this inspector: itself
  *                           (`localConfigured`, it holds the vendor key +
  *                           secrets) or a deployed one (`remoteDataPlaneUrl`,
- *                           the NON-secret COMPUTERS_REMOTE_DATA_PLANE_URL).
- *                           The client uses this to aim the terminal
- *                           WebSocket and to render an honest empty state
- *                           when neither is available. No secrets here — a
- *                           boolean and a public URL.
+ *                           the NON-secret COMPUTERS_REMOTE_DATA_PLANE_URL —
+ *                           explicit, or auto-discovered via Convex; see
+ *                           remote-data-plane.ts). Awaits any in-flight
+ *                           discovery so the client's cached first answer is
+ *                           never a false negative. The client uses this to
+ *                           aim the terminal WebSocket and to render an
+ *                           honest empty state when neither is available.
+ *                           No secrets here — a boolean and a public URL.
  *
  *   POST /exec    (bearer)  Run one command on the CALLER'S computer. This is
  *                           what a credential-less local inspector forwards
@@ -28,8 +31,8 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { executionScopeSchema } from "../../utils/execution-scope.js";
-import { isComputersDataPlaneConfigured } from "../../utils/computers/control-plane-client.js";
-import { getComputersRemoteDataPlaneUrl } from "../../utils/computers/remote-data-plane.js";
+import { resolveComputersLocalConfigured } from "../../utils/computers/runtime-config.js";
+import { resolveComputersRemoteDataPlaneUrl } from "../../utils/computers/remote-data-plane.js";
 import {
   MAX_COMMAND_TIMEOUT_S,
   e2bRunner,
@@ -55,12 +58,16 @@ const execSchema = z.object({
 export function createComputersRoutes(runner: BashRunner = e2bRunner): Hono {
   const computers = new Hono();
 
-  computers.get("/config", (c) =>
-    c.json({
-      localConfigured: isComputersDataPlaneConfigured(),
-      remoteDataPlaneUrl: getComputersRemoteDataPlaneUrl(),
-    })
-  );
+  computers.get("/config", async (c) => {
+    // Await any in-flight startup bootstrap/discovery — the client caches
+    // this FIRST response for the whole SPA session, so it must never race
+    // a still-resolving lookup into a false "unconfigured".
+    const [localConfigured, remoteDataPlaneUrl] = await Promise.all([
+      resolveComputersLocalConfigured(),
+      resolveComputersRemoteDataPlaneUrl(),
+    ]);
+    return c.json({ localConfigured, remoteDataPlaneUrl });
+  });
 
   computers.post("/exec", async (c) =>
     handleRoute(c, async () => {

@@ -3,6 +3,11 @@ import {
   normalizeOAuthProtocolVersion,
   normalizeOAuthRegistrationStrategy,
 } from "@/lib/oauth/profile";
+import {
+  normalizeAuthMethod,
+  normalizeIdentityAssertionFormat,
+  normalizeRegistrationMode,
+} from "@/shared/xaa.js";
 
 type SerializeOptions = {
   /**
@@ -59,6 +64,10 @@ function serializeServersInternal(
     if (server.xaaAuthzIssuer !== undefined) {
       serializedServer.xaaAuthzIssuer = server.xaaAuthzIssuer;
     }
+    if (server.xaaAllowPathScopedIssuer !== undefined) {
+      serializedServer.xaaAllowPathScopedIssuer =
+        server.xaaAllowPathScopedIssuer;
+    }
     if (server.useXaa !== undefined) {
       serializedServer.useXaa = server.useXaa;
     }
@@ -70,6 +79,16 @@ function serializeServersInternal(
     }
     if (server.xaaEmail !== undefined) {
       serializedServer.xaaEmail = server.xaaEmail;
+    }
+    if (server.xaaIdentityAssertionFormat !== undefined) {
+      serializedServer.xaaIdentityAssertionFormat =
+        server.xaaIdentityAssertionFormat;
+    }
+    if (server.registrationMode !== undefined) {
+      serializedServer.registrationMode = server.registrationMode;
+    }
+    if (server.authMethod !== undefined) {
+      serializedServer.authMethod = server.authMethod;
     }
 
     if (server.config) {
@@ -245,6 +264,12 @@ export function deserializeServersFromConvex(
     if (xaaAuthzIssuer !== undefined) {
       server.xaaAuthzIssuer = xaaAuthzIssuer;
     }
+    const xaaAllowPathScopedIssuer =
+      serverData.xaaAllowPathScopedIssuer ??
+      serverData.config?.xaaAllowPathScopedIssuer;
+    if (xaaAllowPathScopedIssuer !== undefined) {
+      server.xaaAllowPathScopedIssuer = xaaAllowPathScopedIssuer === true;
+    }
     if (serverData.useXaa !== undefined) {
       server.useXaa = serverData.useXaa === true;
     }
@@ -256,6 +281,30 @@ export function deserializeServersFromConvex(
     }
     if (serverData.xaaEmail !== undefined) {
       server.xaaEmail = serverData.xaaEmail;
+    }
+    // Narrow the bare wire value to a known format; drop anything unknown so
+    // the debugger falls back to the OIDC default (normalize-or-clear).
+    const xaaIdentityAssertionFormat = normalizeIdentityAssertionFormat(
+      serverData.xaaIdentityAssertionFormat,
+    );
+    if (xaaIdentityAssertionFormat !== undefined) {
+      server.xaaIdentityAssertionFormat = xaaIdentityAssertionFormat;
+    }
+    // Narrow the bare wire value to a known mode; drop anything unknown so the
+    // flows fall back to their defaults. Accepts the legacy per-flow keys
+    // (xaaRegistrationStrategy, oauthRegistrationMode) from old exports —
+    // canonical key wins when both are present.
+    const registrationMode = normalizeRegistrationMode(
+      serverData.registrationMode ??
+        serverData.xaaRegistrationStrategy ??
+        serverData.oauthRegistrationMode,
+    );
+    if (registrationMode !== undefined) {
+      server.registrationMode = registrationMode;
+    }
+    const authMethod = normalizeAuthMethod(serverData.authMethod);
+    if (authMethod !== undefined) {
+      server.authMethod = authMethod;
     }
 
     // Handle oauthFlowProfile from legacy nested structure
@@ -334,6 +383,15 @@ export function serversHaveChanged(
     const remoteXaaAuthzIssuer =
       remoteServer.xaaAuthzIssuer ?? remoteServer.config?.xaaAuthzIssuer;
     if ((localServer.xaaAuthzIssuer ?? undefined) !== (remoteXaaAuthzIssuer ?? undefined))
+      return true;
+
+    const remoteXaaAllowPathScopedIssuer =
+      remoteServer.xaaAllowPathScopedIssuer ??
+      remoteServer.config?.xaaAllowPathScopedIssuer;
+    if (
+      (localServer.xaaAllowPathScopedIssuer ?? undefined) !==
+      (remoteXaaAllowPathScopedIssuer ?? undefined)
+    )
       return true;
 
     // Get local URL

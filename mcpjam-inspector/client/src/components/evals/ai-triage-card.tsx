@@ -132,7 +132,7 @@ export function AiTriageCard({
   const host = serverQuality?.host;
   const hostLabel = (() => {
     if (!host || host.source === "unknown") return null;
-    const name = host.name ?? "Host";
+    const name = host.name ?? "Client";
     return host.modelId ? `${name} · ${host.modelId}` : name;
   })();
 

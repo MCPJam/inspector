@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { errorToastMessage } from "@/test/utils";
 import { toast } from "sonner";
 import type { AppAction, AppState, Project } from "@/state/app-types";
 import { useProjectState } from "../use-project-state";
@@ -541,7 +542,7 @@ describe("useProjectState automatic project creation", () => {
 
     expect(createProjectMock).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(
-      "Create or join an organization to create projects.",
+      errorToastMessage("Create or join an organization to create projects."),
       { duration: Infinity },
     );
   });
@@ -580,7 +581,7 @@ describe("useProjectState automatic project creation", () => {
 
     expect(createProjectMock).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(
-      "Create or join an organization to create projects.",
+      errorToastMessage("Create or join an organization to create projects."),
       { duration: Infinity },
     );
   });
@@ -610,7 +611,7 @@ describe("useProjectState automatic project creation", () => {
 
     expect(createProjectMock).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(
-      "Create or join an organization to create projects.",
+      errorToastMessage("Create or join an organization to create projects."),
       { duration: Infinity },
     );
   });
@@ -1528,7 +1529,9 @@ describe("useProjectState automatic project creation", () => {
     });
 
     expect(toast.error).toHaveBeenCalledWith(
-      "This organization has reached its project limit (1). Upgrade to create more projects.",
+      errorToastMessage(
+        "This organization has reached its project limit (1). Upgrade to create more projects.",
+      ),
       { duration: Infinity },
     );
   });
@@ -1572,7 +1575,9 @@ describe("useProjectState automatic project creation", () => {
     });
 
     expect(toast.error).toHaveBeenCalledWith(
-      "This organization has reached its project limit (1). Ask an organization owner to upgrade.",
+      errorToastMessage(
+        "This organization has reached its project limit (1). Ask an organization owner to upgrade.",
+      ),
       { duration: Infinity },
     );
   });
@@ -1613,7 +1618,9 @@ describe("useProjectState automatic project creation", () => {
 
     expect(toast.error).toHaveBeenCalledTimes(1);
     expect(toast.error).toHaveBeenCalledWith(
-      "This organization has reached its project limit (1). Ask an organization owner to upgrade.",
+      errorToastMessage(
+        "This organization has reached its project limit (1). Ask an organization owner to upgrade.",
+      ),
       { duration: Infinity },
     );
     expect(logger.error).toHaveBeenCalledTimes(2);
@@ -2551,5 +2558,86 @@ describe("useProjectState cold-share data-loss guard", () => {
     expect(migrateCall![1].extra.bulkServerCount).toBeNull();
     expect(migrateCall![1].extra.embeddedServerCount).toBe(1);
     expect(migrateCall![1].extra.sourceProjectId).toBe("local-1");
+  });
+});
+
+describe("handleUpdateProject — xaaTestDefaults whitelist", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    updateProjectMock.mockResolvedValue("remote-1");
+    ensureDefaultProjectMock.mockResolvedValue("remote-1");
+    useProjectServersMock.mockImplementation(() => projectServersState);
+    useOrganizationBillingStatusMock.mockImplementation(
+      () => organizationBillingStatusState.value,
+    );
+    projectQueryState.allProjects = [
+      {
+        _id: "remote-1",
+        name: "Remote project",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-a",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    projectQueryState.isLoading = false;
+    projectServersState.servers = [];
+    projectServersState.isLoading = false;
+  });
+
+  it("forwards an atomic xaaTestDefaults object to updateProject", async () => {
+    const { result } = renderUseProjectState({
+      appState: createAppState({}),
+      activeOrganizationId: "org-a",
+    });
+
+    await act(async () => {
+      await result.current.handleUpdateProject("remote-1", {
+        xaaTestDefaults: {
+          defaultIdentity: {
+            subject: "proj-sub-1",
+            email: "proj@example.com",
+          },
+        },
+      });
+    });
+
+    expect(updateProjectMock).toHaveBeenCalledWith({
+      projectId: "remote-1",
+      xaaTestDefaults: {
+        defaultIdentity: { subject: "proj-sub-1", email: "proj@example.com" },
+      },
+    });
+  });
+
+  it("forwards an explicit null clear and omits the key when untouched", async () => {
+    const { result } = renderUseProjectState({
+      appState: createAppState({}),
+      activeOrganizationId: "org-a",
+    });
+
+    await act(async () => {
+      await result.current.handleUpdateProject("remote-1", {
+        xaaTestDefaults: null,
+      });
+    });
+    expect(updateProjectMock).toHaveBeenCalledWith({
+      projectId: "remote-1",
+      xaaTestDefaults: null,
+    });
+
+    updateProjectMock.mockClear();
+    await act(async () => {
+      await result.current.handleUpdateProject("remote-1", {
+        name: "Renamed",
+      });
+    });
+    const payload = updateProjectMock.mock.calls[0][0];
+    expect(payload).toMatchObject({ projectId: "remote-1", name: "Renamed" });
+    // Omitted updates must not clobber the stored default.
+    expect("xaaTestDefaults" in payload).toBe(false);
   });
 });

@@ -13,6 +13,19 @@ describe("mapRuntimeError", () => {
     expect(mapRuntimeError(new Error("Timeout exceeded")).status).toBe(504);
   });
 
+  it("maps a raw 401 from the target server to 401 UNAUTHORIZED without oauthRequired", () => {
+    const mapped = mapRuntimeError(
+      Object.assign(new Error("Error POSTing to endpoint (HTTP 401)"), {
+        statusCode: 401,
+      }),
+    );
+    expect(mapped.status).toBe(401);
+    expect(mapped.code).toBe(ErrorCode.UNAUTHORIZED);
+    // No per-server auth context here — the escalation tag is applied only
+    // where the effective auth method is known.
+    expect(mapped.details?.oauthRequired).toBeUndefined();
+  });
+
   it("maps ECONN* errno messages to 502", () => {
     expect(
       mapRuntimeError(new Error("connect ECONNREFUSED 127.0.0.1:8080")).status,

@@ -19,6 +19,11 @@ export interface RemoteProject {
   organizationId: string;
   visibility?: ProjectVisibility;
   ownerId: string;
+  /** Admin-controlled default synthetic identity for the MCPJam test IdP
+   * (atomic pair). Absent when the project has no default. */
+  xaaTestDefaults?: {
+    defaultIdentity: { subject: string; email: string };
+  };
   createdAt: number;
   updatedAt: number;
 }
@@ -57,6 +62,9 @@ export interface RemoteServer {
   authServerMode?: "mcpjam" | "own";
   xaaSubject?: string;
   xaaEmail?: string;
+  xaaIdentityAssertionFormat?: string;
+  registrationMode?: string;
+  authMethod?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -217,6 +225,78 @@ export function useProjectMembers({
     isLoading,
     hasPendingMembers: pendingMembers.length > 0,
   };
+}
+
+// The Swarms surface (personas / journeys / journeyRuns) is *member-only* on
+// the backend: every persona/journey/run query rejects a project **guest**.
+// Mirror that gate in the UI so a guest never fires the (now-erroring)
+// member-only queries. A viewer may access Swarms only when they hold a
+// resolved member-or-above role; a guest — or any unresolved role — is denied.
+export function canViewSwarms(
+  role: ProjectMembershipRole | undefined
+): boolean {
+  return role === "owner" || role === "admin" || role === "member";
+}
+
+// Host create / update / delete are ADMIN-gated server-side (`hosts.ts`
+// `requireAdminAccess` → project role 'admin', which owner+admin resolve to).
+// Mirror that in the UI so a member — who CAN view Swarms — never sees a
+// New/Edit/Apply/Delete affordance that would 403 on click. An unresolved
+// role denies (fail-closed).
+export function canManageHosts(
+  role: ProjectMembershipRole | undefined
+): boolean {
+  return role === "owner" || role === "admin";
+}
+
+// Resolve the *current viewer's* project-membership role for a project, reusing
+// the same members-list signal `ProjectSettingsTab` keys off. Returns
+// `role: undefined` while the members list is still loading (or when the viewer
+// isn't found among the active members). Callers should treat `isLoading` as
+// "not yet decided" rather than firing member-only queries.
+export function useViewerProjectRole({
+  isAuthenticated,
+  projectId,
+  viewerEmail,
+}: {
+  isAuthenticated: boolean;
+  projectId: string | null;
+  viewerEmail: string | null | undefined;
+}): { role: ProjectMembershipRole | undefined; isLoading: boolean } {
+  const { activeMembers, isLoading } = useProjectMembers({
+    isAuthenticated,
+    projectId,
+  });
+
+  const role = useMemo(() => {
+    const email = viewerEmail?.trim().toLowerCase();
+    if (!email) return undefined;
+    return activeMembers.find(
+      (member) => member.email.toLowerCase() === email
+    )?.role;
+  }, [activeMembers, viewerEmail]);
+
+  return {
+    role,
+    isLoading: isViewerRolePending(isLoading, isAuthenticated, viewerEmail),
+  };
+}
+
+/**
+ * Is the viewer's project role still "not yet decided"? True while the members
+ * list is loading OR while the viewer's identity is still hydrating — WorkOS
+ * `user.email` arrives asynchronously AFTER `isAuthenticated` flips true, so if
+ * the members list resolves first we'd otherwise report a real member as
+ * `{ role: undefined, isLoading: false }` and callers would wrongly deny them.
+ * Treat "authenticated but no viewer email yet" as still-loading so the gate
+ * shows a spinner, not access-denied, until the identity is available.
+ */
+export function isViewerRolePending(
+  membersLoading: boolean,
+  isAuthenticated: boolean,
+  viewerEmail: string | null | undefined
+): boolean {
+  return membersLoading || (isAuthenticated && !viewerEmail?.trim());
 }
 
 export function useProjectMutations() {

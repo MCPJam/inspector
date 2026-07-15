@@ -4,6 +4,7 @@ import {
   readStoredOAuthConfig,
   MCPOAuthOptions,
 } from "@/lib/oauth/mcp-oauth";
+import { normalizeRegistrationMode } from "@/shared/xaa.js";
 import { ServerWithName } from "./app-types";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 
@@ -134,8 +135,16 @@ function buildReconnectOAuthOptions(
   const profile = server.oauthFlowProfile;
   const protocolMode =
     profile?.protocolVersion ?? oauthConfig.protocolMode ?? "auto";
+  // The CANONICAL per-server registrationMode wins — it can be "auto" (resolve
+  // from current server metadata at connect time), while the legacy
+  // profile/localStorage values are rollback-compat concretes. Preferring a
+  // concrete here would pin every reconnect to it and "auto" would never
+  // dynamically resolve again.
   const registrationMode =
-    profile?.registrationStrategy ?? oauthConfig.registrationMode ?? "auto";
+    normalizeRegistrationMode(server.registrationMode) ??
+    profile?.registrationStrategy ??
+    oauthConfig.registrationMode ??
+    "auto";
   const profileScopes = parseOAuthScopes(profile?.scopes);
 
   return {
@@ -174,6 +183,13 @@ export async function ensureAuthorizedForReconnect(
     beforeRedirect?: (oauthOptions: MCPOAuthOptions) => void;
     onTraceUpdate?: (trace: OAuthTrace) => void;
     allowInteractiveOAuthFlow?: boolean;
+    /**
+     * Set by the reconnect path after the user explicitly confirmed Auto's
+     * OAuth escalation. Without it, a tokenless Auto server is treated as
+     * ready-unauthenticated (discover semantics) — never front-run a
+     * redirect the user didn't ask for.
+     */
+    interactiveOAuthConfirmed?: boolean;
   },
 ): Promise<OAuthResult> {
   // If server is explicitly configured without OAuth, skip OAuth flow entirely
@@ -189,6 +205,20 @@ export async function ensureAuthorizedForReconnect(
   if (server.useOAuth !== true && !server.oauthTokens) {
     // Clear any lingering OAuth data that might cause confusion
     clearOAuthData(server.name);
+    return { kind: "ready", serverConfig: server.config, tokens: undefined };
+  }
+
+  // Auto (discover) servers carry useOAuth: true as a derived mirror, but a
+  // tokenless Auto server connects unauthenticated by design — the connect
+  // surfaces tag a real 401 and the reconnect path asks the user before
+  // coming back here with interactiveOAuthConfirmed. Without this guard,
+  // every auto-connect loop (load, client switch) would surprise-redirect
+  // open Auto servers into OAuth.
+  if (
+    server.authMethod === "auto" &&
+    !server.oauthTokens &&
+    options?.interactiveOAuthConfirmed !== true
+  ) {
     return { kind: "ready", serverConfig: server.config, tokens: undefined };
   }
 

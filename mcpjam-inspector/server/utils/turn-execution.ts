@@ -27,6 +27,7 @@ import {
 import {
   runDirectChatTurn,
   consumeDirectChatTurnHeadless,
+  stampMcpToolOriginProviderOptions,
   type RunDirectChatTurnOptions,
 } from "./direct-chat-turn";
 
@@ -92,6 +93,17 @@ export type DirectTurnOptions = {
   onLiveTextDelta?: RunDirectChatTurnOptions["onLiveTextDelta"];
   onStepFinish?: RunDirectChatTurnOptions["onStepFinish"];
   onEngineError?: RunDirectChatTurnOptions["onEngineError"];
+  /**
+   * PR 3a: awaited per-tool-result render hook, mapped into the direct
+   * engine's `traceEvents.onToolResultChunk`. The synthetic local-BYOK path
+   * needs it so the browser session context renders an MCP App widget before
+   * the next step decides whether to advertise Computer Use — the same wiring
+   * `runLocalOrgChatTurnHeadless` passed through `traceEvents`. INERT for
+   * callers that don't set it (no `traceEvents` is forwarded then).
+   */
+  onToolResultChunk?: NonNullable<
+    RunDirectChatTurnOptions["traceEvents"]
+  >["onToolResultChunk"];
   // TODO(PR 3 — local eval migration): local STREAMING eval still depends on the
   // direct engine's `traceEvents` (`onStepSnapshot`, `onToolResultChunk`) to emit
   // its SSE. Before PR 3 deletes `stream-adapter.ts`, expose normalized
@@ -186,10 +198,22 @@ export async function runUnifiedAssistantTurn(
     onLiveTextDelta: opts.onLiveTextDelta,
     onStepFinish: opts.onStepFinish,
     onEngineError: opts.onEngineError,
+    // PR 3a: only forward `traceEvents` when the caller wired a chunk hook, so
+    // callers that don't set it stay byte-identical (no traceEvents object).
+    ...(opts.onToolResultChunk
+      ? { traceEvents: { onToolResultChunk: opts.onToolResultChunk } }
+      : {}),
   });
   const headless = await consumeDirectChatTurnHeadless(handle);
-  // Direct's `response.messages` IS this turn's response slice.
-  const newMessages = headless.messages;
+  // Direct's `response.messages` IS this turn's response slice. Stamp the
+  // mcp-tool-origin serverId onto its tool parts — the hosted engine does this
+  // internally, and the local-BYOK persistence path (session viewer replay via
+  // `transcript-to-ui-messages`) relies on it to attribute which server a tool
+  // came from. Normalizes both engines' transcripts to the same shape.
+  const newMessages = stampMcpToolOriginProviderOptions(
+    headless.messages,
+    opts.tools,
+  );
   const messages = [...opts.messages, ...newMessages];
   return {
     messages,

@@ -14,8 +14,7 @@ import { Input } from "@mcpjam/design-system/input";
 import { ToolItem, type ToolQualityInfo } from "./ToolItem";
 import { SavedRequestItem } from "./SavedRequestItem";
 import type { SavedRequest } from "@/lib/types/request-types";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import { SelectedToolHeader } from "../ui-playground/SelectedToolHeader";
 import { ParametersForm } from "../ui-playground/ParametersForm";
 import { SchemaViewer } from "@/components/ui/schema-viewer";
@@ -104,7 +103,6 @@ export function ToolsSidebar({
   serverSupportsTaskToolCalls,
   onClose,
 }: ToolsSidebarProps) {
-  const posthog = usePostHog();
   const selectedTool = selectedToolName ? tools[selectedToolName] : null;
 
   const hasParameters = formFields && formFields.length > 0;
@@ -118,10 +116,8 @@ export function ToolsSidebar({
 
   const handleExecute = () => {
     if (!onExecute) return;
-    posthog.capture("execute_tool", {
+    track("execute_tool", {
       location: "tools_sidebar",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       as_task: executeAsTask ?? false,
     });
     onExecute();
@@ -129,19 +125,15 @@ export function ToolsSidebar({
 
   const handleSave = () => {
     if (!onSave) return;
-    posthog.capture("save_tool_button_clicked", {
+    track("save_tool_button_clicked", {
       location: "tools_sidebar",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
     onSave();
   };
 
   const handleRefresh = () => {
-    posthog.capture("refresh_tools_clicked", {
+    track("refresh_tools_clicked", {
       location: "tools_sidebar",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
     onRefresh();
   };

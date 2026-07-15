@@ -3,7 +3,6 @@
  */
 import { useCallback } from "react";
 import { MessageCircle } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
@@ -12,6 +11,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { useActiveTab } from "@/lib/app-navigation";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
+import { track } from "@/lib/analytics";
 
 const SHORTCUT_LABEL =
   typeof navigator !== "undefined" && /Mac|iP(hone|od|ad)/.test(navigator.platform)
@@ -21,19 +21,19 @@ const SHORTCUT_LABEL =
 export function AgentSidePanelTrigger() {
   const isOpen = useAgentPanelStore((s) => s.isOpen);
   const toggle = useAgentPanelStore((s) => s.toggle);
-  const posthog = usePostHog();
   const activeTab = useActiveTab();
 
   const onClick = useCallback(() => {
     const next = !isOpen;
     if (next) {
-      posthog?.capture("mcpjam_agent_panel_opened", {
+      track("mcpjam_agent_panel_opened", {
+        location: "agent_side_panel",
         via: "click",
         tab: activeTab,
       });
     }
     toggle();
-  }, [activeTab, isOpen, posthog, toggle]);
+  }, [activeTab, isOpen, toggle]);
 
   return (
     <Tooltip>
