@@ -17,10 +17,12 @@ function baseParams(
 ): DriveHostedEvalTurnParams {
   const browser = {
     setActivePromptIndex: vi.fn(),
+    setActiveWidgetChecks: vi.fn(),
     dismissCarriedWidget: vi.fn(async () => {}),
     computerWidgetTools: {},
     noteToolCallInput: vi.fn(),
     handleEngineToolResult: vi.fn(async () => {}),
+    drainFollowUps: vi.fn(() => [] as string[]),
   };
   return {
     promptIndex: 0,
@@ -120,3 +122,7 @@ describe("driveHostedEvalTurn pre-turn failure mapping (CodeRabbit, PR 2610)", (
     expect(runAssistantTurnMock).not.toHaveBeenCalled();
   });
 });
+
+// NOTE: widget `ui/message` follow-up driving moved OUT of driveHostedEvalTurn
+// (R3 deleted its internal recursion) into the step-executor's
+// `drainAndDriveFollowUps` — covered by `step-executor-followup.test.ts`.

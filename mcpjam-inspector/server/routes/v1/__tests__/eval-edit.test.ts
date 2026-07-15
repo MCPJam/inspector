@@ -474,31 +474,48 @@ describe("v1 eval-edit routes", () => {
     });
   });
 
-  it("PATCH case with a matching kind is a no-op (never forwards caseType)", async () => {
-    // CASE_DOC.caseType === "prompt"; round-tripping the same kind must not
-    // forward caseType to updateTestCase (which rejects it).
+  it("PATCH prompt-case steps never forward caseType", async () => {
+    // CASE_DOC.caseType === "prompt"; patching with prompt steps keeps the kind
+    // and must not forward caseType to updateTestCase (which rejects it).
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
-      { kind: "prompt", prompt: "updated" }
+      { steps: [{ id: "s1", kind: "prompt", prompt: "updated" }] }
     );
     expect(res.status).toBe(200);
     const args = convexMutationMock.mock.calls.find(
       (c) => c[0] === "testSuites:updateTestCase"
     )![1];
     expect(args.caseType).toBeUndefined();
+    expect(args.steps).toEqual([
+      { id: "s1", kind: "prompt", prompt: "updated" },
+    ]);
+    expect(args.query).toBe("updated");
   });
 
   it("PATCH case rejects a kind change with 400", async () => {
+    // The kind is derived from `steps`: a single model-free `toolCall` step is
+    // a render-check. Patching a prompt case with render-check steps is a kind
+    // change and must be rejected.
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
-      { kind: "render-check", renderCheck: { server: "s", tool: "t" } }
+      {
+        steps: [
+          {
+            id: "s1",
+            kind: "toolCall",
+            serverName: "s",
+            toolName: "t",
+            arguments: {},
+          },
+        ],
+      }
     );
     expect(res.status).toBe(400);
   });
 
-  it("PATCH render-check preserves existing probe arguments when omitted", async () => {
+  it("PATCH render-check maps a single toolCall step to steps only", async () => {
     convexQueryMock.mockImplementation((name: string) =>
       name === "testSuites:getTestCase"
         ? Promise.resolve({
@@ -517,36 +534,54 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
-      { renderCheck: { server: "Excalidraw (App)", tool: "new_tool" } }
+      {
+        steps: [
+          {
+            id: "s1",
+            kind: "toolCall",
+            serverName: "Excalidraw (App)",
+            toolName: "new_tool",
+            arguments: { keep: 1 },
+            renderTimeoutMs: 5000,
+          },
+        ],
+      }
     );
     expect(res.status).toBe(200);
     const args = convexMutationMock.mock.calls.find(
       (c) => c[0] === "testSuites:updateTestCase"
     )![1];
-    expect(args.probeConfig).toEqual({
-      serverName: "Excalidraw (App)",
-      toolName: "new_tool",
-      arguments: { keep: 1 },
-      renderTimeoutMs: 5000,
-    });
+    expect(args.probeConfig).toBeUndefined();
+    expect(args.caseType).toBeUndefined();
+    expect(args.steps).toEqual([
+      {
+        id: "s1",
+        kind: "toolCall",
+        serverName: "Excalidraw (App)",
+        toolName: "new_tool",
+        arguments: { keep: 1 },
+        renderTimeoutMs: 5000,
+      },
+      {
+        id: "s1-rendered",
+        kind: "assert",
+        assertion: { type: "widgetRendered", toolName: "new_tool" },
+      },
+    ]);
+    expect(args.query).toBe("");
   });
 
-  it("GET canonicalizes a single-turn case to top-level fields (turns suppressed)", async () => {
-    // A persisted single-turn case carries one promptTurn; the backend mirrors
-    // it into top-level query/expectedToolCalls, so the DTO reports the
-    // assertion via expectedToolCalls and omits the redundant single `turns`.
+  it("GET projects a single-turn case onto a prompt + toolCalledWith assert step", async () => {
+    // A persisted single-turn prompt case carries one top-level query +
+    // expectedToolCalls; the DTO projects it onto a `prompt` step followed by
+    // a `toolCalledWith` assert step.
     convexQueryMock.mockImplementation((name: string) =>
       name === "testSuites:getTestCase"
         ? Promise.resolve({
             ...CASE_DOC,
             query: "only turn",
             expectedToolCalls: [{ toolName: "list", arguments: {} }],
-            promptTurns: [
-              {
-                prompt: "only turn",
-                expectedToolCalls: [{ toolName: "list", arguments: {} }],
-              },
-            ],
+            promptTurns: [],
           })
         : defaultQueryImpl(name)
     );
@@ -555,7 +590,15 @@ describe("v1 eval-edit routes", () => {
       "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1"
     );
     const body = (await res.json()) as any;
-    expect(body.expectedToolCalls).toEqual([{ tool: "list" }]);
+    expect(body.steps[0]).toMatchObject({
+      kind: "prompt",
+      prompt: "only turn",
+    });
+    expect(body.steps[1]).toMatchObject({
+      kind: "assert",
+      assertion: { type: "toolCalledWith", toolName: "list" },
+    });
+    expect(body.kind).toBeUndefined();
     expect(body.turns).toBeUndefined();
   });
 
@@ -583,7 +626,21 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "POST",
       "/api/v1/projects/p1/eval-suites/suite_1/cases",
-      { title: "bare", prompt: "hi", expectedToolCalls: [{ tool: "x" }] }
+      {
+        title: "bare",
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "hi" },
+          {
+            id: "s2",
+            kind: "assert",
+            assertion: {
+              type: "toolCalledWith",
+              toolName: "x",
+              args: { args: {} },
+            },
+          },
+        ],
+      }
     );
     expect(res.status).toBe(201);
     const args = convexMutationMock.mock.calls.find(
@@ -592,6 +649,18 @@ describe("v1 eval-edit routes", () => {
     // Provider resolved via the catalog, not dropped to [].
     expect(args.models).toEqual([
       { model: "claude-sonnet-4-5", provider: "anthropic" },
+    ]);
+    expect(args.steps).toEqual([
+      { id: "s1", kind: "prompt", prompt: "hi" },
+      {
+        id: "s2",
+        kind: "assert",
+        assertion: {
+          type: "toolCalledWith",
+          toolName: "x",
+          args: { args: {} },
+        },
+      },
     ]);
   });
 
@@ -606,10 +675,16 @@ describe("v1 eval-edit routes", () => {
     expect(item.id).toBe("case_1");
     expect(item._id).toBeUndefined();
     expect(item.testSuiteId).toBeUndefined();
-    expect(item.kind).toBe("prompt");
-    expect(item.prompt).toBe("What tools?");
+    expect(item.kind).toBeUndefined();
+    expect(item.steps[0]).toMatchObject({
+      kind: "prompt",
+      prompt: "What tools?",
+    });
+    expect(item.steps[1]).toMatchObject({
+      kind: "assert",
+      assertion: { type: "toolCalledWith", toolName: "list" },
+    });
     expect(item.iterations).toBe(1);
-    expect(item.expectedToolCalls).toEqual([{ tool: "list" }]);
     expect(item.matchOptions.toolCallOrder).toBe("any");
   });
 
@@ -627,7 +702,7 @@ describe("v1 eval-edit routes", () => {
     expect(args.predicates).toBeNull();
   });
 
-  it("PATCH on a render-check case honors a renderCheck-only patch (no kind)", async () => {
+  it("PATCH on a render-check case stays a render-check via toolCall steps", async () => {
     convexQueryMock.mockImplementation((name: string) => {
       if (name === "testSuites:getTestCase")
         return Promise.resolve({
@@ -645,14 +720,29 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
-      { renderCheck: { server: "Excalidraw (App)", tool: "new_tool" } }
+      {
+        steps: [
+          {
+            id: "s1",
+            kind: "toolCall",
+            serverName: "Excalidraw (App)",
+            toolName: "new_tool",
+            arguments: {},
+          },
+        ],
+      }
     );
     expect(res.status).toBe(200);
     const args = convexMutationMock.mock.calls.find(
       (c) => c[0] === "testSuites:updateTestCase"
     )![1];
-    // Routed to the render-check branch via the existing case's kind, not as a prompt.
-    expect(args.probeConfig).toMatchObject({ toolName: "new_tool" });
+    // The toolCall step keeps the case a render-check (kind unchanged).
+    expect(args.probeConfig).toBeUndefined();
+    expect(args.caseType).toBeUndefined();
+    expect(args.steps[0]).toMatchObject({
+      kind: "toolCall",
+      toolName: "new_tool",
+    });
     expect(args.query).toBe("");
   });
 
@@ -705,6 +795,19 @@ describe("v1 eval-edit routes", () => {
         (c) => c[0] === "testSuites:createTestCase"
       )
     ).toBe(true);
+    const createArgs = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:createTestCase"
+    )![1];
+    expect(createArgs.steps).toHaveLength(2);
+    expect(createArgs.steps[0]).toMatchObject({
+      kind: "prompt",
+      prompt: "do a thing",
+    });
+    expect(createArgs.steps[1]).toMatchObject({
+      kind: "assert",
+      assertion: { type: "toolCalledWith", toolName: "list" },
+    });
+    expect(createArgs.promptTurns).toBeUndefined();
   });
 
   it("generate resolves a server NAME override to an ID before authorizing", async () => {
@@ -758,6 +861,203 @@ describe("v1 eval-edit routes", () => {
     expect(body.created).toHaveLength(0);
     expect(body.skipped).toEqual([
       { title: "Bad draft", error: expect.any(String) },
+    ]);
+  });
+
+  it("generate forwards caseMix + varyUserStyles as generationOptions", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({
+          serverIds: ["srv_1"],
+          serverNames: ["Excalidraw (App)"],
+        });
+      return defaultQueryImpl(name);
+    });
+
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      {
+        caseMix: { simple: 3, negative: 1 },
+        varyUserStyles: true,
+      }
+    );
+    expect(res.status).toBe(200);
+    const forwarded = generateEvalTestsMock.mock.calls.at(-1)?.[1];
+    expect(forwarded?.generationOptions).toEqual({
+      caseMix: { simple: 3, negative: 1 },
+      varyUserStyles: true,
+    });
+  });
+
+  it("generate omits generationOptions when no knobs are provided", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({
+          serverIds: ["srv_1"],
+          serverNames: ["Excalidraw (App)"],
+        });
+      return defaultQueryImpl(name);
+    });
+
+    await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      { mode: "normal" }
+    );
+    const forwarded = generateEvalTestsMock.mock.calls.at(-1)?.[1];
+    expect(forwarded?.generationOptions).toBeUndefined();
+  });
+
+  it("caseMix supersedes mode:negative — uses the plan-driven generator and forwards generationOptions", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+    generateNegativeEvalTestsMock.mockResolvedValue({
+      success: true,
+      tests: [],
+    });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({
+          serverIds: ["srv_1"],
+          serverNames: ["Excalidraw (App)"],
+        });
+      return defaultQueryImpl(name);
+    });
+
+    await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      { mode: "negative", caseMix: { negative: 4 } }
+    );
+    // Routed to the plan-driven generator, NOT the legacy negative-only one.
+    expect(generateNegativeEvalTestsMock).not.toHaveBeenCalled();
+    const forwarded = generateEvalTestsMock.mock.calls.at(-1)?.[1];
+    expect(forwarded?.generationOptions).toEqual({
+      caseMix: { negative: 4 },
+    });
+  });
+
+  it.each([
+    { label: "empty {}", caseMix: {} },
+    { label: "zero-sum { negative: 0 }", caseMix: { negative: 0 } },
+    {
+      label: "all-zero buckets",
+      caseMix: {
+        simple: 0,
+        multiTool: 0,
+        multiTurn: 0,
+        complex: 0,
+        negative: 0,
+      },
+    },
+  ])(
+    "treats a bucketless caseMix ($label) as absent — mode:negative still uses the negative-only generator",
+    async ({ caseMix }) => {
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+      });
+      generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+      generateNegativeEvalTestsMock.mockResolvedValue({
+        success: true,
+        tests: [],
+      });
+      convexQueryMock.mockImplementation((name: string) => {
+        if (name === "testSuites:getSuiteRunServerSelection")
+          return Promise.resolve({
+            serverIds: ["srv_1"],
+            serverNames: ["Excalidraw (App)"],
+          });
+        return defaultQueryImpl(name);
+      });
+
+      await request(
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+        { mode: "negative", caseMix }
+      );
+      // A caseMix with no bucket > 0 must not supersede mode: the negative-only
+      // generator is used, and no empty generationOptions leaks downstream.
+      expect(generateNegativeEvalTestsMock).toHaveBeenCalled();
+      expect(generateEvalTestsMock).not.toHaveBeenCalled();
+      const forwarded = generateNegativeEvalTestsMock.mock.calls.at(-1)?.[1];
+      expect(forwarded?.generationOptions).toBeUndefined();
+    }
+  );
+
+  it("mode:negative + caseMix persists per-draft negativity (positives keep tool calls)", async () => {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    // The plan-driven generator flags each draft; the request still carries
+    // mode:"negative", which must NOT force the positive draft negative.
+    generateEvalTestsMock.mockResolvedValue({
+      success: true,
+      tests: [
+        {
+          title: "Pos",
+          query: "do a thing",
+          runs: 1,
+          expectedToolCalls: [{ toolName: "list", arguments: {} }],
+          isNegativeTest: false,
+        },
+        {
+          title: "Neg",
+          query: "meta question",
+          runs: 1,
+          expectedToolCalls: [],
+          isNegativeTest: true,
+        },
+      ],
+    });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({
+          serverIds: ["srv_1"],
+          serverNames: ["Excalidraw (App)"],
+        });
+      return defaultQueryImpl(name);
+    });
+
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      { mode: "negative", caseMix: { simple: 1, negative: 1 } }
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.counts).toEqual({ normal: 1, negative: 1 });
+
+    const createArgs = convexMutationMock.mock.calls
+      .filter((c) => c[0] === "testSuites:createTestCase")
+      .map((c) => c[1]);
+    const posArgs = createArgs.find((a: any) => a.title === "Pos");
+    const negArgs = createArgs.find((a: any) => a.title === "Neg");
+    // Positive draft keeps its tool calls and is NOT marked negative.
+    expect(posArgs.isNegativeTest).toBeUndefined();
+    expect(posArgs.expectedToolCalls).toEqual([
+      { toolName: "list", arguments: {} },
+    ]);
+    expect(posArgs.steps).toHaveLength(2);
+    expect(posArgs.steps[1]).toMatchObject({
+      kind: "assert",
+      assertion: { type: "toolCalledWith", toolName: "list" },
+    });
+    // Negative draft is marked negative with no tool calls.
+    expect(negArgs.isNegativeTest).toBe(true);
+    expect(negArgs.expectedToolCalls).toEqual([]);
+    expect(negArgs.steps).toEqual([
+      expect.objectContaining({ kind: "prompt", prompt: "meta question" }),
     ]);
   });
 });

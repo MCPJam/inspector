@@ -44,13 +44,13 @@ import { validateToolOutput } from "@/lib/schema-utils";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
 import { WebApiError } from "@/lib/apis/web/base";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import { useQuery } from "convex/react";
 import { stripConvexReservedKeys } from "@/lib/convex-args";
 import { useToolQualityEnabled } from "@/hooks/useToolQualityEnabled";
 import type { ConnectionStatus } from "@/state/app-types";
 import type { ToolQualityInfo } from "./tools/ToolItem";
+import type { McpToolResultImageRenderingPolicy } from "@/lib/client-config-v2";
 
 type ToolMap = Record<string, Tool>;
 type FormField = ToolFormField;
@@ -119,15 +119,16 @@ interface ToolsTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
   serverConnectionStatus?: ConnectionStatus;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
 }
 
 export function ToolsTab({
   serverConfig,
   serverName,
   serverConnectionStatus,
+  mcpToolResultImageRendering,
 }: ToolsTabProps) {
   const logger = useLogger("ToolsTab");
-  const posthog = usePostHog();
   const [tools, setTools] = useState<ToolMap>({});
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
@@ -336,7 +337,7 @@ export function ToolsTab({
       observer.unobserve(element);
       observer.disconnect();
     };
-  }, [filteredToolNames.length, activeTab, cursor, activeTab, fetchingTools]);
+  }, [filteredToolNames.length, activeTab, cursor, fetchingTools]);
 
   // Fetch task capabilities for the server
   const fetchTaskCapabilities = async () => {
@@ -377,12 +378,19 @@ export function ToolsTab({
   }, [selectedTool, tools]);
 
   useEffect(() => {
-    posthog.capture("tools_tab_viewed", {
+    track("tools_tab_viewed", {
       location: "tools_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
   }, []);
+
+  // Clicking the sidebar's "Tools" tab returns to the tool list (the tool
+  // menu): deselect any open tool, the same as the back arrow does.
+  const handleChangeTab = (tab: "tools" | "saved") => {
+    setActiveTab(tab);
+    if (tab === "tools") {
+      setSelectedTool("");
+    }
+  };
 
   const fetchTools = async (reset = false) => {
     if (!serverName) {
@@ -754,7 +762,7 @@ export function ToolsTab({
   const sidebarContent = (
     <ToolsSidebar
       activeTab={activeTab}
-      onChangeTab={setActiveTab}
+      onChangeTab={handleChangeTab}
       tools={tools}
       toolQuality={toolQualityByName}
       toolNames={toolNames}
@@ -812,6 +820,7 @@ export function ToolsTab({
       toolMeta={getToolMeta(lastToolName)}
       responseDurationMs={responseDurationMs}
       serverName={serverName}
+      mcpToolResultImageRendering={mcpToolResultImageRendering}
     />
   ) : (
     <div className="h-full flex items-center justify-center">

@@ -1,4 +1,13 @@
 import type { ServerWithName, ConnectionStatus } from "@/state/app-types";
+import {
+  normalizeOAuthProtocolVersion,
+  normalizeOAuthRegistrationStrategy,
+} from "@/lib/oauth/profile";
+import {
+  normalizeAuthMethod,
+  normalizeIdentityAssertionFormat,
+  normalizeRegistrationMode,
+} from "@/shared/xaa.js";
 
 type SerializeOptions = {
   /**
@@ -18,6 +27,27 @@ type SerializeOptions = {
   redactSecrets: boolean;
 };
 
+function hasBearerAuthorizationHeader(headers: unknown): boolean {
+  if (!headers || typeof headers !== "object") {
+    return false;
+  }
+
+  return Object.entries(headers as Record<string, unknown>).some(
+    ([key, value]) =>
+      key.trim().toLowerCase() === "authorization" &&
+      typeof value === "string" &&
+      value.trim().toLowerCase().startsWith("bearer ")
+  );
+}
+
+function hasRedactedBearerFlag(config: unknown): boolean {
+  return (
+    !!config &&
+    typeof config === "object" &&
+    (config as Record<string, unknown>).hasBearerToken === true
+  );
+}
+
 function serializeServersInternal(
   servers: Record<string, ServerWithName>,
   options: SerializeOptions
@@ -30,6 +60,36 @@ function serializeServersInternal(
       enabled: server.enabled,
       useOAuth: server.useOAuth,
     };
+
+    if (server.xaaAuthzIssuer !== undefined) {
+      serializedServer.xaaAuthzIssuer = server.xaaAuthzIssuer;
+    }
+    if (server.xaaAllowPathScopedIssuer !== undefined) {
+      serializedServer.xaaAllowPathScopedIssuer =
+        server.xaaAllowPathScopedIssuer;
+    }
+    if (server.useXaa !== undefined) {
+      serializedServer.useXaa = server.useXaa;
+    }
+    if (server.authServerMode !== undefined) {
+      serializedServer.authServerMode = server.authServerMode;
+    }
+    if (server.xaaSubject !== undefined) {
+      serializedServer.xaaSubject = server.xaaSubject;
+    }
+    if (server.xaaEmail !== undefined) {
+      serializedServer.xaaEmail = server.xaaEmail;
+    }
+    if (server.xaaIdentityAssertionFormat !== undefined) {
+      serializedServer.xaaIdentityAssertionFormat =
+        server.xaaIdentityAssertionFormat;
+    }
+    if (server.registrationMode !== undefined) {
+      serializedServer.registrationMode = server.registrationMode;
+    }
+    if (server.authMethod !== undefined) {
+      serializedServer.authMethod = server.authMethod;
+    }
 
     if (server.config) {
       const config: Record<string, unknown> = {};
@@ -74,7 +134,7 @@ function serializeServersInternal(
       serializedServer.config = config;
     }
 
-    if (server.useOAuth && server.oauthFlowProfile) {
+    if ((server.useOAuth || server.useXaa) && server.oauthFlowProfile) {
       // OAuthTestProfile.scopes is a UI-shaped string ("read,write" or
       // "read write"); the Convex `servers.oauthScopes` field is
       // v.array(v.string()). Split here so syncProjectServers can pass the
@@ -193,20 +253,80 @@ export function deserializeServersFromConvex(
       hasClientSecret: serverData.hasClientSecret === true,
       hasEnv: serverData.hasEnv === true,
       hasHeaders: serverData.hasHeaders === true,
+      hasBearerToken:
+        serverData.hasBearerToken === true ||
+        hasRedactedBearerFlag(serverData.config) ||
+        hasBearerAuthorizationHeader(config.requestInit?.headers),
     };
+
+    const xaaAuthzIssuer =
+      serverData.xaaAuthzIssuer ?? serverData.config?.xaaAuthzIssuer;
+    if (xaaAuthzIssuer !== undefined) {
+      server.xaaAuthzIssuer = xaaAuthzIssuer;
+    }
+    const xaaAllowPathScopedIssuer =
+      serverData.xaaAllowPathScopedIssuer ??
+      serverData.config?.xaaAllowPathScopedIssuer;
+    if (xaaAllowPathScopedIssuer !== undefined) {
+      server.xaaAllowPathScopedIssuer = xaaAllowPathScopedIssuer === true;
+    }
+    if (serverData.useXaa !== undefined) {
+      server.useXaa = serverData.useXaa === true;
+    }
+    if (serverData.authServerMode !== undefined) {
+      server.authServerMode = serverData.authServerMode;
+    }
+    if (serverData.xaaSubject !== undefined) {
+      server.xaaSubject = serverData.xaaSubject;
+    }
+    if (serverData.xaaEmail !== undefined) {
+      server.xaaEmail = serverData.xaaEmail;
+    }
+    // Narrow the bare wire value to a known format; drop anything unknown so
+    // the debugger falls back to the OIDC default (normalize-or-clear).
+    const xaaIdentityAssertionFormat = normalizeIdentityAssertionFormat(
+      serverData.xaaIdentityAssertionFormat,
+    );
+    if (xaaIdentityAssertionFormat !== undefined) {
+      server.xaaIdentityAssertionFormat = xaaIdentityAssertionFormat;
+    }
+    // Narrow the bare wire value to a known mode; drop anything unknown so the
+    // flows fall back to their defaults. Accepts the legacy per-flow keys
+    // (xaaRegistrationStrategy, oauthRegistrationMode) from old exports —
+    // canonical key wins when both are present.
+    const registrationMode = normalizeRegistrationMode(
+      serverData.registrationMode ??
+        serverData.xaaRegistrationStrategy ??
+        serverData.oauthRegistrationMode,
+    );
+    if (registrationMode !== undefined) {
+      server.registrationMode = registrationMode;
+    }
+    const authMethod = normalizeAuthMethod(serverData.authMethod);
+    if (authMethod !== undefined) {
+      server.authMethod = authMethod;
+    }
 
     // Handle oauthFlowProfile from legacy nested structure
     if (serverData.oauthFlowProfile) {
       server.oauthFlowProfile = serverData.oauthFlowProfile;
     }
 
-    // NEW: Handle flat oauthScopes/clientId from servers table
+    // NEW: Handle flat OAuth profile fields from the servers table
     // Convert oauthScopes array to comma-separated string for OAuthTestProfile.scopes
+    const flatProtocolVersion = normalizeOAuthProtocolVersion(
+      serverData.oauthProtocolVersion,
+    );
+    const flatRegistrationStrategy = normalizeOAuthRegistrationStrategy(
+      serverData.oauthRegistrationStrategy,
+    );
     if (
       serverData.oauthScopes ||
       serverData.clientId ||
       serverData.hasClientSecret ||
-      serverData.oauthResourceUrl
+      serverData.oauthResourceUrl ||
+      flatProtocolVersion ||
+      flatRegistrationStrategy
     ) {
       const existingProfile = (server.oauthFlowProfile as any) || {};
       server.oauthFlowProfile = {
@@ -218,6 +338,15 @@ export function deserializeServersFromConvex(
         clientSecret: "",
         resourceUrl:
           serverData.oauthResourceUrl || existingProfile.resourceUrl || "",
+        // Persisted debugger test-profile choices. Absent (legacy rows or an
+        // unknown wire value) keeps the legacy-nested value when present and
+        // otherwise falls to the reader-side defaults (DCR / 2025-11-25).
+        ...(flatProtocolVersion
+          ? { protocolVersion: flatProtocolVersion }
+          : {}),
+        ...(flatRegistrationStrategy
+          ? { registrationStrategy: flatRegistrationStrategy }
+          : {}),
       } as typeof server.oauthFlowProfile;
     }
 
@@ -250,6 +379,20 @@ export function serversHaveChanged(
     if (localServer.name !== remoteServer.name) return true;
     if (localServer.enabled !== remoteServer.enabled) return true;
     if (localServer.useOAuth !== remoteServer.useOAuth) return true;
+
+    const remoteXaaAuthzIssuer =
+      remoteServer.xaaAuthzIssuer ?? remoteServer.config?.xaaAuthzIssuer;
+    if ((localServer.xaaAuthzIssuer ?? undefined) !== (remoteXaaAuthzIssuer ?? undefined))
+      return true;
+
+    const remoteXaaAllowPathScopedIssuer =
+      remoteServer.xaaAllowPathScopedIssuer ??
+      remoteServer.config?.xaaAllowPathScopedIssuer;
+    if (
+      (localServer.xaaAllowPathScopedIssuer ?? undefined) !==
+      (remoteXaaAllowPathScopedIssuer ?? undefined)
+    )
+      return true;
 
     // Get local URL
     const localUrl =
@@ -323,6 +466,34 @@ export function serversHaveChanged(
     if (Boolean(localServer.hasEnv) !== Boolean(remoteServer.hasEnv))
       return true;
     if (Boolean(localServer.hasHeaders) !== Boolean(remoteServer.hasHeaders))
+      return true;
+    const localHasBearerToken =
+      localServer.hasBearerToken === true ||
+      hasRedactedBearerFlag(localServer.config) ||
+      hasBearerAuthorizationHeader(
+        (localServer.config as any)?.requestInit?.headers
+      );
+    const localBearerFlagIsPresent =
+      Object.prototype.hasOwnProperty.call(localServer, "hasBearerToken") ||
+      hasRedactedBearerFlag(localServer.config);
+    const remoteHasBearerToken =
+      remoteServer.hasBearerToken === true ||
+      hasRedactedBearerFlag(remoteServer.config) ||
+      hasBearerAuthorizationHeader((remoteRequestInit as any)?.headers);
+    const remoteBearerFlagIsMissing =
+      !Object.prototype.hasOwnProperty.call(remoteServer, "hasBearerToken") &&
+      !Object.prototype.hasOwnProperty.call(
+        remoteServer.config ?? {},
+        "hasBearerToken"
+      );
+    const remoteBearerIsUnknown =
+      remoteHeadersAreRedacted &&
+      remoteBearerFlagIsMissing &&
+      !localBearerFlagIsPresent;
+    if (
+      !remoteBearerIsUnknown &&
+      Boolean(localHasBearerToken) !== Boolean(remoteHasBearerToken)
+    )
       return true;
 
     // Check OAuth profile (handle both flat and nested structures)

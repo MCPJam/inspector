@@ -9,6 +9,15 @@ import { z } from "zod";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
 import {
+  evaluateMarketHosts,
+  scanWidgetUsage,
+  type CompatFinding,
+  type CompatProvenance,
+  type CompatVerdict,
+  type HostCompatToolsInput,
+  type ReadResourceResult,
+} from "../host-compat/index.js";
+import {
   buildShowServersPayload,
   projectResolutionError,
   resolveProject,
@@ -25,12 +34,22 @@ import type {
   PlatformEvalCaseDeleted,
   PlatformEvalCasesGenerated,
   PlatformEvalIteration,
+  PlatformEvalStepResult,
   PlatformEvalRun,
   PlatformEvalRunCreated,
   PlatformEvalSuite,
   PlatformEvalSuiteCreated,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
+  PlatformComputerAttached,
+  PlatformComputerReset,
+  PlatformEnvironment,
+  PlatformEnvironmentBuild,
+  PlatformEnvironmentBuildStarted,
+  PlatformEnvironmentDeleted,
+  PlatformHost,
+  PlatformHostDeleted,
+  PlatformHostDetail,
   PlatformPage,
   PlatformProject,
   PlatformProjectServer,
@@ -653,6 +672,114 @@ export const readServerResourceOperation: PlatformOperation<
   },
 };
 
+// ── Host compatibility ───────────────────────────────────────────────
+
+export type HostCompatibilityVerdict = {
+  hostId: string;
+  hostLabel: string;
+  /** Worst-wins aggregate across the apps + server lanes. */
+  verdict: CompatVerdict;
+  /** Weakest source backing this host's facts. */
+  provenance: CompatProvenance;
+  /** Machine-readable findings (each carries a stable `code`). */
+  findings: CompatFinding[];
+};
+
+export type CheckHostCompatibilityResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  /** What the server demands, summarized. */
+  widgets: { total: number; appOnly: number };
+  /** Dimensions that couldn't be analyzed (e.g. unreadable widget HTML). */
+  unknownDimensions: string[];
+  hosts: HostCompatibilityVerdict[];
+};
+
+// Bound the tools pagination so a pathological server can't loop forever.
+const HOST_COMPAT_TOOLS_PAGE_CAP = 50;
+
+export const checkHostCompatibilityOperation: PlatformOperation<
+  ServerScopedInput,
+  CheckHostCompatibilityResult
+> = {
+  name: "check_host_compatibility",
+  title: "Check MCP host compatibility",
+  description:
+    "Check whether a saved MCP server's tools and widgets work on each AI host (Claude, ChatGPT, Cursor, Copilot, Codex, Goose, Mistral, n8n, Perplexity, Cline). Returns a per-host verdict (works / degraded / blocked / unknown) with the specific findings — e.g. a widget a host can't render, or a host API a widget needs that the host lacks.",
+  readOnly: true,
+  inputSchema: serverScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const server = await resolveLiveServer(client, project, input.server, signal);
+    const scope = { projectId: project.id, serverId: server.id };
+
+    // Gather every tool (with its inline `_meta`) across all pages.
+    const rawTools: Array<Record<string, unknown>> = [];
+    let cursor: string | undefined;
+    let truncated = false;
+    for (let page = 0; page < HOST_COMPAT_TOOLS_PAGE_CAP; page++) {
+      const result = await client.listServerTools(
+        { ...scope, body: cursor ? { cursor } : {} },
+        { signal }
+      );
+      rawTools.push(...result.items);
+      cursor = result.nextCursor;
+      if (!cursor) break;
+      // Hit the cap with tools still pending — don't pretend the report is
+      // complete (a later page could hold widgets that change a verdict).
+      if (page === HOST_COMPAT_TOOLS_PAGE_CAP - 1) truncated = true;
+    }
+
+    const toolsData: HostCompatToolsInput = {
+      tools: rawTools.map((tool) => ({
+        name: String(tool.name),
+        _meta: tool._meta as Record<string, unknown> | undefined,
+      })),
+    };
+
+    // Apps lane: read each widget's resource through the platform and scan it.
+    const widgetUsage = await scanWidgetUsage(
+      toolsData,
+      async (uri) =>
+        (await client.readServerResource(
+          { ...scope, body: { uri } },
+          { signal }
+        )) as ReadResourceResult
+    );
+
+    // `toolsTruncated` makes the engine demote any `works` to `unknown` and add
+    // the explaining dimension — verdicts never read complete when they aren't.
+    const { requirements, reports } = evaluateMarketHosts(toolsData, {
+      widgetUsage,
+      toolsTruncated: truncated,
+    });
+
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      widgets: {
+        total:
+          requirements.widgets.mcpAppsOnly.length +
+          requirements.widgets.openaiAppsOnly.length +
+          requirements.widgets.dual.length,
+        appOnly: requirements.appOnlyWidgets.length,
+      },
+      unknownDimensions: requirements.unknownDimensions,
+      hosts: reports.map((report) => ({
+        hostId: report.hostId,
+        hostLabel: report.hostLabel,
+        verdict: report.verdict,
+        provenance: report.provenance,
+        findings: report.findings,
+      })),
+    };
+  },
+};
+
 // ── Eval operations ──────────────────────────────────────────────────
 
 const SUITE_SELECTOR_DESCRIPTION = "Eval suite name or ID.";
@@ -836,16 +963,160 @@ export const runEvalSuiteOperation: PlatformOperation<
   },
 };
 
+const runEvalCaseInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  case: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("The test case to run, by id or title, within the suite."),
+  servers: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Project server names or IDs to override the suite's saved server selection for this run. When omitted, the platform connects exactly the servers the suite was configured with."
+    ),
+});
+
+export type RunEvalCaseInput = z.infer<typeof runEvalCaseInput>;
+
+export type RunEvalCaseResult = {
+  project: SelectedProjectInfo;
+  suite: { id: string; name: string | null };
+  case: { id: string; title: string | null };
+  servers: Array<{ id: string; name?: string }>;
+  runId: string;
+  status: string;
+};
+
+export const runEvalCaseOperation: PlatformOperation<
+  RunEvalCaseInput,
+  RunEvalCaseResult
+> = {
+  name: "run_eval_case",
+  title: "Run a single MCPJam eval case",
+  description:
+    "Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). Returns a runId immediately; poll get_eval_run until terminal. Consumes credits like any eval run.",
+  readOnly: false,
+  inputSchema: runEvalCaseInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    const testCase = await resolveCase(
+      client,
+      project,
+      suite,
+      input.case,
+      signal
+    );
+    const overrideServers = input.servers
+      ? await resolveRunServers(client, project, input.servers, signal)
+      : undefined;
+    const created = await client.createEvalRun(
+      {
+        projectId: project.id,
+        body: {
+          suiteId: suite.id,
+          caseIds: [testCase.id],
+          ...(overrideServers
+            ? { serverIds: overrideServers.map((server) => server.id) }
+            : {}),
+        },
+      },
+      { signal }
+    );
+    const servers =
+      overrideServers?.map((server) => ({
+        id: server.id,
+        name: server.name,
+      })) ??
+      (created.servers ?? []).map((server) => ({
+        id: server.id,
+        ...(server.name ? { name: server.name } : {}),
+      }));
+    return {
+      project: toSelectedProjectInfo(project),
+      suite: { id: suite.id, name: suite.name },
+      case: { id: testCase.id, title: testCase.title },
+      servers,
+      runId: created.runId,
+      status: created.status,
+    };
+  },
+};
+
+/**
+ * Authored test-step (`TestStep`) input — the unified test model that REPLACES
+ * the old `query` / `expectedToolCalls` / `promptTurns` / `caseType` /
+ * `probeConfig` authoring fields (see the inspector's `shared/steps.ts`).
+ *
+ * A case is an ordered `steps` array of:
+ *   - `prompt`   — a user message (model-driven turn);
+ *   - `toolCall` — a deterministic, model-free tool call (= old widget probe);
+ *   - `interact` — one pure widget action (click/type/key/scroll/wait);
+ *   - `assert`   — an assertion (a `Predicate` like `toolCalledWith` /
+ *                  `widgetRendered`, or a DOM `WidgetAssertion`).
+ *
+ * Typed permissively here (discriminated only on `kind` + the per-kind core
+ * fields); the backend `/api/v1` route validates authoritatively with the
+ * shared `stepsSchema`. Declared fully so the body is forwarded verbatim
+ * instead of having unknown keys stripped.
+ *
+ * BREAKING (Phase 2.5): this is a clean break from the old per-case authoring
+ * fields. No users existed for the old shape, so no compatibility layer.
+ */
+const stepInputSchema = z
+  .discriminatedUnion("kind", [
+    z
+      .object({
+        id: z.string().min(1),
+        kind: z.literal("prompt"),
+        prompt: z.string(),
+      })
+      .passthrough(),
+    z
+      .object({
+        id: z.string().min(1),
+        kind: z.literal("toolCall"),
+        serverId: z.string().min(1).optional(),
+        serverName: z.string().min(1),
+        toolName: z.string().min(1),
+        arguments: z.record(z.string(), z.any()),
+        renderTimeoutMs: z.number().int().positive().optional(),
+      })
+      .passthrough(),
+    z
+      .object({
+        id: z.string().min(1),
+        kind: z.literal("interact"),
+        toolName: z.string().min(1),
+        action: z.record(z.string(), z.any()),
+      })
+      .passthrough(),
+    z
+      .object({
+        id: z.string().min(1),
+        kind: z.literal("assert"),
+        assertion: z.record(z.string(), z.any()),
+      })
+      .passthrough(),
+  ])
+  .describe("One authored test step (prompt | toolCall | interact | assert).");
+
 const evalCaseInput = z
   .object({
     title: z.string().trim().min(1).describe("Short label for the test case."),
-    query: z
-      .string()
-      .trim()
-      .optional()
-      .describe(
-        "The user prompt the agent receives. Required for prompt cases; omit for widget_probe cases (normalized to empty)."
-      ),
     runs: z
       .number()
       .int()
@@ -853,19 +1124,11 @@ const evalCaseInput = z
       .max(10)
       .optional()
       .describe("Iterations to run this case per eval run. Defaults to 1."),
-    expectedToolCalls: z
-      .array(
-        z.union([
-          z.string().trim().min(1),
-          z.object({
-            toolName: z.string().trim().min(1),
-            arguments: z.record(z.string(), z.any()).optional(),
-          }),
-        ])
-      )
-      .optional()
+    steps: z
+      .array(stepInputSchema)
+      .min(1)
       .describe(
-        "Tools the agent is expected to call. Either a tool name string or { toolName, arguments }. Defaults to none."
+        "Ordered test steps (prompt / toolCall / interact / assert). The first `prompt` step's text is the case query; `toolCalledWith` asserts are the expected tool calls."
       ),
     expectedOutput: z
       .string()
@@ -883,13 +1146,6 @@ const evalCaseInput = z
       .min(1)
       .optional()
       .describe("Optional scenario/context note for the case."),
-    // Advanced authoring fields. Typed permissively here and validated
-    // authoritatively by the backend route — but declared so they are forwarded
-    // verbatim instead of being stripped as unknown keys.
-    promptTurns: z
-      .array(z.record(z.string(), z.any()))
-      .optional()
-      .describe("Multi-turn prompt sequence for the case (advanced)."),
     advancedConfig: z
       .object({
         system: z.string().optional(),
@@ -909,18 +1165,6 @@ const evalCaseInput = z
       .record(z.string(), z.any())
       .optional()
       .describe("Per-case success-predicate gate (advanced)."),
-    caseType: z
-      .string()
-      .trim()
-      .min(1)
-      .optional()
-      .describe('Case type: "prompt" (default) or "widget_probe".'),
-    probeConfig: z
-      .record(z.string(), z.any())
-      .optional()
-      .describe(
-        "Widget-probe pinned tool call; required when caseType is widget_probe."
-      ),
     model: z
       .string()
       .trim()
@@ -935,20 +1179,6 @@ const evalCaseInput = z
       .describe(
         "Per-case provider override; defaults to the suite-level provider."
       ),
-  })
-  .superRefine((testCase, ctx) => {
-    // Prompt cases need a query; widget_probe cases run a pinned tool call and
-    // carry an empty query (the run schema normalizes to "").
-    if (
-      testCase.caseType !== "widget_probe" &&
-      (testCase.query === undefined || testCase.query.length === 0)
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["query"],
-        message: "query is required for prompt cases",
-      });
-    }
   });
 
 const createEvalSuiteInput = z.object({
@@ -1012,7 +1242,7 @@ export const createEvalSuiteOperation: PlatformOperation<
   name: "create_eval_suite",
   title: "Create MCPJam eval suite",
   description:
-    "Create a runnable eval suite from authored test cases. Specify a name, a default model, the project HTTP servers it runs against, and one or more cases (title, query, optional expected tool calls / expected output / negative-test). Returns the new suite id; run it with run_eval_suite. Does NOT run the suite — authoring is free. Servers must be HTTP; stdio servers can never run hosted.",
+    "Create a runnable eval suite from authored test cases. Specify a name, a default model, the project HTTP servers it runs against, and one or more cases. Each case is an ordered `steps` array (prompt / toolCall / interact / assert) plus optional expected-output / negative-test. Returns the new suite id; run it with run_eval_suite. Does NOT run the suite — authoring is free. Servers must be HTTP; stdio servers can never run hosted.",
   readOnly: false,
   inputSchema: createEvalSuiteInput,
   async execute(input, { client, signal }) {
@@ -1097,50 +1327,26 @@ const publicCheckOverrideSchema = z
   })
   .describe("Per-case check override (how case checks combine with defaults).");
 
-const expectedToolCallSchema = z.object({
-  tool: z.string().trim().min(1),
-  arguments: z.record(z.string(), z.any()).optional(),
-});
-
 const caseModelSchema = z.object({
   model: z.string().trim().min(1),
   provider: z.string().trim().min(1).optional(),
-});
-
-const renderCheckSchema = z.object({
-  server: z.string().trim().min(1),
-  tool: z.string().trim().min(1),
-  arguments: z.record(z.string(), z.any()).optional(),
-  renderTimeoutMs: z.number().int().positive().optional(),
 });
 
 // Per-case editable fields, shared by create and update. All optional so a
 // PATCH carries only what changes; create layers required fields on top.
 const caseFieldsShape = {
   title: z.string().trim().min(1).optional().describe("Short case label."),
-  kind: z
-    .enum(["prompt", "render-check"])
+  // The unified test-step model REPLACES the old kind / prompt / turns /
+  // expectedToolCalls / renderCheck authoring fields (Phase 2.5 clean break).
+  // A `prompt` step is a model turn; a `toolCall` step is a deterministic
+  // (formerly render-check) call; `assert` steps hold the expectations.
+  steps: z
+    .array(stepInputSchema)
+    .min(1)
     .optional()
-    .describe("Case kind. Defaults to prompt."),
-  prompt: z
-    .string()
-    .trim()
-    .optional()
-    .describe("User prompt for a single-turn prompt case."),
-  turns: z
-    .array(
-      z.object({
-        prompt: z.string().trim().min(1),
-        expectedToolCalls: z.array(expectedToolCallSchema).optional(),
-        expectedOutput: z.string().trim().min(1).optional(),
-      })
-    )
-    .optional()
-    .describe("Multi-turn prompt sequence (alternative to prompt)."),
-  expectedToolCalls: z
-    .array(expectedToolCallSchema)
-    .optional()
-    .describe("Tools the agent is expected to call."),
+    .describe(
+      "Ordered test steps (prompt / toolCall / interact / assert). Replaces the case body wholesale when provided."
+    ),
   expectedOutput: z
     .string()
     .trim()
@@ -1167,9 +1373,6 @@ const caseFieldsShape = {
   // untouched (omitted). On create, null is treated as "no override".
   matchOptions: publicMatchOptionsSchema.nullable().optional(),
   checks: publicCheckOverrideSchema.nullable().optional(),
-  renderCheck: renderCheckSchema
-    .optional()
-    .describe("Pinned tool call for a render-check case."),
 } as const;
 
 /** Build the public case body forwarded to the route (drops undefined keys). */
@@ -1490,7 +1693,7 @@ export const createEvalCaseOperation: PlatformOperation<
   name: "create_eval_case",
   title: "Create MCPJam eval case",
   description:
-    "Add one test case to an eval suite. A prompt case needs a prompt (or turns); a render-check case needs renderCheck. Positive cases must assert something: an expected tool call, expected output, or a check.",
+    "Add one test case to an eval suite. Provide ordered `steps`: a `prompt` step is a model turn, a `toolCall` step is a deterministic tool call, and `assert` steps hold the expectations (e.g. a `toolCalledWith` or `widgetRendered` predicate). Positive cases must include at least one `assert` step.",
   readOnly: false,
   inputSchema: createEvalCaseInput,
   async execute(input, { client, signal }) {
@@ -1527,7 +1730,7 @@ export const updateEvalCaseOperation: PlatformOperation<
   name: "update_eval_case",
   title: "Update MCPJam eval case",
   description:
-    "Edit an eval test case. Only the fields you pass change (prompt, turns, expected tool calls, expected output, iterations, models, match options, checks, render check).",
+    "Edit an eval test case. Only the fields you pass change (steps, expected output, iterations, models, match options, checks). Passing `steps` replaces the case's test-step sequence wholesale.",
   readOnly: false,
   inputSchema: updateEvalCaseInput,
   async execute(input, { client, signal }) {
@@ -1623,6 +1826,54 @@ const generateEvalCasesInput = z.object({
     .array(caseModelSchema)
     .optional()
     .describe("Execution models to set on the generated cases."),
+  caseMix: z
+    .object({
+      simple: z
+        .number()
+        .int()
+        .min(0)
+        .max(10)
+        .optional()
+        .describe("Easy, single-tool, single-turn cases."),
+      multiTool: z
+        .number()
+        .int()
+        .min(0)
+        .max(10)
+        .optional()
+        .describe("Medium, 2+ tools, single-turn cases."),
+      multiTurn: z
+        .number()
+        .int()
+        .min(0)
+        .max(10)
+        .optional()
+        .describe("Medium, multi-turn follow-up cases."),
+      complex: z
+        .number()
+        .int()
+        .min(0)
+        .max(10)
+        .optional()
+        .describe("Hard, multi-turn, 3+ tools / cross-server cases."),
+      negative: z
+        .number()
+        .int()
+        .min(0)
+        .max(10)
+        .optional()
+        .describe("Cases that should NOT trigger any tools."),
+    })
+    .optional()
+    .describe(
+      "Per-bucket case counts. Omitted buckets inherit the default mix; supersedes `mode`. Each bucket and the total are bounded server-side."
+    ),
+  varyUserStyles: z
+    .boolean()
+    .optional()
+    .describe(
+      "Condition generated cases on a realistic range of user styles so the queries read like different users wrote them."
+    ),
 });
 export type GenerateEvalCasesInput = z.infer<typeof generateEvalCasesInput>;
 
@@ -1659,6 +1910,8 @@ export const generateEvalCasesOperation: PlatformOperation<
             ? { servers: overrideServers.map((server) => server.id) }
             : {}),
           ...(input.caseModels ? { caseModels: input.caseModels } : {}),
+          ...(input.caseMix ? { caseMix: input.caseMix } : {}),
+          ...(input.varyUserStyles ? { varyUserStyles: true } : {}),
         },
       },
       { signal }
@@ -1814,6 +2067,85 @@ export const getEvalIterationTraceOperation: PlatformOperation<
       runId: input.runId,
       iterationId: input.iterationId,
       trace,
+    };
+  },
+};
+
+export type CancelEvalRunResult = {
+  project: SelectedProjectInfo;
+  run: PlatformEvalRun;
+};
+
+export const cancelEvalRunOperation: PlatformOperation<
+  EvalRunScopedInput,
+  CancelEvalRunResult
+> = {
+  name: "cancel_eval_run",
+  title: "Cancel MCPJam eval run",
+  description:
+    "Cancel an in-flight eval run. Marks the run and its pending/running iterations cancelled. No-op if already cancelled; errors if the run already finished.",
+  readOnly: false,
+  inputSchema: evalRunScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const run = await client.cancelEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+const evalRunStepsInput = evalRunScopedInput.extend({
+  iterationId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Iteration ID, as returned by list_eval_run_iterations."),
+});
+
+export type GetEvalRunStepsInput = z.infer<typeof evalRunStepsInput>;
+
+export type GetEvalRunStepsResult = {
+  project: SelectedProjectInfo;
+  runId: string;
+  iterationId: string;
+  steps: PlatformEvalStepResult[];
+};
+
+export const getEvalRunStepsOperation: PlatformOperation<
+  GetEvalRunStepsInput,
+  GetEvalRunStepsResult
+> = {
+  name: "get_eval_run_steps",
+  title: "Get MCPJam eval iteration step results",
+  description:
+    "Fetch one row per authored test step for an eval iteration, in order: each step's status (ok / fail / skipped / pending), the reason, and evidence (screenshot/video URLs, widget tool calls). The fastest way to see WHICH step failed and why.",
+  readOnly: true,
+  inputSchema: evalRunStepsInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const page = await client.getEvalRunSteps(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        iterationId: input.iterationId,
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      runId: input.runId,
+      iterationId: input.iterationId,
+      steps: page.items,
     };
   },
 };
@@ -2165,5 +2497,620 @@ export const listChatSessionsOperation: PlatformOperation<
       items: page.items,
       ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
     };
+  },
+};
+
+// ── Hosts ──────────────────────────────────────────────────────────────────
+
+const HOST_SELECTOR_DESCRIPTION = "Host name or ID.";
+
+async function resolveHost(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  selector: string,
+  signal: AbortSignal | undefined
+): Promise<PlatformHost> {
+  const page = await client.listHosts({ projectId: project.id }, { signal });
+  return resolveByIdOrName(
+    page.items,
+    selector,
+    "Host",
+    `project "${project.name}"`
+  );
+}
+
+export type ListHostsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformHost[];
+  otherProjects: ProjectInfo[];
+};
+
+export const listHostsOperation: PlatformOperation<
+  ProjectScopedInput,
+  ListHostsResult
+> = {
+  name: "list_hosts",
+  title: "List MCPJam hosts",
+  description:
+    "List the hosts saved in an MCPJam project. If no project is specified, uses the most recently updated accessible project and returns other project names for switching.",
+  readOnly: true,
+  inputSchema: projectScopedInput,
+  async execute(input, { client, signal }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const page = await client.listHosts({ projectId: project.id }, { signal });
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+const getHostInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
+});
+export type GetHostInput = z.infer<typeof getHostInput>;
+
+export const getHostOperation: PlatformOperation<
+  GetHostInput,
+  PlatformHostDetail
+> = {
+  name: "get_host",
+  title: "Show an MCPJam host",
+  description:
+    "Show one host's full settings, including its resolved host config (model, capabilities, host context).",
+  readOnly: true,
+  inputSchema: getHostInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const host = await resolveHost(client, project, input.host, signal);
+    return client.getHost(
+      { projectId: project.id, hostId: host.id },
+      { signal }
+    );
+  },
+};
+
+const createHostInput = z
+  .object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    name: z.string().trim().min(1).describe("Display name for the new host."),
+    template: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "Built-in template to seed the host config from (e.g. claude, chatgpt, cursor)."
+      ),
+    theme: z
+      .enum(["light", "dark"])
+      .optional()
+      .describe("Theme stamped into the seeded host config (template only)."),
+    config: z
+      .record(z.string(), z.unknown())
+      .refine((value) => Object.keys(value).length > 0, {
+        message: "`config` must be a non-empty host config object.",
+      })
+      .optional()
+      .describe("Full host config v2 to use verbatim (alternative to template)."),
+  })
+  .refine(
+    (value) => (value.template ? 1 : 0) + (value.config ? 1 : 0) === 1,
+    { message: "Provide exactly one of `template` or a non-empty `config`." }
+  );
+export type CreateHostInput = z.infer<typeof createHostInput>;
+
+export const createHostOperation: PlatformOperation<
+  CreateHostInput,
+  PlatformHostDetail
+> = {
+  name: "create_host",
+  title: "Create an MCPJam host",
+  description:
+    "Create a host in a project, either from a built-in template (`template`, optional `theme`) or from a full host config (`config`). Returns the created host.",
+  readOnly: false,
+  inputSchema: createHostInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const body: Record<string, unknown> = { name: input.name };
+    if (input.template) {
+      body.template = input.template;
+      if (input.theme) body.theme = input.theme;
+    }
+    if (input.config) body.config = input.config;
+    return client.createHost({ projectId: project.id, body }, { signal });
+  },
+};
+
+const updateHostInput = z
+  .object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("New display name for the host."),
+    config: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe("Replacement host config v2."),
+  })
+  .refine((value) => value.name !== undefined || value.config !== undefined, {
+    message: "Provide at least one of `name` or `config` to update.",
+  });
+export type UpdateHostInput = z.infer<typeof updateHostInput>;
+
+export const updateHostOperation: PlatformOperation<
+  UpdateHostInput,
+  PlatformHostDetail
+> = {
+  name: "update_host",
+  title: "Update an MCPJam host",
+  description:
+    "Edit a host's display name and/or its host config. Only the fields you pass change.",
+  readOnly: false,
+  inputSchema: updateHostInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const host = await resolveHost(client, project, input.host, signal);
+    const body: Record<string, unknown> = {};
+    if (input.name !== undefined) body.name = input.name;
+    if (input.config !== undefined) body.config = input.config;
+    return client.updateHost(
+      { projectId: project.id, hostId: host.id, body },
+      { signal }
+    );
+  },
+};
+
+const deleteHostInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  host: z.string().trim().min(1).describe(HOST_SELECTOR_DESCRIPTION),
+});
+export type DeleteHostInput = z.infer<typeof deleteHostInput>;
+
+export const deleteHostOperation: PlatformOperation<
+  DeleteHostInput,
+  PlatformHostDeleted
+> = {
+  name: "delete_host",
+  title: "Delete an MCPJam host",
+  description:
+    "Permanently delete a host from a project. This cannot be undone.",
+  readOnly: false,
+  inputSchema: deleteHostInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const host = await resolveHost(client, project, input.host, signal);
+    return client.deleteHost(
+      {
+        projectId: project.id,
+        hostId: host.id,
+        // The v1 delete contract is bodyless — the route rejects any field.
+        body: {},
+      },
+      { signal }
+    );
+  },
+};
+
+// ── Computer environments ────────────────────────────────────────────────────
+
+const ENVIRONMENT_SELECTOR_DESCRIPTION = "Environment name or ID.";
+
+async function resolveEnvironment(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  selector: string,
+  signal: AbortSignal | undefined
+): Promise<PlatformEnvironment> {
+  const page = await client.listEnvironments(
+    { projectId: project.id },
+    { signal }
+  );
+  return resolveByIdOrName(
+    page.items,
+    selector,
+    "Environment",
+    `project "${project.name}"`
+  );
+}
+
+const environmentSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  environment: z.string().trim().min(1).describe(ENVIRONMENT_SELECTOR_DESCRIPTION),
+});
+export type EnvironmentSelectorInput = z.infer<typeof environmentSelectorInput>;
+
+export type ListEnvironmentsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformEnvironment[];
+  otherProjects: ProjectInfo[];
+};
+
+export const listEnvironmentsOperation: PlatformOperation<
+  ProjectScopedInput,
+  ListEnvironmentsResult
+> = {
+  name: "list_computer_environments",
+  title: "List computer environments",
+  description:
+    "List the custom Computer environments (Dockerfile images) in an MCPJam project. If no project is specified, uses the most recently updated accessible project.",
+  readOnly: true,
+  inputSchema: projectScopedInput,
+  async execute(input, { client, signal }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const page = await client.listEnvironments(
+      { projectId: project.id },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+export const getEnvironmentOperation: PlatformOperation<
+  EnvironmentSelectorInput,
+  PlatformEnvironment
+> = {
+  name: "get_computer_environment",
+  title: "Show a computer environment",
+  description:
+    "Show one environment's Dockerfile, sharing, and latest build status.",
+  readOnly: true,
+  inputSchema: environmentSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const env = await resolveEnvironment(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    return client.getEnvironment(
+      { projectId: project.id, environmentId: env.id },
+      { signal }
+    );
+  },
+};
+
+const createEnvironmentInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  name: z.string().trim().min(1).describe("Display name for the new environment."),
+  dockerfile: z
+    .string()
+    .min(1)
+    .describe(
+      "Dockerfile text. Must start FROM an allowlisted official base pinned by @sha256 digest; only FROM + RUN are supported."
+    ),
+});
+export type CreateEnvironmentInput = z.infer<typeof createEnvironmentInput>;
+
+export const createEnvironmentOperation: PlatformOperation<
+  CreateEnvironmentInput,
+  PlatformEnvironment
+> = {
+  name: "create_computer_environment",
+  title: "Create a computer environment",
+  description:
+    "Create a custom Computer environment from a Dockerfile. Build it (build_computer_environment) before a computer can boot from it.",
+  readOnly: false,
+  inputSchema: createEnvironmentInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.createEnvironment(
+      {
+        projectId: project.id,
+        body: { name: input.name, dockerfile: input.dockerfile },
+      },
+      { signal }
+    );
+  },
+};
+
+const updateEnvironmentInput = z
+  .object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    environment: z
+      .string()
+      .trim()
+      .min(1)
+      .describe(ENVIRONMENT_SELECTOR_DESCRIPTION),
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("New display name for the environment."),
+    dockerfile: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Replacement Dockerfile text."),
+  })
+  .refine((value) => value.name !== undefined || value.dockerfile !== undefined, {
+    message: "Provide at least one of `name` or `dockerfile` to update.",
+  });
+export type UpdateEnvironmentInput = z.infer<typeof updateEnvironmentInput>;
+
+export const updateEnvironmentOperation: PlatformOperation<
+  UpdateEnvironmentInput,
+  PlatformEnvironment
+> = {
+  name: "update_computer_environment",
+  title: "Update a computer environment",
+  description:
+    "Edit an environment's name and/or Dockerfile. Re-build it for changes to take effect on a computer.",
+  readOnly: false,
+  inputSchema: updateEnvironmentInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const env = await resolveEnvironment(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    const body: { name?: string; dockerfile?: string } = {};
+    if (input.name !== undefined) body.name = input.name;
+    if (input.dockerfile !== undefined) body.dockerfile = input.dockerfile;
+    return client.updateEnvironment(
+      { projectId: project.id, environmentId: env.id, body },
+      { signal }
+    );
+  },
+};
+
+export const buildEnvironmentOperation: PlatformOperation<
+  EnvironmentSelectorInput,
+  PlatformEnvironmentBuildStarted
+> = {
+  name: "build_computer_environment",
+  title: "Build a computer environment",
+  description:
+    "Trigger a build of the environment's image. Async — poll list_computer_environment_builds for status.",
+  readOnly: false,
+  inputSchema: environmentSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const env = await resolveEnvironment(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    return client.buildEnvironment(
+      { projectId: project.id, environmentId: env.id },
+      { signal }
+    );
+  },
+};
+
+export type ListEnvironmentBuildsResult = {
+  project: SelectedProjectInfo;
+  environmentId: string;
+  items: PlatformEnvironmentBuild[];
+};
+
+export const listEnvironmentBuildsOperation: PlatformOperation<
+  EnvironmentSelectorInput,
+  ListEnvironmentBuildsResult
+> = {
+  name: "list_computer_environment_builds",
+  title: "List computer environment builds",
+  description:
+    "List an environment's builds (newest first) with their status and log preview.",
+  readOnly: true,
+  inputSchema: environmentSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const env = await resolveEnvironment(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    const page = await client.listEnvironmentBuilds(
+      { projectId: project.id, environmentId: env.id },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      environmentId: env.id,
+      items: page.items,
+    };
+  },
+};
+
+export const promoteEnvironmentOperation: PlatformOperation<
+  EnvironmentSelectorInput,
+  PlatformEnvironment
+> = {
+  name: "promote_computer_environment",
+  title: "Share a computer environment with the project",
+  description:
+    "Promote a personal-draft environment to a project-shared one (requires project admin).",
+  readOnly: false,
+  inputSchema: environmentSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const env = await resolveEnvironment(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    return client.promoteEnvironment(
+      { projectId: project.id, environmentId: env.id },
+      { signal }
+    );
+  },
+};
+
+export const useEnvironmentOperation: PlatformOperation<
+  EnvironmentSelectorInput,
+  PlatformComputerAttached
+> = {
+  name: "use_computer_environment",
+  title: "Use a computer environment",
+  description:
+    "Attach the environment to your computer, which rebuilds it from the pinned image (installed files are wiped). The environment must have a ready build.",
+  readOnly: false,
+  inputSchema: environmentSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const env = await resolveEnvironment(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    return client.useEnvironment(
+      { projectId: project.id, environmentId: env.id },
+      { signal }
+    );
+  },
+};
+
+export const resetComputerOperation: PlatformOperation<
+  ProjectScopedInput,
+  PlatformComputerReset
+> = {
+  name: "reset_computer",
+  title: "Reset your computer to its image",
+  description:
+    "Reset the caller's computer back to its current image, wiping mutable state.",
+  readOnly: false,
+  inputSchema: projectScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.resetComputer({ projectId: project.id }, { signal });
+  },
+};
+
+export const deleteEnvironmentOperation: PlatformOperation<
+  EnvironmentSelectorInput,
+  PlatformEnvironmentDeleted
+> = {
+  name: "delete_computer_environment",
+  title: "Delete a computer environment",
+  description:
+    "Permanently delete an environment. Computers booted from it fall back to the base image. This cannot be undone.",
+  readOnly: false,
+  inputSchema: environmentSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const env = await resolveEnvironment(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    return client.deleteEnvironment(
+      { projectId: project.id, environmentId: env.id },
+      { signal }
+    );
   },
 };

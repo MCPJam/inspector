@@ -1,9 +1,11 @@
 import { closeSync, existsSync, openSync, renameSync, statSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { operationalError } from "./output.js";
+
+const require = createRequire(import.meta.url);
 
 const FALLBACK_INSPECTOR_BASE_URL = "http://127.0.0.1:6274";
 const DEFAULT_START_TIMEOUT_MS = 30_000;
@@ -769,10 +771,13 @@ async function fetchFreshInspectorSessionToken(
   return body.token;
 }
 
-function getInspectorStartScriptPath(): string {
-  return fileURLToPath(
-    new URL("../../../mcpjam-inspector/bin/start.js", import.meta.url),
-  );
+function getInspectorStartScriptPath(): string | undefined {
+  try {
+    const packageJsonPath = require.resolve("@mcpjam/inspector/package.json");
+    return path.resolve(path.dirname(packageJsonPath), "bin/start.js");
+  } catch {
+    return undefined;
+  }
 }
 
 interface InspectorHealthStatus {
@@ -1062,18 +1067,23 @@ async function startInspector(
   const parsedUrl = new URL(baseUrl);
   const port = parsedUrl.port || "6274";
   const startScriptPath = getInspectorStartScriptPath();
-  const hasStartScript = existsSync(startScriptPath);
-  const args = hasStartScript
-    ? [startScriptPath, "--port", port, "--no-open"]
+  const localStartScriptPath =
+    startScriptPath && existsSync(startScriptPath) ? startScriptPath : undefined;
+  const args = localStartScriptPath
+    ? [localStartScriptPath, "--port", port, "--no-open"]
     : ["-y", "@mcpjam/inspector@latest", "--port", port, "--no-open"];
-  const executable = hasStartScript ? process.execPath : getNpxExecutable();
+  const executable = localStartScriptPath
+    ? process.execPath
+    : getNpxExecutable();
   const logPath = getInspectorStartupLogPath();
   const logFd = openStartupLogFile(logPath);
 
   let child: ReturnType<typeof spawn>;
   try {
     child = spawn(executable, args, {
-      cwd: hasStartScript ? path.dirname(startScriptPath) : process.cwd(),
+      cwd: localStartScriptPath
+        ? path.dirname(localStartScriptPath)
+        : process.cwd(),
       detached: true,
       stdio: ["ignore", logFd, logFd],
       env: {
