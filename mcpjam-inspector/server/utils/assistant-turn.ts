@@ -26,7 +26,8 @@ import type {
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import type { ModelDefinition } from "@/shared/types";
-import { getCanonicalModelId, isMCPJamProvidedModel } from "@/shared/types";
+import { getCanonicalModelId } from "@/shared/types";
+import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import type {
   ProgressiveToolPlan,
@@ -512,7 +513,7 @@ export async function runAssistantTurn(
     ? getHarnessAdapter(opts.harness as string)
     : undefined;
   // supportsModel needs the CANONICAL id (bare hosted ids like `gpt-5-nano` →
-  // `openai/gpt-5-nano`); isMCPJamProvidedModel canonicalizes internally, so a
+  // `openai/gpt-5-nano`); isHostedCatalogModel canonicalizes internally, so a
   // bare id would otherwise pass eligibility but fail supportsModel and wrongly
   // fall back to emulated.
   const canonicalHarnessModelId = getCanonicalModelId(
@@ -520,7 +521,7 @@ export async function runAssistantTurn(
     opts.modelDefinition.provider,
   );
   const modelEligible =
-    isMCPJamProvidedModel(harnessModelId, opts.modelDefinition.provider) &&
+    isHostedCatalogModel(harnessModelId, opts.modelDefinition.provider) &&
     (harnessAdapter
       ? harnessAdapter.supportsModel(canonicalHarnessModelId)
       : true);

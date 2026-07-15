@@ -42,6 +42,7 @@ import {
 } from "./middleware/session-auth";
 import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
+import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
@@ -121,6 +122,7 @@ import v1Routes from "./routes/v1/index";
 import cliAuthRoutes from "./routes/cli-auth/index";
 import relayRoutes, { relayBodyLimit } from "./routes/relay";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata";
+import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd";
 import workosAuthkitRoutes from "./routes/workos-authkit";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
@@ -139,7 +141,7 @@ import {
   CANIUSE_LANDING_HOSTS,
 } from "./config";
 import "./types/hono"; // Type extensions
-import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair";
+import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 
 // Utility function to extract MCP server config from environment variables
 function getMCPConfigFromEnv() {
@@ -238,7 +240,12 @@ warnOnConvexDevMisconfiguration(loadedEnv);
 
 // Generate session token for API authentication
 generateSessionToken();
+setXaaIdpLogger(appLogger);
 initXAAIdpKeyPair();
+
+// Warm the hosted-model catalog (seed ∪ backend /v1/models) so billing
+// dispatch classifies newly-added hosted models correctly. Memoized.
+startHostedModelCatalogRefresh();
 
 startGuestAuthProvisioningInBackground();
 startLocalBrowserRenderingSetupInBackground();
@@ -453,6 +460,7 @@ app.route("/relay", relayRoutes);
 // the production static/SPA fallback. Mirror of the mount in
 // server/app.ts::createHonoApp — both production entries must wire this up.
 registerXaaClientMetadataRoute(app);
+registerXaaConfidentialCimdRoute(app);
 
 // Fallback for clients that post to "/sse/message" instead of the rewritten proxy messages URL.
 // We resolve the upstream messages endpoint via sessionId and forward with any injected auth.

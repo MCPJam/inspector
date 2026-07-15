@@ -19,6 +19,11 @@ export interface RemoteProject {
   organizationId: string;
   visibility?: ProjectVisibility;
   ownerId: string;
+  /** Admin-controlled default synthetic identity for the MCPJam test IdP
+   * (atomic pair). Absent when the project has no default. */
+  xaaTestDefaults?: {
+    defaultIdentity: { subject: string; email: string };
+  };
   createdAt: number;
   updatedAt: number;
 }
@@ -57,6 +62,9 @@ export interface RemoteServer {
   authServerMode?: "mcpjam" | "own";
   xaaSubject?: string;
   xaaEmail?: string;
+  xaaIdentityAssertionFormat?: string;
+  registrationMode?: string;
+  authMethod?: string;
   createdAt: number;
   updatedAt: number;
 }

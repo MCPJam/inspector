@@ -213,6 +213,39 @@ describe("ensureAuthorizedForReconnect", () => {
     );
   });
 
+  it("reconnects with the canonical registrationMode over the legacy concrete strategy", async () => {
+    initiateOAuthMock.mockResolvedValue({ success: true });
+
+    // A row saved by the unified pipeline: canonical "auto" plus the
+    // rollback-compat concrete on the legacy column. Reconnect must run in
+    // "auto" mode (re-resolve from current server metadata) — pinning the
+    // concrete would mean a persisted "auto" never dynamically resolves.
+    const [server] = Object.values(
+      deserializeServersFromConvex([
+        {
+          name: "asana",
+          enabled: true,
+          transportType: "http",
+          url: "https://mcp.asana.com/sse",
+          useOAuth: true,
+          registrationMode: "auto",
+          oauthRegistrationStrategy: "dcr",
+        },
+      ]),
+    );
+
+    await ensureAuthorizedForReconnect(
+      { ...server, oauthTokens: { access_token: "t" } } as ServerWithName,
+      { allowInteractiveOAuthFlow: true },
+    );
+
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        registrationMode: "auto",
+      }),
+    );
+  });
+
   it("strips authorization when falling back to server headers for OAuth retry", async () => {
     initiateOAuthMock.mockResolvedValue({ success: true });
 

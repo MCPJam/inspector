@@ -10,6 +10,7 @@ import {
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
 } from "@mcpjam/sdk/browser";
+import { normalizeRegistrationMode } from "@/shared/xaa.js";
 import type {
   AppAction,
   AppState,
@@ -43,6 +44,11 @@ import {
 } from "@/lib/apis/hosted-oauth-import-tokens-api";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import {
+  autoOAuthEscalation,
+  confirmAutoOAuthEscalation,
+  type AutoEscalationIdentity,
+} from "@/lib/oauth/auto-oauth-escalation";
+import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
   resolveHostedOAuthReturnPath,
@@ -50,6 +56,7 @@ import {
 } from "@/lib/hosted-oauth-callback";
 import { HOSTED_MODE } from "@/lib/config";
 import { isPrivateNetworkUrl } from "@/lib/oauth/private-address";
+import { resolveXaaIdentitySaveFields } from "@/lib/xaa/identity";
 import { validateServerFormData } from "@/lib/server-form-validation";
 import {
   injectHostedServerMapping,
@@ -276,7 +283,7 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   const existingOAuthConfig = readStoredOAuthConfig(formData.name);
   const protocolMode = formData.oauthProtocolMode ?? "auto";
   const registrationMode =
-    formData.oauthRegistrationMode ??
+    formData.registrationMode ??
     (formData.clientId || formData.clientSecret ? "preregistered" : "auto");
 
   oauthConfig.protocolMode = protocolMode;
@@ -492,8 +499,8 @@ function buildOAuthProfileFromFormData(
       ? formData.oauthProtocolMode
       : existingProfile?.protocolVersion ?? "2025-11-25";
   const registrationStrategy =
-    formData.oauthRegistrationMode && formData.oauthRegistrationMode !== "auto"
-      ? formData.oauthRegistrationMode
+    formData.registrationMode && formData.registrationMode !== "auto"
+      ? formData.registrationMode
       : existingProfile?.registrationStrategy ??
         (formData.clientId || formData.clientSecret || formData.hasClientSecret
           ? "preregistered"
@@ -549,6 +556,24 @@ function requiresFreshOAuthAuthorization(error: unknown): boolean {
     (normalized.includes("authentication failed") &&
       normalized.includes("invalid_token"))
   );
+}
+
+/**
+ * Structured-first detection of "this connect needs an interactive OAuth
+ * flow". The connect surfaces tag a live 401 from a discover attempt
+ * (non-XAA auto, no stored token) with `oauthRequired: true` — top-level on
+ * the local envelope (respondWithLocalRouteError spreads details), threaded
+ * through `safeValidateHostedServer` on the hosted one. The string heuristic
+ * stays as the fallback for pre-tagging server responses and thrown errors.
+ */
+function connectFailureRequiresOAuth(
+  result:
+    | { error?: string; oauthRequired?: unknown }
+    | null
+    | undefined
+): boolean {
+  if (result?.oauthRequired === true) return true;
+  return requiresFreshOAuthAuthorization(result?.error);
 }
 
 export function shouldRetryOAuthConnectionFailure(
@@ -1414,6 +1439,10 @@ export function useServerState({
       secretOptions?: {
         clientSecret?: string;
         clearClientSecret?: boolean;
+        // One-shot command (like clearClientSecret): resets the sticky XAA
+        // identity config server-side. Rides the call, never app state — a
+        // persisted flag would re-fire on every future sync.
+        clearXaaConfig?: boolean;
         env?: Record<string, string>;
         headers?: Record<string, string>;
       },
@@ -1464,6 +1493,7 @@ export function useServerState({
 
       const clientSecret = secretOptions?.clientSecret?.trim();
       const clearClientSecret = secretOptions?.clearClientSecret === true;
+      const clearXaaConfig = secretOptions?.clearXaaConfig === true;
       const config = serverEntry.config as any;
       const headers = extractRequestHeaders(config?.requestInit);
       const hasEnvSecretPatch = Object.prototype.hasOwnProperty.call(
@@ -1602,6 +1632,15 @@ export function useServerState({
         ...(serverEntry.xaaEmail !== undefined
           ? { xaaEmail: serverEntry.xaaEmail }
           : {}),
+        ...(serverEntry.xaaIdentityAssertionFormat !== undefined
+          ? { xaaIdentityAssertionFormat: serverEntry.xaaIdentityAssertionFormat }
+          : {}),
+        ...(serverEntry.registrationMode !== undefined
+          ? { registrationMode: serverEntry.registrationMode }
+          : {}),
+        ...(serverEntry.authMethod !== undefined
+          ? { authMethod: serverEntry.authMethod }
+          : {}),
       } as const;
 
       try {
@@ -1611,6 +1650,7 @@ export function useServerState({
             ...payload,
             ...(clientSecret ? { clientSecret } : {}),
             ...(clearClientSecret ? { clearClientSecret: true } : {}),
+            ...(clearXaaConfig ? { clearXaaConfig: true } : {}),
           };
           if (hasSecretOperation) {
             await convexUpdateServerWithClientSecret(updatePayload);
@@ -1659,6 +1699,7 @@ export function useServerState({
               ...payload,
               ...(clientSecret ? { clientSecret } : {}),
               ...(clearClientSecret ? { clearClientSecret: true } : {}),
+              ...(clearXaaConfig ? { clearXaaConfig: true } : {}),
             };
             if (hasSecretOperation) {
               await convexUpdateServerWithClientSecret(updatePayload);
@@ -2743,6 +2784,8 @@ export function useServerState({
           ? { clientSecret: formData.clientSecret }
           : {}),
         ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
+        // One-shot XAA-config reset (modal moved the server off XAA).
+        ...(formData.clearXaaConfig ? { clearXaaConfig: true } : {}),
         ...(formData.secretPatch?.env !== undefined
           ? { env: formData.secretPatch.env }
           : {}),
@@ -2779,15 +2822,24 @@ export function useServerState({
           formData.xaaAllowPathScopedIssuer ??
           existingServerForSave?.xaaAllowPathScopedIssuer,
         useXaa: formData.useXaa ?? false,
-        authServerMode: formData.useXaa
-          ? formData.authServerMode ?? "mcpjam"
-          : existingServerForSave?.authServerMode,
-        xaaSubject: formData.useXaa
-          ? formData.xaaSubject
-          : existingServerForSave?.xaaSubject,
-        xaaEmail: formData.useXaa
-          ? formData.xaaEmail
-          : existingServerForSave?.xaaEmail,
+        // Shared atomic identity-pair semantics (omitted pair preserves the
+        // stored values, explicit "" pair clears) + authServerMode default.
+        ...resolveXaaIdentitySaveFields({
+          useXaa: formData.useXaa === true,
+          formAuthServerMode: formData.authServerMode,
+          formSubject: formData.xaaSubject,
+          formEmail: formData.xaaEmail,
+          existing: existingServerForSave,
+        }),
+        // Unified fields: preserve any saved value when a save that omits
+        // them comes through, rather than erasing it.
+        xaaIdentityAssertionFormat:
+          formData.xaaIdentityAssertionFormat ??
+          existingServerForSave?.xaaIdentityAssertionFormat,
+        registrationMode:
+          formData.registrationMode ??
+          existingServerForSave?.registrationMode,
+        authMethod: formData.authMethod ?? existingServerForSave?.authMethod,
       };
       // Both modes: await Convex sync so the returned serverId is available
       // for OAuth binding (hosted) and for the new {projectId, serverId}
@@ -2854,6 +2906,14 @@ export function useServerState({
 
       try {
         if (formData.type === "http" && formData.useOAuth && formData.url) {
+          // Keyed by project + server id so identically named servers across
+          // projects don't share escalation state; name is the last-resort
+          // key for servers that haven't synced an id yet.
+          const escalationIdentity: AutoEscalationIdentity = {
+            projectId: appState.activeProjectId,
+            serverId: hostedServerId ?? null,
+            serverName: formData.name,
+          };
           const serverConfig = {
             url: formData.url,
             ...(formData.headers && Object.keys(formData.headers).length > 0
@@ -2869,6 +2929,7 @@ export function useServerState({
           );
           if (isStaleOp(formData.name, token)) return;
           if (storedCredentialResult.success) {
+            autoOAuthEscalation.markSucceeded(escalationIdentity);
             dispatch({
               type: "CONNECT_SUCCESS",
               name: formData.name,
@@ -2876,7 +2937,13 @@ export function useServerState({
               tokens: undefined,
               useOAuth: true,
             });
-            toast.success("Connected successfully with OAuth!");
+            // An Auto server may have connected without credentials — don't
+            // claim OAuth happened when it didn't.
+            toast.success(
+              formData.authMethod === "auto"
+                ? "Connected successfully!"
+                : "Connected successfully with OAuth!"
+            );
             storeInitInfo(formData.name, storedCredentialResult.initInfo).catch(
               (err) =>
                 logger.warn("Failed to fetch init info", {
@@ -2886,7 +2953,7 @@ export function useServerState({
             );
             return;
           }
-          if (!requiresFreshOAuthAuthorization(storedCredentialResult.error)) {
+          if (!connectFailureRequiresOAuth(storedCredentialResult)) {
             const errorMessage =
               storedCredentialResult.error || "OAuth connection failed";
             dispatch({
@@ -2898,6 +2965,38 @@ export function useServerState({
             });
             toast.error(errorMessage);
             return;
+          }
+          // Auto escalation gate: the user picked Auto, not OAuth, so a 401
+          // asks before redirecting. A still-pending marker means a confirmed
+          // flow already ran and the server 401'd again — surface the config
+          // problem (and clear, so a later manual attempt re-prompts) instead
+          // of looping.
+          if (formData.authMethod === "auto") {
+            const failWithoutEscalation = (message: string) => {
+              dispatch({
+                type: "CONNECT_FAILURE",
+                name: formData.name,
+                error: message,
+                normalized: (storedCredentialResult as { normalized?: unknown })
+                  .normalized as any,
+              });
+            };
+            if (autoOAuthEscalation.hasPendingAttempt(escalationIdentity)) {
+              autoOAuthEscalation.markFailed(escalationIdentity);
+              const errorMessage = `Server "${formData.name}" still returns 401 after OAuth. Check the server's authorization configuration.`;
+              failWithoutEscalation(errorMessage);
+              toast.error(errorMessage);
+              return;
+            }
+            const proceed = await confirmAutoOAuthEscalation(formData.name);
+            if (isStaleOp(formData.name, token)) return;
+            if (!proceed) {
+              failWithoutEscalation(
+                `Server "${formData.name}" requires authorization. Reconnect to sign in with OAuth.`
+              );
+              return;
+            }
+            autoOAuthEscalation.markPending(escalationIdentity);
           }
           logger.info("Synced OAuth credentials require a fresh OAuth flow", {
             serverName: formData.name,
@@ -2923,7 +3022,7 @@ export function useServerState({
             existingOAuthProfile?.protocolVersion ??
             "auto";
           const registrationMode =
-            formData.oauthRegistrationMode ??
+            formData.registrationMode ??
             existingOAuthProfile?.registrationStrategy ??
             "auto";
           const oauthOptions: any = {
@@ -2969,6 +3068,7 @@ export function useServerState({
               );
               if (isStaleOp(formData.name, token)) return;
               if (connectionResult.success) {
+                autoOAuthEscalation.markSucceeded(escalationIdentity);
                 dispatch({
                   type: "CONNECT_SUCCESS",
                   name: formData.name,
@@ -2986,6 +3086,10 @@ export function useServerState({
                     })
                 );
               } else {
+                // Terminal in this page-session: OAuth completed but the
+                // connect failed. Clear the pending marker so a later manual
+                // attempt re-prompts instead of being muted all session.
+                autoOAuthEscalation.markFailed(escalationIdentity);
                 dispatch({
                   type: "CONNECT_FAILURE",
                   name: formData.name,
@@ -2998,6 +3102,9 @@ export function useServerState({
                 );
               }
             } else {
+              // Redirect pending — the marker stays PENDING on purpose; it's
+              // what survives the page navigation so the post-callback
+              // reconnect doesn't re-prompt.
               toast.success(
                 "OAuth flow initiated. You will be redirected to authorize access."
               );
@@ -3006,6 +3113,8 @@ export function useServerState({
           }
 
           if (isStaleOp(formData.name, token)) return;
+          // OAuth init failed before any redirect — nothing is pending.
+          autoOAuthEscalation.markFailed(escalationIdentity);
           dispatch({
             type: "CONNECT_FAILURE",
             name: formData.name,
@@ -3193,15 +3302,24 @@ export function useServerState({
           formData.xaaAllowPathScopedIssuer ??
           existingServer?.xaaAllowPathScopedIssuer,
         useXaa: formData.useXaa ?? false,
-        authServerMode: formData.useXaa
-          ? formData.authServerMode ?? "mcpjam"
-          : existingServer?.authServerMode,
-        xaaSubject: formData.useXaa
-          ? formData.xaaSubject
-          : existingServer?.xaaSubject,
-        xaaEmail: formData.useXaa
-          ? formData.xaaEmail
-          : existingServer?.xaaEmail,
+        // Shared atomic identity-pair semantics (omitted pair preserves the
+        // stored values, explicit "" pair clears) + authServerMode default.
+        ...resolveXaaIdentitySaveFields({
+          useXaa: formData.useXaa === true,
+          formAuthServerMode: formData.authServerMode,
+          formSubject: formData.xaaSubject,
+          formEmail: formData.xaaEmail,
+          existing: existingServer,
+        }),
+        // Unified fields: preserve any saved value when a save that omits
+        // them comes through, rather than erasing it.
+        xaaIdentityAssertionFormat:
+          formData.xaaIdentityAssertionFormat ??
+          existingServer?.xaaIdentityAssertionFormat,
+        registrationMode:
+          formData.registrationMode ??
+          existingServer?.registrationMode,
+        authMethod: formData.authMethod ?? existingServer?.authMethod,
       } as ServerWithName;
 
       const hasPendingOAuthCallback = new URLSearchParams(
@@ -3226,6 +3344,8 @@ export function useServerState({
                 ? { clientSecret: formData.clientSecret }
                 : {}),
               ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
+              // One-shot XAA-config reset (modal moved the server off XAA).
+              ...(formData.clearXaaConfig ? { clearXaaConfig: true } : {}),
               ...(formData.secretPatch?.env !== undefined
                 ? { env: formData.secretPatch.env }
                 : {}),
@@ -4014,7 +4134,13 @@ export function useServerState({
           server.oauthFlowProfile?.protocolVersion ??
           storedOAuthConfig.protocolMode ??
           "auto";
+        // Canonical per-server registrationMode wins over the legacy
+        // profile/localStorage concretes — a persisted "auto" must keep
+        // resolving from current server metadata on forced reconnects too
+        // (same precedence as buildReconnectOAuthOptions in
+        // oauth-orchestrator.ts).
         const registrationMode =
+          normalizeRegistrationMode(server.registrationMode) ??
           server.oauthFlowProfile?.registrationStrategy ??
           storedOAuthConfig.registrationMode ??
           "auto";
@@ -4177,6 +4303,70 @@ export function useServerState({
         };
       }
 
+      // Auto's escalation gate for the reconnect path: same confirm +
+      // pending/succeeded/failed lifecycle as handleConnect. Returns null to
+      // proceed into the interactive flow, or the outcome to return
+      // immediately. Keyed by project + server id so identically named
+      // servers across projects don't share state.
+      const escalationIdentity: AutoEscalationIdentity = {
+        projectId: appState.activeProjectId,
+        serverId: hostedProjectServerId ?? null,
+        serverName,
+      };
+      let autoInteractiveConfirmed = false;
+      const gateAutoEscalation = async (): Promise<
+        | null
+        | { status: "failed" | "reauth" | "superseded"; error: string }
+      > => {
+        if (server.authMethod !== "auto") return null;
+        const fail = (errorMessage: string, status: "failed" | "reauth") => {
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: errorMessage,
+          });
+          reportError(errorMessage);
+          return { status, error: errorMessage };
+        };
+        if (autoOAuthEscalation.hasPendingAttempt(escalationIdentity)) {
+          // A confirmed flow already ran this session and the server 401'd
+          // again — surface the config problem and clear, so a later manual
+          // attempt re-prompts instead of being muted all session.
+          autoOAuthEscalation.markFailed(escalationIdentity);
+          return fail(
+            `Server "${serverName}" still returns 401 after OAuth. Check the server's authorization configuration.`,
+            "failed"
+          );
+        }
+        if (options?.allowInteractiveOAuthFlow === false) {
+          // Non-interactive reconnect-all (client/host switch, load loop):
+          // never prompt or redirect from here; a manual reconnect offers
+          // the escalation.
+          return fail(
+            `Server "${serverName}" requires authorization. Reconnect to sign in with OAuth.`,
+            "reauth"
+          );
+        }
+        const proceed = await confirmAutoOAuthEscalation(serverName);
+        // A newer op superseded this one while the prompt sat open — don't
+        // write ITS marker state (that would poison the newer attempt).
+        if (isStaleOp(serverName, token)) {
+          return {
+            status: "superseded",
+            error: "Reconnection superseded",
+          };
+        }
+        if (!proceed) {
+          return fail(
+            `Server "${serverName}" requires authorization. Reconnect to sign in with OAuth.`,
+            "failed"
+          );
+        }
+        autoOAuthEscalation.markPending(escalationIdentity);
+        autoInteractiveConfirmed = true;
+        return null;
+      };
+
       if (server.useOAuth === true) {
         const syncedReconnectConfig = withProjectConnectionDefaults(
           server.config
@@ -4194,6 +4384,7 @@ export function useServerState({
             };
           }
           if (result.success) {
+            autoOAuthEscalation.markSucceeded(escalationIdentity);
             dispatch({
               type: "CONNECT_SUCCESS",
               name: serverName,
@@ -4211,7 +4402,7 @@ export function useServerState({
             return { status: "connected" };
           }
 
-          if (!requiresFreshOAuthAuthorization(result.error)) {
+          if (!connectFailureRequiresOAuth(result)) {
             const errorMessage = result.error || "Reconnection failed";
             dispatch({
               type: "CONNECT_FAILURE",
@@ -4223,6 +4414,15 @@ export function useServerState({
             return {
               status: "failed",
               error: errorMessage,
+            };
+          }
+
+          const gated = await gateAutoEscalation();
+          if (gated) return gated;
+          if (isStaleOp(serverName, token)) {
+            return {
+              status: "superseded",
+              error: result.error || "Reconnection failed",
             };
           }
 
@@ -4259,6 +4459,15 @@ export function useServerState({
             };
           }
 
+          const gated = await gateAutoEscalation();
+          if (gated) return gated;
+          if (isStaleOp(serverName, token)) {
+            return {
+              status: "superseded",
+              error: errorMessage,
+            };
+          }
+
           logger.info(
             "Reconnect requires a fresh OAuth flow after synced credential lookup",
             { serverName, error: errorMessage }
@@ -4282,6 +4491,11 @@ export function useServerState({
               updateServerOAuthTrace(serverName, oauthTrace);
             },
             allowInteractiveOAuthFlow: options?.allowInteractiveOAuthFlow,
+            // Auto servers reach the interactive flow only through the
+            // user-confirmed escalation gate above; without this flag the
+            // orchestrator treats a tokenless auto server as
+            // ready-unauthenticated instead of redirecting.
+            interactiveOAuthConfirmed: autoInteractiveConfirmed,
           }
         );
         if (authResult.kind === "redirect") {
@@ -4316,6 +4530,10 @@ export function useServerState({
               error: authResult.error,
             };
           }
+          if (autoInteractiveConfirmed) {
+            // OAuth init failed before any redirect — nothing is pending.
+            autoOAuthEscalation.markFailed(escalationIdentity);
+          }
           dispatch({
             type: "CONNECT_FAILURE",
             name: serverName,
@@ -4344,6 +4562,7 @@ export function useServerState({
           };
         }
         if (result.success) {
+          autoOAuthEscalation.markSucceeded(escalationIdentity);
           dispatch({
             type: "CONNECT_SUCCESS",
             name: serverName,
@@ -4357,6 +4576,12 @@ export function useServerState({
             logger.warn("Failed to fetch init info", { serverName, err })
           );
           return { status: "connected" };
+        }
+        if (autoInteractiveConfirmed) {
+          // Terminal in this page-session: OAuth completed but the connect
+          // failed. Clear the pending marker so a later manual attempt
+          // re-prompts instead of being muted all session.
+          autoOAuthEscalation.markFailed(escalationIdentity);
         }
         const errorMessage = result.error || "Reconnection failed";
         dispatch({
@@ -4722,15 +4947,25 @@ export function useServerState({
             formData.xaaAllowPathScopedIssuer ??
             originalServer?.xaaAllowPathScopedIssuer,
           useXaa: formData.useXaa ?? false,
-          authServerMode: formData.useXaa
-            ? formData.authServerMode ?? "mcpjam"
-            : originalServer?.authServerMode,
-          xaaSubject: formData.useXaa
-            ? formData.xaaSubject
-            : originalServer?.xaaSubject,
-          xaaEmail: formData.useXaa
-            ? formData.xaaEmail
-            : originalServer?.xaaEmail,
+          // Shared atomic identity-pair semantics (omitted pair preserves
+          // the stored values, explicit "" pair clears) + authServerMode
+          // default.
+          ...resolveXaaIdentitySaveFields({
+            useXaa: formData.useXaa === true,
+            formAuthServerMode: formData.authServerMode,
+            formSubject: formData.xaaSubject,
+            formEmail: formData.xaaEmail,
+            existing: originalServer,
+          }),
+          // Unified fields: preserve any saved value when a save that omits
+          // them comes through, rather than erasing it.
+          xaaIdentityAssertionFormat:
+            formData.xaaIdentityAssertionFormat ??
+            originalServer?.xaaIdentityAssertionFormat,
+          registrationMode:
+            formData.registrationMode ??
+            originalServer?.registrationMode,
+          authMethod: formData.authMethod ?? originalServer?.authMethod,
         } as ServerWithName;
 
         if (!formData.useOAuth && !formData.useXaa) {

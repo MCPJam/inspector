@@ -68,6 +68,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "io.modelcontextprotocol/ui": {
             mimeTypes: ["text/html;profile=mcp-app"],
           },
+          "io.modelcontextprotocol/enterprise-managed-authorization": {},
         },
       },
       hostContext: {

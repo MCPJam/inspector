@@ -3,6 +3,7 @@ import {
   SUPPORTED_MODELS,
   type ModelDefinition,
   type ModelProvider,
+  hostedModelDefinitionsFromSnapshot,
   isMCPJamProvidedModel,
   Model,
 } from "@/shared/types";
@@ -27,6 +28,13 @@ export function buildAvailableModels(params: {
   ollamaModels: ModelDefinition[];
   getAzureBaseUrl: () => string;
   customProviders: CustomProvider[];
+  /**
+   * The hosted ("free") model source. When provided (the backend catalog),
+   * it replaces the static `SUPPORTED_MODELS.filter(isMCPJamProvidedModel)`
+   * subset; BYOK-key-derived models still come from `SUPPORTED_MODELS`. Absent
+   * → the pre-catalog static behavior (keeps un-wired callers + tests working).
+   */
+  hostedCatalog?: ModelDefinition[];
 }): ModelDefinition[] {
   const {
     hasToken,
@@ -35,6 +43,7 @@ export function buildAvailableModels(params: {
     isOllamaRunning,
     ollamaModels,
     customProviders,
+    hostedCatalog,
   } = params;
 
   const providerHasKey: Record<string, boolean> = {
@@ -52,10 +61,14 @@ export function buildAvailableModels(params: {
     meta: false,
   } as const;
 
-  const cloud = SUPPORTED_MODELS.filter((m) => {
-    if (isMCPJamProvidedModel(m.id)) return true;
+  const hosted = hostedCatalog ?? hostedModelDefinitionsFromSnapshot();
+  // BYOK models the user has a key for — hosted ids handled by `hosted` above,
+  // so exclude them here to avoid duplicates when a static model is both.
+  const byok = SUPPORTED_MODELS.filter((m) => {
+    if (isMCPJamProvidedModel(String(m.id))) return false;
     return providerHasKey[m.provider];
   });
+  const cloud = [...hosted, ...byok];
 
   const openRouterModels: ModelDefinition[] = providerHasKey.openrouter
     ? getOpenRouterSelectedModels().map((id) => ({
@@ -118,11 +131,15 @@ export function isOrgProviderAvailable(
  * so hosted local-runtime Ollama providers appear in the model picker.
  */
 export function buildAvailableModelsFromOrgConfig(
-  orgConfig: OrgVisibleConfig | undefined
+  orgConfig: OrgVisibleConfig | undefined,
+  /** Hosted ("free") source; see `buildAvailableModels`. */
+  hostedCatalog?: ModelDefinition[]
 ): ModelDefinition[] {
+  const hosted = hostedCatalog ?? hostedModelDefinitionsFromSnapshot();
+
   if (!orgConfig?.providers) {
-    // No org config loaded yet — return only MCPJam-provided models
-    return SUPPORTED_MODELS.filter((m) => isMCPJamProvidedModel(String(m.id)));
+    // No org config loaded yet — return only MCPJam-provided (hosted) models
+    return hosted;
   }
 
   // Determine which provider keys are available. Ollama is skipped — it never
@@ -134,11 +151,13 @@ export function buildAvailableModelsFromOrgConfig(
     if (p.hasSecret) availableProviderKeys.add(p.providerKey);
   }
 
-  // Always include MCPJam-provided models
-  const models: ModelDefinition[] = SUPPORTED_MODELS.filter((m) => {
-    if (isMCPJamProvidedModel(String(m.id))) return true;
+  // Hosted models plus the org-key-derived provider models (hosted ids excluded
+  // from the latter so a static model that is both isn't duplicated).
+  const orgKeyModels = SUPPORTED_MODELS.filter((m) => {
+    if (isMCPJamProvidedModel(String(m.id))) return false;
     return availableProviderKeys.has(m.provider);
   });
+  const models: ModelDefinition[] = [...hosted, ...orgKeyModels];
 
   // OpenRouter: include selectedModels from org config
   const openRouterConfig = orgConfig.providers.find(
@@ -223,6 +242,15 @@ export function compactModelLabel(name: string | undefined | null): string {
   return name.replace(/\s*\(Free\)\s*$/i, "").trim() || name;
 }
 
+/** Title-case an unknown provider key ("arcee-ai" → "Arcee Ai"). */
+function titleCaseProviderKey(groupKey: string): string {
+  return groupKey
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 /** Display name for a provider group key (handles `custom:<slug>`). */
 export function getProviderDisplayName(groupKey: string): string {
   if (groupKey.startsWith("custom:")) {
@@ -261,7 +289,9 @@ export function getProviderDisplayName(groupKey: string): string {
     case "qwen":
       return "Qwen";
     default:
-      return groupKey;
+      // Unknown catalog provider (e.g. "arcee-ai", "nvidia") — render a clean
+      // title-cased name instead of the raw key, so new providers need no code.
+      return titleCaseProviderKey(groupKey);
   }
 }
 
@@ -275,6 +305,8 @@ export interface ModelMenuItem {
   name: string;
   provider: string;
   customProviderName?: string;
+  /** Set by the backend catalog source; see `ModelDefinition.hosted`. */
+  hosted?: boolean;
 }
 
 const OWN_PROVIDER_SOURCES = new Set([
@@ -286,9 +318,15 @@ const OWN_PROVIDER_SOURCES = new Set([
 ]);
 
 export function isMCPJamProvidedModelMenuItem(model: ModelMenuItem): boolean {
+  // The catalog-sourced `hosted` flag is authoritative — a catalog-only model
+  // (not in the static list) still classifies as MCPJam-provided.
+  if (model.hosted === true) {
+    return true;
+  }
   if (OWN_PROVIDER_SOURCES.has(model.provider)) {
     return false;
   }
+  // Back-compat for static-derived items that carry no `hosted` flag.
   return isMCPJamProvidedModel(String(model.id));
 }
 

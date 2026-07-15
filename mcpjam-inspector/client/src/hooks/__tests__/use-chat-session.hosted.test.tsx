@@ -14,6 +14,7 @@ const mockState = vi.hoisted(() => ({
   buildServerRequest: vi.fn(),
   getAccessToken: vi.fn(async () => "access-token"),
   getGuestBearerToken: vi.fn(async () => "guest-token"),
+  getCachedGuestSession: vi.fn(() => null),
   hasToken: vi.fn(() => false),
   getToken: vi.fn(() => ""),
   getOpenRouterSelectedModels: vi.fn(() => []),
@@ -86,6 +87,10 @@ const gatedGoogleModel = {
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
+}));
+
+vi.mock("@/hooks/use-hosted-model-catalog", () => ({
+  useHostedModelCatalog: () => ({ hostedCatalog: [], status: "fallback" }),
 }));
 
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
@@ -162,6 +167,7 @@ vi.mock("@/lib/session-token", () => ({
 
 vi.mock("@/lib/guest-session", () => ({
   getGuestBearerToken: mockState.getGuestBearerToken,
+  getCachedGuestSession: mockState.getCachedGuestSession,
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({

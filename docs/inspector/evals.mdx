@@ -40,7 +40,23 @@ Each case has four moving parts:
   A **negative case** is just a case whose checks say "this tool should *not* fire." Meta questions ("what params does `search` take?"), conversational drift, and ambiguous prompts are the usual shape.
 </Note>
 
-## Checks — the deterministic gate
+## Recording widget interactions
+
+If your MCP server uses MCP Apps (widgets rendered in a sandboxed iframe), you can record real in-widget interactions — clicks and typing — directly into a test case as `interact` steps.
+
+When you arm record mode on a test case, a recorder shim is injected into the widget sandbox. Every click and text input you make in the widget is captured as a locator-stable `interact` step and appended to the case. The locator is built from stable identifiers in priority order: `data-testid` → ARIA role + accessible name → visible text → CSS path. This means the recorded step resolves to the same element when the case runs headlessly.
+
+### Widget `ui/message` follow-ups
+
+Some widget interactions send a `ui/message` back to the host (for example, a cart button that says "Show my cart") rather than calling a tool directly. During eval execution, these follow-up messages automatically drive a continuation model turn — the same way Playground handles them live. The resulting tool call (e.g. `view-cart`) is attributed to the same `interact` step's turn, so a **Tool was called** check on that turn sees the call.
+
+This means an eval case can faithfully verify a full widget interaction sequence: prompt → widget renders → user clicks → model reacts → tool fires → assertion passes.
+
+### What the trace shows
+
+The Chat/Trace tab renders widget tool calls as the same app-attributed cards you see in Playground, so you can inspect exactly what the widget returned and what the model did with it.
+
+
 
 Checks are what actually decide pass/fail. They're pure functions of the iteration transcript, so the verdict is the same every time you replay it — which is the property you want if you're using Evaluate as a regression gate.
 
@@ -57,6 +73,14 @@ Set defaults on the suite; override per case with **inherit** (use suite default
 | **No tool errors** | No tool call returned an error. |
 | **Final message non-empty** | The model produced a final assistant message. |
 | **Token budget under N** | Total token usage stayed below the cap. |
+
+### Harness system tools in assertion dropdowns
+
+When a suite is configured to run under a harness host (such as Claude Code or Codex), the tool-name pickers in the case editor also offer the harness's native **system tools** — for example `bash`, `read`, `webSearch`, `WebFetch` — alongside your MCP server tools. This lets you write assertions like **Tool was never called** for `bash` or **Tool was called with…** for `read` without having to type the wire name by hand.
+
+System tools appear only in assertion pickers. They are not available in pinned tool-call steps or widget-assertion "View (tool)" selects, because those require a tool that MCPJam can invoke directly.
+
+If an MCP tool and a system tool share the same name, the MCP tool takes precedence and the system tool is not added to the list.
 
 ### Argument matching
 
@@ -88,7 +112,7 @@ For cases where "did the right tools fire" isn't enough — anything graded on t
 - **Calibrate per suite.** Judge scores aren't comparable across domains; a 0.7 on one suite isn't a 0.7 on another.
 - When grading against the prompt rather than an expected output, scores are capped at 0.85 — you can't get a "perfect" without saying what perfect means.
 
-Open a completed run and find the **Goal completion** panel. Pick a judge model (default: `openai/gpt-5.4-mini`) and a threshold (default 0.7), then click **Run judge**. Each case gets a score, an advisory verdict, a one-line reason, and rubric hits. The judge never runs automatically unless you enable **Auto-run** in suite settings.
+Open a completed run and find the **LLM as Judge** panel (labelled **Goal judge** when shown inside the suite results split). Pick a judge model (default: `openai/gpt-5.4-mini`) and a threshold (default 0.7), then click **Run judge**. Each case gets a score, an advisory verdict, a one-line reason, and rubric hits. The judge never runs automatically unless you enable **Auto-run** in suite settings.
 
 ## Running
 
@@ -105,6 +129,20 @@ A run needs three things, all picked from the suite header:
 ### Frozen execution snapshots
 
 The first run of a suite saves the set of MCP servers used as a frozen snapshot; reruns reuse it, so connecting new servers can't silently change what a suite runs against. Click **Update snapshot** in the suite header to re-save the current servers and start a new run.
+
+## Computer environment
+
+<Note>
+  The computer environment picker is only visible when the **computers** feature flag is enabled on your account and a project is selected for the suite.
+</Note>
+
+In suite settings, the **Computer environment** select lets you pin a built Docker environment so every eval iteration boots a fresh sandbox from the same image. This keeps results comparable across runs and edits — each iteration gets an identical starting state.
+
+- Choose an environment from the list. Environments that have not finished building are labelled **(not built)**; selecting one will cause the run to fail immediately.
+- Choose **None (default image)** to run without a pinned environment.
+- The agent receives a `bash` tool inside the sandbox.
+
+Once a run completes, the **Run detail** page shows an **Environment** row with the name of the environment used. If the environment has since been deleted, the row shows its raw identifier instead so the record remains durable. Hovering the label shows the image template, digest, and provider from the frozen snapshot taken at run time.
 
 ## Suite execution config
 
@@ -125,7 +163,34 @@ The suite-level **system prompt** and **temperature** are runtime defaults: when
   If you have existing suites where test cases do not specify a system prompt, those cases will now run with the suite's system prompt applied. Cases that already set their own system prompt are unaffected.
 </Note>
 
+## CI tab
+
+The **CI** tab (when enabled for your project) shows only CI-active suites — suites created by the SDK or suites that CI has reported into at least once. Playground-only suites stay in the **Evaluate** tab. If a project has no CI evals yet, the CI tab shows a quickstart prompt.
+
+The commit rail in the CI tab groups runs by commit SHA and only includes CI (SDK-sourced) runs. Playground runs on mixed suites are excluded from the rail so they don't appear as spurious manual-commit groups.
+
+### Pass Rate vs Accuracy
+
+The metric label shown in run headers, the runs table, charts, and hero stats follows the **run's source**, not the suite's creation source:
+
+- **Pass Rate** — shown for runs submitted by the SDK (CI runs). Reflects per-case pass/fail.
+- **Accuracy** — shown for runs triggered manually from the UI, via the API, or on a schedule.
+
+On a mixed suite (one that has received both CI and playground runs), the label updates to match the most recent run. Legacy runs without a recorded source fall back to the suite's creation source.
+
+### CI-synced test cases
+
+Test cases written by a CI report carry a **CI** chip next to their name in the cases list. Opening such a case in the editor shows a notice: "Synced from CI — the next CI report may overwrite manual edits." Manual edits to these cases are preserved until the next CI ingest, which may overwrite them.
+
+### Suite deletion
+
+The delete button in the suite switcher is hidden for any suite that is CI-active — either created by the SDK or one that CI has reported into. This protects CI run history; the next CI report would recreate the suite anyway.
+
 ## Reading results
+
+### Suite navigation
+
+Opening the Evaluate tab takes you directly into the most recent suite's dashboard. To switch suites, use the **suite switcher** in the breadcrumb — it lists all your suites and lets you jump to one, create a new suite, or delete the current suite. If no suites exist yet, the empty-state create prompt appears instead.
 
 ### Suite view
 
@@ -151,9 +216,9 @@ When two or more host configurations are attached to a suite, a **By case / By h
   - **Extra** — actual calls that weren't expected (reported but non-fatal by default)
   - **Out of order** — calls that happened in the wrong sequence (when order checking is enabled)
   - **Arg mismatch** — right tool name, wrong arguments (shown side-by-side)
-- **Full trace** — every turn, every tool call, every token. This is the thing you couldn't see before; spend time here.
+- **Full trace** — every turn, every tool call, every token. This is the thing you couldn't see before; spend time here. When a turn ran through a harness (e.g. Claude Code), the trace detail pane shows an **Engine** badge — "Claude Code" for harness turns, "Emulated" for turns that ran through MCPJam's built-in chat engine — so you can tell at a glance which runtime handled each turn.
 - **Per-model breakdown** to compare how the same case behaves across models.
-- **AI Triage** — after a run completes, an AI Triage panel ranks tool-quality and workflow issues by impact. Each issue has a **Copy** button that copies a ready-to-use fix prompt (tool description + input schema) for a coding agent; **Copy top 3** copies the top three combined.
+- **Suggested fixes** — after a run completes, a **Suggested fixes** panel ranks tool-quality and workflow issues by impact. Each issue has a **Copy** button that copies a ready-to-use fix prompt (tool description + input schema) for a coding agent; **Copy top N** copies the top issues combined.
 - **Predicate Gate** — when `successPredicates` are configured on a case, an expandable Predicate Gate section in the iteration detail lists each predicate with a PASS/FAIL verdict, a one-line summary, and the evaluator's reason. Hidden when no predicates are configured.
 
 #### Comparing two runs
@@ -181,6 +246,24 @@ In both cases the dialog shows the servers recorded for that session, lets you s
 The **Generate** button reads your attached servers' tool catalog and drafts realistic cases — a mix of positive ("call `search` with a query") and negative ("don't call `delete_user` on a meta-question"). Treat it as a draft: skim, edit the prompts to match how your users actually talk, tighten the checks, then save.
 
 When the suite has a saved server attachment spanning two or more servers, the generator produces coverage for each server individually plus at least one cross-server case. Suites without a saved attachment treat all available servers as a single pool.
+
+## Exporting traces
+
+Open a completed run and click the **Export traces** button (download icon in the run header) to download the run's traces as an OTLP JSON file. The export uses OpenInference semantic conventions plus `mcp.app.*` extensions, making it compatible with Arize Phoenix, Datadog, and any other OTLP-compatible observability backend.
+
+### Export options
+
+| Option | Description |
+|--------|-------------|
+| **This run** | Exports only the iterations from the selected run. |
+| **Whole project** | Exports all recorded sessions across every run in the project. |
+| **Include content & artifacts** | Off by default. When enabled, the export includes prompts, outputs, tool arguments and results, and screenshots. Disable this when the content may contain secrets. |
+
+The downloaded file is named `mcpjam-traces-<scope>-<timestamp>.json`.
+
+<Note>
+  If the project is too large to export in a single file, use **This run** scope and export individual runs instead.
+</Note>
 
 ## What to author first
 
