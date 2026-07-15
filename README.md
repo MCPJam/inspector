@@ -112,39 +112,42 @@ The app is available at `http://127.0.0.1:6274`. Always use `-p 127.0.0.1:6274:6
 
 # Coming from MCP Inspector?
 
-### 1. Two-sentence introduction
+## 1. Two-sentence introduction
 
-MCPJam Inspector covers the same protocol validation workflow as the official MCP Inspector and extends into behavior debugging. Everything you do in MCP Inspector has a direct equivalent in MCPJam, while MCPJam adds additional workflows such as Trace, OAuth Debugger, Playground, and Evals; MCP Inspector remains the reference implementation and an excellent protocol validation tool.
+MCPJam Inspector covers the same protocol validation workflow as MCP Inspector and then extends into behavior debugging with a model in the loop. MCP Inspector remains the official reference implementation and a good fit for lightweight protocol validation, while MCPJam adds the workflows that become relevant once you need to understand how AI clients and models actually use your server.
 
-### 2. Condensed comparison matrix
+## 2. Condensed comparison matrix
 
 | Workflow | MCP Inspector | MCPJam Inspector |
 |----------|---------------|------------------|
-| Protocol validation | ✅ | ✅ |
+| Quick protocol validation | ✅ | ✅ |
 | Manual tool execution | ✅ | ✅ |
-| Protocol logs | ✅ | ✅ (Trace) |
-| OAuth debugging | Basic auth configuration | Guided OAuth Debugger |
-| Natural-language testing | — | Playground |
-| Evals | — | MCP Evals |
+| OAuth debugging | — | Guided OAuth Debugger |
+| Model / agent in the loop | — | Playground |
+| Agent / tool-call debugging | — | Trace |
+| Testing across clients and models | — | Clients |
+| Evaluations | — | Evals |
+| Team workflows | — | Workspaces |
+| CLI / SDK workflows | Lightweight protocol checks | Broader debugging and eval workflows |
 
 *Last verified: July 2026*
 
-### 3. When to use each
+## 3. When to use each
 
-#### Use MCP Inspector if...
+### Use MCP Inspector if...
 
 - You only need lightweight protocol validation.
 - You want the official reference inspector.
 - You're validating MCP protocol correctness.
 
-#### Use MCPJam Inspector if...
+### Use MCPJam Inspector if...
 
 - You want to inspect model behavior.
 - You need execution traces.
 - You're debugging OAuth.
-- You want Playground and MCP Evals.
+- You want Playground, Clients, and Evals.
 
-### 4. Learn more
+## 4. Learn more
 
 - [MCPJam vs MCP Inspector blog post](TODO)
 - ["Coming from MCP Inspector?" migration guide](TODO)
