@@ -1627,7 +1627,13 @@ function resolveOAuthResourceUrl(input: {
   });
 
   if (decision.status === "valid") {
-    return decision.value;
+    // Server-advertised values (prm/authorization) are echoed verbatim — the
+    // AS compares against what was advertised. User-typed configured
+    // overrides (and the server fallback) are canonicalized, matching
+    // historical behavior for stored variants like a trailing slash.
+    return decision.source === "configured"
+      ? canonicalizeResourceUrl(decision.value)
+      : decision.value;
   }
 
   const sourceLabel = RESOURCE_INDICATOR_SOURCE_LABELS[decision.source];
