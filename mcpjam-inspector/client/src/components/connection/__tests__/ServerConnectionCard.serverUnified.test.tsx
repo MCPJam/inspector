@@ -15,6 +15,10 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => false,
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: (...args: unknown[]) => mockCapture(...args),
+}));
+
 vi.mock("@/lib/apis/mcp-export-api", () => ({
   exportServerApi: vi.fn().mockResolvedValue({}),
 }));

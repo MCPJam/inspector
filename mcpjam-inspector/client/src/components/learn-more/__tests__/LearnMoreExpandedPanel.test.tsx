@@ -22,7 +22,7 @@ vi.mock("framer-motion", async () => {
       transition: _transition,
       ...props
     },
-    ref,
+    ref
   ) {
     return (
       <div ref={ref} {...props}>
@@ -65,12 +65,35 @@ describe("LearnMoreExpandedPanel", () => {
         tabId="servers"
         sourceRect={null}
         onClose={vi.fn()}
-      />,
+      />
     );
 
     expect(
-      screen.getByText(/Connect MCP servers to your project/i),
+      screen.getByText(/Connect MCP servers to your project/i)
     ).toBeInTheDocument();
+  });
+
+  it("renders the XAA guide without an empty video placeholder", () => {
+    render(
+      <LearnMoreExpandedPanel
+        tabId="xaa-idp"
+        sourceRect={null}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByRole("heading", {
+        name: "Trust MCPJam's identity provider",
+      })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("img", {
+        name: "XAA debugger sequence diagram and flow log",
+      })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Video coming soon")).not.toBeInTheDocument();
+    expect(screen.queryByText("Debugging Failures")).not.toBeInTheDocument();
   });
 
   it("closes when Escape is pressed", () => {
@@ -81,7 +104,7 @@ describe("LearnMoreExpandedPanel", () => {
         tabId="skills"
         sourceRect={null}
         onClose={onClose}
-      />,
+      />
     );
 
     fireEvent.keyDown(document, { key: "Escape" });
@@ -97,7 +120,7 @@ describe("LearnMoreExpandedPanel", () => {
         tabId="servers"
         sourceRect={null}
         onClose={vi.fn()}
-      />,
+      />
     );
 
     const playButton = screen.getByRole("button", {

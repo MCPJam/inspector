@@ -6,7 +6,6 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
-  Lightbulb,
   Loader2,
   Pencil,
   Play,
@@ -23,13 +22,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
 import { cn } from "@/lib/utils";
 import { HTTPHistoryEntry } from "@/components/oauth/HTTPHistoryEntry";
 import { InfoLogEntry } from "@/components/oauth/InfoLogEntry";
@@ -44,6 +36,8 @@ import {
   type XAAPhaseKey,
 } from "@/lib/xaa/step-metadata";
 import type { XAAFlowState, XAAFlowStep } from "@/lib/xaa/types";
+import { generateXAAFlowText } from "@/lib/xaa/log-formatters";
+import { copyToClipboard } from "@/lib/clipboard";
 import {
   getXAAErrorGuidance,
   latestErroredHttpEntry,
@@ -55,7 +49,6 @@ import type {
   XAACompatibilityReport,
 } from "@/lib/xaa/capability-preflight";
 import {
-  NEGATIVE_TEST_MODES,
   NEGATIVE_TEST_MODE_DETAILS,
   type NegativeTestMode,
 } from "@/shared/xaa.js";
@@ -64,14 +57,12 @@ interface XAAFlowLoggerProps {
   flowState: XAAFlowState;
   hasProfile: boolean;
   activeStep?: XAAFlowStep | null;
-  onFocusStep?: (step: XAAFlowStep) => void;
   actions: {
     onConfigure: () => void;
     onReset?: () => void;
     onContinue?: () => void;
     /** Run the whole flow — surfaced in the Continue split-button's menu. */
     onRunAll?: () => void;
-    onChangeNegativeTestMode?: (mode: NegativeTestMode) => void;
     continueLabel: string;
     continueDisabled?: boolean;
     runAllDisabled?: boolean;
@@ -84,7 +75,6 @@ interface XAAFlowLoggerProps {
     authzServerIssuer?: string;
     clientId?: string;
     scope?: string;
-    negativeTestMode: XAAFlowState["negativeTestMode"];
   };
 }
 
@@ -270,13 +260,9 @@ function PhaseHeader({
         <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           Phase {number} · {info.title}
         </span>
-        {info.specStep === null ? (
+        {info.specStep === null && (
           <Badge variant="outline" className="text-[10px] h-4 px-1.5">
             not part of the XAA grant
-          </Badge>
-        ) : (
-          <Badge variant="outline" className="text-[10px] h-4 px-1.5">
-            spec step {info.specStep}
           </Badge>
         )}
         {skipped && (
@@ -285,7 +271,6 @@ function PhaseHeader({
           </Badge>
         )}
       </div>
-      <p className="mt-1 text-xs text-muted-foreground">{info.blurb}</p>
     </div>
   );
 }
@@ -334,12 +319,12 @@ function PhaseRail({ currentStep }: { currentStep: XAAFlowStep }) {
                 "flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px]",
                 state === "active" &&
                   "bg-blue-500/10 font-medium text-blue-600 dark:text-blue-400",
-                state === "done" && "text-green-600 dark:text-green-400",
+                state === "done" && "text-foreground",
                 state === "pending" && "text-muted-foreground"
               )}
             >
               {state === "done" ? (
-                <CheckCircle2 className="h-3 w-3 shrink-0" />
+                <CheckCircle2 className="h-3 w-3 shrink-0 text-green-600 dark:text-green-400" />
               ) : (
                 <span className="font-mono">{number}</span>
               )}
@@ -406,35 +391,19 @@ function NegativeProbeCallout({
   );
 }
 
-/** A "Tip" callout — visually distinct from diagnostics so static teaching
- * copy can't be mistaken for an error explanation. */
-function TeachableMoments({ moments }: { moments: string[] }) {
-  return (
-    <div className="space-y-1.5 border-l-2 border-blue-400/40 pl-3">
-      {moments.map((moment) => (
-        <p
-          key={moment}
-          className="flex items-start gap-1.5 text-xs text-muted-foreground"
-        >
-          <Lightbulb className="h-3.5 w-3.5 mt-px shrink-0 text-blue-400" />
-          <span>{moment}</span>
-        </p>
-      ))}
-    </div>
-  );
-}
-
 export function XAAFlowLogger({
   flowState,
   hasProfile,
   activeStep,
-  onFocusStep,
   actions,
   summary,
 }: XAAFlowLoggerProps) {
   const [expandedSteps, setExpandedSteps] = useState<Set<XAAFlowStep>>(
     new Set()
   );
+  const [copySuccess, setCopySuccess] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const copyResetTimerRef = useRef<number | null>(null);
 
   const stepRefs = useRef(new Map<XAAFlowStep, HTMLDivElement | null>());
 
@@ -511,9 +480,42 @@ export function XAAFlowLogger({
   }, [groups]);
 
   const currentStepIndex = getXAAStepIndex(flowState.currentStep);
-  const focusedStep = activeStep ?? flowState.currentStep;
-  const negativeModeSummary =
-    NEGATIVE_TEST_MODE_DETAILS[summary.negativeTestMode];
+
+  const handleCopyFlow = async () => {
+    setCopyError(null);
+    setCopySuccess(false);
+    if (copyResetTimerRef.current !== null) {
+      window.clearTimeout(copyResetTimerRef.current);
+      copyResetTimerRef.current = null;
+    }
+
+    try {
+      const success = await copyToClipboard(
+        generateXAAFlowText(flowState, summary),
+      );
+      if (!success) {
+        setCopyError("Copy failed");
+        return;
+      }
+      setCopySuccess(true);
+    } catch {
+      setCopyError("Copy failed");
+      return;
+    }
+
+    copyResetTimerRef.current = window.setTimeout(() => {
+      setCopySuccess(false);
+      copyResetTimerRef.current = null;
+    }, 2000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimerRef.current !== null) {
+        window.clearTimeout(copyResetTimerRef.current);
+      }
+    };
+  }, []);
 
   const toggleStep = (step: XAAFlowStep) => {
     setExpandedSteps((previous) => {
@@ -582,7 +584,7 @@ export function XAAFlowLogger({
   };
 
   return (
-    <div className="h-full border-l border-border flex flex-col">
+    <div className="h-full min-w-0 border-l border-border flex flex-col">
       <div className="@container/xaa-run-bar bg-muted/30 border-b border-border px-4 py-3 space-y-3">
         <div className="flex flex-col gap-2 @min-[384px]/xaa-run-bar:flex-row @min-[384px]/xaa-run-bar:items-center">
           <button
@@ -661,45 +663,39 @@ export function XAAFlowLogger({
           <>
             <PhaseRail currentStep={flowState.currentStep} />
 
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-muted-foreground">Mode</span>
-                <Select
-                  value={summary.negativeTestMode}
-                  onValueChange={(nextValue) =>
-                    actions.onChangeNegativeTestMode?.(
-                      nextValue as NegativeTestMode
-                    )
-                  }
-                  disabled={!actions.onChangeNegativeTestMode}
-                >
-                  <SelectTrigger className="h-7 w-[180px] text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {NEGATIVE_TEST_MODES.map((mode) => (
-                      <SelectItem key={mode} value={mode} className="text-xs">
-                        {NEGATIVE_TEST_MODE_DETAILS[mode].label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
+                {summary.clientId && (
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="shrink-0 text-muted-foreground">
+                      Client ID
+                    </span>
+                    <Badge variant="outline" className="font-mono text-xs">
+                      {summary.clientId}
+                    </Badge>
+                  </div>
+                )}
+                {summary.scope && (
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="shrink-0 text-muted-foreground">
+                      Scope
+                    </span>
+                    <Badge variant="outline" className="font-mono text-xs">
+                      {summary.scope}
+                    </Badge>
+                  </div>
+                )}
               </div>
-              {summary.clientId && (
-                <Badge variant="outline" className="text-xs">
-                  {summary.clientId}
-                </Badge>
-              )}
-              {summary.scope && (
-                <Badge variant="outline" className="text-xs">
-                  {summary.scope}
-                </Badge>
-              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleCopyFlow()}
+                className="h-8 shrink-0"
+                title={copyError ?? undefined}
+              >
+                {copyError ?? (copySuccess ? "Copied!" : "Copy")}
+              </Button>
             </div>
-
-            <p className="text-xs text-muted-foreground">
-              {negativeModeSummary.description}
-            </p>
           </>
         )}
       </div>
@@ -714,6 +710,26 @@ export function XAAFlowLogger({
             probe={flowState.negativeProbe}
             mode={flowState.negativeTestMode}
           />
+        )}
+
+        {/* Non-blocking readiness/conformance findings from DCR or CIMD
+            setup. Warnings, not errors — the flow continued past them. */}
+        {(flowState.registrationWarnings?.length ?? 0) > 0 && (
+          <Alert>
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              <div className="space-y-1">
+                <p className="text-xs font-medium">
+                  Client registration warnings
+                </p>
+                <ul className="list-disc space-y-1 pl-4 text-xs">
+                  {flowState.registrationWarnings!.map((warning) => (
+                    <li key={warning.code}>{warning.message}</li>
+                  ))}
+                </ul>
+              </div>
+            </AlertDescription>
+          </Alert>
         )}
 
         {(() => {
@@ -757,6 +773,7 @@ export function XAAFlowLogger({
             decoded={flowState.idJagDecoded}
             negativeTestMode={flowState.negativeTestMode}
             lintContext={{
+              expectedIssuer: flowState.issuerBaseUrl,
               expectedAudience:
                 flowState.authzMetadata?.issuer || flowState.authzServerIssuer,
               expectedResource:
@@ -773,32 +790,38 @@ export function XAAFlowLogger({
                 Welcome to the XAA Debugger
               </h3>
               <p className="text-sm text-muted-foreground">
-                Step through the full cross-app access (XAA) authorization flow
-                against an MCP server.
+                Cross-app access (XAA) lets one app call another app&apos;s MCP
+                server on a user&apos;s behalf — without a second login. Step
+                through that flow here and see exactly where your authorization
+                server accepts or rejects it.
               </p>
             </div>
 
             <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground marker:font-medium marker:text-foreground">
               <li>
                 <span className="font-medium text-foreground">
-                  Add or pick a server in the bar above
+                  Pick a server to test
                 </span>{" "}
-                — each environment (beta/staging/prod) is its own server. Set
-                the simulated identity and negative-test Mode in the run bar.
-              </li>
-              <li>
-                <span className="font-medium text-foreground">
-                  Run the flow
-                </span>{" "}
-                — MCPJam mints an ID-JAG; your authorization server redeems it
-                for an access token, one step at a time.
+                — add or pick one in the bar above (each environment —
+                beta/staging/prod — is its own server), then set the simulated
+                user and test mode in the run bar.
               </li>
               <li>
                 <span className="font-medium text-foreground">
                   Trust MCPJam at your auth server
                 </span>{" "}
-                — register the IdP endpoints (the card at the top) so your
-                authorization server accepts the ID-JAG MCPJam mints.
+                — MCPJam acts as the identity provider. Register its Issuer and
+                JWKS (public signing keys) URLs (the card at the top) so your
+                authorization server accepts the tokens MCPJam signs. Do this
+                first, or the next step gets rejected.
+              </li>
+              <li>
+                <span className="font-medium text-foreground">
+                  Run the flow
+                </span>{" "}
+                — MCPJam mints an ID-JAG (a signed assertion of who the user
+                is); your authorization server exchanges it for an access token.
+                Advance one step at a time to inspect each request.
               </li>
             </ol>
           </div>
@@ -822,7 +845,10 @@ export function XAAFlowLogger({
                 />
               )}
               {section.groups.map((group, indexInPhase) => {
-                const stepInfo = getXAAStepInfo(group.step);
+                const stepInfo = getXAAStepInfo(
+                  group.step,
+                  flowState.identityAssertionFormat,
+                );
                 const status = getStatus(group.step);
                 const StatusIcon = status.icon;
                 const entryCount =
@@ -840,12 +866,7 @@ export function XAAFlowLogger({
                     ref={(el) => {
                       stepRefs.current.set(group.step, el);
                     }}
-                    className={cn(
-                      "bg-background border rounded-lg shadow-sm",
-                      focusedStep === group.step
-                        ? "border-blue-400 ring-1 ring-blue-400/20"
-                        : "border-border"
-                    )}
+                    className="bg-background border border-border rounded-lg shadow-sm"
                   >
                     <button
                       onClick={() => toggleStep(group.step)}
@@ -883,20 +904,6 @@ export function XAAFlowLogger({
                           {stepInfo.summary}
                         </p>
                       </div>
-                      {onFocusStep && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onFocusStep(group.step);
-                          }}
-                        >
-                          Focus
-                        </Button>
-                      )}
                     </button>
 
                     {expandedSteps.has(group.step) && (
@@ -952,11 +959,6 @@ export function XAAFlowLogger({
                           />
                         ))}
 
-                        {stepInfo.teachableMoments?.length ? (
-                          <TeachableMoments
-                            moments={stepInfo.teachableMoments}
-                          />
-                        ) : null}
                       </div>
                     )}
                   </div>

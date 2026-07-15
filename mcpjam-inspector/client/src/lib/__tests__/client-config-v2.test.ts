@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   emptyHostConfigInputV2,
+  gateMcpToolResultImageRenderingByModelVisibility,
   hostCapabilitiesOverrideToMatrix,
   hostConfigDtoToInput,
   hostConfigInputsEqual,
   mergeMcpAppsCapabilities,
   resolveEffectiveHostCapabilities,
   resolveEffectiveMcpAppsCapabilities,
+  setMcpAppsOverridesOnDraft,
   type HostConfigDtoV2,
   type HostConfigInputV2,
 } from "../client-config-v2";
@@ -119,6 +121,89 @@ describe("hostConfigInputsEqual", () => {
     });
     expect(hostConfigInputsEqual(a, b)).toBe(false);
   });
+
+  it("distinguishes unset, enabled, and disabled MCP image policies", () => {
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ modelVisibleMcpToolResults: undefined }),
+        makeInput({ modelVisibleMcpToolResults: undefined })
+      )
+    ).toBe(true);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ modelVisibleMcpToolResults: undefined }),
+        makeInput({
+          modelVisibleMcpToolResults: { directContent: { image: true } },
+        })
+      )
+    ).toBe(false);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({
+          modelVisibleMcpToolResults: { directContent: { image: true } },
+        }),
+        makeInput({
+          modelVisibleMcpToolResults: { directContent: { image: false } },
+        })
+      )
+    ).toBe(false);
+  });
+
+  it("detects MCP tool-result image rendering changes", () => {
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ mcpToolResultImageRendering: undefined }),
+        makeInput({ mcpToolResultImageRendering: undefined })
+      )
+    ).toBe(true);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ mcpToolResultImageRendering: undefined }),
+        makeInput({ mcpToolResultImageRendering: { placement: "inline" } })
+      )
+    ).toBe(false);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({
+          mcpToolResultImageRendering: { placement: "collapsed" },
+        }),
+        makeInput({ mcpToolResultImageRendering: { placement: "none" } })
+      )
+    ).toBe(false);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({
+          mcpToolResultImageRendering: { directContent: { image: true } },
+        }),
+        makeInput({
+          mcpToolResultImageRendering: { directContent: { image: false } },
+        })
+      )
+    ).toBe(false);
+  });
+
+  it("masks MCP tool-result image rendering with model visibility", () => {
+    expect(
+      gateMcpToolResultImageRenderingByModelVisibility(
+        {
+          placement: "inline",
+          directContent: { image: true },
+          embeddedResources: { blob: { image: true } },
+          linkedResources: { blob: { image: true } },
+        },
+        {
+          directContent: { image: false },
+          embeddedResources: { blob: { image: false } },
+          linkedResources: { blob: { image: true } },
+        }
+      )
+    ).toEqual({
+      placement: "inline",
+      directContent: { image: false },
+      embeddedResources: { blob: { image: false } },
+      linkedResources: { blob: { image: true } },
+    });
+  });
 });
 
 describe("emptyHostConfigInputV2", () => {
@@ -199,6 +284,27 @@ describe("computer (personal cloud workstation)", () => {
 
   it("hostConfigDtoToInput yields undefined when no computer is attached", () => {
     expect(hostConfigDtoToInput(makeDto({})).computer).toBeUndefined();
+  });
+});
+
+describe("harness (real agent runtime)", () => {
+  it("marks the draft dirty when the harness selector changes", () => {
+    const none = makeInput();
+    const harnessed = makeInput({ harness: "claude-code" });
+    expect(hostConfigInputsEqual(none, harnessed)).toBe(false);
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ harness: "claude-code" }),
+        makeInput({ harness: "claude-code" })
+      )
+    ).toBe(true);
+  });
+
+  it("hostConfigDtoToInput round-trips the harness selector", () => {
+    expect(
+      hostConfigDtoToInput(makeDto({ harness: "claude-code" })).harness
+    ).toBe("claude-code");
+    expect(hostConfigDtoToInput(makeDto({})).harness).toBeUndefined();
   });
 });
 
@@ -324,6 +430,34 @@ describe("hostConfigDtoToInput", () => {
     };
     const input = hostConfigDtoToInput(dto);
     expect(input.hostCapabilitiesOverride).toBeUndefined();
+  });
+
+  it("copies explicit MCP image policies to input", () => {
+    const input = hostConfigDtoToInput(
+      makeDto({
+        modelVisibleMcpToolResults: {
+          directContent: { image: false },
+          embeddedResources: { blob: { image: true } },
+          linkedResources: { blob: { image: false } },
+        },
+        mcpToolResultImageRendering: {
+          placement: "collapsed",
+          directContent: { image: false },
+        },
+        hostContext: { other: "keep" },
+      })
+    );
+
+    expect(input.modelVisibleMcpToolResults).toEqual({
+      directContent: { image: false },
+      embeddedResources: { blob: { image: true } },
+      linkedResources: { blob: { image: false } },
+    });
+    expect(input.mcpToolResultImageRendering).toEqual({
+      placement: "collapsed",
+      directContent: { image: false },
+    });
+    expect(input.hostContext).toEqual({ other: "keep" });
   });
 });
 
@@ -580,6 +714,65 @@ describe("hostCapabilitiesOverrideToMatrix", () => {
       updateModelContext: false,
       message: true,
       downloadFile: true,
+    });
+  });
+});
+
+describe("setMcpAppsOverridesOnDraft", () => {
+  it("writes the matrix override while preserving sibling profile fields", () => {
+    const draft = makeInput({
+      hostCapabilitiesOverride: { openLinks: {} },
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: { clientInfo: { name: "custom", version: "1" } },
+        apps: {
+          uiInitialize: { hostInfo: { name: "Host" } },
+        },
+      },
+    });
+    const next = setMcpAppsOverridesOnDraft(
+      { ...draft, hostCapabilitiesOverride: undefined },
+      { serverTools: true, logging: false }
+    );
+    expect(next.hostCapabilitiesOverride).toBeUndefined();
+    expect(next.mcpProfile?.initialize?.clientInfo).toEqual({
+      name: "custom",
+      version: "1",
+    });
+    expect(next.mcpProfile?.apps?.uiInitialize?.hostInfo).toEqual({
+      name: "Host",
+    });
+    expect(next.mcpProfile?.apps?.mcpAppsOverrides).toEqual({
+      serverTools: true,
+      logging: false,
+    });
+  });
+
+  it("collapses an otherwise empty profile when the override is cleared", () => {
+    const draft = makeInput({
+      mcpProfile: {
+        profileVersion: 1,
+        apps: { mcpAppsOverrides: { serverTools: true } },
+      },
+    });
+    expect(
+      setMcpAppsOverridesOnDraft(draft, undefined).mcpProfile
+    ).toBeUndefined();
+  });
+
+  it("preserves a protocol-version pin when the override is cleared", () => {
+    const draft = makeInput({
+      mcpProfile: {
+        profileVersion: 1,
+        mcpProtocolVersion: "2025-06-18",
+        apps: { mcpAppsOverrides: { serverTools: true } },
+      },
+    });
+
+    expect(setMcpAppsOverridesOnDraft(draft, undefined).mcpProfile).toEqual({
+      profileVersion: 1,
+      mcpProtocolVersion: "2025-06-18",
+      apps: undefined,
     });
   });
 });
