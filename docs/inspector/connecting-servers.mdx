@@ -33,6 +33,17 @@ View comprehensive server details in a dedicated modal dialog:
 - **Raw capabilities**: Full JSON of server and client capabilities (with copy button)
 - **OpenAI Apps SDK**: For servers using the OpenAI Apps SDK, view widget metadata in a separate tab
 
+### History tab
+
+The **History** tab in the server detail modal shows a timeline of every revision recorded for that server. Each row displays the revision number, a tool-count delta relative to the previous revision, and a timestamp.
+
+Click any revision row to expand it. The expanded panel shows:
+
+- **Diff view** (default for revisions 2 and later) — highlights tools added, removed, or updated compared to the previous revision.
+- **Snapshot view** — lists all tools captured at that revision, with each tool's name and description.
+
+A **Diff / Snapshot** toggle appears at the top of the expanded panel when a previous revision exists. Revision 1 opens directly in Snapshot view since there is nothing to diff against.
+
 ### Server information
 
 Each connected server card displays:
