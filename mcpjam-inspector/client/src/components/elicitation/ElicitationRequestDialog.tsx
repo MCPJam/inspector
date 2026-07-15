@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type {
   HostedElicitationAction,
   HostedElicitationRequestEvent,
@@ -25,22 +26,50 @@ export function UrlElicitationRequiredDialog({
   event: HostedElicitationUrlRequiredEvent | null;
   onDismiss: (toolCallId?: string) => void;
 }) {
-  const first = event?.elicitations[0];
-  if (!event || !first) return null;
+  // The spec allows a server to require SEVERAL interactions before a tool can
+  // run, and they are conjunctive — finishing one doesn't unblock the call.
+  // Showing only `elicitations[0]` and discarding the rest on dismiss left the
+  // user stuck with no way to reach the others. Walk them one at a time and
+  // only dismiss the event once every one has been handled.
+  const [index, setIndex] = useState(0);
+  const total = event?.elicitations.length ?? 0;
+
+  // A new failure resets the walk; keyed state alone wouldn't cover an event
+  // swapped in under the same toolCallId.
+  useEffect(() => {
+    setIndex(0);
+  }, [event]);
+
+  const current = event?.elicitations[index];
+  if (!event || !current) return null;
+
+  const advance = () => {
+    if (index + 1 < total) {
+      setIndex(index + 1);
+      return;
+    }
+    onDismiss(event.toolCallId);
+  };
+
+  const counter = total > 1 ? ` (${index + 1} of ${total})` : "";
 
   return (
     <UrlElicitationConsent
+      // Remount per entry so the previous one's popup-blocked / copied state
+      // can't bleed into the next.
+      key={current.elicitationId}
       advisory
       request={{
-        rendezvousId: first.elicitationId,
+        rendezvousId: current.elicitationId,
         serverId: event.serverId,
         serverName: event.serverName,
         message:
-          first.message ??
-          "This tool needs you to finish something at the link below before it can run.",
-        url: first.url,
+          (current.message ??
+            "This tool needs you to finish something at the link below before it can run.") +
+          counter,
+        url: current.url,
       }}
-      onResponse={() => onDismiss(event.toolCallId)}
+      onResponse={advance}
     />
   );
 }

@@ -1637,6 +1637,13 @@ export function ChatTabV2({
                 message: data.message,
                 schema: data.schema,
                 timestamp: data.timestamp || new Date().toISOString(),
+                // Spec: make it clear WHICH server is asking. Local chat can
+                // have many servers connected at once, so an anonymous dialog
+                // is a real ambiguity. No display name exists on this path —
+                // the id is the trusted anchor and is what the dialog shows.
+                ...(typeof data.serverId === "string"
+                  ? { serverId: data.serverId }
+                  : {}),
               },
             ];
           });
