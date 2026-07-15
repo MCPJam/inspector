@@ -9,7 +9,6 @@ interface ResolveHostedShellGateStateOptions {
   isWorkOsLoading: boolean;
   hasWorkOsUser: boolean;
   workOsUserEmail?: string | null;
-  isLoadingRemoteProjects: boolean;
 }
 
 export function resolveHostedShellGateState({
@@ -20,7 +19,6 @@ export function resolveHostedShellGateState({
   isWorkOsLoading,
   hasWorkOsUser,
   workOsUserEmail,
-  isLoadingRemoteProjects,
 }: ResolveHostedShellGateStateOptions): HostedShellGateState {
   if (!hostedMode) {
     return "ready";
@@ -46,10 +44,6 @@ export function resolveHostedShellGateState({
 
   if (!hasWorkOsUser && !isConvexAuthenticated) {
     return "ready";
-  }
-
-  if (isLoadingRemoteProjects) {
-    return "project-loading";
   }
 
   return "ready";

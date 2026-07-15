@@ -11,9 +11,9 @@ interface GeneralTabProps {
 export function GeneralTab(_: GeneralTabProps) {
   return (
     <div className="flex flex-col gap-4">
-      <FocusBlock title="General" subtitle="Host-wide settings.">
+      <FocusBlock title="General" subtitle="Client-wide settings.">
         <p className="text-[11.5px] text-muted-foreground">
-          Nothing here yet — host name and style live in the header above.
+          Nothing here yet — client name and style live in the header above.
         </p>
       </FocusBlock>
     </div>

@@ -1,9 +1,11 @@
 import { closeSync, existsSync, openSync, renameSync, statSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { operationalError } from "./output.js";
+
+const require = createRequire(import.meta.url);
 
 const FALLBACK_INSPECTOR_BASE_URL = "http://127.0.0.1:6274";
 const DEFAULT_START_TIMEOUT_MS = 30_000;
@@ -432,6 +434,52 @@ export async function ensureInspector(
   };
 }
 
+export interface EnsureInspectorBackendOptions extends InspectorApiClientOptions {
+  startIfNeeded?: boolean;
+  timeoutMs?: number;
+}
+
+export interface EnsureInspectorBackendResult {
+  baseUrl: string;
+  hasActiveClient: boolean;
+  started: boolean;
+}
+
+/**
+ * Ensure the local Inspector BACKEND is reachable (starting it if asked),
+ * without resolving a browser frontend URL. Headless callers (e.g. `apps
+ * render`, which runs the render server-side) need only a live backend — and
+ * the full {@link ensureInspector} additionally probes/validates the frontend
+ * and can throw a frontend-mismatch error when no browser client is present,
+ * which would wrongly block a render that never touches the browser UI.
+ */
+export async function ensureInspectorBackend(
+  options: EnsureInspectorBackendOptions = {},
+): Promise<EnsureInspectorBackendResult> {
+  const baseUrl = normalizeInspectorBaseUrl(options.baseUrl);
+
+  const health = await getInspectorHealth(baseUrl);
+  if (health.healthy) {
+    return { baseUrl, hasActiveClient: health.hasActiveClient, started: false };
+  }
+
+  if (!options.startIfNeeded) {
+    throw operationalError(
+      "Inspector is not running. Run `mcpjam inspector open` first or pass an Inspector-backed option that starts it.",
+    );
+  }
+
+  await startInspector(baseUrl, options.timeoutMs ?? DEFAULT_START_TIMEOUT_MS);
+  clearInspectorSessionTokenCache(baseUrl);
+
+  const startedHealth = await getInspectorHealth(baseUrl);
+  return {
+    baseUrl,
+    hasActiveClient: startedHealth.hasActiveClient,
+    started: true,
+  };
+}
+
 export async function stopInspector(
   baseUrl: string,
 ): Promise<{ stopped: boolean; baseUrl: string }> {
@@ -476,6 +524,12 @@ export class InspectorApiClient {
 
   async ensure(options: Omit<EnsureInspectorOptions, "baseUrl"> = {}) {
     return ensureInspector({ ...options, baseUrl: this.baseUrl });
+  }
+
+  async ensureBackend(
+    options: Omit<EnsureInspectorBackendOptions, "baseUrl"> = {},
+  ) {
+    return ensureInspectorBackend({ ...options, baseUrl: this.baseUrl });
   }
 
   async connectServer(
@@ -717,10 +771,13 @@ async function fetchFreshInspectorSessionToken(
   return body.token;
 }
 
-function getInspectorStartScriptPath(): string {
-  return fileURLToPath(
-    new URL("../../../mcpjam-inspector/bin/start.js", import.meta.url),
-  );
+function getInspectorStartScriptPath(): string | undefined {
+  try {
+    const packageJsonPath = require.resolve("@mcpjam/inspector/package.json");
+    return path.resolve(path.dirname(packageJsonPath), "bin/start.js");
+  } catch {
+    return undefined;
+  }
 }
 
 interface InspectorHealthStatus {
@@ -1010,18 +1067,23 @@ async function startInspector(
   const parsedUrl = new URL(baseUrl);
   const port = parsedUrl.port || "6274";
   const startScriptPath = getInspectorStartScriptPath();
-  const hasStartScript = existsSync(startScriptPath);
-  const args = hasStartScript
-    ? [startScriptPath, "--port", port, "--no-open"]
+  const localStartScriptPath =
+    startScriptPath && existsSync(startScriptPath) ? startScriptPath : undefined;
+  const args = localStartScriptPath
+    ? [localStartScriptPath, "--port", port, "--no-open"]
     : ["-y", "@mcpjam/inspector@latest", "--port", port, "--no-open"];
-  const executable = hasStartScript ? process.execPath : getNpxExecutable();
+  const executable = localStartScriptPath
+    ? process.execPath
+    : getNpxExecutable();
   const logPath = getInspectorStartupLogPath();
   const logFd = openStartupLogFile(logPath);
 
   let child: ReturnType<typeof spawn>;
   try {
     child = spawn(executable, args, {
-      cwd: hasStartScript ? path.dirname(startScriptPath) : process.cwd(),
+      cwd: localStartScriptPath
+        ? path.dirname(localStartScriptPath)
+        : process.cwd(),
       detached: true,
       stdio: ["ignore", logFd, logFd],
       env: {

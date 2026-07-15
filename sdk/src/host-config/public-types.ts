@@ -14,23 +14,51 @@
 
 import type {
   CspDomainSet,
+  HostConfigComputer,
+  HostConfigComputerInput,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
+  Harness,
   HostStyleId,
   McpAppsCapabilities,
   McpProtocolVersion,
+  McpToolResultImageRendering,
+  McpToolResultImageRenderingPolicy,
+  McpToolResultImageRenderPlacement,
+  ModelVisibleMcpToolResults,
   OpenAiAppsCapabilities,
   ServerId,
 } from "./types.js";
 
 export type {
   McpProtocolVersion,
+  McpToolResultImageRendering,
+  McpToolResultImageRenderingPolicy,
+  McpToolResultImageRenderPlacement,
   ServerId,
   HostStyleId,
+  Harness,
   CspDomainSet,
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
+  ModelVisibleMcpToolResults,
 };
+
+/**
+ * Personal cloud workstation attached to a host — one machine per
+ * (project, user). This is the RESOURCE attachment only; the capabilities
+ * the model gets on it (e.g. `bash`) are granted via `builtInToolIds`.
+ * `{ kind: "personal" }` is the only shape in MVP.
+ */
+export type HostComputer = HostConfigComputer;
+
+/**
+ * Input-tolerant computer shape for the Host builder / JSON snapshots: the
+ * legacy `toolset` key is accepted (and dropped by the canonicalizer) so
+ * pre-existing programmatic callers keep compiling. New code should write
+ * `{ kind: "personal" }` and grant capabilities via `builtInToolIds`.
+ */
+export type HostComputerInput = HostConfigComputerInput;
 
 /** Per-host connection defaults (headers + request timeout in ms). */
 export type HostConnectionDefaults = HostConfigConnectionDefaults;
@@ -68,6 +96,15 @@ export interface HostJson {
   requireToolApproval: boolean;
   progressiveToolDiscovery?: boolean;
   respectToolVisibility?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /** Human-facing rendering policy for MCP tool-returned images. */
+  mcpToolResultImageRendering?: McpToolResultImageRendering;
+  /** Personal computer attached to this host; absent ⇒ none. Normalized:
+   * `null` input never survives to `HostJson`. */
+  computer?: HostComputer;
+  /** Which harness runs the turn; absent ⇒ emulated. `"claude-code"` runs the
+   * turn in a real Claude Code runtime (requires an attached `computer`). */
+  harness?: Harness;
   servers: ServerId[];
   optionalServers: ServerId[];
   connectionDefaults: HostConnectionDefaults;
@@ -114,6 +151,23 @@ export interface HostInit {
   progressiveToolDiscovery?: boolean;
   /** SEP-1865 `_meta.ui.visibility` filtering. Undefined → spec default. */
   respectToolVisibility?: boolean;
+  /** Host policy for model visibility of MCP tool-result content/resources. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /** Human-facing rendering policy for MCP tool-returned images. */
+  mcpToolResultImageRendering?: McpToolResultImageRendering;
+  /**
+   * Attach a personal cloud workstation (chat `bash` tool + web terminal).
+   * Absent or `null` ⇒ no computer; `null` is accepted so an editor can
+   * clear the field and is normalized away at `toJSON()`.
+   */
+  computer?: HostComputer | null;
+  /**
+   * Which harness runs the turn; absent ⇒ emulated (MCPJam's own loop). Set to
+   * `"claude-code"` to run the turn inside a real Claude Code runtime via the
+   * AI SDK harness. The harness runs in the host's attached `computer` (E2B),
+   * so a computer is required when this is set.
+   */
+  harness?: Harness;
   /** Required servers this host connects to. */
   servers?: ServerId[];
   /** Optional (auto-connect-if-available) servers. */

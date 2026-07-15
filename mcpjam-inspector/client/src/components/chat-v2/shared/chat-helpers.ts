@@ -3,6 +3,7 @@ import { generateId, type UIMessage, type DynamicToolUIPart } from "ai";
 import type { MCPPromptResult } from "../chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "../chat-input/skills/skill-types";
 import azureLogo from "/azure_logo.png";
+import bedrockLogo from "/bedrock_logo.svg";
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
 import deepseekLogo from "/deepseek_logo.svg";
@@ -29,6 +30,8 @@ export const getProviderLogoFromProvider = (
       return claudeLogo;
     case "azure":
       return azureLogo;
+    case "bedrock":
+      return bedrockLogo;
     case "openai":
       return openaiLogo;
     case "deepseek":

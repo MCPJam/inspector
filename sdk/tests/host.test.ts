@@ -91,6 +91,49 @@ describe("Host — public surface", () => {
     }
   });
 
+  it("serializes explicit MCP image policies", () => {
+    const json = new Host({
+      style: "mcpjam",
+      model: "test-model",
+      modelVisibleMcpToolResults: {
+        directContent: { image: false },
+        embeddedResources: { blob: { image: true } },
+        linkedResources: { blob: { image: false } },
+      },
+      mcpToolResultImageRendering: { placement: "collapsed" },
+    }).toJSON();
+
+    expect(json.modelVisibleMcpToolResults).toEqual({
+      directContent: { image: false },
+      embeddedResources: { blob: { image: true } },
+      linkedResources: { blob: { image: false } },
+    });
+    expect(json.mcpToolResultImageRendering).toEqual({
+      placement: "collapsed",
+    });
+  });
+
+  it("supports MCP image policy setters", () => {
+    const host = new Host({
+      style: "mcpjam",
+      model: "test-model",
+    })
+      .setModelVisibleMcpToolResults({
+        directContent: { image: false },
+        embeddedResources: { blob: { image: false } },
+        linkedResources: { blob: { image: true } },
+      })
+      .setMcpToolResultImageRendering({ placement: "none" });
+
+    const json = host.toJSON();
+    expect(json.modelVisibleMcpToolResults).toEqual({
+      directContent: { image: false },
+      embeddedResources: { blob: { image: false } },
+      linkedResources: { blob: { image: true } },
+    });
+    expect(json.mcpToolResultImageRendering).toEqual({ placement: "none" });
+  });
+
   it("validates lazily at toJSON() (invalid profile throws)", () => {
     const host = new Host({ style: "mcpjam", model: "test-model" });
     host.mcp.apps = { mcpAppsOverrides: { availableDisplayModes: [] } };
@@ -102,7 +145,9 @@ describe("Host — public surface", () => {
       .requireServer("srv_a")
       .setServerOverride("srv_a", { requestTimeout: Infinity });
 
-    expect(() => host.toJSON()).toThrow(/requestTimeoutOverride must be finite/);
+    expect(() => host.toJSON()).toThrow(
+      /requestTimeoutOverride must be finite/
+    );
   });
 
   it("throws if `style` is not set (no silent SDK default)", () => {
@@ -207,6 +252,26 @@ describe("Host — mutation helpers", () => {
     expect(host.mcp).toEqual({});
     expect(host.toJSON().mcp).toBeUndefined();
   });
+
+  it("setComputer attaches the resource shape by default; null detaches", () => {
+    const host = new Host({
+      style: "mcpjam",
+      model: "test-model",
+    }).setComputer();
+    expect(host.toJSON().computer).toEqual({ kind: "personal" });
+
+    host.setComputer({ kind: "personal", workdir: "/srv" });
+    expect(host.toJSON().computer?.workdir).toBe("/srv");
+
+    // Legacy input (original MVP shape) still accepted; toolset is dropped
+    // at projection — capabilities ride builtInToolIds now.
+    host.setComputer({ kind: "personal", toolset: "bash" });
+    expect(host.toJSON().computer).toEqual({ kind: "personal" });
+
+    host.setComputer(null);
+    expect(host.toJSON().computer).toBeUndefined();
+    expect("computer" in JSON.parse(JSON.stringify(host.toJSON()))).toBe(false);
+  });
 });
 
 describe("Host — toJSON() round-trips", () => {
@@ -221,6 +286,20 @@ describe("Host — toJSON() round-trips", () => {
     const json1 = host.toJSON();
     const rebuilt = new Host(json1);
     expect(rebuilt.toJSON()).toEqual(json1);
+  });
+
+  it("round-trips a computer (workdir normalized, legacy toolset dropped at the first toJSON)", () => {
+    const host = new Host({
+      style: "mcpjam",
+      model: "test-model",
+      computer: { kind: "personal", toolset: "bash", workdir: " /home/u " },
+    });
+    const json1 = host.toJSON();
+    expect(json1.computer).toEqual({
+      kind: "personal",
+      workdir: "/home/u",
+    });
+    expect(new Host(json1).toJSON()).toEqual(json1);
   });
 });
 

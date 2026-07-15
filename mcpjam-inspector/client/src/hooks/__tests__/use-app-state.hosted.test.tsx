@@ -289,6 +289,34 @@ describe("useAppState pending OAuth marker org preference", () => {
     expect(result.current.activeOrganizationId).toBe("org-from-marker");
   });
 
+  it("prefers the marker org over a valid stored org during the callback", async () => {
+    localStorage.setItem("active-organization-id:user-1", "org-stored");
+    writePendingMarker("org-from-marker");
+
+    const { result } = renderHook(() =>
+      useAppState({
+        currentUserId: "user-1",
+        routeOrganizationId: undefined,
+        hasOrganizations: true,
+        isLoadingOrganizations: false,
+        validOrganizations: [
+          { _id: "org-stored", myRole: "owner" },
+          { _id: "org-from-marker", myRole: "owner" },
+        ],
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.activeOrganizationId).toBe("org-from-marker");
+    });
+
+    await waitFor(() => {
+      expect(localStorage.getItem("active-organization-id:user-1")).toBe(
+        "org-from-marker"
+      );
+    });
+  });
+
   it("ignores the marker when the URL has no callback params (post-finalize / connection-failure path, #2)", async () => {
     // Simulate the post-callback state: URL has been cleaned by
     // finalizeHostedOAuth, even if the marker somehow survived.

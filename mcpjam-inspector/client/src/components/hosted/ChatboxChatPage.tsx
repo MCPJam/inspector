@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import { Loader2, Link2Off, ShieldX } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { ChatTabV2 } from "@/components/ChatTabV2";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -39,10 +39,12 @@ import {
   ChatboxChatUiOverrideProvider,
   ChatboxHostStyleProvider,
 } from "@/contexts/chatbox-client-style-context";
+import { gateMcpToolResultImageRenderingByModelVisibility } from "@/lib/client-config-v2";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
 import { ChatboxSurfaceProvider } from "@/contexts/chatbox-surface-context";
+import { WebManagedServersProvider } from "@/contexts/web-managed-servers-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
@@ -73,9 +75,9 @@ interface ChatboxDisplayError {
 }
 
 const INVALID_CHATBOX_LINK_MESSAGE =
-  "This chatbox link is invalid or expired. Ask the owner to share a new link if you still need access.";
+  "This swarm link is invalid or expired. Ask the owner to share a new link if you still need access.";
 const UNEXPECTED_CHATBOX_ERROR_MESSAGE =
-  "We couldn't open this chatbox right now. Please try again or open MCPJam.";
+  "We couldn't open this swarm right now. Please try again or open MCPJam.";
 
 type ChatboxBootstrapAuthMode = "workos" | "guest";
 type ChatboxLandingState =
@@ -158,7 +160,7 @@ function getChatboxDisplayError(
   if (!error) {
     return {
       kind: "invalid_link",
-      title: "Chatbox Link Unavailable",
+      title: "Swarm Link Unavailable",
       message: INVALID_CHATBOX_LINK_MESSAGE,
     };
   }
@@ -207,14 +209,14 @@ function getChatboxDisplayError(
   if (isInvalidLink) {
     return {
       kind: "invalid_link",
-      title: "Chatbox Link Unavailable",
+      title: "Swarm Link Unavailable",
       message: INVALID_CHATBOX_LINK_MESSAGE,
     };
   }
 
   return {
     kind: "unexpected",
-    title: "Chatbox Link Unavailable",
+    title: "Swarm Link Unavailable",
     message: UNEXPECTED_CHATBOX_ERROR_MESSAGE,
   };
 }
@@ -240,13 +242,7 @@ export function ChatboxChatPage({
     isLoading: isWorkOsLoading,
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
-  const posthog = usePostHog();
-  const posthogRef = useRef(posthog);
   const themeMode = usePreferencesStore((s) => s.themeMode);
-
-  useEffect(() => {
-    posthogRef.current = posthog;
-  }, [posthog]);
 
   const playgroundParams = useMemo(() => {
     try {
@@ -259,15 +255,24 @@ export function ChatboxChatPage({
     }
   }, []);
 
+  // The embedded Preview iframe is same-origin, so it shares the tab's
+  // sessionStorage with the outer dashboard. Reading or writing the chatbox
+  // session from inside the embed would leak it into (or pick it up from)
+  // the host app — the outer App treats a stored session as "render the
+  // chatbox runtime", hijacking the dashboard on the next reload. The embed
+  // never needs the fallback anyway: its URL keeps the share token (the
+  // post-redeem strip only runs standalone), so a reload re-redeems.
   const readCurrentSession = useCallback(() => {
-    return playgroundParams
-      ? readPlaygroundSession(playgroundParams.playgroundId)
-      : readChatboxSession();
+    if (playgroundParams) {
+      return readPlaygroundSession(playgroundParams.playgroundId);
+    }
+
+    return isEmbeddedPreview() ? null : readChatboxSession();
   }, [playgroundParams]);
 
   const writeCurrentSession = useCallback(
     (nextSession: ChatboxSession) => {
-      if (playgroundParams) {
+      if (playgroundParams || isEmbeddedPreview()) {
         return;
       }
 
@@ -277,7 +282,7 @@ export function ChatboxChatPage({
   );
 
   const clearCurrentSession = useCallback(() => {
-    if (playgroundParams) {
+    if (playgroundParams || isEmbeddedPreview()) {
       return;
     }
 
@@ -486,7 +491,8 @@ export function ChatboxChatPage({
         const authMode = getChatboxBootstrapAuthMode(isAuthenticated);
         setIsBootstrapping(true);
         setRouteError(null);
-        posthogRef.current.capture("chatbox_bootstrap_started", {
+        track("chatbox_bootstrap_started", {
+          location: "chatbox",
           surface: "chatbox",
           auth_mode: authMode,
           status: "started",
@@ -536,7 +542,7 @@ export function ChatboxChatPage({
           if (!nextSession) {
             throw createChatboxRouteError(
               502,
-              "Chatbox redeem returned an incomplete bootstrap payload."
+              "Swarm redeem returned an incomplete bootstrap payload."
             );
           }
 
@@ -545,7 +551,8 @@ export function ChatboxChatPage({
           setRouteError(null);
 
           syncChatboxBootstrapHash(slugify(nextSession.payload.name));
-          posthogRef.current.capture("chatbox_bootstrap_silent_success", {
+          track("chatbox_bootstrap_silent_success", {
+            location: "chatbox",
             surface: "chatbox",
             auth_mode: authMode,
             status: "success",
@@ -575,7 +582,8 @@ export function ChatboxChatPage({
           }
 
           setRouteError(nextError);
-          posthogRef.current.capture("chatbox_bootstrap_silent_failure", {
+          track("chatbox_bootstrap_silent_failure", {
+            location: "chatbox",
             surface: "chatbox",
             auth_mode: authMode,
             status: "failure",
@@ -724,7 +732,8 @@ export function ChatboxChatPage({
     }
 
     interactiveSignInEventKeyRef.current = eventKey;
-    posthogRef.current.capture("interactive_signin_required", {
+    track("interactive_signin_required", {
+      location: "chatbox",
       surface: "chatbox",
       auth_mode: authMode,
       status: "required",
@@ -757,7 +766,7 @@ export function ChatboxChatPage({
     // Copy link work across reloads.
     const token = shareableToken;
     if (!session || !token) {
-      toast.error("Chatbox link unavailable");
+      toast.error("Swarm link unavailable");
       return;
     }
 
@@ -770,9 +779,9 @@ export function ChatboxChatPage({
       await navigator.clipboard.writeText(
         buildChatboxLink(token, session.payload.name)
       );
-      toast.success("Chatbox link copied");
+      toast.success("Swarm link copied");
     } catch {
-      toast.error("Failed to copy chatbox link");
+      toast.error("Failed to copy swarm link");
     }
   }, [session, shareableToken]);
 
@@ -884,12 +893,23 @@ export function ChatboxChatPage({
               (server) => server.serverId
             ),
             requestRefreshAccessVersion,
+            // Redeemed sessions carry Convex-resolved server ids; only the
+            // web chat engine can connect them. Playground previews keep
+            // the platform default (local engine + builder connections).
+            requiresWebChatApi: !playgroundParams,
           }}
           executionConfig={{
             modelId: session.payload.modelId,
             systemPrompt: session.payload.systemPrompt,
             temperature: session.payload.temperature,
             requireToolApproval: session.payload.requireToolApproval,
+            modelVisibleMcpToolResults:
+              session.payload.modelVisibleMcpToolResults,
+            mcpToolResultImageRendering:
+              gateMcpToolResultImageRenderingByModelVisibility(
+                session.payload.mcpToolResultImageRendering,
+                session.payload.modelVisibleMcpToolResults
+              ),
           }}
           onOAuthRequired={handleOAuthRequired}
           chatboxComposerBlocked={introGate.composerBlocked}
@@ -929,47 +949,54 @@ export function ChatboxChatPage({
               hostStyle={hostStyle}
             >
               <ChatboxSurfaceProvider value={true}>
-                <div
-                  className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
-                  data-host-style={hostStyle}
-                  style={shellStyle}
-                >
-                  <header className="border-b border-border/50 bg-background/95 backdrop-blur">
-                    <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-2.5">
-                      <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
-                        {session?.payload.name || "\u00A0"}
-                      </h1>
-                      <button
-                        onClick={handleOpenMcpJam}
-                        className="cursor-pointer flex-shrink-0 border-none bg-transparent p-0"
-                      >
-                        <img
-                          src={
-                            themeMode === "dark"
-                              ? "/mcp_jam_dark.png"
-                              : "/mcp_jam_light.png"
-                          }
-                          alt="MCPJam"
-                          className="h-4 w-auto object-contain"
-                        />
-                      </button>
-                      <div className="flex flex-1 items-center justify-end gap-1.5">
-                        {session && shareableToken ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-muted-foreground"
-                            onClick={handleCopyLink}
-                          >
-                            Copy link
-                          </Button>
-                        ) : null}
+                {/* Redeemed sessions: servers are Convex-resolved, so MCP
+                    Apps widget fetches and bridge resource/prompt calls
+                    must take the hosted API branch on every platform.
+                    Playground previews keep platform routing (local
+                    builds reuse the builder's local connections). */}
+                <WebManagedServersProvider value={!playgroundParams}>
+                  <div
+                    className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
+                    data-host-style={hostStyle}
+                    style={shellStyle}
+                  >
+                    <header className="border-b border-border/50 bg-background/95 backdrop-blur">
+                      <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-2.5">
+                        <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+                          {session?.payload.name || "\u00A0"}
+                        </h1>
+                        <button
+                          onClick={handleOpenMcpJam}
+                          className="cursor-pointer flex-shrink-0 border-none bg-transparent p-0"
+                        >
+                          <img
+                            src={
+                              themeMode === "dark"
+                                ? "/mcp_jam_dark.png"
+                                : "/mcp_jam_light.png"
+                            }
+                            alt="MCPJam"
+                            className="h-4 w-auto object-contain"
+                          />
+                        </button>
+                        <div className="flex flex-1 items-center justify-end gap-1.5">
+                          {session && shareableToken ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-muted-foreground"
+                              onClick={handleCopyLink}
+                            >
+                              Copy link
+                            </Button>
+                          ) : null}
+                        </div>
                       </div>
-                    </div>
-                  </header>
+                    </header>
 
-                  {renderContent()}
-                </div>
+                    {renderContent()}
+                  </div>
+                </WebManagedServersProvider>
               </ChatboxSurfaceProvider>
             </ActiveHostCapsResolverScope>
           </ActiveMcpProfileProvider>

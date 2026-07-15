@@ -4,25 +4,42 @@ import { Hono } from "hono";
 const {
   prepareChatV2Mock,
   handleMCPJamFreeChatModelMock,
+  fetchHostRuntimeConfigMock,
+  fetchChatboxRuntimeConfigMock,
   persistChatSessionToConvexMock,
   disconnectAllServersMock,
+  managerListToolsMock,
+  managerReadResourceMock,
   emitConstructorRpcLogMock,
   validateAppToolEntriesMock,
   AppToolValidationErrorMock,
+  validateUiToolEntriesMock,
+  UiToolValidationErrorMock,
   validateWidgetModelContextEntriesMock,
   buildWidgetModelContextSystemPromptMock,
   WidgetModelContextValidationErrorMock,
 } = vi.hoisted(() => ({
   prepareChatV2Mock: vi.fn(),
   handleMCPJamFreeChatModelMock: vi.fn(),
+  fetchHostRuntimeConfigMock: vi.fn(),
+  fetchChatboxRuntimeConfigMock: vi.fn(),
   persistChatSessionToConvexMock: vi.fn(),
   disconnectAllServersMock: vi.fn(),
+  managerListToolsMock: vi.fn(),
+  managerReadResourceMock: vi.fn(),
   emitConstructorRpcLogMock: vi.fn(),
   validateAppToolEntriesMock: vi.fn(() => []),
   AppToolValidationErrorMock: class AppToolValidationError extends Error {
     constructor(message: string) {
       super(message);
       this.name = "AppToolValidationError";
+    }
+  },
+  validateUiToolEntriesMock: vi.fn(() => []),
+  UiToolValidationErrorMock: class UiToolValidationError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "UiToolValidationError";
     }
   },
   validateWidgetModelContextEntriesMock: vi.fn(() => []),
@@ -34,6 +51,23 @@ const {
     }
   },
 }));
+
+const imagePolicy = (image: boolean) => ({
+  directContent: { image },
+  embeddedResources: { blob: { image } },
+  linkedResources: { blob: { image } },
+});
+
+const resolvedImagePolicyMatcher = (image: boolean) =>
+  expect.objectContaining({
+    directContent: expect.objectContaining({ image }),
+    embeddedResources: expect.objectContaining({
+      blob: expect.objectContaining({ image }),
+    }),
+    linkedResources: expect.objectContaining({
+      blob: expect.objectContaining({ image }),
+    }),
+  });
 
 vi.mock("ai", async () => {
   const actual = await vi.importActual<typeof import("ai")>("ai");
@@ -54,6 +88,8 @@ vi.mock("@mcpjam/sdk", async () => {
       emitConstructorRpcLogMock(options?.rpcLogger);
       return {
         disconnectAllServers: disconnectAllServersMock,
+        listTools: managerListToolsMock,
+        readResource: managerReadResourceMock,
       };
     }),
   };
@@ -63,6 +99,8 @@ vi.mock("../../../utils/chat-v2-orchestration.js", () => ({
   prepareChatV2: prepareChatV2Mock,
   validateAppToolEntries: validateAppToolEntriesMock,
   AppToolValidationError: AppToolValidationErrorMock,
+  validateUiToolEntries: validateUiToolEntriesMock,
+  UiToolValidationError: UiToolValidationErrorMock,
   validateWidgetModelContextEntries: validateWidgetModelContextEntriesMock,
   buildWidgetModelContextSystemPrompt: buildWidgetModelContextSystemPromptMock,
   WidgetModelContextValidationError: WidgetModelContextValidationErrorMock,
@@ -86,6 +124,14 @@ vi.mock("../../../utils/chat-ingestion.js", async () => {
     pickEnrichmentHeaders: vi.fn(() => ({})),
   };
 });
+
+vi.mock("../../../utils/host-runtime-config.js", () => ({
+  fetchHostRuntimeConfig: fetchHostRuntimeConfigMock,
+}));
+
+vi.mock("../../../utils/chatbox-runtime-config.js", () => ({
+  fetchChatboxRuntimeConfig: fetchChatboxRuntimeConfigMock,
+}));
 
 vi.mock("../apps.js", () => ({
   default: new Hono(),
@@ -117,7 +163,22 @@ describe("web routes — chat-v2 hosted mode", () => {
       enhancedSystemPrompt: "system",
       resolvedTemperature: 0.7,
     });
+    managerListToolsMock.mockResolvedValue({ tools: [] });
+    managerReadResourceMock.mockResolvedValue({ contents: [] });
     emitConstructorRpcLogMock.mockReset();
+    // Default: host runtime-config resolves to a non-harness config so the
+    // host-bound (Playground) path routes straight through to the handler.
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { selectedServerIds: ["server-1"] },
+    });
+    // Default: chatbox runtime-config resolves (empty = host has no
+    // overrides). Chatbox turns now FAIL CLOSED on a failed fetch, so the
+    // happy-path tests must resolve it rather than lean on the old fallback.
+    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {},
+    });
 
     handleMCPJamFreeChatModelMock.mockImplementation(async (options: any) => {
       await options.onConversationComplete?.(
@@ -232,6 +293,162 @@ describe("web routes — chat-v2 hosted mode", () => {
     // missing_field, which is the desired behavior for chatbox/serverShare.
     const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
     expect(persistArgs.hostConfig).toBeUndefined();
+  });
+
+  it("validates uiTools on direct turns but strips them from chatbox-bound turns", async () => {
+    const { app, token } = createWebTestApp();
+    const uiTools = [
+      { name: "ui_navigate", description: "Navigate", readOnly: false },
+    ];
+    const baseBody = {
+      projectId: "project-1",
+      selectedServerIds: ["server-1"],
+      chatSessionId: "chat-session-1",
+      messages: [{ role: "user", content: "hi" }],
+      model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
+      uiTools,
+    };
+
+    // Direct hosted chat: the snapshot crosses the validation boundary and
+    // reaches prepareChatV2.
+    const direct = await postJson(app, "/api/web/chat-v2", baseBody, token);
+    expect(direct.status).toBe(200);
+    expect(validateUiToolEntriesMock).toHaveBeenCalledWith(uiTools);
+    // The route forwards the validator's return value (the mock yields []).
+    expect(prepareChatV2Mock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ uiTools: [] })
+    );
+    const directValidateCalls = validateUiToolEntriesMock.mock.calls.length;
+
+    // Chatbox-bound turn: ui_* tools drive the inspector UI, which is not
+    // part of the chatbox surface — the snapshot is ignored wholesale (not
+    // even validated), so a stale/tampered client can't re-advertise them.
+    const chatbox = await postJson(
+      app,
+      "/api/web/chat-v2",
+      { ...baseBody, chatboxId: "cbx_1", accessVersion: 1, surface: "preview" },
+      token
+    );
+    expect(chatbox.status).toBe(200);
+    expect(validateUiToolEntriesMock.mock.calls.length).toBe(
+      directValidateCalls
+    );
+    expect(prepareChatV2Mock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ uiTools: undefined })
+    );
+  });
+
+  // PR3: host-bound direct session (Playground previewing a saved host).
+  it("a direct session with hostId fetches the authoritative host runtime-config and routes through", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        hostId: "host-1",
+        chatSessionId: "chat-host-1",
+        messages: [{ role: "user", content: "preview request" }],
+        model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetchHostRuntimeConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({ hostId: "host-1" })
+    );
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("FAILS CLOSED when the host runtime-config fetch fails — never runs the engine", async () => {
+    const { app, token } = createWebTestApp();
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: false,
+      status: 502,
+      error: "backend unreachable",
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        hostId: "host-1",
+        chatSessionId: "chat-host-2",
+        messages: [{ role: "user", content: "preview request" }],
+        model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
+      },
+      token
+    );
+
+    expect(response.status).not.toBe(200);
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("FAILS CLOSED when the chatbox runtime-config fetch fails — never runs the engine", async () => {
+    const { app, token } = createWebTestApp();
+    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+      ok: false,
+      status: 502,
+      error: "backend unreachable",
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatboxId: "cbx_1",
+        accessVersion: 1,
+        chatSessionId: "chat-cb-fail",
+        messages: [{ role: "user", content: "preview request" }],
+        model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
+      },
+      token
+    );
+
+    // The fetched config is the only source of harness/computer and of the
+    // host-wins protections; falling back to body values would silently
+    // downgrade a harness chatbox and reopen the tampered-body window.
+    // Pin the full status/code/message mapping so it can't regress silently:
+    // upstream 5xx maps to 502 with the INTERNAL_ERROR envelope + the
+    // upstream error surfaced in the message.
+    expect(response.status).toBe(502);
+    const body = (await response.json()) as {
+      code?: string;
+      message?: string;
+    };
+    expect(body.code).toBe("INTERNAL_ERROR");
+    expect(body.message).toContain("Couldn't load this chatbox's settings");
+    expect(body.message).toContain("backend unreachable");
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("a chatbox session ignores a stray hostId (chatbox path wins)", async () => {
+    const { app, token } = createWebTestApp();
+
+    await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatboxId: "cbx_1",
+        accessVersion: 1,
+        hostId: "host-1",
+        chatSessionId: "chat-cb-1",
+        messages: [{ role: "user", content: "preview request" }],
+        model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
+      },
+      token
+    );
+
+    expect(fetchHostRuntimeConfigMock).not.toHaveBeenCalled();
   });
 
   it("passes shared chatbox link context into the hosted model handler", async () => {
@@ -419,6 +636,11 @@ describe("web routes — chat-v2 hosted mode", () => {
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("ok");
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelVisibleMcpToolResults: resolvedImagePolicyMatcher(true),
+      })
+    );
     expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
       expect.objectContaining({
         chatSessionId: "chat-session-direct",
@@ -437,6 +659,153 @@ describe("web routes — chat-v2 hosted mode", () => {
           // resolvedTemperature from prepareChatV2Mock default (0.7)
           temperature: 0.7,
         }),
+      })
+    );
+    const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
+    expect(
+      "modelVisibleMcpToolResults" in persistArgs.hostConfig
+    ).toBe(false);
+  });
+
+  it("honors direct chat image visibility opt-out from the request body", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        selectedServerNames: ["Asana"],
+        chatSessionId: "chat-session-direct-images-off",
+        directVisibility: "project",
+        modelVisibleMcpToolResults: imagePolicy(false),
+        messages: [{ role: "user", content: "hello" }],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("ok");
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
+      })
+    );
+    expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hostConfig: expect.objectContaining({
+          modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
+        }),
+        resumeConfig: expect.objectContaining({
+          modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
+        }),
+      })
+    );
+  });
+
+  it("does not resolve linked image resources from browser-replayed history", async () => {
+    const { app, token } = createWebTestApp();
+    managerListToolsMock.mockResolvedValue({
+      tools: [{ name: "qa_return_linked_image_resource" }],
+    });
+    managerReadResourceMock.mockResolvedValue({
+      contents: [
+        {
+          uri: "example://linked-image.png",
+          blob: "aGVsbG8=",
+          mimeType: "image/png",
+        },
+      ],
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        selectedServerNames: ["Asana"],
+        modelVisibleMcpToolResults: imagePolicy(true),
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call-linked-image",
+                toolName: "qa_return_linked_image_resource",
+                input: {},
+              },
+            ],
+          },
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-linked-image",
+                toolName: "qa_return_linked_image_resource",
+                output: {
+                  type: "json",
+                  value: {
+                    content: [
+                      {
+                        type: "resource_link",
+                        uri: "example://linked-image.png",
+                        name: "Linked PNG resource",
+                        mimeType: "image/png",
+                      },
+                    ],
+                  },
+                },
+              },
+            ],
+          },
+          { role: "user", content: "what can you tell me about the image" },
+        ],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(managerListToolsMock).not.toHaveBeenCalled();
+    expect(managerReadResourceMock).not.toHaveBeenCalled();
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        priorMessages: expect.arrayContaining([
+          expect.objectContaining({
+            role: "tool",
+            content: [
+              expect.objectContaining({
+                type: "tool-result",
+                output: {
+                  type: "json",
+                  value: {
+                    content: [
+                      {
+                        type: "resource_link",
+                        uri: "example://linked-image.png",
+                        name: "Linked PNG resource",
+                        mimeType: "image/png",
+                      },
+                    ],
+                  },
+                },
+              }),
+            ],
+          }),
+        ]),
       })
     );
   });

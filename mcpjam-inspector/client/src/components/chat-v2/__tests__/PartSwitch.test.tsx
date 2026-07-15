@@ -5,13 +5,10 @@ import { PartSwitch } from "../thread/part-switch";
 import { ActiveHostCapsResolverProvider } from "@/contexts/active-host-client-capabilities-context";
 import type { UIMessage } from "@ai-sdk/react";
 
-const { mockUseSaveView, mockDetectUIType, mockWidgetReplay } = vi.hoisted(
-  () => ({
-    mockUseSaveView: vi.fn(),
-    mockDetectUIType: vi.fn(),
-    mockWidgetReplay: vi.fn(),
-  })
-);
+const { mockDetectUIType, mockWidgetReplay } = vi.hoisted(() => ({
+  mockDetectUIType: vi.fn(),
+  mockWidgetReplay: vi.fn(),
+}));
 
 // Mock all part components
 vi.mock("../thread/parts/text-part", () => ({
@@ -23,8 +20,22 @@ vi.mock("../thread/parts/text-part", () => ({
 }));
 
 vi.mock("../thread/parts/tool-part", () => ({
-  ToolPart: ({ part }: { part: any }) => (
-    <div data-testid="tool-part">{part.toolName || "tool"}</div>
+  ToolPart: ({
+    part,
+    serverId,
+    rawOutput,
+  }: {
+    part: any;
+    serverId?: string;
+    rawOutput?: unknown;
+  }) => (
+    <div
+      data-testid="tool-part"
+      data-server-id={serverId ?? ""}
+      data-raw-output={JSON.stringify(rawOutput ?? null)}
+    >
+      {part.toolName || "tool"}
+    </div>
   ),
 }));
 
@@ -105,18 +116,8 @@ vi.mock("@/state/app-state-context", () => ({
     },
     activeProjectId: "default",
     selectedServer: "selected-server",
+    servers: {},
   }),
-}));
-
-vi.mock("@/hooks/useViews", () => ({
-  useViewQueries: () => ({ sortedViews: [] }),
-}));
-
-vi.mock("@/hooks/useSaveView", () => ({
-  useSaveView: (args: any) => {
-    mockUseSaveView(args);
-    return { saveViewInstant: vi.fn(), isSaving: false };
-  },
 }));
 
 // Mock thread-helpers
@@ -138,7 +139,12 @@ vi.mock("../thread/thread-helpers", () => ({
 // Mock mcp-tools-api
 vi.mock("@/lib/apis/mcp-tools-api", () => ({
   callTool: vi.fn(),
+  executeToolApi: vi.fn(),
   getToolServerId: () => "server-1",
+}));
+
+vi.mock("@/lib/toast", () => ({
+  toast: { error: vi.fn(), success: vi.fn() },
 }));
 
 // Mock mcp-apps-utils
@@ -359,14 +365,25 @@ describe("PartSwitch", () => {
       expect(screen.getByTestId("tool-part")).toBeInTheDocument();
     });
 
-    it("uses the tool server when configuring save views", () => {
+    it("passes provider metadata server id to tool parts", () => {
       const part = {
-        type: "tool-invocation",
-        toolName: "read_file",
+        type: "dynamic-tool",
+        toolName: "qa_return_linked_image_resource",
         toolCallId: "call-1",
         state: "output-available",
-        input: { path: "/test.txt" },
-        output: { content: "file content" },
+        input: {},
+        output: {
+          content: [
+            {
+              type: "resource_link",
+              uri: "example://linked-image.png",
+              mimeType: "image/png",
+            },
+          ],
+        },
+        callProviderMetadata: {
+          mcpjam: { serverId: "qa-server" },
+        },
       };
 
       render(
@@ -378,10 +395,51 @@ describe("PartSwitch", () => {
         />
       );
 
-      expect(mockUseSaveView).toHaveBeenCalledWith(
-        expect.objectContaining({
-          serverName: "server-1",
-        })
+      expect(screen.getByTestId("tool-part")).toHaveAttribute(
+        "data-server-id",
+        "qa-server"
+      );
+    });
+
+    it("passes raw MCP result to tool parts instead of model-visible output", () => {
+      const modelOutput = {
+        type: "content",
+        value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+      };
+      const rawResult = {
+        content: [
+          {
+            type: "resource",
+            resource: {
+              uri: "example://embedded-image.png",
+              blob: "aGVsbG8=",
+              mimeType: "image/png",
+            },
+          },
+        ],
+      };
+      const part = {
+        type: "dynamic-tool",
+        toolName: "qa_return_embedded_image_resource",
+        toolCallId: "call-1",
+        state: "output-available",
+        input: {},
+        output: modelOutput,
+        result: rawResult,
+      };
+
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={part as any}
+          toolsMetadata={{}}
+          toolServerMap={{}}
+        />
+      );
+
+      expect(screen.getByTestId("tool-part")).toHaveAttribute(
+        "data-raw-output",
+        JSON.stringify(rawResult)
       );
     });
 
@@ -429,8 +487,8 @@ describe("PartSwitch", () => {
           input: { title: "Flow" },
           output: { content: "saved" },
         };
-        // Mirrors the Codex template's REPLACE (not spread) of
-        // clientCapabilities — see client-templates.ts:803-810.
+        // Mirrors the Codex catalog host definition's REPLACE (not spread) of
+        // clientCapabilities.
         const codexCaps = { elicitation: {} };
         render(
           <ActiveHostCapsResolverProvider value={() => codexCaps}>

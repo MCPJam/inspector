@@ -18,6 +18,9 @@ import type {
   OAuthTraceSource,
   OAuthTraceStepStatus,
 } from "@/lib/oauth/oauth-trace";
+// `extractMethod` relocated to the SDK widget-runtime (Phase 3d-ii); imported
+// for internal use and re-exported below so existing import sites are unchanged.
+import { extractMethod } from "@mcpjam/sdk/widget-runtime";
 
 export type UiProtocol = "mcp-apps" | "openai-apps";
 export type McpServerLogKind = "rpc" | "oauth";
@@ -249,27 +252,6 @@ export function subscribeToRpcStream(): () => void {
   };
 }
 
-/**
- * Helper to extract method name from message based on protocol
- */
-export function extractMethod(message: unknown, protocol?: UiProtocol): string {
-  // OpenAI Apps: extract from "type" field (e.g., "openai:callTool" → "callTool")
-  if (protocol === "openai-apps") {
-    const msg = message as { type?: string };
-    if (typeof msg?.type === "string") {
-      return msg.type.replace("openai:", "");
-    }
-    return "unknown";
-  }
-
-  // MCP Apps (JSON-RPC): extract from method/result/error
-  const msg = message as {
-    method?: string;
-    result?: unknown;
-    error?: unknown;
-  };
-  if (typeof msg?.method === "string") return msg.method;
-  if (msg?.result !== undefined) return "result";
-  if (msg?.error !== undefined) return "error";
-  return "unknown";
-}
+// `extractMethod` is imported from @mcpjam/sdk/widget-runtime (Phase 3d-ii) and
+// re-exported here for back-compat with `@/stores/traffic-log-store` consumers.
+export { extractMethod };

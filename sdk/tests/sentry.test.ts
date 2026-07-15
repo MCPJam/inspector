@@ -195,7 +195,7 @@ describe("sdk sentry wrapper", () => {
     });
 
     await captureEvalReportingFailure(error, {
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       baseUrl: "https://example.com",
       entrypoint: "reportEvalResults",
       framework: "jest",
@@ -207,7 +207,7 @@ describe("sdk sentry wrapper", () => {
     const captureScope = captureScopes[0];
     expect(captureScope.captureException).toHaveBeenCalledWith(error);
     const expectedHash = createHash("sha256")
-      .update("mcpjam_test_key")
+      .update("sk_test_key")
       .digest("hex")
       .slice(0, 16);
     expect(captureScope.setUser).toHaveBeenCalledWith({ id: expectedHash });
@@ -242,12 +242,12 @@ describe("sdk sentry wrapper", () => {
     });
 
     await captureEvalReportingFailure(error, {
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       entrypoint: "reportEvalResults",
       suiteName: "dup-suite",
     });
     await captureEvalReportingFailure(error, {
-      apiKey: "mcpjam_test_key",
+      apiKey: "sk_test_key",
       entrypoint: "reportEvalResultsSafely",
       suiteName: "dup-suite",
     });
