@@ -176,7 +176,7 @@ describe("generateXAAFlowText", () => {
     expect(requestSection).not.toContain("Status: 200");
     expect(requestSection).not.toContain("Response Body:");
     // Received half: status/duration/response fields, no request fields.
-    expect(receivedSection).toContain("Response to POST");
+    expect(receivedSection).toContain("Response to: POST");
     expect(receivedSection).toContain("Status: 200 OK");
     expect(receivedSection).toContain("Duration: 40ms");
     expect(receivedSection).toContain("Response Body:");

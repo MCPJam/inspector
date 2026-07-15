@@ -180,7 +180,7 @@ describe("OAuth copy log formatters", () => {
     );
     expect(requestSection).not.toContain("Status: 200");
     expect(requestSection).not.toContain("Response Body:");
-    expect(receivedSection).toContain("Response to POST");
+    expect(receivedSection).toContain("Response to: POST");
     expect(receivedSection).toContain("Status: 200 OK");
     expect(receivedSection).toContain("Duration: 25ms");
     expect(receivedSection).toContain("Response Body:");
@@ -238,6 +238,7 @@ describe("OAuth copy log formatters", () => {
     );
     expect(requestText).not.toContain("Response Headers:");
     expect(responseText).toContain("[401 Unauthorized]");
+    expect(responseText).toContain("Response to: POST");
     expect(responseText).toContain("Response Headers:");
     expect(responseText).not.toContain("Request Body:");
   });

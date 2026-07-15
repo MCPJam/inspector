@@ -263,11 +263,11 @@ export function generateXAAFlowText(
       const showResponse = view !== "request";
 
       if (view === "response") {
-        text += `[${formatTimestamp(entry.timestamp)}] Response to ${
+        text += `[${formatTimestamp(entry.timestamp)}] Response to: ${
           http.request.method
         } ${sanitizeUrl(http.request.url)}\n`;
       } else {
-        text += `[${formatTimestamp(http.timestamp)}] ${
+        text += `[${formatTimestamp(http.timestamp)}] Request: ${
           http.request.method
         } ${sanitizeUrl(http.request.url)}\n`;
       }

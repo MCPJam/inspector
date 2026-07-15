@@ -178,13 +178,14 @@ export function HTTPHistoryEntry({
                 <span>{errorMessage}</span>
               </div>
             )}
-            {/* Request URL */}
+            {/* Keep the endpoint visible as context, but do not present it as
+                response data when this card is the response half. */}
             <div>
               <div className="text-xs font-medium text-muted-foreground mb-1">
-                Request URL
+                {view === "response" ? "Response to request" : "Request URL"}
               </div>
               <ScrollableJsonView
-                value={{ url }}
+                value={view === "response" ? { method, url } : { url }}
                 containerClassName="rounded-sm bg-background/60 p-2 max-h-[200px]"
               />
             </div>

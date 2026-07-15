@@ -273,9 +273,9 @@ export function generateGuideText(
         const showResponse = view !== "request";
 
         if (view === "response") {
-          text += `[${formatTimestamp(entry.timestamp ?? httpEntry.timestamp)}] Response to ${httpEntry.request.method} ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
+          text += `[${formatTimestamp(entry.timestamp ?? httpEntry.timestamp)}] Response to: ${httpEntry.request.method} ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
         } else {
-          text += `[${formatTimestamp(httpEntry.timestamp)}] ${httpEntry.request.method} ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
+          text += `[${formatTimestamp(httpEntry.timestamp)}] Request: ${httpEntry.request.method} ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
         }
 
         if (showResponse && httpEntry.duration) {
@@ -404,7 +404,11 @@ export function generateRawText(
           : "pending";
 
       text += `[${formatTimestamp(entry.timestamp)}] [${httpEntry.request.method}] [${statusLabel}] ${displayStep}\n`;
-      text += `Request URL: ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
+      if (view === "response") {
+        text += `Response to: ${httpEntry.request.method} ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
+      } else {
+        text += `Request URL: ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
+      }
 
       if (showResponse && httpEntry.duration) {
         text += `Duration: ${httpEntry.duration}ms\n`;
