@@ -21,6 +21,17 @@ export const ErrorCode = {
   // `details` so the client can rebuild a ConvexError and render the proper
   // upgrade message instead of a generic failure.
   BILLING_LIMIT_REACHED: "BILLING_LIMIT_REACHED",
+  // A host with the enterprise-managed authorization POLICY connected an
+  // `auto` server that has no stored XAA client registration. 409 (config
+  // conflict), never a silent downgrade to the discover/OAuth ladder.
+  // "Not configured", deliberately NOT "not enrolled": xaaConfigured proves
+  // an IdP mode + client id registered at the resource authorization
+  // server, not IdP enrollment — XAA_NOT_ENROLLED is reserved for the
+  // future issuer-policy evaluator's denied verdicts. NOTE the local route
+  // envelope (respondWithLocalRouteError) spreads `details` top-level and
+  // drops `code`; clients branch on the top-level `reason:
+  // "xaa_connection_not_configured"`, not this code.
+  XAA_CONNECTION_NOT_CONFIGURED: "XAA_CONNECTION_NOT_CONFIGURED",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

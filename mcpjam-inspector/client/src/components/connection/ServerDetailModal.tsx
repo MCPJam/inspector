@@ -80,13 +80,12 @@ interface ServerDetailModalProps {
   hostedServerId?: string | null;
   /**
    * Host-default outbound MCP wire mode resolved from the surrounding
-   * client's hostConfig.mcpProfile. Surfaced as a prop because the
-   * Servers tab doesn't render this modal inside an
-   * `ActiveMcpProfileProvider` scope (that provider only wraps chat /
-   * playground), so `useActiveMcpProfile()` would return undefined and
-   * the chip would always read "Legacy · default" regardless of what
-   * the user toggled on the client. Undefined = no host-level pin =
-   * "Legacy · default" attribution on the chip.
+   * client's hostConfig.mcpProfile. Kept as an explicit prop (PROP-FIRST,
+   * falling back to `useActiveMcpProfile()`) even though the Servers tab
+   * now also mounts `ActiveMcpProfileProvider` — the prop is the
+   * authoritative chip-attribution source everywhere this modal renders.
+   * Undefined = no host-level pin = "Legacy · default" attribution on
+   * the chip.
    */
   hostDefaultMcpProtocolVersion?: McpProtocolVersion;
   /** Project default XAA test identity — shown as override placeholders. */

@@ -17,10 +17,13 @@ import {
 } from "./hosted-oauth-refresh.js";
 import { logger } from "./logger.js";
 import {
+  parseXaaPolicyValue,
   resolveEffectiveAuthMethod,
   withXaaExtensionCapability,
+  xaaPolicyRequiresConfiguration,
   type EffectiveAuthMethod,
 } from "./effective-auth.js";
+import type { XaaEnterprisePolicy } from "@mcpjam/sdk";
 import { exportSingleServerForInspection } from "./export-helpers.js";
 import { ConvexHttpClient } from "convex/browser";
 import { getInspectorClientRuntimeConfig } from "../env.js";
@@ -368,6 +371,14 @@ export function parseConnectionDefaults(
     out.mcpProtocolVersion = input.mcpProtocolVersion;
   }
 
+  // Enterprise-managed authorization policy. UNLIKE every field above, this
+  // one is enforcement, not advisory: silently dropping a malformed value
+  // would un-enforce a policy the host believes is on (fail-open), so the
+  // shared gate throws 409 instead. Local connects are the user's own
+  // session — body-sourced policy here is self-tampering only.
+  const xaaPolicy = parseXaaPolicyValue(input.xaaPolicy);
+  if (xaaPolicy) out.xaaPolicy = xaaPolicy;
+
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -432,6 +443,15 @@ export function toMCPServerConfig(
      * host default on for.
      */
     mcpProtocolVersion?: McpProtocolVersion;
+    /**
+     * The host's enterprise-managed authorization policy (validated `on`
+     * value). Present ⇒ the EMA extension is advertised on EVERY server of
+     * this host — including explicit-OAuth overrides and stdio servers: the
+     * client's *support* for enterprise-managed auth is host-wide, even
+     * where a specific connection's auth flow is overridden. Also feeds the
+     * effective-auth resolution for the per-connection merge condition.
+     */
+    xaaPolicy?: XaaEnterprisePolicy;
   }
 ): MCPServerConfig {
   const { serverConfig } = authResult;
@@ -442,9 +462,12 @@ export function toMCPServerConfig(
   // Spec (MCP enterprise-managed authorization): a client whose access is
   // enterprise-managed MUST advertise the extension in initialize. Merged —
   // never overwriting — into whatever capabilities the caller configured.
+  // Advertised when the connection actually uses XAA (the backstop) or
+  // whenever the host's enterprise policy is on (host-wide declare-support).
   const clientCapabilities =
-    serverConfig.transportType === "http" &&
-    resolveEffectiveAuthMethod(serverConfig) === "xaa"
+    options?.xaaPolicy != null ||
+    (serverConfig.transportType === "http" &&
+      resolveEffectiveAuthMethod(serverConfig, options?.xaaPolicy) === "xaa")
       ? withXaaExtensionCapability(baseClientCapabilities)
       : baseClientCapabilities;
 
@@ -533,6 +556,14 @@ export function toMCPServerConfig(
   // (non-XAA auto) that HAS a token is on its stored-OAuth rung and gets the
   // same hook; tokenless discover connects bare and recovers via the tagged
   // 401 instead.
+  //
+  // INVARIANT: deliberately resolved WITHOUT the enterprise policy. The
+  // policy and no-policy resolutions differ only for an UNCONFIGURED `auto`
+  // server (xaa vs discover), and that case throws
+  // XAA_CONNECTION_NOT_CONFIGURED before any config/hook is built — so by
+  // the time hooks attach, both resolutions agree. If policy semantics ever
+  // change an ENROLLED server's resolution, this must start taking the
+  // policy too (covered by a test in local-server-resolver tests).
   const effectiveAuthForHooks = resolveEffectiveAuthMethod(serverConfig);
   if (
     oauthToken &&
@@ -596,11 +627,39 @@ export async function resolveLocalServerForConnect(
 
   // One resolver decides the flow for every dispatch below: canonical
   // authMethod wins ("auto" selects XAA when configured, "discover"
-  // otherwise); legacy rows fall back to the boolean pair.
+  // otherwise); legacy rows fall back to the boolean pair. The host's
+  // enterprise policy (already validated at parseConnectionDefaults) forces
+  // `auto` servers to XAA; stdio servers stay outside the policy — XAA is
+  // HTTP-only, so an enterprise-managed host still runs its stdio servers
+  // as today (the EMA capability is still advertised on them).
+  const xaaPolicy = options?.defaults?.xaaPolicy;
   const effectiveAuth =
     result.serverConfig.transportType === "http"
-      ? resolveEffectiveAuthMethod(result.serverConfig)
+      ? resolveEffectiveAuthMethod(result.serverConfig, xaaPolicy)
       : "none";
+
+  // Enterprise policy, unconfigured `auto` server: fail first-class BEFORE
+  // any mint/connect attempt — never silently downgrade to the discover
+  // ladder (that would mask the exact misconfiguration an admin needs to
+  // see). "Not configured" (no stored client registration at the resource
+  // authorization server), deliberately NOT "not enrolled" — enrollment
+  // verdicts belong to the future issuer-policy evaluator.
+  if (
+    result.serverConfig.transportType === "http" &&
+    xaaPolicyRequiresConfiguration(result.serverConfig, xaaPolicy)
+  ) {
+    const displayName = options?.serverDisplayName ?? serverId;
+    throw new WebRouteError(
+      409,
+      ErrorCode.XAA_CONNECTION_NOT_CONFIGURED,
+      `Server "${displayName}" has no XAA client registration configured. This host requires enterprise-managed authorization — add the server's client registration in its auth settings, or set an explicit auth method to override the host policy.`,
+      {
+        serverId,
+        serverName: options?.serverDisplayName ?? null,
+        reason: "xaa_connection_not_configured",
+      }
+    );
+  }
   const useOAuth = effectiveAuth === "oauth";
   // Track the access token we'll hand to `toMCPServerConfig`. Starts from
   // whatever `authorize-batch-local` returned, but for hosted-OAuth servers
@@ -806,6 +865,7 @@ export async function resolveLocalServerForConnect(
       serverName: options?.serverDisplayName ?? serverId,
     },
     xaaUnauthorizedHandler,
+    xaaPolicy,
   });
   return { config, authorizeResult: result, effectiveAuth };
 }

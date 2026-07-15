@@ -117,6 +117,16 @@ export {
   XAA_MCP_EXTENSION,
   type McpInitializeRequest,
 } from "./mcp-init.js";
+export {
+  readXaaEnterprisePolicy,
+  withXaaEnterprisePolicy,
+  withoutXaaEnterprisePolicy,
+  XAA_ENTERPRISE_POLICY_EXTENSION,
+  XAA_ENTERPRISE_POLICY_IDPS,
+  type XaaEnterprisePolicy,
+  type XaaEnterprisePolicyIdp,
+  type XaaEnterprisePolicyState,
+} from "./enterprise-policy.js";
 export { createInProcessXaaExecutor } from "./in-process-executor.js";
 export type { InProcessXaaExecutorOptions } from "./in-process-executor.js";
 export { runXaaFlow } from "./run-xaa-flow.js";

@@ -6,6 +6,7 @@ import {
   type HostTemplateId,
 } from "../src/host-config/templates/index.js";
 import { XAA_MCP_EXTENSION } from "../src/xaa/mcp-init.js";
+import { readXaaEnterprisePolicy } from "../src/xaa/enterprise-policy.js";
 
 const ALL_IDS: HostTemplateId[] = [
   "mcpjam",
@@ -66,6 +67,19 @@ describe("seedHostTemplate", () => {
     ).extensions;
     expect(mcpjamExts["io.modelcontextprotocol/ui"]).toBeDefined();
     expect(mcpjamExts[XAA_MCP_EXTENSION]).toEqual({});
+  });
+
+  // The enterprise-managed POLICY (com.mcpjam/enterprise-managed-auth under
+  // mcpProfile.extensions) is opt-in per host — OFF for EVERY persona,
+  // mcpjam included (product decision 2026-07-14). Unlike the EMA
+  // *capability* above (mcpjam alone advertises support), no seed may carry
+  // the policy; this guards against a future seed change enabling
+  // enforcement-by-default.
+  it("seeds the enterprise-managed policy on NO persona", () => {
+    for (const id of ALL_IDS) {
+      const state = readXaaEnterprisePolicy(seedHostTemplate(id).mcpProfile);
+      expect(state.kind, `template ${id}`).toBe("off");
+    }
   });
 
   it("matches the documented model + style for the claude template", () => {

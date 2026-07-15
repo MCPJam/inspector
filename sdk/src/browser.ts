@@ -269,6 +269,18 @@ export type {
   McpInitializeRequest,
   XaaCapabilityEvidence,
 } from "./xaa/mcp-init.js";
+export {
+  readXaaEnterprisePolicy,
+  withXaaEnterprisePolicy,
+  withoutXaaEnterprisePolicy,
+  XAA_ENTERPRISE_POLICY_EXTENSION,
+  XAA_ENTERPRISE_POLICY_IDPS,
+} from "./xaa/enterprise-policy.js";
+export type {
+  XaaEnterprisePolicy,
+  XaaEnterprisePolicyIdp,
+  XaaEnterprisePolicyState,
+} from "./xaa/enterprise-policy.js";
 // XAA flow-core types + capability preflight (browser-safe engine primitives).
 export * from "./xaa/state-machines/index.js";
 export { EMPTY_OAUTH_FLOW_STATE } from "./oauth/state-machines/types.js";

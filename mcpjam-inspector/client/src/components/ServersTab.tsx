@@ -28,6 +28,7 @@ import {
   ServerDetailModal,
   type ServerDetailTab,
 } from "./connection/ServerDetailModal";
+import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 
 import { JsonImportModal } from "./connection/JsonImportModal";
 import { ServerFormData } from "@/shared/types.js";
@@ -1829,6 +1830,13 @@ export function ServersTab({
   );
 
   return (
+    // The previewed host's mcpProfile scopes this tab so the server
+    // add/edit modals' AuthenticationSection can read the host's
+    // enterprise-managed authorization policy via useActiveMcpProfile().
+    // The ServerDetailModal's protocol chip keeps its explicit
+    // hostDefaultMcpProtocolVersion prop (prop wins; see the modal's
+    // resolution comment) — the provider is additive, not a replacement.
+    <ActiveMcpProfileProvider value={previewedHost?.config?.mcpProfile}>
     <div className="h-full flex flex-col">
       {isAuthHydrating ||
       isBillingContextPending ||
@@ -1883,10 +1891,12 @@ export function ServersTab({
           projectClientConfig={selectedProject?.clientConfig}
           projectId={hostedProjectId}
           hostedServerId={detailModalHostedServerId}
-          // Servers tab doesn't mount under ActiveMcpProfileProvider,
-          // so surface the host default explicitly from the
-          // previewedHost's `mcpProfile.mcpProtocolVersion` for the chip's
-          // source attribution.
+          // The tab now mounts under ActiveMcpProfileProvider (see the
+          // root wrapper), which is the source for general host-profile
+          // reads (e.g. the auth section's enterprise-policy guidance).
+          // The protocol chip stays PROP-FIRST: this explicit value wins
+          // over the provider (see the modal's resolution comment), so
+          // its source attribution is unchanged.
           hostDefaultMcpProtocolVersion={
             previewedHost?.config?.mcpProfile?.mcpProtocolVersion
           }
@@ -1906,5 +1916,6 @@ export function ServersTab({
           )
         : null}
     </div>
+    </ActiveMcpProfileProvider>
   );
 }
