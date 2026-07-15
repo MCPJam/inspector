@@ -2,6 +2,9 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { XAARegistrationWizard } from "../XAARegistrationWizard";
+import { AppStateProvider } from "@/state/app-state-context";
+import type { AppState } from "@/state/app-types";
+import type { ServerWithName } from "@/hooks/use-app-state";
 import type { XaaResourceApp } from "@/lib/xaa/types";
 
 let flagValue: boolean | undefined = true;
@@ -47,6 +50,73 @@ function renderWizard(
     />,
   );
 }
+
+function makeServer(
+  name: string,
+  config: Record<string, unknown>,
+  extra: Record<string, unknown> = {},
+): ServerWithName {
+  return {
+    name,
+    config,
+    lastConnectionTime: new Date(),
+    connectionStatus: "disconnected",
+    retryCount: 0,
+    ...extra,
+  } as unknown as ServerWithName;
+}
+
+function makeAppState(servers: Record<string, ServerWithName>): AppState {
+  return {
+    projects: {
+      proj_1: {
+        id: "proj_1",
+        name: "Project",
+        servers,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    },
+    activeProjectId: "proj_1",
+    servers: {},
+    selectedServer: "none",
+    selectedMultipleServers: [],
+    isMultiSelectMode: false,
+  } as unknown as AppState;
+}
+
+function renderWizardWithServers(
+  servers: Record<string, ServerWithName>,
+  props: Partial<React.ComponentProps<typeof XAARegistrationWizard>> = {},
+) {
+  return render(
+    <AppStateProvider appState={makeAppState(servers)}>
+      <XAARegistrationWizard
+        open
+        onOpenChange={vi.fn()}
+        organizationId={ORG_ID}
+        {...props}
+      />
+    </AppStateProvider>,
+  );
+}
+
+const PICKER_LABEL = "Start from an existing server";
+
+const HTTP_SERVER = makeServer(
+  "prod-mcp",
+  {
+    url: "https://prod.example.com/mcp",
+    clientId: "client-abc",
+    oauthScopes: ["read", "write"],
+  },
+  { xaaAuthzIssuer: "https://idp.example.com" },
+);
+
+const STDIO_SERVER = makeServer("local-stdio", {
+  command: "npx",
+  args: ["my-server"],
+});
 
 async function fillBasicInfoAndAdvance(
   user: ReturnType<typeof userEvent.setup>,
@@ -368,5 +438,166 @@ describe("XAARegistrationWizard", () => {
     );
     // The failed check doesn't block saving.
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  describe("server picker", () => {
+    it("lists only HTTP servers, excluding STDIO", async () => {
+      const user = userEvent.setup();
+      renderWizardWithServers({
+        "prod-mcp": HTTP_SERVER,
+        "local-stdio": STDIO_SERVER,
+      });
+
+      await user.click(screen.getByLabelText(PICKER_LABEL));
+      expect(
+        screen.getByRole("option", { name: "prod-mcp" }),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("option", { name: "local-stdio" })).toBeNull();
+    });
+
+    it("hides the picker when the project has no HTTP servers", () => {
+      renderWizardWithServers({ "local-stdio": STDIO_SERVER });
+      expect(screen.queryByLabelText(PICKER_LABEL)).toBeNull();
+    });
+
+    it("hides the picker outside an AppStateProvider (blank wizard unchanged)", () => {
+      renderWizard();
+      expect(screen.queryByLabelText(PICKER_LABEL)).toBeNull();
+      expect(screen.getByLabelText("Name")).toHaveValue("");
+    });
+
+    it("hides the picker when editing an existing registration", () => {
+      const editing: XaaResourceApp = {
+        id: "app_1",
+        name: "Existing",
+        resourceType: "mcp",
+        resourceUrl: "https://resource.example.com/mcp",
+        authServerMode: "own",
+        tokenEndpoint: "https://auth.example.com/oauth/token",
+        hasSecret: false,
+        createdAt: 1,
+        updatedAt: 2,
+      };
+      renderWizardWithServers({ "prod-mcp": HTTP_SERVER }, { editing });
+      expect(screen.queryByLabelText(PICKER_LABEL)).toBeNull();
+      // The edit-seeded draft is untouched by the (hidden) picker.
+      expect(screen.getByLabelText("Name")).toHaveValue("Existing");
+    });
+
+    it("picking prefills every derivable field across the steps", async () => {
+      const user = userEvent.setup();
+      renderWizardWithServers({ "prod-mcp": HTTP_SERVER });
+
+      await user.click(screen.getByLabelText(PICKER_LABEL));
+      await user.click(screen.getByRole("option", { name: "prod-mcp" }));
+
+      expect(screen.getByLabelText("Name")).toHaveValue("prod-mcp");
+      expect(screen.getByLabelText("Resource URL")).toHaveValue(
+        "https://prod.example.com/mcp",
+      );
+      expect(screen.getByLabelText("MCP server")).toBeChecked();
+
+      await user.click(screen.getByRole("button", { name: "Next" }));
+      expect(screen.getByLabelText("Issuer")).toHaveValue(
+        "https://idp.example.com",
+      );
+      expect(screen.getByLabelText("Client ID")).toHaveValue("client-abc");
+
+      await user.type(
+        screen.getByLabelText("Token endpoint"),
+        "https://idp.example.com/oauth/token",
+      );
+      await user.click(screen.getByRole("button", { name: "Next" }));
+      expect(screen.getByLabelText("Scopes")).toHaveValue("read write");
+    });
+
+    it("keeps manual edits after a pick, until an explicit re-pick overwrites", async () => {
+      const user = userEvent.setup();
+      const other = makeServer("staging-mcp", {
+        url: "https://staging.example.com/mcp",
+      });
+      renderWizardWithServers({
+        "prod-mcp": HTTP_SERVER,
+        "staging-mcp": other,
+      });
+
+      await user.click(screen.getByLabelText(PICKER_LABEL));
+      await user.click(screen.getByRole("option", { name: "prod-mcp" }));
+
+      // Manual edit after the pick sticks.
+      await user.clear(screen.getByLabelText("Name"));
+      await user.type(screen.getByLabelText("Name"), "Custom name");
+      expect(screen.getByLabelText("Name")).toHaveValue("Custom name");
+
+      // A deliberate re-pick overwrites the prefillable fields again —
+      // including clearing values the new server has no data for, so the
+      // draft never mixes two servers' details.
+      await user.click(screen.getByLabelText(PICKER_LABEL));
+      await user.click(screen.getByRole("option", { name: "staging-mcp" }));
+      expect(screen.getByLabelText("Name")).toHaveValue("staging-mcp");
+      expect(screen.getByLabelText("Resource URL")).toHaveValue(
+        "https://staging.example.com/mcp",
+      );
+
+      // Editing after the re-pick sticks too.
+      await user.clear(screen.getByLabelText("Resource URL"));
+      await user.type(
+        screen.getByLabelText("Resource URL"),
+        "https://edited.example.com/mcp",
+      );
+      expect(screen.getByLabelText("Resource URL")).toHaveValue(
+        "https://edited.example.com/mcp",
+      );
+    });
+
+    it("never touches fields the picker has no data for (secret survives a pick)", async () => {
+      const user = userEvent.setup();
+      renderWizardWithServers({ "prod-mcp": HTTP_SERVER });
+
+      await user.type(screen.getByLabelText("Name"), "Manual");
+      await user.type(
+        screen.getByLabelText("Resource URL"),
+        "https://manual.example.com/mcp",
+      );
+      await user.click(screen.getByRole("button", { name: "Next" }));
+      await user.type(screen.getByLabelText("Client secret"), "cs-secret");
+      await user.click(screen.getByRole("button", { name: "Back" }));
+
+      await user.click(screen.getByLabelText(PICKER_LABEL));
+      await user.click(screen.getByRole("option", { name: "prod-mcp" }));
+      expect(screen.getByLabelText("Name")).toHaveValue("prod-mcp");
+
+      await user.click(screen.getByRole("button", { name: "Next" }));
+      expect(screen.getByLabelText("Client secret")).toHaveValue("cs-secret");
+    });
+
+    it("saves a picked-then-completed registration with today's payload shape", async () => {
+      const user = userEvent.setup();
+      renderWizardWithServers({ "prod-mcp": HTTP_SERVER });
+
+      await user.click(screen.getByLabelText(PICKER_LABEL));
+      await user.click(screen.getByRole("option", { name: "prod-mcp" }));
+      await user.click(screen.getByRole("button", { name: "Next" }));
+      await user.type(
+        screen.getByLabelText("Token endpoint"),
+        "https://idp.example.com/oauth/token",
+      );
+      await user.click(screen.getByRole("button", { name: "Next" }));
+      await user.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
+      // Exact-match: the snapshot payload carries no reference to the picked
+      // server row and no new fields.
+      expect(upsert).toHaveBeenCalledWith({
+        name: "prod-mcp",
+        resourceType: "mcp",
+        resourceUrl: "https://prod.example.com/mcp",
+        authServerMode: "own",
+        tokenEndpoint: "https://idp.example.com/oauth/token",
+        issuer: "https://idp.example.com",
+        targetClientId: "client-abc",
+        scopes: ["read", "write"],
+      });
+    });
   });
 });

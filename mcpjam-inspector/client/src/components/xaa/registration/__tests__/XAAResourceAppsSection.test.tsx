@@ -91,7 +91,10 @@ describe("XAAResourceAppsSection", () => {
     const user = userEvent.setup();
     render(<XAAResourceAppsSection organizationId={ORG_ID} />);
 
-    expect(screen.getByTestId("xaa-reg-empty")).toBeInTheDocument();
+    const empty = screen.getByTestId("xaa-reg-empty");
+    expect(empty).toBeInTheDocument();
+    // The register-from-a-server funnel is discoverable from the empty state.
+    expect(empty).toHaveTextContent(/start straight from an existing server/i);
 
     await user.click(screen.getByRole("button", { name: /register/i }));
     expect(screen.getByTestId("xaa-reg-wizard-open")).toBeInTheDocument();

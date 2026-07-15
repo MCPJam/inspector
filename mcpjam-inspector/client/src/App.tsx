@@ -41,6 +41,7 @@ import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
 import { HostCompatPage } from "./components/compat/HostCompatPage";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
+import { XAASetupPage } from "./components/xaa/setup/XAASetupPage";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
 import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
@@ -1331,6 +1332,7 @@ export function XAAFlowRoute() {
     appState,
     displayServerConfigs,
     activeOrganizationId,
+    activeProject,
     convexProjectId,
     setSelectedServer,
     saveServerConfigWithoutConnecting,
@@ -1355,10 +1357,32 @@ export function XAAFlowRoute() {
         selectedServerName={appState.selectedServer}
         organizationId={activeOrganizationId ?? null}
         projectId={convexProjectId ?? null}
+        projectXaaTestDefaults={activeProject?.xaaTestDefaults ?? null}
         onSelectServer={setSelectedServer}
         onSaveServerConfig={saveServerConfigWithoutConnecting}
         openServerModalSignal={xaaServerModalNonce}
       />
+    </ErrorBoundary>
+  );
+}
+
+export function XAASetupRoute() {
+  const { xaaEnabled, activeOrganizationId } = useAppRouteContext();
+  // Same gates as the surfaces that link here: the debugger flag plus the
+  // registration flag (the setup center manages registered resource apps).
+  const registrationEnabled = useFeatureFlagEnabled("xaa-registration");
+  if (xaaEnabled !== true || registrationEnabled !== true) return null;
+
+  return (
+    <ErrorBoundary
+      fallback={
+        <div className="flex items-center justify-center h-full text-muted-foreground">
+          Something went wrong in the XAA setup center. Try refreshing the
+          page.
+        </div>
+      }
+    >
+      <XAASetupPage organizationId={activeOrganizationId ?? null} />
     </ErrorBoundary>
   );
 }

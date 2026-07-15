@@ -13,6 +13,7 @@ import type { ProjectClientConfig } from "@/lib/client-config";
 import { getEffectiveProjectConnectionDefaults } from "@/lib/client-config";
 import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
+import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
 
 interface InitialFormValues {
   name: string;
@@ -117,11 +118,6 @@ export function useServerForm(
   options?: {
     requireHttps?: boolean;
     projectClientConfig?: ProjectClientConfig;
-    /**
-     * Signed-in user's email, used as the default XAA simulated identity
-     * (subject + email) when the Advanced override fields are left blank.
-     */
-    signedInEmail?: string;
   }
 ) {
   const [name, setName] = useState("");
@@ -155,6 +151,10 @@ export function useServerForm(
     useState(false);
   const [xaaSubject, setXaaSubject] = useState("");
   const [xaaEmail, setXaaEmail] = useState("");
+  // The identity override is ONE atomic pair. Only a user edit (via the
+  // exported setters) marks it dirty; an untouched form omits both keys so
+  // the save path preserves the stored values.
+  const [xaaIdentityDirty, setXaaIdentityDirty] = useState(false);
 
   const [clientIdError, setClientIdError] = useState<string | null>(null);
   const [clientSecretError, setClientSecretError] = useState<string | null>(
@@ -401,6 +401,7 @@ export function useServerForm(
       );
       setXaaSubject(server.xaaSubject ?? "");
       setXaaEmail(server.xaaEmail ?? "");
+      setXaaIdentityDirty(false);
 
       // Set auth type based on multiple OAuth detection sources
       if (resolvedAuthType === "xaa") {
@@ -569,6 +570,16 @@ export function useServerForm(
       clientCapabilitiesOverrideError != null
     ) {
       return clientCapabilitiesOverrideError;
+    }
+
+    // The identity override is atomic: exactly one filled field can neither
+    // be saved (a mixed identity) nor silently dropped.
+    if (
+      (authType === "xaa" || authType === "auto") &&
+      xaaIdentityDirty &&
+      (xaaSubject.trim() === "") !== (xaaEmail.trim() === "")
+    ) {
+      return XAA_PARTIAL_OVERRIDE_ERROR;
     }
 
     return null;
@@ -889,16 +900,14 @@ export function useServerForm(
         : undefined,
       xaaAuthzIssuer: useXaa ? xaaAuthzIssuer.trim() || undefined : undefined,
       xaaAllowPathScopedIssuer: useXaa ? xaaAllowPathScopedIssuer : undefined,
-      // Default the simulated identity to the signed-in user when blank, so the
-      // mint asserts a real subject instead of a placeholder test user. The
-      // resource server still decides what subject it accepts — this is just a
-      // sane, overridable default.
-      xaaSubject: useXaa
-        ? xaaSubject.trim() || options?.signedInEmail || undefined
-        : undefined,
-      xaaEmail: useXaa
-        ? xaaEmail.trim() || options?.signedInEmail || undefined
-        : undefined,
+      // Atomic identity override: an untouched pair omits BOTH keys (the
+      // save path preserves stored values); an edited pair emits both
+      // trimmed values; an explicit clear emits both as "" (the backend
+      // normalizes the empty pair away). Partial pairs are blocked by
+      // validateForm before this builder's output is submitted.
+      ...(useXaa && xaaIdentityDirty
+        ? { xaaSubject: xaaSubject.trim(), xaaEmail: xaaEmail.trim() }
+        : {}),
       requestTimeout: reqTimeout,
     };
   };
@@ -919,6 +928,7 @@ export function useServerForm(
     setXaaAllowPathScopedIssuer(false);
     setXaaSubject("");
     setXaaEmail("");
+    setXaaIdentityDirty(false);
     setBearerToken("");
     setHasStoredBearerToken(false);
     setAuthType("auto");
@@ -1050,9 +1060,15 @@ export function useServerForm(
     xaaAllowPathScopedIssuer,
     setXaaAllowPathScopedIssuer,
     xaaSubject,
-    setXaaSubject,
+    setXaaSubject: (value: string) => {
+      setXaaIdentityDirty(true);
+      setXaaSubject(value);
+    },
     xaaEmail,
-    setXaaEmail,
+    setXaaEmail: (value: string) => {
+      setXaaIdentityDirty(true);
+      setXaaEmail(value);
+    },
     requestTimeout,
     setRequestTimeout,
     inheritedRequestTimeout: projectConnectionDefaults.requestTimeout,

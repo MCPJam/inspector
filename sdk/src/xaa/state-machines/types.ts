@@ -83,6 +83,33 @@ export interface XaaDcrCredentialCache {
   delete(key: string): void;
 }
 
+/** Build the stable, target-scoped key used for session-only DCR credentials. */
+export function buildXaaDcrCredentialCacheKey(args: {
+  targetKey: string;
+  registrationEndpoint: string;
+  scope?: string | null;
+}): string {
+  return [args.targetKey, args.registrationEndpoint, args.scope ?? ""]
+    .map(encodeURIComponent)
+    .join("::");
+}
+
+/** True only when a confidential DCR credential has a finite, elapsed expiry. */
+export function isXaaDcrClientSecretExpired(
+  credentials: Pick<
+    XaaEphemeralDcrCredentials,
+    "clientSecret" | "clientSecretExpiresAt"
+  >,
+  nowSeconds = Math.floor(Date.now() / 1000)
+): boolean {
+  return (
+    Boolean(credentials.clientSecret) &&
+    typeof credentials.clientSecretExpiresAt === "number" &&
+    credentials.clientSecretExpiresAt !== 0 &&
+    credentials.clientSecretExpiresAt <= nowSeconds
+  );
+}
+
 export interface XAAJWTInspectionIssue {
   section: "header" | "payload" | "signature";
   field: string;
@@ -183,6 +210,10 @@ export interface XAAFlowState {
   accessToken?: string;
   tokenType?: string;
   expiresIn?: number;
+  /** The `scope` the authorization server actually granted on the jwt-bearer
+   * token response, when it returned one. Distinct from `scope` (requested):
+   * a narrower grant is how a RAS downscopes a subject per its own policy. */
+  grantedScope?: string;
   lastRequest?: {
     method: string;
     url: string;
@@ -218,6 +249,26 @@ export interface XAAFlowState {
   /** Set after a DCR POST whose outcome left no reusable registration: a
    * retry may create a second remote client and needs explicit confirmation. */
   dcrRetryMayCreateDuplicate?: boolean;
+  /** Managed-IdP policy ruling for this run's ID-JAG mint. Set only when the
+   * run carried a managed context (config `policyMode` present) — legacy and
+   * unmanaged-context-free runs never fabricate policy state. Carries codes
+   * and scope strings only — never tokens. */
+  idpPolicy?: {
+    outcome: "granted" | "downscoped" | "denied";
+    /** Allowlisted OAuth error code from a policy denial (or evaluator
+     * outage). Anything else the issuer returns is dropped, not echoed. */
+    errorCode?:
+      | "access_denied"
+      | "invalid_target"
+      | "invalid_client"
+      | "invalid_scope"
+      | "temporarily_unavailable";
+    /** Short value-free reason enum from the issuer's `error_description`
+     * (truncated); e.g. `not_assigned`, `identity_suspended`. */
+    reasonCode?: string;
+    requestedScope?: string;
+    grantedScope?: string;
+  };
 }
 
 export interface XAARequestResult {
@@ -264,6 +315,17 @@ export interface BaseXAAStateMachineConfig {
    * request bodies so the local server forwards them to the hosted issuer. */
   issuerMode?: "local" | "hosted";
   organizationId?: string | null;
+  /** Managed-IdP policy context for org-registered resource-app runs. When
+   * set, the ID-JAG mint carries it (headers on the spec `/token` form, body
+   * fields on the legacy JSON mint) so the org-scoped issuer can enforce
+   * per-person policy. Keyed on PRESENCE, independent of `issuerMode` — a
+   * direct hosted run keeps `issuerMode` "local". Unset ⇒ legacy behavior,
+   * byte-identical mint requests. */
+  policyMode?: "managed" | "unmanaged";
+  /** The org synthetic person this managed run acts as. */
+  testIdentityId?: string;
+  /** The registered resource app the managed run targets. */
+  resourceAppId?: string;
   /** Scoped issuer flavor for hosted forwards: "org" (/o/<orgId>, signed-in
    * members) or "anonymous" (/g/<personalOrgId>, the anonymous test issuer a
    * RAS must explicitly allowlist). Defaults to "org". */
@@ -347,6 +409,7 @@ export const EMPTY_XAA_FLOW_STATE: XAAFlowState = {
   accessToken: undefined,
   tokenType: undefined,
   expiresIn: undefined,
+  grantedScope: undefined,
   lastRequest: undefined,
   lastResponse: undefined,
   httpHistory: [],
@@ -354,6 +417,7 @@ export const EMPTY_XAA_FLOW_STATE: XAAFlowState = {
   error: undefined,
   negativeProbe: undefined,
   compatibilityReport: undefined,
+  idpPolicy: undefined,
 };
 
 export function createInitialXAAFlowState(

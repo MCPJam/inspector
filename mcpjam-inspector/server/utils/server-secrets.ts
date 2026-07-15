@@ -405,3 +405,117 @@ export async function authorizeXaaOrgIssuer(args: {
     clientIp: args.clientIp,
   });
 }
+
+/**
+ * The backend policy evaluator's ruling on an org-scoped ID-JAG mint. A
+ * `denied` decision is a POLICY outcome (auditable, mapped to an OAuth error
+ * downstream) — transport/auth failures throw WebRouteError instead and the
+ * caller fails the mint closed. connectionId/assignmentId are absent on the
+ * admin unmanaged bypass, which has no connection or assignment rows.
+ */
+export type XaaIssuerPolicyDecision =
+  | {
+      outcome: "granted";
+      grantedScopes: string[];
+      connectionId?: string;
+      assignmentId?: string;
+    }
+  | {
+      outcome: "denied";
+      code: "access_denied" | "invalid_target" | "invalid_client" | "invalid_scope";
+      reasonCode: string;
+    };
+
+const XAA_POLICY_DENIAL_CODES = [
+  "access_denied",
+  "invalid_target",
+  "invalid_client",
+  "invalid_scope",
+] as const;
+
+/**
+ * Evaluate the managed-IdP policy for an org-scoped ID-JAG mint. Sibling of
+ * authorizeXaaOrgIssuer: the caller's bearer is forwarded as-is, so Convex
+ * resolves the identity, requires org membership, applies the managed policy
+ * (or the admin-only unmanaged bypass) and writes the audit row atomically
+ * with the decision. Throws WebRouteError on transport/auth failure — the
+ * mint gate treats any throw as fail-closed.
+ */
+export async function evaluateXaaIssuerPolicy(args: {
+  bearerToken: string;
+  organizationId: string;
+  testIdentityId: string;
+  resourceAppId: string;
+  claims: { subject: string; email?: string };
+  audience: string;
+  resource?: string;
+  targetClientId?: string;
+  requestedScopes: string[];
+  policyMode: "managed" | "unmanaged";
+}): Promise<XaaIssuerPolicyDecision> {
+  const body = await postToConvexAuthorized({
+    path: "/web/xaa/issuer/evaluate-policy",
+    bearerToken: args.bearerToken,
+    body: {
+      organizationId: args.organizationId,
+      testIdentityId: args.testIdentityId,
+      resourceAppId: args.resourceAppId,
+      claims: args.claims,
+      audience: args.audience,
+      ...(args.resource !== undefined ? { resource: args.resource } : {}),
+      ...(args.targetClientId !== undefined
+        ? { targetClientId: args.targetClientId }
+        : {}),
+      requestedScopes: args.requestedScopes,
+      policyMode: args.policyMode,
+    },
+    serviceName: "issuer-policy service",
+  });
+
+  const decision = body?.decision;
+  if (decision && typeof decision === "object") {
+    if (
+      decision.outcome === "granted" &&
+      Array.isArray(decision.grantedScopes) &&
+      decision.grantedScopes.every((s: unknown) => typeof s === "string")
+    ) {
+      // Downscope-only invariant, enforced client-side too: whatever the
+      // evaluator says, this path can only preserve or narrow the request —
+      // a malformed/compromised policy response must never broaden the mint
+      // beyond what the client asked for.
+      const requested = new Set(args.requestedScopes);
+      const grantedScopes = (decision.grantedScopes as string[]).filter(
+        (scope) => requested.has(scope)
+      );
+      return {
+        outcome: "granted",
+        grantedScopes,
+        ...(typeof decision.connectionId === "string"
+          ? { connectionId: decision.connectionId }
+          : {}),
+        ...(typeof decision.assignmentId === "string"
+          ? { assignmentId: decision.assignmentId }
+          : {}),
+      };
+    }
+    if (
+      decision.outcome === "denied" &&
+      (XAA_POLICY_DENIAL_CODES as readonly string[]).includes(decision.code)
+    ) {
+      return {
+        outcome: "denied",
+        code: decision.code,
+        reasonCode:
+          typeof decision.reasonCode === "string" ? decision.reasonCode : "",
+      };
+    }
+  }
+
+  // An unrecognized decision shape must never mint — throw so the gate fails
+  // closed rather than guessing at a grant.
+  throw new WebRouteError(
+    500,
+    ErrorCode.INTERNAL_ERROR,
+    "Issuer policy response was invalid"
+  );
+}

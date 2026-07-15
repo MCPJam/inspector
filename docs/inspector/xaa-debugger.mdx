@@ -56,6 +56,15 @@ cannot reach a local Issuer URL.
   />
 </Frame>
 
+The hosted issuer is available to both signed-in users and guest (not-signed-in) sessions, provided an organization is active. The issuer used depends on your session:
+
+| Session | Issuer path | Trust model |
+| ------- | ----------- | ----------- |
+| **Signed in** | `/o/<orgId>` | Membership-gated. Only org members can mint assertions under it. |
+| **Guest** | `/g/<personalOrgId>` | **Anonymous test issuer.** Its discovery document is marked `mcpjam:issuer_kind: anonymous-test`. Your authorization server must explicitly allowlist this issuer. Assertions prove control of an anonymous session — this is a testing convenience, not enterprise-managed authorization. Sign in to use the membership-gated issuer instead. |
+
+When a guest session is active, the hosted-issuer toggle shows an **Anonymous test issuer** badge as a reminder of this distinction.
+
 ## Add Your MCP Server
 
 In the XAA Flow tab, select **Configure Server to Test**.
@@ -195,6 +204,8 @@ The **Negative-test scorecard** sends invalid ID-JAGs to your authorization
 server and checks that it refuses the assertions that the ID-JAG profile
 requires it to reject. It also reports two policy-dependent probes separately.
 Run a successful flow first to unlock it.
+The scorecard reuses the client identity resolved by that flow when it was
+pre-registered or dynamically registered with DCR.
 
 Click **Run negative tests** to send intentionally broken ID-JAGs to the
 authorization server's token endpoint. The MCP server is not called during

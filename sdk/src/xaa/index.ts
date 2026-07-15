@@ -79,12 +79,16 @@ export {
   type VerifyMockSamlAssertionExpectations,
 } from "./mint/saml.js";
 export {
+  decodeIdentityAssertionClaimsUnsafe,
   handleXaaAuthenticate,
   handleXaaJsonTokenExchange,
   handleXaaTokenExchangeGrant,
+  mintXaaTokenExchangeGrant,
+  validateXaaTokenExchangeGrant,
   type XaaAuthenticateParams,
   type XaaJsonTokenExchangeParams,
   type XaaMintHandlerResult,
+  type XaaValidatedTokenExchangeGrant,
 } from "./mint/handlers.js";
 export {
   buildJwtBearerBody,
