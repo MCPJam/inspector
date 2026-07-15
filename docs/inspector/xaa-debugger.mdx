@@ -63,7 +63,7 @@ The hosted issuer is available to both signed-in users and guest (not-signed-in)
 | **Signed in** | `/o/<orgId>` | Membership-gated. Only org members can mint assertions under it. |
 | **Guest** | `/g/<personalOrgId>` | **Anonymous test issuer.** Its discovery document is marked `mcpjam:issuer_kind: anonymous-test`. Your authorization server must explicitly allowlist this issuer. Assertions prove control of an anonymous session — this is a testing convenience, not enterprise-managed authorization. Sign in to use the membership-gated issuer instead. |
 
-When a guest session is active, the hosted-issuer toggle shows an **Anonymous test issuer** badge as a reminder of this distinction.
+When a guest session is active, hover the info icon next to the hosted-issuer toggle to see a reminder of this distinction.
 
 ## Add Your MCP Server
 
