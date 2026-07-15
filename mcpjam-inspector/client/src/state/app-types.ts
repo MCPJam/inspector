@@ -4,6 +4,7 @@ import type {
   AuthMethod,
   IdentityAssertionFormat,
   RegistrationMode,
+  XaaClientAuthMethod,
 } from "@/shared/xaa.js";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import type {
@@ -100,6 +101,12 @@ export interface ServerWithName {
    * flows and the XAA debugger. Persisted per-server; may be "auto".
    */
   registrationMode?: RegistrationMode;
+  /**
+   * XAA-debugger-only CIMD client-authentication method ("none" public default
+   * | "private_key_jwt" confidential). Persisted per-server; only meaningful
+   * when registrationMode resolves to "cimd".
+   */
+  xaaClientAuth?: XaaClientAuthMethod;
   /**
    * Canonical auth method (useOAuth/useXaa are its derived compat mirrors).
    * "auto" selects XAA when the server is XAA-configured, OAuth otherwise.

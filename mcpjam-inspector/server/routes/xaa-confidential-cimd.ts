@@ -84,13 +84,24 @@ function isRateLimited(c: Context): boolean {
   return false;
 }
 
-/** The public URL this request was served at (Cloudflare/Vercel-forwarded). */
-function requestClientId(c: Context): string {
+/**
+ * The public origin this request was served at (Cloudflare/Vercel-forwarded).
+ * Exported so the endpoint that MINTS a confidential client_id URL uses the same
+ * origin derivation the reflector uses when it ECHOES client_id — otherwise the
+ * minted URL and the reflected `client_id` wouldn't byte-match.
+ */
+export function confidentialCimdPublicOrigin(c: Context): string {
   const url = new URL(c.req.url);
-  const proto = c.req.header("x-forwarded-proto") ?? url.protocol.replace(/:$/, "");
+  const proto =
+    c.req.header("x-forwarded-proto") ?? url.protocol.replace(/:$/, "");
   const host =
     c.req.header("x-forwarded-host") ?? c.req.header("host") ?? url.host;
-  return `${proto}://${host}${url.pathname}`;
+  return `${proto}://${host}`;
+}
+
+/** The public URL this request was served at (Cloudflare/Vercel-forwarded). */
+function requestClientId(c: Context): string {
+  return `${confidentialCimdPublicOrigin(c)}${new URL(c.req.url).pathname}`;
 }
 
 export function registerXaaConfidentialCimdRoute(app: Hono) {

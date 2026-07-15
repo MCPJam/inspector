@@ -301,6 +301,44 @@ describe("XAAServerModal", () => {
     expect(formData.registrationMode).toBe("dcr");
   });
 
+  it("surfaces the Client authentication control only for CIMD and saves the confidential choice", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderModal();
+
+    await user.type(screen.getByLabelText(/Server Name/), "staging-mcp");
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://staging.mcp.example.com"
+    );
+    // Pre-registered: no client-auth control.
+    expect(
+      screen.queryByLabelText("Client authentication")
+    ).not.toBeInTheDocument();
+
+    // Switch to CIMD → the control appears.
+    await user.click(screen.getByLabelText("Registration"));
+    await user.click(
+      screen.getByRole("option", { name: /client metadata url/i })
+    );
+    expect(
+      screen.getByLabelText("Client authentication")
+    ).toBeInTheDocument();
+
+    // Choose Confidential (private_key_jwt).
+    await user.click(screen.getByLabelText("Client authentication"));
+    await user.click(
+      screen.getByRole("option", { name: /confidential/i })
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" })
+    );
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    const { formData } = onSave.mock.calls[0][0];
+    expect(formData.registrationMode).toBe("cimd");
+    expect(formData.xaaClientAuth).toBe("private_key_jwt");
+  });
+
   it("prefills the persisted registration strategy when editing", async () => {
     const user = userEvent.setup();
     const server = {

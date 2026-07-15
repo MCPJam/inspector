@@ -97,6 +97,30 @@ export function getXaaIdpUrls(
  * (browser on :5173, backend on :6274). Falls back to null on any failure;
  * callers should default to `getXaaIdpUrls()` then.
  */
+/**
+ * Confidential CIMD: ask the server for the reflector document URL that
+ * publishes ITS client public key. The browser can't hold the private key, so
+ * it presents this URL as its client_id and the server signs the
+ * client_assertion at /proxy/token. Returns null on failure (caller falls back
+ * to public CIMD). Unscoped: the client key is the server's own, org-independent.
+ */
+export async function fetchConfidentialCimdClientUrl(
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  const url = `${origin}${getIssuerBasePath()}/confidential-cimd/client`;
+  try {
+    const response = await fetch(url, { signal });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { clientIdMetadataUrl?: unknown };
+    return typeof body.clientIdMetadataUrl === "string"
+      ? body.clientIdMetadataUrl
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchXaaIdpUrls(
   signal?: AbortSignal,
   organizationId?: string | null,

@@ -5,6 +5,7 @@ import type {
   AuthMethod,
   IdentityAssertionFormat,
   RegistrationMode,
+  XaaClientAuthMethod,
 } from "./xaa";
 
 // Legacy server config (keeping for compatibility)
@@ -811,6 +812,13 @@ export interface ServerFormData {
    * it must preserve the stored value (the save-path `?? existing` merge).
    */
   xaaIdentityAssertionFormat?: IdentityAssertionFormat;
+  /**
+   * XAA-debugger-only CIMD client authentication ("none" public default |
+   * "private_key_jwt" confidential). Persisted per-server; only meaningful when
+   * registrationMode resolves to "cimd". Saves that omit it preserve the stored
+   * value (the save-path `?? existing` merge).
+   */
+  xaaClientAuth?: XaaClientAuthMethod;
   /** Registry credential key for resolving OAuth client ID from env (e.g. "github") */
   oauthCredentialKey?: string;
   /** True for registry servers that use backend-managed preregistered OAuth credentials */

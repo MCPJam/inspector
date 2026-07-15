@@ -21,6 +21,7 @@ export {
   DEFAULT_SUBJECT_IDENTIFIER_FORMAT,
   normalizeSubjectIdentifierFormat,
   SAML2_TOKEN_TYPE,
+  isLoopbackClientMetadataUrl,
 } from "@mcpjam/sdk/browser";
 export type {
   NegativeTestMode,
@@ -30,6 +31,27 @@ export type {
   IdentityAssertionFormat,
   SubjectIdentifierFormat,
 } from "@mcpjam/sdk/browser";
+
+/**
+ * Client-authentication method for a CIMD run (XAA-debugger-only vocabulary).
+ * Public CIMD is `none`; confidential CIMD is `private_key_jwt` — the debugger
+ * holds a client key (server-side) and signs a client_assertion, addressing the
+ * client via the confidential reflector document URL. Only meaningful when the
+ * registration strategy is `cimd`.
+ */
+export const XAA_CLIENT_AUTH_METHODS = ["none", "private_key_jwt"] as const;
+export type XaaClientAuthMethod = (typeof XAA_CLIENT_AUTH_METHODS)[number];
+export const DEFAULT_XAA_CLIENT_AUTH: XaaClientAuthMethod = "none";
+
+/** Narrow a bare wire value to a known method; undefined ⇒ fall back to public. */
+export function normalizeXaaClientAuth(
+  value: unknown,
+): XaaClientAuthMethod | undefined {
+  return typeof value === "string" &&
+    (XAA_CLIENT_AUTH_METHODS as readonly string[]).includes(value)
+    ? (value as XaaClientAuthMethod)
+    : undefined;
+}
 
 /**
  * The single field a negative test tampered with, paired with what a valid

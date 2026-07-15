@@ -23,6 +23,10 @@ import {
   issueMockIdToken,
   issueNegativeIdJag,
   verifyXaaJwt,
+  initXaaClientKeyPair,
+  signClientAssertion,
+  getXaaClientJwks,
+  buildConfidentialCimdUrl,
   ID_JAG_TOKEN_TYPE,
   TOKEN_EXCHANGE_GRANT,
   XAA_ACCESS_TOKEN_TYP,
@@ -54,6 +58,7 @@ import type {
   XaaResourceAppSecretResult,
 } from "../../utils/server-secrets.js";
 import { logger } from "../../utils/logger.js";
+import { confidentialCimdPublicOrigin } from "../xaa-confidential-cimd.js";
 import { getClientIp as getTrustedClientIp } from "../../utils/client-ip.js";
 import { CORS_ORIGINS, MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 
@@ -543,8 +548,16 @@ const proxyTokenSchema = z
     clientSecret: z.string().trim().min(1).optional(),
     // How to authenticate at the token endpoint. Absent = legacy body-post
     // behavior; only the methods the debugger can actually redeem.
+    // `private_key_jwt` is the confidential CIMD method: the server signs a
+    // client_assertion with its own client key (the reflector publishes the
+    // matching public key).
     tokenEndpointAuthMethod: z
-      .enum(["client_secret_post", "client_secret_basic", "none"])
+      .enum([
+        "client_secret_post",
+        "client_secret_basic",
+        "none",
+        "private_key_jwt",
+      ])
       .optional(),
     scope: z.string().trim().min(1).optional(),
     resource: z.string().trim().min(1).optional(),
@@ -1026,6 +1039,22 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
 
   router.get("/.well-known/jwks.json", (c) => serveJwks(c));
 
+  // Confidential CIMD: hand the browser the reflector document URL that
+  // publishes THIS server's client public key. The browser can't hold the
+  // private key, so it presents this URL as its client_id and the server signs
+  // the client_assertion at /proxy/token. The origin is derived exactly like
+  // the reflector's echoed client_id (forwarded host/proto) so the two
+  // byte-match, as CIMD requires. Returns only a URL derived from a public key
+  // — nothing secret — so it needs no auth.
+  router.get("/confidential-cimd/client", (c) => {
+    initXaaClientKeyPair();
+    const clientIdMetadataUrl = buildConfidentialCimdUrl(
+      getXaaClientJwks().keys[0],
+      confidentialCimdPublicOrigin(c),
+    );
+    return c.json({ clientIdMetadataUrl });
+  });
+
   // Unscoped hosted /token refuses public token exchange (see handleToken);
   // its doc must not advertise it. Local (no org gate available) serves it.
   const unscopedTokenExchangeAtToken = !authorizeOrgIssuer;
@@ -1201,17 +1230,34 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         });
       }
       // RFC 6749 §2.3.1: client_id is REQUIRED for post/basic; a public (none)
-      // client still needs a client_id to identify itself. Reject locally with
-      // a 400 rather than letting buildJwtBearerRequest throw into a 500.
+      // client and a private_key_jwt client both still need a client_id to
+      // identify themselves (private_key_jwt's `iss`/`sub` ARE the client_id).
+      // Reject locally with a 400 rather than letting buildJwtBearerRequest
+      // throw into a 500.
       if (
         (authMethod === "client_secret_basic" ||
           authMethod === "client_secret_post" ||
-          authMethod === "none") &&
+          authMethod === "none" ||
+          authMethod === "private_key_jwt") &&
         !clientId
       ) {
         return toJsonError(`${authMethod} requires a client id`, {
           status: 400,
           code: "VALIDATION_ERROR",
+        });
+      }
+
+      // Confidential CIMD: sign the private_key_jwt client assertion SERVER-SIDE
+      // (the browser can't hold the private key). Reuses the exact SDK helpers
+      // the CLI's in-process executor uses — the reflector publishes the
+      // matching public key. `clientId` is the reflector document URL, `aud` is
+      // the token endpoint.
+      let clientAssertion: string | undefined;
+      if (authMethod === "private_key_jwt") {
+        initXaaClientKeyPair();
+        clientAssertion = signClientAssertion({
+          clientId: clientId as string,
+          tokenEndpoint: url,
         });
       }
 
@@ -1226,6 +1272,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         scope: parsed.scope,
         resource: parsed.resource,
         tokenEndpointAuthMethod: authMethod,
+        clientAssertion,
       });
 
       const result = await executeOAuthProxy({

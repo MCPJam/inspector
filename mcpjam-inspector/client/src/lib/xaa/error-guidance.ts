@@ -233,7 +233,7 @@ export function getXAAErrorGuidance(
       return {
         title: "Registered, but with an auth method this debugger can't use",
         explanation:
-          "Registration succeeded, but the server assigned a client-authentication method (for example `private_key_jwt`) that this debugger doesn't exercise yet. That's a debugger limitation, not authorization-server unreadiness. Use pre-registered credentials with a supported method to continue.",
+          "Registration succeeded, but the server assigned a client-authentication method (for example `private_key_jwt`) that this debugger doesn't exercise for dynamically-registered (DCR) clients yet. Confidential CIMD with `private_key_jwt` IS supported — set the CIMD strategy's Client authentication to Confidential. Otherwise this is a debugger limitation, not authorization-server unreadiness: use pre-registered credentials with a supported method to continue.",
         actions: [CONFIGURE],
         severity: "error",
       };

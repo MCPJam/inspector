@@ -75,6 +75,9 @@ const buildProjectServerProjection = (
   ...(server.registrationMode === undefined
     ? {}
     : { registrationMode: server.registrationMode }),
+  ...(server.xaaClientAuth === undefined
+    ? {}
+    : { xaaClientAuth: server.xaaClientAuth }),
   ...(server.authMethod === undefined
     ? {}
     : { authMethod: server.authMethod }),

@@ -41,6 +41,7 @@ import { NegativeTestScorecard } from "./NegativeTestScorecard";
 import type { NegativeTestsInput } from "@/lib/xaa/discovery-client";
 import {
   DEFAULT_IDENTITY_ASSERTION_FORMAT,
+  isLoopbackClientMetadataUrl,
   normalizeIdentityAssertionFormat,
   normalizeRegistrationStrategy,
   type IdentityAssertionFormat,
@@ -55,7 +56,10 @@ import {
 } from "@/lib/xaa/types";
 import { XAADcrReRegisterControl } from "./XAADcrReRegisterControl";
 import { createInspectorXAAStateMachine } from "@/lib/xaa/debug-state-machine-adapter";
-import { fetchXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
+import {
+  fetchConfidentialCimdClientUrl,
+  fetchXaaIdpUrls,
+} from "@/lib/xaa/idp-endpoints";
 import { HOSTED_MODE } from "@/lib/config";
 import { hashXaaTargetId } from "@/lib/xaa/target-telemetry";
 
@@ -836,6 +840,31 @@ export function XAAFlowTab({
     return () => controller.abort();
   }, [organizationId, hostedIssuerKind]);
 
+  // Confidential CIMD: when the per-server config asks for private_key_jwt on a
+  // cimd run, fetch the reflector document URL that publishes THIS server's
+  // client public key. The browser can't hold the private key, so it presents
+  // this URL as its client_id and the server signs the client_assertion at
+  // /proxy/token. Public CIMD (the default) leaves clientIdMetadataUrl unset and
+  // the state machine uses the fixed hosted public document.
+  const wantsConfidentialCimd =
+    effectiveStrategy === "cimd" &&
+    selectedServer?.xaaClientAuth === "private_key_jwt";
+  const [confidentialCimdUrl, setConfidentialCimdUrl] = useState<
+    string | undefined
+  >(undefined);
+  useEffect(() => {
+    if (!wantsConfidentialCimd) {
+      setConfidentialCimdUrl(undefined);
+      return;
+    }
+    const controller = new AbortController();
+    setConfidentialCimdUrl(undefined);
+    void fetchConfidentialCimdClientUrl(controller.signal).then((url) => {
+      if (url && !controller.signal.aborted) setConfidentialCimdUrl(url);
+    });
+    return () => controller.abort();
+  }, [wantsConfidentialCimd]);
+
   const xaaStateMachine = useMemo(() => {
     return createInspectorXAAStateMachine({
       getState: () => flowStateRef.current,
@@ -878,6 +907,18 @@ export function XAAFlowTab({
       organizationId,
       issuerMode: hostedIssuerOptIn ? "hosted" : "local",
       issuerKind: hostedIssuerKind,
+      // Confidential CIMD: address the client via the reflector document URL so
+      // the machine adopts private_key_jwt from the fetched doc and the server
+      // signs the assertion. A loopback (local-dev) reflector needs the gated
+      // carve-out for the machine's up-front URL validation. Public CIMD leaves
+      // both unset.
+      ...(confidentialCimdUrl
+        ? {
+            clientIdMetadataUrl: confidentialCimdUrl,
+            allowLoopbackClientMetadata:
+              isLoopbackClientMetadataUrl(confidentialCimdUrl),
+          }
+        : {}),
     });
   }, [
     runInput,
@@ -892,6 +933,7 @@ export function XAAFlowTab({
     runsDynamicRegistration,
     dcrCredentialCache,
     targetKey,
+    confidentialCimdUrl,
   ]);
 
   const handleAdvance = useCallback(async () => {

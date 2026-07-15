@@ -12,9 +12,12 @@ import {
   getSessionToken,
 } from "../../../services/session-token.js";
 import {
+  decodeConfidentialCimdKey,
+  getXaaClientJwks,
   initXAAIdpKeyPair,
   issueMockSamlAssertion,
   resetXAAIdpKeyPairForTests,
+  resetXaaClientKeyPairForTests,
   SAML_NAMEID_FORMAT_PERSISTENT,
   XAA_DEBUG_IDP_CLIENT_ID,
 } from "@mcpjam/sdk";
@@ -2200,5 +2203,115 @@ describe("org-scoped /token with SAML subject tokens", () => {
       sub: "alice-123",
       client_id: "client-1",
     });
+  });
+});
+
+describe("confidential CIMD (private_key_jwt) on the xaa router", () => {
+  const originalKeyDir = process.env.XAA_IDP_KEY_DIR;
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-conf-cimd-"));
+    process.env.XAA_IDP_KEY_DIR = tempDir;
+    resetXaaClientKeyPairForTests();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetXaaClientKeyPairForTests();
+    rmSync(tempDir, { recursive: true, force: true });
+    if (originalKeyDir === undefined) delete process.env.XAA_IDP_KEY_DIR;
+    else process.env.XAA_IDP_KEY_DIR = originalKeyDir;
+  });
+
+  function buildApp() {
+    const app = new Hono();
+    app.route(
+      "/api/mcp/xaa",
+      createXaaRouter({ issuerBasePath: "/api/mcp", httpsOnlyProxy: false })
+    );
+    return app;
+  }
+
+  it("GET /confidential-cimd/client publishes this server's client key", async () => {
+    const app = buildApp();
+    const response = await app.request(
+      "http://localhost/api/mcp/xaa/confidential-cimd/client"
+    );
+    expect(response.status).toBe(200);
+    const { clientIdMetadataUrl } = (await response.json()) as {
+      clientIdMetadataUrl: string;
+    };
+    expect(clientIdMetadataUrl).toContain(
+      "/.well-known/oauth/xaa-cimd/"
+    );
+    // The URL-embedded key must be exactly the server's published client key.
+    const encoded = new URL(clientIdMetadataUrl).pathname.split("/").pop()!;
+    const decoded = decodeConfidentialCimdKey(encoded);
+    expect(decoded?.x).toBe(getXaaClientJwks().keys[0].x);
+    expect(decoded?.y).toBe(getXaaClientJwks().keys[0].y);
+  });
+
+  it("/proxy/token signs a private_key_jwt assertion for the confidential client", async () => {
+    const app = buildApp();
+    const tokenEndpoint = "https://as.example.com/oauth/token";
+    const clientId =
+      "https://localhost/.well-known/oauth/xaa-cimd/AbC123";
+
+    let capturedBody: URLSearchParams | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const u = typeof input === "string" ? input : input.toString();
+        if (u === tokenEndpoint) {
+          capturedBody = new URLSearchParams(init?.body as string);
+          return jsonResponse({ access_token: "tok", token_type: "Bearer" });
+        }
+        return new Response("{}", { status: 404 });
+      })
+    );
+
+    const response = await app.request("/api/mcp/xaa/proxy/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tokenEndpoint,
+        assertion: "the.id.jag",
+        clientId,
+        tokenEndpointAuthMethod: "private_key_jwt",
+        scope: "mcp.access",
+      }),
+    });
+    expect(response.status).toBe(200);
+
+    // The confidential client-auth pair is on the wire; no secret leaks.
+    expect(capturedBody?.get("client_assertion_type")).toBe(
+      "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+    );
+    expect(capturedBody?.get("client_id")).toBe(clientId);
+    expect(capturedBody?.get("client_secret")).toBeNull();
+    const assertion = capturedBody?.get("client_assertion");
+    expect(assertion?.split(".")).toHaveLength(3);
+    // iss = sub = client_id, aud = token endpoint (what the RAS verifies).
+    const claims = decodeJwtPayload(assertion as string);
+    expect(claims.iss).toBe(clientId);
+    expect(claims.sub).toBe(clientId);
+    expect(claims.aud).toBe(tokenEndpoint);
+  });
+
+  it("/proxy/token rejects private_key_jwt without a client_id", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/mcp/xaa/proxy/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tokenEndpoint: "https://as.example.com/oauth/token",
+        assertion: "the.id.jag",
+        tokenEndpointAuthMethod: "private_key_jwt",
+      }),
+    });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { message?: string };
+    expect(body.message).toContain("requires a client id");
   });
 });
