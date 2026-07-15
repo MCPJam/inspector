@@ -1616,9 +1616,20 @@ function resolveOAuthResourceUrl(input: {
   configuredResourceUrl?: string;
   resourceMetadata?: { resource?: unknown } | null;
 }): string {
+  const prmResource = readOAuthResourceFromMetadata(input.resourceMetadata);
+
+  // A PRM document that exists but omits its REQUIRED `resource` (RFC 9728
+  // §2) is broken metadata — silently falling through to another candidate
+  // would connect against metadata every other connect surface rejects.
+  if (input.resourceMetadata && !prmResource) {
+    throw new Error(
+      'Rejected OAuth resource indicator from protected resource metadata: the document is missing its required "resource" identifier (RFC 9728 §2).'
+    );
+  }
+
   const decision = evaluateResourceIndicator({
     serverUrl: input.serverUrl,
-    prmResource: readOAuthResourceFromMetadata(input.resourceMetadata),
+    prmResource,
     authorizationUrlResource: readOAuthResourceFromAuthorizationUrl(
       input.authorizationUrl
     ),

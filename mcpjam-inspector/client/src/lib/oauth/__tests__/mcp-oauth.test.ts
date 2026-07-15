@@ -1923,6 +1923,35 @@ describe("mcp-oauth", () => {
       expect(mockExchangeAuthorization).not.toHaveBeenCalled();
     });
 
+    it("rejects PRM metadata that omits its required resource during callback completion", async () => {
+      const asana = createAsanaDiscoveryState();
+      delete asana.resourceMetadata.resource;
+      localStorage.setItem("mcp-oauth-pending", "asana");
+      localStorage.setItem(
+        "mcp-serverUrl-asana",
+        "https://mcp.asana.com/v2/mcp"
+      );
+      localStorage.setItem(
+        "mcp-client-asana",
+        JSON.stringify({ client_id: "asana-client-id" })
+      );
+      localStorage.setItem("mcp-verifier-asana", "test-verifier");
+      localStorage.setItem(
+        "mcp-discovery-asana",
+        JSON.stringify({
+          serverUrl: "https://mcp.asana.com/v2/mcp",
+          discoveryState: asana,
+        })
+      );
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const callbackResult = await handleOAuthCallback("oauth-code");
+
+      expect(callbackResult.success).toBe(false);
+      expect(callbackResult.error).toContain('missing its required "resource"');
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+    });
+
     it("uses the generic Inspector OAuth proxy for Asana when stored config is missing the preregistered flag", async () => {
       const browserFetch = vi.fn();
       vi.stubGlobal("fetch", browserFetch);
