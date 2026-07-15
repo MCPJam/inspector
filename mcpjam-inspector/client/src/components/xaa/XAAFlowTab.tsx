@@ -1367,14 +1367,11 @@ export function XAAFlowTab({
     ) => {
       const previousTargetKey = lastAppliedTargetKey.current;
       lastAppliedTargetKey.current = nextTargetKey;
-      const configurationChanged =
+      const dcrConfigurationChanged =
         previousTargetKey === nextTargetKey &&
-        ((lastAppliedFlowConfigurationKey.current !== null &&
-          lastAppliedFlowConfigurationKey.current !==
-            nextFlowConfigurationKey) ||
-          lastAppliedConfigurationSaveVersion.current !==
-            nextConfigurationSaveVersion);
-      if (configurationChanged) {
+        lastAppliedFlowConfigurationKey.current !== null &&
+        lastAppliedFlowConfigurationKey.current !== nextFlowConfigurationKey;
+      if (dcrConfigurationChanged) {
         const targetPrefix = `${encodeURIComponent(nextTargetKey)}::`;
         for (const key of Array.from(dcrCredentialCacheRef.current.keys())) {
           if (key.startsWith(targetPrefix)) {

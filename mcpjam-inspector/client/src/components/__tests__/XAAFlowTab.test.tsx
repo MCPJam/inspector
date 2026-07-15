@@ -819,6 +819,39 @@ describe("XAAFlowTab", () => {
       );
     });
 
+    it("keeps the DCR session registration when the same config is saved", async () => {
+      render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />
+      );
+
+      const registrationEndpoint = "https://auth.example.com/register";
+      const cacheKey = buildXaaDcrCredentialCacheKey({
+        targetKey: currentTarget.targetKey,
+        registrationEndpoint,
+      });
+      const credentials = {
+        clientId: "dynamic-client",
+        clientSecret: "session-only-secret",
+        clientSecretExpiresAt: 0,
+        tokenEndpointAuthMethod: "client_secret_basic" as const,
+        registrationEndpoint,
+      };
+      capturedMachineConfig.dcrCredentialCache.set(cacheKey, credentials);
+
+      await act(async () => {
+        await capturedServerModalProps.onSave({
+          formData: { name: "staging" },
+        });
+      });
+
+      expect(capturedMachineConfig.dcrCredentialCache.get(cacheKey)).toEqual(
+        credentials
+      );
+    });
+
     it("unlocks DCR negative tests with the dynamically registered credentials", async () => {
       const user = userEvent.setup();
       render(
