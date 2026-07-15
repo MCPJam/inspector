@@ -3,6 +3,10 @@ import {
   WebRouteError,
   parseErrorMessage,
 } from "../routes/web/errors.js";
+import { logger } from "./logger.js";
+
+// One-shot guard so a misconfigured deployment logs once, not per request.
+let warnedMissingServiceTokenForIp = false;
 
 export interface ServerSecretsResult {
   env: Record<string, string> | null;
@@ -35,6 +39,117 @@ function statusToErrorCode(status: number): ErrorCode {
   if (status === 502) return ErrorCode.SERVER_UNREACHABLE;
   if (status === 504) return ErrorCode.TIMEOUT;
   return ErrorCode.INTERNAL_ERROR;
+}
+
+const CONVEX_POST_TIMEOUT_MS = 10_000;
+
+/**
+ * POST to a Convex authorized HTTP endpoint, forwarding the caller's bearer so
+ * Convex resolves the identity and enforces membership/ownership. Shared by
+ * every secret-reveal / authorization gate here so the CONVEX_HTTP_URL guard,
+ * timeout, abort/unreachable classification, and `{ success }` envelope check
+ * can't drift across copies. Returns the parsed success body; throws
+ * WebRouteError on any failure. `serviceName` only shapes error copy.
+ */
+async function postToConvexAuthorized(args: {
+  path: string;
+  bearerToken: string;
+  body: Record<string, unknown>;
+  serviceName: string;
+  // Real end-user IP as seen by THIS server. Convex's own x-forwarded-for
+  // names the inspector server (the direct peer), so the guest per-IP quota
+  // would collapse into one bucket without this forward. The backend only
+  // trusts x-mcpjam-client-ip when accompanied by a valid inspector service
+  // token, so we send that token alongside it — otherwise a direct caller
+  // could spoof the IP to evade the per-IP cap.
+  clientIp?: string | null;
+}): Promise<any> {
+  const convexUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexUrl) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing CONVEX_HTTP_URL configuration"
+    );
+  }
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    CONVEX_POST_TIMEOUT_MS
+  );
+
+  // Only forward the client IP when we can also prove Inspector provenance
+  // (INSPECTOR_SERVICE_TOKEN); the backend ignores an unauthenticated IP.
+  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const forwardIp = Boolean(args.clientIp && inspectorServiceToken);
+  // Surface the silent-degradation case: we resolved a client IP but can't
+  // authenticate it to the backend, so the per-IP guest quota collapses to a
+  // coarse bucket. In a real hosted deployment the token is always set (it
+  // gates the delegation flow too); warn once so a misconfiguration is visible
+  // rather than silently weakening the cap.
+  if (args.clientIp && !inspectorServiceToken && !warnedMissingServiceTokenForIp) {
+    warnedMissingServiceTokenForIp = true;
+    logger.warn(
+      "INSPECTOR_SERVICE_TOKEN unset: not forwarding client IP to Convex; " +
+        "the per-IP guest XAA quota will bucket coarsely until it is configured."
+    );
+  }
+
+  let body: any = null;
+  let response: Response;
+  try {
+    response = await fetch(`${convexUrl}${args.path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${args.bearerToken}`,
+        ...(forwardIp
+          ? {
+              "x-mcpjam-client-ip": args.clientIp as string,
+              "x-inspector-service-token": inspectorServiceToken as string,
+            }
+          : {}),
+      },
+      body: JSON.stringify(args.body),
+      signal: controller.signal,
+    });
+    // Read the body while the abort signal is still armed: a Convex action
+    // that flushes headers and then stalls the body would otherwise hang here
+    // indefinitely (the timeout only covered the header round-trip).
+    const text = await response.text();
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      // non-JSON body; body stays null
+    }
+  } catch (error) {
+    const isAbort =
+      error instanceof Error &&
+      (error.name === "AbortError" ||
+        (error as { code?: string }).code === "ABORT_ERR");
+    throw new WebRouteError(
+      isAbort ? 504 : 502,
+      isAbort ? ErrorCode.TIMEOUT : ErrorCode.SERVER_UNREACHABLE,
+      isAbort
+        ? `The ${args.serviceName} timed out after ${CONVEX_POST_TIMEOUT_MS}ms`
+        : `Failed to reach the ${args.serviceName}: ${parseErrorMessage(error)}`
+    );
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!response.ok || !body?.success) {
+    const message =
+      typeof body?.error === "string"
+        ? body.error
+        : `The ${args.serviceName} request failed (${response.status})`;
+    throw new WebRouteError(
+      response.ok ? 500 : response.status,
+      statusToErrorCode(response.ok ? 500 : response.status),
+      message
+    );
+  }
+  return body;
 }
 
 export async function fetchRuntimeServerSecrets(args: {
@@ -179,64 +294,15 @@ export interface XaaResourceAppSecretResult {
 export async function fetchXaaResourceAppSecret(args: {
   bearerToken: string;
   registrationId: string;
+  clientIp?: string | null;
 }): Promise<XaaResourceAppSecretResult> {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexUrl) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
-    );
-  }
-  const REVEAL_TIMEOUT_MS = 10_000;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REVEAL_TIMEOUT_MS);
-
-  let response: Response;
-  try {
-    response = await fetch(`${convexUrl}/web/xaa/resource-app/reveal-secret`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${args.bearerToken}`,
-      },
-      body: JSON.stringify({ id: args.registrationId }),
-      signal: controller.signal,
-    });
-  } catch (error) {
-    const isAbort =
-      error instanceof Error &&
-      (error.name === "AbortError" ||
-        (error as { code?: string }).code === "ABORT_ERR");
-    throw new WebRouteError(
-      isAbort ? 504 : 502,
-      ErrorCode.SERVER_UNREACHABLE,
-      isAbort
-        ? `Secret reveal service timed out after ${REVEAL_TIMEOUT_MS}ms`
-        : `Failed to reach secret reveal service: ${parseErrorMessage(error)}`
-    );
-  } finally {
-    clearTimeout(timeoutId);
-  }
-
-  let body: any = null;
-  try {
-    body = await response.json();
-  } catch {
-    // ignored
-  }
-
-  if (!response.ok || !body?.success) {
-    const message =
-      typeof body?.error === "string"
-        ? body.error
-        : `Secret reveal failed (${response.status})`;
-    throw new WebRouteError(
-      response.ok ? 500 : response.status,
-      statusToErrorCode(response.ok ? 500 : response.status),
-      message
-    );
-  }
+  const body = await postToConvexAuthorized({
+    path: "/web/xaa/resource-app/reveal-secret",
+    bearerToken: args.bearerToken,
+    body: { id: args.registrationId },
+    serviceName: "secret-reveal service",
+    clientIp: args.clientIp,
+  });
 
   if (typeof body.clientSecret !== "string") {
     throw new WebRouteError(
@@ -285,67 +351,15 @@ export async function fetchServerClientSecret(args: {
   bearerToken: string;
   serverId: string;
   projectId: string;
+  clientIp?: string | null;
 }): Promise<ServerClientSecretResult> {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexUrl) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
-    );
-  }
-  const REVEAL_TIMEOUT_MS = 10_000;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REVEAL_TIMEOUT_MS);
-
-  let response: Response;
-  try {
-    response = await fetch(`${convexUrl}/web/xaa/server/reveal-secret`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${args.bearerToken}`,
-      },
-      body: JSON.stringify({
-        serverId: args.serverId,
-        projectId: args.projectId,
-      }),
-      signal: controller.signal,
-    });
-  } catch (error) {
-    const isAbort =
-      error instanceof Error &&
-      (error.name === "AbortError" ||
-        (error as { code?: string }).code === "ABORT_ERR");
-    throw new WebRouteError(
-      isAbort ? 504 : 502,
-      ErrorCode.SERVER_UNREACHABLE,
-      isAbort
-        ? `Secret reveal service timed out after ${REVEAL_TIMEOUT_MS}ms`
-        : `Failed to reach secret reveal service: ${parseErrorMessage(error)}`
-    );
-  } finally {
-    clearTimeout(timeoutId);
-  }
-
-  let body: any = null;
-  try {
-    body = await response.json();
-  } catch {
-    // ignored
-  }
-
-  if (!response.ok || !body?.success) {
-    const message =
-      typeof body?.error === "string"
-        ? body.error
-        : `Secret reveal failed (${response.status})`;
-    throw new WebRouteError(
-      response.ok ? 500 : response.status,
-      statusToErrorCode(response.ok ? 500 : response.status),
-      message
-    );
-  }
+  const body = await postToConvexAuthorized({
+    path: "/web/xaa/server/reveal-secret",
+    bearerToken: args.bearerToken,
+    body: { serverId: args.serverId, projectId: args.projectId },
+    serviceName: "secret-reveal service",
+    clientIp: args.clientIp,
+  });
 
   return {
     clientSecret:
@@ -358,4 +372,150 @@ export async function fetchServerClientSecret(args: {
     // the issuer check (older backends simply omit the field).
     xaaAllowPathScopedIssuer: body.xaaAllowPathScopedIssuer === true,
   };
+}
+
+/**
+ * Gate for the scoped MCPJam XAA test issuers. Forwards the caller's bearer
+ * to Convex, which resolves the identity and applies the flavor's rule:
+ *
+ * - issuerKind "org" (`/api/web/xaa/o/<orgId>`): org membership required;
+ *   guests are always rejected — the /o/ trust story depends on excluding
+ *   anonymous actors.
+ * - issuerKind "anonymous" (`/api/web/xaa/g/<orgId>`): the visibly separate
+ *   anonymous test issuer, bound to the caller's OWN personal org (guest
+ *   sessions included, subject to revocation + durable quotas backend-side).
+ *
+ * Throws a WebRouteError on any failure — minting under a scoped issuer is
+ * fail-closed.
+ */
+export async function authorizeXaaOrgIssuer(args: {
+  bearerToken: string;
+  organizationId: string;
+  issuerKind?: "org" | "anonymous";
+  clientIp?: string | null;
+}): Promise<void> {
+  await postToConvexAuthorized({
+    path: "/web/xaa/issuer/authorize",
+    bearerToken: args.bearerToken,
+    body: {
+      organizationId: args.organizationId,
+      issuerKind: args.issuerKind ?? "org",
+    },
+    serviceName: "issuer-authorization service",
+    clientIp: args.clientIp,
+  });
+}
+
+/**
+ * The backend policy evaluator's ruling on an org-scoped ID-JAG mint. A
+ * `denied` decision is a POLICY outcome (auditable, mapped to an OAuth error
+ * downstream) — transport/auth failures throw WebRouteError instead and the
+ * caller fails the mint closed. connectionId/assignmentId are absent on the
+ * admin unmanaged bypass, which has no connection or assignment rows.
+ */
+export type XaaIssuerPolicyDecision =
+  | {
+      outcome: "granted";
+      grantedScopes: string[];
+      connectionId?: string;
+      assignmentId?: string;
+    }
+  | {
+      outcome: "denied";
+      code: "access_denied" | "invalid_target" | "invalid_client" | "invalid_scope";
+      reasonCode: string;
+    };
+
+const XAA_POLICY_DENIAL_CODES = [
+  "access_denied",
+  "invalid_target",
+  "invalid_client",
+  "invalid_scope",
+] as const;
+
+/**
+ * Evaluate the managed-IdP policy for an org-scoped ID-JAG mint. Sibling of
+ * authorizeXaaOrgIssuer: the caller's bearer is forwarded as-is, so Convex
+ * resolves the identity, requires org membership, applies the managed policy
+ * (or the admin-only unmanaged bypass) and writes the audit row atomically
+ * with the decision. Throws WebRouteError on transport/auth failure — the
+ * mint gate treats any throw as fail-closed.
+ */
+export async function evaluateXaaIssuerPolicy(args: {
+  bearerToken: string;
+  organizationId: string;
+  testIdentityId: string;
+  resourceAppId: string;
+  claims: { subject: string; email?: string };
+  audience: string;
+  resource?: string;
+  targetClientId?: string;
+  requestedScopes: string[];
+  policyMode: "managed" | "unmanaged";
+}): Promise<XaaIssuerPolicyDecision> {
+  const body = await postToConvexAuthorized({
+    path: "/web/xaa/issuer/evaluate-policy",
+    bearerToken: args.bearerToken,
+    body: {
+      organizationId: args.organizationId,
+      testIdentityId: args.testIdentityId,
+      resourceAppId: args.resourceAppId,
+      claims: args.claims,
+      audience: args.audience,
+      ...(args.resource !== undefined ? { resource: args.resource } : {}),
+      ...(args.targetClientId !== undefined
+        ? { targetClientId: args.targetClientId }
+        : {}),
+      requestedScopes: args.requestedScopes,
+      policyMode: args.policyMode,
+    },
+    serviceName: "issuer-policy service",
+  });
+
+  const decision = body?.decision;
+  if (decision && typeof decision === "object") {
+    if (
+      decision.outcome === "granted" &&
+      Array.isArray(decision.grantedScopes) &&
+      decision.grantedScopes.every((s: unknown) => typeof s === "string")
+    ) {
+      // Downscope-only invariant, enforced client-side too: whatever the
+      // evaluator says, this path can only preserve or narrow the request —
+      // a malformed/compromised policy response must never broaden the mint
+      // beyond what the client asked for.
+      const requested = new Set(args.requestedScopes);
+      const grantedScopes = (decision.grantedScopes as string[]).filter(
+        (scope) => requested.has(scope)
+      );
+      return {
+        outcome: "granted",
+        grantedScopes,
+        ...(typeof decision.connectionId === "string"
+          ? { connectionId: decision.connectionId }
+          : {}),
+        ...(typeof decision.assignmentId === "string"
+          ? { assignmentId: decision.assignmentId }
+          : {}),
+      };
+    }
+    if (
+      decision.outcome === "denied" &&
+      (XAA_POLICY_DENIAL_CODES as readonly string[]).includes(decision.code)
+    ) {
+      return {
+        outcome: "denied",
+        code: decision.code,
+        reasonCode:
+          typeof decision.reasonCode === "string" ? decision.reasonCode : "",
+      };
+    }
+  }
+
+  // An unrecognized decision shape must never mint — throw so the gate fails
+  // closed rather than guessing at a grant.
+  throw new WebRouteError(
+    500,
+    ErrorCode.INTERNAL_ERROR,
+    "Issuer policy response was invalid"
+  );
 }

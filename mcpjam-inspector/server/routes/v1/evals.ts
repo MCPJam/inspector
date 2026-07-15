@@ -62,10 +62,17 @@ import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
 import { synthesizeServerBody } from "./adapter.js";
 import {
   getCanonicalModelId,
-  isMCPJamProvidedModel,
-  isModelSupported,
+  hostedModelDefinitionsFromSnapshot,
   SUPPORTED_MODELS,
 } from "@/shared/types";
+import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
+
+// BYOK statics + the hosted snapshot — hosted display rows were removed from
+// SUPPORTED_MODELS, so provider derivation / suggestions read both.
+const MODEL_LOOKUP = [
+  ...SUPPORTED_MODELS,
+  ...hostedModelDefinitionsFromSnapshot(),
+];
 
 const evals = new Hono();
 
@@ -415,14 +422,14 @@ export function assertInlineTestModelsValid(
     const provider = test.provider.trim().toLowerCase();
     if (OPEN_MODEL_PROVIDERS.has(provider)) continue;
     const canonical = getCanonicalModelId(test.model, test.provider);
-    if (isMCPJamProvidedModel(canonical, test.provider)) continue;
+    if (isHostedCatalogModel(canonical, test.provider)) continue;
     if (modelApiKeys?.[test.provider] ?? modelApiKeys?.[provider]) continue;
-    if (isModelSupported(canonical)) continue;
+    if (MODEL_LOOKUP.some((model) => String(model.id) === canonical)) continue;
 
-    const hostedIds = SUPPORTED_MODELS.filter(
+    const hostedIds = MODEL_LOOKUP.filter(
       (m) =>
-        m.provider.toLowerCase() === provider &&
-        isMCPJamProvidedModel(String(m.id), m.provider)
+        String(m.provider).toLowerCase() === provider &&
+        isHostedCatalogModel(String(m.id), m.provider)
     ).map((m) => String(m.id));
     throw new WebRouteError(
       400,
@@ -983,7 +990,7 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
  */
 function providerForModelId(modelId: string): string | undefined {
   if (modelId.includes("/")) return modelId.split("/")[0];
-  const match = SUPPORTED_MODELS.find(
+  const match = MODEL_LOOKUP.find(
     (m) => String(m.id) === modelId || String(m.id).endsWith(`/${modelId}`)
   );
   return match ? String(match.provider) : undefined;

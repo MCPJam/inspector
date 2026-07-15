@@ -9,6 +9,7 @@ import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { composeAvailableModels } from "@/components/chat-v2/shared/available-models";
 import { useOutOfCredits } from "@/hooks/useCreditBalance";
+import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 
 /**
  * Models the current user can pick on any model-picker surface (eval suite
@@ -57,6 +58,7 @@ export function useAvailableModels(options?: {
   const { isOllamaRunning, ollamaModels } =
     useDetectedOllamaModels(getOllamaBaseUrl);
   const outOfCredits = useOutOfCredits(organizationId);
+  const { hostedCatalog } = useHostedModelCatalog();
 
   const availableModels = useMemo(
     () =>
@@ -70,6 +72,7 @@ export function useAvailableModels(options?: {
         getAzureBaseUrl,
         customProviders,
         outOfCredits,
+        hostedCatalog,
       }),
     [
       hostedOrgModelConfig,
@@ -81,6 +84,7 @@ export function useAvailableModels(options?: {
       getAzureBaseUrl,
       customProviders,
       outOfCredits,
+      hostedCatalog,
     ]
   );
 

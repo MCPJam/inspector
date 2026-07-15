@@ -31,10 +31,10 @@ export function applyGuestModelLocks(
 
   return models.map((model) => {
     const modelId = String(model.id);
-    if (
-      !isMCPJamProvidedModelMenuItem(model) ||
-      isMCPJamGuestAllowedModel(modelId)
-    ) {
+    // Prefer the catalog-sourced `guestAllowed` flag; fall back to the static
+    // guest allow-list for models without it. Unknown → guest-gated (locked).
+    const guestAllowed = model.guestAllowed ?? isMCPJamGuestAllowedModel(modelId);
+    if (!isMCPJamProvidedModelMenuItem(model) || guestAllowed) {
       return model;
     }
 
@@ -111,6 +111,12 @@ export function composeAvailableModels(params: {
   customProviders: CustomProvider[];
   /** Lock MCPJam-provided ("free") models when the org/guest has 0 credits. */
   outOfCredits?: boolean;
+  /**
+   * The hosted ("free") model source from the backend catalog. When omitted,
+   * composition falls back to the static `SUPPORTED_MODELS` hosted subset —
+   * so this stays a drop-in for any caller that hasn't wired the catalog yet.
+   */
+  hostedCatalog?: ModelDefinition[];
 }): ModelDefinition[] {
   const {
     orgConfig,
@@ -122,10 +128,11 @@ export function composeAvailableModels(params: {
     getAzureBaseUrl,
     customProviders,
     outOfCredits = false,
+    hostedCatalog,
   } = params;
 
   if ((orgConfig?.providers.length ?? 0) > 0) {
-    const orgModels = buildAvailableModelsFromOrgConfig(orgConfig);
+    const orgModels = buildAvailableModelsFromOrgConfig(orgConfig, hostedCatalog);
     const orgModelsWithLocalOllama = appendDetectedLocalOllamaModels(
       orgModels,
       isOllamaRunning,
@@ -144,6 +151,7 @@ export function composeAvailableModels(params: {
     ollamaModels,
     getAzureBaseUrl,
     customProviders,
+    hostedCatalog,
   });
   const guestLockedModels = applyGuestModelLocks(localModels, isAuthenticated);
   const visibleModels = HOSTED_MODE

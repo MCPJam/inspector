@@ -248,6 +248,7 @@ export function evaluateHostCompat(
   return {
     hostId: profile.id,
     hostLabel: profile.label,
+    verifiedAt: profile.verifiedAt,
     verdict,
     provenance: profile.provenance,
     lanes: { apps, server },

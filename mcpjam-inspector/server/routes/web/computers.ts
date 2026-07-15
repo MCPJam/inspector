@@ -31,7 +31,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { executionScopeSchema } from "../../utils/execution-scope.js";
-import { isComputersDataPlaneConfigured } from "../../utils/computers/control-plane-client.js";
+import { resolveComputersLocalConfigured } from "../../utils/computers/runtime-config.js";
 import { resolveComputersRemoteDataPlaneUrl } from "../../utils/computers/remote-data-plane.js";
 import {
   MAX_COMMAND_TIMEOUT_S,
@@ -58,15 +58,16 @@ const execSchema = z.object({
 export function createComputersRoutes(runner: BashRunner = e2bRunner): Hono {
   const computers = new Hono();
 
-  computers.get("/config", async (c) =>
-    c.json({
-      localConfigured: isComputersDataPlaneConfigured(),
-      // Awaits any in-flight startup discovery — the client caches this
-      // FIRST response for the whole SPA session, so it must never race a
-      // still-resolving lookup into a false "unconfigured".
-      remoteDataPlaneUrl: await resolveComputersRemoteDataPlaneUrl(),
-    })
-  );
+  computers.get("/config", async (c) => {
+    // Await any in-flight startup bootstrap/discovery — the client caches
+    // this FIRST response for the whole SPA session, so it must never race
+    // a still-resolving lookup into a false "unconfigured".
+    const [localConfigured, remoteDataPlaneUrl] = await Promise.all([
+      resolveComputersLocalConfigured(),
+      resolveComputersRemoteDataPlaneUrl(),
+    ]);
+    return c.json({ localConfigured, remoteDataPlaneUrl });
+  });
 
   computers.post("/exec", async (c) =>
     handleRoute(c, async () => {

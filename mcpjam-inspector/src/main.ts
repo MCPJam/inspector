@@ -314,7 +314,7 @@ async function startHonoServer(): Promise<number> {
     // Node's cache; subsequent calls just return the cached exports, which
     // is exactly what we want now that we're reusing the same port.
     const { createHonoApp } = await import("../server/app.js");
-    const honoApp = createHonoApp();
+    const honoApp = await createHonoApp();
 
     server = serve({
       fetch: honoApp.fetch,

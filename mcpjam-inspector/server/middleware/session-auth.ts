@@ -30,6 +30,14 @@ const UNPROTECTED_ROUTES = [
   "/api/mcp/health", // Health check - no sensitive data
   "/api/apps/health", // Health check - no sensitive data
   "/api/session-token", // Token endpoint - protected by localhost check instead
+  // Mock OIDC IdP front-channel/RP endpoints: external browsers and relying
+  // parties reach these without any MCPJam session (that's their purpose).
+  // EXACT matches only — never move these to UNPROTECTED_PREFIXES, where the
+  // startsWith match would silently make /api/mcp/xaa/token-exchange public.
+  "/api/mcp/xaa/authorize",
+  "/api/mcp/xaa/authorize/confirm",
+  "/api/mcp/xaa/token",
+  "/api/mcp/xaa/userinfo",
 ];
 
 /**
@@ -38,6 +46,11 @@ const UNPROTECTED_ROUTES = [
  * SECURITY: Each prefix here must have a documented reason for being unprotected.
  */
 const UNPROTECTED_PREFIXES = [
+  // NOTE: only /api/* paths need listing here — everything else already
+  // bypasses this middleware (see the startsWith("/api/") check below).
+  // /relay (the PostHog reverse proxy, routes/relay.ts) relies on that
+  // non-/api bypass: analytics must flow before any session exists. It must
+  // never be moved under /api/ or it would silently gain session auth.
   "/assets/", // Static assets (JS, CSS, images) - no sensitive data
   "/api/apps/mcp-apps/", // MCP Apps widgets - loaded in sandboxed iframes, can't send headers
   // Widget file DOWNLOAD only. The download URL is fetched directly from

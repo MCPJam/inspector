@@ -702,7 +702,7 @@ export function RunDetailView({
 
       {runClient && !showAccuracyHero && !embeddedInResultsSplit ? (
         <div className="mb-4 flex flex-wrap items-center gap-2">
-          <span className={runDetailMetaLabelClass}>Host</span>
+          <span className={runDetailMetaLabelClass}>Client</span>
           <HostChip name={runClient.displayName} hostId={runClient.hostId} />
         </div>
       ) : null}

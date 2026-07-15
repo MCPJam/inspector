@@ -20,8 +20,7 @@ import {
   Pencil,
   Laptop,
 } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { EmptyState } from "./ui/empty-state";
 import {
   listSkills,
@@ -66,7 +65,6 @@ export function SkillsTab({
   projectId,
   computersEnabled,
 }: SkillsTabProps = {}) {
-  const posthog = usePostHog();
   // Skills data source. Hosted mode has no local FS, so it's always cloud.
   // Locally, when the Computer feature is on, the user can toggle Local⇄Cloud.
   const showSourceToggle = !HOSTED_MODE && !!computersEnabled && !!projectId;
@@ -236,8 +234,8 @@ export function SkillsTab({
     setIsDeleting(true);
     try {
       await deleteSkill(skillToDelete, skillsSource);
-      posthog.capture("skill_deleted", {
-        ...standardEventProps("skills_tab"),
+      track("skill_deleted", {
+        location: "skills_tab",
         skill_name: skillToDelete,
       });
       // Refresh skills list
@@ -274,8 +272,8 @@ export function SkillsTab({
     if (!projectId || !selectedItem) return;
     try {
       await promoteSkill(selectedItem.name, projectId);
-      posthog.capture("skill_promoted", {
-        ...standardEventProps("skills_tab"),
+      track("skill_promoted", {
+        location: "skills_tab",
         skill_name: selectedItem.name,
       });
       await fetchSkills();
@@ -289,8 +287,8 @@ export function SkillsTab({
     setSelectedFilePath("SKILL.md");
     setRawMode(false);
     setDescriptionExpanded(false);
-    posthog.capture("skill_viewed", {
-      ...standardEventProps("skills_tab"),
+    track("skill_viewed", {
+      location: "skills_tab",
       skill_name: name,
     });
     fetchFileContent(name, "SKILL.md");

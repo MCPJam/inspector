@@ -20,6 +20,10 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => false,
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
+}));
+
 vi.mock("@/lib/apis/mcp-tools-api", () => ({
   listTools: vi.fn().mockResolvedValue({ tools: [], toolsMetadata: {} }),
 }));

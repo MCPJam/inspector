@@ -8,14 +8,10 @@ import type {
 } from "../../types";
 import { CrossHostDashboard } from "../cross-host-dashboard";
 
-const captureMock = vi.fn();
+const { captureMock } = vi.hoisted(() => ({ captureMock: vi.fn() }));
 
-vi.mock("posthog-js/react", () => ({
-  usePostHog: () => ({ capture: captureMock }),
-}));
-
-vi.mock("@/lib/PosthogUtils", () => ({
-  standardEventProps: (location: string) => ({ location }),
+vi.mock("@/lib/analytics", () => ({
+  track: (...args: unknown[]) => captureMock(...args),
 }));
 
 function makeSuite(

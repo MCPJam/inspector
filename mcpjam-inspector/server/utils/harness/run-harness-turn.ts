@@ -354,6 +354,8 @@ export async function runHarnessTurn(
     chatSessionId,
     chatboxId,
     sourceType,
+    journeyRunId,
+    hostId,
     harness,
     harnessMcpProxy,
     builtInTools,
@@ -662,9 +664,27 @@ export async function runHarnessTurn(
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
         sourceType === "chatbox"
           ? "chatbox-chat"
+          : sourceType === "swarm"
+          ? "swarm-chat"
           : sourceType === "eval" || sourceType === "sandbox"
           ? undefined
           : "direct-chat";
+      // FAIL CLOSED on incomplete swarm continuity identity. The `swarm-chat`
+      // lane is keyed on (journeyRunId, hostId, chatSessionId); if the swarm
+      // runner reached a harness turn without ALL of them, silently skipping
+      // continuity would run a fresh un-keyed session — losing multi-turn
+      // resume AND emitting a transcript whose harness sidecar can't be
+      // attributed to its run. That's a runner wiring bug; surface it.
+      if (
+        ownerType === "swarm-chat" &&
+        !(journeyRunId && hostId && chatSessionId)
+      ) {
+        throw new Error(
+          "Swarm harness turn is missing continuity identity " +
+            "(journeyRunId, hostId, and chatSessionId are all required for " +
+            "the swarm-chat owner lane)"
+        );
+      }
       let continuity:
         | {
             owner: HarnessOwnerRef;
@@ -683,7 +703,10 @@ export async function runHarnessTurn(
         projectId &&
         authHeader &&
         ownerType &&
-        (ownerType !== "chatbox-chat" || chatboxId)
+        (ownerType !== "chatbox-chat" || chatboxId) &&
+        // swarm-chat completeness is enforced (throw) above, so reaching here
+        // with ownerType === "swarm-chat" implies all three key dimensions.
+        (ownerType !== "swarm-chat" || (journeyRunId && hostId))
       ) {
         const owner: HarnessOwnerRef = {
           projectId,
@@ -694,6 +717,10 @@ export async function runHarnessTurn(
           ownerType,
           chatSessionId,
           ...(chatboxId ? { chatboxId } : {}),
+          // Swarm continuity lane — the run + pinned host key the owner so a
+          // multi-turn swarm harness session resumes ONLY its own sidecar.
+          ...(ownerType === "swarm-chat" && journeyRunId ? { journeyRunId } : {}),
+          ...(ownerType === "swarm-chat" && hostId ? { hostId } : {}),
           // Phase 3: route owner resolution through resolveExecutionAccess so a
           // host-funded swarm guest can claim/resume their OWN lane.
           ...(executionScope ? { executionScope } : {}),
@@ -1781,7 +1808,8 @@ export async function runHarnessTurn(
             capturedHarnessCommit = {
               ownerType: continuity.owner.ownerType as
                 | "direct-chat"
-                | "chatbox-chat",
+                | "chatbox-chat"
+                | "swarm-chat",
               chatSessionId: continuity.owner.chatSessionId as string,
               ...(continuity.owner.chatboxId
                 ? { chatboxId: continuity.owner.chatboxId }

@@ -9,16 +9,14 @@
  *
  *   reserve           user-bearer auth — reserve/wake/poll the acting user's
  *                     computer (idempotent; each poll also counts as activity)
- *   sandbox-info      shared-secret auth — Convex row id → vendor sandbox id.
- *                     The secret marks us as the deployed server; browsers
+ *   sandbox-info      service-token auth — Convex row id → vendor sandbox id.
+ *                     The token marks us as the deployed server; browsers
  *                     must never be able to make this exchange.
- *   commands          shared-secret auth — durable command log (idempotent)
- *   terminal-sessions shared-secret auth — session open/close records
+ *   commands          service-token auth — durable command log (idempotent)
+ *   terminal-sessions service-token auth — session open/close records
  */
 import { logger } from "../logger.js";
 import { type ExecutionScope } from "../execution-scope.js";
-
-const SECRET_HEADER = "x-computers-data-plane-secret";
 
 export type ComputerStatus =
   | "requested"
@@ -54,14 +52,52 @@ export function getConvexHttpUrl(): string | null {
   return process.env.CONVEX_HTTP_URL?.trim() || null;
 }
 
-function getDataPlaneSecret(): string | null {
-  return process.env.COMPUTERS_DATA_PLANE_SECRET?.trim() || null;
+/**
+ * Set once the boot bootstrap gets a 401 from this server's Convex
+ * (`runtime-config.ts` calls `markServiceTokenRejected`): the
+ * `INSPECTOR_SERVICE_TOKEN` this process holds is NOT a valid data-plane
+ * credential. The runtime-config route and every secret-gated `/computers/*`
+ * route gate on the SAME check, so a token the bootstrap rejected will also
+ * 401 the data-plane calls — it must not count toward
+ * `isComputersDataPlaneConfigured()` or be presented on requests, or the
+ * server would advertise `localConfigured: true` while every computer call
+ * hard-401s. Sticky for the process lifetime: a wrong token only becomes
+ * right via an env change + restart, and a 401 bootstrap never re-runs.
+ */
+let serviceTokenRejected = false;
+
+/** Called by the bootstrap on a 401. */
+export function markServiceTokenRejected(): void {
+  serviceTokenRejected = true;
 }
 
-/** True when every env var the computers data plane needs is present. */
+export function resetServiceTokenRejectedForTests(): void {
+  serviceTokenRejected = false;
+}
+
+function getServiceToken(): string | null {
+  if (serviceTokenRejected) return null;
+  return process.env.INSPECTOR_SERVICE_TOKEN?.trim() || null;
+}
+
+/**
+ * True when everything the computers data plane needs is present: a Convex to
+ * talk to, the inspector service token, the vendor key, and the terminal-token
+ * secret. The secret is still required because it signs/verifies harness proxy
+ * tokens (`harness-proxy-token.ts`) even though terminal tokens are now
+ * RS256/JWKS.
+ *
+ * Values may arrive from the environment OR from the boot bootstrap
+ * (`runtime-config.ts`, which fills env in place) — callers that can run
+ * before startup finishes must await `initComputersRuntimeConfigBootstrap`
+ * first (see `initComputersStartup` in `remote-data-plane.ts`).
+ */
 export function isComputersDataPlaneConfigured(): boolean {
   return Boolean(
-    getConvexHttpUrl() && getDataPlaneSecret() && process.env.E2B_API_KEY
+    getConvexHttpUrl() &&
+      getServiceToken() &&
+      process.env.E2B_API_KEY &&
+      process.env.COMPUTERS_TERMINAL_TOKEN_SECRET?.trim()
   );
 }
 
@@ -103,9 +139,14 @@ async function postJson<T>(
   return { ok: true, value: payload as T };
 }
 
-function secretHeaders(): Record<string, string> | null {
-  const secret = getDataPlaneSecret();
-  return secret ? { [SECRET_HEADER]: secret } : null;
+/**
+ * Server-to-server auth headers for the secret-gated `/computers/*` routes:
+ * the inspector service token. Null when the server holds no (valid) token —
+ * callers treat that as unconfigured.
+ */
+function authHeaders(): Record<string, string> | null {
+  const token = getServiceToken();
+  return token ? { "x-inspector-service-token": token } : null;
 }
 
 function bearerHeader(raw: string): Record<string, string> {
@@ -143,12 +184,12 @@ export async function provisionEvalSandbox(args: {
   );
 }
 
-/** Release an eval sandbox (shared-secret auth; idempotent). */
+/** Release an eval sandbox (service-token auth; idempotent). */
 export async function releaseEvalSandbox(args: {
   sandboxRowId: string;
   signal?: AbortSignal;
 }): Promise<void> {
-  const headers = secretHeaders();
+  const headers = authHeaders();
   if (!headers) return;
   const result = await postJson(
     "/evals/sandbox/release",
@@ -189,17 +230,20 @@ export async function reserveComputer(args: {
   );
 }
 
-/** Exchange a computer row id for its vendor sandbox info (secret auth). */
+/** Exchange a computer row id for its vendor sandbox info (service-token auth). */
 export async function getComputerSandboxInfo(args: {
   computerId: string;
   signal?: AbortSignal;
 }): Promise<ControlPlaneResult<ComputerSandboxInfo>> {
-  const headers = secretHeaders();
+  const headers = authHeaders();
   if (!headers) {
+    // authHeaders() is null when the token is unset OR was rejected by the
+    // bootstrap (markServiceTokenRejected) — name both so operators don't
+    // chase a "not set" that is actually a wrong token.
     return {
       ok: false,
       status: 0,
-      error: "COMPUTERS_DATA_PLANE_SECRET is not set",
+      error: "INSPECTOR_SERVICE_TOKEN is not set or was rejected",
     };
   }
   return postJson<ComputerSandboxInfo>(
@@ -210,7 +254,7 @@ export async function getComputerSandboxInfo(args: {
   );
 }
 
-/** Record an executed command (secret auth; idempotent on commandId). */
+/** Record an executed command (service-token auth; idempotent on commandId). */
 export async function recordComputerCommand(args: {
   computerId: string;
   commandId: string;
@@ -220,7 +264,7 @@ export async function recordComputerCommand(args: {
   exitCode?: number;
   outputPreview?: string;
 }): Promise<void> {
-  const headers = secretHeaders();
+  const headers = authHeaders();
   if (!headers) return;
   const result = await postJson("/computers/commands", headers, { ...args });
   if (!result.ok) {
@@ -234,13 +278,13 @@ export async function recordComputerCommand(args: {
   }
 }
 
-/** Record a terminal session transition (secret auth; idempotent). */
+/** Record a terminal session transition (service-token auth; idempotent). */
 export async function recordTerminalSession(args: {
   sessionId: string;
   action: "open" | "close";
   computerId?: string;
 }): Promise<void> {
-  const headers = secretHeaders();
+  const headers = authHeaders();
   if (!headers) return;
   const result = await postJson("/computers/terminal-sessions", headers, {
     sessionId: args.sessionId,
@@ -251,6 +295,30 @@ export async function recordTerminalSession(args: {
     logger.warn("[computers] failed to record terminal session", {
       sessionId: args.sessionId,
       action: args.action,
+      status: result.status,
+      error: result.error,
+    });
+  }
+}
+
+/**
+ * Bump the computer's `lastActiveAt` (service-token auth) so live terminal I/O
+ * counts as activity for the idle-hibernate sweep. Sent throttled (~once/min)
+ * from the terminal bridge on PTY I/O; best-effort — a dropped touch just risks
+ * an earlier idle hibernate, never a failed keystroke.
+ */
+export async function touchComputerActivity(args: {
+  computerId: string;
+}): Promise<void> {
+  const headers = authHeaders();
+  if (!headers) return;
+  const result = await postJson("/computers/terminal-sessions", headers, {
+    action: "touch",
+    computerId: args.computerId,
+  });
+  if (!result.ok) {
+    logger.warn("[computers] failed to touch computer activity", {
+      computerId: args.computerId,
       status: result.status,
       error: result.error,
     });

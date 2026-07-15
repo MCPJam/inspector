@@ -148,6 +148,24 @@ export function rowPassesSupportFilter(
   }
 }
 
+export function cellPassesSupportFilter(
+  field: HostConfigFieldDef,
+  config: HostConfigDtoV2,
+  mode: SupportFilterMode
+): boolean {
+  if (mode === "all") return true;
+  const level = getSupportLevel(field, config);
+  if (level === null) return false;
+  switch (mode) {
+    case "missing":
+      return level === "neutral" || level === "unsupported";
+    case "partial":
+      return level === "partial";
+    case "supported":
+      return level === "supported";
+  }
+}
+
 function normalizeFieldSearchText(value: string): string {
   return value
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
@@ -188,6 +206,7 @@ export function fieldMatchesQuery(
  * the container (the "N / M fields" count) so they never disagree.
  */
 export function computeVisibleFieldIds(args: {
+  fields?: ReadonlyArray<HostConfigFieldDef>;
   configs: ReadonlyArray<HostConfigDtoV2>;
   divergingOnly: boolean;
   supportFilter: SupportFilterMode;
@@ -195,7 +214,7 @@ export function computeVisibleFieldIds(args: {
 }): Set<string> {
   const q = args.searchQuery.trim().toLowerCase();
   const set = new Set<string>();
-  for (const field of HOST_CONFIG_FIELDS) {
+  for (const field of args.fields ?? HOST_CONFIG_FIELDS) {
     if (args.divergingOnly && !fieldDiverges(field, args.configs)) continue;
     if (!rowPassesSupportFilter(field, args.configs, args.supportFilter))
       continue;

@@ -3,9 +3,9 @@ import {
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
 import {
-  seedFromHostTemplate,
-  type HostTemplateId,
-} from "@/lib/client-templates";
+  bundledHostCompatCatalog,
+  getCatalogTemplate,
+} from "@mcpjam/sdk/host-compat";
 import type { ChatUiOverride } from "@/lib/client-styles";
 import { replaceLeadModelId } from "@/lib/selected-model-storage";
 import { getCanonicalModelId, isModelSupported } from "@/shared/types";
@@ -39,7 +39,7 @@ type HostConfigForPlayground = Pick<
  *
  * Fall through to the host style's template default only when the
  * configured id is empty/whitespace or doesn't resolve at all. BYO
- * host ids with no template entry land on MCPJam's hosted Haiku default.
+ * host ids with no catalog fallback entry leave the picker unchanged.
  */
 export function resolvePlaygroundModelId(
   desiredModelId: string | undefined,
@@ -50,9 +50,10 @@ export function resolvePlaygroundModelId(
     const canonical = getCanonicalModelId(trimmed);
     if (isModelSupported(canonical)) return canonical;
   }
-  const fallback = seedFromHostTemplate(
-    hostStyle as HostTemplateId
-  ).modelId?.trim();
+  const fallback = getCatalogTemplate(
+    bundledHostCompatCatalog(),
+    hostStyle
+  )?.modelId?.trim();
   if (!fallback) return undefined;
   const canonicalFallback = getCanonicalModelId(fallback);
   return isModelSupported(canonicalFallback) ? canonicalFallback : undefined;

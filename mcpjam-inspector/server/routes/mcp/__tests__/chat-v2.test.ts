@@ -184,9 +184,17 @@ vi.mock("@/shared/types", async () => {
   return {
     ...actual,
     isGPT5Model: vi.fn().mockReturnValue(false),
-    isMCPJamProvidedModel: vi.fn().mockReturnValue(false),
   };
 });
+
+// Hosted-model classification moved behind the catalog service; the route keys
+// billing dispatch on isHostedCatalogModel. Default false — tests that exercise
+// the MCPJam path override it explicitly.
+vi.mock("../../../services/hosted-model-catalog.js", () => ({
+  isHostedCatalogModel: vi.fn().mockReturnValue(false),
+  startHostedModelCatalogRefresh: vi.fn(),
+  refreshHostedModelCatalog: vi.fn(),
+}));
 
 vi.mock("../../../utils/guest-auth.js", () => ({
   getProductionGuestAuthHeader: vi
@@ -243,7 +251,9 @@ describe("POST /api/mcp/chat-v2", () => {
 
   describe("MCPJam model classification", () => {
     it("classifies the model PROVIDER-AWARE (bare hosted ids must canonicalize)", async () => {
-      const { isMCPJamProvidedModel } = await import("@/shared/types");
+      const { isHostedCatalogModel } = await import(
+        "../../../services/hosted-model-catalog.js"
+      );
 
       await postAuthenticatedJson({
         messages: [{ role: "user", content: "hi" }],
@@ -254,7 +264,7 @@ describe("POST /api/mcp/chat-v2", () => {
       // here would treat a bare hosted id as non-MCPJam and route it into
       // org/BYOK after it passed preflight (same class of bug as the
       // streamWebChatTurn dispatch).
-      expect(vi.mocked(isMCPJamProvidedModel)).toHaveBeenCalledWith(
+      expect(vi.mocked(isHostedCatalogModel)).toHaveBeenCalledWith(
         "gpt-5-nano",
         "openai"
       );
@@ -1255,8 +1265,10 @@ describe("POST /api/mcp/chat-v2", () => {
 
   describe("MCPJam model persistence", () => {
     beforeEach(async () => {
-      const { isMCPJamProvidedModel } = await import("@/shared/types");
-      vi.mocked(isMCPJamProvidedModel).mockReturnValue(true);
+      const { isHostedCatalogModel } = await import(
+        "../../../services/hosted-model-catalog.js"
+      );
+      vi.mocked(isHostedCatalogModel).mockReturnValue(true);
       process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
     });
 
@@ -1854,8 +1866,10 @@ describe("POST /api/mcp/chat-v2", () => {
 
   describe("Org BYOK Convex routing", () => {
     beforeEach(async () => {
-      const { isMCPJamProvidedModel } = await import("@/shared/types");
-      vi.mocked(isMCPJamProvidedModel).mockReturnValue(false);
+      const { isHostedCatalogModel } = await import(
+        "../../../services/hosted-model-catalog.js"
+      );
+      vi.mocked(isHostedCatalogModel).mockReturnValue(false);
       process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
     });
 
@@ -1987,13 +2001,88 @@ describe("POST /api/mcp/chat-v2", () => {
         global.fetch = originalFetch;
       }
     });
+
+    it("forces the cloud /stream/org proxy for local-only MCP even with a local-eligible provider", async () => {
+      // A `custom:` provider is local-runtime-eligible, so without the flag this
+      // chat resolves + runs the model locally (see the test above). When a
+      // selected MCP server is local-only, `localMcpRuntimeRequired` must force
+      // the CLOUD runtime so the org key stays in Convex and the model call is
+      // proxied through /stream/org — the tool loop still runs locally against
+      // the local MCP connection.
+      const originalFetch = global.fetch;
+      const fetchMock = vi.fn().mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url === "https://test-convex.example.com/stream/org") {
+          const headers = new Headers(
+            (init as RequestInit | undefined)?.headers
+          );
+          expect(headers.get("X-Inspector-Service-Token")).toBeNull();
+          expect(headers.get("Authorization")).toBe(
+            "Bearer signed-in-test-token"
+          );
+          const body = JSON.parse(String((init as RequestInit).body ?? "{}"));
+          expect(body).toMatchObject({
+            projectId: "project-1",
+            providerKey: "custom:local-one",
+          });
+          return createSseResponse([
+            {
+              type: "finish",
+              finishReason: "stop",
+              messageMetadata: {
+                inputTokens: 1,
+                outputTokens: 1,
+                totalTokens: 2,
+              },
+            },
+          ]);
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+      global.fetch = fetchMock;
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: {
+            id: "custom:local-one:m-1",
+            provider: "custom",
+            customProviderName: "local-one",
+          },
+          projectId: "project-1",
+          selectedServers: ["server-1"],
+          selectedServerIds: ["server-1"],
+          localMcpRuntimeRequired: true,
+        });
+
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        // Cloud proxy hit; the local-runtime resolve path is never taken, so
+        // the org key never leaves Convex.
+        expect(
+          fetchMock.mock.calls.some(
+            ([input]) =>
+              String(input) === "https://test-convex.example.com/stream/org"
+          )
+        ).toBe(true);
+        expect(
+          fetchMock.mock.calls.some(([input]) =>
+            String(input).includes("/stream/org/resolve")
+          )
+        ).toBe(false);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
   });
 
   describe("unresolved tool calls from aborted requests (MCPJam models)", () => {
     beforeEach(async () => {
       // Enable MCPJam model path
-      const { isMCPJamProvidedModel } = await import("@/shared/types");
-      vi.mocked(isMCPJamProvidedModel).mockReturnValue(true);
+      const { isHostedCatalogModel } = await import(
+        "../../../services/hosted-model-catalog.js"
+      );
+      vi.mocked(isHostedCatalogModel).mockReturnValue(true);
 
       // Set required env var
       process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";

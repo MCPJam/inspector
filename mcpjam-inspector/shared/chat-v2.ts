@@ -39,6 +39,15 @@ export interface ChatV2Request {
    * hosted web route gets real Ids from a separate request schema.
    */
   selectedServerIds?: string[];
+  /**
+   * Local inspector must own the tool loop for this turn because at least one
+   * selected MCP server is reachable only from this machine (stdio, localhost,
+   * or private IP HTTP). For org BYOK, the server forces the cloud runtime so
+   * the model call is proxied through Convex (`/stream/org`) — the org key
+   * stays in Convex and is never sent to the inspector — while the tool loop
+   * still runs locally against the local MCP connection.
+   */
+  localMcpRuntimeRequired?: boolean;
   requireToolApproval?: boolean;
   /**
    * HostConfig v2 built-in tool ids (e.g. `["web_search"]`) the client wants

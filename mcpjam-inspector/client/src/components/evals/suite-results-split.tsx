@@ -290,7 +290,7 @@ function RunGroupItem({
           <button
             type="button"
             onClick={onToggleExpand}
-            title={expanded ? "Hide host runs" : "Show host runs"}
+            title={expanded ? "Hide client runs" : "Show client runs"}
             className="flex w-7 shrink-0 items-center justify-center rounded-l-md text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-90")} />

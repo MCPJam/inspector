@@ -54,10 +54,10 @@ import {
 import {
   getCanonicalModelId,
   getModelById,
-  isMCPJamProvidedModel,
   type ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
+import { isHostedCatalogModel } from "./hosted-model-catalog.js";
 import {
   hasSkillTools,
   mergeToolCallsByPromptIndex,
@@ -1566,7 +1566,7 @@ const executeTestCase = async (params: {
     String(modelDefinition.id),
     modelDefinition.provider
   );
-  const isJamModel = isMCPJamProvidedModel(
+  const isJamModel = isHostedCatalogModel(
     resolvedModelId,
     modelDefinition.provider
   );
@@ -2505,12 +2505,12 @@ const runLocalIteration = async ({
       if (pinnedEnvironmentId && runId !== null) {
         // Don't provision unless this server is a fully-configured data plane.
         // Provisioning only needs the user bearer, but EXEC needs E2B_API_KEY
-        // and RELEASE needs COMPUTERS_DATA_PLANE_SECRET — without them
+        // and RELEASE needs a server-to-server credential — without them
         // releaseEvalSandbox silently no-ops, so each iteration would boot a
         // paid box only the backend TTL GC could reap. Fail loudly instead.
         if (!isComputersDataPlaneConfigured()) {
           throw new Error(
-            "This eval pins a reproducible computer environment, but this server isn't configured as a computers data plane (needs CONVEX_HTTP_URL, COMPUTERS_DATA_PLANE_SECRET, and E2B_API_KEY) — it could provision a sandbox but not exec or release it."
+            "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
           );
         }
         evalSandbox = await provisionEvalSandbox({
@@ -3313,7 +3313,7 @@ const runHostedIterationWithBrowser = async (
     if (pinnedEnvironmentId && runId !== null) {
       if (!isComputersDataPlaneConfigured()) {
         throw new Error(
-          "This eval pins a reproducible computer environment, but this server isn't configured as a computers data plane (needs CONVEX_HTTP_URL, COMPUTERS_DATA_PLANE_SECRET, and E2B_API_KEY) — it could provision a sandbox but not exec or release it."
+          "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
         );
       }
       evalSandbox = await provisionEvalSandbox({

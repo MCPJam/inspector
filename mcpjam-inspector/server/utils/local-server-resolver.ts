@@ -3,6 +3,7 @@ import type { MCPClientManager, MCPServerConfig } from "@mcpjam/sdk";
 import {
   describeError,
   isKnownProtocolVersion,
+  isUnauthorized401,
   type McpProtocolVersion,
 } from "@mcpjam/sdk";
 import {
@@ -15,6 +16,11 @@ import {
   forceRefreshHostedOAuthAccessToken,
 } from "./hosted-oauth-refresh.js";
 import { logger } from "./logger.js";
+import {
+  resolveEffectiveAuthMethod,
+  withXaaExtensionCapability,
+  type EffectiveAuthMethod,
+} from "./effective-auth.js";
 import { exportSingleServerForInspection } from "./export-helpers.js";
 import { ConvexHttpClient } from "convex/browser";
 import { getInspectorClientRuntimeConfig } from "../env.js";
@@ -53,6 +59,16 @@ type LocalAuthorizeServerConfig =
       authServerMode?: "mcpjam" | "own";
       xaaSubject?: string;
       xaaEmail?: string;
+      // Backend-resolved identity failure: a LEGACY partial per-server
+      // override (one member stored) can't resolve an atomic identity, so
+      // the backend omits BOTH identity fields and sends this actionable,
+      // value-free message instead. The mint must fail with it — never
+      // silently fall back to the demo identity.
+      xaaIdentityError?: string;
+      // Unified canonical auth fields (useOAuth/useXaa are their derived
+      // compat mirrors). Absent on legacy rows.
+      authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
+      registrationMode?: "auto" | "preregistered" | "cimd" | "dcr";
     }
   | {
       transportType: "stdio";
@@ -420,9 +436,17 @@ export function toMCPServerConfig(
 ): MCPServerConfig {
   const { serverConfig } = authResult;
   const timeout = options?.timeoutMs ?? serverConfig.timeout;
-  const clientCapabilities =
+  const baseClientCapabilities =
     options?.clientCapabilities ??
     (serverConfig.clientCapabilities as Record<string, unknown> | undefined);
+  // Spec (MCP enterprise-managed authorization): a client whose access is
+  // enterprise-managed MUST advertise the extension in initialize. Merged —
+  // never overwriting — into whatever capabilities the caller configured.
+  const clientCapabilities =
+    serverConfig.transportType === "http" &&
+    resolveEffectiveAuthMethod(serverConfig) === "xaa"
+      ? withXaaExtensionCapability(baseClientCapabilities)
+      : baseClientCapabilities;
 
   if (serverConfig.transportType === "stdio") {
     const stdio: any = {
@@ -505,8 +529,17 @@ export function toMCPServerConfig(
   // Attach the SDK's 401-recovery hook only when this is a hosted-OAuth
   // server (we have a token from `authorize-batch-local`) AND the caller
   // supplied refresh context. Header-only HTTP servers can't be refreshed
-  // server-side, so the hook would be a no-op there.
-  if (oauthToken && serverConfig.useOAuth === true && options?.refreshContext) {
+  // server-side, so the hook would be a no-op there. A "discover" server
+  // (non-XAA auto) that HAS a token is on its stored-OAuth rung and gets the
+  // same hook; tokenless discover connects bare and recovers via the tagged
+  // 401 instead.
+  const effectiveAuthForHooks = resolveEffectiveAuthMethod(serverConfig);
+  if (
+    oauthToken &&
+    (effectiveAuthForHooks === "oauth" ||
+      effectiveAuthForHooks === "discover") &&
+    options?.refreshContext
+  ) {
     http.onUnauthorized = buildHostedOAuthUnauthorizedHandler({
       bearerToken: options.refreshContext.bearerToken,
       projectId: options.refreshContext.projectId,
@@ -515,7 +548,7 @@ export function toMCPServerConfig(
     });
   } else if (
     oauthToken &&
-    serverConfig.useXaa === true &&
+    effectiveAuthForHooks === "xaa" &&
     options?.xaaUnauthorizedHandler
   ) {
     // XAA re-mint on 401 — mutually exclusive with the OAuth hook above.
@@ -552,12 +585,23 @@ export async function resolveLocalServerForConnect(
 ): Promise<{
   config: MCPServerConfig;
   authorizeResult: LocalAuthorizeBatchSuccess;
+  /**
+   * The resolved dispatch decision, surfaced so the connect executor can
+   * scope its 401 handling: only a "discover" connect (non-XAA auto) tags a
+   * live 401 as oauthRequired for client-side escalation.
+   */
+  effectiveAuth: EffectiveAuthMethod;
 }> {
   let result = await authorizeServerLocal(c, bearerToken, projectId, serverId);
 
-  const useOAuth =
-    result.serverConfig.transportType === "http" &&
-    result.serverConfig.useOAuth === true;
+  // One resolver decides the flow for every dispatch below: canonical
+  // authMethod wins ("auto" selects XAA when configured, "discover"
+  // otherwise); legacy rows fall back to the boolean pair.
+  const effectiveAuth =
+    result.serverConfig.transportType === "http"
+      ? resolveEffectiveAuthMethod(result.serverConfig)
+      : "none";
+  const useOAuth = effectiveAuth === "oauth";
   // Track the access token we'll hand to `toMCPServerConfig`. Starts from
   // whatever `authorize-batch-local` returned, but for hosted-OAuth servers
   // we fall back to a server-side refresh — same `force-refresh` endpoint
@@ -608,20 +652,62 @@ export async function resolveLocalServerForConnect(
     }
   }
 
+  // Discover (non-XAA auto), stored-token rung: recover an expired hosted
+  // token the same way the oauth branch does, but swallow EVERY refresh
+  // failure and fall through to an unauthenticated attempt instead of
+  // throwing pre-connect. A tokenless discover server has usually never
+  // OAuth'd (refreshTokenInvalid), and in pure-local deployments the refresh
+  // helper isn't even configured (CONVEX_HTTP_URL unset throws a 500) — in
+  // both cases the right move is to just try the server bare; if it actually
+  // needs auth, the connect 401s and the tagged error escalates client-side.
+  if (effectiveAuth === "discover" && !resolvedOauthAccessToken) {
+    try {
+      resolvedOauthAccessToken = await forceRefreshHostedOAuthAccessToken(
+        bearerToken,
+        projectId,
+        serverId,
+        { serverName: options?.serverDisplayName ?? serverId }
+      );
+    } catch (error) {
+      logger.debug(
+        "[discover connect] silent token refresh unavailable; attempting unauthenticated connect",
+        {
+          serverId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+    }
+  }
+
   // Cross-App Access: mint the resource access token server-side (MCPJam as the
   // test IdP), then hand it to `toMCPServerConfig` through the same
-  // `oauthAccessToken` channel that injects the Bearer header. Gated strictly on
-  // `useXaa === true && useOAuth !== true` so it can never collide with the
+  // `oauthAccessToken` channel that injects the Bearer header. The effective
+  // method is a hard selection (auto picked XAA because the server is
+  // XAA-configured, or the row says xaa) — it can never collide with the
   // OAuth branch above.
-  const useXaa =
-    result.serverConfig.transportType === "http" &&
-    result.serverConfig.useXaa === true &&
-    result.serverConfig.useOAuth !== true;
+  const useXaa = effectiveAuth === "xaa";
   let xaaUnauthorizedHandler:
     | (() => Promise<{ accessToken: string }>)
     | undefined;
   if (useXaa && result.serverConfig.transportType === "http") {
     const sc = result.serverConfig;
+    // XAA connect runs on stored pre-registered credentials only; a dynamic
+    // registrationMode (dcr/cimd) applies to the debugger and OAuth flows.
+    if (sc.registrationMode === "dcr" || sc.registrationMode === "cimd") {
+      logger.info(
+        "[XAA connect] registrationMode is dynamic; connect uses stored pre-registered credentials — the mode applies to the debugger and OAuth flows only",
+        { serverId, registrationMode: sc.registrationMode }
+      );
+    }
+    // Backend-resolved identity failure (legacy partial per-server
+    // override): a distinct configuration error, surfaced BEFORE any mint.
+    // No silent fallback to the demo identity, no silent XAA→OAuth fallback.
+    if (sc.xaaIdentityError) {
+      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, sc.xaaIdentityError, {
+        serverId,
+        serverName: options?.serverDisplayName ?? null,
+      });
+    }
     const mintArgs = buildXaaMintArgs({
       issuer: resolveXaaIssuer(c, HOSTED_MODE),
       hostedMode: HOSTED_MODE,
@@ -721,7 +807,7 @@ export async function resolveLocalServerForConnect(
     },
     xaaUnauthorizedHandler,
   });
-  return { config, authorizeResult: result };
+  return { config, authorizeResult: result, effectiveAuth };
 }
 
 // ---------------------------------------------------------------------------
@@ -847,7 +933,14 @@ export function parseLocalConnectRequestBody(
  * `{success: false, error, ...details}` and clients depend on that.
  */
 export function respondWithLocalRouteError(c: Context, error: WebRouteError) {
-  if (error.details?.oauthRequired === true) {
+  // Both tags mean "the UPSTREAM MCP server demands auth" — refreshing the
+  // inspector session or guest token can't change that outcome, so authFetch
+  // must skip its 401-retry round-trips. Only `oauthRequired` additionally
+  // drives client-side OAuth escalation.
+  if (
+    error.details?.oauthRequired === true ||
+    error.details?.upstreamAuthRequired === true
+  ) {
     c.header("X-MCP-Auth-Required", "oauth");
   }
   const normalized = error.normalized ?? describeError(error);
@@ -962,6 +1055,57 @@ export async function executeLocalServerConnect(
               ? cleanupError.message
               : String(cleanupError),
         });
+      }
+    }
+    // A live 401 from a "discover" attempt (non-XAA auto, no stored token) is
+    // the MCP spec's discovery signal, not a failure to bury in a generic
+    // envelope: tag it oauthRequired so the client escalates into the
+    // interactive OAuth flow. Explicit "none" servers get a hint instead —
+    // the user chose unauthenticated, so nothing auto-escalates.
+    if (isUnauthorized401(error)) {
+      const serverUrl =
+        resolved.config &&
+        typeof (resolved.config as { url?: unknown }).url === "object"
+          ? String((resolved.config as { url: URL }).url)
+          : undefined;
+      if (resolved.effectiveAuth === "discover") {
+        return respondWithLocalRouteError(
+          c,
+          new WebRouteError(
+            401,
+            ErrorCode.UNAUTHORIZED,
+            `Server "${serverDisplayName}" requires authorization.`,
+            {
+              oauthRequired: true,
+              serverId,
+              serverName: serverDisplayName,
+              serverUrl,
+            },
+            describeError(error)
+          )
+        );
+      }
+      if (resolved.effectiveAuth === "none") {
+        // Same honest 401 status as the hosted mapping — but tagged with
+        // upstreamAuthRequired instead of oauthRequired: the user explicitly
+        // chose No Authentication, so the client must not auto-escalate;
+        // the tag only suppresses authFetch's session/guest-token retries
+        // (which can't fix an upstream 401).
+        return respondWithLocalRouteError(
+          c,
+          new WebRouteError(
+            401,
+            ErrorCode.UNAUTHORIZED,
+            `Connection failed for server ${serverDisplayName}: the server requires authorization (HTTP 401). Switch Authentication to Auto or OAuth to sign in.`,
+            {
+              upstreamAuthRequired: true,
+              serverId,
+              serverName: serverDisplayName,
+              serverUrl,
+            },
+            describeError(error)
+          )
+        );
       }
     }
     return c.json(

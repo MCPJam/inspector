@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
-import posthog from "posthog-js";
+import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import type { EvalSuiteRun } from "./types";
 import { pickLatestCompletedRun } from "./helpers";
 import { useRunInsights } from "./use-run-insights";
@@ -124,10 +123,8 @@ function RunInsightsBanner({
     if (!targetRun || unavailable) {
       return;
     }
-    posthog.capture("eval_run_insights_opened", {
+    track("eval_run_insights_opened", {
       location: "suite_insights_collapsible",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       title,
       run_id: targetRun._id,
     });
@@ -279,7 +276,7 @@ function CrossHostInsightsBanner({ scope }: { scope: InsightGroupScope }) {
             {expanded
               ? "Show less"
               : findings.length > 0
-                ? `Show ${findings.length} cross-host finding${findings.length === 1 ? "" : "s"}`
+                ? `Show ${findings.length} cross-client finding${findings.length === 1 ? "" : "s"}`
                 : "Show more"}
           </button>
         ) : null}
@@ -293,14 +290,14 @@ function CrossHostInsightsBanner({ scope }: { scope: InsightGroupScope }) {
   } else if (!allRunsTerminal) {
     body = (
       <p className="min-w-0 flex-1 text-sm text-muted-foreground">
-        Cross-host diagnosis runs once every host in this group has finished.
+        Cross-client diagnosis runs once every client in this group has finished.
       </p>
     );
   } else if (pending || requested) {
     body = (
       <span className="flex min-w-0 flex-1 items-center gap-2 text-sm text-muted-foreground">
         <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-        Comparing hosts…
+        Comparing clients…
       </span>
     );
   } else if (error) {
@@ -310,14 +307,14 @@ function CrossHostInsightsBanner({ scope }: { scope: InsightGroupScope }) {
   } else {
     body = (
       <p className="min-w-0 flex-1 text-sm text-muted-foreground">
-        We'll compare how each host performed on this suite here.
+        We'll compare how each client performed on this suite here.
       </p>
     );
   }
 
   return (
     <InsightBannerShell
-      label="Cross-host insights"
+      label="Cross-client insights"
       trailing={
         error || failedGeneration ? (
           <button

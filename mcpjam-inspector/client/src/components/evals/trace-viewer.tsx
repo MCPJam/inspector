@@ -56,12 +56,9 @@ import type {
   McpToolResultImageRendering,
 } from "@/lib/client-config-v2";
 
-// Default host-style template id used when the caller passes
-// `activeHost` but no explicit `hostStyle`. Mirrors
-// `DEFAULT_HOST_TEMPLATE_ID` in `lib/client-templates.ts` but inlined to
-// avoid pulling that module (and its build-time `__APP_VERSION__`
-// reference) into surfaces that don't otherwise need it — keeps
-// trace-viewer test environments lean.
+// Default host-style id used when the caller passes `activeHost` but no explicit
+// `hostStyle`. Mirrors the catalog default without importing catalog/client
+// modules into this trace-only surface.
 const DEFAULT_TRACE_HOST_STYLE_FALLBACK = "mcpjam";
 
 const TraceTimelineLazy = lazy(() =>

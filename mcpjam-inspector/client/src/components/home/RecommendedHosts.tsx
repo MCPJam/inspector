@@ -3,19 +3,13 @@ import { toast } from "@/lib/toast";
 import { Loader2, Plus } from "lucide-react";
 import { useAppNavigate, buildHostsPath } from "@/lib/app-navigation";
 import { useHostMutations } from "@/hooks/useClients";
-import {
-  getHostTemplateLogoSrc,
-  HOST_TEMPLATES,
-  seedFromHostTemplate,
-  type HostTemplateId,
-} from "@/lib/client-templates";
+import { cloneHostTemplateInput } from "@/lib/client-config-v2";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
+import { getHostLogoSrc } from "@/lib/host-ui-metadata";
 
-const RECOMMENDED_HOST_IDS: readonly HostTemplateId[] = [
-  "claude",
-  "chatgpt",
-  "cursor",
-];
+const RECOMMENDED_HOST_IDS = ["claude", "chatgpt", "cursor"] as const;
 
 interface RecommendedHostsProps {
   projectId: string | null;
@@ -25,26 +19,42 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
   const { createHost } = useHostMutations();
   const navigate = useAppNavigate();
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const [creatingId, setCreatingId] = useState<HostTemplateId | null>(null);
+  const catalogState = useHostCatalog();
+  const [creatingId, setCreatingId] = useState<string | null>(null);
 
-  const recommended = HOST_TEMPLATES.filter((t) =>
-    RECOMMENDED_HOST_IDS.includes(t.id)
-  );
+  const recommended =
+    catalogState.status === "live"
+      ? RECOMMENDED_HOST_IDS.flatMap((id) => {
+          const host = getCatalogHost(catalogState.catalog, id);
+          return host ? [host] : [];
+        })
+      : [];
 
-  async function handleCreate(templateId: HostTemplateId, label: string) {
+  async function handleCreate(hostId: string) {
     if (!projectId) {
-      toast.error("Select a project before creating a host.");
+      toast.error("Select a project before creating a client.");
       return;
     }
-    setCreatingId(templateId);
+    const catalog =
+      catalogState.status === "live" ? catalogState.catalog : null;
+    const template = catalog
+      ? getCatalogTemplate(catalog, hostId)
+      : undefined;
+    if (!template) {
+      toast.error("Could not load live client templates.");
+      return;
+    }
+    const label =
+      (catalog ? getCatalogHost(catalog, hostId)?.label : undefined) ?? hostId;
+    setCreatingId(hostId);
     try {
-      const seed = seedFromHostTemplate(templateId, { theme: themeMode });
+      const seed = cloneHostTemplateInput(template, { themeMode });
       const { hostId } = await createHost({
         projectId,
         name: label,
         input: { ...seed, serverIds: [] },
       });
-      toast.success(`Created ${label} host.`);
+      toast.success(`Created ${label} client.`);
       navigate(buildHostsPath(hostId));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -63,29 +73,39 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
       </div>
 
       <ul>
-        {recommended.map((template, i) => {
-          const isCreating = creatingId === template.id;
+        {recommended.map((host, i) => {
+          const isCreating = creatingId === host.id;
           const isLast = i === recommended.length - 1;
+          const canCreateFromLiveTemplate =
+            catalogState.status === "live" &&
+            getCatalogTemplate(catalogState.catalog, host.id) !== undefined;
           return (
             <li
-              key={template.id}
+              key={host.id}
               className={isLast ? "" : "border-b border-border/40"}
             >
               <button
                 type="button"
-                disabled={isCreating || !projectId}
-                onClick={() => handleCreate(template.id, template.label)}
+                disabled={
+                  isCreating || !projectId || !canCreateFromLiveTemplate
+                }
+                onClick={() => handleCreate(host.id)}
+                title={
+                  canCreateFromLiveTemplate
+                    ? `Create ${host.label}`
+                    : "Live client template unavailable"
+                }
                 className="group flex w-full items-center gap-2.5 px-4 py-2 text-left transition-colors hover:bg-accent/40 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <div className="grid size-6 shrink-0 place-items-center rounded bg-muted/60">
                   <img
-                    src={getHostTemplateLogoSrc(template, themeMode)}
+                    src={getHostLogoSrc(host.id, themeMode)}
                     alt=""
                     className="size-3.5 object-contain"
                   />
                 </div>
                 <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
-                  {template.label}
+                  {host.label}
                 </span>
                 <span className="flex shrink-0 items-center gap-0.5 text-[11px] font-medium text-muted-foreground transition group-hover:text-foreground group-disabled:opacity-50">
                   {isCreating ? (

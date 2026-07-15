@@ -21,9 +21,12 @@ import { Hono } from "hono";
 import {
   bundledHostCompatCatalog,
   hostCompatCatalogEnvelopeSchema,
+  hydrateHostCompatCatalog,
+  SUPPORTED_CATALOG_SCHEMA_VERSION,
   type HostCompatCatalog,
   type HostCompatCatalogEnvelope,
 } from "@mcpjam/sdk/host-compat";
+import { logger } from "../../utils/logger.js";
 
 // The Zod-inferred envelope narrows `provenance` to the wire enum; the SDK's
 // catalog type also admits `observed` (earned live, never published). Serve
@@ -34,8 +37,9 @@ type CatalogEnvelope = Omit<HostCompatCatalogEnvelope, "catalog"> & {
 
 const hostCatalog = new Hono();
 
-const UPSTREAM_TIMEOUT_MS = 2_500;
+const UPSTREAM_TIMEOUT_MS = 6_500;
 const CACHE_TTL_MS = 300_000;
+const DEGRADATION_WARN_THROTTLE_MS = 60_000;
 
 type CachedEnvelope = { envelope: CatalogEnvelope; fetchedAt: number };
 
@@ -44,16 +48,38 @@ let cache: CachedEnvelope | null = null;
 // requests past the TTL share it instead of stampeding the backend, and the
 // one winner updates the cache (so two refreshes can't race to overwrite it).
 let inflightRefresh: Promise<CatalogEnvelope | null> | null = null;
+const lastDegradationWarnAtByReason = new Map<string, number>();
 
 /** Test hook — reset module state between cases. */
 export function resetHostCatalogCacheForTests(): void {
   cache = null;
   inflightRefresh = null;
+  lastDegradationWarnAtByReason.clear();
+}
+
+function warnHostCatalogDegradation(
+  reason:
+    | "upstream_non_2xx"
+    | "upstream_invalid_envelope"
+    | "upstream_fetch_error"
+    | "upstream_older_version"
+    | "serve_stale"
+    | "serve_bundled",
+  details: Record<string, unknown> = {}
+): void {
+  const now = Date.now();
+  const lastWarnAt = lastDegradationWarnAtByReason.get(reason) ?? 0;
+  if (now - lastWarnAt < DEGRADATION_WARN_THROTTLE_MS) return;
+  lastDegradationWarnAtByReason.set(reason, now);
+  logger.warn("[host-catalog] degraded catalog path", {
+    reason,
+    ...details,
+  });
 }
 
 function bundledEnvelope(): CatalogEnvelope {
   return {
-    schemaVersion: 1,
+    schemaVersion: SUPPORTED_CATALOG_SCHEMA_VERSION,
     // Version 0 = "not a backend publish"; consumers compare against >=1.
     version: 0,
     contentHash: "",
@@ -76,14 +102,35 @@ async function fetchUpstreamEnvelope(
       headers: { accept: "application/json" },
       signal: controller.signal,
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      warnHostCatalogDegradation("upstream_non_2xx", {
+        status: response.status,
+      });
+      return null;
+    }
     const body: unknown = await response.json();
     // Validate before caching/serving — a malformed upstream payload must
     // degrade to stale/bundled, never be proxied through to consumers.
     const parsed = hostCompatCatalogEnvelopeSchema.safeParse(body);
-    if (!parsed.success) return null;
-    return { ...parsed.data, source: "live" };
-  } catch {
+    if (!parsed.success) {
+      const schemaVersion =
+        body !== null && typeof body === "object" && !Array.isArray(body)
+          ? (body as { schemaVersion?: unknown }).schemaVersion
+          : undefined;
+      warnHostCatalogDegradation("upstream_invalid_envelope", {
+        schemaVersion,
+      });
+      return null;
+    }
+    return {
+      ...parsed.data,
+      catalog: hydrateHostCompatCatalog(parsed.data.catalog),
+      source: "live",
+    };
+  } catch (error) {
+    warnHostCatalogDegradation("upstream_fetch_error", {
+      error: error instanceof Error ? error.name : typeof error,
+    });
     return null;
   } finally {
     clearTimeout(timeoutId);
@@ -110,6 +157,10 @@ function refreshCache(convexUrl: string): Promise<CatalogEnvelope | null> {
           // Upstream is healthy but returned an older version — keep the newer
           // cached content, but still refresh its TTL so we don't re-hit
           // upstream on every subsequent request (cache-thrash).
+          warnHostCatalogDegradation("upstream_older_version", {
+            upstreamVersion: envelope.version,
+            cachedVersion: cache.envelope.version,
+          });
           cache.fetchedAt = Date.now();
         }
         // Serve the freshest we hold — never the just-rejected older one.
@@ -142,9 +193,16 @@ hostCatalog.get("/host-catalog", async (c) => {
   // instead of pinning this stale copy for another max-age window (which would
   // mask upstream recovery).
   if (cache) {
+    warnHostCatalogDegradation("serve_stale", {
+      version: cache.envelope.version,
+      ageMs: now - cache.fetchedAt,
+    });
     return c.json(cache.envelope, 200, { "Cache-Control": "no-cache" });
   }
 
+  warnHostCatalogDegradation("serve_bundled", {
+    convexConfigured: Boolean(convexUrl),
+  });
   return c.json(bundledEnvelope(), 200, { "Cache-Control": "no-store" });
 });
 
