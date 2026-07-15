@@ -81,4 +81,37 @@ describe("OAuthProfileModal", () => {
 
     expect(onSave).toHaveBeenCalledTimes(1);
   });
+
+  it("blocks a second submit while the first save is still in flight", async () => {
+    // Awaiting onSave keeps the modal open, which opened a resubmit window the
+    // old fire-and-forget close never had.
+    const user = userEvent.setup();
+    let releaseSave: (() => void) | undefined;
+    const onSave = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseSave = resolve;
+        }),
+    );
+    render(
+      <OAuthProfileModal
+        open
+        onOpenChange={vi.fn()}
+        server={createServer("oauth-flow-target")}
+        existingServerNames={["oauth-flow-target"]}
+        onSave={onSave}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save configuration" }));
+    expect(onSave).toHaveBeenCalledTimes(1);
+
+    // Still saving: the button is disabled, so a second click is a no-op.
+    const savingButton = screen.getByRole("button", { name: "Saving…" });
+    expect(savingButton).toBeDisabled();
+    await user.click(savingButton);
+    expect(onSave).toHaveBeenCalledTimes(1);
+
+    releaseSave?.();
+  });
 });

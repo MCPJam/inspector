@@ -91,6 +91,7 @@ export function OAuthProfileModal({
       : [createHeaderRow()],
   );
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const supportedStrategies = useMemo(
     () => getSupportedRegistrationStrategies(draft.protocolVersion),
     [draft.protocolVersion],
@@ -203,8 +204,9 @@ export function OAuthProfileModal({
     };
 
     // Await so a rejected save keeps the modal open with the entered values
-    // instead of closing over a server that was never written. Mirrors
-    // XAAServerModal.
+    // instead of closing over a server that was never written. `saving` blocks
+    // the resubmits that awaiting now makes possible. Mirrors XAAServerModal.
+    setSaving(true);
     try {
       await onSave({
         formData,
@@ -225,6 +227,8 @@ export function OAuthProfileModal({
           ? saveError.message
           : "Could not save the server. Please try again.",
       );
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -543,10 +547,13 @@ export function OAuthProfileModal({
               type="button"
               variant="ghost"
               onClick={() => onOpenChange(false)}
+              disabled={saving}
             >
               Cancel
             </Button>
-            <Button type="submit">Save configuration</Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? "Saving…" : "Save configuration"}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>
