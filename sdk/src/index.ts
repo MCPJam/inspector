@@ -108,6 +108,7 @@ export {
   MCPAuthError,
   isAuthError,
   isMCPAuthError,
+  isUnauthorized401,
 } from "./mcp-client-manager/index.js";
 export type { RetryPolicy } from "./retry.js";
 export {
@@ -293,9 +294,21 @@ export {
   TOKEN_EXCHANGE_GRANT,
   XAA_DEBUG_IDP_CLIENT_ID,
   XAA_DEBUG_CLIENT_ID_METADATA_URL,
+  XAA_CONFIDENTIAL_CIMD_ORIGIN,
+  XAA_CONFIDENTIAL_CIMD_PATH_PREFIX,
+  buildConfidentialCimdUrl,
+  decodeConfidentialCimdKey,
+  getConfidentialCimdReflectorMetadata,
+  UNVERIFIED_CONFIDENTIAL_CIMD_CLIENT_NAME,
   evaluateIdJagClientMetadata,
   getXaaDebugClientMetadata,
 } from "./oauth/client-identity.js";
+export {
+  initXaaClientKeyPair,
+  getXaaClientJwks,
+  resetXaaClientKeyPairForTests,
+  XAA_CLIENT_KID,
+} from "./xaa/mint/client-keypair.js";
 export type {
   IdJagClientMetadataEvaluation,
   IdJagMetadataEvidence,
@@ -308,7 +321,11 @@ export type {
   DynamicClientRegistrationCredentials,
   DynamicClientRegistrationOutcome,
 } from "./oauth/state-machines/shared/dynamic-client-registration.js";
-export { validateClientIdMetadataUrl } from "./oauth/state-machines/shared/client-id-metadata.js";
+export {
+  validateClientIdMetadataUrl,
+  isLoopbackHost,
+  isLoopbackClientMetadataUrl,
+} from "./oauth/state-machines/shared/client-id-metadata.js";
 export {
   decodeJWT,
   decodeJWTParts,

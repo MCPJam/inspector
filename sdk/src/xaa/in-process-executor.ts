@@ -19,6 +19,8 @@ import {
   handleXaaTokenExchangeGrant,
 } from "./mint/handlers.js";
 import { buildJwtBearerRequest } from "./mint/jwt-bearer.js";
+import { initXaaClientKeyPair } from "./mint/client-keypair.js";
+import { signClientAssertion } from "./mint/client-assertion.js";
 import {
   DEFAULT_NEGATIVE_TEST_MODE,
   isNegativeTestMode,
@@ -165,7 +167,11 @@ export function createInProcessXaaExecutor(
     // assertion for sub/email and mints (applying the negative-test tamper
     // when requested). Like the server route, a missing/malformed assertion
     // or one without a subject is a 400 — never a silently minted
-    // empty-subject ID-JAG.
+    // empty-subject ID-JAG. Intentional divergence: the server's
+    // managed-policy-gated response additionally echoes a granted `scope`
+    // field, but the managed context (policyMode/testIdentityId/
+    // resourceAppId) never reaches this in-process CLI path, so no scope is
+    // echoed here.
     if (path.endsWith("/token-exchange")) {
       const identityAssertion = nonEmptyString(body.identityAssertion);
       if (!identityAssertion) {
@@ -255,15 +261,26 @@ export function createInProcessXaaExecutor(
           error: "In-process redemption requires an explicit token endpoint.",
         });
       }
+      const authMethod = isTokenAuthMethod(body.tokenEndpointAuthMethod)
+        ? body.tokenEndpointAuthMethod
+        : undefined;
+      // Confidential CIMD: sign the private_key_jwt client assertion here (Node),
+      // with the local client key. The browser-safe state machine only carries
+      // the method string; key material never leaves the executor.
+      const clientId = str(body.clientId) || undefined;
+      const clientAssertion =
+        authMethod === "private_key_jwt" && clientId
+          ? (initXaaClientKeyPair(),
+            signClientAssertion({ clientId, tokenEndpoint }))
+          : undefined;
       const { headers, body: form } = buildJwtBearerRequest({
         assertion: str(body.assertion),
-        clientId: str(body.clientId) || undefined,
+        clientId,
         clientSecret: str(body.clientSecret) || undefined,
         scope: str(body.scope) || undefined,
         resource: str(body.resource) || undefined,
-        tokenEndpointAuthMethod: isTokenAuthMethod(body.tokenEndpointAuthMethod)
-          ? body.tokenEndpointAuthMethod
-          : undefined,
+        tokenEndpointAuthMethod: authMethod,
+        clientAssertion,
       });
       const upstream = await executeOAuthProxy({
         url: tokenEndpoint,
@@ -337,10 +354,15 @@ export function createInProcessXaaExecutor(
 
 function isTokenAuthMethod(
   value: unknown
-): value is "client_secret_post" | "client_secret_basic" | "none" {
+): value is
+  | "client_secret_post"
+  | "client_secret_basic"
+  | "none"
+  | "private_key_jwt" {
   return (
     value === "client_secret_post" ||
     value === "client_secret_basic" ||
-    value === "none"
+    value === "none" ||
+    value === "private_key_jwt"
   );
 }

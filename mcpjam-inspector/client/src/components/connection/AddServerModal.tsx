@@ -17,7 +17,6 @@ import {
 } from "@/shared/types.js";
 import { track } from "@/lib/analytics";
 import { HOSTED_MODE } from "@/lib/config";
-import { useAuth } from "@workos-inc/authkit-react";
 import { useAppReady, useAppReadyMessage } from "@/hooks/use-app-ready";
 import { useServerForm } from "./hooks/use-server-form";
 import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSettingsSection";
@@ -33,6 +32,8 @@ interface AddServerModalProps {
   initialData?: Partial<ServerFormData>;
   requireHttps?: boolean;
   projectClientConfig?: Project["clientConfig"];
+  /** Project default XAA test identity — shown as override placeholders. */
+  projectXaaDefaultIdentity?: { subject: string; email: string } | null;
 }
 
 function normalizeOauthProtocolMode(
@@ -87,12 +88,11 @@ export function AddServerModal({
   initialData,
   requireHttps,
   projectClientConfig,
+  projectXaaDefaultIdentity = null,
 }: AddServerModalProps) {
-  const { user } = useAuth();
   const formState = useServerForm(undefined, {
     requireHttps,
     projectClientConfig,
-    signedInEmail: user?.email,
   });
   const hostedUrlPlaceholder = "https://example.com/mcp";
   const appReady = useAppReady();
@@ -449,7 +449,8 @@ export function AddServerModal({
               onXaaSubjectChange={formState.setXaaSubject}
               xaaEmail={formState.xaaEmail}
               onXaaEmailChange={formState.setXaaEmail}
-              signedInEmail={user?.email}
+              autoSelectsXaa={formState.autoSelectsXaa}
+              projectDefaultIdentity={projectXaaDefaultIdentity}
             />
           )}
 

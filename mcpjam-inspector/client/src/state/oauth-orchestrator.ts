@@ -183,6 +183,13 @@ export async function ensureAuthorizedForReconnect(
     beforeRedirect?: (oauthOptions: MCPOAuthOptions) => void;
     onTraceUpdate?: (trace: OAuthTrace) => void;
     allowInteractiveOAuthFlow?: boolean;
+    /**
+     * Set by the reconnect path after the user explicitly confirmed Auto's
+     * OAuth escalation. Without it, a tokenless Auto server is treated as
+     * ready-unauthenticated (discover semantics) — never front-run a
+     * redirect the user didn't ask for.
+     */
+    interactiveOAuthConfirmed?: boolean;
   },
 ): Promise<OAuthResult> {
   // If server is explicitly configured without OAuth, skip OAuth flow entirely
@@ -198,6 +205,20 @@ export async function ensureAuthorizedForReconnect(
   if (server.useOAuth !== true && !server.oauthTokens) {
     // Clear any lingering OAuth data that might cause confusion
     clearOAuthData(server.name);
+    return { kind: "ready", serverConfig: server.config, tokens: undefined };
+  }
+
+  // Auto (discover) servers carry useOAuth: true as a derived mirror, but a
+  // tokenless Auto server connects unauthenticated by design — the connect
+  // surfaces tag a real 401 and the reconnect path asks the user before
+  // coming back here with interactiveOAuthConfirmed. Without this guard,
+  // every auto-connect loop (load, client switch) would surprise-redirect
+  // open Auto servers into OAuth.
+  if (
+    server.authMethod === "auto" &&
+    !server.oauthTokens &&
+    options?.interactiveOAuthConfirmed !== true
+  ) {
     return { kind: "ready", serverConfig: server.config, tokens: undefined };
   }
 
