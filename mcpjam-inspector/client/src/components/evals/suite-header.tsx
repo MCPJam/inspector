@@ -30,8 +30,7 @@ import {
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
-import posthog from "posthog-js";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import {
   formatRunId,
   getEffectiveSuiteServers,
@@ -243,10 +242,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           suiteId: suite._id,
           serverAttachmentId,
         });
-        posthog.capture("eval_suite_server_changed", {
+        track("eval_suite_server_changed", {
           location: "suite_header",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
           suite_id: suite._id,
           server_attachment_id: serverAttachmentId,
         });
@@ -499,10 +496,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 aria-label="Run all cases in this suite"
                 aria-busy={isRerunning}
                 onClick={() => {
-                  posthog.capture("run_all_cases_button_clicked", {
+                  track("run_all_cases_button_clicked", {
                     location: "suite_header",
-                    platform: detectPlatform(),
-                    environment: detectEnvironment(),
                     suite_id: suite._id,
                     iteration_override: iterationOverride ?? null,
                   });

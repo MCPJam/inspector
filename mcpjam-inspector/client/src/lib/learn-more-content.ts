@@ -7,7 +7,8 @@ export interface LearnMoreEntry {
   description: string;
   /** Longer, high-level description for the expanded modal */
   expandedDescription?: string;
-  docsUrl: string;
+  /** Optional — when omitted, the expanded modal hides its Docs link. */
+  docsUrl?: string;
 }
 
 export const learnMoreContent: Record<string, LearnMoreEntry> = {
@@ -44,7 +45,7 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
       "https://outstanding-fennec-304.convex.cloud/api/storage/bc3fd8aa-af57-4807-9f69-d184e1e4b397",
     description: "Build and test ChatGPT apps and MCP apps locally.",
     expandedDescription:
-      "A local development environment for ChatGPT apps and MCP apps. Emulate widgets, test across devices, themes, and host styles, debug CSP, and chat with your server — no ngrok or paid subscription needed.",
+      "A local development environment for ChatGPT apps and MCP apps. Emulate widgets, test across devices, themes, and client styles, debug CSP, and chat with your server — no ngrok or paid subscription needed.",
     docsUrl: "https://docs.mcpjam.com/inspector/playground",
   },
   skills: {
@@ -79,5 +80,12 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
     expandedDescription:
       "A guided debugger for Cross-App Access style enterprise authorization. Issue a synthetic OIDC identity token, exchange it for a valid or intentionally broken ID-JAG, submit that assertion to your real authorization server, and then verify the resulting access token against your MCP server.",
     docsUrl: "https://docs.mcpjam.com/inspector/guided-oauth",
+  },
+  "xaa-idp": {
+    title: "Cross-App Access",
+    videoUrl: "",
+    description: "",
+    // Content intentionally empty for now — fill in the video/description
+    // later. docsUrl omitted so the modal renders without a Docs link.
   },
 };

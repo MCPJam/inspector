@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { toast } from "@/lib/toast";
+import { normalizeRegistrationMode } from "@/shared/xaa.js";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@mcpjam/design-system/dialog";
@@ -14,10 +15,8 @@ import {
   ServerFormData,
   type ServerFormOAuthProtocolMode,
 } from "@/shared/types.js";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { HOSTED_MODE } from "@/lib/config";
-import { usePostHog } from "posthog-js/react";
-import { useAuth } from "@workos-inc/authkit-react";
 import { useAppReady, useAppReadyMessage } from "@/hooks/use-app-ready";
 import { useServerForm } from "./hooks/use-server-form";
 import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSettingsSection";
@@ -33,6 +32,8 @@ interface AddServerModalProps {
   initialData?: Partial<ServerFormData>;
   requireHttps?: boolean;
   projectClientConfig?: Project["clientConfig"];
+  /** Project default XAA test identity — shown as override placeholders. */
+  projectXaaDefaultIdentity?: { subject: string; email: string } | null;
 }
 
 function normalizeOauthProtocolMode(
@@ -45,16 +46,9 @@ function normalizeOauthProtocolMode(
     : "2025-11-25";
 }
 
-function normalizeOauthRegistrationMode(
-  value?: ServerFormData["oauthRegistrationMode"],
-): ServerFormData["oauthRegistrationMode"] | undefined {
-  return value === "auto" ||
-    value === "cimd" ||
-    value === "dcr" ||
-    value === "preregistered"
-    ? value
-    : undefined;
-}
+// Single-sourced in the SDK's registration vocabulary (accepts the legacy
+// pre_registered alias; unknown → undefined so callers apply defaults).
+const normalizeOauthRegistrationMode = normalizeRegistrationMode;
 
 function isAuthorizationHeader(key: string): boolean {
   return key.trim().toLowerCase() === "authorization";
@@ -94,13 +88,11 @@ export function AddServerModal({
   initialData,
   requireHttps,
   projectClientConfig,
+  projectXaaDefaultIdentity = null,
 }: AddServerModalProps) {
-  const posthog = usePostHog();
-  const { user } = useAuth();
   const formState = useServerForm(undefined, {
     requireHttps,
     projectClientConfig,
-    signedInEmail: user?.email,
   });
   const hostedUrlPlaceholder = "https://example.com/mcp";
   const appReady = useAppReady();
@@ -147,13 +139,13 @@ export function AddServerModal({
             normalizeOauthProtocolMode(initialData.oauthProtocolMode),
           );
         }
-        if (initialData.oauthRegistrationMode) {
+        if (initialData.registrationMode) {
           formState.setOauthRegistrationMode(
-            normalizeOauthRegistrationMode(initialData.oauthRegistrationMode) ??
+            normalizeOauthRegistrationMode(initialData.registrationMode) ??
               "auto",
           );
           formState.setUseCustomClientId(
-            initialData.oauthRegistrationMode === "preregistered",
+            initialData.registrationMode === "preregistered",
           );
         }
         if (initialData.oauthScopes && initialData.oauthScopes.length > 0) {
@@ -228,7 +220,7 @@ export function AddServerModal({
     // Validate Client ID if using custom configuration
     if (
       formState.authType === "oauth" &&
-      formState.oauthRegistrationMode === "preregistered"
+      formState.registrationMode === "preregistered"
     ) {
       const clientIdError = formState.validateClientId(formState.clientId);
       if (clientIdError) {
@@ -407,7 +399,7 @@ export function AddServerModal({
               onOauthScopesChange={formState.setOauthScopesInput}
               oauthProtocolMode={formState.oauthProtocolMode}
               onOauthProtocolModeChange={formState.setOauthProtocolMode}
-              oauthRegistrationMode={formState.oauthRegistrationMode}
+              registrationMode={formState.registrationMode}
               onOauthRegistrationModeChange={
                 formState.setOauthRegistrationMode
               }
@@ -457,7 +449,8 @@ export function AddServerModal({
               onXaaSubjectChange={formState.setXaaSubject}
               xaaEmail={formState.xaaEmail}
               onXaaEmailChange={formState.setXaaEmail}
-              signedInEmail={user?.email}
+              autoSelectsXaa={formState.autoSelectsXaa}
+              projectDefaultIdentity={projectXaaDefaultIdentity}
             />
           )}
 
@@ -504,10 +497,8 @@ export function AddServerModal({
               type="button"
               variant="outline"
               onClick={() => {
-                posthog.capture("cancel_button_clicked", {
+                track("cancel_button_clicked", {
                   location: "add_server_modal",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
                 });
                 handleClose();
               }}
@@ -522,10 +513,8 @@ export function AddServerModal({
               }
               title={isAppBootstrapping ? appReadyMessage ?? undefined : undefined}
               onClick={() => {
-                posthog.capture("add_server_button_clicked", {
+                track("add_server_button_clicked", {
                   location: "add_server_modal",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
                 });
               }}
               className="px-4"

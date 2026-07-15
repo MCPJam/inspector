@@ -3,23 +3,15 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BillingUpsellGate } from "../BillingUpsellGate";
 
-const captureMock = vi.fn();
+const { trackMock } = vi.hoisted(() => ({ trackMock: vi.fn() }));
 
-vi.mock("posthog-js/react", () => ({
-  usePostHog: () => ({ capture: captureMock }),
-}));
-
-vi.mock("@/lib/PosthogUtils", () => ({
-  standardEventProps: (location: string) => ({
-    location,
-    platform: "web",
-    environment: "test",
-  }),
+vi.mock("@/lib/analytics", () => ({
+  track: trackMock,
 }));
 
 describe("BillingUpsellGate", () => {
   beforeEach(() => {
-    captureMock.mockReset();
+    trackMock.mockReset();
   });
 
   it("captures billing_upsell_gate_viewed once on mount", () => {
@@ -33,11 +25,9 @@ describe("BillingUpsellGate", () => {
       />,
     );
 
-    expect(captureMock).toHaveBeenCalledTimes(1);
-    expect(captureMock).toHaveBeenCalledWith("billing_upsell_gate_viewed", {
+    expect(trackMock).toHaveBeenCalledTimes(1);
+    expect(trackMock).toHaveBeenCalledWith("billing_upsell_gate_viewed", {
       location: "billing_upsell_gate",
-      platform: "web",
-      environment: "test",
       feature: "chatboxes",
       current_plan: "free",
       upgrade_plan: "team",

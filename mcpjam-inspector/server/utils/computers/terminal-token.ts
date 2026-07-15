@@ -9,21 +9,13 @@
  *   purpose  'computer-terminal'  (REQUIRED — rejects every other JWT population)
  *   sub      Convex users id (owner)   computerId / projectId   exp ~60s
  *
- * Verification dispatches on the token's own `alg` header, and the key
- * material is selected BY algorithm — which forecloses alg-confusion (an
- * HS256 token HMAC'd with the public-key bytes finds only the shared secret
- * on the HS256 path, never the public key):
+ * RS256 only: the token is verified against the backend-published JWKS
+ * (`GET {CONVEX_HTTP_URL}/computers/terminal-jwks`, kid `computer-terminal-1`),
+ * fetched with a short cache. The inspector holds verify-only material and can
+ * never mint. Any other `alg` (including `HS256` and `none`) is rejected.
  *
- *   RS256 — verified against the backend-published JWKS
- *     (`GET {CONVEX_HTTP_URL}/computers/terminal-jwks`, kid
- *     `computer-terminal-1`), fetched with a short cache. This is the
- *     endgame: the inspector holds verify-only material and can never mint.
- *   HS256 — the shared `COMPUTERS_TERMINAL_TOKEN_SECRET`, kept as the
- *     migration fallback until the backend key flip.
- *   anything else (including `none`) — rejected.
- *
- * Fails closed (`null`) whenever the matching key material is unavailable —
- * secret unconfigured, `CONVEX_HTTP_URL` unset, or JWKS unreachable.
+ * Fails closed (`null`) whenever the key material is unavailable —
+ * `CONVEX_HTTP_URL` unset, or JWKS unreachable/empty.
  *
  * The token deliberately carries only MCPJam row ids. The vendor sandbox id
  * is resolved server-side via the secret-gated `/computers/sandbox-info`
@@ -39,7 +31,6 @@ import { logger } from "../logger.js";
 
 const ISSUER = "https://api.mcpjam.com/computer-terminal";
 const PURPOSE = "computer-terminal";
-const MIN_SECRET_LENGTH = 16;
 
 const JWKS_PATH = "/computers/terminal-jwks";
 const JWKS_FETCH_TIMEOUT_MS = 5_000;
@@ -53,16 +44,6 @@ export interface ComputerTerminalClaims {
   userId: string;
   computerId: string;
   projectId: string;
-}
-
-function base64UrlToBytes(input: string): Uint8Array {
-  const padLen = (4 - (input.length % 4)) % 4;
-  const base64 =
-    input.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat(padLen);
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
 }
 
 let cachedJwks: {
@@ -183,70 +164,19 @@ async function verifyRs256TerminalToken(
 }
 
 /**
- * Verify a terminal token per the header-alg dispatch documented above.
- * Returns the claims or `null`; never throws on malformed input.
+ * Verify a terminal token (RS256 only, per the doc above). Rejects any other
+ * `alg` before touching the network; returns the claims or `null` and never
+ * throws on malformed input.
  */
 export async function verifyComputerTerminalToken(
   token: string
 ): Promise<ComputerTerminalClaims | null> {
-  const parts = token.split(".");
-  if (parts.length !== 3) return null;
-  const [h, p, s] = parts;
-  if (!h || !p || !s) return null;
-
   let alg: unknown;
   try {
     alg = decodeProtectedHeader(token).alg;
   } catch {
     return null;
   }
-  if (alg === "RS256") {
-    return verifyRs256TerminalToken(token);
-  }
-  if (alg !== "HS256") {
-    return null;
-  }
-
-  const secret = process.env.COMPUTERS_TERMINAL_TOKEN_SECRET?.trim();
-  if (!secret || secret.length < MIN_SECRET_LENGTH) return null;
-
-  let valid: boolean;
-  try {
-    const key = await crypto.subtle.importKey(
-      "raw",
-      new TextEncoder().encode(secret),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["verify"]
-    );
-    const sigBytes = base64UrlToBytes(s);
-    // Copy into a standalone ArrayBuffer — the server tsconfig has no DOM
-    // lib, so subtle.verify's BufferSource parameter needs an exact match.
-    const signature = sigBytes.buffer.slice(
-      sigBytes.byteOffset,
-      sigBytes.byteOffset + sigBytes.byteLength
-    ) as ArrayBuffer;
-    valid = await crypto.subtle.verify(
-      "HMAC",
-      key,
-      signature,
-      new TextEncoder().encode(`${h}.${p}`)
-    );
-  } catch {
-    return null;
-  }
-  if (!valid) return null;
-
-  let payload: Record<string, unknown>;
-  try {
-    payload = JSON.parse(new TextDecoder().decode(base64UrlToBytes(p)));
-  } catch {
-    return null;
-  }
-  if (payload.iss !== ISSUER) return null;
-  if (typeof payload.exp !== "number") return null;
-  // JWT NumericDate semantics: the token is expired AT `exp`, not after it.
-  if (Math.floor(Date.now() / 1000) >= payload.exp) return null;
-
-  return toTerminalClaims(payload);
+  if (alg !== "RS256") return null;
+  return verifyRs256TerminalToken(token);
 }

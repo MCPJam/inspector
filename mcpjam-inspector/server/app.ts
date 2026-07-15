@@ -17,6 +17,8 @@ import webRoutes from "./routes/web/index.js";
 import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
 import relayRoutes, { relayBodyLimit } from "./routes/relay.js";
+import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata.js";
+import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd.js";
 import workosAuthkitRoutes from "./routes/workos-authkit.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
@@ -53,11 +55,12 @@ import {
   loadInspectorEnv,
   warnOnConvexDevMisconfiguration,
 } from "./env.js";
+import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog.js";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
-import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair.js";
+import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
 import { registerSelfFetch } from "./utils/self-app.js";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url.js";
@@ -79,7 +82,12 @@ export async function createHonoApp() {
 
   // Generate session token for API authentication
   generateSessionToken();
+  setXaaIdpLogger(appLogger);
   initXAAIdpKeyPair();
+
+  // Warm the hosted-model catalog (seed ∪ backend /v1/models) so billing
+  // dispatch classifies newly-added hosted models correctly. Memoized.
+  startHostedModelCatalogRefresh();
 
   startGuestAuthProvisioningInBackground();
   startLocalBrowserRenderingSetupInBackground();
@@ -288,6 +296,13 @@ export async function createHonoApp() {
   // production entries must wire this up.
   app.use("/relay/*", relayBodyLimit());
   app.route("/relay", relayRoutes);
+
+  // XAA Client ID Metadata Document. Also deliberately OUTSIDE /api (the
+  // target authorization server fetches it anonymously) and mounted before
+  // the static/SPA fallback. Mirror of the mount in server/index.ts — both
+  // production entries must wire this up.
+  registerXaaClientMetadataRoute(app);
+  registerXaaConfidentialCimdRoute(app);
 
   // Health check
   app.get("/health", (c) => {

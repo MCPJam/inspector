@@ -82,3 +82,6 @@ sdk/mcp-client-manager/dist/
 .idea/
 
 .env.local
+
+# local-only dev artifacts
+.local/

@@ -3,6 +3,7 @@ import { Loader2, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ComputerTerminal } from "./ComputerTerminal";
 import { ComputersUnavailableMessage } from "./ComputersUnavailableMessage";
+import { ComputerPausedForBillingNotice } from "./ComputerBillingNotices";
 import { PaneMessage } from "./PaneMessage";
 import type { ComputerTerminalController } from "./useComputerTerminal";
 
@@ -39,9 +40,17 @@ export function ComputerTerminalPane({
     dataPlaneResolved,
   } = controller;
 
+  // Paused for billing (COMP-7) — waking would just bounce; show the reason +
+  // remedy instead of an idle prompt or a spinner.
+  const isBillingPaused =
+    liveStatus === "hibernating" && status?.hibernatedReason === "billing";
+
   const body = () => {
     if (dataPlaneUnavailable) {
       return <ComputersUnavailableMessage />;
+    }
+    if (isBillingPaused) {
+      return <ComputerPausedForBillingNotice />;
     }
     if (!terminalOpen) {
       return (

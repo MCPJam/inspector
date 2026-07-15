@@ -3,10 +3,7 @@ import { Hono } from "hono";
 import { mkdtempSync, rmSync } from "fs";
 import os from "os";
 import path from "path";
-import {
-  initXAAIdpKeyPair,
-  resetXAAIdpKeyPairForTests,
-} from "../../../services/xaa-idp-keypair.js";
+import { initXAAIdpKeyPair, resetXAAIdpKeyPairForTests } from "@mcpjam/sdk";
 import { createXaaRouter } from "../xaa.js";
 
 const DISCOVERED_TOKEN_ENDPOINT = "https://discovered-as.example.com/oauth/token";
@@ -149,6 +146,7 @@ describe("server-target /proxy/token", () => {
       serverId: "srv_1",
       projectId: "proj_1",
       bearerToken: "user-token",
+      clientIp: null,
     });
 
     // The token POST went to the server-discovered endpoint, never the
@@ -594,6 +592,7 @@ describe("server-target /negative-tests", () => {
       serverId: "srv_1",
       projectId: "proj_1",
       bearerToken: "user-token",
+      clientIp: null,
     });
 
     expect(tokenPosts.length).toBeGreaterThan(0);

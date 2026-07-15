@@ -353,9 +353,9 @@ export function SessionInsightBar({
             <span className="text-muted-foreground/40">·</span>
             <span
               className="text-muted-foreground"
-              title="Host-response latency (server work time across turns; excludes the persona driver's own LLM time)"
+              title="Client-response latency (server work time across turns; excludes the persona driver's own LLM time)"
             >
-              {formatLatency(readiness.hostLatencyMs)} host latency
+              {formatLatency(readiness.hostLatencyMs)} client latency
             </span>
           </>
         ) : null}

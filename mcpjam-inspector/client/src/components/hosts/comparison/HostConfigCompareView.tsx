@@ -1,10 +1,34 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
+import { Bell, Check, Copy, Filter, Flag, Loader2, Share2 } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@mcpjam/design-system/dialog";
 import {
   Popover,
   PopoverAnchor,
   PopoverContent,
 } from "@mcpjam/design-system/popover";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@mcpjam/design-system/dropdown-menu";
+import { Textarea } from "@mcpjam/design-system/textarea";
 import {
   Command,
   CommandEmpty,
@@ -33,18 +57,21 @@ import {
   writeHostCompareSelection,
 } from "./host-compare-selection";
 import { buildPresetCompareEntries } from "./host-compare-presets";
+import {
+  PUBLIC_CAN_I_USE_FIELDS,
+  getCaniuseCapabilityBySlug,
+  getCaniuseCapabilityForField,
+  sortCaniusePresetHosts,
+} from "./caniuse-capability-catalog";
 import { HostConfigComparisonMatrix } from "./host-config-comparison-matrix";
 import { HostCapabilityListView } from "./HostCapabilityListView";
 import {
-  computeVisibleFieldIds,
   fieldMatchesQuery,
-  isSupportField,
   type SupportFilterMode,
 } from "./support-level";
 import {
   groupHostConfigFields,
   HOST_CONFIG_FIELDS,
-  hostConfigField,
 } from "@/lib/host-config-field-schema";
 import { SearchInput } from "@/components/ui/search-input";
 import { cn } from "@/lib/utils";
@@ -52,14 +79,17 @@ import { cn } from "@/lib/utils";
 type CompareViewMode = "table" | "list";
 
 const HOSTS_QUERY_PARAM = "hosts";
+const CAPABILITY_QUERY_PARAM = "capability";
+const SEARCH_QUERY_PARAM = "q";
 const MAIN_PRODUCT_URL = "https://app.mcpjam.com";
 const MOBILE_COMPARE_MEDIA_QUERY = "(max-width: 640px)";
+const CANIUSE_ACTION_BUTTON_CLASS =
+  "h-8 rounded-full border-border bg-background px-3 text-[12px] font-medium text-foreground hover:border-border hover:bg-muted hover:text-foreground";
 const SEARCH_PICKER_HIDDEN_FIELD_IDS = new Set([
   "modelId",
   "systemPrompt",
   "temperature",
 ]);
-
 function getInitialCompareViewMode(): CompareViewMode {
   if (
     typeof window === "undefined" ||
@@ -74,6 +104,84 @@ function getInitialCompareViewMode(): CompareViewMode {
 
 function sameStringArray(a: ReadonlyArray<string>, b: ReadonlyArray<string>) {
   return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+function normalizeSearchParamValue(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function capabilityForSearchQuery(
+  query: string,
+  fields: ReadonlyArray<HostConfigFieldDef>
+) {
+  const normalized = normalizeSearchParamValue(query);
+  if (!normalized) return null;
+
+  for (const field of fields) {
+    const capability = getCaniuseCapabilityForField(field);
+    if (!capability) continue;
+    const shortFieldId = field.id.replace(/^capabilities\./, "");
+    const exactMatches = [
+      field.label,
+      capability.slug,
+      field.id,
+      shortFieldId,
+    ].map(normalizeSearchParamValue);
+    if (exactMatches.includes(normalized)) return capability;
+  }
+
+  return null;
+}
+
+function fieldSearchQueryFromParams(searchParams: URLSearchParams): string {
+  const capability = getCaniuseCapabilityBySlug(
+    searchParams.get(CAPABILITY_QUERY_PARAM)
+  );
+  if (capability) return capability.field.label;
+  return searchParams.get(SEARCH_QUERY_PARAM) ?? "";
+}
+
+function writeFieldSearchParams(
+  next: URLSearchParams,
+  query: string,
+  fields: ReadonlyArray<HostConfigFieldDef>
+) {
+  const trimmed = query.trim();
+  next.delete(CAPABILITY_QUERY_PARAM);
+  next.delete(SEARCH_QUERY_PARAM);
+  if (!trimmed) return;
+
+  const capability = capabilityForSearchQuery(trimmed, fields);
+  if (capability) {
+    next.set(CAPABILITY_QUERY_PARAM, capability.slug);
+    return;
+  }
+
+  next.set(SEARCH_QUERY_PARAM, trimmed);
+}
+
+/**
+ * Absolute, shareable URL for the current comparison. Unlike the URL the view
+ * mirrors into (which drops `hosts=` for the default selection to keep the bar
+ * clean), a shared link always pins the exact clients — so it opens the same
+ * comparison for the recipient even if the default set changes later.
+ */
+function buildShareComparisonUrl(
+  hostIds: ReadonlyArray<string>,
+  query: string,
+  fields: ReadonlyArray<HostConfigFieldDef>
+): string {
+  const params = new URLSearchParams();
+  if (hostIds.length > 0) {
+    params.set(HOSTS_QUERY_PARAM, hostIds.join(","));
+  }
+  writeFieldSearchParams(params, query, fields);
+  const search = params.toString();
+  if (typeof window === "undefined") {
+    return search ? `?${search}` : "";
+  }
+  const { origin, pathname } = window.location;
+  return `${origin}${pathname}${search ? `?${search}` : ""}`;
 }
 
 interface HostConfigCompareViewProps {
@@ -104,7 +212,9 @@ export function HostConfigCompareView({
       projectId,
     });
   const catalogState = useHostCatalog();
-  const compareCatalog = catalogState.catalog ?? bundledHostCompatCatalog();
+  const compareCatalog = presetOnly
+    ? catalogState.catalog ?? bundledHostCompatCatalog()
+    : catalogState.catalog;
   const liveHosts = canQueryLiveHosts ? queriedLiveHosts : [];
   const listLoading = canQueryLiveHosts ? queriedListLoading : false;
   const selectionScopeId = presetOnly ? "public" : projectId ?? "";
@@ -120,33 +230,37 @@ export function HostConfigCompareView({
     if (!codexEnabled) excluded.add("codex");
     return excluded;
   }, [claudeCodeEnabled, codexEnabled]);
-  const presets = useMemo(
-    () =>
-      buildPresetCompareEntries(compareCatalog, {
+  const presets = useMemo(() => {
+    if (!compareCatalog) {
+      return { hosts: [], subjects: {} as Record<string, HostComparisonSubject> };
+    }
+    return buildPresetCompareEntries(compareCatalog, {
         excludedTemplateIds: excludedPresetTemplateIds,
-      }),
-    [compareCatalog, excludedPresetTemplateIds]
-  );
-
+    });
+  }, [compareCatalog, excludedPresetTemplateIds]);
   // Real created hosts first, then presets — what the selector chips iterate.
-  const hosts = useMemo(
-    () => (presetOnly ? presets.hosts : [...liveHosts, ...presets.hosts]),
-    [liveHosts, presetOnly, presets.hosts]
-  );
+  const hosts = useMemo(() => {
+    if (!presetOnly) return [...liveHosts, ...presets.hosts];
+    return sortCaniusePresetHosts(presets.hosts);
+  }, [liveHosts, presetOnly, presets.hosts]);
 
   const [subjectsByHost, setSubjectsByHost] = useState<
     Record<string, HostComparisonSubject>
   >({});
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedHostIds, setSelectedHostIds] = useState<string[]>([]);
   const [divergingOnly, setDivergingOnly] = useState(false);
   const [supportFilter, setSupportFilter] = useState<SupportFilterMode>("all");
-  const [fieldSearchQuery, setFieldSearchQuery] = useState("");
+  const [fieldSearchQuery, setFieldSearchQuery] = useState(() =>
+    fieldSearchQueryFromParams(searchParams)
+  );
   const [viewMode, setViewMode] = useState<CompareViewMode>(() =>
     getInitialCompareViewMode()
   );
   const [showDescriptions, setShowDescriptions] = useState(false);
-  const [searchParams, setSearchParams] = useSearchParams();
   const viewModeUserSetRef = useRef(false);
+  const hasFieldSearchQuery = fieldSearchQuery.trim().length > 0;
+  const effectiveSupportFilter = hasFieldSearchQuery ? supportFilter : "all";
   // Tracks whether the initial URL-driven selection has been applied.
   // After the first resolve, subsequent URL changes are ignored — Compare
   // becomes the source of truth and mirrors back into the URL.
@@ -171,6 +285,28 @@ export function HostConfigCompareView({
   // Every selectable id (real + preset). URL / stored selections reconcile
   // against this so a chosen preset column survives a reload.
   const knownHostIds = useMemo(() => hosts.map((host) => host.hostId), [hosts]);
+  const compareFields = useMemo(
+    () => (presetOnly ? PUBLIC_CAN_I_USE_FIELDS : HOST_CONFIG_FIELDS),
+    [presetOnly]
+  );
+  // Base for the per-column "Verify against your server" deep-link. In dev the
+  // caniuse surface and the hosted app share an origin, so stay on it (localhost)
+  // instead of bouncing to prod; on the prod vanity domain (caniuse.dev) the
+  // hosted app is a different origin, so use the absolute product URL.
+  const verifyBaseUrl = useMemo(() => {
+    if (!presetOnly) return undefined;
+    if (import.meta.env.DEV && typeof window !== "undefined") {
+      return window.location.origin;
+    }
+    return MAIN_PRODUCT_URL;
+  }, [presetOnly]);
+
+  useEffect(() => {
+    const nextQuery = fieldSearchQueryFromParams(searchParams);
+    setFieldSearchQuery((previous) =>
+      previous === nextQuery ? previous : nextQuery
+    );
+  }, [searchParams]);
 
   useEffect(() => {
     if (!presetOnly && !projectId) return;
@@ -205,8 +341,8 @@ export function HostConfigCompareView({
     writeHostCompareSelection(selectionScopeId, selectedHostIds);
   }, [presetOnly, projectId, selectionScopeId, selectedHostIds]);
 
-  // Mirror selection → ?hosts=. Suppress when the selection is the default
-  // (ChatGPT + Claude, in that order) so shared links stay clean.
+  // Mirror selection/search → URL. Suppress `hosts=` when the selection is the
+  // default (ChatGPT + Claude, in that order) so shared links stay clean.
   useEffect(() => {
     if (!presetOnly && !projectId) return;
     if (!urlConsumedRef.current) return;
@@ -221,23 +357,22 @@ export function HostConfigCompareView({
     // are unavailable; `toggleHostCompareSelection` keeps `minSelected=1`),
     // so an empty selection means "not yet resolved."
     if (selectedHostIds.length === 0) return;
+    const next = new URLSearchParams(searchParams);
     const isDefault =
       selectedHostIds.length === DEFAULT_COMPARE_HOST_IDS.length &&
       selectedHostIds.every((id, i) => id === DEFAULT_COMPARE_HOST_IDS[i]);
-    const current = searchParams.get(HOSTS_QUERY_PARAM);
     if (isDefault) {
-      if (current === null) return;
-      const next = new URLSearchParams(searchParams);
       next.delete(HOSTS_QUERY_PARAM);
-      setSearchParams(next, { replace: true });
-      return;
+    } else {
+      next.set(HOSTS_QUERY_PARAM, selectedHostIds.join(","));
     }
-    const desired = selectedHostIds.join(",");
-    if (current === desired) return;
-    const next = new URLSearchParams(searchParams);
-    next.set(HOSTS_QUERY_PARAM, desired);
+
+    writeFieldSearchParams(next, fieldSearchQuery, compareFields);
+    if (next.toString() === searchParams.toString()) return;
     setSearchParams(next, { replace: true });
   }, [
+    compareFields,
+    fieldSearchQuery,
     selectedHostIds,
     listLoading,
     presetOnly,
@@ -349,42 +484,20 @@ export function HostConfigCompareView({
     }
   }, []);
 
-  // "N / M fields" count for the search header — same predicate the matrix and
-  // list view use, so the number always matches what's rendered. In list mode
-  // only support-shaped rows render, so the count narrows to that subset too.
-  const matchCount = useMemo(() => {
-    const ids = computeVisibleFieldIds({
-      configs: orderedSubjects.map((s) => s.config),
-      divergingOnly,
-      supportFilter,
-      searchQuery: fieldSearchQuery,
-    });
-    if (viewMode !== "list") return ids.size;
-    let n = 0;
-    for (const id of ids) {
-      if (isSupportField(hostConfigField(id))) n += 1;
-    }
-    return n;
-  }, [
-    orderedSubjects,
-    divergingOnly,
-    supportFilter,
-    fieldSearchQuery,
-    viewMode,
-  ]);
+  const handleResetCompareView = useCallback(() => {
+    setFieldSearchQuery("");
+    setSupportFilter("all");
+  }, []);
 
-  const totalFieldCount = useMemo(
-    () =>
-      viewMode === "list"
-        ? HOST_CONFIG_FIELDS.filter(isSupportField).length
-        : HOST_CONFIG_FIELDS.length,
-    [viewMode]
-  );
+  useEffect(() => {
+    if (hasFieldSearchQuery || supportFilter === "all") return;
+    setSupportFilter("all");
+  }, [hasFieldSearchQuery, supportFilter]);
 
   if (!presetOnly && !projectId) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        Sign in to compare your hosts.
+        Sign in to compare your clients.
       </div>
     );
   }
@@ -426,8 +539,9 @@ export function HostConfigCompareView({
         ) : hosts.length === 0 ? (
           <div className="rounded-xl border border-border bg-card p-10 text-center">
             <p className="text-sm text-muted-foreground">
-              No hosts yet. Create one from the Host tab to populate the
-              comparison.
+              {presetOnly
+                ? "No hosts are available in the live catalog."
+                : "No hosts yet. Create one from the Host tab to populate the comparison."}
             </p>
           </div>
         ) : (
@@ -435,13 +549,27 @@ export function HostConfigCompareView({
             <CompareSearchBar
               query={fieldSearchQuery}
               onQueryChange={setFieldSearchQuery}
-              matchCount={matchCount}
-              totalCount={totalFieldCount}
-              showCount={orderedSubjects.length > 0}
+              fields={compareFields}
               viewMode={viewMode}
               onViewModeChange={handleViewModeChange}
               disableListView={showDescriptions}
               mobileOptimized={presetOnly}
+              onReset={handleResetCompareView}
+              supportFilter={supportFilter}
+              onSupportFilterChange={setSupportFilter}
+              actions={
+                presetOnly ? (
+                  <div className="flex items-center gap-1.5">
+                    <ReportInconsistencyDialog />
+                    <NotifyButton />
+                    <ShareComparisonDialog
+                      selectedHostIds={selectedHostIds}
+                      searchQuery={fieldSearchQuery}
+                      fields={compareFields}
+                    />
+                  </div>
+                ) : undefined
+              }
             />
 
             <HostCompareSelector
@@ -449,9 +577,6 @@ export function HostConfigCompareView({
               selectedHostIds={selectedHostIds}
               subjectsByHost={allSubjects}
               onToggleHost={handleToggleHost}
-              matchCount={matchCount}
-              totalCount={totalFieldCount}
-              showCount={orderedSubjects.length > 0}
               viewMode={viewMode}
               onViewModeChange={handleViewModeChange}
               disableListView={showDescriptions}
@@ -459,6 +584,7 @@ export function HostConfigCompareView({
               onDivergingOnlyChange={setDivergingOnly}
               supportFilter={supportFilter}
               onSupportFilterChange={setSupportFilter}
+              supportFiltersDisabled={!hasFieldSearchQuery}
               showDescriptions={showDescriptions}
               onShowDescriptionsChange={handleShowDescriptionsChange}
               descriptionsDisabled={viewMode === "list"}
@@ -485,8 +611,9 @@ export function HostConfigCompareView({
                 {viewMode === "table" ? (
                   <HostConfigComparisonMatrix
                     subjects={orderedSubjects}
+                    fields={compareFields}
                     divergingOnly={divergingOnly}
-                    supportFilter={supportFilter}
+                    supportFilter={effectiveSupportFilter}
                     searchQuery={fieldSearchQuery}
                     showDescriptions={showDescriptions}
                     themeMode={themeMode}
@@ -494,12 +621,14 @@ export function HostConfigCompareView({
                     onRemoveHost={
                       selectedHostIdSet.size > 1 ? handleToggleHost : undefined
                     }
+                    verifyBaseUrl={verifyBaseUrl}
                   />
                 ) : (
                   <HostCapabilityListView
                     subjects={orderedSubjects}
+                    fields={compareFields}
                     divergingOnly={divergingOnly}
-                    supportFilter={supportFilter}
+                    supportFilter={effectiveSupportFilter}
                     searchQuery={fieldSearchQuery}
                     themeMode={themeMode}
                     mobileOptimized={presetOnly}
@@ -511,6 +640,252 @@ export function HostConfigCompareView({
         )}
       </div>
     </div>
+  );
+}
+
+function NotifyButton() {
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState<
+    "idle" | "submitting" | "succeeded" | "error"
+  >("idle");
+  const trimmedEmail = email.trim();
+
+  const handleOpenChange = useCallback((nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (nextOpen) return;
+    setEmail("");
+    setStatus("idle");
+  }, []);
+
+  const handleSubmit = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (status === "submitting") return;
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+        setStatus("error");
+        return;
+      }
+      setStatus("submitting");
+      try {
+        const response = await fetch("/api/web/caniuse/subscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: trimmedEmail }),
+        });
+        if (!response.ok) throw new Error("Subscribe failed");
+        setStatus("succeeded");
+      } catch {
+        setStatus("error");
+      }
+    },
+    [status, trimmedEmail]
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        aria-label="Notify me of client changes"
+        title="Notify me of client changes"
+        className={cn("gap-1.5", CANIUSE_ACTION_BUTTON_CLASS)}
+        onClick={() => setOpen(true)}
+      >
+        <Bell className="size-3.5" />
+        <span>Notify</span>
+      </Button>
+      <DialogContent className="sm:max-w-[420px]">
+        {status === "succeeded" ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>You&apos;re on the list.</DialogTitle>
+              <DialogDescription>
+                We&apos;ll email you when hosts change.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex items-center gap-2 text-sm font-medium text-emerald-600 dark:text-emerald-400">
+              <Check className="size-4 shrink-0" />
+              Saved.
+            </div>
+          </>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-3" noValidate>
+            <DialogHeader>
+              <DialogTitle>Stay up to date</DialogTitle>
+              <DialogDescription>
+                Get an email when a host adds or changes a capability.
+              </DialogDescription>
+            </DialogHeader>
+            <div>
+              <input
+                type="email"
+                value={email}
+                onChange={(event) => {
+                  setEmail(event.target.value);
+                  if (status === "error") setStatus("idle");
+                }}
+                placeholder="you@company.com"
+                aria-label="Email"
+                autoFocus
+                className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              />
+              {status === "error" ? (
+                <p className="mt-1 text-[11px] text-destructive">
+                  Enter a valid email address.
+                </p>
+              ) : null}
+            </div>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={status === "submitting"}
+            >
+              {status === "submitting" ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Sending
+                </>
+              ) : (
+                "Notify me"
+              )}
+            </Button>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ReportInconsistencyDialog() {
+  const [open, setOpen] = useState(false);
+  const [message, setMessage] = useState("");
+  const [status, setStatus] = useState<
+    "idle" | "submitting" | "succeeded" | "error"
+  >("idle");
+
+  const trimmedMessage = message.trim();
+
+  const handleOpenChange = useCallback((nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (nextOpen) return;
+    setMessage("");
+    setStatus("idle");
+  }, []);
+
+  const handleSubmit = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!trimmedMessage || status === "submitting") return;
+
+      setStatus("submitting");
+      try {
+        const response = await fetch("/api/web/caniuse/report-inconsistency", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: trimmedMessage }),
+        });
+        if (!response.ok) throw new Error("Report failed");
+        setStatus("succeeded");
+      } catch {
+        setStatus("error");
+      }
+    },
+    [status, trimmedMessage]
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        aria-label="Report inconsistency"
+        title="Report inconsistency"
+        className={cn(
+          "gap-1.5",
+          CANIUSE_ACTION_BUTTON_CLASS
+        )}
+        onClick={() => setOpen(true)}
+      >
+        <Flag className="size-3.5" />
+        <span>Report</span>
+      </Button>
+      <DialogContent className="sm:max-w-[440px]">
+        {status === "succeeded" ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>Thanks for the heads up.</DialogTitle>
+              <DialogDescription>
+                We&apos;ve notified the MCPJam team.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button type="button" onClick={() => handleOpenChange(false)}>
+                Close
+              </Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <DialogHeader>
+              <DialogTitle>Report inconsistency</DialogTitle>
+              <DialogDescription>
+                Tell us what looks inconsistent.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <label
+                htmlFor="caniuse-report-message"
+                className="text-sm font-medium text-foreground"
+              >
+                What looks inconsistent?
+              </label>
+              <Textarea
+                id="caniuse-report-message"
+                value={message}
+                onChange={(event) => {
+                  setMessage(event.target.value);
+                  if (status === "error") setStatus("idle");
+                }}
+                placeholder="Example: Claude supports this, but the table says it doesn't."
+                className="min-h-[120px] resize-none"
+                autoFocus
+              />
+              {status === "error" ? (
+                <p className="text-[12px] text-destructive">
+                  Couldn&apos;t send report. Please try again.
+                </p>
+              ) : null}
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => handleOpenChange(false)}
+                disabled={status === "submitting"}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={!trimmedMessage || status === "submitting"}
+              >
+                {status === "submitting" ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Sending
+                  </>
+                ) : (
+                  "Send report"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -547,28 +922,98 @@ function HostConfigFetcher({
   return null;
 }
 
-/** caniuse-style "Can I use ___" search header + result count + view toggle. */
+/** caniuse-style "Can I use ___" search header + view toggle. */
+const SUPPORT_FILTER_OPTIONS: ReadonlyArray<{
+  value: SupportFilterMode;
+  label: string;
+}> = [
+  { value: "all", label: "All fields" },
+  { value: "missing", label: "Missing" },
+  { value: "partial", label: "Partial" },
+  { value: "supported", label: "Full" },
+];
+
+/**
+ * Support-level filter for the caniuse search line, rendered right after the
+ * "?" glyph. Always present; the funnel only takes the accent colour once a
+ * non-default filter is applied.
+ */
+function SupportFilterFunnel({
+  supportFilter,
+  onSupportFilterChange,
+  disabled = false,
+}: {
+  supportFilter: SupportFilterMode;
+  onSupportFilterChange: (mode: SupportFilterMode) => void;
+  disabled?: boolean;
+}) {
+  const active = !disabled && supportFilter !== "all";
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label="Filter fields by support level"
+          disabled={disabled}
+          title={disabled ? "Search first to filter" : undefined}
+          className={cn(
+            "inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted-foreground",
+            active && "text-primary hover:text-primary"
+          )}
+        >
+          <Filter className="size-[18px]" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44 p-1">
+        <div className="px-2 pb-1 pt-1.5 text-[9.5px] font-bold uppercase tracking-wider text-muted-foreground/70">
+          Show
+        </div>
+        {SUPPORT_FILTER_OPTIONS.map((option) => (
+          <DropdownMenuItem
+            key={option.value}
+            data-testid={`support-filter-${option.value}`}
+            disabled={disabled}
+            onClick={() => {
+              if (!disabled) onSupportFilterChange(option.value);
+            }}
+            className="h-8 gap-2 rounded-md px-2 text-[12.5px]"
+          >
+            {option.label}
+            {supportFilter === option.value ? (
+              <Check className="ml-auto size-3.5 text-primary" />
+            ) : null}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function CompareSearchBar({
   query,
   onQueryChange,
-  matchCount,
-  totalCount,
-  showCount,
+  fields,
   viewMode,
   onViewModeChange,
   disableListView = false,
   mobileOptimized = false,
+  onReset,
+  actions,
+  supportFilter,
+  onSupportFilterChange,
 }: {
   query: string;
   onQueryChange: (q: string) => void;
-  matchCount: number;
-  totalCount: number;
-  /** Hidden while hosts are still loading — the count would be meaningless. */
-  showCount: boolean;
+  fields: ReadonlyArray<HostConfigFieldDef>;
   viewMode: CompareViewMode;
   onViewModeChange: (mode: CompareViewMode) => void;
   disableListView?: boolean;
   mobileOptimized?: boolean;
+  onReset?: () => void;
+  /** Utility actions rendered at the trailing edge of the search row. */
+  actions?: ReactNode;
+  supportFilter?: SupportFilterMode;
+  onSupportFilterChange?: (mode: SupportFilterMode) => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const searchAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -578,11 +1023,9 @@ function CompareSearchBar({
   const fieldGroups = useMemo(
     () =>
       groupHostConfigFields(
-        HOST_CONFIG_FIELDS.filter(
-          (field) => !SEARCH_PICKER_HIDDEN_FIELD_IDS.has(field.id)
-        )
+        fields.filter((field) => !SEARCH_PICKER_HIDDEN_FIELD_IDS.has(field.id))
       ),
-    []
+    [fields]
   );
   const filteredFieldGroups = useMemo(() => {
     const loweredQuery = query.trim().toLowerCase();
@@ -609,6 +1052,16 @@ function CompareSearchBar({
     [onQueryChange]
   );
 
+  const handleResetClick = useCallback(() => {
+    setPickerOpen(false);
+    onReset?.();
+  }, [onReset]);
+
+  const canResetSearch = query.trim().length > 0;
+  const canIUseLabelClass = mobileOptimized
+    ? "shrink-0 cursor-pointer rounded-md border-0 bg-transparent p-0 text-[24px] font-semibold leading-none tracking-normal text-foreground transition-opacity hover:opacity-80 disabled:cursor-default disabled:opacity-100 disabled:hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+    : "shrink-0 cursor-pointer rounded-md border-0 bg-transparent p-0 text-[15px] font-medium tracking-tight text-foreground transition-opacity hover:opacity-80 disabled:cursor-default disabled:opacity-100 disabled:hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40";
+
   const keepPickerOpenForSearchAnchor = useCallback(
     (event: CustomEvent<{ originalEvent?: Event }>) => {
       const target = (event.detail.originalEvent?.target ??
@@ -622,12 +1075,19 @@ function CompareSearchBar({
 
   const searchRow = (
     <>
-      {mobileOptimized ? (
-        <span className="shrink-0 text-[24px] font-semibold leading-none tracking-normal text-foreground">
+      {onReset ? (
+        <button
+          type="button"
+          className={canIUseLabelClass}
+          aria-label="Show all clients and capabilities"
+          disabled={!canResetSearch}
+          title={canResetSearch ? "Show all clients and capabilities" : undefined}
+          onClick={handleResetClick}
+        >
           Can I use…
-        </span>
+        </button>
       ) : (
-        <span className="shrink-0 text-[15px] font-medium tracking-tight text-foreground">
+        <span className={canIUseLabelClass}>
           Can I use…
         </span>
       )}
@@ -650,7 +1110,7 @@ function CompareSearchBar({
                 }}
                 onFocus={() => setPickerOpen(true)}
                 placeholder="Search capabilities, fields, descriptions…"
-                aria-label="Search host config fields"
+                aria-label="Search client config fields"
                 type="search"
                 autoComplete="off"
                 spellCheck={false}
@@ -665,7 +1125,7 @@ function CompareSearchBar({
                 }}
                 onFocus={() => setPickerOpen(true)}
                 placeholder="Search capabilities, fields, descriptions…"
-                aria-label="Search host config fields"
+                aria-label="Search client config fields"
                 className="w-full"
               />
             )}
@@ -673,7 +1133,7 @@ function CompareSearchBar({
         </PopoverAnchor>
         <PopoverContent
           align="start"
-          className="w-[min(420px,calc(100vw-2rem))] p-0"
+          className="w-[var(--radix-popover-trigger-width)] p-0"
           onFocusOutside={keepPickerOpenForSearchAnchor}
           onInteractOutside={keepPickerOpenForSearchAnchor}
           onOpenAutoFocus={(event) => event.preventDefault()}
@@ -730,6 +1190,13 @@ function CompareSearchBar({
           >
             ?
           </span>
+          {supportFilter !== undefined && onSupportFilterChange ? (
+            <SupportFilterFunnel
+              supportFilter={supportFilter}
+              onSupportFilterChange={onSupportFilterChange}
+              disabled={query.trim().length === 0}
+            />
+          ) : null}
         </span>
       )}
     </>
@@ -747,9 +1214,14 @@ function CompareSearchBar({
           <div className="flex w-full min-w-0 flex-nowrap items-center justify-center gap-2 sm:col-start-2">
             {searchRow}
           </div>
+          {actions ? (
+            <div className="flex items-center gap-1.5 sm:col-start-1 sm:row-start-1 sm:justify-self-start">
+              {actions}
+            </div>
+          ) : null}
           <a
             href={MAIN_PRODUCT_URL}
-            className="inline-flex min-w-0 shrink-0 items-center gap-1.5 text-[11px] leading-none text-muted-foreground transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 sm:col-start-3 sm:justify-self-end"
+            className="inline-flex min-w-0 shrink-0 items-center gap-1.5 text-[11px] leading-none text-muted-foreground transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 sm:col-start-3 sm:row-start-1 sm:justify-self-end"
             aria-label="Open MCPJam"
           >
             <span>Brought to you by</span>
@@ -759,16 +1231,11 @@ function CompareSearchBar({
       ) : (
         searchRow
       )}
-      {showCount && !mobileOptimized && (
-        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-          {matchCount} / {totalCount} fields
-        </span>
-      )}
       {!mobileOptimized && (
         <div
           role="group"
           aria-label="View mode"
-          className="flex shrink-0 items-center gap-0.5 rounded-full border border-border p-0.5"
+          className="ml-auto flex shrink-0 items-center gap-0.5 rounded-full border border-border p-0.5"
         >
           {(
             [
@@ -807,6 +1274,90 @@ function CompareSearchBar({
         </div>
       )}
     </div>
+  );
+}
+
+function ShareComparisonDialog({
+  selectedHostIds,
+  searchQuery,
+  fields,
+}: {
+  selectedHostIds: ReadonlyArray<string>;
+  searchQuery: string;
+  fields: ReadonlyArray<HostConfigFieldDef>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const shareUrl = useMemo(
+    () => buildShareComparisonUrl(selectedHostIds, searchQuery, fields),
+    [selectedHostIds, searchQuery, fields]
+  );
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+    } catch {
+      // Clipboard blocked (e.g. insecure context) — the URL stays visible in
+      // the field, so the user can still select and copy it manually.
+      return;
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
+  }, [shareUrl]);
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        aria-label="Share"
+        title="Share"
+        onClick={() => setOpen(true)}
+        className={cn(
+          "gap-1.5",
+          CANIUSE_ACTION_BUTTON_CLASS
+        )}
+      >
+        <Share2 className="size-3.5" />
+        <span>Share</span>
+      </Button>
+      <DialogContent className="sm:max-w-[460px]">
+        <DialogHeader>
+          <DialogTitle>Share this comparison</DialogTitle>
+          <DialogDescription>
+            Anyone with this link will see the same comparison you&apos;re
+            looking at.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <input
+              readOnly
+              value={shareUrl}
+              onFocus={(event) => event.currentTarget.select()}
+              aria-label="Shareable link"
+              className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 font-mono text-[11.5px] text-muted-foreground"
+            />
+            <Button type="button" onClick={handleCopy} className="gap-2">
+              {copied ? (
+                <>
+                  <Check className="size-4" />
+                  Copied
+                </>
+              ) : (
+                <>
+                  <Copy className="size-4" />
+                  Copy
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

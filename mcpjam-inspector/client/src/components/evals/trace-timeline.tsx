@@ -11,8 +11,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { motion, useReducedMotion } from "framer-motion";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import {
   AlertCircle,
   Bot,
@@ -2055,7 +2054,6 @@ export function TraceTimeline({
     anchorBottom: number;
   } | null>(null);
   const hoveredRowElRef = useRef<HTMLDivElement | null>(null);
-  const posthog = usePostHog();
 
   const axisHeaderMeasureRef = useRef<HTMLDivElement>(null);
   const [axisColumnWidthPx, setAxisColumnWidthPx] = useState(-1);
@@ -2732,8 +2730,8 @@ export function TraceTimeline({
                       spanShowsFailure,
                     );
                     const selectRow = () => {
-                      posthog.capture("trace_span_clicked", {
-                        ...standardEventProps("trace_timeline"),
+                      track("trace_span_clicked", {
+                        location: "trace_timeline",
                         span_kind: row.kind,
                       });
                       setSelectedRowKey(row.key);

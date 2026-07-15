@@ -89,11 +89,11 @@ describe("groupHostConfigFields", () => {
     const agent = groupHostConfigFields().find(
       (g) => g.section.id === "agent"
     )!;
-    const modelSampling = agent.subsections.find(
-      (s) => s.label === "Model & sampling"
+    const agentTooling = agent.subsections.find(
+      (s) => s.label === "Agent tooling"
     );
-    expect(modelSampling).toBeTruthy();
-    expect(modelSampling!.fields.map((f) => f.id)).toEqual([
+    expect(agentTooling).toBeTruthy();
+    expect(agentTooling!.fields.map((f) => f.id)).toEqual([
       "modelId",
       "temperature",
       "requireToolApproval",

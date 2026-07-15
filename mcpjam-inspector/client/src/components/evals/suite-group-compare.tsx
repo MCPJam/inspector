@@ -115,7 +115,7 @@ export function SuiteGroupCompare({
         </div>
         {commonHosts.length > 0 ? (
           <div className="flex items-center gap-1.5">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Host</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Client</span>
             <select
               className={selectClass()}
               value={effectiveHostId ?? ""}
@@ -149,8 +149,8 @@ export function SuiteGroupCompare({
           )
         ) : (
           <div className="flex flex-1 items-center justify-center p-8 text-center text-sm text-muted-foreground">
-            These two groups share no common host to compare.
-            {commonHosts.length === 0 ? " Pick groups that ran the same host." : null}
+            These two groups share no common client to compare.
+            {commonHosts.length === 0 ? " Pick groups that ran the same client." : null}
           </div>
         )}
       </div>

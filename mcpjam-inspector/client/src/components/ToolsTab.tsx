@@ -44,8 +44,7 @@ import { validateToolOutput } from "@/lib/schema-utils";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
 import { WebApiError } from "@/lib/apis/web/base";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import { useQuery } from "convex/react";
 import { stripConvexReservedKeys } from "@/lib/convex-args";
 import { useToolQualityEnabled } from "@/hooks/useToolQualityEnabled";
@@ -130,7 +129,6 @@ export function ToolsTab({
   mcpToolResultImageRendering,
 }: ToolsTabProps) {
   const logger = useLogger("ToolsTab");
-  const posthog = usePostHog();
   const [tools, setTools] = useState<ToolMap>({});
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
@@ -380,10 +378,8 @@ export function ToolsTab({
   }, [selectedTool, tools]);
 
   useEffect(() => {
-    posthog.capture("tools_tab_viewed", {
+    track("tools_tab_viewed", {
       location: "tools_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
   }, []);
 

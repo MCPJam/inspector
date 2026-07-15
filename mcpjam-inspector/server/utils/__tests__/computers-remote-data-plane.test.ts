@@ -121,7 +121,7 @@ describe("initComputersRemoteDataPlaneDiscovery", () => {
 
   it("skips the network call when this server already holds real secrets", async () => {
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
-    vi.stubEnv("COMPUTERS_DATA_PLANE_SECRET", "secret");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-svc-token");
     vi.stubEnv("E2B_API_KEY", "e2b_test");
     vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "terminal-secret-16+");
     installFetchStub();
@@ -394,7 +394,7 @@ describe("bash tool delegation", () => {
 
   it("prefers the local data plane when both are configured", async () => {
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
-    vi.stubEnv("COMPUTERS_DATA_PLANE_SECRET", "secret");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-svc-token");
     vi.stubEnv("E2B_API_KEY", "e2b_test");
     vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "terminal-secret-16+");
     fetchResponse = () =>

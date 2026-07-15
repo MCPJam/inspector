@@ -30,6 +30,14 @@ const UNPROTECTED_ROUTES = [
   "/api/mcp/health", // Health check - no sensitive data
   "/api/apps/health", // Health check - no sensitive data
   "/api/session-token", // Token endpoint - protected by localhost check instead
+  // Mock OIDC IdP front-channel/RP endpoints: external browsers and relying
+  // parties reach these without any MCPJam session (that's their purpose).
+  // EXACT matches only — never move these to UNPROTECTED_PREFIXES, where the
+  // startsWith match would silently make /api/mcp/xaa/token-exchange public.
+  "/api/mcp/xaa/authorize",
+  "/api/mcp/xaa/authorize/confirm",
+  "/api/mcp/xaa/token",
+  "/api/mcp/xaa/userinfo",
 ];
 
 /**

@@ -52,6 +52,10 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: posthogCaptureMock }),
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: (...args: unknown[]) => posthogCaptureMock(...args),
+}));
+
 vi.mock("@/state/mcp-api", () => ({
   testConnection: vi.fn(),
   deleteServer: vi.fn(),

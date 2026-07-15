@@ -8,6 +8,7 @@ import { describe, it, expect } from "vitest";
 import type { Context } from "hono";
 import {
   buildJwtBearerBody,
+  buildJwtBearerRequest,
   buildXaaMintArgs,
   resolveXaaIssuer,
 } from "../xaa-mint.js";
@@ -129,5 +130,100 @@ describe("buildXaaMintArgs", () => {
     });
     expect(args.subject).toBe("alice@corp.com");
     expect(args.email).toBe("alice@corp.com");
+  });
+});
+
+describe("buildJwtBearerRequest", () => {
+  const args = {
+    assertion: "the-id-jag",
+    clientId: "client:with/reserved chars",
+    clientSecret: "secret+with/reserved=chars",
+    scope: "read",
+    resource: "https://mcp.example.com",
+  };
+
+  it("keeps credentials in the form body for client_secret_post and the legacy default", () => {
+    for (const method of ["client_secret_post", undefined] as const) {
+      const request = buildJwtBearerRequest({
+        ...args,
+        tokenEndpointAuthMethod: method,
+      });
+      expect(request.headers).toEqual({});
+      expect(request.body).toEqual(
+        buildJwtBearerBody(args)
+      );
+      expect(request.body.client_secret).toBe(args.clientSecret);
+    }
+  });
+
+  it("builds an RFC 6749 Basic header (application/x-www-form-urlencoded before Base64) and strips the secret from the body", () => {
+    // Mirror the production form-urlencoder: space→"+", "!'()~" percent-encoded.
+    const formUrlEncode = (v: string) =>
+      encodeURIComponent(v)
+        .replace(/[!'()~]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase())
+        .replace(/%20/g, "+");
+    const withSpaces = {
+      ...args,
+      clientId: "client id!",
+      clientSecret: "secret (with)~chars",
+    };
+    const request = buildJwtBearerRequest({
+      ...withSpaces,
+      tokenEndpointAuthMethod: "client_secret_basic",
+    });
+    const expected = Buffer.from(
+      `${formUrlEncode(withSpaces.clientId)}:${formUrlEncode(withSpaces.clientSecret)}`
+    ).toString("base64");
+    expect(request.headers).toEqual({ Authorization: `Basic ${expected}` });
+    // Space must NOT be %20 (that would be encodeURIComponent, not form-encoding).
+    expect(Buffer.from(expected, "base64").toString()).toContain("client+id");
+    // With Basic, BOTH client_id and secret live in the header only — the body
+    // must not repeat client_id (some endpoints reject dual-carried client_id).
+    expect(request.body.client_secret).toBeUndefined();
+    expect(request.body.client_id).toBeUndefined();
+    expect(request.body.assertion).toBe(args.assertion);
+  });
+
+  it("throws when client_secret_basic lacks a credential", () => {
+    expect(() =>
+      buildJwtBearerRequest({
+        assertion: "a",
+        clientId: "c",
+        tokenEndpointAuthMethod: "client_secret_basic",
+      })
+    ).toThrow(/client_secret_basic/);
+    expect(() =>
+      buildJwtBearerRequest({
+        assertion: "a",
+        clientSecret: "s",
+        tokenEndpointAuthMethod: "client_secret_basic",
+      })
+    ).toThrow(/client_secret_basic/);
+  });
+
+  it("requires a client_id for public (none) and client_secret_post clients", () => {
+    expect(() =>
+      buildJwtBearerRequest({
+        assertion: "a",
+        tokenEndpointAuthMethod: "none",
+      })
+    ).toThrow(/client_id/);
+    expect(() =>
+      buildJwtBearerRequest({
+        assertion: "a",
+        clientSecret: "s",
+        tokenEndpointAuthMethod: "client_secret_post",
+      })
+    ).toThrow(/client_id/);
+  });
+
+  it("sends no secret anywhere for a public (none) client", () => {
+    const request = buildJwtBearerRequest({
+      ...args,
+      tokenEndpointAuthMethod: "none",
+    });
+    expect(request.headers).toEqual({});
+    expect(request.body.client_id).toBe(args.clientId);
+    expect(JSON.stringify(request.body)).not.toContain(args.clientSecret);
   });
 });
