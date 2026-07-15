@@ -103,12 +103,10 @@ export function confirmAutoOAuthEscalation(
         resolve(value);
       }
     };
-    toast(`"${serverName}" requires authorization`, {
-      description:
-        "Continue with OAuth? You'll be redirected to the server's sign-in page.",
+    toast(`Authorize "${serverName}"?`, {
       duration: Infinity,
       action: {
-        label: "Continue with OAuth",
+        label: "Continue",
         onClick: () => settle(true),
       },
       cancel: {
