@@ -11,6 +11,16 @@ vi.mock("@/lib/analytics", () => ({
   track: (...args: unknown[]) => captureMock(...args),
 }));
 
+// The people strip is gated on the xaa-registration flag (#3224). Unmocked,
+// `useFeatureFlagEnabled` returns undefined, so `registrationEnabled === true`
+// is false, the strip never renders, and every "Run as people" assertion reads
+// props off a null capture. Mirrors the mock XAAIdpCard.test.tsx already uses
+// for the same gate.
+let registrationFlag: boolean | undefined = true;
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => registrationFlag,
+}));
+
 // Controllable signed-in state: null simulates a guest session.
 let authUser: { email: string } | null = { email: "tester@example.com" };
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -365,6 +375,9 @@ describe("XAAFlowTab", () => {
     orgPeopleState = { people: [], isLoading: false, isAuthenticated: false };
     peopleState = { people: undefined, isLoading: false, isAvailable: false };
     capturedPeopleStripProps = null;
+    // Reset the gate between tests — the flag-off cases below mutate it, and a
+    // leaked `false` would silently hide the strip from every later assertion.
+    registrationFlag = true;
     capturedTargetParams = null;
     capturedWizardProps = null;
     capturedScorecardInput = null;
@@ -1259,6 +1272,21 @@ describe("XAAFlowTab", () => {
         />,
       );
     }
+
+    // Locks the gate #3224 added. It had no coverage here, which is why
+    // re-gating the strip silently broke every assertion in this block instead
+    // of failing one honest test.
+    it.each([[false], [undefined]])(
+      "hides the strip entirely when the xaa-registration flag is %p",
+      (flag) => {
+        registrationFlag = flag as boolean | undefined;
+        seedRoster();
+        currentTarget = personTarget();
+        renderTab();
+
+        expect(capturedPeopleStripProps).toBeNull();
+      },
+    );
 
     it("passes selection through and toggling calls the per-project setter", () => {
       seedRoster();
