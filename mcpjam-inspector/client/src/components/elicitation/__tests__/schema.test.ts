@@ -1,4 +1,4 @@
-import { isSafeUserFacingPattern } from "../schema";
+import { patternHint } from "../schema";
 import { describe, it, expect } from "vitest";
 import {
   buildElicitationContent,
@@ -253,12 +253,13 @@ describe("validateField", () => {
     expect(validateField(f, "abc")).toBeNull();
   });
 
-  it("enforces pattern and survives a malformed pattern", () => {
-    expect(validateField(field({ pattern: "^ab" }), "xy")).toBe(
-      "f does not match the required format"
-    );
+  it("does not enforce pattern client-side at all", () => {
+    // Deliberate: running a server-chosen regex on the UI thread is a hang
+    // vector with no safe subset (see the note on `patternHint`). A mismatched
+    // value round-trips and the MCP server rejects it; the user still sees the
+    // pattern as a hint. An un-compilable pattern is likewise a non-event.
+    expect(validateField(field({ pattern: "^ab" }), "xy")).toBeNull();
     expect(validateField(field({ pattern: "^ab" }), "abc")).toBeNull();
-    // An un-compilable server-supplied pattern must not throw; it is skipped.
     expect(validateField(field({ pattern: "([" }), "anything")).toBeNull();
   });
 
@@ -468,30 +469,45 @@ describe("buildElicitationContent", () => {
 });
 
 
-describe("isSafeUserFacingPattern", () => {
-  it.each([
-    ["^[a-z]+$"],
-    ["^\\d{4}-\\d{2}$"],
-    ["^(cat|dog)$"],
-    ["[A-Z][a-z]*"],
-  ])("allows an ordinary pattern: %s", (pattern) => {
-    expect(isSafeUserFacingPattern(pattern)).toBe(true);
+describe("pattern handling", () => {
+  it("never executes a server-supplied pattern, however catastrophic", () => {
+    // An earlier cut tried to allow "safe-looking" patterns. It was bypassable:
+    // `a?a?a?...aaa` has no nested-quantifier markers and still took ~150ms at
+    // 50 chars, doubling per character. There is no safe subset — so we simply
+    // don't run them. This test is a clock, not a shape assertion.
+    const evil = "^" + "a?".repeat(60) + "a".repeat(60) + "$";
+    const field = {
+      name: "x",
+      kind: "string" as const,
+      required: false,
+      pattern: evil,
+    };
+
+    const started = Date.now();
+    const result = validateField(field, "a".repeat(55) + "X");
+    const elapsed = Date.now() - started;
+
+    // Would be seconds if we compiled and ran it.
+    expect(elapsed).toBeLessThan(50);
+    // And it must not fabricate a failure either — the server validates.
+    expect(result).toBeNull();
   });
 
-  it.each([
-    ["(a+)+$"],
-    ["(a*)*$"],
-    ["(a|aa)+$"],
-    ["^(\\w+\\s?)*$"],
-    ["(x+){10,}"],
-  ])("refuses a catastrophic pattern: %s", (pattern) => {
-    // These backtrack exponentially. Running them on the UI thread lets any
-    // connected server freeze the tab as the user types.
-    expect(isSafeUserFacingPattern(pattern)).toBe(false);
+  it("surfaces the pattern to the user as a hint instead", () => {
+    expect(
+      patternHint({
+        name: "x",
+        kind: "string",
+        required: false,
+        pattern: "^[a-z]+$",
+      }),
+    ).toBe("Must match: ^[a-z]+$");
   });
 
-  it("refuses an absurdly long pattern", () => {
-    expect(isSafeUserFacingPattern("a".repeat(301))).toBe(false);
+  it("has no hint when the schema declares no pattern", () => {
+    expect(
+      patternHint({ name: "x", kind: "string", required: false }),
+    ).toBeUndefined();
   });
 });
 

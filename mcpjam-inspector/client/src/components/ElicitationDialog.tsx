@@ -27,6 +27,7 @@ import {
   fieldLabel,
   initialFormValues,
   parseElicitationSchema,
+  patternHint,
   validateField,
   type ElicitationField,
 } from "./elicitation/schema";
@@ -319,6 +320,13 @@ export function ElicitationDialog({
                     {field.description && (
                       <p className="text-xs text-muted-foreground">
                         {field.description}
+                      </p>
+                    )}
+                    {/* The pattern is shown, never executed — see the note on
+                        `patternHint`. Plain text: it is server-supplied. */}
+                    {patternHint(field) && (
+                      <p className="font-mono text-[11px] text-muted-foreground">
+                        {patternHint(field)}
                       </p>
                     )}
                   </div>

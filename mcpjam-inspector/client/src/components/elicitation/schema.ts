@@ -66,27 +66,27 @@ const FORMATS: readonly ElicitationFieldFormat[] = [
 ];
 
 /**
- * `pattern` is chosen by the MCP server, and `RegExp.test` runs unbounded on
- * the UI thread with a backtracking engine. A hostile (or merely careless)
- * server can send a catastrophic pattern — `(a+)+$` already costs ~160ms
- * against 24 characters and doubles per extra char — which would freeze the tab
- * as the user types.
+ * We deliberately DO NOT execute a server-supplied `pattern`.
  *
- * Without a safe (RE2-style) engine available, this refuses to run patterns
- * carrying the shape that makes backtracking explode: a quantifier applied to a
- * group that itself contains a quantifier or an alternation, e.g. `(a+)+`,
- * `(a*)*`, `(a|aa)+`. Skipping validation is the safe failure — the MCP server
- * re-validates its own schema, so the worst case is that a bad value round-trips
- * instead of being caught early. Freezing the renderer is not a safe failure.
+ * `pattern` comes from the MCP server and `RegExp.test` runs unbounded on the
+ * UI thread with a backtracking engine, so a hostile (or merely careless)
+ * pattern freezes the tab. There is no safe subset to allow: an earlier cut
+ * tried rejecting "nested quantifier" shapes like `(a+)+`, and it was trivially
+ * bypassed — `a?a?a?…aaa` carries none of those markers and still took ~150ms
+ * at 50 characters, doubling per extra character. Bounding input doesn't help
+ * either, since `maxLength` is server-supplied too.
  *
- * Bounded input alone wouldn't save us: maxLength is also server-supplied.
+ * Heuristics here are a losing game; the real fix is a non-backtracking engine
+ * (RE2/`node-re2`), which is a dependency decision beyond this change.
+ *
+ * Skipping is the safe failure: the MCP server re-validates its own schema, so
+ * an unmatched value round-trips and is rejected there instead of being caught
+ * early. The pattern is still shown to the user as a hint (see `patternHint`),
+ * so they aren't flying blind. Freezing the renderer is NOT a safe failure.
  */
-const NESTED_QUANTIFIER_RE = /\([^()]*[+*{|][^()]*\)\s*[+*]|\([^()]*\)\s*\{\d+,\s*\}/;
-
-export function isSafeUserFacingPattern(pattern: string): boolean {
-  // Long patterns are themselves a smell and cost more to analyze than to skip.
-  if (pattern.length > 300) return false;
-  return !NESTED_QUANTIFIER_RE.test(pattern);
+export function patternHint(field: ElicitationField): string | undefined {
+  // Displayed verbatim as text — never compiled, never executed.
+  return field.pattern ? `Must match: ${field.pattern}` : undefined;
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -384,18 +384,9 @@ function validateString(
       field.maxLength === 1 ? "" : "s"
     }`;
   }
-  if (field.pattern !== undefined && isSafeUserFacingPattern(field.pattern)) {
-    let re: RegExp | undefined;
-    try {
-      re = new RegExp(field.pattern);
-    } catch {
-      // A malformed server-supplied pattern must not break the form; skip it.
-      re = undefined;
-    }
-    if (re && !re.test(str)) {
-      return `${label} does not match the required format`;
-    }
-  }
+  // `pattern` is intentionally NOT enforced here — see the note above
+  // `patternHint`. Running a server-chosen regex on the UI thread lets any
+  // connected server hang the tab; the server rejects a bad value anyway.
   switch (field.format) {
     case "email":
       return EMAIL_RE.test(str)
