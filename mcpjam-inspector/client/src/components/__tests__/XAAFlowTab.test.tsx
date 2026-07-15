@@ -1000,42 +1000,79 @@ describe("XAAFlowTab", () => {
       expect(capturedScorecardProps.resolveInput).toBeUndefined();
     });
 
-    it("keeps CIMD negative tests unavailable", async () => {
-      const user = userEvent.setup();
+    // The CIMD client identity is the metadata document URL the run resolved,
+    // and the auth method comes from the document it validated — so the
+    // scorecard reads both straight off flow state.
+    it.each([
+      {
+        variant: "public",
+        clientId:
+          "https://app.mcpjam.com/.well-known/oauth/xaa-client-metadata.json",
+        authMethod: "none" as const,
+      },
+      {
+        variant: "confidential",
+        clientId: "https://app.mcpjam.com/.well-known/oauth/xaa-cimd/AbC123",
+        authMethod: "private_key_jwt" as const,
+      },
+    ])(
+      "runs $variant CIMD negative tests against the run's URL client_id",
+      async ({ clientId, authMethod }) => {
+        const user = userEvent.setup();
+        render(
+          <XAAFlowTab
+            serverConfigs={withStrategy("cimd")}
+            selectedServerName="staging"
+          />
+        );
+        machineCompletionUpdates = {
+          registrationStrategy: "cimd",
+          clientId,
+          tokenEndpoint: "https://auth.example.com/token",
+          tokenEndpointAuthMethod: authMethod,
+          authzMetadata: { issuer: "https://auth.example.com" },
+          resourceMetadata: { resource: "https://staging.mcp.example.com" },
+        };
+
+        await user.click(screen.getByRole("button", { name: /run all/i }));
+
+        await waitFor(() =>
+          expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+            "data-unlocked",
+            "true"
+          )
+        );
+        const scorecard = screen.getByTestId("xaa-scorecard");
+        expect(scorecard).toHaveAttribute("data-has-input", "true");
+        expect(scorecard).toHaveAttribute("data-unavailable-reason", "");
+        expect(scorecard).toHaveAttribute("data-client-id", clientId);
+        expect(scorecard).toHaveAttribute("data-auth-method", authMethod);
+        // No secret exists for a CIMD client — the server signs the
+        // client_assertion for private_key_jwt, so there is nothing to re-read
+        // at click time the way a DCR run must.
+        expect(capturedScorecardInput.clientSecret).toBeUndefined();
+        expect(capturedScorecardProps.resolveInput).toBeUndefined();
+      }
+    );
+
+    it("keeps CIMD negative tests unavailable until the flow has run", async () => {
       render(
         <XAAFlowTab
           serverConfigs={withStrategy("cimd")}
           selectedServerName="staging"
         />
       );
-      const clientId =
-        "https://app.mcpjam.com/.well-known/oauth/xaa-client-metadata.json";
-      machineCompletionUpdates = {
-        registrationStrategy: "cimd",
-        clientId,
-        tokenEndpoint: "https://auth.example.com/token",
-        tokenEndpointAuthMethod: "none",
-        authzMetadata: { issuer: "https://auth.example.com" },
-        resourceMetadata: { resource: "https://staging.mcp.example.com" },
-      };
-
-      await user.click(screen.getByRole("button", { name: /run all/i }));
 
       await waitFor(() =>
         expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
           "data-unavailable-reason",
-          expect.stringMatching(/not supported yet/i)
+          expect.stringMatching(/run the flow first/i)
         )
-      );
-      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
-        "data-unlocked",
-        "false"
       );
       expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
         "data-has-input",
         "false"
       );
-      expect(capturedScorecardProps.resolveInput).toBeUndefined();
     });
 
     it("keeps an expired DCR credential unavailable without registering again", async () => {

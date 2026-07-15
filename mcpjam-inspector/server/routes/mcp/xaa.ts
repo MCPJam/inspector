@@ -33,7 +33,6 @@ import {
 } from "@mcpjam/sdk";
 import { createHash } from "crypto";
 import {
-  buildJwtBearerRequest,
   getIssuerForRequest,
   resolveServerTarget,
 } from "../../services/xaa-mint.js";
@@ -403,18 +402,12 @@ const healthCheckSchema = z.object({
   url: z.string().trim().min(1),
 });
 
+// `private_key_jwt` is confidential CIMD: an injected provider signs the
+// client_assertion (the reflector publishes its matching key). Both /proxy/token
+// and the negative-test scorecard redeem through buildXaaJwtBearerRequest, which
+// delegates that signing to the provider, so both accept the same methods. Each
+// route still rejects `private_key_jwt` when no provider is configured.
 const tokenEndpointAuthMethodSchema = z.enum([
-  "client_secret_post",
-  "client_secret_basic",
-  "none",
-]);
-
-// /proxy/token additionally supports confidential CIMD (`private_key_jwt`): an
-// injected provider signs the client_assertion (the reflector publishes its
-// matching key). Kept SEPARATE from the shared schema above so the negative-
-// tests path (which redeems via the low-level buildJwtBearerRequest, with no
-// signer) never accepts it.
-const proxyTokenAuthMethodSchema = z.enum([
   "client_secret_post",
   "client_secret_basic",
   "none",
@@ -424,10 +417,9 @@ const proxyTokenAuthMethodSchema = z.enum([
 type TokenEndpointAuthMethod = z.infer<typeof tokenEndpointAuthMethodSchema>;
 
 function tokenEndpointAuthValidationError(input: {
-  // Accepts `private_key_jwt` too (the /proxy/token superset): the checks below
-  // already treat it correctly — it needs a client_id (its iss/sub) and no
-  // secret.
-  tokenEndpointAuthMethod?: TokenEndpointAuthMethod | "private_key_jwt";
+  // `private_key_jwt` is handled correctly by the checks below — it needs a
+  // client_id (its iss/sub) and no secret.
+  tokenEndpointAuthMethod?: TokenEndpointAuthMethod;
   clientId?: string;
   clientSecret?: string;
 }): string | undefined {
@@ -586,9 +578,8 @@ const proxyTokenSchema = z
     clientId: z.string().trim().min(1).optional(),
     clientSecret: z.string().trim().min(1).optional(),
     // How to authenticate at the token endpoint. Absent = legacy body-post
-    // behavior; only the methods the debugger can actually redeem. The proxy
-    // superset adds `private_key_jwt` (confidential CIMD).
-    tokenEndpointAuthMethod: proxyTokenAuthMethodSchema.optional(),
+    // behavior; only the methods the debugger can actually redeem.
+    tokenEndpointAuthMethod: tokenEndpointAuthMethodSchema.optional(),
     scope: z.string().trim().min(1).optional(),
     resource: z.string().trim().min(1).optional(),
     headers: z.record(z.string(), z.string()).optional(),
@@ -1503,6 +1494,15 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         code: "VALIDATION_ERROR",
       });
     }
+    if (
+      tokenEndpointAuthMethod === "private_key_jwt" &&
+      !confidentialCimdProvider
+    ) {
+      return toJsonError(
+        "private_key_jwt is not available on this inspector deployment",
+        { status: 400, code: "VALIDATION_ERROR" }
+      );
+    }
 
     // Validate the outbound URL once (every case hits the same endpoint) and
     // enforce the per-host daily cap.
@@ -1576,14 +1576,39 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         };
       }
 
-      const jwtBearerRequest = buildJwtBearerRequest({
-        assertion: token,
-        clientId,
-        clientSecret,
-        scope: effectiveScope,
-        resource: parsed.resource,
-        tokenEndpointAuthMethod,
-      });
+      // Signs a fresh client_assertion per case for confidential CIMD
+      // (private_key_jwt); a no-op for the other methods. `aud` is the
+      // unnormalized endpoint — the same string the positive flow signs over,
+      // so an AS that compares it strictly can't reject a case for the wrong
+      // reason and make a broken assertion look correctly refused.
+      let jwtBearerRequest: ReturnType<typeof buildXaaJwtBearerRequest>;
+      try {
+        jwtBearerRequest = buildXaaJwtBearerRequest(
+          {
+            assertion: token,
+            tokenEndpoint,
+            clientId,
+            clientSecret,
+            scope: effectiveScope,
+            resource: parsed.resource,
+            tokenEndpointAuthMethod,
+          },
+          confidentialCimdProvider
+        );
+      } catch (error) {
+        return {
+          mode,
+          label: details.label,
+          expectedFailure: details.expectedFailure,
+          outcome: "error",
+          verdict: "unknown",
+          diff,
+          detail:
+            error instanceof Error
+              ? error.message
+              : "Failed to build the token request",
+        };
+      }
 
       try {
         const response = await fetch(validated.toString(), {

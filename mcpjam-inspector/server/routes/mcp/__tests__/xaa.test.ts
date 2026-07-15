@@ -648,6 +648,137 @@ describe("POST /negative-tests", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  // Public CIMD: the client_id is the metadata document URL and there is no
+  // secret to present.
+  it("uses a public CIMD URL client_id without sending a secret", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const clientId = "https://app.example.com/.well-known/oauth/client.json";
+    const response = await buildApp().request("/api/web/xaa/negative-tests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...INLINE_BODY,
+        clientId,
+        tokenEndpointAuthMethod: "none",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const responseBody = (await response.json()) as {
+      results: Array<{ mode: string; verdict: string; diff?: unknown }>;
+    };
+    expect(responseBody.results).toHaveLength(11);
+    expect(fetchMock).toHaveBeenCalledTimes(11);
+    for (const [, init] of fetchMock.mock.calls) {
+      const headers = init?.headers as Record<string, string>;
+      const form = new URLSearchParams(String(init?.body));
+      expect(headers.Authorization).toBeUndefined();
+      expect(form.get("client_id")).toBe(clientId);
+      expect(form.has("client_secret")).toBe(false);
+      expect(form.has("client_assertion")).toBe(false);
+    }
+    // The URL client_id is what client_id_mismatch is measured against.
+    const mismatch = responseBody.results.find(
+      (row) => row.mode === "client_id_mismatch"
+    );
+    expect(mismatch?.diff).toMatchObject({
+      field: "client_id",
+      expected: clientId,
+    });
+  });
+
+  it("rejects private_key_jwt when no confidential provider is configured", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await buildApp().request("/api/web/xaa/negative-tests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...INLINE_BODY,
+        clientId: "https://app.example.com/.well-known/oauth/xaa-cimd/AbC123",
+        tokenEndpointAuthMethod: "private_key_jwt",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("not available"),
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("signs a fresh private_key_jwt client_assertion for every confidential CIMD case", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = new Hono();
+    app.route(
+      "/api/web/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/web",
+        httpsOnlyProxy: false,
+        confidentialCimdProvider: getLocalConfidentialCimdProvider(),
+      })
+    );
+
+    const clientId =
+      "https://app.example.com/.well-known/oauth/xaa-cimd/AbC123";
+    const response = await app.request("/api/web/xaa/negative-tests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...INLINE_BODY,
+        clientId,
+        tokenEndpointAuthMethod: "private_key_jwt",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const responseBody = (await response.json()) as {
+      results: Array<{ verdict: string }>;
+    };
+    expect(responseBody.results).toHaveLength(11);
+    expect(fetchMock).toHaveBeenCalledTimes(11);
+
+    const assertions = new Set<string>();
+    for (const [, init] of fetchMock.mock.calls) {
+      const form = new URLSearchParams(String(init?.body));
+      expect(form.get("client_assertion_type")).toBe(
+        "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+      );
+      expect(form.get("client_id")).toBe(clientId);
+      expect(form.has("client_secret")).toBe(false);
+      const assertion = form.get("client_assertion") as string;
+      expect(assertion.split(".")).toHaveLength(3);
+      // iss = sub = the CIMD URL; aud = the token endpoint the case posts to.
+      // A mismatched aud would get every case refused on client auth and
+      // scored "pass" without ever testing the broken ID-JAG.
+      const claims = decodeJwtPayload(assertion);
+      expect(claims.iss).toBe(clientId);
+      expect(claims.sub).toBe(clientId);
+      expect(claims.aud).toBe(INLINE_BODY.tokenEndpoint);
+      assertions.add(assertion);
+    }
+    // Each case authenticates on its own assertion (unique jti), not a shared one.
+    expect(assertions.size).toBe(11);
+  });
+
   it("yields partial results when a case times out (one slow case doesn't sink the run)", async () => {
     let call = 0;
     const fetchMock = vi.fn(async () => {

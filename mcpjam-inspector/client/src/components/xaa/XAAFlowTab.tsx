@@ -761,16 +761,12 @@ export function XAAFlowTab({
         // The strategy the completed run actually used (state-authoritative).
         registration_strategy: flowStateRef.current.registrationStrategy,
       });
-      // This PR enables dynamic scorecards for DCR only. Keep CIMD locked
-      // until its client-auth behavior is implemented and reviewed separately.
-      if (flowStateRef.current.registrationStrategy !== "cimd") {
-        setPositiveRunTargets((current) => {
-          if (current.has(runGateKey)) return current;
-          const next = new Set(current);
-          next.add(runGateKey);
-          return next;
-        });
-      }
+      setPositiveRunTargets((current) => {
+        if (current.has(runGateKey)) return current;
+        const next = new Set(current);
+        next.add(runGateKey);
+        return next;
+      });
     }
   }, [flowState.currentStep, authServerModeForTelemetry, runGateKey]);
 
@@ -877,10 +873,40 @@ export function XAAFlowTab({
     const resource =
       flowState.resourceMetadata?.resource || runInput.serverUrl || "";
 
+    // CIMD: the client_id IS the metadata document URL, and there are no
+    // issued credentials to cache or expire. Both the URL and the auth method
+    // are read from flow state, which the CIMD step sets from the document it
+    // actually fetched and validated (`none` for public, `private_key_jwt` for
+    // confidential). Using the run's own values — rather than re-deriving from
+    // the server config — keeps the scorecard testing the identity the
+    // positive run established, and can't silently drop the client_assertion
+    // a confidential client owes (which would get every case refused for the
+    // wrong reason and scored as a pass).
     if (flowState.registrationStrategy === "cimd") {
+      if (!flowState.tokenEndpoint || !flowState.clientId) {
+        return {
+          input: null,
+          unavailableReason:
+            "Run the flow first so the client identity and token endpoint are known.",
+        };
+      }
+      if (!audience || !resource) return { input: null };
+
       return {
-        input: null,
-        unavailableReason: "CIMD negative tests are not supported yet.",
+        input: {
+          tokenEndpoint: flowState.tokenEndpoint,
+          audience,
+          resource,
+          subject: runInput.userId || undefined,
+          // Sent alongside `subject`: a hosted-issuer run's evaluator matches
+          // both claims exactly, and a managed scorecard missing the email is
+          // denied outright — which would refuse every case and score the run
+          // all-green without testing anything.
+          email: runInput.email || undefined,
+          clientId: flowState.clientId,
+          tokenEndpointAuthMethod: flowState.tokenEndpointAuthMethod,
+          scope: runInput.scope || undefined,
+        },
       };
     }
 
