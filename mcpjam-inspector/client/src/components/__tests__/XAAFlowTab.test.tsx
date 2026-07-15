@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -740,6 +740,68 @@ describe("XAAFlowTab", () => {
           tokenEndpointAuthMethod: "client_secret_basic",
           issuerKind: "org",
         })
+      );
+
+      capturedMachineConfig.dcrCredentialCache.set(cacheKey, {
+        clientId: "dynamic-client",
+        clientSecret: "session-only-secret",
+        clientSecretExpiresAt: 0,
+        tokenEndpointAuthMethod: "client_secret_post",
+        registrationEndpoint,
+      });
+      act(() => {
+        capturedMachineConfig.updateState({
+          tokenEndpointAuthMethod: "client_secret_post",
+        });
+      });
+
+      await waitFor(() =>
+        expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+          "data-unlocked",
+          "false"
+        )
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-auth-method",
+        "client_secret_post"
+      );
+    });
+
+    it("preserves the duplicate-registration warning across config edits", async () => {
+      const { rerender } = render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />
+      );
+
+      act(() => {
+        capturedMachineConfig.updateState({
+          registrationStrategy: "dcr",
+          currentStep: "dcr_request",
+          isBusy: false,
+          error: "Registration outcome unknown",
+          dcrRetryMayCreateDuplicate: true,
+        });
+      });
+
+      currentTarget = makeTarget({
+        runInput: {
+          ...makeTarget().runInput,
+          scope: "new-scope",
+        },
+      });
+      rerender(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />
+      );
+
+      await waitFor(() =>
+        expect(
+          capturedMachineConfig.getState().dcrRetryMayCreateDuplicate
+        ).toBe(true)
       );
     });
 

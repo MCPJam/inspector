@@ -433,6 +433,10 @@ export function XAAFlowTab({
     flowState.registrationStrategy === "preregistered"
       ? runInput.clientId
       : flowState.clientId ?? "";
+  const scorecardTokenEndpointAuthMethod =
+    flowState.registrationStrategy === "dcr"
+      ? flowState.tokenEndpointAuthMethod ?? ""
+      : "";
   const runGateKey = [
     targetKey,
     hostedIssuerOptIn ? "hosted" : "local",
@@ -440,6 +444,7 @@ export function XAAFlowTab({
     hostedIssuerKind,
     flowState.registrationStrategy,
     scorecardClientId,
+    scorecardTokenEndpointAuthMethod,
     flowConfigurationKey,
     configurationSaveVersion,
   ].join("|");
@@ -821,7 +826,6 @@ export function XAAFlowTab({
             dcrCredentialCacheRef.current.delete(key);
           }
         }
-        dcrDuplicateRiskRef.current.delete(nextTargetKey);
       }
       lastAppliedFlowConfigurationKey.current = nextFlowConfigurationKey;
       lastAppliedConfigurationSaveVersion.current =
