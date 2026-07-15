@@ -399,6 +399,26 @@ describe("XAAFlowTab", () => {
     );
   });
 
+  it("suppresses the configure prompt while project servers hydrate", () => {
+    currentTarget = makeTarget({
+      targetSource: "none",
+      targetKey: "none",
+      isTestable: false,
+    });
+
+    render(
+      <XAAFlowTab
+        serverConfigs={{}}
+        selectedServerName="none"
+        areServersHydrated={false}
+      />,
+    );
+
+    expect(captureXaaSequenceProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({ showConfigurePrompt: false }),
+    );
+  });
+
   it("places the negative-test scorecard behind a vertical resize handle", () => {
     render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
 

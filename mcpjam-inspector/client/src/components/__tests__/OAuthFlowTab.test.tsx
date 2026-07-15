@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { OAuthFlowTab } from "../OAuthFlowTab";
@@ -43,8 +43,12 @@ vi.mock("../ui/resizable", () => ({
   ResizableHandle: () => <div />,
 }));
 
+const captureOAuthProfileModalProps = vi.hoisted(() => vi.fn());
 vi.mock("../oauth/OAuthProfileModal", () => ({
-  OAuthProfileModal: () => null,
+  OAuthProfileModal: (props: unknown) => {
+    captureOAuthProfileModalProps(props);
+    return null;
+  },
 }));
 
 vi.mock("../oauth/OAuthFlowLogger", () => ({
@@ -96,6 +100,44 @@ describe("OAuthFlowTab", () => {
     expect(captureOAuthSequenceProps).toHaveBeenLastCalledWith(
       expect.objectContaining({ showConfigurePrompt: false }),
     );
+  });
+
+  it("does not open configuration during hydration or after a header server arrives", async () => {
+    const oauthServer = createServer({
+      name: "available-oauth",
+      useOAuth: true,
+      config: { url: "https://example.com/mcp" },
+    });
+    const { rerender } = render(
+      <OAuthFlowTab
+        serverConfigs={{}}
+        selectedServerName="none"
+        areServersHydrated={false}
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(captureOAuthProfileModalProps).toHaveBeenLastCalledWith(
+        expect.objectContaining({ open: false }),
+      );
+    });
+
+    rerender(
+      <OAuthFlowTab
+        serverConfigs={{ "available-oauth": oauthServer }}
+        selectedServerName="none"
+        areServersHydrated
+        hasHeaderServers
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(captureOAuthProfileModalProps).toHaveBeenLastCalledWith(
+        expect.objectContaining({ open: false }),
+      );
+    });
   });
 
   it("does not select the first HTTP server when opened with a non-HTTP selection", async () => {

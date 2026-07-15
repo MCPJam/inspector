@@ -1265,6 +1265,7 @@ export function OAuthFlowRoute() {
   const {
     appState,
     displayServerConfigs,
+    areServersHydrated,
     setSelectedServer,
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
@@ -1323,6 +1324,7 @@ export function OAuthFlowRoute() {
         serverConfigs={displayServerConfigs}
         selectedServerName={appState.selectedServer}
         hasHeaderServers={oauthDebuggerHasHeaderServers}
+        areServersHydrated={areServersHydrated}
         onSelectServer={setSelectedServer}
         onSaveServerConfig={saveServerConfigWithoutConnecting}
         onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
@@ -1338,6 +1340,7 @@ export function XAAFlowRoute() {
     xaaEnabled,
     appState,
     displayServerConfigs,
+    areServersHydrated,
     activeOrganizationId,
     activeProject,
     convexProjectId,
@@ -1364,6 +1367,7 @@ export function XAAFlowRoute() {
         serverConfigs={displayServerConfigs}
         selectedServerName={appState.selectedServer}
         hasHeaderServers={xaaDebuggerHasHeaderServers}
+        areServersHydrated={areServersHydrated}
         organizationId={activeOrganizationId ?? null}
         projectId={convexProjectId ?? null}
         projectXaaTestDefaults={activeProject?.xaaTestDefaults ?? null}
