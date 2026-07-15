@@ -884,24 +884,77 @@ export async function createAuthorizedManager(
     }
   );
 
+  // PASS 1 — validate the WHOLE batch before any server does side-effecting
+  // work. The mint pass below runs concurrently (Promise.all), so a check
+  // living inside it only fails *its own* server: a sibling's XAA mint (a
+  // real token issued at the resource AS) would already be in flight by the
+  // time this one rejects. Every purely-synchronous configuration verdict
+  // therefore belongs here, so "fails before any side effects" holds for the
+  // batch, not just per server.
+  for (const serverId of uniqueServerIds) {
+    const auth = batch.results[serverId];
+    if (!auth) {
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        `Authorization response is missing result for server "${serverId}"`
+      );
+    }
+    if (!auth.ok) {
+      throw new WebRouteError(auth.status, auth.code as ErrorCode, auth.message);
+    }
+    const displayServerName = serverNamesById?.[serverId] ?? serverId;
+
+    // Enterprise policy, unconfigured `auto` server: never silently downgrade
+    // to the discover ladder. "Not configured" (no stored client registration
+    // at the resource authorization server), NOT "not enrolled" — enrollment
+    // verdicts belong to the future issuer-policy evaluator.
+    if (
+      auth.serverConfig.transportType === "http" &&
+      xaaPolicyRequiresConfiguration(auth.serverConfig, options?.xaaPolicy)
+    ) {
+      throw new WebRouteError(
+        409,
+        ErrorCode.XAA_CONNECTION_NOT_CONFIGURED,
+        `Server "${displayServerName}" has no XAA client registration configured. This host requires enterprise-managed authorization — add the server's client registration in its auth settings, or set an explicit auth method to override the host policy.`,
+        {
+          serverId,
+          serverName: serverNamesById?.[serverId] ?? null,
+          reason: "xaa_connection_not_configured",
+        }
+      );
+    }
+
+    // Backend-resolved identity failure (legacy partial per-server override):
+    // a distinct configuration error, surfaced before any mint AND before the
+    // issuer guard — eval routes omit `xaaIssuer`, so checking that first
+    // would mask this actionable 400 behind the caller-contract 500. Gated on
+    // the same XAA selection the mint pass uses. No silent fallback to the
+    // demo identity, no silent XAA→OAuth fallback.
+    if (
+      auth.serverConfig.transportType === "http" &&
+      resolveEffectiveAuthMethod(auth.serverConfig, options?.xaaPolicy) ===
+        "xaa" &&
+      auth.serverConfig.xaaIdentityError
+    ) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        auth.serverConfig.xaaIdentityError,
+        { serverId, serverName: displayServerName }
+      );
+    }
+  }
+
+  // PASS 2 — connect/mint concurrently. Every server reaching this point has
+  // already cleared the batch-wide validation above.
   const configEntries = await Promise.all(
     uniqueServerIds.map(async (serverId) => {
-      const auth = batch.results[serverId];
-      if (!auth) {
-        throw new WebRouteError(
-          500,
-          ErrorCode.INTERNAL_ERROR,
-          `Authorization response is missing result for server "${serverId}"`
-        );
-      }
-
-      if (!auth.ok) {
-        throw new WebRouteError(
-          auth.status,
-          auth.code as ErrorCode,
-          auth.message
-        );
-      }
+      // Non-null: PASS 1 threw for a missing or failed authorize result.
+      const auth = batch.results[serverId] as Extract<
+        (typeof batch.results)[string],
+        { ok: true }
+      >;
 
       const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
       const displayServerName = serverNamesById?.[serverId] ?? serverId;
@@ -915,27 +968,6 @@ export async function createAuthorizedManager(
         auth.serverConfig,
         options?.xaaPolicy
       );
-
-      // Enterprise policy, unconfigured `auto` server: fail first-class
-      // BEFORE any mint/refresh — never silently downgrade to the discover
-      // ladder. "Not configured" (no stored client registration at the
-      // resource authorization server), NOT "not enrolled" — enrollment
-      // verdicts belong to the future issuer-policy evaluator.
-      if (
-        auth.serverConfig.transportType === "http" &&
-        xaaPolicyRequiresConfiguration(auth.serverConfig, options?.xaaPolicy)
-      ) {
-        throw new WebRouteError(
-          409,
-          ErrorCode.XAA_CONNECTION_NOT_CONFIGURED,
-          `Server "${displayServerName}" has no XAA client registration configured. This host requires enterprise-managed authorization — add the server's client registration in its auth settings, or set an explicit auth method to override the host policy.`,
-          {
-            serverId,
-            serverName: serverNamesById?.[serverId] ?? null,
-            reason: "xaa_connection_not_configured",
-          }
-        );
-      }
       const usesOAuthFlow = effectiveAuth === "oauth";
       // "discover" (non-XAA auto) rides the OAuth rails only when a stored
       // token exists; tokenless discover connects unauthenticated instead of
@@ -1000,20 +1032,8 @@ export async function createAuthorizedManager(
             { serverId, registrationMode: auth.serverConfig.registrationMode }
           );
         }
-        // Backend-resolved identity failure (legacy partial per-server
-        // override): a distinct configuration error, surfaced BEFORE any
-        // mint AND before the issuer guard below — eval routes omit
-        // `xaaIssuer`, so checking it first would mask this actionable 400
-        // behind the caller-contract 500. No silent fallback to the demo
-        // identity, no silent XAA→OAuth fallback.
-        if (auth.serverConfig.xaaIdentityError) {
-          throw new WebRouteError(
-            400,
-            ErrorCode.VALIDATION_ERROR,
-            auth.serverConfig.xaaIdentityError,
-            { serverId, serverName: displayServerName }
-          );
-        }
+        // (`xaaIdentityError` is validated batch-wide in PASS 1 — before any
+        // sibling server can mint.)
         if (!options?.xaaIssuer) {
           // Caller-contract violation: a `useXaa` server reached a manager
           // builder that didn't thread the issuer (only callers holding the

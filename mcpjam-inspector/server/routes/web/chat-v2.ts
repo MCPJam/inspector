@@ -341,6 +341,10 @@ chatV2.post("/", async (c) => {
           String(modelDefinition.id),
           modelDefinition.provider,
         ),
+        // Fail closed rather than let a harness turn bypass the host's
+        // enterprise-managed policy: the harness proxy token carries no
+        // host, so that route can't enforce it (see the flag's docstring).
+        xaaEnterprisePolicyOn: xaaPolicy != null,
       });
       if (!availability.ok) {
         throw new WebRouteError(

@@ -1,5 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+
+// The policy toggle is gated on the `xaa` feature flag (same gate as the
+// per-server XAA auth option) — without it a flag-off user could enable the
+// policy and lose the UI needed to register the servers it breaks.
+const { featureFlagMock } = vi.hoisted(() => ({
+  featureFlagMock: vi.fn((flag: string) => flag === "xaa"),
+}));
+vi.mock("posthog-js/react", () => ({
+  usePostHog: () => ({ capture: vi.fn() }),
+  useFeatureFlagEnabled: (flag: string) => featureFlagMock(flag),
+}));
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import {
@@ -109,5 +120,38 @@ describe("ProtocolTab — enterprise-managed authorization policy switch", () =>
     expect(
       document.body.textContent?.includes(XAA_ENTERPRISE_POLICY_EXTENSION)
     ).toBe(true);
+  });
+
+  it("hides the toggle when the xaa flag is off (no policy on the host)", () => {
+    featureFlagMock.mockImplementation(() => false);
+    try {
+      renderTab(emptyHostConfigInputV2());
+      expect(
+        screen.queryByRole("switch", {
+          name: /enterprise-managed authorization/i,
+        })
+      ).toBeNull();
+    } finally {
+      featureFlagMock.mockImplementation((flag: string) => flag === "xaa");
+    }
+  });
+
+  it("still shows the toggle with the flag off when a policy is already stored (never strand a host)", () => {
+    featureFlagMock.mockImplementation(() => false);
+    try {
+      const draft = emptyHostConfigInputV2();
+      draft.mcpProfile = {
+        profileVersion: 1,
+        extensions: { [XAA_ENTERPRISE_POLICY_EXTENSION]: { idp: "mcpjam" } },
+      };
+      renderTab(draft);
+      expect(
+        screen.getByRole("switch", {
+          name: /enterprise-managed authorization/i,
+        })
+      ).toHaveAttribute("aria-checked", "true");
+    } finally {
+      featureFlagMock.mockImplementation((flag: string) => flag === "xaa");
+    }
   });
 });
