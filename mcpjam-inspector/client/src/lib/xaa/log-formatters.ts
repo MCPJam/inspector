@@ -203,6 +203,7 @@ export function generateXAAFlowText(
         view: HttpEntryView;
       };
 
+  const currentStepIndex = getXAAStepIndex(flowState.currentStep);
   const byStep = new Map<XAAFlowStep, TimelineEntry[]>();
   const add = (step: XAAFlowStep, entry: TimelineEntry) => {
     const entries = byStep.get(step) ?? [];
@@ -211,6 +212,7 @@ export function generateXAAFlowText(
   };
 
   for (const entry of flowState.infoLogs ?? []) {
+    if (getXAAStepIndex(entry.step) > currentStepIndex) continue;
     if (options?.step && entry.step !== options.step) continue;
     add(entry.step, {
       type: "info",
@@ -227,6 +229,7 @@ export function generateXAAFlowText(
     entries: flowState.httpHistory ?? [],
     pairedReceivedStep: getXAAReceivedStepForRequest,
   })) {
+    if (getXAAStepIndex(item.step) > currentStepIndex) continue;
     if (options?.step && item.step !== options.step) continue;
     add(item.step, {
       type: "http",

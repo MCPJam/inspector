@@ -480,9 +480,9 @@ export function XAAFlowLogger({
       ensureGroup(item.step).displayItems.push(item);
     });
 
-    return Array.from(steps.values()).sort(
-      (a, b) => getXAAStepIndex(a.step) - getXAAStepIndex(b.step)
-    );
+    return Array.from(steps.values())
+      .filter((group) => getXAAStepIndex(group.step) <= currentStepIndex)
+      .sort((a, b) => getXAAStepIndex(a.step) - getXAAStepIndex(b.step));
   }, [flowState.httpHistory, flowState.infoLogs, currentStepIndex]);
 
   // Bucket consecutive step groups by phase so each phase renders one header.

@@ -183,7 +183,7 @@ describe("generateXAAFlowText", () => {
     expect(receivedSection).not.toContain("Request Body:");
   });
 
-  it("prints a completed response under the received step while parked there", () => {
+  it("hides a completed response until the received step is reached", () => {
     const copied = generateXAAFlowText(
       createInitialXAAFlowState({
         currentStep: "jwt_bearer_request",
@@ -208,11 +208,10 @@ describe("generateXAAFlowText", () => {
       {}
     );
 
-    // The response is visible in the received-step section even though the
-    // flow is still parked at the request step.
-    expect(copied).toContain("[received_access_token]");
-    expect(copied).toContain("Status: 200 OK");
-    expect(copied).toContain("Response Body:");
+    // The SDK already has the response, but the raw view follows Continue:
+    // only the request is visible until the received step is reached.
+    expect(copied).not.toContain("Status: 200 OK");
+    expect(copied).not.toContain("Response Body:");
     expect(copied).toContain(
       "Response: recorded under [received_access_token]"
     );

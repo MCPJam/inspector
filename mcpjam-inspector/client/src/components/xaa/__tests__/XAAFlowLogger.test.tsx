@@ -304,11 +304,26 @@ describe("XAAFlowLogger request/response cards", () => {
     expect(screen.getAllByText("POST")).toHaveLength(2);
   });
 
-  it("shows the response on the next card while parked at the request step", async () => {
-    renderWithExchange({ currentStep: "jwt_bearer_request" });
-    // Current step auto-expands; the request half renders in place and the
-    // completed response is parked on the collapsed received card.
+  it("does not reveal the response card while parked at the request step", () => {
+    renderWithExchange({
+      currentStep: "jwt_bearer_request",
+      infoLogs: [
+        {
+          id: "access-token-issued",
+          step: "received_access_token",
+          label: "Access token issued",
+          timestamp: 2,
+          level: "info",
+        },
+      ],
+    });
+    // XAA records the completed exchange during the request click, but the
+    // response card and its received-step logs stay hidden until the next click.
     expect(screen.getByText("response → next step")).toBeInTheDocument();
+    expect(
+      screen.queryByText(getXAAStepInfo("received_access_token").title)
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Access token issued")).not.toBeInTheDocument();
     expect(screen.queryByText("Status: 200 OK")).not.toBeInTheDocument();
     expect(screen.getAllByText("POST")).toHaveLength(1);
   });
