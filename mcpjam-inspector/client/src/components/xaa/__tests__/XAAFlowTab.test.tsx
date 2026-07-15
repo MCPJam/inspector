@@ -2,7 +2,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { XAAFlowTab } from "../xaa/XAAFlowTab";
+import { XAAFlowTab } from "../XAAFlowTab";
+import { fetchConfidentialCimdClientUrl } from "@/lib/xaa/idp-endpoints";
 import type { XaaTestTarget } from "@/hooks/useXaaTestTarget";
 
 const captureMock = vi.fn();
@@ -16,12 +17,12 @@ vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ user: authUser }),
 }));
 
-vi.mock("../xaa/XAAIdpCard", () => ({
+vi.mock("../XAAIdpCard", () => ({
   XAAIdpCard: () => <div data-testid="xaa-idp-card" />,
 }));
 
 let capturedServerModalProps: any = null;
-vi.mock("../xaa/XAAServerModal", () => ({
+vi.mock("../XAAServerModal", () => ({
   XAAServerModal: (props: any) => {
     capturedServerModalProps = props;
     return <div data-testid="xaa-server-modal" />;
@@ -64,7 +65,7 @@ vi.mock("@/hooks/useXaaRunSettings", () => ({
   }),
 }));
 
-vi.mock("../ui/resizable", () => ({
+vi.mock("../../ui/resizable", () => ({
   ResizablePanelGroup: ({
     children,
     direction,
@@ -80,11 +81,11 @@ vi.mock("../ui/resizable", () => ({
   ),
 }));
 
-vi.mock("../xaa/XAASequenceDiagram", () => ({
+vi.mock("../XAASequenceDiagram", () => ({
   XAASequenceDiagram: () => <div data-testid="xaa-sequence-diagram" />,
 }));
 
-vi.mock("../xaa/XAAFlowLogger", () => ({
+vi.mock("../XAAFlowLogger", () => ({
   XAAFlowLogger: ({
     summary,
     actions,
@@ -124,7 +125,7 @@ vi.mock("../xaa/XAAFlowLogger", () => ({
   ),
 }));
 
-vi.mock("../xaa/registration/XAAResourceAppsSection", () => ({
+vi.mock("../registration/XAAResourceAppsSection", () => ({
   XAAResourceAppsSection: ({
     onSelect,
   }: {
@@ -140,7 +141,7 @@ vi.mock("../xaa/registration/XAAResourceAppsSection", () => ({
   ),
 }));
 
-vi.mock("../xaa/NegativeTestScorecard", () => ({
+vi.mock("../NegativeTestScorecard", () => ({
   NegativeTestScorecard: ({
     input,
     unlocked,
@@ -262,6 +263,34 @@ describe("XAAFlowTab", () => {
     // CIMD (no clientIdMetadataUrl) that would omit the client_assertion.
     expect(runAllMock).not.toHaveBeenCalled();
     expect(capturedMachineConfig?.clientIdMetadataUrl).toBeUndefined();
+  });
+
+  it("a blocked click retries the reflector fetch (transient-failure recovery)", async () => {
+    const user = userEvent.setup();
+    confidentialCimdUrlResult = null; // first fetch fails
+    render(
+      <XAAFlowTab
+        serverConfigs={CONFIDENTIAL_SERVER}
+        selectedServerName="staging"
+      />
+    );
+    // Let the initial fetch settle to the error state.
+    await waitFor(() =>
+      expect(fetchConfidentialCimdClientUrl).toHaveBeenCalled()
+    );
+    const callsBefore = vi.mocked(fetchConfidentialCimdClientUrl).mock.calls
+      .length;
+
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+
+    // The blocked click re-triggers the fetch rather than only re-showing the
+    // error, so a transient failure is recoverable without a config change.
+    await waitFor(() =>
+      expect(
+        vi.mocked(fetchConfidentialCimdClientUrl).mock.calls.length
+      ).toBeGreaterThan(callsBefore)
+    );
+    expect(runAllMock).not.toHaveBeenCalled();
   });
 
   it("threads the reflector URL into the machine for a confidential CIMD run", async () => {

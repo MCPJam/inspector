@@ -1,5 +1,6 @@
 import { HOSTED_MODE } from "@/lib/config";
 import { MCPJAM_HOSTED_APP_ORIGIN } from "@/lib/oauth/constants";
+import { authFetch } from "@/lib/session-token";
 
 export interface XaaIdpUrls {
   issuerBaseUrl: string;
@@ -107,10 +108,13 @@ export function getXaaIdpUrls(
 export async function fetchConfidentialCimdClientUrl(
   signal?: AbortSignal,
 ): Promise<string | null> {
-  const origin = typeof window === "undefined" ? "" : window.location.origin;
-  const url = `${origin}${getIssuerBasePath()}/confidential-cimd/client`;
+  // authFetch (not plain fetch): in local mode every /api/mcp/xaa/* route
+  // except /.well-known/* requires the X-MCP-Session-Auth token, and it
+  // attaches the hosted bearer + refresh-retry in hosted mode. A bare fetch
+  // would 401 locally and silently break confidential CIMD.
+  const url = `${getIssuerBasePath()}/confidential-cimd/client`;
   try {
-    const response = await fetch(url, { signal });
+    const response = await authFetch(url, { signal });
     if (!response.ok) return null;
     const body = (await response.json()) as { clientIdMetadataUrl?: unknown };
     return typeof body.clientIdMetadataUrl === "string"

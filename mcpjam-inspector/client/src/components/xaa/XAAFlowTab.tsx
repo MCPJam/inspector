@@ -855,6 +855,13 @@ export function XAAFlowTab({
   const [confidentialCimdStatus, setConfidentialCimdStatus] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle");
+  // Bumping this re-runs the fetch effect — the recovery path for a transient
+  // failure (a blocked Start/Run all click triggers it; see below).
+  const [confidentialCimdRetry, setConfidentialCimdRetry] = useState(0);
+  const retryConfidentialCimd = useCallback(
+    () => setConfidentialCimdRetry((n) => n + 1),
+    []
+  );
   useEffect(() => {
     if (!wantsConfidentialCimd) {
       setConfidentialCimdUrl(undefined);
@@ -874,7 +881,8 @@ export function XAAFlowTab({
       }
     });
     return () => controller.abort();
-  }, [wantsConfidentialCimd]);
+    // confidentialCimdRetry in the deps is the retry trigger.
+  }, [wantsConfidentialCimd, confidentialCimdRetry]);
 
   // FAIL CLOSED: a confidential run must not silently fall back to public CIMD
   // (which omits the client_assertion). Block Start/Run all until the reflector
@@ -883,9 +891,21 @@ export function XAAFlowTab({
     ? confidentialCimdStatus === "ready"
       ? null
       : confidentialCimdStatus === "error"
-        ? "Confidential CIMD is selected, but the reflector client URL couldn't be loaded. Retry, or switch Client authentication to Public in the server config."
+        ? "Confidential CIMD is selected, but the reflector client URL couldn't be loaded. Retrying — click again in a moment, or switch Client authentication to Public in the server config."
         : "Preparing the confidential CIMD client identity… try again in a moment."
     : null;
+
+  // A blocked click on an errored fetch actively re-triggers it, so the user can
+  // recover a transient failure without changing the server config.
+  const handleConfidentialCimdBlock = useCallback(() => {
+    if (confidentialCimdStatus === "error") retryConfidentialCimd();
+    updateFlowState({ error: confidentialCimdBlockReason ?? undefined });
+  }, [
+    confidentialCimdStatus,
+    retryConfidentialCimd,
+    updateFlowState,
+    confidentialCimdBlockReason,
+  ]);
 
   const xaaStateMachine = useMemo(() => {
     return createInspectorXAAStateMachine({
@@ -964,7 +984,7 @@ export function XAAFlowTab({
       return;
     }
     if (confidentialCimdBlockReason) {
-      updateFlowState({ error: confidentialCimdBlockReason });
+      handleConfidentialCimdBlock();
       return;
     }
 
@@ -977,7 +997,7 @@ export function XAAFlowTab({
     xaaStateMachine,
     fireFlowStarted,
     confidentialCimdBlockReason,
-    updateFlowState,
+    handleConfidentialCimdBlock,
   ]);
 
   const handleRunAll = useCallback(async () => {
@@ -986,7 +1006,7 @@ export function XAAFlowTab({
       return;
     }
     if (confidentialCimdBlockReason) {
-      updateFlowState({ error: confidentialCimdBlockReason });
+      handleConfidentialCimdBlock();
       return;
     }
 
@@ -1021,7 +1041,7 @@ export function XAAFlowTab({
     fireFlowStarted,
     authServerModeForTelemetry,
     confidentialCimdBlockReason,
-    updateFlowState,
+    handleConfidentialCimdBlock,
   ]);
 
   const continueLabel = !isTestable
