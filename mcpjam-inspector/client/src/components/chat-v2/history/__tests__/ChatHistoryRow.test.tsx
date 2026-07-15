@@ -7,7 +7,7 @@ import { ChatHistoryRow } from "../ChatHistoryRow";
 import { getModelById } from "@/shared/types";
 
 function sessionStub(
-  overrides: Partial<ChatHistorySession> = {},
+  overrides: Partial<ChatHistorySession> = {}
 ): ChatHistorySession {
   return {
     _id: "s1",
@@ -85,8 +85,10 @@ vi.mock("@mcpjam/design-system/tooltip", () => ({
 
 describe("ChatHistoryRow", () => {
   it("shows resolved model name when modelId matches catalog", () => {
-    const session = sessionStub({ modelId: "openai/gpt-5-mini" });
-    const def = getModelById("openai/gpt-5-mini");
+    // A BYOK static id still resolves a friendly name; hosted ids show the raw
+    // id (see the fallback test below) now that display rows come from the catalog.
+    const session = sessionStub({ modelId: "gpt-5-mini" });
+    const def = getModelById("gpt-5-mini");
     expect(def).toBeDefined();
 
     render(
@@ -97,7 +99,7 @@ describe("ChatHistoryRow", () => {
         isStreaming={false}
         onSelect={vi.fn()}
         actions={actions}
-      />,
+      />
     );
 
     const modelEl = screen.getByTestId("chat-history-model");
@@ -117,7 +119,7 @@ describe("ChatHistoryRow", () => {
         isStreaming={false}
         onSelect={vi.fn()}
         actions={actions}
-      />,
+      />
     );
 
     expect(screen.getByText("custom/unknown-model")).toBeInTheDocument();
@@ -134,7 +136,7 @@ describe("ChatHistoryRow", () => {
         isStreaming={false}
         onSelect={vi.fn()}
         actions={actions}
-      />,
+      />
     );
 
     expect(screen.queryByTestId("chat-history-model")).not.toBeInTheDocument();
@@ -154,7 +156,7 @@ describe("ChatHistoryRow", () => {
           imageUrl: "https://example.com/avatar.png",
         }}
         actions={actions}
-      />,
+      />
     );
 
     const wrap = screen.getByTestId("chat-history-owner-avatar");
@@ -173,7 +175,7 @@ describe("ChatHistoryRow", () => {
         onSelect={vi.fn()}
         projectThreadOwner={{ status: "generic" }}
         actions={actions}
-      />,
+      />
     );
 
     expect(screen.queryByLabelText("Pinned")).not.toBeInTheDocument();
@@ -189,7 +191,7 @@ describe("ChatHistoryRow", () => {
         onSelect={vi.fn()}
         projectThreadOwner={{ status: "generic" }}
         actions={actions}
-      />,
+      />
     );
 
     expect(screen.getByLabelText("Pinned")).toBeInTheDocument();
@@ -205,7 +207,7 @@ describe("ChatHistoryRow", () => {
         onSelect={vi.fn()}
         projectThreadOwner={{ status: "generic" }}
         actions={actions}
-      />,
+      />
     );
 
     const wrap = screen.getByTestId("chat-history-owner-avatar");
@@ -221,11 +223,11 @@ describe("ChatHistoryRow", () => {
         isStreaming={false}
         onSelect={vi.fn()}
         actions={actions}
-      />,
+      />
     );
 
     expect(
-      screen.queryByTestId("chat-history-owner-avatar"),
+      screen.queryByTestId("chat-history-owner-avatar")
     ).not.toBeInTheDocument();
   });
 
@@ -241,7 +243,7 @@ describe("ChatHistoryRow", () => {
         isStreaming={false}
         onSelect={vi.fn()}
         actions={actions}
-      />,
+      />
     );
 
     const dropdown = screen.getByTestId("dropdown-menu");
@@ -254,7 +256,7 @@ describe("ChatHistoryRow", () => {
       (event) => {
         contextMenuEvent = event;
       },
-      { once: true },
+      { once: true }
     );
 
     await user.pointer({
@@ -278,7 +280,7 @@ describe("ChatHistoryRow", () => {
         isStreaming
         onSelect={vi.fn()}
         actions={actions}
-      />,
+      />
     );
 
     const dropdown = screen.getByTestId("dropdown-menu");
@@ -303,7 +305,7 @@ describe("ChatHistoryRow", () => {
         isStreaming={false}
         onSelect={onSelect}
         actions={actions}
-      />,
+      />
     );
 
     await user.click(screen.getByText("hello world"));
@@ -319,7 +321,7 @@ describe("ChatHistoryRow", () => {
         isStreaming={false}
         onSelect={vi.fn()}
         actions={actions}
-      />,
+      />
     );
 
     expect(screen.getByText("Archive")).toBeInTheDocument();
@@ -339,13 +341,13 @@ describe("ChatHistoryRow", () => {
         canConvertToTestCase
         onConvertToTestCase={onConvertToTestCase}
         actions={actions}
-      />,
+      />
     );
 
     const promote = screen.getByTestId("chat-history-promote-to-test-case");
     expect(promote).toHaveAttribute("aria-label", "Promote to test case");
     expect(
-      screen.queryByText("Promote to test case", { exact: true }),
+      screen.queryByText("Promote to test case", { exact: true })
     ).not.toBeInTheDocument();
 
     await user.click(promote);
@@ -362,7 +364,7 @@ describe("ChatHistoryRow", () => {
         isStreaming={false}
         onSelect={vi.fn()}
         actions={actions}
-      />,
+      />
     );
 
     expect(screen.getByText("Unarchive")).toBeInTheDocument();
@@ -378,7 +380,7 @@ describe("ChatHistoryRow", () => {
         sharedThreadsEnabled
         onSelect={vi.fn()}
         actions={actions}
-      />,
+      />
     );
 
     expect(screen.getByText("Share to project")).toBeInTheDocument();
@@ -394,7 +396,7 @@ describe("ChatHistoryRow", () => {
         sharedThreadsEnabled={false}
         onSelect={vi.fn()}
         actions={actions}
-      />,
+      />
     );
 
     expect(screen.queryByText("Share to project")).not.toBeInTheDocument();
@@ -410,7 +412,7 @@ describe("ChatHistoryRow", () => {
         sharedThreadsEnabled={false}
         onSelect={vi.fn()}
         actions={actions}
-      />,
+      />
     );
 
     expect(screen.queryByText("Unshare")).not.toBeInTheDocument();
@@ -425,7 +427,7 @@ describe("ChatHistoryRow", () => {
         isStreaming={false}
         onSelect={vi.fn()}
         actions={actions}
-      />,
+      />
     );
 
     expect(screen.getByLabelText("Pinned")).toBeInTheDocument();
@@ -444,7 +446,7 @@ describe("ChatHistoryRow", () => {
           onSelect={vi.fn()}
           actions={actions}
         />
-      </div>,
+      </div>
     );
 
     const title = screen.getByText(longTitle);
@@ -464,7 +466,7 @@ describe("ChatHistoryRow", () => {
         isStreaming={false}
         onSelect={vi.fn()}
         actions={actions}
-      />,
+      />
     );
 
     expect(screen.queryByText("Mark read")).not.toBeInTheDocument();

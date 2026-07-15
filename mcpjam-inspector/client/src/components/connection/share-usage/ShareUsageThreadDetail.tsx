@@ -29,8 +29,134 @@ import {
   useSessionBrowserArtifacts,
   type SharedChatTurnTrace,
 } from "@/hooks/useSharedChatThreads";
+import { SessionInsightBar } from "@/components/chatboxes/session-readiness";
+import { useAction } from "convex/react";
+import { Gavel, RotateCcw } from "lucide-react";
+import { JudgeVerdictCard } from "@/components/shared/session-quality/judge-presentation";
+import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 
 const EMPTY_SPANS: EvalTraceSpan[] = [];
+
+/**
+ * Goal-completion judge section for SWARM sessions — rendered under the
+ * readiness insight bar so the verdict is visible on every tab. States:
+ * absent → explicit first-run affordance; completed → shared JudgeVerdictCard
+ * + a Re-judge affordance; failed → "Judge unavailable" + Retry (a failed
+ * judgment must be recoverable, not hidden); running → judging placeholder.
+ * All controls call the backend `requestSwarmSessionJudge` (sessionId only —
+ * goal/run/project are server-derived) and rely on the reactive thread
+ * subscription to refresh.
+ */
+export function SwarmJudgeSection({
+  threadId,
+  goalScore,
+}: {
+  threadId: string;
+  goalScore?: SharedChatThread["goalScore"];
+}) {
+  const requestJudge = useAction(
+    "swarmJudge:requestSwarmSessionJudge" as never
+  ) as unknown as (args: { sessionId: string }) => Promise<unknown>;
+  const [requesting, setRequesting] = useState(false);
+
+  const rerun = async () => {
+    setRequesting(true);
+    try {
+      await requestJudge({ sessionId: threadId });
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to run the judge"
+      );
+    } finally {
+      setRequesting(false);
+    }
+  };
+
+  const judging = requesting || goalScore?.status === "running";
+
+  return (
+    <div className="shrink-0 space-y-1.5 px-4 pt-2">
+      {judging ? (
+        <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-xs text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          Judging against the journey goal…
+        </div>
+      ) : !goalScore ? (
+        <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-xs">
+          <Gavel
+            className="size-3.5 shrink-0 text-muted-foreground"
+            aria-hidden
+          />
+          <span className="text-muted-foreground">
+            Check this session against the journey goal.
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="ml-auto shrink-0 rounded-xl"
+            onClick={() => void rerun()}
+          >
+            <Gavel className="mr-1.5 size-3.5" />
+            Run judge
+          </Button>
+        </div>
+      ) : goalScore.status === "completed" &&
+        typeof goalScore.score === "number" &&
+        Number.isFinite(goalScore.score) &&
+        typeof goalScore.passed === "boolean" ? (
+        // Both fields validated — a malformed `passed` must not render as
+        // "below threshold" (same guard as the list badge).
+        <div className="flex items-start gap-1.5">
+          <div className="min-w-0 flex-1">
+            <JudgeVerdictCard
+              verdict={{
+                score: goalScore.score,
+                passed: goalScore.passed,
+                reason: goalScore.reason,
+              }}
+            />
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="shrink-0 rounded-xl"
+            onClick={() => void rerun()}
+            title="Re-run the judge on this session"
+          >
+            <RotateCcw className="size-3.5" />
+          </Button>
+        </div>
+      ) : goalScore.status === "failed" ? (
+        <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-xs">
+          <Gavel
+            className="size-3.5 shrink-0 text-muted-foreground"
+            aria-hidden
+          />
+          <span className="font-medium uppercase tracking-wide text-muted-foreground">
+            Judge unavailable
+          </span>
+          {goalScore.error ? (
+            <span className="min-w-0 flex-1 truncate text-muted-foreground">
+              {goalScore.error}
+            </span>
+          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="ml-auto shrink-0 rounded-xl"
+            onClick={() => void rerun()}
+          >
+            <RotateCcw className="mr-1.5 size-3.5" />
+            Retry
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /**
  * Bridge inspector ToolRenderOverrides — whose widget/CSP fields use the MCP
@@ -39,7 +165,7 @@ const EMPTY_SPANS: EvalTraceSpan[] = [];
  * named seam so future read-only consumers can reuse it.
  */
 function bridgeToolRenderOverrides(
-  overrides: Record<string, unknown> | undefined,
+  overrides: Record<string, unknown> | undefined
 ): Record<string, ChatUiToolRenderOverride> | undefined {
   return overrides as Record<string, ChatUiToolRenderOverride> | undefined;
 }
@@ -58,7 +184,7 @@ interface ShareUsageThreadDetailProps {
  * Fetch span blobs from turn trace URLs and flatten into a single span array.
  */
 async function hydrateSpans(
-  traces: SharedChatTurnTrace[],
+  traces: SharedChatTurnTrace[]
 ): Promise<EvalTraceSpan[]> {
   const results = await Promise.all(
     traces.map(async (trace) => {
@@ -71,7 +197,7 @@ async function hydrateSpans(
       } catch {
         return [];
       }
-    }),
+    })
   );
   return results.flat();
 }
@@ -124,7 +250,7 @@ export function ShareUsageThreadDetail({
         if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("Failed to load thread messages:", err);
         setError(
-          err instanceof Error ? err.message : "Failed to load messages",
+          err instanceof Error ? err.message : "Failed to load messages"
         );
       } finally {
         if (isActive) {
@@ -166,8 +292,10 @@ export function ShareUsageThreadDetail({
   // artifact presence, the same heuristic the eval trace viewer uses.
   const renderObservations = browserArtifacts?.widgetRenderObservations ?? [];
   const interactionSteps = browserArtifacts?.browserInteractionSteps ?? [];
-  const hasBrowserArtifacts =
-    renderObservations.length > 0 || interactionSteps.length > 0;
+  // The Browser tab renders only the per-widget render observations now; the
+  // interaction steps surface on the Trace tab (`Interact · …` spans), so they
+  // ride the trace blob below rather than gating this tab.
+  const hasBrowserArtifacts = renderObservations.length > 0;
 
   // The "browser" mode is only valid while the LOADED session actually has
   // artifacts. `viewMode` is component state that survives a `threadId`
@@ -193,7 +321,13 @@ export function ShareUsageThreadDetail({
         ? { browserInteractionSteps: interactionSteps }
         : {}),
     };
-  }, [messages, widgetSnapshots, hydratedSpans, renderObservations, interactionSteps]);
+  }, [
+    messages,
+    widgetSnapshots,
+    hydratedSpans,
+    renderObservations,
+    interactionSteps,
+  ]);
 
   // Adapt trace to UI messages for the chat view
   const adaptedTrace = useMemo(() => {
@@ -211,7 +345,7 @@ export function ShareUsageThreadDetail({
       name: thread?.modelId ?? "Unknown",
       provider: "custom" as ModelProvider,
     }),
-    [thread?.modelId],
+    [thread?.modelId]
   );
 
   // Compute trace timing from turn traces
@@ -231,7 +365,7 @@ export function ShareUsageThreadDetail({
     const ok = await copyToClipboard(text);
     if (ok) {
       toast.success(
-        sessionLink ? "Session link copied" : "Session reference copied",
+        sessionLink ? "Session link copied" : "Session reference copied"
       );
     } else {
       toast.error("Failed to copy");
@@ -351,6 +485,16 @@ export function ShareUsageThreadDetail({
         </div>
       </div>
 
+      {thread.synthetic === true && thread.readiness ? (
+        <SessionInsightBar readiness={thread.readiness} />
+      ) : null}
+
+      {/* Swarm-only: render before the first score exists so deployments with
+          automatic judging disabled still expose the on-demand entry point. */}
+      {thread.sourceType === "swarm" ? (
+        <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
+      ) : null}
+
       {/* Trace / Chat / [Browser] / Raw tabs. The Browser tab appears when the
           session carries browser-rendered MCP App artifacts (synthetic runs);
           its active mode lives outside the shared TraceViewMode union. */}
@@ -367,10 +511,7 @@ export function ShareUsageThreadDetail({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {effectiveViewMode === "browser" ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-            <BrowserArtifactsView
-              observations={renderObservations}
-              steps={interactionSteps}
-            />
+            <BrowserArtifactsView observations={renderObservations} />
           </div>
         ) : effectiveViewMode === "chat" ? (
           <div className="min-h-0 flex-1 overflow-y-auto">
@@ -378,7 +519,7 @@ export function ShareUsageThreadDetail({
               messages={adaptedTrace.messages}
               model={resolvedModel}
               toolRenderOverrides={bridgeToolRenderOverrides(
-                adaptedTrace.toolRenderOverrides,
+                adaptedTrace.toolRenderOverrides
               )}
               reasoningDisplayMode={reasoningDisplayMode}
               widgetPolicy="placeholder"

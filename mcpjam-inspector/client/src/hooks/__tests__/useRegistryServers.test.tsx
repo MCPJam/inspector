@@ -21,6 +21,10 @@ vi.mock("@/lib/apis/registry-http", () => ({
   mergeGuestRegistryStars: vi.fn(),
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
+}));
+
 vi.mock("sonner", () => ({
   toast: { error: vi.fn() },
 }));

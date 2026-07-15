@@ -5,25 +5,28 @@ import {
   type ListToolsResultWithMetadata,
 } from "@/lib/apis/mcp-tools-api";
 import { evaluateAllHosts, type HostCompatEvaluation } from "./engine";
+import { useHostCatalog } from "./use-host-catalog";
 import { useWidgetUsage } from "./use-widget-usage";
+import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { filterReportsByFeatureFlags } from "./feature-visibility";
 
 const TOOLS_FETCH_MAX_ATTEMPTS = 3;
 
 /**
- * Compat reports for one server, for surfaces that don't already hold a
- * tools list (the server card strip). Fetches tools per connection so the
- * widget findings can be derived. Surfaces that already fetched tools (the
- * detail modal) should call `evaluateAllHosts` directly instead.
- *
- * A transient `listTools` failure is retried with backoff so the strip
- * doesn't get stuck advertising "unknown" widgets while the detail modal's
- * own fetch succeeds. Only after the retries are exhausted does the widget
- * dimension stay unknown (the engine reports that gap honestly).
+ * Fetch a connected server's tools (+ metadata) for surfaces that don't
+ * already hold the list — the server card strip and the standalone
+ * Compatibility page. A transient `listTools` failure is retried with linear
+ * backoff so the surface doesn't get stuck on "unknown" widgets; only after
+ * every attempt fails does the widget dimension stay unknown (the engine
+ * reports that gap honestly). Returns `null` until the first fetch resolves,
+ * and for a disconnected/absent server.
  */
-export function useHostCompatReports(
-  server: ServerWithName,
-): HostCompatEvaluation {
-  const isConnected = server.connectionStatus === "connected";
+export function useServerToolsData(
+  server: ServerWithName | null,
+): ListToolsResultWithMetadata | null {
+  const isConnected = server?.connectionStatus === "connected";
+  const serverName = server?.name;
   const [toolsData, setToolsData] =
     useState<ListToolsResultWithMetadata | null>(null);
 
@@ -34,12 +37,12 @@ export function useHostCompatReports(
     // (server.name change) never evaluates widgets against stale metadata
     // while the new fetch is in flight.
     setToolsData(null);
-    if (!isConnected) {
+    if (!isConnected || !serverName) {
       return;
     }
 
     const attempt = (tries: number) => {
-      listTools({ serverId: server.name })
+      listTools({ serverId: serverName })
         .then((result) => {
           if (!cancelled) setToolsData(result);
         })
@@ -58,12 +61,48 @@ export function useHostCompatReports(
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [isConnected, server.name]);
+  }, [isConnected, serverName]);
 
+  return toolsData;
+}
+
+/**
+ * Compat reports for one server, for surfaces that don't already hold a
+ * tools list (the server card strip). Surfaces that already fetched tools
+ * (the detail modal) should call `evaluateAllHosts` directly instead.
+ */
+export function useHostCompatReports(
+  server: ServerWithName,
+): HostCompatEvaluation {
+  const toolsData = useServerToolsData(server);
   const widgetUsage = useWidgetUsage(server.name, toolsData);
+  // Live catalog in the deps: verdicts render immediately from the bundled
+  // catalog, then recompute once the live fetch lands.
+  const catalogState = useHostCatalog();
+  const claudeCodeEnabled = useClaudeCodeHostEnabled();
+  const codexEnabled = useCodexHostEnabled();
 
-  return useMemo(
-    () => evaluateAllHosts(toolsData, widgetUsage),
-    [toolsData, widgetUsage],
-  );
+  const protocolVersion = server.initializationInfo?.protocolVersion;
+  return useMemo(() => {
+    const evaluation = evaluateAllHosts(
+      toolsData,
+      widgetUsage,
+      { protocolVersion },
+      catalogState?.catalog
+    );
+    return {
+      ...evaluation,
+      reports: filterReportsByFeatureFlags(evaluation.reports, {
+        claudeCode: claudeCodeEnabled,
+        codex: codexEnabled,
+      }),
+    };
+  }, [
+    toolsData,
+    widgetUsage,
+    protocolVersion,
+    catalogState,
+    claudeCodeEnabled,
+    codexEnabled,
+  ]);
 }

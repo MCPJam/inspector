@@ -1889,15 +1889,13 @@ async function readHostedOAuthSessionProgress(input: {
 }
 
 /**
- * Simple localStorage-based OAuth provider for MCP
+ * Browser OAuth provider for MCP
  */
 /**
  * Optional Convex binding threaded through to `saveTokens` so that — in local
  * mode — pre-exchanged OAuth tokens get imported into the Convex
  * `hostedOAuthCredentials` store via `/api/web/oauth/import-tokens`. Without
- * a binding, `saveTokens` falls back to localStorage-only (legacy behaviour),
- * which is the right path for brand-new servers that haven't been synced to
- * Convex yet — the resolver path also falls back in that case.
+ * a binding, `saveTokens` rejects instead of storing tokens in localStorage.
  *
  * `kind` is `"registry"` iff BOTH `registryServerId` AND `useRegistryOAuthProxy`
  * are set on the originating flow; a stored `registryServerId` alone does not
@@ -2086,7 +2084,14 @@ export class MCPOAuthProvider implements OAuthClientProvider {
 
   tokens() {
     const stored = localStorage.getItem(`mcp-tokens-${this.serverName}`);
-    return stored ? JSON.parse(stored) : undefined;
+    if (!stored) {
+      return undefined;
+    }
+    try {
+      return JSON.parse(stored);
+    } catch {
+      return undefined;
+    }
   }
 
   async saveTokens(tokens: any) {
@@ -2094,60 +2099,62 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       return;
     }
 
-    localStorage.setItem(
-      `mcp-tokens-${this.serverName}`,
-      JSON.stringify(tokens)
-    );
-
-    // Local mode: also persist tokens into Convex `hostedOAuthCredentials` so
-    // that the resolver path (/web/authorize-batch-local) can serve them on
-    // subsequent /api/mcp/connect calls. Without this, OAuth-protected servers
-    // either 401 on the resolver path or fall through to the legacy
-    // {serverConfig} body. localStorage stays the source for in-memory
-    // refresh until Slice 2b purges it.
     const normalizedTokens = normalizeImportHostedOAuthTokens(tokens);
-    if (this.convexBinding && normalizedTokens) {
-      const stored = await this.clientInformation();
-      const clientId = (stored?.client_id as string | undefined) ?? this.customClientId;
-      if (!clientId) {
-        // No clientId means we can't write a usable record; bail loudly so
-        // the OAuth-completion error surfaces in the UI rather than 401ing
-        // silently on the next connect.
-        throw new Error(
-          "OAuth client information missing client_id; cannot import tokens to Convex"
-        );
-      }
-      const clientSecret =
-        (stored?.client_secret as string | undefined) ?? this.customClientSecret;
-      // Forward the AS URL we discovered locally so the hosted backend can
-      // persist a refresh fallback for servers it can't reach (e.g. localhost);
-      // without it, the backend re-discovers against an unreachable resource on
-      // refresh and the credential becomes unusable.
-      const authorizationServerUrl =
-        this.discoveryState()?.authorizationServerUrl;
-      const importPayload: ImportHostedOAuthTokensRequest = {
-        projectId: this.convexBinding.projectId,
-        serverId: this.convexBinding.serverId,
-        serverUrl: this.serverUrl,
-        ...(this.convexBinding.oauthResourceUrl
-          ? { oauthResourceUrl: this.convexBinding.oauthResourceUrl }
-          : {}),
-        ...(authorizationServerUrl ? { authorizationServerUrl } : {}),
-        kind: this.convexBinding.kind,
-        ...(this.convexBinding.registryServerId
-          ? { registryServerId: this.convexBinding.registryServerId }
-          : {}),
-        ...(this.convexBinding.useRegistryOAuthProxy
-          ? { useRegistryOAuthProxy: this.convexBinding.useRegistryOAuthProxy }
-          : {}),
-        clientInformation: {
-          clientId,
-          ...(clientSecret ? { clientSecret } : {}),
-        },
-        tokens: normalizedTokens,
-      };
-      await importHostedOAuthTokens(importPayload);
+    if (!normalizedTokens) {
+      localStorage.removeItem(`mcp-tokens-${this.serverName}`);
+      throw new Error(
+        "OAuth token response missing access_token; cannot import tokens to Convex"
+      );
     }
+    if (!this.convexBinding) {
+      localStorage.removeItem(`mcp-tokens-${this.serverName}`);
+      throw new Error(
+        "OAuth server is not synced; cannot store tokens securely"
+      );
+    }
+
+    const stored = await this.clientInformation();
+    const clientId =
+      (stored?.client_id as string | undefined) ?? this.customClientId;
+    if (!clientId) {
+      localStorage.removeItem(`mcp-tokens-${this.serverName}`);
+      // No clientId means we can't write a usable record; bail loudly so
+      // the OAuth-completion error surfaces in the UI rather than 401ing
+      // silently on the next connect.
+      throw new Error(
+        "OAuth client information missing client_id; cannot import tokens to Convex"
+      );
+    }
+    const clientSecret =
+      (stored?.client_secret as string | undefined) ?? this.customClientSecret;
+    // Forward the AS URL we discovered locally so the hosted backend can
+    // persist a refresh fallback for servers it can't reach (e.g. localhost);
+    // without it, the backend re-discovers against an unreachable resource on
+    // refresh and the credential becomes unusable.
+    const authorizationServerUrl = this.discoveryState()?.authorizationServerUrl;
+    const importPayload: ImportHostedOAuthTokensRequest = {
+      projectId: this.convexBinding.projectId,
+      serverId: this.convexBinding.serverId,
+      serverUrl: this.serverUrl,
+      ...(this.convexBinding.oauthResourceUrl
+        ? { oauthResourceUrl: this.convexBinding.oauthResourceUrl }
+        : {}),
+      ...(authorizationServerUrl ? { authorizationServerUrl } : {}),
+      kind: this.convexBinding.kind,
+      ...(this.convexBinding.registryServerId
+        ? { registryServerId: this.convexBinding.registryServerId }
+        : {}),
+      ...(this.convexBinding.useRegistryOAuthProxy
+        ? { useRegistryOAuthProxy: this.convexBinding.useRegistryOAuthProxy }
+        : {}),
+      clientInformation: {
+        clientId,
+        ...(clientSecret ? { clientSecret } : {}),
+      },
+      tokens: normalizedTokens,
+    };
+    await importHostedOAuthTokens(importPayload);
+    localStorage.removeItem(`mcp-tokens-${this.serverName}`);
   }
 
   prepareTokenRequest() {
@@ -2320,7 +2327,7 @@ const oauthBindingStorage = {
         JSON.stringify(binding)
       );
     } catch {
-      // best-effort — saveTokens still writes to localStorage; the only
+      // best-effort — if the persisted binding is missing, the only
       // downside of a missed persist is that the post-redirect callback
       // can't import to Convex and the user re-OAuths after expiry.
     }
@@ -2342,8 +2349,8 @@ const oauthBindingStorage = {
  * `initiateOAuth` time); falls back to the localStorage-persisted binding
  * written at initiation so post-redirect callbacks can still resolve the
  * mapping while `getProjectServers` is still loading. Returns undefined
- * only when both lookups fail (server not yet synced to Convex), in which
- * case `saveTokens` falls back to localStorage-only.
+ * only when both lookups fail; `saveTokens` treats that as an unsafe token
+ * storage path and rejects.
  */
 function buildConvexBindingForServer(input: {
   serverName: string;
@@ -3325,7 +3332,7 @@ export async function handleOAuthCallback(
       message: "Authorization code exchange succeeded.",
     });
     completeOAuthTraceStep(callbackTrace, "received_access_token", {
-      message: "OAuth tokens were stored locally.",
+      message: "OAuth tokens were stored securely.",
     });
     completeOAuthTraceStep(callbackTrace, "complete", {
       message: "OAuth callback completed successfully.",
@@ -3393,26 +3400,12 @@ export function getStoredTokensState(serverName: string): StoredTokensState {
     return { tokens: undefined, isInvalid: false };
   }
   const tokens = localStorage.getItem(`mcp-tokens-${serverName}`);
-  const clientInfo = localStorage.getItem(`mcp-client-${serverName}`);
   // TODO: Maybe we should move clientID away from the token info? Not sure if clientID is bonded to token
   if (!tokens) return { tokens: undefined, isInvalid: false };
 
   try {
     const tokensJson = JSON.parse(tokens);
-    const clientJson = clientInfo ? JSON.parse(clientInfo) : {};
-    if (
-      clientJson &&
-      typeof clientJson === "object" &&
-      "client_secret" in clientJson
-    ) {
-      const sanitizedClientInfo = Object.fromEntries(
-        Object.entries(clientJson).filter(([key]) => key !== "client_secret")
-      );
-      localStorage.setItem(
-        `mcp-client-${serverName}`,
-        JSON.stringify(sanitizedClientInfo)
-      );
-    }
+    const clientJson = readStoredClientInformation(serverName);
 
     // Merge tokens with client_id from client information
     return {
@@ -3568,7 +3561,7 @@ export async function refreshOAuthTokens(
       message: "Refresh token exchange succeeded.",
     });
     completeOAuthTraceStep(trace, "received_access_token", {
-      message: "Refreshed OAuth tokens were stored locally.",
+      message: "Refreshed OAuth tokens were stored securely.",
     });
     completeOAuthTraceStep(trace, "complete", {
       message: "OAuth token refresh completed successfully.",

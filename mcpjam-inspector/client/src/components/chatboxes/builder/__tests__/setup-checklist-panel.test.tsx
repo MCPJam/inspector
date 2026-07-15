@@ -161,7 +161,7 @@ describe("SetupChecklistPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Access/i }));
     expect(
-      screen.getByText(/Save the chatbox to invite people by email/i),
+      screen.getByText(/Save the swarm to invite people by email/i),
     ).toBeInTheDocument();
     const emailInput = screen.getByLabelText(/email address/i);
     expect(emailInput).toBeDisabled();

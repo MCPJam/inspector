@@ -196,7 +196,7 @@ function baseOptions() {
     runId: "run-1",
     chatboxId: "chatbox-1",
     projectId: "proj-1",
-    personas: [{ id: "p1", name: "Persona One", role: "tester" }],
+    personas: [{ id: "p1", name: "Persona One", role: "tester", notes: "" }],
     sessionsPerPersona: 1,
     maxTurns: 3,
     modelId: "anthropic/claude-haiku-4.5",
@@ -300,6 +300,8 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
     expect(createBrowserSessionContextMock.mock.calls[0]![0]).toMatchObject({
       model: "anthropic/claude-haiku-4.5",
       logScope: "sessionSimulation",
+      // Session simulation is the one surface that opts into Computer Use.
+      enableComputerUse: true,
     });
 
     // Per-turn hygiene runs BEFORE the engine; dispose runs at session end.
@@ -400,6 +402,61 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
     expect((artifactCall![1] as any).browserInteractionSteps).toBeUndefined();
   });
 
+  it("passes chatbox computer resources to the built-in tool resolver", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: false });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+
+    await startSimulation({
+      ...baseOptions(),
+      builtInToolIds: ["bash"],
+      computer: { kind: "personal", workdir: "/workspace" },
+      requireToolApproval: true,
+    });
+
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(Object.keys(prepareOpts.builtInTools ?? {})).toEqual(["bash"]);
+    expect(prepareOpts.builtInTools.bash).toBeDefined();
+  });
+
+  it("wires Cloud Skills on the emulated synthetic path (member, no harness)", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: false });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+
+    await startSimulation({ ...baseOptions() });
+
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(prepareOpts.cloudSkills).toEqual({
+      authHeader: "Bearer token",
+      projectId: "proj-1",
+    });
+  });
+
+  it("omits Cloud Skills tools on the harness path (delivered natively)", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: false });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+
+    // claude-code + an MCPJam-provided model ⇒ the turn runs the real harness,
+    // which writes skills into the sandbox itself; the emulated listSkills/
+    // loadSkill tools must NOT also be advertised.
+    await startSimulation({ ...baseOptions(), harness: "claude-code" });
+
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(prepareOpts.cloudSkills).toBeUndefined();
+  });
+
+  it("omits Cloud Skills under tool approval (headless can't approve)", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: false });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+
+    // A synthetic visitor can't grant approval; the local-BYOK path fail-closes
+    // on any non-empty tool set, so the always-present listSkills/loadSkill
+    // meta-tools must not be injected when requireToolApproval is on.
+    await startSimulation({ ...baseOptions(), requireToolApproval: true });
+
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(prepareOpts.cloudSkills).toBeUndefined();
+  });
+
   it("disposes the context when the turn throws (session failure path)", async () => {
     const fake = buildFakeBrowserContext({ computerUse: true });
     createBrowserSessionContextMock.mockReturnValue(fake);
@@ -410,6 +467,31 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
     expect(fake.dispose).toHaveBeenCalledTimes(1);
     // The failed session is counted, not thrown out of the batch loop.
     expect(updateRunMock).toHaveBeenCalled();
+  });
+
+  it("routes a rate-limit turn error to the rate_limited outcome (shared classifyTurnFailure)", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: true });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+    // A spend-cap / rate-limit error from the turn must fold into the amber
+    // `rate_limited` outcome via the shared `classifyTurnFailure`, not `failed`.
+    runAssistantTurnMock.mockRejectedValue(
+      new Error("Daily spend cap reached for free models"),
+    );
+
+    await startSimulation(baseOptions());
+
+    // runOneSession → catch → classifyTurnFailure("...cap...") === "rate_limited"
+    // → tryUpdateRunWithRetry with a { rateLimited: 1 } delta.
+    const rateLimitedProgress = updateRunMock.mock.calls.some(
+      (call) => (call[4] as { rateLimited?: number })?.rateLimited === 1,
+    );
+    expect(rateLimitedProgress).toBe(true);
+    // Whole batch tripped the cap (no successes, no hard failures) → terminal
+    // status is rate_limited.
+    const terminalRateLimited = updateRunMock.mock.calls.some(
+      (call) => call[5] === "rate_limited",
+    );
+    expect(terminalRateLimited).toBe(true);
   });
 
   it("skips the artifact mutation when a turn drained nothing", async () => {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { usePostHog } from "posthog-js/react";
-import { useAuth } from "@workos-inc/authkit-react";
-import { toast } from "sonner";
+import { track } from "@/lib/analytics";
+import { authFetch } from "@/lib/session-token";
+import { toast } from "@/lib/toast";
 import { AlertTriangle, Loader2, Sparkles } from "lucide-react";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
 import { isMCPJamProvidedModel } from "@/shared/types";
@@ -17,15 +17,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import {
+  PersonaCard,
+  usePersonaRoster,
+  useSortedRoster,
+} from "@/components/chatboxes/personas";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:6274";
+// Mirrors the backend MAX_PERSONA_COUNT and the /start `.max(10)` validator.
+const MAX_PERSONAS = 10;
 
 interface PersonaSlate {
   id: string;
   name: string;
   role: string;
   notes: string;
+  /** Gradable objective (Phase 3); snapshotted into the run + driver prompt. */
+  goal?: string;
+  /** Durable roster row id; stamped onto the synthetic session at ingestion. */
+  personaRefId?: string;
 }
 
 interface PersonaEditState extends PersonaSlate {
@@ -43,23 +52,27 @@ interface RunStatus {
   error?: string;
 }
 
-
 type DialogStage = "configure" | "review" | "running";
 
 interface GenerateSessionsDialogProps {
   isOpen: boolean;
   onClose: () => void;
   chatbox: ChatboxSettings;
+  /**
+   * Phase 2: when launched from the Personas tab "Run swarm" with characters
+   * already selected, the dialog opens straight at the Review stage seeded with
+   * these personas (skipping roster selection / generation). The `/start`
+   * payload is unchanged — these flow through as inline personas.
+   */
+  initialPersonas?: PersonaSlate[];
 }
 
 export function GenerateSessionsDialog({
   isOpen,
   onClose,
   chatbox,
+  initialPersonas,
 }: GenerateSessionsDialogProps) {
-  const { getAccessToken } = useAuth();
-  const posthog = usePostHog();
-
   const [stage, setStage] = useState<DialogStage>("configure");
   const [personaCount, setPersonaCount] = useState(3);
   const [sessionsPerPersona, setSessionsPerPersona] = useState(2);
@@ -70,6 +83,9 @@ export function GenerateSessionsDialog({
   const [running, setRunning] = useState<RunStatus | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
+  // Stage 1 roster selection (Phase 2).
+  const [rosterSelected, setRosterSelected] = useState<Set<string>>(new Set());
+  const roster = useSortedRoster(usePersonaRoster(chatbox.chatboxId));
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const runStartAt = useRef<number>(0);
   // Guards `chatbox_simulate_sessions_completed` against firing more than
@@ -77,6 +93,11 @@ export function GenerateSessionsDialog({
   // Ref (not state) so the guard is checked synchronously inside the poll
   // callback without depending on a re-render.
   const completionAnalyticsFired = useRef(false);
+  // Seed the preselected personas exactly once per open cycle. Without this,
+  // a Convex roster refetch (or any new `initialPersonas` array identity) while
+  // the dialog is open would re-run the effect and snap the stage back to
+  // "review" — clobbering an in-progress run, the "Back" navigation, or edits.
+  const seededForOpenRef = useRef(false);
 
   useEffect(() => {
     if (!isOpen) {
@@ -86,13 +107,26 @@ export function GenerateSessionsDialog({
       setRunId(null);
       setPollError(null);
       setStarting(false);
+      setRosterSelected(new Set());
       completionAnalyticsFired.current = false;
+      seededForOpenRef.current = false;
       if (pollTimer.current) {
         clearInterval(pollTimer.current);
         pollTimer.current = null;
       }
+      return;
     }
-  }, [isOpen]);
+    // Opened from "Run swarm" with characters preselected — seed Review once.
+    if (
+      !seededForOpenRef.current &&
+      initialPersonas &&
+      initialPersonas.length > 0
+    ) {
+      seededForOpenRef.current = true;
+      setPersonas(initialPersonas.map((p) => ({ ...p, selected: true })));
+      setStage("review");
+    }
+  }, [isOpen, initialPersonas]);
 
   // Server selection lives on the backend: the dialog forwards the full
   // chatbox server list and the start route filters optionals out so the
@@ -106,13 +140,23 @@ export function GenerateSessionsDialog({
   }));
   const hasRequiredServers = serversPayload.some((s) => !s.optional);
 
+  // An unpinned host persists modelId "" — synthetic sessions have no
+  // visitor picker to fall back to (unlike interactive chat), so the run
+  // is doomed before it starts. Gate both action buttons and show the
+  // fix-it notice instead of letting the user sail into a run where every
+  // session fails. The /start route enforces the same guard server-side.
+  const hasNoModel = !chatbox.modelId.trim();
+
   // BYOK is now supported on synthetic runs — the runner dispatches
   // org-BYOK models through /stream/org (or local-usage writeback) and
   // the backend forwarder stamps synthesisRunId onto the resulting
   // llmUsageRecord. The flag is kept to (a) show a spend-warning
   // notice so users know provider credits will be consumed, and (b)
-  // render the rough cost preview below.
-  const isByokChatbox = !isMCPJamProvidedModel(chatbox.modelId);
+  // render the rough cost preview below. A modelless chatbox is NOT
+  // BYOK — without the hasNoModel exclusion, isMCPJamProvidedModel("")
+  // → false used to show the org-key spend warning for a chatbox that
+  // has no model at all.
+  const isByokChatbox = !hasNoModel && !isMCPJamProvidedModel(chatbox.modelId);
 
   // Rough cost estimate (not an upper bound — uses a single blended
   // midpoint rate with no safety multiplier, so it can under-estimate
@@ -124,7 +168,8 @@ export function GenerateSessionsDialog({
   const ESTIMATED_USD_PER_1K_TOKENS = 0.005; // coarse blended midpoint
   const totalTurnsUpperBound = personaCount * sessionsPerPersona * maxTurns;
   const estimatedCostUsd =
-    (totalTurnsUpperBound * ESTIMATED_TOKENS_PER_TURN *
+    (totalTurnsUpperBound *
+      ESTIMATED_TOKENS_PER_TURN *
       ESTIMATED_USD_PER_1K_TOKENS) /
     1000;
   const formatUsd = (value: number): string => {
@@ -133,46 +178,62 @@ export function GenerateSessionsDialog({
     return `$${value.toFixed(2)}`;
   };
 
-  async function authHeader(): Promise<Record<string, string>> {
-    const token = await getAccessToken();
-    return token ? { Authorization: `Bearer ${token}` } : {};
+  // Personas marked to actually run in the Review stage; the /start endpoint
+  // caps this at MAX_PERSONAS, so the Run button guards on it.
+  const selectedReviewCount = personas.filter((p) => p.selected).length;
+
+  function handleUseRoster() {
+    const chosen = (roster ?? []).filter((p) => rosterSelected.has(p._id));
+    if (chosen.length === 0 || chosen.length > MAX_PERSONAS) return;
+    setPersonas(
+      chosen.map((p) => ({
+        id: p.personaId,
+        name: p.name,
+        role: p.role,
+        notes: p.notes,
+        ...(p.goal ? { goal: p.goal } : {}),
+        personaRefId: p._id,
+        selected: true,
+      }))
+    );
+    setStage("review");
   }
 
   async function handleGenerate() {
     setGenerating(true);
-    posthog.capture("chatbox_generate_personas_started", {
-      ...standardEventProps("chatbox_usage_panel"),
+    track("chatbox_generate_personas_started", {
+      location: "chatbox_usage_panel",
       chatbox_id: chatbox.chatboxId,
       persona_count: personaCount,
     });
     try {
-      const response = await fetch(
-        `${API_BASE}/api/web/chatboxes/${chatbox.chatboxId}/generate-personas`,
+      // Same-origin relative path via authFetch: the Vite dev proxy forwards
+      // `/api` locally, and authFetch attaches the right bearer (WorkOS,
+      // guest, or local session) only to allowlisted origins.
+      const response = await authFetch(
+        `/api/web/chatboxes/${encodeURIComponent(
+          chatbox.chatboxId
+        )}/generate-personas`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(await authHeader()),
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             projectId: chatbox.projectId,
             servers: serversPayload,
             personaCount,
             chatboxName: chatbox.name,
           }),
-        },
+        }
       );
       if (!response.ok) {
         const text = await response.text();
         throw new Error(text);
       }
       const data = (await response.json()) as { personas: PersonaSlate[] };
-      setPersonas(
-        data.personas.map((p) => ({ ...p, selected: true })),
-      );
+      setPersonas(data.personas.map((p) => ({ ...p, selected: true })));
       setStage("review");
-      posthog.capture("chatbox_generate_personas_completed", {
-        ...standardEventProps("chatbox_usage_panel"),
+      track("chatbox_generate_personas_completed", {
+        location: "chatbox_usage_panel",
         chatbox_id: chatbox.chatboxId,
         persona_count: data.personas.length,
         success: true,
@@ -181,8 +242,8 @@ export function GenerateSessionsDialog({
       const message =
         error instanceof Error ? error.message : "Failed to generate personas";
       toast.error(message);
-      posthog.capture("chatbox_generate_personas_completed", {
-        ...standardEventProps("chatbox_usage_panel"),
+      track("chatbox_generate_personas_completed", {
+        location: "chatbox_usage_panel",
         chatbox_id: chatbox.chatboxId,
         persona_count: personaCount,
         success: false,
@@ -203,14 +264,13 @@ export function GenerateSessionsDialog({
     runStartAt.current = Date.now();
     setStarting(true);
     try {
-      const response = await fetch(
-        `${API_BASE}/api/web/chatboxes/${chatbox.chatboxId}/simulate-sessions/start`,
+      const response = await authFetch(
+        `/api/web/chatboxes/${encodeURIComponent(
+          chatbox.chatboxId
+        )}/simulate-sessions/start`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(await authHeader()),
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             projectId: chatbox.projectId,
             servers: serversPayload,
@@ -218,7 +278,7 @@ export function GenerateSessionsDialog({
             sessionsPerPersona,
             maxTurns,
           }),
-        },
+        }
       );
       if (!response.ok) {
         const text = await response.text();
@@ -226,8 +286,8 @@ export function GenerateSessionsDialog({
       }
       const data = (await response.json()) as { runId: string };
       setRunId(data.runId);
-      posthog.capture("chatbox_simulate_sessions_started", {
-        ...standardEventProps("chatbox_usage_panel"),
+      track("chatbox_simulate_sessions_started", {
+        location: "chatbox_usage_panel",
         chatbox_id: chatbox.chatboxId,
         run_id: data.runId,
         selected_persona_count: selected.length,
@@ -257,14 +317,13 @@ export function GenerateSessionsDialog({
     if (pollTimer.current) clearInterval(pollTimer.current);
     pollTimer.current = setInterval(async () => {
       try {
-        const response = await fetch(
-          `${API_BASE}/api/web/chatboxes/${chatbox.chatboxId}/simulate-sessions/${runId}?projectId=${encodeURIComponent(chatbox.projectId)}`,
-          {
-            method: "GET",
-            headers: {
-              ...(await authHeader()),
-            },
-          },
+        const response = await authFetch(
+          `/api/web/chatboxes/${encodeURIComponent(
+            chatbox.chatboxId
+          )}/simulate-sessions/${encodeURIComponent(
+            runId
+          )}?projectId=${encodeURIComponent(chatbox.projectId)}`,
+          { method: "GET" }
         );
         if (!response.ok) {
           setPollError(`Last update failed (${response.status})`);
@@ -284,8 +343,8 @@ export function GenerateSessionsDialog({
           }
           if (!completionAnalyticsFired.current) {
             completionAnalyticsFired.current = true;
-            posthog.capture("chatbox_simulate_sessions_completed", {
-              ...standardEventProps("chatbox_usage_panel"),
+            track("chatbox_simulate_sessions_completed", {
+              location: "chatbox_usage_panel",
               chatbox_id: chatbox.chatboxId,
               run_id: runId,
               sessions_created: data.run.summary.succeeded,
@@ -309,14 +368,14 @@ export function GenerateSessionsDialog({
     };
     // `chatbox.projectId` is read inside the poll URL; include it so a
     // (rare) projectId swap on the same chatboxId doesn't stale-close.
-  }, [runId, isOpen, chatbox.chatboxId, chatbox.projectId, posthog]);
+  }, [runId, isOpen, chatbox.chatboxId, chatbox.projectId]);
 
   function updatePersona(
     index: number,
-    patch: Partial<PersonaEditState>,
+    patch: Partial<PersonaEditState>
   ): void {
     setPersonas((prev) =>
-      prev.map((p, i) => (i === index ? { ...p, ...patch } : p)),
+      prev.map((p, i) => (i === index ? { ...p, ...patch } : p))
     );
   }
 
@@ -336,6 +395,69 @@ export function GenerateSessionsDialog({
 
         {stage === "configure" ? (
           <div className="space-y-4">
+            {hasNoModel ? (
+              <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  This chatbox&apos;s client has no model selected. Pick a model
+                  on the client&apos;s Behavior tab, then come back to run
+                  sessions.
+                </span>
+              </div>
+            ) : null}
+            {/* Stage 1 — roster selection. Pick saved characters to run, or
+                generate a fresh slate below. */}
+            {roster && roster.length > 0 ? (
+              <div className="space-y-2">
+                <Label>Run saved characters</Label>
+                <div className="grid max-h-[240px] grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                  {roster.map((persona) => (
+                    <PersonaCard
+                      key={persona._id}
+                      persona={persona}
+                      selected={rosterSelected.has(persona._id)}
+                      onToggle={() =>
+                        setRosterSelected((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(persona._id)) next.delete(persona._id);
+                          else next.add(persona._id);
+                          return next;
+                        })
+                      }
+                    />
+                  ))}
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    {rosterSelected.size} selected
+                    {rosterSelected.size > MAX_PERSONAS ? (
+                      <span className="ml-1 text-amber-600 dark:text-amber-400">
+                        · max {MAX_PERSONAS}
+                      </span>
+                    ) : null}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={
+                      rosterSelected.size === 0 ||
+                      rosterSelected.size > MAX_PERSONAS
+                    }
+                    onClick={handleUseRoster}
+                  >
+                    Review selected ({rosterSelected.size})
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <div className="h-px flex-1 bg-border" />
+                  <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    or generate new
+                  </span>
+                  <div className="h-px flex-1 bg-border" />
+                </div>
+              </div>
+            ) : null}
+
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1">
                 <Label htmlFor="persona-count">Personas</Label>
@@ -347,7 +469,7 @@ export function GenerateSessionsDialog({
                   value={personaCount}
                   onChange={(e) =>
                     setPersonaCount(
-                      Math.max(1, Math.min(10, Number(e.target.value) || 1)),
+                      Math.max(1, Math.min(10, Number(e.target.value) || 1))
                     )
                   }
                 />
@@ -362,7 +484,7 @@ export function GenerateSessionsDialog({
                   value={sessionsPerPersona}
                   onChange={(e) =>
                     setSessionsPerPersona(
-                      Math.max(1, Math.min(5, Number(e.target.value) || 1)),
+                      Math.max(1, Math.min(5, Number(e.target.value) || 1))
                     )
                   }
                 />
@@ -377,7 +499,7 @@ export function GenerateSessionsDialog({
                   value={maxTurns}
                   onChange={(e) =>
                     setMaxTurns(
-                      Math.max(1, Math.min(20, Number(e.target.value) || 1)),
+                      Math.max(1, Math.min(20, Number(e.target.value) || 1))
                     )
                   }
                 />
@@ -404,9 +526,9 @@ export function GenerateSessionsDialog({
                   </div>
                   <div className="mt-1 text-[11px] opacity-80">
                     {totalTurnsUpperBound} turns ({personaCount} ×{" "}
-                    {sessionsPerPersona} × {maxTurns}) at a coarse blended
-                    rate. Actuals depend on the model and conversation
-                    length and can vary above this number.
+                    {sessionsPerPersona} × {maxTurns}) at a coarse blended rate.
+                    Actuals depend on the model and conversation length and can
+                    vary above this number.
                   </div>
                 </div>
               </>
@@ -436,7 +558,10 @@ export function GenerateSessionsDialog({
               <Button
                 size="sm"
                 onClick={handleGenerate}
-                disabled={generating}
+                // hasNoModel: persona generation itself would succeed (it
+                // runs on the backend's own LLM), but the subsequent run
+                // can't — block here so the user isn't led into a dead end.
+                disabled={generating || hasNoModel}
               >
                 {generating ? (
                   <>
@@ -452,12 +577,54 @@ export function GenerateSessionsDialog({
 
         {stage === "review" ? (
           <div className="space-y-3">
+            {/* No-model notice — also shown here because the Personas-tab
+                "Run swarm" path opens straight at Review, bypassing the
+                configure-stage notice. */}
+            {hasNoModel ? (
+              <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  This chatbox&apos;s client has no model selected. Pick a model
+                  on the client&apos;s Behavior tab, then come back to run
+                  sessions.
+                </span>
+              </div>
+            ) : null}
+            {/* BYOK spend warning — also shown here because the Personas-tab
+                "Run swarm" path opens straight at Review, bypassing the
+                configure-stage warning. */}
+            {isByokChatbox ? (
+              <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  This chatbox uses your organization&apos;s model key. Running
+                  these sessions will consume your provider credits (~
+                  {formatUsd(
+                    (selectedReviewCount *
+                      sessionsPerPersona *
+                      maxTurns *
+                      ESTIMATED_TOKENS_PER_TURN *
+                      ESTIMATED_USD_PER_1K_TOKENS) /
+                      1000
+                  )}
+                  ).
+                </span>
+              </div>
+            ) : null}
+            {/* Approval-mode warning — also surfaced here so the Personas-tab
+                "Run swarm" path doesn't bypass the configure-stage notice. */}
+            {chatbox.requireToolApproval ? (
+              <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  Synthetic sessions cannot exercise approval-required tools.
+                  The persona will only see meta/discovery tools.
+                </span>
+              </div>
+            ) : null}
             <div className="grid max-h-[400px] grid-cols-1 gap-2 overflow-y-auto pr-1">
               {personas.map((persona, index) => (
-                <div
-                  key={persona.id}
-                  className="rounded-md border p-3 text-sm"
-                >
+                <div key={persona.id} className="rounded-md border p-3 text-sm">
                   <div className="flex items-start gap-2">
                     <Checkbox
                       checked={persona.selected}
@@ -496,7 +663,7 @@ export function GenerateSessionsDialog({
                 </div>
               ))}
             </div>
-            <div className="flex justify-between">
+            <div className="flex items-center justify-between gap-2">
               <Button
                 variant="ghost"
                 size="sm"
@@ -504,15 +671,31 @@ export function GenerateSessionsDialog({
               >
                 Back
               </Button>
-              <Button size="sm" onClick={handleRun} disabled={starting}>
-                {starting ? (
-                  <>
-                    <Loader2 className="mr-1 size-3 animate-spin" /> Starting
-                  </>
-                ) : (
-                  "Run simulation"
-                )}
-              </Button>
+              <div className="flex items-center gap-2">
+                {selectedReviewCount > MAX_PERSONAS ? (
+                  <span className="text-[11px] text-amber-600 dark:text-amber-400">
+                    Select at most {MAX_PERSONAS}
+                  </span>
+                ) : null}
+                <Button
+                  size="sm"
+                  onClick={handleRun}
+                  disabled={
+                    starting ||
+                    hasNoModel ||
+                    selectedReviewCount === 0 ||
+                    selectedReviewCount > MAX_PERSONAS
+                  }
+                >
+                  {starting ? (
+                    <>
+                      <Loader2 className="mr-1 size-3 animate-spin" /> Starting
+                    </>
+                  ) : (
+                    "Run simulation"
+                  )}
+                </Button>
+              </div>
             </div>
           </div>
         ) : null}
@@ -530,15 +713,16 @@ export function GenerateSessionsDialog({
                 {running.status === "running"
                   ? "Running…"
                   : running.status === "completed"
-                    ? "Done"
-                    : running.status === "partial"
-                      ? "Completed partially"
-                      : running.status === "rate_limited"
-                        ? "Rate-limited — budget reached"
-                        : "Failed"}
+                  ? "Done"
+                  : running.status === "partial"
+                  ? "Completed partially"
+                  : running.status === "rate_limited"
+                  ? "Rate-limited — budget reached"
+                  : "Failed"}
               </p>
               <p className="text-xs text-muted-foreground">
-                {running.summary.succeeded + running.summary.failed +
+                {running.summary.succeeded +
+                  running.summary.failed +
                   running.summary.rateLimited}{" "}
                 / {running.summary.total} sessions
                 {running.summary.failed > 0
@@ -569,8 +753,8 @@ export function GenerateSessionsDialog({
                 {running.status !== "running"
                   ? "View sessions"
                   : pollError
-                    ? "Close"
-                    : "Working…"}
+                  ? "Close"
+                  : "Working…"}
               </Button>
             </div>
           </div>

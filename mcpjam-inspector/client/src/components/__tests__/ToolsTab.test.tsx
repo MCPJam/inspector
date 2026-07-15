@@ -15,6 +15,7 @@ vi.mock("posthog-js/react", () => ({
     capture: vi.fn(),
   }),
 }));
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 // Mock the APIs
 const mockListTools = vi.fn();
