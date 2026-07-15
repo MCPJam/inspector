@@ -412,6 +412,33 @@ const healthCheckSchema = z.object({
   url: z.string().trim().min(1),
 });
 
+const tokenEndpointAuthMethodSchema = z.enum([
+  "client_secret_post",
+  "client_secret_basic",
+  "none",
+]);
+
+type TokenEndpointAuthMethod = z.infer<typeof tokenEndpointAuthMethodSchema>;
+
+function tokenEndpointAuthValidationError(input: {
+  tokenEndpointAuthMethod?: TokenEndpointAuthMethod;
+  clientId?: string;
+  clientSecret?: string;
+}): string | undefined {
+  const { tokenEndpointAuthMethod, clientId, clientSecret } = input;
+  if (
+    (tokenEndpointAuthMethod === "client_secret_post" ||
+      tokenEndpointAuthMethod === "client_secret_basic") &&
+    !clientSecret
+  ) {
+    return `${tokenEndpointAuthMethod} requires a client secret`;
+  }
+  if (tokenEndpointAuthMethod && !clientId) {
+    return `${tokenEndpointAuthMethod} requires a client id`;
+  }
+  return undefined;
+}
+
 const negativeTestsSchema = z
   .object({
     audience: z.string().trim().min(1),
@@ -426,6 +453,7 @@ const negativeTestsSchema = z
     scope: z.string().trim().min(1).optional(),
     tokenEndpoint: z.string().trim().min(1).optional(),
     clientSecret: z.string().trim().min(1).optional(),
+    tokenEndpointAuthMethod: tokenEndpointAuthMethodSchema.optional(),
     headers: z.record(z.string(), z.string()).optional(),
     registrationId: z.string().trim().min(1).optional(),
     serverId: z.string().trim().min(1).optional(),
@@ -565,9 +593,7 @@ const proxyTokenSchema = z
     clientSecret: z.string().trim().min(1).optional(),
     // How to authenticate at the token endpoint. Absent = legacy body-post
     // behavior; only the methods the debugger can actually redeem.
-    tokenEndpointAuthMethod: z
-      .enum(["client_secret_post", "client_secret_basic", "none"])
-      .optional(),
+    tokenEndpointAuthMethod: tokenEndpointAuthMethodSchema.optional(),
     scope: z.string().trim().min(1).optional(),
     resource: z.string().trim().min(1).optional(),
     headers: z.record(z.string(), z.string()).optional(),
@@ -785,6 +811,13 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       return toJsonError(
         "Minting through the hosted issuer requires signing in",
         { status: 401, code: "UNAUTHORIZED" }
+      );
+    }
+
+    if (path === "/negative-tests" && typeof body.clientSecret === "string") {
+      return toJsonError(
+        "Confidential DCR negative tests are unavailable with the hosted issuer",
+        { status: 400, code: "VALIDATION_ERROR" }
       );
     }
 
@@ -1431,26 +1464,13 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       }
 
       const authMethod = parsed.tokenEndpointAuthMethod;
-      if (
-        (authMethod === "client_secret_post" ||
-          authMethod === "client_secret_basic") &&
-        !clientSecret
-      ) {
-        return toJsonError(`${authMethod} requires a client secret`, {
-          status: 400,
-          code: "VALIDATION_ERROR",
-        });
-      }
-      // RFC 6749 §2.3.1: client_id is REQUIRED for post/basic; a public (none)
-      // client still needs a client_id to identify itself. Reject locally with
-      // a 400 rather than letting buildJwtBearerRequest throw into a 500.
-      if (
-        (authMethod === "client_secret_basic" ||
-          authMethod === "client_secret_post" ||
-          authMethod === "none") &&
-        !clientId
-      ) {
-        return toJsonError(`${authMethod} requires a client id`, {
+      const authValidationError = tokenEndpointAuthValidationError({
+        tokenEndpointAuthMethod: authMethod,
+        clientId,
+        clientSecret,
+      });
+      if (authValidationError) {
+        return toJsonError(authValidationError, {
           status: 400,
           code: "VALIDATION_ERROR",
         });
@@ -1667,6 +1687,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     let clientId = parsed.clientId;
     let clientSecret = parsed.clientSecret;
     let extraHeaders = parsed.headers;
+    let tokenEndpointAuthMethod = parsed.tokenEndpointAuthMethod;
 
     try {
       if (parsed.serverId) {
@@ -1693,6 +1714,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         clientId = resolved.clientId;
         clientSecret = resolved.clientSecret;
         extraHeaders = undefined;
+        tokenEndpointAuthMethod = undefined;
       } else if (parsed.registrationId) {
         if (!options.resolveRegistrationSecret) {
           return toJsonError(
@@ -1724,6 +1746,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         clientId = resolved.targetClientId ?? parsed.clientId;
         clientSecret = resolved.clientSecret;
         extraHeaders = undefined;
+        tokenEndpointAuthMethod = undefined;
       } else {
         tokenEndpoint = parsed.tokenEndpoint as string;
       }
@@ -1736,6 +1759,18 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         });
       }
       throw error;
+    }
+
+    const authValidationError = tokenEndpointAuthValidationError({
+      tokenEndpointAuthMethod,
+      clientId,
+      clientSecret,
+    });
+    if (authValidationError) {
+      return toJsonError(authValidationError, {
+        status: 400,
+        code: "VALIDATION_ERROR",
+      });
     }
 
     // Validate the outbound URL once (every case hits the same endpoint) and
@@ -1829,13 +1864,14 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         };
       }
 
-      const form = new URLSearchParams();
-      form.set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer");
-      form.set("assertion", token);
-      if (clientId) form.set("client_id", clientId);
-      if (clientSecret) form.set("client_secret", clientSecret);
-      if (effectiveScope) form.set("scope", effectiveScope);
-      form.set("resource", parsed.resource);
+      const jwtBearerRequest = buildJwtBearerRequest({
+        assertion: token,
+        clientId,
+        clientSecret,
+        scope: effectiveScope,
+        resource: parsed.resource,
+        tokenEndpointAuthMethod,
+      });
 
       try {
         const response = await fetch(validated.toString(), {
@@ -1844,8 +1880,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
             "Content-Type": "application/x-www-form-urlencoded",
             "User-Agent": "MCP-Inspector/1.0",
             ...(extraHeaders || {}),
+            ...jwtBearerRequest.headers,
           },
-          body: form.toString(),
+          body: new URLSearchParams(jwtBearerRequest.body).toString(),
           redirect: options.httpsOnlyProxy ? "manual" : "follow",
           signal: AbortSignal.timeout(NEGATIVE_TEST_CASE_TIMEOUT_MS),
         });

@@ -83,6 +83,33 @@ export interface XaaDcrCredentialCache {
   delete(key: string): void;
 }
 
+/** Build the stable, target-scoped key used for session-only DCR credentials. */
+export function buildXaaDcrCredentialCacheKey(args: {
+  targetKey: string;
+  registrationEndpoint: string;
+  scope?: string | null;
+}): string {
+  return [args.targetKey, args.registrationEndpoint, args.scope ?? ""]
+    .map(encodeURIComponent)
+    .join("::");
+}
+
+/** True only when a confidential DCR credential has a finite, elapsed expiry. */
+export function isXaaDcrClientSecretExpired(
+  credentials: Pick<
+    XaaEphemeralDcrCredentials,
+    "clientSecret" | "clientSecretExpiresAt"
+  >,
+  nowSeconds = Math.floor(Date.now() / 1000)
+): boolean {
+  return (
+    Boolean(credentials.clientSecret) &&
+    typeof credentials.clientSecretExpiresAt === "number" &&
+    credentials.clientSecretExpiresAt !== 0 &&
+    credentials.clientSecretExpiresAt <= nowSeconds
+  );
+}
+
 export interface XAAJWTInspectionIssue {
   section: "header" | "payload" | "signature";
   field: string;
