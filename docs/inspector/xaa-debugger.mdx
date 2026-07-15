@@ -135,6 +135,55 @@ Your authorization server must validate MCPJam's ID-JAG before issuing an
 access token. It may also apply its own policy to decide which users are
 allowed.
 
+## Run as a Test Identity
+
+The **Run as** strip appears below the XAA Flow header when you are signed in to a project. It lets you maintain a per-project roster of synthetic test identities and run the full XAA flow as any one of them.
+
+### Add a person
+
+Click **Run as…** (empty roster) or **Add person** to open the add form. Fill in:
+
+| Field | Purpose |
+| --- | --- |
+| **Name** | A display label for the chip (e.g. "Test admin"). |
+| **Subject** | The `sub` claim MCPJam puts in the ID token and ID-JAG. |
+| **Email** | The `email` claim MCPJam puts in the ID token. |
+
+All three fields are required. Use synthetic values — do not enter real user data.
+
+### Select a person
+
+Click a chip to select that person. The flow immediately rebuilds so the next run mints tokens for their subject and email. Click the same chip again to deselect and return to the default identity.
+
+Your authorization server decides what the selected subject can access. The chip strip does not change the target server, client, or scopes.
+
+### Identity precedence
+
+When a person is selected, their subject and email are used together — MCPJam never mixes one person's subject with another source's email. The full precedence order is:
+
+1. **Selected person** — subject and email from the chosen chip.
+2. **Per-server simulated identity** — the subject/email stored on the server's Connect page (Advanced settings).
+3. **Run-settings default** — the global simulated identity in the XAA Flow header.
+
+### Outcome badges
+
+After each valid-mode run, the chip shows your authorization server's last decision for that person against the current target:
+
+| Badge | Meaning |
+| --- | --- |
+| **Allowed** | The flow completed and the AS granted the full requested scope. |
+| **Downscoped** | The flow completed but the AS returned a narrower scope than requested. |
+| **Rejected** | The AS refused the jwt-bearer grant with a policy error (`invalid_grant` or `access_denied`). The OAuth error code is shown. |
+| **Error** | The run failed before the AS ruled on the subject (network error, discovery failure, etc.). Not a policy result. |
+
+Badges are session-only and are cleared automatically when the target's server URL, authorization server, client ID, or scope changes, or when the person's subject or email is edited.
+
+Negative-mode runs (expired token, wrong audience, etc.) do not record outcomes — they test your AS's rejection behavior, not per-subject access.
+
+### Edit or delete a person
+
+Hover a chip and click the pencil icon to open the edit form. You can update the name, subject, or email, or delete the person entirely. The chip strip and edit form are disabled while a run is in progress or paused between steps.
+
 ## Inspect the ID-JAG
 
 <Frame>
