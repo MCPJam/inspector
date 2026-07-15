@@ -4,6 +4,7 @@ import { withEphemeralManager } from "../lib/ephemeral.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
 import {
+  addHostOption,
   addRetryOptions,
   addSharedServerOptions,
   describeTarget,
@@ -12,6 +13,7 @@ import {
   parseServerConfig,
   resolveAliasedStringOption,
 } from "../lib/server-config.js";
+import { resolveHostFromOptions } from "../lib/host-resolve.js";
 import { writeResult } from "../lib/output.js";
 
 export function registerResourcesCommands(program: Command): void {
@@ -19,16 +21,19 @@ export function registerResourcesCommands(program: Command): void {
     .command("resources")
     .description("List and read MCP resources");
 
-  addRetryOptions(
+  addHostOption(
+    addRetryOptions(
     addSharedServerOptions(
       resources
         .command("list")
         .description("List resources exposed by an MCP server")
         .option("--cursor <cursor>", "Pagination cursor"),
     ),
+    ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
     const retryPolicy = parseRetryPolicy(options);
+    const host = resolveHostFromOptions(options);
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
@@ -46,6 +51,7 @@ export function registerResourcesCommands(program: Command): void {
         timeout: globalOptions.timeout,
         rpcLogger: collector?.rpcLogger,
         retryPolicy,
+        host: host?.connection,
       },
     );
 
@@ -55,7 +61,8 @@ export function registerResourcesCommands(program: Command): void {
     );
   });
 
-  addRetryOptions(
+  addHostOption(
+    addRetryOptions(
     addSharedServerOptions(
       resources
         .command("read")
@@ -63,9 +70,11 @@ export function registerResourcesCommands(program: Command): void {
         .option("--resource-uri <uri>", "Resource URI")
         .option("--uri <uri>", "Alias for --resource-uri"),
     ),
+    ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
     const retryPolicy = parseRetryPolicy(options);
+    const host = resolveHostFromOptions(options);
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
@@ -92,6 +101,7 @@ export function registerResourcesCommands(program: Command): void {
         timeout: globalOptions.timeout,
         rpcLogger: collector?.rpcLogger,
         retryPolicy,
+        host: host?.connection,
       },
     );
 
@@ -101,16 +111,19 @@ export function registerResourcesCommands(program: Command): void {
     );
   });
 
-  addRetryOptions(
+  addHostOption(
+    addRetryOptions(
     addSharedServerOptions(
       resources
         .command("templates")
         .description("List resource templates exposed by an MCP server")
         .option("--cursor <cursor>", "Pagination cursor"),
     ),
+    ),
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
     const retryPolicy = parseRetryPolicy(options);
+    const host = resolveHostFromOptions(options);
     const target = describeTarget(options);
     const collector = globalOptions.rpc
       ? createCliRpcLogCollector({ __cli__: target })
@@ -131,6 +144,7 @@ export function registerResourcesCommands(program: Command): void {
         timeout: globalOptions.timeout,
         rpcLogger: collector?.rpcLogger,
         retryPolicy,
+        host: host?.connection,
       },
     );
 

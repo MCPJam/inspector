@@ -19,6 +19,14 @@ type StepMeta = {
   messageStartIndex?: number;
   messageEndIndex?: number;
   status?: SpanStatus;
+  // GenAI harness metadata. `finishReason` here is the AI SDK's already-canonical
+  // value (stop|length|content-filter|tool-calls|error|other|unknown) — no alias
+  // mapping needed on this path. `provider` is threaded from the integration config.
+  finishReason?: string;
+  provider?: string;
+  responseId?: string;
+  responseTimestamp?: string;
+  ttfcMs?: number;
 };
 
 type ToolMeta = {
@@ -167,11 +175,16 @@ export function createEvalSpanIntegration(options: {
   rel: () => number;
   /** Map from tool name → serverId for tool span metadata. */
   serverIdByTool?: Map<string, string>;
+  /**
+   * Logical provider (OTel `gen_ai.provider.name`, e.g. "anthropic"). Threaded
+   * from the caller's model config — the AI SDK step event does not expose it.
+   */
+  provider?: string;
 }): TelemetryIntegration & {
   getSpans: () => EvalTraceSpanInput[];
   finalizeFailure: (errorLabel?: string) => void;
 } {
-  const { rel, serverIdByTool } = options;
+  const { rel, serverIdByTool, provider } = options;
   const sink = createEvalSpanSink(rel);
 
   return {
@@ -199,12 +212,21 @@ export function createEvalSpanIntegration(options: {
     },
 
     onStepFinish(event: OnStepFinishEvent) {
+      const responseTimestamp =
+        event.response?.timestamp instanceof Date
+          ? event.response.timestamp.toISOString()
+          : undefined;
       sink.onStepFinish(event.stepNumber, undefined, {
         modelId: event.response?.modelId ?? event.model?.modelId,
         inputTokens: event.usage?.inputTokens,
         outputTokens: event.usage?.outputTokens,
         totalTokens: event.usage?.totalTokens,
         status: "ok",
+        // AI SDK `finishReason` is already in the canonical vocabulary.
+        finishReason: event.finishReason,
+        provider,
+        responseId: event.response?.id,
+        responseTimestamp,
       });
     },
 
@@ -255,6 +277,24 @@ export function createEvalSpanSink(rel: () => number): EvalSpanSink {
     }
     if (meta.status) {
       span.status = meta.status;
+    }
+    if (typeof meta.finishReason === "string" && meta.finishReason.length > 0) {
+      span.finishReason = meta.finishReason;
+    }
+    if (typeof meta.provider === "string" && meta.provider.length > 0) {
+      span.provider = meta.provider;
+    }
+    if (typeof meta.responseId === "string" && meta.responseId.length > 0) {
+      span.responseId = meta.responseId;
+    }
+    if (
+      typeof meta.responseTimestamp === "string" &&
+      meta.responseTimestamp.length > 0
+    ) {
+      span.responseTimestamp = meta.responseTimestamp;
+    }
+    if (typeof meta.ttfcMs === "number") {
+      span.ttfcMs = meta.ttfcMs;
     }
   }
 

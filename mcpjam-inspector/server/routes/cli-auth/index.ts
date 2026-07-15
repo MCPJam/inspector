@@ -22,6 +22,13 @@
  * these routes always mount at `/api/cli/auth` on the app root. Without
  * either env, every route answers 501 so self-hosted Inspectors degrade
  * cleanly.
+ *
+ * The `/oauth2/authorize` request authenticates a WorkOS Connect OAuth
+ * *application* (a Public/PKCE app registered separately from the AuthKit
+ * environment, with its own client id). Hosted deployments select it via
+ * `CLI_AUTH_CLIENT_ID`; when unset (self-hosted/dev where the two coincide)
+ * the AuthKit environment client id is used. The issuer is always derived
+ * from the AuthKit environment client id, independent of this override.
  */
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -70,14 +77,20 @@ function resolveCliAuthConfig(
     return null;
   }
 
-  const clientId = resolveWorkosClientId(env);
-  if (!clientId) {
+  // The AuthKit environment client id resolves the issuer (authorize/token
+  // endpoints). The `/oauth2/authorize` client id, however, must identify a
+  // WorkOS Connect OAuth application (its own Public/PKCE client id): hosted
+  // deployments set `CLI_AUTH_CLIENT_ID`, while self-hosted/dev setups where
+  // the two coincide fall back to the AuthKit environment client id.
+  const authkitClientId = resolveWorkosClientId(env);
+  if (!authkitClientId) {
     return null;
   }
-  const issuer = resolveAuthkitIssuer(clientId, env);
+  const issuer = resolveAuthkitIssuer(authkitClientId, env);
   if (!issuer) {
     return null;
   }
+  const clientId = env.CLI_AUTH_CLIENT_ID || authkitClientId;
 
   return { secret, publicOrigin, issuer, clientId };
 }

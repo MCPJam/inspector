@@ -8,21 +8,22 @@ import {
   MessageSquareCode,
   BookOpen,
   FlaskConical,
+  Boxes,
   Workflow,
-  Layers,
   ListTodo,
   SquareSlash,
   MessageCircleQuestionIcon,
   GraduationCap,
   Box,
+  PackageOpen,
   LayoutGrid,
   GitBranch,
   UserPlus,
   ShieldCheck,
   Loader2,
 } from "lucide-react";
-import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { useFeatureFlagEnabled } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import {
@@ -48,11 +49,13 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
-import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
 import { SidebarTrialCountdown } from "@/components/sidebar/sidebar-trial-countdown";
 import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
+//World Cup 2026 TODO remove after the tournament (see world-cup-ball.tsx)
+import { WorldCupBall } from "@/components/world-cup-ball";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Button } from "@mcpjam/design-system/button";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
   Tooltip,
   TooltipContent,
@@ -85,6 +88,8 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
   disabled?: boolean;
   disabledTooltip?: string;
+  /** Optional pill shown next to the label, e.g. "New" */
+  badge?: string;
   /** Only show this item when the named feature flag is enabled */
   featureFlag?: string;
   /** Hide this item when the named feature flag is enabled */
@@ -204,13 +209,15 @@ const navigationSections: NavSection[] = [
     id: "mcp-apps",
     items: [
       {
-        title: "Views",
-        url: "/views",
-        icon: Layers,
+        title: "Chatbox",
+        url: "/chatboxes",
+        icon: PackageOpen,
+        featureFlag: "sandboxes-enabled",
+        billingFeature: "chatboxes",
       },
       {
-        title: "Chatboxes",
-        url: "/chatboxes",
+        title: "Swarms",
+        url: "/swarms",
         icon: Box,
         featureFlag: "sandboxes-enabled",
         billingFeature: "chatboxes",
@@ -248,6 +255,25 @@ const navigationSections: NavSection[] = [
         featureFlag: "mcpjam-conformance",
       },
       {
+        title: "Compatibility",
+        url: "/compatibility",
+        icon: Boxes,
+        // MCPJam-internal flag (same convention as `mcpjam-conformance`).
+        featureFlag: "mcpjam-compatibility",
+      },
+      // {
+      //   title: "Tracing",
+      //   url: "/tracing",
+      //   icon: Activity,
+      // },
+    ],
+  },
+  {
+    // Auth-flow debuggers get their own section so they read as a related
+    // pair, separated from the surrounding nav by the section dividers.
+    id: "debuggers",
+    items: [
+      {
         title: "OAuth Debugger",
         url: "/oauth-flow",
         icon: Workflow,
@@ -256,13 +282,9 @@ const navigationSections: NavSection[] = [
         title: "XAA Debugger",
         url: "/xaa-flow",
         icon: ShieldCheck,
+        badge: "New",
         featureFlag: "xaa",
       },
-      // {
-      //   title: "Tracing",
-      //   url: "/tracing",
-      //   icon: Activity,
-      // },
     ],
   },
   {
@@ -308,6 +330,27 @@ const signedOutUtilityItems: NavItem[] = [
   },
 ];
 
+// Neutral placeholder shown while auth is resolving, so signed-in users don't
+// see the signed-out nav list flash before their authed items appear.
+function SidebarNavSkeleton() {
+  return (
+    <SidebarGroup>
+      <SidebarGroupContent>
+        <SidebarMenu>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <SidebarMenuItem key={i}>
+              <SidebarMenuButton disabled>
+                <Skeleton className="size-4 rounded" />
+                <Skeleton className="h-3.5 w-24 group-data-[collapsible=icon]:hidden" />
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  );
+}
+
 export function getHostedNavigationSections(
   sections: NavSection[]
 ): NavSection[] {
@@ -342,6 +385,35 @@ export function getHostedNavigationSections(
 
 const hostedNavigationSections =
   getHostedNavigationSections(navigationSections);
+
+/**
+ * Resolve the hosted Skills nav item against the `skills-enabled` PostHog flag.
+ * `getHostedNavigationSections` runs at module load (no hooks) and marks Skills
+ * disabled by default. Hosted skills are a **project-membership** resource
+ * (authored in Convex, available even without a Computer), but are gated behind
+ * the flag until QA completes:
+ *   - flag on  ⇒ flip the item to enabled (access is still enforced server-side);
+ *   - flag off ⇒ drop the item entirely, rather than leave it grayed with the
+ *     "local only" tooltip, which would misrepresent why it's unavailable.
+ */
+export function resolveHostedSkillsNav(
+  sections: NavSection[],
+  enabled: boolean
+): NavSection[] {
+  return sections
+    .map((section) => ({
+      ...section,
+      items: section.items.flatMap((item) => {
+        const isSkills =
+          normalizeHostedHashTab(item.url.replace(/^[#/]+/, "")) === "skills";
+        if (!isSkills) return [item];
+        return enabled
+          ? [{ ...item, disabled: false, disabledTooltip: undefined }]
+          : [];
+      }),
+    }))
+    .filter((section) => section.items.length > 0);
+}
 
 interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onNavigate?: (section: string) => void;
@@ -526,7 +598,6 @@ export function MCPSidebar({
   onBeforeSignOut,
   ...props
 }: MCPSidebarProps) {
-  const posthog = usePostHog();
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
@@ -534,8 +605,18 @@ export function MCPSidebar({
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
-  const { isAuthenticated } = useConvexAuth();
-  const { user } = useAuth();
+  const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
+  // Hosted Cloud Skills nav is gated until QA completes; fail-closed (absent /
+  // loading flag ⇒ hidden). See `useSkillsEnabled`.
+  const skillsEnabled = useFeatureFlagEnabled("skills-enabled");
+  const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
+  const { user, isLoading: isWorkOsAuthLoading } = useAuth();
+  // Until WorkOS + Convex resolve the session we don't yet know guest-vs-authed
+  // (`user` is null and `isAuthenticated` is false even for signed-in users).
+  // Treat that window as "unknown" so the sidebar renders neutral skeletons
+  // instead of flashing the signed-out layout for users who are signed in.
+  const authResolving =
+    HOSTED_MODE && !user && (isWorkOsAuthLoading || isConvexAuthLoading);
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const { status: updateStatus, restartAndInstall } = useUpdateNotification();
@@ -581,8 +662,8 @@ export function MCPSidebar({
   const handleNavClick = (url: string) => {
     if (onNavigate && /^[#/]/.test(url)) {
       const section = url.replace(/^[#/]+/, "");
-      posthog.capture("sidebar_nav_clicked", {
-        ...standardEventProps("mcp_sidebar"),
+      track("sidebar_nav_clicked", {
+        location: "mcp_sidebar",
         section,
       });
       onNavigate(section);
@@ -596,6 +677,7 @@ export function MCPSidebar({
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
+      "mcpjam-compatibility": compatibilityEnabled === true,
       // Hosts/Connect and Home are fully rolled out; their nav visibility is
       // purely auth-driven (signed-out users keep the legacy Servers item).
       "hosts-enabled": isAuthenticated,
@@ -607,19 +689,23 @@ export function MCPSidebar({
       sandboxesEnabled,
       registryEnabled,
       conformanceEnabled,
+      compatibilityEnabled,
       xaaEnabled,
       isAuthenticated,
     ]
   );
   const hubNavHash = "#servers";
   const visibleNavigationSections = filterByFeatureFlags(
-    HOSTED_MODE ? hostedNavigationSections : navigationSections,
+    HOSTED_MODE
+      ? resolveHostedSkillsNav(hostedNavigationSections, skillsEnabled === true)
+      : navigationSections,
     featureFlags
   );
 
   // Signed-in users reach Settings/Support via the account menu; only
   // signed-out users (no account menu) get utility icons in the footer.
-  const utilityItems = user ? [] : signedOutUtilityItems;
+  // Suppress them while auth is resolving so they don't flash for signed-in users.
+  const utilityItems = user || authResolving ? [] : signedOutUtilityItems;
 
   const isNavItemActive = (item: NavItem) =>
     normalizeHostedHashTab(
@@ -652,6 +738,8 @@ export function MCPSidebar({
                   alt="MCP Jam"
                   className="h-4 w-auto"
                 />
+                {/*World Cup 2026, TODO remove after the tournament */}
+                <WorldCupBall className="ml-1.5" />
               </button>
             ) : state === "expanded" ? (
               <div className="relative isolate w-full">
@@ -674,6 +762,8 @@ export function MCPSidebar({
                     alt="MCP Jam"
                     className="h-4 w-auto"
                   />
+                  {/*World Cup 2026, TODO remove after the tournament */}
+                  <WorldCupBall className="ml-1.5" />
                 </button>
                 <SidebarTrigger
                   className={cn(
@@ -702,7 +792,7 @@ export function MCPSidebar({
             onSwitchProject={onSwitchProject}
             onCreateProject={onCreateProject}
             onDeleteProject={onDeleteProject}
-            isLoading={isLoadingProjects}
+            isLoading={isLoadingProjects || authResolving}
             onNavigateToSettings={() => handleNavClick("#project-settings")}
             isCreateDisabled={isCreateProjectDisabled}
             createDisabledReason={createProjectDisabledReason}
@@ -733,56 +823,60 @@ export function MCPSidebar({
           )}
         </SidebarHeader>
         <SidebarContent className="gap-0">
-          {visibleNavigationSections.map((section, sectionIndex) => {
-            const rawEvalsEntry = section.items.find(
-              (item) => item.evalsSubnav
-            );
-            // Only render Evaluate through the SidebarEvalsNavGroup wrapper
-            // (which adds its own SidebarGroup padding) when there's actually
-            // a Runs sub-item to nest. Otherwise, fold Evaluate into flatItems
-            // so it sits flush with Views and matches sibling spacing.
-            const useEvalsSubnavWrapper =
-              !!rawEvalsEntry && evaluateRunsEnabled === true;
-            const evalsEntry = useEvalsSubnavWrapper
-              ? rawEvalsEntry
-              : undefined;
-            const flatItems = section.items.filter(
-              (item) => !item.evalsSubnav || !useEvalsSubnavWrapper
-            );
+          {authResolving ? (
+            <SidebarNavSkeleton />
+          ) : (
+            visibleNavigationSections.map((section, sectionIndex) => {
+              const rawEvalsEntry = section.items.find(
+                (item) => item.evalsSubnav
+              );
+              // Only render Evaluate through the SidebarEvalsNavGroup wrapper
+              // (which adds its own SidebarGroup padding) when there's actually
+              // a Runs sub-item to nest. Otherwise, fold Evaluate into flatItems
+              // so it sits flush with Views and matches sibling spacing.
+              const useEvalsSubnavWrapper =
+                !!rawEvalsEntry && evaluateRunsEnabled === true;
+              const evalsEntry = useEvalsSubnavWrapper
+                ? rawEvalsEntry
+                : undefined;
+              const flatItems = section.items.filter(
+                (item) => !item.evalsSubnav || !useEvalsSubnavWrapper
+              );
 
-            return (
-              <React.Fragment key={section.id}>
-                <NavMain
-                  items={flatItems.map((item) => ({
-                    ...item,
-                    isActive: isNavItemActive(item),
-                  }))}
-                  onItemClick={handleNavClick}
-                  learnMore={
-                    learnMoreEnabled
-                      ? {
-                          onExpand: learnMore.openExpandedModal,
-                        }
-                      : null
-                  }
-                />
-                {evalsEntry ? (
-                  <SidebarEvalsNavGroup
-                    title={evalsEntry.title}
-                    Icon={evalsEntry.icon}
-                    disabled={evalsEntry.disabled}
-                    disabledTooltip={evalsEntry.disabledTooltip}
-                    activeTab={activeTab}
-                    showRuns={evaluateRunsEnabled === true}
+              return (
+                <React.Fragment key={section.id}>
+                  <NavMain
+                    items={flatItems.map((item) => ({
+                      ...item,
+                      isActive: isNavItemActive(item),
+                    }))}
+                    onItemClick={handleNavClick}
+                    learnMore={
+                      learnMoreEnabled
+                        ? {
+                            onExpand: learnMore.openExpandedModal,
+                          }
+                        : null
+                    }
                   />
-                ) : null}
-                {/* Add subtle divider between sections (except after the last section) */}
-                {sectionIndex < visibleNavigationSections.length - 1 && (
-                  <div className="mx-4 my-1 border-t border-border/50" />
-                )}
-              </React.Fragment>
-            );
-          })}
+                  {evalsEntry ? (
+                    <SidebarEvalsNavGroup
+                      title={evalsEntry.title}
+                      Icon={evalsEntry.icon}
+                      disabled={evalsEntry.disabled}
+                      disabledTooltip={evalsEntry.disabledTooltip}
+                      activeTab={activeTab}
+                      showRuns={evaluateRunsEnabled === true}
+                    />
+                  ) : null}
+                  {/* Add subtle divider between sections (except after the last section) */}
+                  {sectionIndex < visibleNavigationSections.length - 1 && (
+                    <div className="mx-4 my-1 border-t border-border/50" />
+                  )}
+                </React.Fragment>
+              );
+            })
+          )}
         </SidebarContent>
         <SidebarFooter>
           {utilityItems.length > 0 ? (
@@ -831,7 +925,6 @@ export function MCPSidebar({
               className="mt-1"
             />
           ) : null}
-          {!user ? <SidebarCreditUsage className="px-1" includeGuests /> : null}
           <SidebarUser onBeforeSignOut={onBeforeSignOut} />
         </SidebarFooter>
       </Sidebar>

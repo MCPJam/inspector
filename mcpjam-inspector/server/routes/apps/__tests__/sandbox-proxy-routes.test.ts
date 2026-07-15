@@ -18,5 +18,15 @@ describe("Sandbox proxy routes", () => {
     expect(body).toContain("function applyColorScheme");
     expect(body).toContain("color-scheme: light dark");
     expect(body).toContain("ui/notifications/sandbox-color-scheme-changed");
+    expect(body).toContain('const RECORDER_SHIM = "(function(){');
+    expect(body).toContain("recorderBootstrap();");
+    expect(body).toContain("var __name = function(target) { return target; };");
+    expect(body).toContain(
+      'const injection = (extraScript || "") + cspMeta + violationListener;'
+    );
+    expect(body).not.toContain("recorder:proxy-status");
+    expect(body).not.toContain(
+      'const RECORDER_SHIM = "__MCPJAM_RECORDER_SHIM__";'
+    );
   });
 });

@@ -49,6 +49,7 @@ vi.mock("@workos-inc/authkit-react", () => ({
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
 }));
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
