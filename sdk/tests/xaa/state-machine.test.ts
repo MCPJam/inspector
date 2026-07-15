@@ -34,6 +34,41 @@ async function advanceUntil(
   }
 }
 
+const PREREGISTERED_XAA_ARROW_STEPS: XAAFlowState["currentStep"][] = [
+  "discover_resource_metadata",
+  "received_resource_metadata",
+  "discover_authz_metadata",
+  "received_authz_metadata",
+  "user_authentication",
+  "received_identity_assertion",
+  "token_exchange_request",
+  "received_id_jag",
+  "inspect_id_jag",
+  "jwt_bearer_request",
+  "received_access_token",
+  "authenticated_mcp_request",
+  "complete",
+];
+
+async function recordEveryAdvance(
+  machine: { proceedToNextStep: () => Promise<void> },
+  readStep: () => XAAFlowState["currentStep"],
+  target: XAAFlowState["currentStep"],
+  cap = 40
+): Promise<XAAFlowState["currentStep"][]> {
+  const visited: XAAFlowState["currentStep"][] = [];
+  for (let i = 0; i < cap && readStep() !== target; i += 1) {
+    const before = readStep();
+    await machine.proceedToNextStep();
+    const after = readStep();
+    if (after === before) {
+      throw new Error(`XAA flow stopped at ${after} before reaching ${target}`);
+    }
+    visited.push(after);
+  }
+  return visited;
+}
+
 function encodePart(value: Record<string, any>): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
 }
@@ -206,9 +241,14 @@ describe("createXAAStateMachine", () => {
       scope: "read:tools write:tools",
     });
 
-    await advanceUntil(machine, () => state.currentStep, "complete");
+    const visited = await recordEveryAdvance(
+      machine,
+      () => state.currentStep,
+      "complete"
+    );
 
     expect(state.currentStep).toBe("complete");
+    expect(visited).toEqual(PREREGISTERED_XAA_ARROW_STEPS);
     expect(state.accessToken).toBe("access-token");
     expect(state.grantedScope).toBe("read:tools");
     expect(state.identityAssertion).toBe(idToken);
@@ -1458,7 +1498,10 @@ describe("createXAAStateMachine", () => {
         authzServerIssuer: "https://auth.example.com",
       });
 
-      // idle -> (skip resource) -> received_resource_metadata
+      // The network probe is skipped, but both visible diagram actions still
+      // consume one Continue click apiece.
+      await machine.proceedToNextStep();
+      expect(state.currentStep).toBe("discover_resource_metadata");
       await machine.proceedToNextStep();
       expect(state.currentStep).toBe("received_resource_metadata");
       expect(
@@ -2335,6 +2378,19 @@ describe("open dcr registration strategy", () => {
     expect(first.registerCalls()).toHaveLength(1);
 
     const second = createDynamicHarness({ strategy: "dcr", cache });
+    await advanceUntil(
+      second.machine,
+      () => second.getState().currentStep,
+      "received_authz_metadata"
+    );
+
+    // The diagram must know that its next action is the single local reuse
+    // arrow before the user clicks it; otherwise it first shows a registration
+    // request and swaps that arrow out during the click.
+    expect(second.getState().dcrRegistrationReused).toBe(true);
+    await second.machine.proceedToNextStep();
+    expect(second.getState().currentStep).toBe("received_client_credentials");
+
     await second.machine.runAll();
     const state = second.getState();
 
@@ -3010,10 +3066,15 @@ describe("createXAAStateMachine SAML axes", () => {
     const { executor } = samlExecutor({ subjectIdFormatParam: true });
     const { machine, getState } = buildSamlMachine(executor);
 
-    await machine.runAll();
+    const visited = await recordEveryAdvance(
+      machine,
+      () => getState().currentStep,
+      "complete"
+    );
 
     const state = getState();
     expect(state.currentStep).toBe("complete");
+    expect(visited).toEqual(PREREGISTERED_XAA_ARROW_STEPS);
     expect(state.identityAssertion).toBe(fakeSamlAssertionB64);
     expect(state.identityAssertionSubject).toEqual({
       issuer: "https://issuer.example/api/web/xaa",
@@ -3163,6 +3224,63 @@ describe("createXAAStateMachine SAML axes", () => {
 });
 
 describe("negative-test probe is terminal", () => {
+  it("shows the JWT request and accepted-token response on separate clicks", async () => {
+    let state: XAAFlowState = createInitialXAAFlowState({
+      serverUrl: "https://mcp.example.com",
+      resourceUrl: "https://mcp.example.com",
+      authzServerIssuer: "https://auth.example.com",
+      tokenEndpoint: "https://auth.example.com/token",
+      clientId: "mcpjam-debugger",
+      idJag: "broken-id-jag",
+      currentStep: "inspect_id_jag",
+      negativeTestMode: "unknown_kid",
+    });
+    const externalRequest = vi.fn();
+    const internalRequest = vi.fn(async () => ({
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      body: {
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: {
+          access_token: "illegitimate-token",
+          token_type: "Bearer",
+          expires_in: 300,
+        },
+      },
+      ok: true,
+    }));
+    const machine = createXAAStateMachine({
+      state,
+      getState: () => state,
+      updateState: (updates) => {
+        state = { ...state, ...updates };
+      },
+      serverUrl: "https://mcp.example.com",
+      issuerBaseUrl: "https://issuer.example/api/web/xaa",
+      requestExecutor: { externalRequest, internalRequest },
+      negativeTestMode: "unknown_kid",
+      clientId: "mcpjam-debugger",
+      authzServerIssuer: "https://auth.example.com",
+    });
+
+    await machine.proceedToNextStep();
+    expect(state.currentStep).toBe("jwt_bearer_request");
+    expect(state.negativeProbe).toBeUndefined();
+    expect(state.accessToken).toBe("illegitimate-token");
+
+    await machine.proceedToNextStep();
+    expect(state.currentStep).toBe("received_access_token");
+    expect(state.negativeProbe).toEqual({ outcome: "accepted", status: 200 });
+    expect(
+      state.infoLogs?.find((entry) => entry.id === "xaa-negative-accepted")
+        ?.data
+    ).toEqual({ status: 200, mode: "unknown_kid" });
+    expect(externalRequest).not.toHaveBeenCalled();
+  });
+
   it("does not advance past an accepted probe into the authenticated MCP call", async () => {
     // A negative-mode run the authorization server WRONGLY accepts rests at
     // received_access_token with negativeProbe set. A direct proceedToNextStep

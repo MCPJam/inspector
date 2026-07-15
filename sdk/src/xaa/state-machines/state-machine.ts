@@ -722,20 +722,12 @@ export function createXAAStateMachine(
     // the request entirely rather than firing a spurious (often 404ing) probe.
     if (state.authzServerIssuer) {
       machine.updateState({
-        currentStep: "received_resource_metadata",
+        // The configured bootstrap still has two visible diagram actions.
+        // Rest on this one so a Continue click cannot complete both at once.
+        currentStep: "discover_resource_metadata",
         resourceUrl: state.resourceUrl || activeServerUrl,
         error: undefined,
       });
-      pushInfo(
-        "received_resource_metadata",
-        "xaa-resource-metadata-skipped",
-        "Resource metadata discovery skipped",
-        {
-          reason:
-            "Authorization server issuer is already configured; RFC 9728 discovery is not part of the XAA grant and isn't needed.",
-          authz_server_issuer: state.authzServerIssuer,
-        }
-      );
       return;
     }
 
@@ -826,6 +818,21 @@ export function createXAAStateMachine(
       error: undefined,
     });
     const state = currentState();
+
+    if (!state.resourceMetadata) {
+      pushInfo(
+        "received_resource_metadata",
+        "xaa-resource-metadata-skipped",
+        "Resource metadata discovery skipped",
+        {
+          reason:
+            "Authorization server issuer is already configured; RFC 9728 discovery is not part of the XAA grant and isn't needed.",
+          authz_server_issuer: state.authzServerIssuer,
+        }
+      );
+      return;
+    }
+
     pushInfo(
       "received_resource_metadata",
       "xaa-resource-metadata",
@@ -847,22 +854,12 @@ export function createXAAStateMachine(
     // known — in either case skip the probe and advance.
     if (registrationId || serverId || state.tokenEndpoint) {
       machine.updateState({
-        currentStep: "received_authz_metadata",
+        // Keep the skipped bootstrap presentation single-step too: this
+        // click reaches the lookup arrow and the process half reaches the
+        // separate "metadata ready" arrow.
+        currentStep: "discover_authz_metadata",
         error: undefined,
       });
-      pushInfo(
-        "received_authz_metadata",
-        "xaa-authz-metadata-skipped",
-        "Authorization metadata discovery skipped",
-        {
-          reason: registrationId
-            ? "The registered resource's token endpoint is resolved server-side; RFC 8414 discovery isn't needed."
-            : "The token endpoint is already configured; RFC 8414 discovery isn't needed.",
-          ...(state.tokenEndpoint
-            ? { token_endpoint: state.tokenEndpoint }
-            : {}),
-        }
-      );
       return;
     }
 
@@ -1027,11 +1024,47 @@ export function createXAAStateMachine(
   };
 
   const discoverAuthzMetadataProcess = () => {
+    const beforeProcess = currentState();
+    const registrationEndpoint =
+      beforeProcess.authzMetadata?.registration_endpoint;
+    const cachedDcrCredentials =
+      registrationStrategy === "dcr" && registrationEndpoint
+        ? dcrCredentialCache?.get(dcrCacheKeyFor(registrationEndpoint))
+        : undefined;
+
     machine.updateState({
       currentStep: "received_authz_metadata",
+      // Resolve the next diagram shape before its arrow becomes current. A
+      // cached DCR run has one local reuse arrow, not a registration request
+      // that disappears only after the user clicks it.
+      ...(registrationStrategy === "dcr"
+        ? {
+            dcrRegistrationReused: Boolean(
+              cachedDcrCredentials && !dcrSecretExpired(cachedDcrCredentials)
+            ),
+          }
+        : {}),
       error: undefined,
     });
     const state = currentState();
+
+    if (!state.authzMetadata) {
+      pushInfo(
+        "received_authz_metadata",
+        "xaa-authz-metadata-skipped",
+        "Authorization metadata discovery skipped",
+        {
+          reason: registrationId
+            ? "The registered resource's token endpoint is resolved server-side; RFC 8414 discovery isn't needed."
+            : "The token endpoint is already configured; RFC 8414 discovery isn't needed.",
+          ...(state.tokenEndpoint
+            ? { token_endpoint: state.tokenEndpoint }
+            : {}),
+        }
+      );
+      return;
+    }
+
     pushInfo(
       "received_authz_metadata",
       "xaa-authz-metadata",
@@ -1680,8 +1713,11 @@ export function createXAAStateMachine(
           );
         }
 
+        // Match the OIDC request/process split. Preserve the signed assertion
+        // and its structured subject now, but reach the response arrow only
+        // after the next Continue click.
         machine.updateState({
-          currentStep: "received_identity_assertion",
+          currentStep: "user_authentication",
           identityAssertion: body.assertion,
           identityAssertionSubject: {
             issuer: subject.issuer,
@@ -1693,21 +1729,10 @@ export function createXAAStateMachine(
               ? { spNameQualifier: subject.spNameQualifier }
               : {}),
           },
+          userId: activeUserId,
+          email: activeEmail,
           error: undefined,
         });
-
-        pushInfo(
-          "received_identity_assertion",
-          "xaa-identity-assertion",
-          "SAML assertion issued",
-          {
-            userId: activeUserId,
-            email: activeEmail,
-            nameid: subject.nameid,
-            nameid_format: subject.nameidFormat,
-            sp_name_qualifier: subject.spNameQualifier,
-          }
-        );
         return;
       }
 
@@ -1737,11 +1762,28 @@ export function createXAAStateMachine(
   };
 
   const authenticateUserProcess = () => {
+    const state = currentState();
     machine.updateState({
       currentStep: "received_identity_assertion",
       error: undefined,
     });
-    const state = currentState();
+
+    if (state.identityAssertionFormat === "saml") {
+      pushInfo(
+        "received_identity_assertion",
+        "xaa-identity-assertion",
+        "SAML assertion issued",
+        {
+          userId: state.userId,
+          email: state.email,
+          nameid: state.identityAssertionSubject?.nameid,
+          nameid_format: state.identityAssertionSubject?.nameidFormat,
+          sp_name_qualifier: state.identityAssertionSubject?.spNameQualifier,
+        }
+      );
+      return;
+    }
+
     pushInfo(
       "received_identity_assertion",
       "xaa-identity-assertion",
@@ -2254,10 +2296,12 @@ export function createXAAStateMachine(
 
       // In a negative-test mode the assertion was deliberately broken, so a
       // token here means the server accepted something it should have rejected
-      // — the security risk the test probes for. Stop rather than using it.
+      // — the security risk the test probes for. Preserve the result while
+      // resting on the request arrow; the next click exposes the terminal
+      // response arrow. The token is still never used for an MCP call.
       if (state.negativeTestMode !== "valid") {
         machine.updateState({
-          currentStep: "received_access_token",
+          currentStep: "jwt_bearer_request",
           accessToken: tokenResponse.access_token,
           tokenType:
             typeof tokenResponse.token_type === "string"
@@ -2272,15 +2316,8 @@ export function createXAAStateMachine(
               ? tokenResponse.scope
               : undefined,
           error: undefined,
-          negativeProbe: { outcome: "accepted", status: upstreamStatus },
+          negativeProbe: undefined,
         });
-        pushInfo(
-          "received_access_token",
-          "xaa-negative-accepted",
-          "Authorization server issued a token for a broken assertion",
-          { status: upstreamStatus, mode: state.negativeTestMode },
-          { level: "error" }
-        );
         return;
       }
 
@@ -2312,11 +2349,35 @@ export function createXAAStateMachine(
   };
 
   const requestAccessTokenProcess = () => {
+    const state = currentState();
+
+    if (state.negativeTestMode !== "valid") {
+      const lastResponseBody = state.lastResponse?.body;
+      const upstreamStatus =
+        lastResponseBody &&
+        typeof lastResponseBody === "object" &&
+        typeof lastResponseBody.status === "number"
+          ? lastResponseBody.status
+          : undefined;
+      machine.updateState({
+        currentStep: "received_access_token",
+        error: undefined,
+        negativeProbe: { outcome: "accepted", status: upstreamStatus },
+      });
+      pushInfo(
+        "received_access_token",
+        "xaa-negative-accepted",
+        "Authorization server issued a token for a broken assertion",
+        { status: upstreamStatus, mode: state.negativeTestMode },
+        { level: "error" }
+      );
+      return;
+    }
+
     machine.updateState({
       currentStep: "received_access_token",
       error: undefined,
     });
-    const state = currentState();
     pushInfo(
       "received_access_token",
       "xaa-access-token",

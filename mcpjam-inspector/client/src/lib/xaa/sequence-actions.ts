@@ -266,11 +266,22 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
     },
   ];
 
+  // A negative probe is terminal by design: a rejected assertion has no
+  // access-token response, while an incorrectly accepted assertion must never
+  // be carried into an MCP call. Do not leave an unreachable arrow styled as
+  // "next" after Continue has been disabled.
+  const visibleActions = flowState.negativeProbe
+    ? actions.slice(
+        0,
+        actions.findIndex((action) => action.id === flowState.currentStep) + 1,
+      )
+    : actions;
+
   // Only reveal an arrow's detail chip once its step has actually been reached.
   // The request/process split stores a step's resolved values while still
   // resting at the prior "request" step, so gating on value-presence alone
   // would surface a "received" detail one click early.
-  return actions.map((action) =>
+  return visibleActions.map((action) =>
     getXAAStepIndex(action.id as XAAFlowStep) <= reachedIndex
       ? action
       : { ...action, details: undefined },
