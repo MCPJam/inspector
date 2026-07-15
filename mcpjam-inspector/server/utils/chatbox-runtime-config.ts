@@ -62,6 +62,13 @@ export type ChatboxRuntimeConfig = RuntimeExecutionFields & {
     toolset?: "bash";
     workdir?: string;
   };
+  // Host-level MCP profile envelope from the pinned HostConfigV2 — carries
+  // the enterprise-managed authorization policy under
+  // `extensions["com.mcpjam/enterprise-managed-auth"]`. Server-authoritative
+  // for chatbox turns (a share-link body must not add/drop the policy).
+  // Optional so a backend that predates the projection returns omitted →
+  // policy off (safe: matches pre-feature behavior).
+  mcpProfile?: Record<string, unknown>;
 };
 
 export type ChatboxRuntimeConfigResult =

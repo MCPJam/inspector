@@ -1,6 +1,9 @@
 import { useLayoutEffect } from "react";
 import { setApiContext } from "@/lib/apis/web/context";
-import type { McpProtocolVersion } from "@mcpjam/sdk/browser";
+import type {
+  McpProtocolVersion,
+  XaaEnterprisePolicy,
+} from "@mcpjam/sdk/browser";
 
 interface UseApiContextOptions {
   projectId: string | null;
@@ -9,6 +12,9 @@ interface UseApiContextOptions {
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  // Active host's enterprise-managed authorization policy (validated `on`
+  // value only) — rides ad-hoc chat/eval request bodies.
+  xaaPolicy?: XaaEnterprisePolicy;
   clientConfigSyncPending?: boolean;
   getAccessToken: () => Promise<string | undefined | null>;
   oauthTokensByServerId?: Record<string, string>;
@@ -28,6 +34,7 @@ export function useApiContext({
   clientInfo,
   supportedProtocolVersions,
   mcpProtocolVersionsByServerId,
+  xaaPolicy,
   clientConfigSyncPending,
   getAccessToken,
   oauthTokensByServerId,
@@ -54,6 +61,7 @@ export function useApiContext({
       clientInfo,
       supportedProtocolVersions,
       mcpProtocolVersionsByServerId,
+      xaaPolicy,
       clientConfigSyncPending,
       getAccessToken,
       oauthTokensByServerId,
@@ -74,6 +82,7 @@ export function useApiContext({
     clientInfo,
     supportedProtocolVersions,
     mcpProtocolVersionsByServerId,
+    xaaPolicy,
     clientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,

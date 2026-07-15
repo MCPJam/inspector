@@ -69,9 +69,18 @@ const buildProjectServerProjection = (
     : { xaaAllowPathScopedIssuer: server.xaaAllowPathScopedIssuer }),
   ...(server.xaaSubject === undefined ? {} : { xaaSubject: server.xaaSubject }),
   ...(server.xaaEmail === undefined ? {} : { xaaEmail: server.xaaEmail }),
-  ...(server.xaaRegistrationStrategy === undefined
+  ...(server.xaaIdentityAssertionFormat === undefined
     ? {}
-    : { xaaRegistrationStrategy: server.xaaRegistrationStrategy }),
+    : { xaaIdentityAssertionFormat: server.xaaIdentityAssertionFormat }),
+  ...(server.registrationMode === undefined
+    ? {}
+    : { registrationMode: server.registrationMode }),
+  ...(server.xaaClientAuth === undefined
+    ? {}
+    : { xaaClientAuth: server.xaaClientAuth }),
+  ...(server.authMethod === undefined
+    ? {}
+    : { authMethod: server.authMethod }),
   ...(server.hasClientSecret === undefined
     ? {}
     : { hasClientSecret: server.hasClientSecret }),

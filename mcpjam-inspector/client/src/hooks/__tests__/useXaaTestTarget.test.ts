@@ -2,7 +2,6 @@ import { renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { useXaaTestTarget } from "../useXaaTestTarget";
 import type { ServerWithName } from "@/hooks/use-app-state";
-import type { XaaResourceApp } from "@/lib/xaa/types";
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
@@ -53,8 +52,8 @@ describe("useXaaTestTarget", () => {
       useXaaTestTarget({
         server: httpServer({ xaaAuthzIssuer: "https://auth.example.com" }),
         selectedServerName: "staging-mcp",
-        selectedRegistration: null,
         runSettings,
+        selectedPerson: null,
         projectId: "proj_1",
       }),
     );
@@ -81,8 +80,8 @@ describe("useXaaTestTarget", () => {
       useXaaTestTarget({
         server: httpServer({ hasClientSecret: true }),
         selectedServerName: "staging-mcp",
-        selectedRegistration: null,
         runSettings,
+        selectedPerson: null,
         projectId: "proj_1",
       }),
     );
@@ -103,8 +102,8 @@ describe("useXaaTestTarget", () => {
       useXaaTestTarget({
         server: httpServer({ hasClientSecret: true }),
         selectedServerName: "staging-mcp",
-        selectedRegistration: null,
         runSettings,
+        selectedPerson: null,
         projectId: "proj_1",
       }),
     );
@@ -115,39 +114,6 @@ describe("useXaaTestTarget", () => {
     expect(result.current.serverId).toBeUndefined();
     expect(result.current.secretUnavailable).toBe(true);
     expect(result.current.runInput.clientSecret).toBe("");
-  });
-
-  it("prefers a selected registration over the bar server", () => {
-    remoteServers = [
-      { _id: "srv_1", name: "staging-mcp", projectId: "proj_1" },
-    ];
-    const registration: XaaResourceApp = {
-      id: "app_1",
-      name: "AcmeApp",
-      resourceType: "mcp",
-      resourceUrl: "https://acme.example.com/mcp",
-      authServerMode: "own",
-      issuer: "https://acme-as.example.com",
-      targetClientId: "acme-client",
-      scopes: ["read"],
-      hasSecret: true,
-      createdAt: 0,
-      updatedAt: 0,
-    };
-    const { result } = renderHook(() =>
-      useXaaTestTarget({
-        server: httpServer(),
-        selectedServerName: "staging-mcp",
-        selectedRegistration: registration,
-        runSettings,
-        projectId: "proj_1",
-      }),
-    );
-
-    expect(result.current.targetSource).toBe("registration");
-    expect(result.current.targetKey).toBe("registration:app_1");
-    expect(result.current.runInput.registrationId).toBe("app_1");
-    expect(result.current.usesServerSideSecret).toBe(false);
   });
 
   it("marks a STDIO server not testable", () => {
@@ -165,8 +131,8 @@ describe("useXaaTestTarget", () => {
       useXaaTestTarget({
         server: stdio,
         selectedServerName: "local-stdio",
-        selectedRegistration: null,
         runSettings,
+        selectedPerson: null,
         projectId: "proj_1",
       }),
     );
@@ -181,12 +147,60 @@ describe("useXaaTestTarget", () => {
       useXaaTestTarget({
         server: httpServer({ useOAuth: false }),
         selectedServerName: "staging-mcp",
-        selectedRegistration: null,
         runSettings,
+        selectedPerson: null,
         projectId: "proj_1",
       }),
     );
     expect(result.current.isTestable).toBe(false);
+  });
+
+  it("uses the per-server xaaSubject/xaaEmail override with no person selected", () => {
+    remoteServers = [
+      { _id: "srv_1", name: "staging-mcp", projectId: "proj_1" },
+    ];
+    const { result } = renderHook(() =>
+      useXaaTestTarget({
+        server: httpServer({
+          xaaSubject: "server-sub",
+          xaaEmail: "server@example.com",
+        } as Partial<ServerWithName>),
+        selectedServerName: "staging-mcp",
+        runSettings,
+        selectedPerson: null,
+        projectId: "proj_1",
+      }),
+    );
+    expect(result.current.runInput.userId).toBe("server-sub");
+    expect(result.current.runInput.email).toBe("server@example.com");
+  });
+
+  it("a selected person beats the server override ATOMICALLY (both fields)", () => {
+    remoteServers = [
+      { _id: "srv_1", name: "staging-mcp", projectId: "proj_1" },
+    ];
+    const { result } = renderHook(() =>
+      useXaaTestTarget({
+        server: httpServer({
+          xaaSubject: "server-sub",
+          xaaEmail: "server@example.com",
+        } as Partial<ServerWithName>),
+        selectedServerName: "staging-mcp",
+        runSettings,
+        selectedPerson: {
+          _id: "person_1",
+          subject: "bob-001",
+          email: "bob@tables.test",
+        },
+        projectId: "proj_1",
+      }),
+    );
+    // Both fields come from the person — the server's email must NOT be
+    // borrowed alongside the person's subject (identities are atomic).
+    expect(result.current.runInput.userId).toBe("bob-001");
+    expect(result.current.runInput.email).toBe("bob@tables.test");
+    // The person changes the identity, never the target.
+    expect(result.current.targetKey).toBe("bar_server:staging-mcp");
   });
 
   it("returns the none source when nothing is selected", () => {
@@ -195,12 +209,171 @@ describe("useXaaTestTarget", () => {
       useXaaTestTarget({
         server: undefined,
         selectedServerName: "none",
-        selectedRegistration: null,
         runSettings,
+        selectedPerson: null,
         projectId: "proj_1",
       }),
     );
     expect(result.current.targetSource).toBe("none");
     expect(result.current.isTestable).toBe(false);
+  });
+
+  // ── Project default precedence ────────────────────────────────────────
+
+  const projectDefault = { subject: "proj-sub-1", email: "proj@example.com" };
+
+  it("uses the project default when the server has no override", () => {
+    remoteServers = [
+      { _id: "srv_1", name: "staging-mcp", projectId: "proj_1" },
+    ];
+    const { result } = renderHook(() =>
+      useXaaTestTarget({
+        server: httpServer(),
+        selectedServerName: "staging-mcp",
+        runSettings,
+        selectedPerson: null,
+        projectId: "proj_1",
+        projectDefault,
+      }),
+    );
+    expect(result.current.runInput.userId).toBe("proj-sub-1");
+    expect(result.current.runInput.email).toBe("proj@example.com");
+    expect(result.current.identityError).toBeUndefined();
+  });
+
+  it("a complete server override beats the project default", () => {
+    remoteServers = [
+      { _id: "srv_1", name: "staging-mcp", projectId: "proj_1" },
+    ];
+    const { result } = renderHook(() =>
+      useXaaTestTarget({
+        server: httpServer({
+          xaaSubject: "server-sub",
+          xaaEmail: "server@example.com",
+        } as Partial<ServerWithName>),
+        selectedServerName: "staging-mcp",
+        runSettings,
+        selectedPerson: null,
+        projectId: "proj_1",
+        projectDefault,
+      }),
+    );
+    expect(result.current.runInput.userId).toBe("server-sub");
+    expect(result.current.runInput.email).toBe("server@example.com");
+  });
+
+  it("a selected person beats server override AND project default (highest precedence)", () => {
+    remoteServers = [
+      { _id: "srv_1", name: "staging-mcp", projectId: "proj_1" },
+    ];
+    const { result } = renderHook(() =>
+      useXaaTestTarget({
+        server: httpServer({
+          xaaSubject: "server-sub",
+          xaaEmail: "server@example.com",
+        } as Partial<ServerWithName>),
+        selectedServerName: "staging-mcp",
+        runSettings,
+        selectedPerson: {
+          _id: "person_1",
+          subject: "bob-001",
+          email: "bob@tables.test",
+        },
+        projectId: "proj_1",
+        projectDefault,
+      }),
+    );
+    expect(result.current.runInput.userId).toBe("bob-001");
+    expect(result.current.runInput.email).toBe("bob@tables.test");
+  });
+
+  it("a stale/deleted person (resolved to null by the caller) falls through to the project default", () => {
+    // The owning page resolves a stale selectedPersonId against the roster
+    // to null before calling the hook — so the fallthrough contract is:
+    // null person + no override → project default, atomically.
+    remoteServers = [
+      { _id: "srv_1", name: "staging-mcp", projectId: "proj_1" },
+    ];
+    const { result } = renderHook(() =>
+      useXaaTestTarget({
+        server: httpServer(),
+        selectedServerName: "staging-mcp",
+        runSettings,
+        selectedPerson: null,
+        projectId: "proj_1",
+        projectDefault,
+      }),
+    );
+    expect(result.current.runInput.userId).toBe("proj-sub-1");
+    expect(result.current.runInput.email).toBe("proj@example.com");
+  });
+
+  it("falls back to run settings when there is no person, override, or project default", () => {
+    remoteServers = [
+      { _id: "srv_1", name: "staging-mcp", projectId: "proj_1" },
+    ];
+    const { result } = renderHook(() =>
+      useXaaTestTarget({
+        server: httpServer(),
+        selectedServerName: "staging-mcp",
+        runSettings,
+        selectedPerson: null,
+        projectId: "proj_1",
+        projectDefault: null,
+      }),
+    );
+    expect(result.current.runInput.userId).toBe("user-1");
+    expect(result.current.runInput.email).toBe("u@example.com");
+  });
+
+  it("a partial legacy server override sets identityError and never mixes sources", () => {
+    remoteServers = [
+      { _id: "srv_1", name: "staging-mcp", projectId: "proj_1" },
+    ];
+    const { result } = renderHook(() =>
+      useXaaTestTarget({
+        server: httpServer({
+          xaaSubject: "server-sub",
+          // Legacy row: email member missing.
+        } as Partial<ServerWithName>),
+        selectedServerName: "staging-mcp",
+        runSettings,
+        selectedPerson: null,
+        projectId: "proj_1",
+        projectDefault,
+      }),
+    );
+    expect(result.current.identityError).toBe(
+      "Complete or clear the server identity override",
+    );
+    // Run input stays coherent (fallback pair) but the consumer must block
+    // the run — never server-sub with the project default's email.
+    expect(result.current.runInput.userId).toBe("user-1");
+    expect(result.current.runInput.email).toBe("u@example.com");
+  });
+
+  it("a selected person clears the partial-override block (person wins atomically)", () => {
+    remoteServers = [
+      { _id: "srv_1", name: "staging-mcp", projectId: "proj_1" },
+    ];
+    const { result } = renderHook(() =>
+      useXaaTestTarget({
+        server: httpServer({
+          xaaSubject: "server-sub",
+        } as Partial<ServerWithName>),
+        selectedServerName: "staging-mcp",
+        runSettings,
+        selectedPerson: {
+          _id: "person_1",
+          subject: "bob-001",
+          email: "bob@tables.test",
+        },
+        projectId: "proj_1",
+        projectDefault: null,
+      }),
+    );
+    expect(result.current.identityError).toBeUndefined();
+    expect(result.current.runInput.userId).toBe("bob-001");
+    expect(result.current.runInput.email).toBe("bob@tables.test");
   });
 });

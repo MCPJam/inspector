@@ -1,5 +1,6 @@
 import { HOSTED_MODE } from "@/lib/config";
 import { MCPJAM_HOSTED_APP_ORIGIN } from "@/lib/oauth/constants";
+import { authFetch } from "@/lib/session-token";
 
 export interface XaaIdpUrls {
   issuerBaseUrl: string;
@@ -20,8 +21,14 @@ function getIssuerBasePath(): string {
  */
 export function getOrgScopedIssuerSegment(
   organizationId?: string | null,
+  issuerKind: "org" | "anonymous" = "org",
 ): string {
-  return HOSTED_MODE && organizationId ? `/o/${organizationId}` : "";
+  if (!HOSTED_MODE || !organizationId) return "";
+  // "anonymous" = the /g/ anonymous test issuer (guest sessions, bound to
+  // the personal org; a RAS must explicitly allowlist it).
+  return issuerKind === "anonymous"
+    ? `/g/${organizationId}`
+    : `/o/${organizationId}`;
 }
 
 /**
@@ -45,10 +52,16 @@ const HOSTED_ISSUER_ORIGIN =
     "",
   ) || MCPJAM_HOSTED_APP_ORIGIN;
 
-export function getHostedXaaIdpUrls(organizationId?: string | null): XaaIdpUrls {
-  const issuerBaseUrl = `${HOSTED_ISSUER_ORIGIN}/api/web/xaa${
-    organizationId ? `/o/${organizationId}` : ""
-  }`;
+export function getHostedXaaIdpUrls(
+  organizationId?: string | null,
+  issuerKind: "org" | "anonymous" = "org",
+): XaaIdpUrls {
+  const segment = organizationId
+    ? issuerKind === "anonymous"
+      ? `/g/${organizationId}`
+      : `/o/${organizationId}`
+    : "";
+  const issuerBaseUrl = `${HOSTED_ISSUER_ORIGIN}/api/web/xaa${segment}`;
   return {
     issuerBaseUrl,
     openidConfigUrl: `${issuerBaseUrl}/.well-known/openid-configuration`,
@@ -64,9 +77,12 @@ export function getHostedXaaIdpUrls(organizationId?: string | null): XaaIdpUrls 
  * that actually mints the ID-JAG `iss`, so prefer `fetchXaaIdpUrls` when an
  * accurate value matters (registration, issuer-trust comparisons).
  */
-export function getXaaIdpUrls(organizationId?: string | null): XaaIdpUrls {
+export function getXaaIdpUrls(
+  organizationId?: string | null,
+  issuerKind: "org" | "anonymous" = "org",
+): XaaIdpUrls {
   const origin = typeof window === "undefined" ? "" : window.location.origin;
-  const issuerBaseUrl = `${origin}${getIssuerBasePath()}${getOrgScopedIssuerSegment(organizationId)}`;
+  const issuerBaseUrl = `${origin}${getIssuerBasePath()}${getOrgScopedIssuerSegment(organizationId, issuerKind)}`;
   return {
     issuerBaseUrl,
     openidConfigUrl: `${issuerBaseUrl}/.well-known/openid-configuration`,
@@ -82,11 +98,40 @@ export function getXaaIdpUrls(organizationId?: string | null): XaaIdpUrls {
  * (browser on :5173, backend on :6274). Falls back to null on any failure;
  * callers should default to `getXaaIdpUrls()` then.
  */
+/**
+ * Confidential CIMD: ask the server for the reflector document URL that
+ * publishes ITS client public key. The browser can't hold the private key, so
+ * it presents this URL as its client_id and the server signs the
+ * client_assertion at /proxy/token. Local-inspector capability only; hosted
+ * deliberately has no provider/route. Returns null on failure so the caller
+ * can fail closed rather than silently switching to public CIMD.
+ */
+export async function fetchConfidentialCimdClientUrl(
+  signal?: AbortSignal,
+): Promise<string | null> {
+  // authFetch (not plain fetch): this endpoint is session-protected in local
+  // mode (it requires the X-MCP-Session-Auth token), and authFetch also carries
+  // the hosted bearer + refresh-retry in hosted mode. A bare fetch would 401
+  // locally and silently break confidential CIMD.
+  const url = `${getIssuerBasePath()}/confidential-cimd/client`;
+  try {
+    const response = await authFetch(url, { signal });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { clientIdMetadataUrl?: unknown };
+    return typeof body.clientIdMetadataUrl === "string"
+      ? body.clientIdMetadataUrl
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchXaaIdpUrls(
   signal?: AbortSignal,
   organizationId?: string | null,
+  issuerKind: "org" | "anonymous" = "org",
 ): Promise<XaaIdpUrls | null> {
-  const { openidConfigUrl } = getXaaIdpUrls(organizationId);
+  const { openidConfigUrl } = getXaaIdpUrls(organizationId, issuerKind);
   try {
     const response = await fetch(openidConfigUrl, { signal });
     if (!response.ok) {

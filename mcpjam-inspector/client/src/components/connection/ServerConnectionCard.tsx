@@ -927,16 +927,6 @@ export function ServerConnectionCard({
             </div>
           )}
 
-          {server.connectionStatus === "oauth-flow" && (
-            <div
-              className="mt-3 rounded-md border border-purple-300/40 bg-purple-500/10 p-2 text-xs text-muted-foreground"
-              onClick={(e) => e.stopPropagation()}
-            >
-              Complete sign-in in the browser. Inspector will resume
-              automatically.
-            </div>
-          )}
-
           {showTunnelActions && hasTunnel && showTunnelRequests && (
             <div
               className="mt-2 rounded-md border border-border/70 bg-muted/20 p-2"

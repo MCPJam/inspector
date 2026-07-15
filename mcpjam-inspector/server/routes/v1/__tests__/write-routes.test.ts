@@ -272,6 +272,9 @@ describe("v1 write routes", () => {
         ]);
         expect(createAuthorizedManagerMock.mock.calls[0][7]).toEqual({
           serverNames: ["alpha", "beta"],
+          // Threaded so per-server XAA servers mint instead of 500ing —
+          // the v1 eval API has no host-persona input, so no xaaPolicy.
+          xaaIssuer: expect.stringContaining("/xaa"),
         });
         expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
           serverIds: ["s_alpha", "s_beta"],

@@ -24,7 +24,7 @@ The Playground is the main workspace for developing against your MCP servers. It
 
 ## Key Features
 
-- **Chat with frontier models** — Talk to your server using Claude, GPT, Gemini, DeepSeek, and more at no cost, no API key required. Bring your own key for custom providers.
+- **Chat with frontier models** — Talk to your server using Claude, GPT, Gemini, DeepSeek, and more at no cost, no API key required. Organizations can configure additional model providers in their organization settings.
 - **Manual tool invocation** — Run any tool from the Tools rail with your own inputs to iterate on a widget or response without prompting a model.
 - **Widget emulator** — Render widgets exposed via `openai/outputTemplate` (ChatGPT Apps) or `ui.resourceUri` (MCP Apps) the same way a real host would, with Inline, Picture-in-Picture, and Fullscreen display modes.
 - **Chat / Trace / Raw views** — Switch between the conversation, a timestamped timeline of every step (with per-step latency and tokens), and the exact JSON payload sent to the model.
@@ -36,6 +36,7 @@ The Playground is the main workspace for developing against your MCP servers. It
 - **Sessions rail** — Resume, archive, and search past conversations from the left rail.
 - **Skills and prompts** — Type `/` to inject skills or MCP prompts directly into the chat.
 - **Edit tool input/output live** — Click **Edit** on any tool-result card to tweak the input or output JSON and watch the widget re-render instantly; **Run** re-executes the tool with your edited input.
+- **Voice input** — Click the mic button in the chat input to record your voice; the audio is transcribed and the text is inserted into the composer.
 
 ## Getting Started
 
@@ -57,8 +58,9 @@ The Playground is a three-column IDE shell. Each side rail is collapsible — dr
 - Chat composer, conversation thread with inline tool calls and widgets, and the host context toolbar.
 - Top of the pane has a segmented control to switch between **Chat**, **Trace**, and **Raw** views.
 
-**Right rail — JSON-RPC Logger**
-- Real-time feed of MCP protocol messages. Search, filter by source server, filter by log level, copy, download, or clear the buffer.
+**Right rail — Logs / Shell**
+- **Logs** (always available) — Real-time feed of MCP protocol messages. Search, filter by source server, filter by log level, copy, download, or clear the buffer.
+- **Shell** (shown when the previewed host has a Project Computer) — A live terminal on the computer the harness runs on. Click **Open terminal** to provision or wake the computer and connect. Switching between Logs and Shell keeps both the terminal WebSocket and the log stream alive so neither is dropped.
 
 ## Chat, Trace, and Raw Views
 
@@ -94,9 +96,15 @@ When multiple servers are selected at the same time, the Tools rail aggregates e
 The model picker in the chat input lets you choose which LLM to use. Models are organized into two tabs:
 
 - **Free models** — Frontier models (Claude, GPT, Gemini, DeepSeek, and more) available at no cost with no API key required.
-- **Your providers** — Models from providers you've configured in Settings with your own API key.
+- **Your providers** — Models from providers configured in your organization's settings on mcpjam.com.
 
 The picker opens on the tab that matches your currently selected model. When you search, results from both tabs appear together.
+
+### Out-of-credits state
+
+When your MCPJam credit balance reaches zero, free models are grayed out in the picker with a tooltip explaining the limit. Models from your own providers remain enabled — switching to one is the fastest way to keep working. Paid top-up credits (if you have any) keep free models available even after your daily free allowance is exhausted.
+
+If the out-of-credits dialog appears, clicking **Bring your own key** closes the dialog and opens the model picker directly on the **Your providers** tab so you can switch to an own-key model without leaving the chat.
 
 ## Multi-Model Compare
 
@@ -215,6 +223,12 @@ Simulate notches, rounded corners, and gesture areas. Pick a preset (None, iPhon
 
 ## Widget Controls
 
+### Download confirmation
+
+When an MCP App widget triggers a `ui/download-file` request, the inspector shows a confirmation dialog before the download runs. The dialog displays the filename, MIME type, and URI so you can make an informed decision. Click **Download** to allow it or **Cancel** to deny it — a denial is surfaced to the widget as a `{ isError: true }` result so the widget can handle it gracefully.
+
+Only one confirmation prompt is shown at a time. If a second download request arrives while a prompt is open, it is automatically denied.
+
 ### Display Modes
 
 All three display modes are supported for both ChatGPT Apps and MCP Apps:
@@ -234,6 +248,10 @@ Widget rendering is gated on the active Client's `clientCapabilities`. Hosts tha
 ## Per-Widget Debugging
 
 Every tool result in the chat thread has a row of icons in its header. Click an icon to open the matching debug panel below the widget.
+
+### Sign-in links
+
+When a computer-backed tool (such as Bash) runs a command that triggers a device-flow authentication prompt — for example, `gh auth login` — any sign-in URLs surfaced by the tool appear as clickable links directly in the chat thread under a **Sign-in link** heading. This saves you from hunting through scrollback for the URL. Only `https:` URLs are rendered as links; plain `http:` and non-web schemes are never shown.
 
 ### Data
 
@@ -263,9 +281,13 @@ The debug panel includes a **Mounts** section that appears only when a widget if
 
 Click **Edit** on a tool-result card to make the **Input** and **Result** JSON editable in place. Edits re-render the widget live with no reload; **Run** re-executes the tool with the edited input, and **Revert** restores the original. Edits are local to the session — nothing is persisted.
 
-## JSON-RPC Logger
+## Right Rail
 
-The right rail streams every message between the inspector and your connected server(s) in real time. Each entry shows the direction (client→server or server→client), the method name, and a timestamp. Click an entry to expand its full JSON payload.
+The right rail has two tabs. The **Logs** tab is always present; the **Shell** tab appears when the previewed host has a Project Computer attached.
+
+### Logs tab
+
+Streams every message between the inspector and your connected server(s) in real time. Each entry shows the direction (client→server or server→client), the method name, and a timestamp. Click an entry to expand its full JSON payload.
 
 Logged messages include:
 
@@ -284,6 +306,12 @@ Controls in the logger header:
 - **Clear** the buffer
 - **Collapse** the rail
 
+### Shell tab
+
+When the previewed host has a Project Computer, a **Shell** tab appears next to **Logs**. Click **Open terminal** to provision or wake the computer and open a live terminal session on the same machine the harness runs on. The computer status chip in the Shell header shows the current state (starting, ready, error, etc.).
+
+Both tabs stay mounted while you switch between them, so the terminal WebSocket and the log stream are never dropped.
+
 ## Input Bar
 
 Click the **+** button on the left of the chat input to manage servers, attach files, and tune model behavior.
@@ -292,13 +320,22 @@ Click the **+** button on the left of the chat input to manage servers, attach f
 A list of every server in your project, sorted by status. Each row shows the server name and transport type (`HTTP` or `stdio`, npx/desktop only). Connect, disconnect, or toggle a server on or off for the current conversation. **+ Add server** opens the add-server modal without leaving the Playground.
 
 **Attach files**
-Upload images, PDFs, text, JSON, CSV, XLSX, and other supported files into the conversation.
+Add files to the conversation in any of these ways:
+
+- **File picker** — Click the **+** button and choose **Attach files** to browse and select files.
+- **Paste** — Copy an image to your clipboard and paste it directly into the chat input (`Ctrl+V` / `Cmd+V`). Pasted images without a filename are saved automatically as `pasted-image-1.png`, `pasted-image-2.png`, and so on.
+- **Drag and drop** — Drag one or more files from your desktop and drop them onto the chat input. A "Drop image or file to attach" overlay appears while you're dragging to confirm the drop target.
+
+Supported file types include images, PDFs, text, JSON, CSV, XLSX, and other common formats. Invalid file types show an error message below the input.
 
 **System Prompt & Temperature**
 Edit the system prompt the model sees before your messages, and adjust the temperature slider (0 = deterministic, higher = more creative).
 
 **Tool Approval**
 When on, pauses the model before each tool call so you can approve or deny it manually.
+
+**Voice input**
+Click the mic button (right side of the input) to record your voice. The audio is transcribed using Whisper and the resulting text is appended to whatever you've already typed in the composer. Recording stops automatically after 3 minutes. The mic is disabled when your daily voice budget is exhausted; a warning appears in the composer when the remaining budget is low. While a recording is in progress, pressing Enter does not submit the draft — use the stop button (arrow-up) to finish recording first, or the ✕ button to cancel without transcribing.
 
 **Context meter** (right side of the input)
 Open it to inspect the token breakdown for the current conversation — input, output, system prompt, and MCP tools usage.
@@ -313,6 +350,29 @@ The Playground respects every skill you've configured in the [Skills](/inspector
 ## Prompts
 
 Prompts are MCP prompt templates exposed by your servers via `prompts/list`. Type `/` in the input and pick one from the **PROMPTS** section. Selected prompts appear as expandable cards above the input — source server ID, description, arguments (required ones marked with `*`), and a preview of the first message — so you can review or remove them before sending.
+
+## Workspace tools
+
+When you are signed in as a project member, the Playground gives the model a set of built-in tools for interacting with the MCP servers saved in your project. These tools are not available to guests or in shared chatbox sessions.
+
+| Tool | What it does |
+|---|---|
+| `list_project_servers` | List all servers saved in the project with their names, transport types, and enabled status. |
+| `diagnose_server` | Probe a server's URL, connect, initialize, and report its capabilities and any connection errors. Use this when a server won't connect or you want to check its health. |
+| `list_server_tools` | List the tools a server exposes — names, descriptions, and input schemas. Paginated; pass `nextCursor` back as `cursor` for the next page. |
+| `call_server_tool` | Execute a tool on a server and return its result. Runs with your own authorization and may have side effects. Get the tool name and parameter schema from `list_server_tools` first. |
+| `list_server_prompts` | List the prompts a server exposes — names, descriptions, and arguments. Paginated. |
+| `get_server_prompt` | Render a prompt from a server with the given arguments and return its messages. |
+| `list_server_resources` | List the resources a server exposes — URIs, names, and MIME types. Paginated. |
+| `read_server_resource` | Read one resource from a server by URI and return its contents. |
+
+Servers are identified by name or ID as saved in the project. Stdio servers are not supported for live operations — the model will receive a clear error rather than a connection failure.
+
+When **Tool Approval** is on, the model pauses before `diagnose_server`, `call_server_tool`, and `read_server_resource` (the operations that open a live connection) so you can approve or deny each one. Read-only listing tools (`list_project_servers`, `list_server_tools`, `list_server_prompts`, `list_server_resources`) never require approval.
+
+<Note>
+  These tools are only available when you are signed in as a project member. They are not shown to guests or in chatbox sessions.
+</Note>
 
 ## Related Features
 

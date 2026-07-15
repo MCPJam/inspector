@@ -6,6 +6,7 @@ import {
   Boxes,
   Info,
   Loader2,
+  Moon,
   RotateCcw,
   TerminalSquare,
   Trash2,
@@ -20,6 +21,7 @@ import {
   useComputerStatus,
   useComputerUsage,
   useDeleteComputer,
+  useHibernateComputer,
   useMintTerminalToken,
   useReserveComputer,
 } from "@/hooks/useProjectComputer";
@@ -55,6 +57,7 @@ export function ComputerView({
   const status = useComputerStatus(effectiveProjectId);
   const reserve = useReserveComputer();
   const deleteComputer = useDeleteComputer();
+  const hibernateComputer = useHibernateComputer();
   const mintTerminalToken = useMintTerminalToken();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const terminalTheme = themeMode === "dark" ? "dark" : "light";
@@ -63,6 +66,8 @@ export function ComputerView({
   const [starting, setStarting] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmingHibernate, setConfirmingHibernate] = useState(false);
+  const [hibernating, setHibernating] = useState(false);
   const [envDrawerOpen, setEnvDrawerOpen] = useState(false);
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -161,6 +166,23 @@ export function ComputerView({
       setConfirmingDelete(false);
     }
   }, [effectiveProjectId, deleteComputer]);
+
+  const onHibernate = useCallback(async () => {
+    if (!effectiveProjectId) return;
+    setHibernating(true);
+    try {
+      await hibernateComputer({ projectId: effectiveProjectId });
+      setTerminalOpen(false);
+      toast.success("Computer hibernated. It'll wake next time you use it.");
+    } catch (err) {
+      toast.error(
+        getBillingErrorMessage(err, "Could not hibernate the computer.")
+      );
+    } finally {
+      setHibernating(false);
+      setConfirmingHibernate(false);
+    }
+  }, [effectiveProjectId, hibernateComputer]);
 
   const onReset = useCallback(async () => {
     if (!effectiveProjectId) return;
@@ -321,6 +343,42 @@ export function ComputerView({
               Open terminal
             </Button>
           ) : null}
+          {isReady ? (
+            confirmingHibernate ? (
+              <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                Hibernate now?
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void onHibernate()}
+                  disabled={hibernating}
+                >
+                  {hibernating ? (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : null}
+                  Hibernate
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setConfirmingHibernate(false)}
+                  disabled={hibernating}
+                >
+                  Cancel
+                </Button>
+              </span>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setConfirmingHibernate(true)}
+                title="Put the computer to sleep now (state is kept; wakes on next use)"
+              >
+                <Moon className="mr-1.5 h-3.5 w-3.5" />
+                Hibernate now
+              </Button>
+            )
+          ) : null}
           {hasComputer ? (
             confirmingDelete ? (
               <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
@@ -361,8 +419,9 @@ export function ComputerView({
 
       <div className="flex flex-col gap-1.5">
         <p className="text-sm text-muted-foreground">
-          A personal Linux workstation for this project — it sleeps when idle
-          and wakes on use.
+          A personal Linux workstation for this project. It sleeps automatically
+          after about 30 minutes idle, or shortly after you close the terminal,
+          and wakes on use. Use “Hibernate now” to put it to sleep immediately.
         </p>
         <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />

@@ -19,14 +19,14 @@ export function buildNodesAndEdges(
   config: DiagramActorConfig = {
     actors: ACTORS,
     actorXPositions: ACTOR_X_POSITIONS,
-  },
+  }
 ): { nodes: Node[]; edges: Edge[] } {
   const totalActions = actions.length;
   const totalSegmentHeight = totalActions * ACTION_SPACING + 100;
   const actorIds = Object.keys(config.actors);
 
   const actorSegments = Object.fromEntries(
-    actorIds.map((actorId) => [actorId, [] as ActorNodeData["segments"]]),
+    actorIds.map((actorId) => [actorId, [] as ActorNodeData["segments"]])
   ) as Record<string, ActorNodeData["segments"]>;
 
   let currentY = 0;
@@ -50,7 +50,7 @@ export function buildNodesAndEdges(
     // Add box segments for the actors involved in this action
     const addSegmentForActor = (
       actorName: string,
-      segments: ActorNodeData["segments"],
+      segments: ActorNodeData["segments"]
     ) => {
       if (action.from === actorName || action.to === actorName) {
         segments.push({
@@ -110,12 +110,13 @@ export function buildNodesAndEdges(
     const arrowColor = isComplete
       ? "#10b981"
       : isCurrent
-        ? "#3b82f6"
-        : "#d1d5db";
+      ? "#3b82f6"
+      : "#d1d5db";
 
     const sourceX = config.actorXPositions[action.from] ?? 0;
     const targetX = config.actorXPositions[action.to] ?? 0;
     const isLeftToRight = sourceX < targetX;
+    const isInternal = action.from === action.to;
 
     return {
       id: `edge-${action.id}`,
@@ -130,18 +131,21 @@ export function buildNodesAndEdges(
       type: "actionEdge",
       data: {
         stepId: action.id,
+        isInternal,
         label: action.label,
         description: action.description,
         status,
         details: action.details,
       },
       animated: isCurrent,
-      markerEnd: {
-        type: "arrowclosed" as const,
-        color: arrowColor,
-        width: 12,
-        height: 12,
-      },
+      markerEnd: isInternal
+        ? undefined
+        : {
+            type: "arrowclosed" as const,
+            color: arrowColor,
+            width: 12,
+            height: 12,
+          },
       style: {
         stroke: arrowColor,
         strokeWidth: isCurrent ? 3 : isComplete ? 2 : 1.5,

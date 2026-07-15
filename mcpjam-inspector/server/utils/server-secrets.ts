@@ -3,6 +3,10 @@ import {
   WebRouteError,
   parseErrorMessage,
 } from "../routes/web/errors.js";
+import { logger } from "./logger.js";
+
+// One-shot guard so a misconfigured deployment logs once, not per request.
+let warnedMissingServiceTokenForIp = false;
 
 export interface ServerSecretsResult {
   env: Record<string, string> | null;
@@ -52,6 +56,13 @@ async function postToConvexAuthorized(args: {
   bearerToken: string;
   body: Record<string, unknown>;
   serviceName: string;
+  // Real end-user IP as seen by THIS server. Convex's own x-forwarded-for
+  // names the inspector server (the direct peer), so the guest per-IP quota
+  // would collapse into one bucket without this forward. The backend only
+  // trusts x-mcpjam-client-ip when accompanied by a valid inspector service
+  // token, so we send that token alongside it — otherwise a direct caller
+  // could spoof the IP to evade the per-IP cap.
+  clientIp?: string | null;
 }): Promise<any> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -67,6 +78,23 @@ async function postToConvexAuthorized(args: {
     CONVEX_POST_TIMEOUT_MS
   );
 
+  // Only forward the client IP when we can also prove Inspector provenance
+  // (INSPECTOR_SERVICE_TOKEN); the backend ignores an unauthenticated IP.
+  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  const forwardIp = Boolean(args.clientIp && inspectorServiceToken);
+  // Surface the silent-degradation case: we resolved a client IP but can't
+  // authenticate it to the backend, so the per-IP guest quota collapses to a
+  // coarse bucket. In a real hosted deployment the token is always set (it
+  // gates the delegation flow too); warn once so a misconfiguration is visible
+  // rather than silently weakening the cap.
+  if (args.clientIp && !inspectorServiceToken && !warnedMissingServiceTokenForIp) {
+    warnedMissingServiceTokenForIp = true;
+    logger.warn(
+      "INSPECTOR_SERVICE_TOKEN unset: not forwarding client IP to Convex; " +
+        "the per-IP guest XAA quota will bucket coarsely until it is configured."
+    );
+  }
+
   let body: any = null;
   let response: Response;
   try {
@@ -75,6 +103,12 @@ async function postToConvexAuthorized(args: {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${args.bearerToken}`,
+        ...(forwardIp
+          ? {
+              "x-mcpjam-client-ip": args.clientIp as string,
+              "x-inspector-service-token": inspectorServiceToken as string,
+            }
+          : {}),
       },
       body: JSON.stringify(args.body),
       signal: controller.signal,
@@ -241,53 +275,6 @@ export async function fetchRuntimeServerSecrets(args: {
   };
 }
 
-export interface XaaResourceAppSecretResult {
-  clientSecret: string;
-  /** The registration's stored token endpoint — the only URL the proxy may
-   * post the secret to. */
-  tokenEndpoint: string | null;
-  targetClientId: string | null;
-  scopes: string[] | null;
-}
-
-/**
- * Resolve a registered XAA resource app's client secret (plus the stored
- * token endpoint it must be posted to) server-side, mirroring
- * fetchRuntimeServerSecrets: the caller's bearer is forwarded as-is, so the
- * backend enforces that the caller is a member of the registration's org.
- * The secret never reaches the browser.
- */
-export async function fetchXaaResourceAppSecret(args: {
-  bearerToken: string;
-  registrationId: string;
-}): Promise<XaaResourceAppSecretResult> {
-  const body = await postToConvexAuthorized({
-    path: "/web/xaa/resource-app/reveal-secret",
-    bearerToken: args.bearerToken,
-    body: { id: args.registrationId },
-    serviceName: "secret-reveal service",
-  });
-
-  if (typeof body.clientSecret !== "string") {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Secret reveal response was invalid"
-    );
-  }
-
-  return {
-    clientSecret: body.clientSecret,
-    tokenEndpoint:
-      typeof body.tokenEndpoint === "string" ? body.tokenEndpoint : null,
-    targetClientId:
-      typeof body.targetClientId === "string" ? body.targetClientId : null,
-    scopes: Array.isArray(body.scopes)
-      ? body.scopes.filter((s: unknown): s is string => typeof s === "string")
-      : null,
-  };
-}
-
 export interface ServerClientSecretResult {
   /** null for a public client (server with no stored secret). */
   clientSecret: string | null;
@@ -307,7 +294,7 @@ export interface ServerClientSecretResult {
 /**
  * Resolve a server target's confidential client secret plus the non-secret
  * config (client id, url, issuer) server-side, mirroring
- * fetchXaaResourceAppSecret: the caller's bearer is forwarded as-is, so the
+ * fetchRuntimeServerSecrets: the caller's bearer is forwarded as-is, so the
  * backend enforces per-server ownership. The secret never reaches the browser
  * and the inspector server — not the client — decides where it is posted.
  */
@@ -315,12 +302,14 @@ export async function fetchServerClientSecret(args: {
   bearerToken: string;
   serverId: string;
   projectId: string;
+  clientIp?: string | null;
 }): Promise<ServerClientSecretResult> {
   const body = await postToConvexAuthorized({
     path: "/web/xaa/server/reveal-secret",
     bearerToken: args.bearerToken,
     body: { serverId: args.serverId, projectId: args.projectId },
     serviceName: "secret-reveal service",
+    clientIp: args.clientIp,
   });
 
   return {
@@ -337,20 +326,33 @@ export async function fetchServerClientSecret(args: {
 }
 
 /**
- * Membership gate for the org-scoped MCPJam XAA test issuer
- * (`/api/web/xaa/o/<orgId>`). Forwards the caller's bearer to Convex, which
- * resolves the identity and requires org membership (guests are always
- * rejected there). Throws a WebRouteError on any failure — minting under a
- * scoped issuer is fail-closed.
+ * Gate for the scoped MCPJam XAA test issuers. Forwards the caller's bearer
+ * to Convex, which resolves the identity and applies the flavor's rule:
+ *
+ * - issuerKind "org" (`/api/web/xaa/o/<orgId>`): org membership required;
+ *   guests are always rejected — the /o/ trust story depends on excluding
+ *   anonymous actors.
+ * - issuerKind "anonymous" (`/api/web/xaa/g/<orgId>`): the visibly separate
+ *   anonymous test issuer, bound to the caller's OWN personal org (guest
+ *   sessions included, subject to revocation + durable quotas backend-side).
+ *
+ * Throws a WebRouteError on any failure — minting under a scoped issuer is
+ * fail-closed.
  */
 export async function authorizeXaaOrgIssuer(args: {
   bearerToken: string;
   organizationId: string;
+  issuerKind?: "org" | "anonymous";
+  clientIp?: string | null;
 }): Promise<void> {
   await postToConvexAuthorized({
     path: "/web/xaa/issuer/authorize",
     bearerToken: args.bearerToken,
-    body: { organizationId: args.organizationId },
+    body: {
+      organizationId: args.organizationId,
+      issuerKind: args.issuerKind ?? "org",
+    },
     serviceName: "issuer-authorization service",
+    clientIp: args.clientIp,
   });
 }

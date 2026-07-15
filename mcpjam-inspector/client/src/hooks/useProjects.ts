@@ -19,6 +19,11 @@ export interface RemoteProject {
   organizationId: string;
   visibility?: ProjectVisibility;
   ownerId: string;
+  /** Admin-controlled default synthetic identity for the MCPJam test IdP
+   * (atomic pair). Absent when the project has no default. */
+  xaaTestDefaults?: {
+    defaultIdentity: { subject: string; email: string };
+  };
   createdAt: number;
   updatedAt: number;
 }
@@ -57,7 +62,13 @@ export interface RemoteServer {
   authServerMode?: "mcpjam" | "own";
   xaaSubject?: string;
   xaaEmail?: string;
-  xaaRegistrationStrategy?: string;
+  xaaIdentityAssertionFormat?: string;
+  registrationMode?: string;
+  // CIMD client authentication ("none" | "private_key_jwt"). Requires the Convex
+  // schema + `servers:getProjectServers` query to persist/return it for hosted
+  // round-trip, mirroring xaaIdentityAssertionFormat.
+  xaaClientAuth?: string;
+  authMethod?: string;
   createdAt: number;
   updatedAt: number;
 }

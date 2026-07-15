@@ -1,8 +1,6 @@
-// The jwt-bearer (RFC 7523) token-request body posted to the resource
-// authorization server to redeem an ID-JAG. SINGLE SOURCE OF TRUTH — the
-// inspector's `/proxy/token` debugger route, the connect-page mint, and the
-// CLI's headless redemption all build their request body here so every surface
-// stays byte-identical on the wire.
+// Pure jwt-bearer (RFC 7523) request encoding shared by every XAA surface.
+// Node callers that also need private_key_jwt signing use the higher-level
+// buildXaaJwtBearerRequest wrapper from confidential-cimd-provider.ts.
 export function buildJwtBearerBody(args: {
   assertion: string;
   clientId?: string | null;
@@ -23,7 +21,11 @@ export function buildJwtBearerBody(args: {
 export type XaaTokenEndpointAuthMethod =
   | "client_secret_post"
   | "client_secret_basic"
-  | "none";
+  | "none"
+  | "private_key_jwt";
+
+const CLIENT_ASSERTION_TYPE =
+  "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
 // RFC 6749 section 2.3.1 requires each credential to be form-urlencoded before
 // the `client_id:client_secret` pair is Base64-encoded.
@@ -50,8 +52,26 @@ export function buildJwtBearerRequest(args: {
   scope?: string | null;
   resource?: string | null;
   tokenEndpointAuthMethod?: XaaTokenEndpointAuthMethod | null;
+  /** The signed private_key_jwt assertion (confidential CIMD). */
+  clientAssertion?: string | null;
 }): { headers: Record<string, string>; body: Record<string, string> } {
   const method = args.tokenEndpointAuthMethod;
+
+  if (method === "private_key_jwt") {
+    if (!args.clientId || !args.clientAssertion) {
+      throw new Error(
+        "private_key_jwt requires a client_id and a signed client_assertion",
+      );
+    }
+    return {
+      headers: {},
+      body: {
+        ...buildJwtBearerBody({ ...args, clientSecret: null }),
+        client_assertion_type: CLIENT_ASSERTION_TYPE,
+        client_assertion: args.clientAssertion,
+      },
+    };
+  }
 
   if (method === "client_secret_basic") {
     if (!args.clientId || !args.clientSecret) {

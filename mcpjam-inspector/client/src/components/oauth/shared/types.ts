@@ -17,6 +17,8 @@ export interface ActorNodeData extends Record<string, unknown> {
 
 // Edge data for action labels
 export interface ActionEdgeData extends Record<string, unknown> {
+  stepId?: string;
+  isInternal?: boolean;
   label: string;
   description: string;
   status: NodeStatus;

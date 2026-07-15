@@ -87,6 +87,8 @@ const isHttpServer = (server?: ServerWithName) =>
 interface OAuthFlowTabProps {
   serverConfigs: Record<string, ServerWithName>;
   selectedServerName: string;
+  hasHeaderServers?: boolean;
+  areServersHydrated?: boolean;
   onSelectServer: (serverName: string) => void;
   onSaveServerConfig?: (
     formData: ServerFormData,
@@ -113,6 +115,8 @@ interface OAuthFlowTabProps {
 export const OAuthFlowTab = ({
   serverConfigs,
   selectedServerName,
+  hasHeaderServers = false,
+  areServersHydrated = true,
   onSelectServer,
   onSaveServerConfig,
   onConnectWithTokens,
@@ -168,10 +172,19 @@ export const OAuthFlowTab = ({
   }, [pendingServerSelection, serverConfigs, onSelectServer]);
 
   useEffect(() => {
+    // On a hard reload, the project server query resolves after this tab first
+    // mounts. Do not mistake that loading gap for an empty project. If an
+    // eligible server then appears in the header, also close any dialog opened
+    // by the earlier empty state.
+    if (!areServersHydrated) return;
+    if (hasHeaderServers) {
+      setIsProfileModalOpen(false);
+      return;
+    }
     if (httpServerCount === 0) {
       setIsProfileModalOpen(true);
     }
-  }, [httpServerCount]);
+  }, [areServersHydrated, hasHeaderServers, httpServerCount]);
 
   const profile = useMemo(
     () => deriveOAuthProfileFromServer(activeServer),
@@ -642,6 +655,7 @@ export const OAuthFlowTab = ({
             protocolVersion={protocolVersion}
             focusedStep={focusedStep}
             hasProfile={false}
+            showConfigurePrompt={areServersHydrated && !hasHeaderServers}
             onConfigure={() => setIsProfileModalOpen(true)}
           />
         )}

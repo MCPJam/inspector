@@ -28,7 +28,7 @@ const hostedSecretProps = {
   onOauthScopesChange: vi.fn(),
   oauthProtocolMode: "2025-11-25" as const,
   onOauthProtocolModeChange: vi.fn(),
-  oauthRegistrationMode: "preregistered" as const,
+  registrationMode: "preregistered" as const,
   onOauthRegistrationModeChange: vi.fn(),
   useCustomClientId: true,
   onUseCustomClientIdChange: vi.fn(),
@@ -62,7 +62,7 @@ describe("AuthenticationSection", () => {
         onOauthScopesChange={vi.fn()}
         oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
-        oauthRegistrationMode="auto"
+        registrationMode="auto"
         onOauthRegistrationModeChange={vi.fn()}
         useCustomClientId={false}
         onUseCustomClientIdChange={vi.fn()}
@@ -95,7 +95,7 @@ describe("AuthenticationSection", () => {
         onOauthScopesChange={vi.fn()}
         oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
-        oauthRegistrationMode="auto"
+        registrationMode="auto"
         onOauthRegistrationModeChange={vi.fn()}
         useCustomClientId={false}
         onUseCustomClientIdChange={vi.fn()}
@@ -126,7 +126,7 @@ describe("AuthenticationSection", () => {
         onOauthScopesChange={vi.fn()}
         oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
-        oauthRegistrationMode="auto"
+        registrationMode="auto"
         onOauthRegistrationModeChange={vi.fn()}
         useCustomClientId={false}
         onUseCustomClientIdChange={vi.fn()}
@@ -142,6 +142,87 @@ describe("AuthenticationSection", () => {
     expect(screen.getByText("Cross-App Access (XAA)")).toBeInTheDocument();
   });
 
+  const autoProps = {
+    serverUrl: "https://example.com/mcp",
+    authType: "auto" as const,
+    onAuthTypeChange: vi.fn(),
+    showAuthSettings: false,
+    bearerToken: "",
+    onBearerTokenChange: vi.fn(),
+    oauthScopesInput: "",
+    onOauthScopesChange: vi.fn(),
+    oauthProtocolMode: "2025-11-25" as const,
+    onOauthProtocolModeChange: vi.fn(),
+    registrationMode: "auto" as const,
+    onOauthRegistrationModeChange: vi.fn(),
+    useCustomClientId: false,
+    onUseCustomClientIdChange: vi.fn(),
+    clientId: "",
+    onClientIdChange: vi.fn(),
+    clientSecret: "",
+    onClientSecretChange: vi.fn(),
+    clientIdError: null,
+    clientSecretError: null,
+  };
+
+  it("shows only labels in the menu — no option subtitles", async () => {
+    xaaFlagValue = true;
+    render(<AuthenticationSection {...autoProps} />);
+
+    const trigger = screen.getByRole("combobox");
+    expect(trigger).toHaveTextContent("Auto");
+
+    await userEvent.click(trigger);
+    expect(screen.getByRole("option", { name: "Auto" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "No Authentication" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "Cross-App Access when configured — otherwise connects without credentials, then OAuth if required",
+      ),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Connect without credentials"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the Auto option visible for a server saved as auto, even when the flag is off", () => {
+    xaaFlagValue = false;
+    render(<AuthenticationSection {...autoProps} />);
+
+    expect(screen.getByRole("combobox")).toHaveTextContent("Auto");
+  });
+
+  it("offers Auto to everyone without XAA in the menu when the flag is off", async () => {
+    xaaFlagValue = false;
+    render(<AuthenticationSection {...autoProps} authType="none" />);
+
+    await userEvent.click(screen.getByRole("combobox"));
+    expect(screen.getByRole("option", { name: "Auto" })).toBeInTheDocument();
+    expect(
+      screen.queryByText("Cross-App Access (XAA)"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("explains Auto per-server: discover when XAA is not configured", () => {
+    xaaFlagValue = true;
+    render(<AuthenticationSection {...autoProps} autoSelectsXaa={false} />);
+
+    expect(
+      screen.getByText("Anonymous first, then OAuth if required."),
+    ).toBeInTheDocument();
+  });
+
+  it("explains Auto per-server: XAA when configured", () => {
+    xaaFlagValue = true;
+    render(<AuthenticationSection {...autoProps} autoSelectsXaa={true} />);
+
+    expect(
+      screen.getByText("Uses Cross-App Access for this server."),
+    ).toBeInTheDocument();
+  });
+
   it("does not show the OAuth plan explainer for a typical automatic OAuth setup", () => {
     render(
       <AuthenticationSection
@@ -155,7 +236,7 @@ describe("AuthenticationSection", () => {
         onOauthScopesChange={vi.fn()}
         oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
-        oauthRegistrationMode="auto"
+        registrationMode="auto"
         onOauthRegistrationModeChange={vi.fn()}
         useCustomClientId={false}
         onUseCustomClientIdChange={vi.fn()}
@@ -190,7 +271,7 @@ describe("AuthenticationSection", () => {
         onOauthScopesChange={vi.fn()}
         oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
-        oauthRegistrationMode="auto"
+        registrationMode="auto"
         onOauthRegistrationModeChange={vi.fn()}
         useCustomClientId={false}
         onUseCustomClientIdChange={vi.fn()}
@@ -226,7 +307,7 @@ describe("AuthenticationSection", () => {
         onOauthScopesChange={vi.fn()}
         oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
-        oauthRegistrationMode="preregistered"
+        registrationMode="preregistered"
         onOauthRegistrationModeChange={vi.fn()}
         useCustomClientId={true}
         onUseCustomClientIdChange={vi.fn()}
@@ -265,7 +346,7 @@ describe("AuthenticationSection", () => {
         onOauthScopesChange={vi.fn()}
         oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
-        oauthRegistrationMode="auto"
+        registrationMode="auto"
         onOauthRegistrationModeChange={vi.fn()}
         useCustomClientId={false}
         onUseCustomClientIdChange={vi.fn()}
@@ -298,7 +379,7 @@ describe("AuthenticationSection", () => {
         onOauthScopesChange={vi.fn()}
         oauthProtocolMode="2025-11-25"
         onOauthProtocolModeChange={vi.fn()}
-        oauthRegistrationMode="cimd"
+        registrationMode="cimd"
         onOauthRegistrationModeChange={vi.fn()}
         useCustomClientId={false}
         onUseCustomClientIdChange={vi.fn()}
@@ -332,7 +413,7 @@ describe("AuthenticationSection", () => {
       onOauthScopesChange: vi.fn(),
       oauthProtocolMode: "2025-11-25" as const,
       onOauthProtocolModeChange: vi.fn(),
-      oauthRegistrationMode: "preregistered" as const,
+      registrationMode: "preregistered" as const,
       onOauthRegistrationModeChange: vi.fn(),
       useCustomClientId: true,
       onUseCustomClientIdChange: vi.fn(),

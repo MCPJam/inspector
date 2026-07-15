@@ -5,6 +5,7 @@ import { BootstrapNotReadyError } from "@/lib/app-ready";
 import {
   getDefaultClientCapabilities,
   type McpProtocolVersion,
+  type XaaEnterprisePolicy,
 } from "@mcpjam/sdk/browser";
 
 type GetAccessTokenFn = () => Promise<string | undefined | null>;
@@ -20,6 +21,13 @@ export interface ApiContext {
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  /**
+   * The active host's enterprise-managed authorization policy (validated
+   * `on` value only). Rides ad-hoc chat/eval bodies; ignored server-side
+   * whenever a backend host config exists (chatbox/host-bound turns read
+   * the policy server-authoritatively instead).
+   */
+  xaaPolicy?: XaaEnterprisePolicy;
   clientConfigSyncPending?: boolean;
   getAccessToken?: GetAccessTokenFn;
   oauthTokensByServerId?: Record<string, string>;
@@ -391,6 +399,11 @@ export function buildServerRequest(
             apiContext.mcpProtocolVersionsByServerId[serverId],
         }
       : {}),
+    // Single-server flows (tools/resources/prompts, validate) enforce the
+    // same host policy as batch connects — omitting it here would let these
+    // ephemeral connections bypass enterprise-managed auth. Ignored
+    // server-side for chatbox-scoped calls (server-authoritative fetch wins).
+    ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(chatboxId ? { chatboxId } : {}),
     ...(chatboxId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
@@ -405,6 +418,7 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   chatboxId?: string;
@@ -434,6 +448,7 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
     ...(protocolVersions
       ? { mcpProtocolVersionsByServerId: protocolVersions }
       : {}),
+    ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(chatboxId ? { chatboxId } : {}),
@@ -475,6 +490,7 @@ export function buildResolvedServerBatchRequest(input: {
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   chatboxId?: string;
@@ -496,6 +512,7 @@ export function buildResolvedServerBatchRequest(input: {
     ...(protocolVersions
       ? { mcpProtocolVersionsByServerId: protocolVersions }
       : {}),
+    ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(input.oauthTokens ? { oauthTokens: input.oauthTokens } : {}),
     ...(input.accessScope ? { accessScope: input.accessScope } : {}),
     ...(input.chatboxId ? { chatboxId: input.chatboxId } : {}),
@@ -513,6 +530,7 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   supportedProtocolVersions?: string[];
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
+  xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   chatboxId?: string;
@@ -543,6 +561,7 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
     ...(protocolVersions
       ? { mcpProtocolVersionsByServerId: protocolVersions }
       : {}),
+    ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(chatboxId ? { chatboxId } : {}),

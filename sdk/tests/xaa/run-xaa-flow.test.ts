@@ -7,6 +7,10 @@ import {
   getXAAIdpJwks,
   resetXAAIdpKeyPairForTests,
 } from "../../src/xaa/mint/keypair.js";
+import {
+  JWT_BEARER_GRANT,
+  ID_JAG_GRANT_PROFILE,
+} from "../../src/oauth/client-identity.js";
 
 const SERVER_URL = "https://mcp.example.com/mcp";
 const AS_ISSUER = "https://auth.example.com";
@@ -303,8 +307,7 @@ describe("runXaaFlow", () => {
 
     expect(result.completed).toBe(true);
     expect(
-      mcpHeaders["MCP-Protocol-Version"] ??
-        mcpHeaders["mcp-protocol-version"]
+      mcpHeaders["MCP-Protocol-Version"] ?? mcpHeaders["mcp-protocol-version"]
     ).toBe("2025-11-25");
     expect(mcpRequest).toMatchObject({
       params: {
@@ -369,7 +372,11 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === serverWithSlash && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
+          return json({
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: { protocolVersion: "2025-11-25" },
+          });
         }
         return json({}, 404);
       }
@@ -412,7 +419,11 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === SERVER_URL && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
+          return json({
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: { protocolVersion: "2025-11-25" },
+          });
         }
         return json({}, 404);
       }
@@ -479,7 +490,11 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === SERVER_URL && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
+          return json({
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: { protocolVersion: "2025-11-25" },
+          });
         }
         return json({}, 404);
       }
@@ -528,7 +543,11 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === serverWithSlash && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
+          return json({
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: { protocolVersion: "2025-11-25" },
+          });
         }
         return json({}, 404);
       }
@@ -613,7 +632,11 @@ describe("runXaaFlow", () => {
           return json({ access_token: "at-1", token_type: "Bearer" });
         }
         if (url === serverWithQuery && method === "POST") {
-          return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
+          return json({
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: { protocolVersion: "2025-11-25" },
+          });
         }
         return json({}, 404);
       }
@@ -770,7 +793,11 @@ describe("runXaaFlow", () => {
         return json({ access_token: "at-basic", token_type: "Bearer" });
       }
       if (url === SERVER_URL && method === "POST") {
-        return json({ jsonrpc: "2.0", id: "mcpjam-xaa-cli", result: { protocolVersion: "2025-11-25" } });
+        return json({
+          jsonrpc: "2.0",
+          id: "mcpjam-xaa-cli",
+          result: { protocolVersion: "2025-11-25" },
+        });
       }
       return json({}, 404);
     }) as unknown as typeof fetch;
@@ -886,5 +913,242 @@ describe("runXaaFlow", () => {
           input.toString() === SERVER_URL && init?.method === "POST"
       )
     ).toBe(false);
+  });
+
+  it("reports steps in ID-JAG spec vocabulary for a valid flow", async () => {
+    global.fetch = stubFetch({
+      token: {
+        status: 200,
+        body: { access_token: "at-123", token_type: "Bearer", expires_in: 300 },
+      },
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    const stepNames = result.steps.map((s) => s.step);
+    expect(stepNames).toContain("verify_issuer_publication");
+    expect(stepNames).toContain("mint_id_jag");
+    expect(stepNames).toContain("redeem_id_jag");
+    expect(stepNames).toContain("authenticated_mcp_request");
+    // The engine's internal HTTP-step names must not leak into CLI output.
+    expect(stepNames).not.toContain("token_exchange_request");
+    expect(stepNames).not.toContain("jwt_bearer_request");
+  });
+
+  it("prefixes and renames baseline/probe steps in a negative flow", async () => {
+    global.fetch = stubFetch({
+      tokenResponses: [
+        {
+          status: 200,
+          body: { access_token: "baseline-token", token_type: "Bearer" },
+        },
+        { status: 401, body: { error: "invalid_grant" } },
+      ],
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+      negativeTestMode: "bad_signature",
+    });
+
+    const stepNames = result.steps.map((s) => s.step);
+    expect(stepNames).toContain("baseline:mint_id_jag");
+    expect(stepNames).toContain("baseline:redeem_id_jag");
+    expect(stepNames).toContain("probe:mint_id_jag");
+    expect(stepNames).toContain("probe:redeem_id_jag");
+    expect(stepNames).not.toContain("baseline:token_exchange_request");
+    expect(stepNames).not.toContain("probe:jwt_bearer_request");
+  });
+
+  it("redeems at the jwt-bearer/ID-JAG-capable AS when the resource advertises several", async () => {
+    const PLAIN_AS = "https://as-plain.example.com";
+    const CAPABLE_AS = "https://as-capable.example.com";
+    const PLAIN_TOKEN = `${PLAIN_AS}/oauth/token`;
+    const CAPABLE_TOKEN = `${CAPABLE_AS}/oauth/token`;
+
+    const fetchMock = withPublishedIssuer(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        const method = (init?.method || "GET").toUpperCase();
+        if (url.includes(".well-known/oauth-protected-resource")) {
+          return json({
+            resource: SERVER_URL,
+            authorization_servers: [PLAIN_AS, CAPABLE_AS],
+          });
+        }
+        if (
+          url.includes(".well-known/oauth-authorization-server") ||
+          url.includes(".well-known/openid-configuration")
+        ) {
+          if (url.startsWith(CAPABLE_AS)) {
+            return json({
+              issuer: CAPABLE_AS,
+              token_endpoint: CAPABLE_TOKEN,
+              grant_types_supported: [JWT_BEARER_GRANT],
+              authorization_grant_profiles_supported: [ID_JAG_GRANT_PROFILE],
+            });
+          }
+          if (url.startsWith(PLAIN_AS)) {
+            return json({ issuer: PLAIN_AS, token_endpoint: PLAIN_TOKEN });
+          }
+          return json({}, 404);
+        }
+        if (url === CAPABLE_TOKEN && method === "POST") {
+          return json({
+            access_token: "at-capable",
+            token_type: "Bearer",
+            expires_in: 300,
+          });
+        }
+        if (url === SERVER_URL && method === "POST") {
+          return json({
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: { protocolVersion: "2025-11-25", serverInfo: {} },
+          });
+        }
+        return json({}, 404);
+      }
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+    });
+
+    expect(result.completed).toBe(true);
+    expect(result.authzServerIssuer).toBe(CAPABLE_AS);
+    expect(result.tokenEndpoint).toBe(CAPABLE_TOKEN);
+    expect(result.redemption?.tokenIssued).toBe(true);
+    // The plain AS is advertised first but must not receive the redemption.
+    const postedTo = (endpoint: string) =>
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          input.toString() === endpoint &&
+          (init?.method || "GET").toUpperCase() === "POST"
+      );
+    expect(postedTo(CAPABLE_TOKEN)).toBe(true);
+    expect(postedTo(PLAIN_TOKEN)).toBe(false);
+  });
+
+  it("drives a full SAML run through the in-process executor (saml input + saml-nameid output)", async () => {
+    global.fetch = stubFetch({
+      token: {
+        status: 200,
+        body: {
+          access_token: "at-saml",
+          token_type: "Bearer",
+          expires_in: 300,
+        },
+      },
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      email: "u@example.com",
+      clientId: "client-1",
+      identityAssertionFormat: "saml",
+      subjectIdentifierFormat: "saml-nameid",
+    });
+
+    expect(result.completed).toBe(true);
+    expect(result.idJag?.verified).toBe(true);
+    expect(result.idJag?.claims).toMatchObject({
+      iss: ISSUER,
+      sub: "user-1",
+      aud: AS_ISSUER,
+      client_id: "client-1",
+      email: "u@example.com",
+    });
+    expect(result.idJag?.claims.sub_id).toEqual({
+      format: "saml-nameid",
+      issuer: ISSUER,
+      nameid: "user-1",
+      // The TARGET RAS entity ID — never the SAML assertion's own audience.
+      sp_name_qualifier: AS_ISSUER,
+      nameid_format: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+    });
+    expect(result.redemption?.tokenIssued).toBe(true);
+    expect(result.mcp?.ok).toBe(true);
+  });
+
+  it("keeps the two axes independent: SAML input with the default oauth-sub output mints no sub_id", async () => {
+    global.fetch = stubFetch({
+      token: {
+        status: 200,
+        body: { access_token: "at-saml", token_type: "Bearer" },
+      },
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      clientId: "client-1",
+      identityAssertionFormat: "saml",
+    });
+
+    expect(result.completed).toBe(true);
+    expect(result.idJag?.claims.sub).toBe("user-1");
+    expect(result.idJag?.claims).not.toHaveProperty("sub_id");
+  });
+
+  it("scores a SAML negative probe and tampers every subject hint", async () => {
+    global.fetch = stubFetch({
+      tokenResponses: [
+        {
+          status: 200,
+          body: { access_token: "baseline-token", token_type: "Bearer" },
+        },
+        { status: 401, body: { error: "invalid_grant" } },
+      ],
+    }) as unknown as typeof fetch;
+
+    const result = await runXaaFlow({
+      serverUrl: SERVER_URL,
+      authzServerIssuer: AS_ISSUER,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      issuerBaseUrl: ISSUER_BASE,
+      subject: "user-1",
+      email: "u@example.com",
+      clientId: "client-1",
+      negativeTestMode: "unknown_sub",
+      identityAssertionFormat: "saml",
+      subjectIdentifierFormat: "saml-nameid",
+    });
+
+    expect(result.negativeProbe).toMatchObject({
+      mode: "unknown_sub",
+      baselineAccepted: true,
+      outcome: "rejected",
+    });
+    expect(result.completed).toBe(true);
+    // The probe ID-JAG must not leak ANY resolvable subject hint.
+    expect(result.idJag?.claims.sub).toBe("unknown-user-00000");
+    expect(
+      (result.idJag?.claims.sub_id as Record<string, unknown>).nameid
+    ).toBe("unknown-user-00000");
+    expect(result.idJag?.claims.email).not.toBe("u@example.com");
   });
 });

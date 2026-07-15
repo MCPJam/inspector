@@ -118,4 +118,94 @@ describe("useXaaRunSettings", () => {
       negativeTestMode: "scope_denial",
     });
   });
+
+  it("persists the selected person per project and round-trips it", () => {
+    const { result } = renderHook(() => useXaaRunSettings());
+
+    act(() => {
+      result.current.setSelectedPersonId("proj_a", "person_1");
+    });
+    act(() => {
+      result.current.setSelectedPersonId("proj_b", "person_2");
+    });
+
+    // Project B's selection must not disturb project A's.
+    expect(result.current.selectedPersonIdByProject).toEqual({
+      proj_a: "person_1",
+      proj_b: "person_2",
+    });
+
+    const stored = JSON.parse(localStorage.getItem(RUN_SETTINGS_KEY) ?? "{}");
+    expect(stored.selectedPersonIdByProject).toEqual({
+      proj_a: "person_1",
+      proj_b: "person_2",
+    });
+
+    const remounted = renderHook(() => useXaaRunSettings());
+    expect(remounted.result.current.selectedPersonIdByProject).toEqual({
+      proj_a: "person_1",
+      proj_b: "person_2",
+    });
+  });
+
+  it("setting a project's person to null deletes only that key", () => {
+    const { result } = renderHook(() => useXaaRunSettings());
+
+    act(() => {
+      result.current.setSelectedPersonId("proj_a", "person_1");
+    });
+    act(() => {
+      result.current.setSelectedPersonId("proj_b", "person_2");
+    });
+    act(() => {
+      result.current.setSelectedPersonId("proj_a", null);
+    });
+
+    expect(result.current.selectedPersonIdByProject).toEqual({
+      proj_b: "person_2",
+    });
+  });
+
+  it("sanitizes a junk stored person map to {}", () => {
+    localStorage.setItem(
+      RUN_SETTINGS_KEY,
+      JSON.stringify({
+        userId: "u",
+        email: "e@example.com",
+        selectedPersonIdByProject: ["not", "a", "map"],
+      }),
+    );
+    const { result } = renderHook(() => useXaaRunSettings());
+    expect(result.current.selectedPersonIdByProject).toEqual({});
+  });
+
+  it("drops non-string / empty entries from a stored person map", () => {
+    localStorage.setItem(
+      RUN_SETTINGS_KEY,
+      JSON.stringify({
+        userId: "u",
+        email: "e@example.com",
+        selectedPersonIdByProject: {
+          proj_a: "person_1",
+          proj_b: 42,
+          proj_c: "",
+          "": "person_x",
+        },
+      }),
+    );
+    const { result } = renderHook(() => useXaaRunSettings());
+    expect(result.current.selectedPersonIdByProject).toEqual({
+      proj_a: "person_1",
+    });
+  });
+
+  it("legacy-profile migration yields an empty person map", () => {
+    localStorage.setItem(
+      LEGACY_PROFILE_KEY,
+      JSON.stringify({ userId: "legacy-user", email: "legacy@example.com" }),
+    );
+    const { result } = renderHook(() => useXaaRunSettings());
+    expect(result.current.userId).toBe("legacy-user");
+    expect(result.current.selectedPersonIdByProject).toEqual({});
+  });
 });

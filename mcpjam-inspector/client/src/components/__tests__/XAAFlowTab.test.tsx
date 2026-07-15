@@ -1,43 +1,53 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { XAAFlowTab } from "../xaa/XAAFlowTab";
+import { fetchConfidentialCimdClientUrl } from "@/lib/xaa/idp-endpoints";
 import type { XaaTestTarget } from "@/hooks/useXaaTestTarget";
+import { buildXaaDcrCredentialCacheKey } from "@/lib/xaa/types";
 
 const captureMock = vi.fn();
 vi.mock("@/lib/analytics", () => ({
   track: (...args: unknown[]) => captureMock(...args),
 }));
 
+// Controllable signed-in state: null simulates a guest session.
+let authUser: { email: string } | null = { email: "tester@example.com" };
 vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => ({ user: { email: "tester@example.com" } }),
+  useAuth: () => ({ user: authUser }),
 }));
 
+vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+}));
+
+let capturedIdpCardProps: any = null;
 vi.mock("../xaa/XAAIdpCard", () => ({
-  XAAIdpCard: () => <div data-testid="xaa-idp-card" />,
+  XAAIdpCard: (props: any) => {
+    capturedIdpCardProps = props;
+    return <div data-testid="xaa-idp-card" />;
+  },
 }));
 
+let capturedServerModalProps: any = null;
 vi.mock("../xaa/XAAServerModal", () => ({
-  XAAServerModal: () => <div data-testid="xaa-server-modal" />,
+  XAAServerModal: (props: any) => {
+    capturedServerModalProps = props;
+    return <div data-testid="xaa-server-modal" />;
+  },
 }));
 
-let resourceApps: unknown[] = [];
-vi.mock("@/hooks/useXaaResourceApps", () => ({
-  useXaaResourceApps: () => ({
-    resourceApps,
-    isLoading: false,
-    isAuthenticated: true,
-    error: null,
-    upsert: vi.fn(),
-    remove: vi.fn(),
-  }),
-}));
-
-// Controllable resolved target. Each test sets it before render.
+// Controllable resolved target. Each test sets it before render. The params
+// the tab passes in are captured so the tab→resolver wiring (e.g. the selected
+// person) is assertable despite the wholesale mock.
 let currentTarget: XaaTestTarget;
+let capturedTargetParams: any = null;
 vi.mock("@/hooks/useXaaTestTarget", () => ({
-  useXaaTestTarget: () => currentTarget,
+  useXaaTestTarget: (params: any) => {
+    capturedTargetParams = params;
+    return currentTarget;
+  },
 }));
 
 // Controllable global run settings (simulated identity + mode). Tests mutate
@@ -47,29 +57,79 @@ let runSettingsState: {
   email: string;
   negativeTestMode: "valid" | "expired" | "wrong_audience" | "bad_signature";
 } = { userId: "u", email: "e@example.com", negativeTestMode: "valid" };
+let personSelectionState: Record<string, string> = {};
+let issuerModeState: "local" | "hosted" = "local";
 const setIdentityMock = vi.fn();
 const setNegativeTestModeMock = vi.fn();
+const setSelectedPersonIdMock = vi.fn();
 vi.mock("@/hooks/useXaaRunSettings", () => ({
   useXaaRunSettings: () => ({
     ...runSettingsState,
+    issuerMode: issuerModeState,
+    selectedPersonIdByProject: personSelectionState,
     isDefaultIdentity: false,
     setIdentity: setIdentityMock,
     setNegativeTestMode: setNegativeTestModeMock,
+    setIssuerMode: vi.fn(),
+    setSelectedPersonId: setSelectedPersonIdMock,
   }),
 }));
 
+// Controllable "Run as" roster. The strip itself is mocked (tested in its own
+// suite) — tab tests assert the wiring: selection resolution, reset, and the
+// per-person outcome map exposed through outcomeFor.
+type TestPerson = {
+  _id: string;
+  name: string;
+  subject: string;
+  email: string;
+  createdAt: number;
+  updatedAt: number;
+};
+let peopleState: {
+  people: TestPerson[] | undefined;
+  isLoading: boolean;
+  isAvailable: boolean;
+} = { people: undefined, isLoading: false, isAvailable: false };
+vi.mock("@/hooks/useXaaPeople", () => ({
+  useXaaPeople: () => peopleState,
+  useXaaPeopleMutations: () => ({
+    create: vi.fn(),
+    update: vi.fn(),
+    remove: vi.fn(),
+  }),
+}));
+
+let capturedPeopleStripProps: any = null;
+vi.mock("../xaa/XAAPeopleStrip", () => ({
+  XAAPeopleStrip: (props: any) => {
+    capturedPeopleStripProps = props;
+    return <div data-testid="xaa-people-strip" />;
+  },
+}));
+
 vi.mock("../ui/resizable", () => ({
-  ResizablePanelGroup: ({ children }: { children?: ReactNode }) => (
-    <div>{children}</div>
-  ),
+  ResizablePanelGroup: ({
+    children,
+    direction,
+  }: {
+    children?: ReactNode;
+    direction?: "horizontal" | "vertical";
+  }) => <div data-resizable-direction={direction}>{children}</div>,
   ResizablePanel: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
   ),
-  ResizableHandle: () => <div />,
+  ResizableHandle: ({ "aria-label": ariaLabel }: { "aria-label"?: string }) => (
+    <div role="separator" aria-label={ariaLabel} />
+  ),
 }));
 
+const captureXaaSequenceProps = vi.hoisted(() => vi.fn());
 vi.mock("../xaa/XAASequenceDiagram", () => ({
-  XAASequenceDiagram: () => <div data-testid="xaa-sequence-diagram" />,
+  XAASequenceDiagram: (props: unknown) => {
+    captureXaaSequenceProps(props);
+    return <div data-testid="xaa-sequence-diagram" />;
+  },
 }));
 
 vi.mock("../xaa/XAAFlowLogger", () => ({
@@ -82,9 +142,11 @@ vi.mock("../xaa/XAAFlowLogger", () => ({
       continueLabel: string;
       continueDisabled?: boolean;
       runAllDisabled?: boolean;
+      resetDisabled?: boolean;
       isRunningAll?: boolean;
       onContinue?: () => void;
       onRunAll?: () => void;
+      onReset?: () => void;
     };
   }) => (
     <div data-testid="xaa-flow-logger">
@@ -92,6 +154,14 @@ vi.mock("../xaa/XAAFlowLogger", () => ({
         {summary.serverUrl || "No target configured"}
       </span>
       <span data-testid="logger-continue-label">{actions.continueLabel}</span>
+      <button
+        type="button"
+        data-testid="logger-reset"
+        disabled={actions.resetDisabled || !actions.onReset}
+        onClick={() => actions.onReset?.()}
+      >
+        Reset
+      </button>
       <button
         type="button"
         data-testid="logger-run-all"
@@ -112,31 +182,47 @@ vi.mock("../xaa/XAAFlowLogger", () => ({
   ),
 }));
 
-vi.mock("../xaa/registration/XAAResourceAppsSection", () => ({
-  XAAResourceAppsSection: ({
-    onSelect,
-  }: {
-    onSelect: (app: { id: string }) => void;
-  }) => (
-    <button
-      type="button"
-      data-testid="select-registration"
-      onClick={() => onSelect({ id: "app_1" })}
-    >
-      select registration
-    </button>
-  ),
-}));
-
+let capturedScorecardProps: any = null;
+let capturedScorecardInput: any = null;
 vi.mock("../xaa/NegativeTestScorecard", () => ({
-  NegativeTestScorecard: ({ unlocked }: { unlocked: boolean }) => (
-    <div data-testid="xaa-scorecard" data-unlocked={String(unlocked)} />
-  ),
+  NegativeTestScorecard: (props: any) => {
+    capturedScorecardProps = props;
+    capturedScorecardInput = props.input;
+    return (
+      <div
+        data-testid="xaa-scorecard"
+        data-unlocked={String(props.unlocked)}
+        data-has-input={String(props.input !== null)}
+        data-audience={props.input?.audience ?? ""}
+        data-client-id={props.input?.clientId ?? ""}
+        data-auth-method={props.input?.tokenEndpointAuthMethod ?? ""}
+        data-unavailable-reason={props.unavailableReason ?? ""}
+      />
+    );
+  },
 }));
 
 const runAllMock = vi.fn();
 let capturedMachineConfig: any = null;
 let machineShouldComplete = true;
+// Extra fields the fake machine merges into the completed state (e.g. a
+// grantedScope for downscoping tests). `machineCompleteExtras` (People tests)
+// spreads AFTER completion so it can override; `machineCompletionUpdates`
+// (SAML tests) spreads BEFORE so completion fields win. Both default to {}.
+let machineCompleteExtras: Record<string, unknown> = {};
+let machineCompletionUpdates: Record<string, unknown> = {};
+// When set, runAll parks this failure state instead of completing.
+let machineFailure: Record<string, unknown> | null = null;
+// Controllable confidential-CIMD reflector URL fetch. null ⇒ the fetch failed
+// (or hasn't resolved), which must fail the run closed rather than fall back to
+// public CIMD. Preserve every other real export so the issuer-resolution paths
+// the rest of the suite exercises behave unchanged.
+let confidentialCimdUrlResult: string | null = null;
+vi.mock("@/lib/xaa/idp-endpoints", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/xaa/idp-endpoints")>()),
+  fetchConfidentialCimdClientUrl: vi.fn(async () => confidentialCimdUrlResult),
+}));
+
 vi.mock("@/lib/xaa/debug-state-machine-adapter", () => ({
   createInspectorXAAStateMachine: (config: any) => {
     capturedMachineConfig = config;
@@ -146,8 +232,15 @@ vi.mock("@/lib/xaa/debug-state-machine-adapter", () => ({
       // unlocks the scorecard); an unsuccessful one leaves it mid-flow.
       runAll: vi.fn(async () => {
         runAllMock();
-        if (machineShouldComplete) {
-          config.updateState({ currentStep: "complete", isBusy: false });
+        if (machineFailure) {
+          config.updateState({ isBusy: false, ...machineFailure });
+        } else if (machineShouldComplete) {
+          config.updateState({
+            ...machineCompletionUpdates,
+            currentStep: "complete",
+            isBusy: false,
+            ...machineCompleteExtras,
+          });
         }
       }),
     };
@@ -182,34 +275,170 @@ describe("XAAFlowTab", () => {
     captureMock.mockClear();
     runAllMock.mockClear();
     capturedMachineConfig = null;
+    capturedServerModalProps = null;
+    capturedScorecardProps = null;
+    capturedIdpCardProps = null;
     machineShouldComplete = true;
-    resourceApps = [];
+    machineCompleteExtras = {};
+    machineCompletionUpdates = {};
+    machineFailure = null;
+    // Reset like every other module-level mutable: the issuer-kind test flips
+    // authUser to null (guest), and a mid-test failure must not leak that into
+    // later tests.
+    authUser = { email: "tester@example.com" };
     localStorage.clear();
     runSettingsState = {
       userId: "u",
       email: "e@example.com",
       negativeTestMode: "valid",
     };
+    personSelectionState = {};
+    issuerModeState = "local";
+    peopleState = { people: undefined, isLoading: false, isAvailable: false };
+    capturedPeopleStripProps = null;
+    capturedTargetParams = null;
+    capturedScorecardInput = null;
     setIdentityMock.mockClear();
     setNegativeTestModeMock.mockClear();
+    setSelectedPersonIdMock.mockClear();
+    confidentialCimdUrlResult = null;
     currentTarget = makeTarget();
+  });
+
+  it("suppresses the configure prompt when the header has a server", () => {
+    currentTarget = makeTarget({
+      targetSource: "none",
+      targetKey: "none",
+      isTestable: false,
+    });
+
+    render(
+      <XAAFlowTab
+        serverConfigs={{}}
+        selectedServerName="none"
+        hasHeaderServers
+      />,
+    );
+
+    expect(captureXaaSequenceProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({ showConfigurePrompt: false }),
+    );
+  });
+
+  it("suppresses the configure prompt while project servers hydrate", () => {
+    currentTarget = makeTarget({
+      targetSource: "none",
+      targetKey: "none",
+      isTestable: false,
+    });
+
+    render(
+      <XAAFlowTab
+        serverConfigs={{}}
+        selectedServerName="none"
+        areServersHydrated={false}
+      />,
+    );
+
+    expect(captureXaaSequenceProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({ showConfigurePrompt: false }),
+    );
+  });
+
+  const CONFIDENTIAL_SERVER = {
+    staging: { registrationMode: "cimd", xaaClientAuth: "private_key_jwt" },
+  } as any;
+
+  it("fails a confidential CIMD run closed when the reflector URL can't load", async () => {
+    const user = userEvent.setup();
+    confidentialCimdUrlResult = null; // fetch fails
+    render(
+      <XAAFlowTab
+        serverConfigs={CONFIDENTIAL_SERVER}
+        selectedServerName="staging"
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+
+    // Blocked: the machine is NOT run, and it was never configured as public
+    // CIMD (no clientIdMetadataUrl) that would omit the client_assertion.
+    expect(runAllMock).not.toHaveBeenCalled();
+    expect(capturedMachineConfig?.clientIdMetadataUrl).toBeUndefined();
+  });
+
+  it("a blocked click retries the reflector fetch (transient-failure recovery)", async () => {
+    const user = userEvent.setup();
+    confidentialCimdUrlResult = null; // first fetch fails
+    render(
+      <XAAFlowTab
+        serverConfigs={CONFIDENTIAL_SERVER}
+        selectedServerName="staging"
+      />
+    );
+    await waitFor(() =>
+      expect(fetchConfidentialCimdClientUrl).toHaveBeenCalled()
+    );
+    const callsBefore = vi.mocked(fetchConfidentialCimdClientUrl).mock.calls
+      .length;
+
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+
+    await waitFor(() =>
+      expect(
+        vi.mocked(fetchConfidentialCimdClientUrl).mock.calls.length
+      ).toBeGreaterThan(callsBefore)
+    );
+    expect(runAllMock).not.toHaveBeenCalled();
+  });
+
+  it("threads the reflector URL into the machine for a confidential CIMD run", async () => {
+    const user = userEvent.setup();
+    const reflectorUrl =
+      "https://app.mcpjam.com/.well-known/oauth/xaa-cimd/AbC123";
+    confidentialCimdUrlResult = reflectorUrl;
+    render(
+      <XAAFlowTab
+        serverConfigs={CONFIDENTIAL_SERVER}
+        selectedServerName="staging"
+      />
+    );
+
+    await waitFor(() =>
+      expect(capturedMachineConfig?.clientIdMetadataUrl).toBe(reflectorUrl)
+    );
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+    expect(runAllMock).toHaveBeenCalled();
+  });
+
+  it("places the negative-test scorecard behind a vertical resize handle", () => {
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
+
+    expect(
+      screen.getByRole("separator", {
+        name: /resize negative-test scorecard/i,
+      })
+    ).toBeInTheDocument();
+    expect(
+      screen
+        .getByTestId("xaa-scorecard")
+        .closest('[data-resizable-direction="vertical"]')
+    ).not.toBeNull();
   });
 
   it("shows the not-testable state naming the server, with a configure CTA", () => {
     currentTarget = makeTarget({ isTestable: false });
 
-    render(
-      <XAAFlowTab serverConfigs={{}} selectedServerName="local-stdio" />,
-    );
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="local-stdio" />);
 
     expect(screen.getByText(/Not XAA-compatible/i)).toBeInTheDocument();
     // The card names the selected server and points at the config modal.
     expect(screen.getByText("local-stdio")).toBeInTheDocument();
     expect(
-      screen.getByText(/needs an HTTP URL and OAuth/i),
+      screen.getByText(/needs an HTTP URL and OAuth/i)
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /configure server to test/i }),
+      screen.getByRole("button", { name: /configure server to test/i })
     ).toBeInTheDocument();
     // No run controls (and no top-bar Run all) in the not-testable state.
     expect(screen.queryByTestId("logger-run-all")).not.toBeInTheDocument();
@@ -225,7 +454,7 @@ describe("XAAFlowTab", () => {
         serverConfigs={{}}
         selectedServerName="local-stdio"
         onSelectServer={onSelectServer}
-      />,
+      />
     );
 
     await user.click(screen.getByRole("button", { name: /back to start/i }));
@@ -233,27 +462,23 @@ describe("XAAFlowTab", () => {
   });
 
   it("fires xaa_tab_viewed once per mount with a target_count", () => {
-    resourceApps = [{ id: "a" }];
     render(
       <XAAFlowTab
         serverConfigs={{ s1: {} as any, s2: {} as any }}
         selectedServerName="none"
-      />,
+      />
     );
 
     const viewed = captureMock.mock.calls.filter(
-      ([event]) => event === "xaa_tab_viewed",
+      ([event]) => event === "xaa_tab_viewed"
     );
     expect(viewed).toHaveLength(1);
-    // 1 registration + 2 servers.
-    expect(viewed[0][1]).toMatchObject({ target_count: 3 });
+    expect(viewed[0][1]).toMatchObject({ target_count: 2 });
   });
 
   it("Run all drives the machine and fires telemetry carrying target_source", async () => {
     const user = userEvent.setup();
-    render(
-      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
-    );
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
 
     await user.click(screen.getByRole("button", { name: /run all/i }));
 
@@ -263,14 +488,14 @@ describe("XAAFlowTab", () => {
       expect.objectContaining({
         mode: "local-profile",
         target_source: "bar_server",
-      }),
+      })
     );
   });
 
   it("a debounced identity reset can't wipe a run started within its window", async () => {
     const user = userEvent.setup();
     const { rerender } = render(
-      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
+      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />
     );
 
     // Edit the simulated identity — arms the 400ms debounced flow rebuild.
@@ -284,23 +509,23 @@ describe("XAAFlowTab", () => {
     await user.click(screen.getByRole("button", { name: /run all/i }));
     await waitFor(() => expect(runAllMock).toHaveBeenCalledTimes(1));
     expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
-      "Flow Complete",
+      "Flow Complete"
     );
 
     // Let the debounce elapse: the stale timer must skip (Run all already
     // applied this identity) rather than rebuild and wipe the completed run.
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
-      "Flow Complete",
+      "Flow Complete"
     );
   });
 
   it("retargets the run summary when the selected server changes", () => {
     const { rerender } = render(
-      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
+      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />
     );
     expect(screen.getByTestId("logger-server-url")).toHaveTextContent(
-      "https://staging.mcp.example.com",
+      "https://staging.mcp.example.com"
     );
 
     currentTarget = makeTarget({
@@ -313,14 +538,46 @@ describe("XAAFlowTab", () => {
     rerender(<XAAFlowTab serverConfigs={{}} selectedServerName="prod" />);
 
     expect(screen.getByTestId("logger-server-url")).toHaveTextContent(
-      "https://prod.mcp.example.com",
+      "https://prod.mcp.example.com"
+    );
+  });
+
+  it("resets a completed flow when its server configuration changes", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />
+    );
+
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
+        "Flow Complete"
+      )
+    );
+
+    currentTarget = makeTarget({
+      runInput: {
+        ...makeTarget().runInput,
+        scope: "new-scope",
+        serverUrl: "https://new.mcp.example.com",
+      },
+    });
+    rerender(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
+
+    await user.click(screen.getByRole("button", { name: /reset flow/i }));
+    expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
+      "Start"
+    );
+    expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+      "data-unlocked",
+      "false"
     );
   });
 
   it("unlocks the scorecard per target — a green run on one leaves another locked", async () => {
     const user = userEvent.setup();
     const { rerender } = render(
-      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
+      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />
     );
 
     // A successful run unlocks staging's scorecard.
@@ -328,8 +585,8 @@ describe("XAAFlowTab", () => {
     await waitFor(() =>
       expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
         "data-unlocked",
-        "true",
-      ),
+        "true"
+      )
     );
 
     // Switching to a different server shows a locked scorecard — the green run
@@ -345,7 +602,47 @@ describe("XAAFlowTab", () => {
 
     expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
       "data-unlocked",
-      "false",
+      "false"
+    );
+  });
+
+  it("uses the discovered issuer for a confidential server whose AS metadata discovery was skipped", async () => {
+    const user = userEvent.setup();
+    currentTarget = makeTarget({
+      usesServerSideSecret: true,
+      serverId: "srv_1",
+      projectId: "proj_1",
+    });
+    machineCompletionUpdates = {
+      authzServerIssuer: "https://as.example.com",
+      resourceMetadata: {
+        resource: "https://staging.mcp.example.com",
+      },
+    };
+
+    render(
+      <XAAFlowTab
+        serverConfigs={{ staging: {} as any }}
+        selectedServerName="staging"
+        projectId="proj_1"
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-audience",
+        "https://as.example.com"
+      )
+    );
+    expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+      "data-has-input",
+      "true"
+    );
+    expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+      "data-unavailable-reason",
+      ""
     );
   });
 
@@ -358,11 +655,9 @@ describe("XAAFlowTab", () => {
     });
     render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
 
+    expect(screen.getByRole("button", { name: /run all/i })).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: /run all/i }),
-    ).toBeDisabled();
-    expect(
-      screen.getByText(/couldn't resolve this server's saved secret/i),
+      screen.getByText(/couldn't resolve this server's saved secret/i)
     ).toBeInTheDocument();
   });
 
@@ -375,8 +670,35 @@ describe("XAAFlowTab", () => {
     });
     render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
     expect(
-      screen.getByText(/resolving this server's saved secret/i),
+      screen.getByText(/resolving this server's saved secret/i)
     ).toBeInTheDocument();
+  });
+
+  it("derives the org issuer kind for signed-in users and anonymous for guests", () => {
+    currentTarget = makeTarget({});
+
+    authUser = { email: "tester@example.com" };
+    const { unmount } = render(
+      <XAAFlowTab
+        serverConfigs={{}}
+        selectedServerName="staging"
+        organizationId="org_1"
+      />
+    );
+    expect(capturedMachineConfig).toMatchObject({ issuerKind: "org" });
+    unmount();
+
+    capturedMachineConfig = null;
+    authUser = null; // guest session
+    render(
+      <XAAFlowTab
+        serverConfigs={{}}
+        selectedServerName="staging"
+        organizationId="org_1"
+      />
+    );
+    expect(capturedMachineConfig).toMatchObject({ issuerKind: "anonymous" });
+    authUser = { email: "tester@example.com" };
   });
 
   it("passes serverId/projectId to the machine for a confidential server", () => {
@@ -399,41 +721,8 @@ describe("XAAFlowTab", () => {
     render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
     expect(screen.queryByText("Configure Target")).not.toBeInTheDocument();
     expect(
-      screen.queryByText(/Configure XAA Debugger/i),
+      screen.queryByText(/Configure XAA Debugger/i)
     ).not.toBeInTheDocument();
-  });
-
-  it("surfaces the registration override with a clear control", async () => {
-    const user = userEvent.setup();
-    resourceApps = [
-      {
-        id: "app_1",
-        name: "AcmeApp",
-        resourceType: "mcp",
-        resourceUrl: "https://acme.example.com/mcp",
-        authServerMode: "own",
-        issuer: "https://acme-as.example.com",
-        scopes: [],
-        hasSecret: true,
-        createdAt: 0,
-        updatedAt: 0,
-      },
-    ];
-    currentTarget = makeTarget({
-      targetSource: "registration",
-      targetKey: "registration:app_1",
-      runInput: { ...makeTarget().runInput, mode: "hosted-registration" },
-    });
-
-    render(<XAAFlowTab serverConfigs={{}} selectedServerName="none" />);
-    await user.click(screen.getByTestId("select-registration"));
-
-    expect(
-      screen.getByText(/Using registered app — overrides the bar selection/i),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /use bar server/i }),
-    ).toBeInTheDocument();
   });
 
   it("xaa_flow_started carries a salted target_id (no raw name/url)", async () => {
@@ -442,7 +731,7 @@ describe("XAAFlowTab", () => {
     await user.click(screen.getByRole("button", { name: /run all/i }));
 
     const started = captureMock.mock.calls.find(
-      ([event]) => event === "xaa_flow_started",
+      ([event]) => event === "xaa_flow_started"
     );
     expect(started?.[1].target_id).toMatch(/^[0-9a-f]{8}$/);
     expect(started?.[1].target_id).not.toContain("staging");
@@ -454,14 +743,14 @@ describe("XAAFlowTab", () => {
     // Success site: the run reaches complete (effect-driven event).
     machineShouldComplete = true;
     const { unmount } = render(
-      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />,
+      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />
     );
     await user.click(screen.getByRole("button", { name: /run all/i }));
     await waitFor(() =>
       expect(captureMock).toHaveBeenCalledWith(
         "xaa_flow_completed",
-        expect.objectContaining({ success: true, target_source: "bar_server" }),
-      ),
+        expect.objectContaining({ success: true, target_source: "bar_server" })
+      )
     );
     unmount();
 
@@ -476,35 +765,329 @@ describe("XAAFlowTab", () => {
         expect.objectContaining({
           success: false,
           target_source: "bar_server",
-        }),
-      ),
+        })
+      )
     );
   });
 
   describe("registration strategy (persisted, modal-owned)", () => {
     // The on-flow selector band was removed: the strategy is chosen in the
     // Configure Server modal and persisted on the server config. The flow reads
-    // it from serverConfigs[selectedServerName].xaaRegistrationStrategy.
+    // it from serverConfigs[selectedServerName].registrationMode.
     const withStrategy = (strategy: string) =>
-      ({ staging: { xaaRegistrationStrategy: strategy } }) as any;
+      ({ staging: { registrationMode: strategy } } as any);
 
     it("threads a persisted dcr strategy to the machine, with the session cache", () => {
       render(
         <XAAFlowTab
           serverConfigs={withStrategy("dcr")}
           selectedServerName="staging"
-        />,
+        />
       );
 
       // No on-flow selector band any more.
       expect(
-        screen.queryByText(/client registration/i),
+        screen.queryByText(/client registration/i)
       ).not.toBeInTheDocument();
       expect(capturedMachineConfig.registrationStrategy).toBe("dcr");
       expect(capturedMachineConfig.dcrCredentialCache).toBeDefined();
       expect(capturedMachineConfig.dcrCacheTargetKey).toBe(
-        currentTarget.targetKey,
+        currentTarget.targetKey
       );
+    });
+
+    it("keeps the DCR session registration when the same config is saved", async () => {
+      render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />
+      );
+
+      const registrationEndpoint = "https://auth.example.com/register";
+      const cacheKey = buildXaaDcrCredentialCacheKey({
+        targetKey: currentTarget.targetKey,
+        registrationEndpoint,
+      });
+      const credentials = {
+        clientId: "dynamic-client",
+        clientSecret: "session-only-secret",
+        clientSecretExpiresAt: 0,
+        tokenEndpointAuthMethod: "client_secret_basic" as const,
+        registrationEndpoint,
+      };
+      capturedMachineConfig.dcrCredentialCache.set(cacheKey, credentials);
+
+      await act(async () => {
+        await capturedServerModalProps.onSave({
+          formData: { name: "staging" },
+        });
+      });
+
+      expect(capturedMachineConfig.dcrCredentialCache.get(cacheKey)).toEqual(
+        credentials
+      );
+    });
+
+    it("unlocks DCR negative tests with the dynamically registered credentials", async () => {
+      const user = userEvent.setup();
+      render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />
+      );
+
+      const registrationEndpoint = "https://auth.example.com/register";
+      const cacheKey = buildXaaDcrCredentialCacheKey({
+        targetKey: currentTarget.targetKey,
+        registrationEndpoint,
+      });
+      capturedMachineConfig.dcrCredentialCache.set(cacheKey, {
+        clientId: "dynamic-client",
+        clientSecret: "session-only-secret",
+        clientSecretExpiresAt: 0,
+        tokenEndpointAuthMethod: "client_secret_basic",
+        registrationEndpoint,
+      });
+      machineCompletionUpdates = {
+        registrationStrategy: "dcr",
+        clientId: "dynamic-client",
+        tokenEndpoint: "https://auth.example.com/token",
+        tokenEndpointAuthMethod: "client_secret_basic",
+        authzMetadata: {
+          issuer: "https://auth.example.com",
+          registration_endpoint: registrationEndpoint,
+        },
+        resourceMetadata: { resource: "https://staging.mcp.example.com" },
+      };
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+          "data-unlocked",
+          "true"
+        )
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-client-id",
+        "dynamic-client"
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-auth-method",
+        "client_secret_basic"
+      );
+      expect(capturedScorecardProps.input.clientSecret).toBeUndefined();
+      expect(capturedScorecardProps.resolveInput()).toEqual(
+        expect.objectContaining({
+          clientId: "dynamic-client",
+          clientSecret: "session-only-secret",
+          tokenEndpointAuthMethod: "client_secret_basic",
+          issuerKind: "org",
+        })
+      );
+
+      capturedMachineConfig.dcrCredentialCache.set(cacheKey, {
+        clientId: "dynamic-client",
+        clientSecret: "session-only-secret",
+        clientSecretExpiresAt: 0,
+        tokenEndpointAuthMethod: "client_secret_post",
+        registrationEndpoint,
+      });
+      act(() => {
+        capturedMachineConfig.updateState({
+          tokenEndpointAuthMethod: "client_secret_post",
+        });
+      });
+
+      await waitFor(() =>
+        expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+          "data-unlocked",
+          "false"
+        )
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-auth-method",
+        "client_secret_post"
+      );
+    });
+
+    it("preserves the duplicate-registration warning across config edits", async () => {
+      const { rerender } = render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />
+      );
+
+      act(() => {
+        capturedMachineConfig.updateState({
+          registrationStrategy: "dcr",
+          currentStep: "dcr_request",
+          isBusy: false,
+          error: "Registration outcome unknown",
+          dcrRetryMayCreateDuplicate: true,
+        });
+      });
+
+      currentTarget = makeTarget({
+        runInput: {
+          ...makeTarget().runInput,
+          scope: "new-scope",
+        },
+      });
+      rerender(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />
+      );
+
+      await waitFor(() =>
+        expect(
+          capturedMachineConfig.getState().dcrRetryMayCreateDuplicate
+        ).toBe(true)
+      );
+    });
+
+    it("keeps confidential DCR secrets out of the hosted issuer scorecard", async () => {
+      issuerModeState = "hosted";
+      const user = userEvent.setup();
+      render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+          organizationId="org_123"
+        />
+      );
+
+      const registrationEndpoint = "https://auth.example.com/register";
+      const cacheKey = buildXaaDcrCredentialCacheKey({
+        targetKey: currentTarget.targetKey,
+        registrationEndpoint,
+      });
+      capturedMachineConfig.dcrCredentialCache.set(cacheKey, {
+        clientId: "dynamic-client",
+        clientSecret: "session-only-secret",
+        clientSecretExpiresAt: 0,
+        tokenEndpointAuthMethod: "client_secret_post",
+        registrationEndpoint,
+      });
+      machineCompletionUpdates = {
+        registrationStrategy: "dcr",
+        clientId: "dynamic-client",
+        tokenEndpoint: "https://auth.example.com/token",
+        authzMetadata: {
+          issuer: "https://auth.example.com",
+          registration_endpoint: registrationEndpoint,
+        },
+        resourceMetadata: { resource: "https://staging.mcp.example.com" },
+      };
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+          "data-unavailable-reason",
+          expect.stringMatching(/confidential DCR/i)
+        )
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-has-input",
+        "false"
+      );
+      expect(capturedScorecardProps.resolveInput).toBeUndefined();
+    });
+
+    it("keeps CIMD negative tests unavailable", async () => {
+      const user = userEvent.setup();
+      render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("cimd")}
+          selectedServerName="staging"
+        />
+      );
+      const clientId =
+        "https://app.mcpjam.com/.well-known/oauth/xaa-client-metadata.json";
+      machineCompletionUpdates = {
+        registrationStrategy: "cimd",
+        clientId,
+        tokenEndpoint: "https://auth.example.com/token",
+        tokenEndpointAuthMethod: "none",
+        authzMetadata: { issuer: "https://auth.example.com" },
+        resourceMetadata: { resource: "https://staging.mcp.example.com" },
+      };
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+          "data-unavailable-reason",
+          expect.stringMatching(/not supported yet/i)
+        )
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-unlocked",
+        "false"
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-has-input",
+        "false"
+      );
+      expect(capturedScorecardProps.resolveInput).toBeUndefined();
+    });
+
+    it("keeps an expired DCR credential unavailable without registering again", async () => {
+      const user = userEvent.setup();
+      render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />
+      );
+
+      const registrationEndpoint = "https://auth.example.com/register";
+      const cacheKey = buildXaaDcrCredentialCacheKey({
+        targetKey: currentTarget.targetKey,
+        registrationEndpoint,
+      });
+      capturedMachineConfig.dcrCredentialCache.set(cacheKey, {
+        clientId: "expired-client",
+        clientSecret: "expired-secret",
+        clientSecretExpiresAt: Math.floor(Date.now() / 1000) - 1,
+        tokenEndpointAuthMethod: "client_secret_post",
+        registrationEndpoint,
+      });
+      machineCompletionUpdates = {
+        registrationStrategy: "dcr",
+        clientId: "expired-client",
+        tokenEndpoint: "https://auth.example.com/token",
+        authzMetadata: {
+          issuer: "https://auth.example.com",
+          registration_endpoint: registrationEndpoint,
+        },
+        resourceMetadata: { resource: "https://staging.mcp.example.com" },
+      };
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+          "data-unavailable-reason",
+          expect.stringMatching(/expired/i)
+        )
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-has-input",
+        "false"
+      );
+      expect(
+        screen
+          .getByTestId("xaa-scorecard")
+          .getAttribute("data-unavailable-reason")
+      ).toMatch(/expired/i);
+      expect(runAllMock).toHaveBeenCalledTimes(1);
     });
 
     it("defaults to preregistered when nothing is persisted", () => {
@@ -512,7 +1095,7 @@ describe("XAAFlowTab", () => {
         <XAAFlowTab
           serverConfigs={{ staging: {} as any }}
           selectedServerName="staging"
-        />,
+        />
       );
       expect(capturedMachineConfig.registrationStrategy).toBe("preregistered");
     });
@@ -531,7 +1114,7 @@ describe("XAAFlowTab", () => {
           serverConfigs={withStrategy("dcr")}
           selectedServerName="staging"
           projectId="proj_1"
-        />,
+        />
       );
       expect(capturedMachineConfig.registrationStrategy).toBe("dcr");
       expect(capturedMachineConfig.serverId).toBeUndefined();
@@ -548,7 +1131,7 @@ describe("XAAFlowTab", () => {
           serverConfigs={{ staging: {} as any }}
           selectedServerName="staging"
           projectId="proj_1"
-        />,
+        />
       );
       expect(capturedMachineConfig.registrationStrategy).toBe("preregistered");
       expect(capturedMachineConfig.serverId).toBe("srv_1");
@@ -560,15 +1143,15 @@ describe("XAAFlowTab", () => {
         <XAAFlowTab
           serverConfigs={{ staging: {} as any }}
           selectedServerName="staging"
-        />,
+        />
       );
       // Drive the run to completion so a later strategy change must confirm.
       await user.click(screen.getByRole("button", { name: /run all/i }));
       await waitFor(() =>
         expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
           "data-unlocked",
-          "true",
-        ),
+          "true"
+        )
       );
 
       // Persisted strategy changes for the same target → confirm before reset.
@@ -576,44 +1159,563 @@ describe("XAAFlowTab", () => {
         <XAAFlowTab
           serverConfigs={withStrategy("dcr")}
           selectedServerName="staging"
-        />,
+        />
       );
       await waitFor(() =>
         expect(
-          screen.getByRole("button", { name: /keep current run/i }),
-        ).toBeInTheDocument(),
+          screen.getByRole("button", { name: /keep current run/i })
+        ).toBeInTheDocument()
       );
 
       // Keep the current run, then start a FRESH run: the fresh-run path
       // (Run all → rebuildFlow) must use the newly persisted strategy, not a
       // stale pin. This is the exact path the stale-pin bug regressed.
       await user.click(
-        screen.getByRole("button", { name: /keep current run/i }),
+        screen.getByRole("button", { name: /keep current run/i })
       );
       // Start a fresh run. On the old pinned code this rebuilt with the stale
       // preregistered strategy; the machine driving Run all must be dcr.
       await user.click(screen.getByRole("button", { name: /run all/i }));
       await waitFor(() =>
-        expect(capturedMachineConfig.registrationStrategy).toBe("dcr"),
+        expect(capturedMachineConfig.registrationStrategy).toBe("dcr")
       );
     });
 
-    it("forces preregistered for registration-backed targets regardless of persisted strategy", () => {
-      currentTarget = makeTarget({
-        targetSource: "registration",
-        runInput: {
-          ...makeTarget().runInput,
-          registrationId: "app_1",
+  });
+
+  describe("identity assertion header toggle (write-through)", () => {
+    // A realistic stored XAA server: the toggle's untouched resave derives
+    // url/clientId/scopes from the config and must preserve the rest of the
+    // stored values by omission.
+    const storedServer = () =>
+      ({
+        staging: {
+          name: "staging",
+          config: { url: "https://staging.mcp.example.com" },
+          hasClientSecret: false,
+          xaaAuthzIssuer: "https://as.example.com",
+          // Stored "auto" is shared with the OAuth flow — the resave must
+          // omit registrationMode so the save-path merge preserves it.
+          registrationMode: "auto",
+          xaaSubject: "stored-subject",
+          xaaEmail: "stored@example.com",
         },
-      } as Partial<XaaTestTarget>);
+      } as any);
+
+    it("passes the persisted format and an enabled control for a testable bar server", () => {
       render(
         <XAAFlowTab
-          serverConfigs={withStrategy("dcr")}
+          serverConfigs={{
+            staging: {
+              ...storedServer().staging,
+              xaaIdentityAssertionFormat: "saml",
+            },
+          }}
           selectedServerName="staging"
-        />,
+          onSaveServerConfig={vi.fn()}
+        />
       );
-      expect(capturedMachineConfig.registrationStrategy).toBe("preregistered");
+
+      expect(capturedIdpCardProps.identityAssertionFormat).toBe("saml");
+      expect(capturedIdpCardProps.onIdentityAssertionFormatChange).toEqual(
+        expect.any(Function)
+      );
+      expect(
+        capturedIdpCardProps.identityAssertionFormatDisabledReason
+      ).toBeNull();
+    });
+
+    it("persists a flip to SAML through the modal's save path, preserving stored fields by omission", async () => {
+      const onSaveServerConfig = vi.fn();
+      render(
+        <XAAFlowTab
+          serverConfigs={storedServer()}
+          selectedServerName="staging"
+          onSaveServerConfig={onSaveServerConfig}
+        />
+      );
+
+      await act(async () => {
+        await capturedIdpCardProps.onIdentityAssertionFormatChange("saml");
+      });
+
+      expect(onSaveServerConfig).toHaveBeenCalledTimes(1);
+      const formData = onSaveServerConfig.mock.calls[0][0];
+      expect(formData).toMatchObject({
+        name: "staging",
+        type: "http",
+        url: "https://staging.mcp.example.com",
+        useXaa: true,
+        useOAuth: false,
+        authServerMode: "mcpjam",
+        xaaAuthzIssuer: "https://as.example.com",
+        xaaIdentityAssertionFormat: "saml",
+      });
+      // Preserve-by-omission: the format is the ONLY stored value this save
+      // may change. Sending any of these would clobber stored state (identity
+      // pair, shared "auto" registration mode) or the saved secret.
+      expect(formData).not.toHaveProperty("xaaSubject");
+      expect(formData).not.toHaveProperty("xaaEmail");
+      expect(formData).not.toHaveProperty("registrationMode");
+      expect(formData).not.toHaveProperty("clientSecret");
+      expect(formData).not.toHaveProperty("clearClientSecret");
+    });
+
+    it("does not save when the selected format is already active", async () => {
+      const onSaveServerConfig = vi.fn();
+      render(
+        <XAAFlowTab
+          serverConfigs={storedServer()}
+          selectedServerName="staging"
+          onSaveServerConfig={onSaveServerConfig}
+        />
+      );
+
+      await act(async () => {
+        await capturedIdpCardProps.onIdentityAssertionFormatChange("oidc");
+      });
+      expect(onSaveServerConfig).not.toHaveBeenCalled();
+    });
+
+    it("hides the control when no save path is wired", () => {
+      render(
+        <XAAFlowTab serverConfigs={storedServer()} selectedServerName="staging" />
+      );
+      expect(
+        capturedIdpCardProps.onIdentityAssertionFormatChange
+      ).toBeUndefined();
     });
   });
-});
 
+  describe("Run as people", () => {
+    const bob: TestPerson = {
+      _id: "person_bob",
+      name: "Bob Tables",
+      subject: "bob-001",
+      email: "bob@tables.test",
+      createdAt: 1,
+      updatedAt: 10,
+    };
+
+    function seedRoster(selected = true) {
+      peopleState = { people: [bob], isLoading: false, isAvailable: true };
+      if (selected) personSelectionState = { proj_1: bob._id };
+    }
+
+    /** Target whose runInput carries the person's identity (the real
+     * useXaaTestTarget is mocked wholesale, so tests set it themselves). */
+    function personTarget(extra: Record<string, unknown> = {}) {
+      return makeTarget({
+        runInput: {
+          ...makeTarget().runInput,
+          userId: bob.subject,
+          email: bob.email,
+          ...extra,
+        },
+      } as Partial<XaaTestTarget>);
+    }
+
+    function renderTab() {
+      return render(
+        <XAAFlowTab
+          serverConfigs={{}}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+    }
+
+    it("passes selection through and toggling calls the per-project setter", () => {
+      seedRoster();
+      currentTarget = personTarget();
+      renderTab();
+
+      expect(capturedPeopleStripProps.selectedPersonId).toBe(bob._id);
+      expect(capturedPeopleStripProps.disabled).toBe(false);
+      capturedPeopleStripProps.onSelectPerson(null);
+      expect(setSelectedPersonIdMock).toHaveBeenCalledWith("proj_1", null);
+    });
+
+    it("a person switch resets a completed flow immediately (no debounce)", async () => {
+      const user = userEvent.setup();
+      peopleState = { people: [bob], isLoading: false, isAvailable: true };
+      const { rerender } = renderTab();
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
+          "Flow Complete",
+        ),
+      );
+
+      // Select Bob: selection + the resolved runInput identity change together.
+      personSelectionState = { proj_1: bob._id };
+      currentTarget = personTarget();
+      rerender(
+        <XAAFlowTab
+          serverConfigs={{}}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+
+      // Synchronous reset — back to Start without waiting out the 400ms
+      // debounce that typed identity edits use.
+      expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
+        "Start",
+      );
+    });
+
+    it("ignores selection changes while the flow is busy", () => {
+      seedRoster(false);
+      currentTarget = makeTarget();
+      renderTab();
+
+      act(() => {
+        capturedMachineConfig.updateState({ isBusy: true });
+      });
+      expect(capturedPeopleStripProps.disabled).toBe(true);
+      // Backstop even if the strip's disabled state were bypassed.
+      capturedPeopleStripProps.onSelectPerson(bob._id);
+      expect(setSelectedPersonIdMock).not.toHaveBeenCalled();
+    });
+
+    it("ignores selection changes while a step-through run is PAUSED mid-flow", () => {
+      // A Continue-driven run parks between steps with isBusy=false but the
+      // flow neither idle nor complete — switching persons there would
+      // silently drop the in-progress state (coderabbit finding).
+      seedRoster(false);
+      currentTarget = makeTarget();
+      renderTab();
+
+      act(() => {
+        capturedMachineConfig.updateState({
+          isBusy: false,
+          currentStep: "token_exchange_request",
+        });
+      });
+      expect(capturedPeopleStripProps.disabled).toBe(true);
+      // Backstop for the programmatic seam too.
+      capturedPeopleStripProps.onSelectPerson(bob._id);
+      expect(setSelectedPersonIdMock).not.toHaveBeenCalled();
+    });
+
+    it("records 'allowed' for the person the run started as", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      currentTarget = personTarget();
+      renderTab();
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(capturedPeopleStripProps.outcomeFor(bob._id)).toMatchObject({
+          status: "allowed",
+        }),
+      );
+    });
+
+    it("records 'ras_downscoped' when the AS granted a narrower scope", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      currentTarget = personTarget({ scope: "tasks:read tasks:write" });
+      machineCompleteExtras = { grantedScope: "tasks:read" };
+      renderTab();
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(capturedPeopleStripProps.outcomeFor(bob._id)).toMatchObject({
+          status: "ras_downscoped",
+        }),
+      );
+    });
+
+    it("records 'ras_rejected' with the allowlisted code — never the raw error", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      currentTarget = personTarget();
+      machineFailure = {
+        currentStep: "jwt_bearer_request",
+        error:
+          "Authorization server returned 400 (invalid_grant: subject not provisioned; token=SECRET). Does the authorization server trust the synthetic issuer JWKS?",
+      };
+      renderTab();
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(capturedPeopleStripProps.outcomeFor(bob._id)).toMatchObject({
+          status: "ras_rejected",
+          oauthErrorCode: "invalid_grant",
+          failedStep: "jwt_bearer_request",
+        }),
+      );
+      // The recorded outcome must never carry the raw error string (it can
+      // embed tokens) — only the allowlisted code and step enum.
+      const recorded = capturedPeopleStripProps.outcomeFor(bob._id);
+      expect(JSON.stringify(recorded)).not.toContain("SECRET");
+      expect(JSON.stringify(recorded)).not.toContain("provisioned");
+    });
+
+    it("records 'test_error' for a non-policy failure", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      currentTarget = personTarget();
+      machineFailure = {
+        currentStep: "discover_authz_metadata",
+        error: "fetch failed: network unreachable",
+      };
+      renderTab();
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(capturedPeopleStripProps.outcomeFor(bob._id)).toMatchObject({
+          status: "test_error",
+          failedStep: "discover_authz_metadata",
+        }),
+      );
+    });
+
+    it("records nothing for a negative-mode run", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      currentTarget = personTarget({ negativeTestMode: "expired" });
+      renderTab();
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() => expect(runAllMock).toHaveBeenCalledTimes(1));
+      expect(capturedPeopleStripProps.outcomeFor(bob._id)).toBeUndefined();
+    });
+
+    it("hides a recorded outcome when the target's material inputs change", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      currentTarget = personTarget();
+      const { rerender } = renderTab();
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(capturedPeopleStripProps.outcomeFor(bob._id)).toBeDefined(),
+      );
+
+      currentTarget = personTarget({
+        serverUrl: "https://other.mcp.example.com",
+      });
+      rerender(
+        <XAAFlowTab
+          serverConfigs={{}}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+      expect(capturedPeopleStripProps.outcomeFor(bob._id)).toBeUndefined();
+    });
+
+    it("hides a recorded outcome after the person is edited", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      currentTarget = personTarget();
+      const { rerender } = renderTab();
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(capturedPeopleStripProps.outcomeFor(bob._id)).toBeDefined(),
+      );
+
+      // Editing the person bumps updatedAt — the old result may no longer
+      // describe this subject.
+      peopleState = {
+        ...peopleState,
+        people: [{ ...bob, subject: "bob-999", updatedAt: 11 }],
+      };
+      rerender(
+        <XAAFlowTab
+          serverConfigs={{}}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+      expect(capturedPeopleStripProps.outcomeFor(bob._id)).toBeUndefined();
+    });
+
+    it("invalidates a recorded outcome when the registration strategy switches (fix F)", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      currentTarget = personTarget();
+      const { rerender } = render(
+        <XAAFlowTab
+          serverConfigs={{ staging: {} as any }}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(capturedPeopleStripProps.outcomeFor(bob._id)).toMatchObject({
+          status: "allowed",
+        }),
+      );
+
+      // The persisted strategy flips to DCR for the same target — a
+      // preregistered result must not stay attributed to a different client
+      // identity. The completed run asks for confirmation first.
+      rerender(
+        <XAAFlowTab
+          serverConfigs={{ staging: { registrationMode: "dcr" } } as any}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+      await user.click(
+        await screen.findByRole("button", { name: /switch and reset/i }),
+      );
+      expect(capturedPeopleStripProps.outcomeFor(bob._id)).toBeUndefined();
+    });
+
+    it("invalidates a dynamic run's outcome when a NEW client identity is registered (fix F)", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      currentTarget = personTarget();
+      // A DCR run that registers a fresh client mid-flight and completes.
+      machineCompleteExtras = { clientId: "dyn-client-1" };
+      render(
+        <XAAFlowTab
+          serverConfigs={{ staging: { registrationMode: "dcr" } } as any}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      // The run's own outcome is attributed to the identity it established.
+      await waitFor(() =>
+        expect(capturedPeopleStripProps.outcomeFor(bob._id)).toMatchObject({
+          status: "allowed",
+        }),
+      );
+
+      // A re-registration establishes a different client identity — the
+      // previous result no longer describes it.
+      act(() => {
+        capturedMachineConfig.updateState({ clientId: "dyn-client-2" });
+      });
+      expect(capturedPeopleStripProps.outcomeFor(bob._id)).toBeUndefined();
+    });
+
+    it("keeps a dynamic outcome across an ordinary reset that reuses the cached registration", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      currentTarget = personTarget();
+      machineCompleteExtras = { clientId: "dyn-client-1" };
+      render(
+        <XAAFlowTab
+          serverConfigs={{ staging: { registrationMode: "dcr" } } as any}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(capturedPeopleStripProps.outcomeFor(bob._id)).toMatchObject({
+          status: "allowed",
+        }),
+      );
+
+      // An ordinary reset re-seeds the CONFIGURED clientId; the session cache
+      // still holds the registration, so no new client identity is
+      // established and the badge must survive the reset.
+      await user.click(screen.getByTestId("logger-reset"));
+      expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
+        "Start",
+      );
+      expect(capturedPeopleStripProps.outcomeFor(bob._id)).toMatchObject({
+        status: "allowed",
+      });
+    });
+
+    it("a re-registration on one target leaves another target's dynamic badge intact (per-target generation)", async () => {
+      const user = userEvent.setup();
+      seedRoster();
+      const dcrConfigs = {
+        staging: { registrationMode: "dcr" },
+        prod: { registrationMode: "dcr" },
+      } as any;
+      currentTarget = personTarget();
+      machineCompleteExtras = { clientId: "dyn-client-1" };
+      const { rerender } = render(
+        <XAAFlowTab
+          serverConfigs={dcrConfigs}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+      await waitFor(() =>
+        expect(capturedPeopleStripProps.outcomeFor(bob._id)).toMatchObject({
+          status: "allowed",
+        }),
+      );
+
+      // Switch to a different DCR target (confirming away the completed run)…
+      currentTarget = makeTarget({
+        targetKey: "bar_server:prod",
+        runInput: {
+          ...personTarget().runInput,
+          serverUrl: "https://prod.mcp.example.com",
+        },
+      });
+      rerender(
+        <XAAFlowTab
+          serverConfigs={dcrConfigs}
+          selectedServerName="prod"
+          projectId="proj_1"
+        />,
+      );
+      await user.click(
+        await screen.findByRole("button", { name: /switch and reset/i }),
+      );
+      // …where a run establishes a NEW dynamic client identity.
+      act(() => {
+        capturedMachineConfig.updateState({ clientId: "dyn-client-2" });
+      });
+
+      // Back on the first target, the recorded outcome still describes the
+      // client that produced it — the other target's registration must not
+      // invalidate it.
+      currentTarget = personTarget();
+      rerender(
+        <XAAFlowTab
+          serverConfigs={dcrConfigs}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+      expect(capturedPeopleStripProps.outcomeFor(bob._id)).toMatchObject({
+        status: "allowed",
+      });
+    });
+
+    it("clears a stale stored selection only after the roster loads without it", () => {
+      peopleState = { people: [bob], isLoading: true, isAvailable: true };
+      personSelectionState = { proj_1: "person_ghost" };
+      currentTarget = makeTarget();
+      const { rerender } = renderTab();
+
+      // Still loading — must not clear (would wipe a valid selection on
+      // every mount).
+      expect(setSelectedPersonIdMock).not.toHaveBeenCalled();
+
+      peopleState = { people: [bob], isLoading: false, isAvailable: true };
+      rerender(
+        <XAAFlowTab
+          serverConfigs={{}}
+          selectedServerName="staging"
+          projectId="proj_1"
+        />,
+      );
+      expect(setSelectedPersonIdMock).toHaveBeenCalledWith("proj_1", null);
+    });
+  });
+
+});

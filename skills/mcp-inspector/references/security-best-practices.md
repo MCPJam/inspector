@@ -206,6 +206,39 @@ Use this file when performing a security-focused review of an MCP server. Each c
 - **Best proving command**: repeated connected commands with `--rpc`
 - **Phase**: 4, with any abuse proof in 3
 
+## Cross-App Access (ID-JAG)
+
+**Attack**: A resource authorization server that accepts an ID-JAG without fully
+validating it can be tricked into issuing an access token for a forged, replayed,
+wrong-audience, or wrong-client assertion — turning the enterprise-managed trust
+chain into a token-minting oracle. Use `xaa run` to probe redemption behavior;
+read `references/xaa-id-jag-interpretation.md` first. ID-JAG is an active
+Internet-Draft — anchor severity to a specific draft revision.
+
+### Authorization server issues a token for a tampered or wrong-audience ID-JAG
+
+- **Command**: Inspector UI negative-test scorecard (bad signature, wrong audience, expired, missing claims, invalid `typ`, wrong issuer, resource mismatch, client-id mismatch, unknown `kid`). `mcpjam xaa run` establishes the happy-path baseline; the CLI itself does not send the tampered probes
+- **Where to look**: `redemption.tokenIssued` / `redemption.status` for each tampered assertion; a rejected probe is a 4xx `invalid_grant`
+- **Checklist hit**: The authorization server returns an access token for an assertion that fails a `MUST` validation (signature, `aud`, `exp`, `typ`, `iss`, `resource`, `client_id`, or `kid`)
+- **Default compliance impact**: `high`
+- **Default security impact**: `high` when acceptance is demonstrated with the exact tampered assertion; `pending` when only the happy-path run exists
+- **Escalates when**: A minted token is then accepted by the MCP server (`authenticated_mcp_request` succeeds with the forged-grant token)
+- **Do not escalate when**: The server rejected the probe (that is the desired behavior), or only the valid baseline was run — a single happy-path `xaa run` proves nothing about rejection
+- **Best proving command**: Inspector UI negative scorecard, with the decoded `idJag.claims` and `redemption` body as evidence
+- **Phase**: 3
+
+### Public-client posture on the Client ↔ RAS leg
+
+- **Command**: `xaa run --registration cimd` (public) or `--registration dcr`
+- **Where to look**: `registration.warnings[]` for `public_client`
+- **Checklist hit**: The authorization server accepts the jwt-bearer grant from a client with no key or secret
+- **Default compliance impact**: `low`
+- **Default security impact**: `info`
+- **Escalates when**: Combined with a demonstrated grant-validation weakness that a public client can actually reach and exploit — explain the compound path
+- **Do not escalate when**: It is a standalone posture observation. Draft-04 *recommends* confidential clients; a public client is a hardening note, not a vulnerability, and confidential CIMD (`--client-auth private-key-jwt`) satisfies the recommendation
+- **Best proving command**: `xaa run` with the registration warning; pair with a redemption-validation probe before compounding
+- **Phase**: 2
+
 ## What NOT to flag
 
 - Missing `scopes_supported`. This is optional.
@@ -217,3 +250,7 @@ Use this file when performing a security-focused review of an MCP server. Each c
 - A no-auth server exposing read-only public tools by design
 - Missing optional metadata like `outputSchema`. This is not a security issue.
 - A server correctly rejecting a bad request. That is the desired behavior, not a finding.
+- `not_advertised` ID-JAG capability evidence when `xaa run` redemption succeeded. Advertisement is interop evidence, not a security control.
+- A public-client XAA registration (`public_client` warning) by itself as medium or high.
+- A single completed `xaa run` as proof of ID-JAG conformance or secure posture. It is one happy path for one registration strategy.
+- `verify_issuer_publication` failure or a bare `xaa run` connection error as a target finding. That is local issuer setup.
