@@ -17,6 +17,10 @@ mcpjam oauth login --url https://your-server.com/mcp \
 
 On success, the command prints credentials such as an access token, refresh token, client ID, and sometimes client secret. You can pass access tokens to other commands via `--oauth-access-token` or `--access-token`.
 
+<Note>
+  `oauth login` validates the server's Protected Resource Metadata (PRM) at the discovery step. If the PRM document is missing its required `resource` field, or if the advertised resource is on a different origin than the server URL, the login fails before any authorization request is made. Fix the PRM document on your server to resolve this. The OAuth Debugger accepts these values with a warning so you can still observe the flow.
+</Note>
+
 ## Commands
 
 ### `oauth login`
