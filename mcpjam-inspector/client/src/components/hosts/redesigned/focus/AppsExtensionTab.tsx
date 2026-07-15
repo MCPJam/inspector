@@ -5,6 +5,7 @@ import {
   hostCapabilitiesOverrideToMatrix,
   resolveEffectiveHostCapabilities,
   resolveEffectiveMcpAppsCapabilities,
+  setMcpAppsOverridesOnDraft,
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
 } from "@/lib/client-config-v2";
@@ -26,7 +27,14 @@ import {
 } from "@mcpjam/sdk/browser";
 import { Switch } from "@mcpjam/design-system/switch";
 import { hostConfigField } from "@/lib/host-config-field-schema";
-import { clientAdvertisesMcpApps, isRecord } from "@/lib/host-capabilities";
+import {
+  ALL_DISPLAY_MODES,
+  MCP_APPS_DIMENSIONS,
+  OPENAI_APPS_METHOD_LABELS,
+  type DisplayMode,
+  type McpAppsDimensionKey,
+} from "@/lib/apps-capability-dimensions";
+import { hostSupportsWidgetRendering, isRecord } from "@/lib/host-capabilities";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
@@ -393,9 +401,11 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
     hostCapabilitiesOverride: draft.hostCapabilitiesOverride,
   }) as Record<string, unknown>;
 
-  if (Object.keys(effectiveCaps).length > 0) {
-    doc.hostCapabilities = effectiveCaps;
-  }
+  // Always emit, even when empty — mirrors `hostContext` above. An empty
+  // `{}` is a meaningful advertise ("this host offers no app capabilities",
+  // e.g. the Claude Code CLI template's explicit override), so hiding it
+  // would make an intentional empty look like an omission.
+  doc.hostCapabilities = effectiveCaps;
 
   // sandbox — proxy iframe configuration. Maps to `mcpProfile.apps.sandbox`
   // in storage and the "Sandbox proxy iframe" card in the matrix. Spec
@@ -849,26 +859,6 @@ function setCompatRuntimeOnDraft(
   };
 }
 
-/** Field labels rendered in the matrix. Order matches Copilot's published table. */
-const OPENAI_APPS_METHOD_LABELS: Array<{
-  key: keyof OpenAiAppsCapabilities;
-  label: string;
-}> = [
-  { key: "callTool", label: "callTool" },
-  { key: "sendFollowUpMessage", label: "sendFollowUpMessage" },
-  { key: "setWidgetState", label: "setWidgetState" },
-  { key: "requestDisplayMode", label: "requestDisplayMode" },
-  { key: "notifyIntrinsicHeight", label: "notifyIntrinsicHeight" },
-  { key: "openExternal", label: "openExternal" },
-  { key: "setOpenInAppUrl", label: "setOpenInAppUrl" },
-  { key: "requestModal", label: "requestModal" },
-  { key: "uploadFile", label: "uploadFile" },
-  { key: "selectFiles", label: "selectFiles" },
-  { key: "getFileDownloadUrl", label: "getFileDownloadUrl" },
-  { key: "requestCheckout", label: "requestCheckout" },
-  { key: "requestClose", label: "requestClose" },
-];
-
 /**
  * Per-method capability matrix for `window.openai.*`. Replaces the
  * single "Enable window.openai" toggle with one row per method so users
@@ -882,9 +872,9 @@ const OPENAI_APPS_METHOD_LABELS: Array<{
  *   shim with ONLY that method, letting users build an exact subset from
  *   scratch instead of starting from the full preset.
  * - A collapsed disclosure summarizes "N of 13 enabled" and expands to
- *   the full per-method list. Defaults inherit from the active host
- *   template (`client-templates.ts`), so picking ChatGPT / Copilot /
- *   etc. is already the "preset" — no second affordance needed.
+ *   the full per-method list. Defaults inherit from the active catalog host
+ *   definition, so picking ChatGPT / Copilot / etc. is already the "preset" —
+ *   no second affordance needed.
  * - Method rows show the effective value with an "Overridden" badge
  *   when the user has diverged from the preset.
  *
@@ -1022,9 +1012,7 @@ function OpenaiAppsCapabilityMatrix({
           className="flex flex-1 items-center justify-between gap-2 px-3.5 py-2.5 text-left hover:bg-muted/40"
         >
           <div className="flex flex-col gap-0.5">
-            <span className="text-[12px] font-medium">
-              {fInjectShim.label}
-            </span>
+            <span className="text-[12px] font-medium">{fInjectShim.label}</span>
           </div>
           <ChevronDown
             className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
@@ -1179,172 +1167,6 @@ function WidgetDisplayModeRequestsControl({
   );
 }
 
-/**
- * Update `mcpProfile.apps.mcpAppsOverrides` while preserving sibling
- * fields (`sandbox`, `uiInitialize`, `compatRuntime`) and collapsing
- * empties on the way out:
- *
- *   - empty override object → omit `mcpAppsOverrides` from `apps`
- *   - empty `apps` block (no other siblings) → omit `apps` from profile
- *   - profile that's now content-less (only `profileVersion`) →
- *     `mcpProfile: undefined`
- *
- * Mirrors the collapse the bottom of `applyJsonToDraft` already does.
- * Without it, toggling a row and toggling it back leaves a dirty
- * `{ profileVersion: 1, apps: {} }` shell on the draft —
- * `optionalMcpProfileEq` treats that as distinct from `undefined`, so
- * the save button stays armed and the matrix says "Matches host style
- * preset" while the draft is silently dirty.
- *
- * Trade-off: a user who deliberately opted into a content-less
- * `{ profileVersion: 1 }` envelope (by hand-editing the JSON) will
- * see that stub dropped when they touch the matrix. We accept that:
- * the typed-in `{ profileVersion: 1 }` carries no semantic content
- * the resolver consumes, and the common case (user toggles via
- * matrix UI, expects clean revert) is overwhelmingly more frequent.
- * If we ever model the matrix and the openai shim's
- * `setCompatRuntimeOnDraft` consistently, we can revisit by tracking
- * "synthesized vs opted-in" provenance — but that's bigger than this
- * PR.
- */
-function setMcpAppsOverridesOnDraft(
-  prev: HostConfigInputV2,
-  next: McpAppsCapabilities | undefined
-): HostConfigInputV2 {
-  const hasKeys = next !== undefined && Object.keys(next).length > 0;
-  const prevProfile = prev.mcpProfile;
-  const prevApps = prevProfile?.apps ?? {};
-
-  // Rebuild `apps` explicitly so the spread doesn't leak
-  // `mcpAppsOverrides: undefined` into `Object.keys` when we're
-  // clearing the override. Sibling fields (`sandbox`, `uiInitialize`,
-  // `compatRuntime`, future additions) round-trip verbatim.
-  const nextApps: NonNullable<HostConfigMcpProfileV1["apps"]> = {};
-  for (const [key, value] of Object.entries(prevApps)) {
-    if (key === "mcpAppsOverrides") continue;
-    if (value !== undefined) {
-      (nextApps as Record<string, unknown>)[key] = value;
-    }
-  }
-  if (hasKeys) nextApps.mcpAppsOverrides = next;
-  const appsEmpty = Object.keys(nextApps).length === 0;
-
-  // Fast path: no envelope before, no content now → leave draft alone
-  // (no envelope ever synthesized just to immediately collapse it).
-  if (prevProfile === undefined && appsEmpty) {
-    return prev;
-  }
-
-  const baseProfile: HostConfigMcpProfileV1 = prevProfile ?? {
-    profileVersion: 1,
-  };
-  const hasInitialize =
-    baseProfile.initialize !== undefined &&
-    (baseProfile.initialize.clientInfo !== undefined ||
-      (baseProfile.initialize.supportedProtocolVersions &&
-        baseProfile.initialize.supportedProtocolVersions.length > 0));
-  const hasExtensions = baseProfile.extensions !== undefined;
-  const profileEmpty = appsEmpty && !hasInitialize && !hasExtensions;
-
-  return {
-    ...prev,
-    mcpProfile: profileEmpty
-      ? undefined
-      : { ...baseProfile, apps: appsEmpty ? undefined : nextApps },
-  };
-}
-
-type McpAppsDimensionKey = Exclude<
-  keyof McpAppsCapabilities,
-  "availableDisplayModes" | "widgetDisplayModeRequests"
->;
-
-/** Per-dimension matrix metadata. Description is shown on row hover. */
-type McpAppsDimensionMeta = {
-  key: McpAppsDimensionKey;
-  description: string;
-};
-
-/** All boolean MCP Apps matrix dimensions in display order. */
-const MCP_APPS_DIMENSIONS: McpAppsDimensionMeta[] = [
-  {
-    key: "toolInputPartial",
-    description:
-      "Send ui/notifications/tool-input-partial while the agent streams arguments",
-  },
-  {
-    key: "toolCancelled",
-    description:
-      "Notify the app when tool execution is cancelled (ui/notifications/tool-cancelled)",
-  },
-  {
-    key: "hostContextChanged",
-    description:
-      "Notify the app when theme, display mode, or other host context changes",
-  },
-  {
-    key: "resourceTeardown",
-    description: "Send ui/resource-teardown before destroying the app view",
-  },
-  {
-    key: "serverResources",
-    description: "Advertise resources/read proxy capability in ui/initialize",
-  },
-  {
-    key: "logging",
-    description: "Accept notifications/message log calls from the app",
-  },
-  {
-    key: "toolInfo",
-    description: "Include calling-tool metadata in HostContext.toolInfo",
-  },
-  {
-    key: "openLinks",
-    description: "Advertise ui/open-link capability",
-  },
-  {
-    key: "serverTools",
-    description: "Advertise tools/call proxy capability",
-  },
-  {
-    key: "updateModelContext",
-    description: "Accept ui/update-model-context requests from the app",
-  },
-  {
-    key: "message",
-    description:
-      "Accept ui/message requests that add content to the conversation",
-  },
-  {
-    key: "downloadFile",
-    description: "Accept ui/download-file requests from the app",
-  },
-  {
-    key: "requestTeardown",
-    description:
-      "Honor ui/notifications/request-teardown by unmounting the app",
-  },
-  {
-    key: "sandboxPermissions",
-    description: "Honor _meta.ui.permissions when configuring the iframe",
-  },
-  {
-    key: "cspFrameDomains",
-    description: "Honor _meta.ui.csp.frameDomains for nested iframes",
-  },
-  {
-    key: "cspBaseUriDomains",
-    description: "Honor _meta.ui.csp.baseUriDomains in CSP",
-  },
-  {
-    key: "resourcePrefersBorder",
-    description: "Honor _meta.ui.prefersBorder when rendering app chrome",
-  },
-];
-
-const ALL_DISPLAY_MODES = ["inline", "fullscreen", "pip"] as const;
-type DisplayMode = (typeof ALL_DISPLAY_MODES)[number];
-
 const DISPLAY_MODE_LABELS: Record<DisplayMode, string> = {
   inline: "Inline",
   fullscreen: "Fullscreen",
@@ -1383,7 +1205,9 @@ function McpAppsCapabilityMatrix({
   ) => void;
 }) {
   const [dimensionsOpen, setDimensionsOpen] = useState(false);
-  const advertised = clientAdvertisesMcpApps(draft.clientCapabilities);
+  const advertised = hostSupportsWidgetRendering(draft.clientCapabilities, {
+    hostStyle: draft.hostStyle,
+  });
   const rawOverridesRecord = draft.mcpProfile?.apps?.mcpAppsOverrides;
   const legacyOverride = draft.hostCapabilitiesOverride;
   // Legacy `hostCapabilitiesOverride` is the pre-matrix way of
@@ -1494,7 +1318,9 @@ function McpAppsCapabilityMatrix({
   // turning off support clears overrides the same way the window.openai
   // master toggle clears per-method overrides. Shared by the master Switch
   // and the "last capability off" auto-disable.
-  const withoutMcpUiExtension = (prev: HostConfigInputV2): HostConfigInputV2 => {
+  const withoutMcpUiExtension = (
+    prev: HostConfigInputV2
+  ): HostConfigInputV2 => {
     const nextCaps: Record<string, unknown> = {
       ...(prev.clientCapabilities ?? {}),
     };
@@ -1510,7 +1336,19 @@ function McpAppsCapabilityMatrix({
     } else {
       delete nextCaps.extensions;
     }
-    let nextDraft: HostConfigInputV2 = { ...prev, clientCapabilities: nextCaps };
+    // Mistral's normalized template starts from `clientCapabilities: {}`
+    // evidence but advertises the standard MCP UI extension because Le Chat
+    // demonstrated Apps rendering. When the user explicitly turns support
+    // off, keep a tiny inert marker so the switch can represent "off" without
+    // adding unrelated capabilities. Toggling back on flows through
+    // withMcpUiExtension above and restores the standard MCP UI extension.
+    if (prev.hostStyle === "mistral" && Object.keys(nextCaps).length === 0) {
+      nextCaps.extensions = {};
+    }
+    let nextDraft: HostConfigInputV2 = {
+      ...prev,
+      clientCapabilities: nextCaps,
+    };
     nextDraft = setMcpAppsOverridesOnDraft(nextDraft, undefined);
     if (nextDraft.hostCapabilitiesOverride !== undefined) {
       nextDraft = { ...nextDraft, hostCapabilitiesOverride: undefined };
@@ -1818,7 +1656,9 @@ function McpAppsCapabilityMatrix({
                 key={key}
                 dimensionKey={key}
                 description={description}
-                effective={advertised ? Boolean(effectiveCapabilities[key]) : false}
+                effective={
+                  advertised ? Boolean(effectiveCapabilities[key]) : false
+                }
                 onToggle={(next) =>
                   advertised
                     ? setBooleanOverride(key, next)
@@ -1890,14 +1730,25 @@ export function AppsExtensionTab({
     // threaded explicitly because its editor surface isn't a form
     // control fieldset can reach.
     <fieldset disabled={readOnly} className="contents">
-      <div className="flex h-full min-h-[480px] flex-col gap-3">
-        <OpenaiAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
+      {/* `min-h-full` (not `h-full`) lets the column grow past the panel
+          when the matrices expand so the parent scroll region takes over,
+          instead of clamping to the viewport and squeezing the editor to
+          nothing. When collapsed, it still fills the panel and the editor
+          flex-grows. */}
+      <div className="flex min-h-full flex-col gap-3">
+        <OpenaiAppsCapabilityMatrix
+          draft={draft}
+          onDraftChange={onDraftChange}
+        />
         {/* Two-matrix architecture: window.openai (shim) and app.* (spec
             bridge) are independent surfaces and never cross-gate. The
             subtitle on each section makes this explicit so users don't
             confuse them. */}
         <McpAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
-        <div className="min-h-0 flex-1">
+        {/* `min-h-[320px]` guarantees the editor keeps a usable, scrollable
+            height even when both matrices above are expanded — its own
+            CodeMirror scroll then works instead of the editor collapsing. */}
+        <div className="min-h-[320px] flex-1">
           <JsonEditor
             rawContent={content}
             onRawChange={onRawChange}

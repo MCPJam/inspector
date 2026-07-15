@@ -6,8 +6,8 @@ const mockCapture = vi.fn();
 const mockExportServerApi = vi.fn();
 const mockDownloadTextFile = vi.fn();
 
-vi.mock("posthog-js/react", () => ({
-  usePostHog: () => ({ capture: mockCapture }),
+vi.mock("@/lib/analytics", () => ({
+  track: (...args: unknown[]) => mockCapture(...args),
 }));
 
 vi.mock("@/lib/apis/mcp-export-api", () => ({

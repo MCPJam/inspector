@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { Info } from "lucide-react";
 import { Slider } from "@mcpjam/design-system/slider";
 import { Switch } from "@mcpjam/design-system/switch";
@@ -14,25 +14,30 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import {
   DEFAULT_TEMPERATURE_V2,
+  getMcpToolResultImageRenderPlacement,
+  isMcpDirectContentImageVisible,
+  isMcpDirectContentImageRendered,
+  isMcpEmbeddedResourceBlobImageVisible,
+  isMcpEmbeddedResourceBlobImageRendered,
+  isMcpLinkedResourceBlobImageVisible,
+  isMcpLinkedResourceBlobImageRendered,
+  setMcpDirectContentImageVisible,
+  setMcpDirectContentImageRendered,
+  setMcpEmbeddedResourceBlobImageVisible,
+  setMcpEmbeddedResourceBlobImageRendered,
+  setMcpLinkedResourceBlobImageVisible,
+  setMcpLinkedResourceBlobImageRendered,
+  setMcpToolResultImageRenderPlacement,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
 import { hostConfigField } from "@/lib/host-config-field-schema";
+import { harnessControlState } from "@/lib/harness-capabilities";
 import type { ModelDefinition } from "@/shared/types";
 import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
-import { useHostAgentModels } from "@/hooks/use-host-agent-models";
+import { useAvailableModels } from "@/hooks/use-available-models";
 import { FieldRow, FocusBlock } from "./primitives";
 import { fieldsWithIssues } from "./useHostDraftValidation";
 import type { HostAttentionIssue } from "../types";
-import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
-import { BuiltInToolCheckboxList } from "@/components/client-config/BuiltInToolCheckboxList";
-import {
-  attachComputerPatch,
-  catalogHasComputerBackedTool,
-  detachComputerPatch,
-  shouldShowComputerToggle,
-  visibleBuiltInToolCatalog,
-} from "@/lib/host-config-computer";
-import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 
 // Tri-state UI ↔ persisted value. The backend treats `undefined` as
 // "auto" (orchestrator may still enable progressive mode above the
@@ -55,6 +60,98 @@ function triToProgressiveValue(
   if (value === "on") return true;
   if (value === "off") return false;
   return undefined;
+}
+
+function InfoHoverLabel({
+  label,
+  tooltip,
+  aboutLabel,
+}: {
+  label: ReactNode;
+  tooltip?: ReactNode;
+  aboutLabel?: string;
+}) {
+  if (!tooltip) return <>{label}</>;
+
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {label}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={`About ${aboutLabel ?? String(label)}`}
+            className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            <Info className="h-3 w-3" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent
+          variant="muted"
+          side="top"
+          sideOffset={4}
+          className="max-w-[260px] leading-snug"
+        >
+          {tooltip}
+        </TooltipContent>
+      </Tooltip>
+    </span>
+  );
+}
+
+function ImagePolicyRow({
+  sourceLabel,
+  sourceDescription,
+  sourceTooltip,
+  modelLabel,
+  renderLabel,
+  modelChecked,
+  renderChecked,
+  onModelChange,
+  onRenderChange,
+  disabled,
+  renderDisabled,
+}: {
+  sourceLabel: string;
+  sourceDescription: ReactNode;
+  sourceTooltip: ReactNode;
+  modelLabel: string;
+  renderLabel: string;
+  modelChecked: boolean;
+  renderChecked: boolean;
+  onModelChange: (checked: boolean) => void;
+  onRenderChange: (checked: boolean) => void;
+  disabled: boolean;
+  renderDisabled: boolean;
+}) {
+  return (
+    <>
+      <div className="min-w-0 py-1.5">
+        <div className="text-[12px] font-medium">
+          <InfoHoverLabel label={sourceLabel} tooltip={sourceTooltip} />
+        </div>
+        <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+          {sourceDescription}
+        </p>
+      </div>
+      <div className="flex justify-end py-1.5">
+        <Switch
+          checked={modelChecked}
+          onCheckedChange={onModelChange}
+          aria-label={modelLabel}
+          disabled={disabled}
+        />
+      </div>
+      <div className="flex justify-end py-1.5">
+        <Switch
+          checked={modelChecked && renderChecked}
+          onCheckedChange={onRenderChange}
+          aria-label={renderLabel}
+          disabled={disabled || renderDisabled || !modelChecked}
+        />
+      </div>
+    </>
+  );
 }
 
 interface BehaviorTabProps {
@@ -83,7 +180,7 @@ export function BehaviorTab({
   // Same model source as the Playground picker (org providers in hosted
   // mode, local keys otherwise) so org-only providers like Bedrock and
   // OpenRouter are selectable here too.
-  const { availableModels } = useHostAgentModels();
+  const { availableModels } = useAvailableModels();
   const currentModel = useMemo<ModelDefinition>(() => {
     const match = availableModels.find((m) => String(m.id) === draft.modelId);
     if (match) return match;
@@ -100,31 +197,6 @@ export function BehaviorTab({
   const update = (patch: Partial<HostConfigInputV2>) =>
     onDraftChange((prev) => ({ ...prev, ...patch }));
 
-  // Built-in tools catalog. `undefined` while loading or if the backend isn't
-  // deployed; `[]` on populated deployments with no enabled rows. Hide the
-  // FocusBlock entirely in both cases so empty installs don't render a dead card.
-  const builtInToolCatalog = useBuiltInToolCatalog();
-  const computersEnabled = useComputersEnabled();
-  // Render only the rows this user may see: with `computers-enabled` off,
-  // computer-backed rows (e.g. an enabled `bash`) stay hidden — except an
-  // already-selected id, which must remain visible to stay removable.
-  const visibleBuiltInTools = visibleBuiltInToolCatalog(builtInToolCatalog, {
-    computersEnabled,
-    selectedIds: draft.builtInToolIds,
-  });
-  const showBuiltInTools = (visibleBuiltInTools?.length ?? 0) > 0;
-  // The personal-computer toggle appears once the deployment exposes a
-  // computer-backed tool (the `bash` row ships disabled until launch) OR when
-  // the host already has a computer attached, so an existing attachment is
-  // always detachable even if no computer-backed tool is in the catalog.
-  const showComputerToggle =
-    computersEnabled &&
-    shouldShowComputerToggle({
-      catalogHasComputerBackedTool:
-        catalogHasComputerBackedTool(builtInToolCatalog),
-      computerAttached: draft.computer !== undefined,
-    });
-
   // Labels and descriptions are sourced from the shared field schema so
   // the focus tab and the cross-host comparison matrix stay in sync.
   // Changing a label here would otherwise drift; lookups throw on a typo
@@ -133,12 +205,56 @@ export function BehaviorTab({
   const fTemp = hostConfigField("temperature");
   const fApproval = hostConfigField("requireToolApproval");
   const fVisibility = hostConfigField("respectToolVisibility");
+  const fDirectImages = hostConfigField(
+    "modelVisibleMcpToolResults.directContent.image"
+  );
+  const fEmbeddedImages = hostConfigField(
+    "modelVisibleMcpToolResults.embeddedResources.blob.image"
+  );
+  const fLinkedImages = hostConfigField(
+    "modelVisibleMcpToolResults.linkedResources.blob.image"
+  );
+  const fRenderImages = hostConfigField("mcpToolResultImageRendering");
+  const fRenderDirectImages = hostConfigField(
+    "mcpToolResultImageRendering.directContent.image"
+  );
+  const fRenderEmbeddedImages = hostConfigField(
+    "mcpToolResultImageRendering.embeddedResources.blob.image"
+  );
+  const fRenderLinkedImages = hostConfigField(
+    "mcpToolResultImageRendering.linkedResources.blob.image"
+  );
   const fProgressive = hostConfigField("progressiveToolDiscovery");
   const fSystemPrompt = hostConfigField("systemPrompt");
+  const imageRenderPlacement = getMcpToolResultImageRenderPlacement(
+    draft.mcpToolResultImageRendering
+  );
+  const imageRenderSourcesDisabled =
+    readOnly || imageRenderPlacement === "none";
+
+  // A real harness (e.g. Claude Code) runs its own loop, so some knobs don't
+  // cross into its runtime until the MCP proxy mediates them — and a few never
+  // can. Gray those out per-control (model + system prompt always apply, so
+  // they stay enabled) with an honest note, instead of letting the toggle look
+  // live while doing nothing. Un-graying is a one-line change in
+  // `harness-capabilities.ts` as each proxy phase lands.
+  const tempState = harnessControlState(draft.harness, "temperature");
+  const approvalState = harnessControlState(draft.harness, "requireToolApproval");
+  const visibilityState = harnessControlState(
+    draft.harness,
+    "respectToolVisibility",
+  );
+  const progressiveState = harnessControlState(
+    draft.harness,
+    "progressiveToolDiscovery",
+  );
+  const progressiveTriValue = progressiveState.enforced
+    ? progressiveValueToTri(draft.progressiveToolDiscovery)
+    : "off";
 
   return (
     <div className="flex flex-col gap-4">
-      <FocusBlock title="Model & sampling">
+      <FocusBlock title="Agent tooling">
         <FieldRow
           label={fModel.label}
           description={fModel.description}
@@ -156,6 +272,7 @@ export function BehaviorTab({
                 onModelChange={(model) => update({ modelId: String(model.id) })}
                 disabled={readOnly}
                 align="end"
+                analyticsLocation="client_builder"
               />
             </div>
           }
@@ -179,13 +296,20 @@ export function BehaviorTab({
               })
             }
             aria-label={fTemp.label}
-            disabled={readOnly}
+            disabled={readOnly || !tempState.enforced}
           />
+          {!tempState.enforced ? (
+            <p className="text-[11px] text-muted-foreground">{tempState.note}</p>
+          ) : null}
         </div>
 
         <FieldRow
           label={fApproval.label}
-          description={fApproval.description}
+          description={
+            approvalState.enforced
+              ? fApproval.description
+              : `${fApproval.description} ${approvalState.note}`
+          }
           control={
             <Switch
               checked={draft.requireToolApproval}
@@ -193,14 +317,18 @@ export function BehaviorTab({
                 update({ requireToolApproval: checked })
               }
               aria-label={fApproval.label}
-              disabled={readOnly}
+              disabled={readOnly || !approvalState.enforced}
             />
           }
         />
 
         <FieldRow
           label={fVisibility.label}
-          description={fVisibility.description}
+          description={
+            visibilityState.enforced
+              ? fVisibility.description
+              : `${fVisibility.description} ${visibilityState.note}`
+          }
           control={
             <Switch
               checked={draft.respectToolVisibility}
@@ -208,7 +336,7 @@ export function BehaviorTab({
                 update({ respectToolVisibility: checked })
               }
               aria-label={fVisibility.label}
-              disabled={readOnly}
+              disabled={readOnly || !visibilityState.enforced}
             />
           }
         />
@@ -241,6 +369,9 @@ export function BehaviorTab({
               </Tooltip>
             </span>
           }
+          description={
+            progressiveState.enforced ? undefined : progressiveState.note
+          }
           /**
            * 3-state, not 2-state: the backend reads `undefined` as
            * "auto" and may enable progressive discovery above catalog/
@@ -252,7 +383,7 @@ export function BehaviorTab({
               type="single"
               size="sm"
               variant="outline"
-              value={progressiveValueToTri(draft.progressiveToolDiscovery)}
+              value={progressiveTriValue}
               onValueChange={(value) => {
                 // Radix calls onValueChange("") when the user
                 // re-clicks the active item. Treat that as no-op so
@@ -265,7 +396,7 @@ export function BehaviorTab({
                 });
               }}
               aria-label="Progressive MCP tool discovery"
-              disabled={readOnly}
+              disabled={readOnly || !progressiveState.enforced}
             >
               <ToggleGroupItem value="auto" aria-label="Auto (default)">
                 Auto
@@ -279,42 +410,262 @@ export function BehaviorTab({
             </ToggleGroup>
           }
         />
-      </FocusBlock>
 
-      {showBuiltInTools || showComputerToggle ? (
-        <FocusBlock title="Built-in tools">
-          {showComputerToggle ? (
-            <FieldRow
-              label="Personal computer"
-              description="Attach a per-member cloud workstation (a persistent Linux sandbox). Required by computer-backed tools like Bash."
-              control={
-                <Switch
-                  checked={draft.computer !== undefined}
-                  onCheckedChange={(checked) =>
-                    update(
-                      checked
-                        ? attachComputerPatch()
-                        : detachComputerPatch(draft, builtInToolCatalog)
-                    )
-                  }
-                  aria-label="Personal computer"
-                  disabled={readOnly}
+        <div className="space-y-2.5 border-t border-border/60 pt-2.5">
+          <div className="min-w-0">
+            <div className="text-[12px] font-medium">
+              <InfoHoverLabel
+                label="MCP tool-result images"
+                tooltip="Controls which MCP tool-returned image shapes the model can see and which ones the UI renders."
+              />
+            </div>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              Configure model visibility and UI rendering by MCP result shape.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
+            <div className="min-w-0">
+              <div className="text-[12px] font-medium">
+                <InfoHoverLabel
+                  label="UI placement"
+                  aboutLabel={fRenderImages.label}
+                  tooltip="Controls where enabled MCP tool-returned image previews appear in the UI."
                 />
+              </div>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                Choose where enabled image previews appear.
+              </p>
+            </div>
+            <div className="shrink-0">
+              <ToggleGroup
+                type="single"
+                size="sm"
+                variant="outline"
+                value={imageRenderPlacement}
+                onValueChange={(value) => {
+                  if (!value) return;
+                  if (
+                    value === "none" ||
+                    value === "collapsed" ||
+                    value === "inline"
+                  ) {
+                    update({
+                      mcpToolResultImageRendering:
+                        setMcpToolResultImageRenderPlacement(
+                          draft.mcpToolResultImageRendering,
+                          value
+                        ),
+                    });
+                  }
+                }}
+                disabled={readOnly}
+                aria-label={fRenderImages.label}
+              >
+                <ToggleGroupItem
+                  value="none"
+                  aria-label="Do not render images"
+                  className="min-w-[4.25rem] px-3"
+                >
+                  None
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="collapsed"
+                  aria-label="Render images in collapsed tool cards"
+                  className="min-w-[5.75rem] px-3"
+                >
+                  Collapsed
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="inline"
+                  aria-label="Render images inline"
+                  className="min-w-[4.25rem] px-3"
+                >
+                  Inline
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(4.5rem,auto)_minmax(4.5rem,auto)] items-center gap-x-4 gap-y-1">
+            <div className="text-[10px] font-medium uppercase text-muted-foreground">
+              Source
+            </div>
+            <div className="justify-self-end text-[10px] font-medium uppercase text-muted-foreground">
+              Model sees
+            </div>
+            <div className="justify-self-end text-[10px] font-medium uppercase text-muted-foreground">
+              UI shows
+            </div>
+
+            <ImagePolicyRow
+              sourceLabel="Tool image content"
+              sourceDescription="Direct MCP image blocks returned by tools."
+              sourceTooltip={
+                <>
+                  Uses{" "}
+                  <a
+                    href="https://modelcontextprotocol.io/specification/2025-11-25/server/tools#image-content"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline underline-offset-2 hover:text-foreground"
+                  >
+                    direct image blocks
+                  </a>{" "}
+                  in MCP tool results.
+                </>
               }
+              modelLabel={fDirectImages.label}
+              renderLabel={fRenderDirectImages.label}
+              modelChecked={isMcpDirectContentImageVisible(
+                draft.modelVisibleMcpToolResults
+              )}
+              renderChecked={isMcpDirectContentImageRendered(
+                draft.mcpToolResultImageRendering
+              )}
+              onModelChange={(checked) =>
+                update({
+                  modelVisibleMcpToolResults: setMcpDirectContentImageVisible(
+                    draft.modelVisibleMcpToolResults,
+                    checked
+                  ),
+                  ...(checked
+                    ? {}
+                    : {
+                        mcpToolResultImageRendering:
+                          setMcpDirectContentImageRendered(
+                            draft.mcpToolResultImageRendering,
+                            false
+                          ),
+                      }),
+                })
+              }
+              onRenderChange={(checked) =>
+                update({
+                  mcpToolResultImageRendering: setMcpDirectContentImageRendered(
+                    draft.mcpToolResultImageRendering,
+                    checked
+                  ),
+                })
+              }
+              disabled={readOnly}
+              renderDisabled={imageRenderSourcesDisabled}
             />
-          ) : null}
-          {showBuiltInTools ? (
-            <BuiltInToolCheckboxList
-              label="Attached"
-              selected={draft.builtInToolIds}
-              available={visibleBuiltInTools ?? []}
-              computerAttached={draft.computer !== undefined}
-              readOnly={readOnly}
-              onChange={(builtInToolIds) => update({ builtInToolIds })}
+
+            <ImagePolicyRow
+              sourceLabel="Embedded resource images"
+              sourceDescription="Image blobs embedded inside MCP resources."
+              sourceTooltip={
+                <>
+                  Uses{" "}
+                  <a
+                    href="https://modelcontextprotocol.io/specification/2025-11-25/server/tools#embedded-resources"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline underline-offset-2 hover:text-foreground"
+                  >
+                    embedded resource blobs
+                  </a>{" "}
+                  with image MIME types.
+                </>
+              }
+              modelLabel={fEmbeddedImages.label}
+              renderLabel={fRenderEmbeddedImages.label}
+              modelChecked={isMcpEmbeddedResourceBlobImageVisible(
+                draft.modelVisibleMcpToolResults
+              )}
+              renderChecked={isMcpEmbeddedResourceBlobImageRendered(
+                draft.mcpToolResultImageRendering
+              )}
+              onModelChange={(checked) =>
+                update({
+                  modelVisibleMcpToolResults:
+                    setMcpEmbeddedResourceBlobImageVisible(
+                      draft.modelVisibleMcpToolResults,
+                      checked
+                    ),
+                  ...(checked
+                    ? {}
+                    : {
+                        mcpToolResultImageRendering:
+                          setMcpEmbeddedResourceBlobImageRendered(
+                            draft.mcpToolResultImageRendering,
+                            false
+                          ),
+                      }),
+                })
+              }
+              onRenderChange={(checked) =>
+                update({
+                  mcpToolResultImageRendering:
+                    setMcpEmbeddedResourceBlobImageRendered(
+                      draft.mcpToolResultImageRendering,
+                      checked
+                    ),
+                })
+              }
+              disabled={readOnly}
+              renderDisabled={imageRenderSourcesDisabled}
             />
-          ) : null}
-        </FocusBlock>
-      ) : null}
+
+            <ImagePolicyRow
+              sourceLabel="Resource link images"
+              sourceDescription="Image links resolved through MCP resources/read."
+              sourceTooltip={
+                <>
+                  Uses{" "}
+                  <a
+                    href="https://modelcontextprotocol.io/specification/2025-11-25/server/tools#resource-links"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline underline-offset-2 hover:text-foreground"
+                  >
+                    resource links
+                  </a>{" "}
+                  resolved through MCP <code>resources/read</code>.
+                </>
+              }
+              modelLabel={fLinkedImages.label}
+              renderLabel={fRenderLinkedImages.label}
+              modelChecked={isMcpLinkedResourceBlobImageVisible(
+                draft.modelVisibleMcpToolResults
+              )}
+              renderChecked={isMcpLinkedResourceBlobImageRendered(
+                draft.mcpToolResultImageRendering
+              )}
+              onModelChange={(checked) =>
+                update({
+                  modelVisibleMcpToolResults:
+                    setMcpLinkedResourceBlobImageVisible(
+                      draft.modelVisibleMcpToolResults,
+                      checked
+                    ),
+                  ...(checked
+                    ? {}
+                    : {
+                        mcpToolResultImageRendering:
+                          setMcpLinkedResourceBlobImageRendered(
+                            draft.mcpToolResultImageRendering,
+                            false
+                          ),
+                      }),
+                })
+              }
+              onRenderChange={(checked) =>
+                update({
+                  mcpToolResultImageRendering:
+                    setMcpLinkedResourceBlobImageRendered(
+                      draft.mcpToolResultImageRendering,
+                      checked
+                    ),
+                })
+              }
+              disabled={readOnly}
+              renderDisabled={imageRenderSourcesDisabled}
+            />
+          </div>
+        </div>
+      </FocusBlock>
 
       <FocusBlock title={fSystemPrompt.label}>
         <Textarea

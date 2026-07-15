@@ -44,7 +44,8 @@ import {
  * a host at all.
  */
 export function hostSupportsWidgetRendering(
-  clientCapabilities: Record<string, unknown> | undefined
+  clientCapabilities: Record<string, unknown> | undefined,
+  _opts?: { hostStyle?: string | null | undefined },
 ): boolean {
   if (clientCapabilities === undefined) return true;
   return clientAdvertisesMcpApps(clientCapabilities);

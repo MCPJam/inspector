@@ -49,6 +49,7 @@ export const COMPUTER_USE_TOOL_VERSIONS: Record<
   "claude-opus-4-8": "20251124",
   "claude-opus-4-7": "20251124",
   "claude-opus-4-6": "20251124",
+  "claude-sonnet-5": "20251124",
   "claude-sonnet-4-7": "20251124",
   "claude-sonnet-4-6": "20251124",
   "claude-haiku-4-6": "20251124",

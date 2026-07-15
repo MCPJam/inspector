@@ -12,6 +12,19 @@ const packageJson = JSON.parse(
 );
 const appVersion = packageJson.version || "1.0.0";
 
+// @mcpjam/chat-ui and @mcpjam/widget-react publish from dist, but the release
+// workflow builds only `-w @mcpjam/inspector`, so their dist never exists when
+// electron-forge runs the renderer build. Resolve them from source so the
+// desktop build never depends on a chat-ui / widget-react build (mirrors the
+// source aliases in client/vite.config.ts that keep the web build working).
+const chatUiEntry = resolve(__dirname, "../chat-ui/src/index.ts");
+const chatUiThreadHelpersEntry = resolve(
+  __dirname,
+  "../chat-ui/src/thread-helpers.ts",
+);
+const chatUiTraceEntry = resolve(__dirname, "../chat-ui/src/trace.ts");
+const widgetReactEntry = resolve(__dirname, "../widget-react/src/index.ts");
+
 // https://vitejs.dev/config
 export default defineConfig(({ mode }) => {
   // Load env file based on `mode` in the current working directory.
@@ -27,6 +40,11 @@ export default defineConfig(({ mode }) => {
         "@repo/assets": resolve(__dirname, "./client/src/assets"),
         "@/shared": resolve(__dirname, "./shared"),
         "@": resolve(__dirname, "./client/src"),
+        // More specific subpaths must precede the bare alias (first match wins).
+        "@mcpjam/chat-ui/thread-helpers": chatUiThreadHelpersEntry,
+        "@mcpjam/chat-ui/trace": chatUiTraceEntry,
+        "@mcpjam/chat-ui": chatUiEntry,
+        "@mcpjam/widget-react": widgetReactEntry,
       },
     },
     server: {
@@ -44,6 +62,13 @@ export default defineConfig(({ mode }) => {
           target: "https://api.workos.com",
           changeOrigin: true,
           secure: true,
+        },
+        // PostHog same-origin relay (server/routes/relay.ts) — matches the
+        // web client Vite config; without it Electron dev requests to /relay
+        // fall through to Vite's SPA fallback and return index.html with 200.
+        "/relay": {
+          target: "http://localhost:6274",
+          changeOrigin: true,
         },
       },
     },

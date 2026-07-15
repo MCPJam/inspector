@@ -26,6 +26,9 @@ export const routePaths = {
   servers: "/servers",
   hosts: "/hosts",
   hostCompare: "/host-compare",
+  /** Chrome-less host-compare for vanity domains (caniuse.dev) — no sidebar/nav, bypasses NUX. */
+  embedHostCompare: "/embed/host-compare",
+  capabilities: "/capabilities",
   computer: "/computer",
   registry: "/registry",
   tools: "/tools",
@@ -36,12 +39,13 @@ export const routePaths = {
   skills: "/skills",
   learning: "/learning",
   conformance: "/conformance",
+  compatibility: "/compatibility",
   oauthFlow: "/oauth-flow",
   xaaFlow: "/xaa-flow",
   tracing: "/tracing",
   chatboxes: "/chatboxes",
+  swarms: "/swarms",
   playground: "/playground",
-  views: "/views",
   support: "/support",
   settings: "/settings",
   profile: "/profile",
@@ -80,9 +84,61 @@ export function buildHostComparePath(
 export function buildChatboxSessionPath(
   hostId: string,
   threadId: string,
+  // Which product surface the session link should open on. Both surfaces host
+  // a Sessions tab over the same chatbox; the agent Swarm keeps links on
+  // `/swarms` so a shared link doesn't bounce the recipient to the human
+  // Chatbox surface.
+  basePath: string = routePaths.chatboxes,
 ): string {
   const search = new URLSearchParams({ host: hostId, session: threadId });
-  return `${routePaths.chatboxes}?${search.toString()}`;
+  return `${basePath}?${search.toString()}`;
+}
+
+/**
+ * Build a Swarms deep-link to one synthetic session. Unlike the chatbox
+ * Sessions tab (host-anchored), the Swarms surface is Persona → Journey → Run →
+ * Session, so a link that only carried `host`/`session` couldn't restore the
+ * persona + run selection the recipient needs to reach the session. This
+ * encodes `persona` (personaRefId) and `run` (runId) alongside `host`/`session`
+ * so `SwarmsTab` can restore the full selection chain on load.
+ */
+export function buildSwarmSessionPath(args: {
+  personaRefId: string;
+  runId: string;
+  hostId: string;
+  threadId: string;
+}): string {
+  const search = new URLSearchParams({
+    persona: args.personaRefId,
+    run: args.runId,
+    host: args.hostId,
+    session: args.threadId,
+  });
+  return `${routePaths.swarms}?${search.toString()}`;
+}
+
+/**
+ * Parse a Swarms session deep-link's selection params (see
+ * {@link buildSwarmSessionPath}) from a search string. Every field is optional —
+ * a bare `/swarms` visit returns all-undefined.
+ */
+export function parseSwarmSessionParams(search: string): {
+  personaRefId?: string;
+  runId?: string;
+  hostId?: string;
+  threadId?: string;
+} {
+  const params = new URLSearchParams(search);
+  const pick = (key: string) => {
+    const value = params.get(key);
+    return value && value.trim() ? value : undefined;
+  };
+  return {
+    personaRefId: pick("persona"),
+    runId: pick("run"),
+    hostId: pick("host"),
+    threadId: pick("session"),
+  };
 }
 
 /** Build a path for a specific organization route. */
@@ -265,6 +321,14 @@ const KNOWN_APP_TAB_SEGMENTS = new Set<string>([
   "computer",
 ]);
 
+export function isKnownAppTabSegment(segment: string): boolean {
+  return KNOWN_APP_TAB_SEGMENTS.has(segment);
+}
+
+export function listKnownAppTabSegments(): string[] {
+  return [...KNOWN_APP_TAB_SEGMENTS];
+}
+
 function isSpecialEntryPathname(pathname: string): boolean {
   return (
     pathname === "/billing" ||
@@ -275,8 +339,25 @@ function isSpecialEntryPathname(pathname: string): boolean {
   );
 }
 
+/**
+ * The OAuth debugger callback (`/oauth/callback/debug`) runs in a throwaway
+ * popup that only relays its code to the opener and closes. It must render
+ * WITHOUT `<AuthKitProvider>` (see main.tsx): AuthKit's on-load refresh rotates
+ * the shared WorkOS token from this short-lived context, intermittently
+ * dropping the opener window's session.
+ */
+export function isDebugOAuthCallbackPath(pathname: string): boolean {
+  return (
+    pathname === "/oauth/callback/debug" ||
+    pathname.startsWith("/oauth/callback/debug/")
+  );
+}
+
 export function pathnameToActiveTab(pathname: string): string {
   if (isSpecialEntryPathname(pathname)) return "servers";
+  if (pathname.startsWith(`${routePaths.capabilities}/`)) {
+    return "host-compare";
+  }
   const firstSegment = pathname.replace(/^\/+/, "").split("/")[0] || "home";
   const normalized = normalizeHostedHashTab(firstSegment);
   // Unknown first segments include chatbox slugs; App handles those surfaces
@@ -319,6 +400,53 @@ function decodePathSegment(segment: string): string {
   } catch {
     return segment;
   }
+}
+
+// ── XAA setup center (`/xaa-flow/setup[/:section]`) ─────────────────────────
+
+export type XaaSetupSection = "people" | "apps" | "access";
+
+const XAA_SETUP_BASE_PATH = `${routePaths.xaaFlow}/setup`;
+
+/** Build a deep-linkable setup-center path. `people` is the default section
+ * and canonicalizes to the bare `/xaa-flow/setup`. */
+export function buildXaaSetupPath(section?: XaaSetupSection): string {
+  return section && section !== "people"
+    ? `${XAA_SETUP_BASE_PATH}/${section}`
+    : XAA_SETUP_BASE_PATH;
+}
+
+/** Resolve the active setup section from a pathname; null when the pathname
+ * is not a setup-center route. Unknown section segments fall back to the
+ * default section rather than 404ing a shared link. */
+export function parseXaaSetupSection(pathname: string): XaaSetupSection | null {
+  const segments = pathname.replace(/^\/+/, "").split("/");
+  if (segments[0] !== "xaa-flow" || segments[1] !== "setup") return null;
+  const sectionSegment = segments[2];
+  return sectionSegment === "apps" || sectionSegment === "access"
+    ? sectionSegment
+    : "people";
+}
+
+/**
+ * Deep link into the XAA debugger with a registered resource app
+ * preselected. A full navigation (not a client-side route push): the
+ * debugger captures the `resource` query param at module load, so an SPA
+ * push after boot would be ignored.
+ */
+export function openXaaAppInDebugger(appId: string): void {
+  window.location.assign(
+    `${routePaths.xaaFlow}?resource=${encodeURIComponent(appId)}`
+  );
+}
+
+/** Active setup section from the current location (pattern: useCurrentOrgRoute). */
+export function useXaaSetupSection(): XaaSetupSection {
+  const locationContext = useContext(UNSAFE_LocationContext);
+  const pathname =
+    locationContext?.location.pathname ??
+    (typeof window === "undefined" ? "/" : window.location.pathname);
+  return parseXaaSetupSection(pathname) ?? "people";
 }
 
 export function navigationTargetToPath(
@@ -419,4 +547,44 @@ export function getInvalidOrganizationRouteNavigationTarget({
   }
 
   return null;
+}
+
+/**
+ * Decide whether an active-project change should snap the user to Servers.
+ *
+ * Staying on a project-scoped page (App Builder/Chat) after the active project
+ * changes would leave the user pointed at a project that no longer exists, so
+ * we snap to Servers. But not every project change is a manual switch: opening
+ * another org's settings (e.g. via the switcher's per-row gear) flips the
+ * active org, which auto-resolves a new active project as a *side effect* while
+ * the user deliberately navigates to the org page. Organization routes are
+ * org-scoped, not project-scoped, so snapping there would bounce the user right
+ * back off the settings they just opened.
+ *
+ * The initial hydration (no previous id) and the local-default `"none"`
+ * placeholder are never treated as real switches.
+ */
+export function shouldSnapToServersOnActiveProjectChange({
+  previousActiveProjectId,
+  nextActiveProjectId,
+  activeTab,
+}: {
+  previousActiveProjectId: string | null;
+  nextActiveProjectId: string;
+  activeTab: string;
+}): boolean {
+  if (
+    previousActiveProjectId == null ||
+    previousActiveProjectId === nextActiveProjectId ||
+    previousActiveProjectId === "none" ||
+    nextActiveProjectId === "none"
+  ) {
+    return false;
+  }
+
+  if (activeTab === "organizations") {
+    return false;
+  }
+
+  return true;
 }

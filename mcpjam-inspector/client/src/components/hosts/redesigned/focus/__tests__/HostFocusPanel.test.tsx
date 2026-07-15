@@ -12,8 +12,8 @@ vi.mock("@/hooks/useBuiltInToolCatalog", () => ({
 // BehaviorTab's model picker reuses the Playground ModelSelector fed by the
 // shared app-state + Convex model hooks; stub them so the panel renders
 // without providers.
-vi.mock("@/hooks/use-host-agent-models", () => ({
-  useHostAgentModels: () => ({
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({
     availableModels: [
       { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "anthropic" },
     ],
@@ -188,7 +188,7 @@ describe("HostFocusPanel", () => {
     expect(screen.queryByRole("tab", { name: /^General$/ })).toBeNull();
     expect(screen.queryByRole("tab", { name: /^Appearance$/ })).toBeNull();
     // The host-name textbox lives in the always-visible identity header.
-    expect(screen.getByRole("textbox", { name: "Host name" })).toHaveValue(
+    expect(screen.getByRole("textbox", { name: "Client name" })).toHaveValue(
       "My Host",
     );
   });

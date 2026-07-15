@@ -5,12 +5,7 @@ vi.mock("@/lib/apis/evals-api", () => ({
   generateEvalTests: vi.fn(),
 }));
 
-vi.mock("@/lib/guest-session", () => ({
-  getGuestBearerToken: vi.fn(),
-}));
-
 import { generateEvalTests } from "@/lib/apis/evals-api";
-import { getGuestBearerToken } from "@/lib/guest-session";
 
 describe("generateAndPersistEvalTests", () => {
   const mockQuery = vi.fn();
@@ -22,7 +17,6 @@ describe("generateAndPersistEvalTests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetAccessToken.mockResolvedValue("token");
-    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-token");
     vi.mocked(generateEvalTests).mockResolvedValue({
       success: true,
       tests: [],
@@ -73,7 +67,7 @@ describe("generateAndPersistEvalTests", () => {
     expect(mockCreateTestCase).toHaveBeenCalledTimes(1);
   });
 
-  it("persists promptTurns for generated multi-turn cases", async () => {
+  it("persists steps for generated multi-turn cases", async () => {
     mockQuery.mockResolvedValue([]);
     vi.mocked(generateEvalTests).mockResolvedValue({
       success: true,
@@ -114,26 +108,50 @@ describe("generateAndPersistEvalTests", () => {
       skipIfExistingCases: true,
     });
 
+    // The Convex mutation rejects `promptTurns`; the create path now sends the
+    // unified `steps` model derived from the generated turns. Each turn's
+    // prompt → a `prompt` step; its expected calls → `toolCalledWith` asserts.
     expect(mockCreateTestCase).toHaveBeenCalledWith(
       expect.objectContaining({
         query: "Find the latest incident",
         expectedToolCalls: [{ toolName: "search_incidents", arguments: {} }],
-        promptTurns: [
+        steps: [
           expect.objectContaining({
-            id: "turn-1",
+            kind: "prompt",
             prompt: "Find the latest incident",
           }),
           expect.objectContaining({
-            id: "turn-2",
+            kind: "assert",
+            assertion: expect.objectContaining({
+              type: "toolCalledWith",
+              toolName: "search_incidents",
+            }),
+          }),
+          expect.objectContaining({
+            kind: "prompt",
             prompt: "Now get the full details for that one",
+          }),
+          expect.objectContaining({
+            kind: "assert",
+            assertion: expect.objectContaining({
+              type: "toolCalledWith",
+              toolName: "get_incident_details",
+            }),
           }),
         ],
       }),
     );
+    expect(mockCreateTestCase).not.toHaveBeenCalledWith(
+      expect.objectContaining({ promptTurns: expect.anything() }),
+    );
   });
 
-  it("uses the guest bearer token for direct guest generation", async () => {
+  // The guest bearer is now resolved by the caller's `getAccessToken`
+  // (see resolveConvexAccessToken / useConvexAccessToken); this function just
+  // forwards whatever token it returns. A direct guest still drops projectId.
+  it("forwards the resolved token and nulls projectId for direct guests", async () => {
     mockQuery.mockResolvedValue([]);
+    mockGetAccessToken.mockResolvedValue("guest-token");
     vi.mocked(generateEvalTests).mockResolvedValue({
       success: true,
       tests: [{ title: "T", query: "q", runs: 1, expectedToolCalls: [] }],
@@ -150,8 +168,7 @@ describe("generateAndPersistEvalTests", () => {
       isDirectGuest: true,
     });
 
-    expect(getGuestBearerToken).toHaveBeenCalledTimes(1);
-    expect(mockGetAccessToken).not.toHaveBeenCalled();
+    expect(mockGetAccessToken).toHaveBeenCalledTimes(1);
     expect(generateEvalTests).toHaveBeenCalledWith({
       projectId: null,
       serverIds: ["srv"],

@@ -13,20 +13,34 @@ operation catalog in `@mcpjam/sdk/platform`; every call hits the Platform API
 (`/api/v1`) with the session's own AuthKit JWT, so results respect the
 caller's project access.
 
-| Tool | What it does |
-| --- | --- |
-| `show_servers` | Project servers with hosted doctor health probes; renders as an MCP Apps widget when the client supports it |
-| `list_projects` | Projects the caller can access, most recently updated first |
-| `list_project_servers` | Servers saved in a project (no probes) |
-| `list_eval_suites` | Eval suites in a project, with latest-run summaries |
-| `list_eval_suite_runs` | Recent runs of a suite (by name or ID), newest first |
-| `run_eval_suite` | Start an async rerun of a suite; returns `runId` immediately |
-| `get_eval_run` | Run status/result/summary — poll until terminal |
-| `list_eval_run_iterations` | Per-iteration results: tool calls, token usage, latency |
-| `get_eval_iteration_trace` | Full trace for one iteration (can be large) |
-| `list_chatboxes` | Chatboxes published from a project |
-| `get_chatbox` | One chatbox's settings: model, system prompt, approval policy, servers |
-| `list_chat_sessions` | Chat sessions visible to the caller, optional project/status filter |
+| Tool | What it does | Widget |
+| --- | --- | --- |
+| `show_servers` | Project servers with hosted doctor health probes | ✅ |
+| `list_projects` | Projects the caller can access, most recently updated first | — |
+| `list_project_servers` | Servers saved in a project (no probes) | — |
+| `list_eval_suites` | Eval suites in a project, with latest-run summaries | ✅ |
+| `list_eval_suite_runs` | Recent runs of a suite (by name or ID), newest first | ✅ |
+| `run_eval_suite` | Start an async rerun of a suite; returns `runId` immediately | — |
+| `get_eval_run` | Run status/result/summary — poll until terminal | ✅ |
+| `list_eval_run_iterations` | Per-iteration results: tool calls, token usage, latency | ✅ |
+| `get_eval_iteration_trace` | Full trace for one iteration (can be large) | — |
+| `list_chatboxes` | Chatboxes published from a project | ✅ |
+| `get_chatbox` | One chatbox's settings: model, system prompt, approval policy, servers | ✅ |
+| `list_chat_sessions` | Chat sessions visible to the caller, optional project/status filter | — |
+
+Widget-backed tools render as MCP Apps when — and only when — the client's
+`initialize` request advertises the `io.modelcontextprotocol/ui` extension
+with the MCP Apps MIME type; other clients get the same tools as plain
+text + structured content (see `src/tools/sessionToolRegistrar.ts`). All
+widgets ship in **one** Vite-bundled single-file app (`src/ui/app.tsx`):
+each tool registers its own `ui://mcpjam/...` resource URI (hosts cache
+templates per URI) serving the same HTML, and the worker tags the tool's
+structured content with `widget: <view>` so the app routes the result to
+the right view. The non-widget tools stay plain deliberately:
+`list_projects`/`list_project_servers` defer to the richer `show_servers`,
+`run_eval_suite` returns a receipt the run widgets supersede, and
+`get_eval_iteration_trace`/`list_chat_sessions` are agent-oriented payloads
+with no visual form.
 
 Listing tools take an optional `project` (name or ID) and default to the most
 recently updated accessible project. The eval-run polling tools
@@ -74,6 +88,11 @@ per-project authorization to listings, probes, and eval runs.
 Both domains are the MCPJam tenant — the same one the inspector app authenticates against, so a user signed into the inspector can reach this worker.
 
 `npm run dev` uses `--env staging` so local development binds against staging.
+For developing against the **Home/MCPJam agent** locally, use `npm run dev:local`
+(`--env dev`) instead — it binds to the dev AuthKit app and the local inspector
+(`http://localhost:6274/api/v1`). The inspector's own `npm run dev` starts this
+`dev:local` worker automatically (see `CONTRIBUTING.md`), so you normally don't
+run it by hand.
 Both tenants must have **Client ID Metadata Document** enabled under
 *Connect → Configuration* in the WorkOS dashboard — it's off by default, and
 without it dynamic-client-registration MCP clients will fail to connect.
@@ -164,11 +183,17 @@ GitHub Environment UI.
 - `src/server.ts` — `McpJamMcpServer` (extends `McpAgent` from `agents`). Reads
   `this.props.bearerToken` inside each tool handler and forwards it to the
   Platform API via `PlatformApiClient`.
-- `src/tools/platformTools.ts` — registers the plain (no-UI) tools from the
-  `@mcpjam/sdk/platform` operation catalog and houses the shared
-  operation-to-tool adapter.
-- `src/tools/showServers.ts` — the `show_servers` tool with its MCP Apps
-  widget resource.
+- `src/tools/platformTools.ts` — registers the `@mcpjam/sdk/platform`
+  operation catalog (plain and widget-backed per
+  `PLATFORM_TOOL_WIDGET_VIEWS`) and houses the shared operation-to-tool
+  adapter.
+- `src/tools/showServers.ts` — the `show_servers` tool, registered with the
+  same widget plumbing under its own resource URI.
+- `src/shared/platform-widgets.ts` — the worker↔widget contract: view ids,
+  per-tool resource URIs, and the `widget` payload tag.
+- `src/ui/app.tsx` — the single MCP Apps bundle: shared shell
+  (`src/ui/shared/`) plus one view per widget-backed tool
+  (`src/ui/views/`).
 
 Modeled after the WorkOS AuthKit MCP pattern used in
 [`examples/mcp-apps/sip-cocktails`](../examples/mcp-apps/sip-cocktails/server-utils.ts),

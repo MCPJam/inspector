@@ -98,4 +98,28 @@ describe("CI replay actions", () => {
     await user.click(toggleButton);
     expect(toggleButton).toHaveAttribute("aria-expanded", "false");
   });
+
+  it("labels cancelled run rows as cancelled", () => {
+    renderWithProviders(
+      <RunAccordionView
+        suite={{ _id: "suite-1", name: "Asana MCP Evals", source: "sdk" }}
+        runs={[
+          {
+            ...replayableRun,
+            _id: "run-cancelled",
+            status: "cancelled" as const,
+            result: "cancelled" as const,
+            stopReason: "user_cancelled" as const,
+            stoppedAt: 2,
+          },
+        ]}
+        allIterations={[]}
+        onRunClick={vi.fn()}
+        onReplayRun={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/Cancelled/)).toBeInTheDocument();
+    expect(screen.queryByText(/Failed/)).not.toBeInTheDocument();
+  });
 });

@@ -57,7 +57,7 @@ export function registerHostStyle(definition: HostStyleDefinition): void {
   }
   if (id !== definition.id) {
     throw new Error(
-      `[host-styles] Host style id "${definition.id}" must not contain leading or trailing whitespace.`,
+      `[host-styles] Host style id "${definition.id}" must not contain leading or trailing whitespace.`
     );
   }
   if (registry.has(id)) {
@@ -68,7 +68,7 @@ export function registerHostStyle(definition: HostStyleDefinition): void {
 
 /** Strict lookup. Returns `undefined` when the id is unknown. */
 export function findHostStyle(
-  id: HostStyleId | null | undefined,
+  id: HostStyleId | null | undefined
 ): HostStyleDefinition | undefined {
   if (!id) return undefined;
   return registry.get(id);
@@ -76,7 +76,7 @@ export function findHostStyle(
 
 /** Lookup with claude fallback. Use at boundaries where missing data is normal. */
 export function getHostStyleOrDefault(
-  id: HostStyleId | null | undefined,
+  id: HostStyleId | null | undefined
 ): HostStyleDefinition {
   return findHostStyle(id) ?? DEFAULT_HOST_STYLE;
 }
@@ -110,7 +110,7 @@ export function getHostStyleOrDefault(
  */
 export function buildHostCapabilities(
   matrix: ResolvedMcpAppsCapabilities,
-  augment?: Partial<Omit<McpUiHostCapabilities, "sandbox">>,
+  augment?: Partial<Omit<McpUiHostCapabilities, "sandbox">>
 ): Omit<McpUiHostCapabilities, "sandbox"> {
   const caps: Omit<McpUiHostCapabilities, "sandbox"> = {};
   if (matrix.openLinks) caps.openLinks = {};
@@ -127,7 +127,7 @@ export function buildHostCapabilities(
       Omit<McpUiHostCapabilities, "sandbox">[keyof Omit<
         McpUiHostCapabilities,
         "sandbox"
-      >],
+      >]
     ]
   >) {
     if (caps[key] === undefined) continue;
@@ -150,13 +150,13 @@ export function buildHostCapabilities(
  * honest "no claims" baseline rather than impersonating Claude.
  */
 export function getHostCapabilitiesForStyle(
-  id: HostStyleId | null | undefined,
+  id: HostStyleId | null | undefined
 ): Omit<McpUiHostCapabilities, "sandbox"> {
   const def = findHostStyle(id);
   if (!def) return SPEC_DEFAULT_HOST_CAPABILITIES;
   return buildHostCapabilities(
     def.mcp.mcpAppsCapabilities,
-    def.mcp.hostCapabilitiesAugment,
+    def.mcp.hostCapabilitiesAugment
   );
 }
 
@@ -175,7 +175,7 @@ export function getHostCapabilitiesForStyle(
  * `lib/client-config-v2.ts` for the merge.
  */
 export function getCompatRuntimeForStyle(
-  id: HostStyleId | null | undefined,
+  id: HostStyleId | null | undefined
 ): EffectiveCompatRuntime {
   const profile = findHostStyle(id)?.mcp.compatRuntime;
   if (!profile?.openaiApps) return { injected: false };
@@ -197,7 +197,7 @@ export function getCompatRuntimeForStyle(
  */
 export function getLoadingIndicatorForStyle(
   id: HostStyleId | null | undefined,
-  chatUiOverride?: ChatUiOverride,
+  chatUiOverride?: ChatUiOverride
 ): ComponentType<{ className?: string }> {
   return resolveEffectiveHostStyle({
     hostStyle: id,
@@ -262,6 +262,8 @@ export function resolveEffectiveHostStyle(args: {
     pickerDescription:
       override.pickerDescription ?? preset.chatUi.pickerDescription,
     logoSrc: override.logoSrc ?? preset.chatUi.logoSrc,
+    logoSrcByTheme:
+      override.logoSrc !== undefined ? undefined : preset.chatUi.logoSrcByTheme,
     family,
     resolveChatBackground,
     loadingIndicator,
@@ -293,7 +295,7 @@ export function resolveEffectiveHostStyle(args: {
  * underlying source was a built-in component or a data-shaped override.
  */
 function makeIndicatorComponent(
-  def: IndicatorDef,
+  def: IndicatorDef
 ): ComponentType<{ className?: string }> {
   function CustomHostIndicator({ className }: { className?: string }) {
     return createElement(HostIndicatorDispatch, { def, className });

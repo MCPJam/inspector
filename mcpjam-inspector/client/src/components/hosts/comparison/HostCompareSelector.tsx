@@ -18,17 +18,53 @@ import { cn } from "@/lib/utils";
 import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
 import type { HostListItem } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
+import type { HostThemeMode } from "@/lib/client-styles";
+import type { SupportFilterMode } from "./support-level";
 
-const INLINE_CHIP_LIMIT = 6;
+const INITIAL_INLINE_CHIP_LIMIT = 6;
+
+const SUPPORT_FILTERS: ReadonlyArray<{
+  value: SupportFilterMode;
+  label: string;
+  title: string;
+}> = [
+  { value: "all", label: "All", title: "Show every field" },
+  {
+    value: "missing",
+    label: "Missing",
+    title: "Capabilities not supported by at least one host",
+  },
+  {
+    value: "partial",
+    label: "Partial",
+    title: "Capabilities that are partial / Auto for at least one host",
+  },
+  {
+    value: "supported",
+    label: "Full",
+    title: "Capabilities supported by every host",
+  },
+];
 
 interface HostCompareSelectorProps {
   hosts: ReadonlyArray<HostListItem>;
   selectedHostIds: ReadonlyArray<string>;
   subjectsByHost: Readonly<Record<string, HostComparisonSubject>>;
   onToggleHost: (hostId: string) => void;
+  viewMode?: "table" | "list";
+  onViewModeChange?: (mode: "table" | "list") => void;
+  disableListView?: boolean;
   divergingOnly: boolean;
   onDivergingOnlyChange: (enabled: boolean) => void;
+  supportFilter: SupportFilterMode;
+  onSupportFilterChange: (mode: SupportFilterMode) => void;
+  supportFiltersDisabled?: boolean;
+  showDescriptions: boolean;
+  onShowDescriptionsChange: (enabled: boolean) => void;
+  descriptionsDisabled?: boolean;
   disabled?: boolean;
+  themeMode?: HostThemeMode;
+  mobileOptimized?: boolean;
 }
 
 export function HostCompareSelector({
@@ -36,45 +72,233 @@ export function HostCompareSelector({
   selectedHostIds,
   subjectsByHost,
   onToggleHost,
+  viewMode,
+  onViewModeChange,
+  disableListView = false,
   divergingOnly,
   onDivergingOnlyChange,
+  supportFilter,
+  onSupportFilterChange,
+  supportFiltersDisabled = false,
+  showDescriptions,
+  onShowDescriptionsChange,
+  descriptionsDisabled = false,
   disabled = false,
+  themeMode = "light",
+  mobileOptimized = false,
 }: HostCompareSelectorProps) {
   const selectedSet = new Set(selectedHostIds);
-  const inlineHosts = hosts.slice(0, INLINE_CHIP_LIMIT);
-  const overflowHosts = hosts.slice(INLINE_CHIP_LIMIT);
+  const inlineHosts = getInlineCompareHosts(hosts, selectedSet);
+  const inlineHostIds = new Set(inlineHosts.map((host) => host.hostId));
+  const overflowHosts = hosts.filter((host) => !inlineHostIds.has(host.hostId));
 
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-2">
-      {inlineHosts.map((host) => (
-        <HostCompareChip
-          key={host.hostId}
-          host={host}
-          subject={subjectsByHost[host.hostId]}
-          selected={selectedSet.has(host.hostId)}
-          onToggle={() => onToggleHost(host.hostId)}
-          disabled={disabled}
-        />
-      ))}
+    <div
+      className={cn(
+        "mb-4 flex flex-wrap items-start gap-2",
+        mobileOptimized && "min-w-0"
+      )}
+    >
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+        {inlineHosts.map((host) => (
+          <HostCompareChip
+            key={host.hostId}
+            host={host}
+            subject={subjectsByHost[host.hostId]}
+            selected={selectedSet.has(host.hostId)}
+            onToggle={() => onToggleHost(host.hostId)}
+            disabled={disabled}
+            themeMode={themeMode}
+          />
+        ))}
 
-      {overflowHosts.length > 0 ? (
-        <HostCompareOverflowMenu
-          hosts={overflowHosts}
-          selectedSet={selectedSet}
-          subjectsByHost={subjectsByHost}
-          onToggleHost={onToggleHost}
-          disabled={disabled}
-        />
-      ) : null}
+        {overflowHosts.length > 0 ? (
+          <HostCompareOverflowMenu
+            hosts={overflowHosts}
+            selectedSet={selectedSet}
+            subjectsByHost={subjectsByHost}
+            onToggleHost={onToggleHost}
+            disabled={disabled}
+            themeMode={themeMode}
+          />
+        ) : null}
+      </div>
 
-      <label className="ml-auto flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground">
-        <Switch
-          checked={divergingOnly}
-          onCheckedChange={onDivergingOnlyChange}
-          aria-label="Show only diverging fields"
-        />
-        <span>Only diverging</span>
-      </label>
+      <div
+        className={cn(
+          "ml-auto flex shrink-0 items-center gap-4",
+          mobileOptimized &&
+            "ml-0 min-w-0 w-full flex-wrap justify-center gap-2 sm:ml-auto sm:w-auto sm:flex-nowrap sm:justify-end sm:gap-3"
+        )}
+      >
+        {mobileOptimized &&
+        viewMode !== undefined &&
+        onViewModeChange !== undefined ? (
+          <CompareViewModeToggle
+            viewMode={viewMode}
+            onViewModeChange={onViewModeChange}
+            disableListView={disableListView}
+            disabled={disabled}
+          />
+        ) : null}
+        {mobileOptimized ? null : (
+          <div
+            role="group"
+            aria-label="Filter by support level"
+            className="flex items-center gap-0.5 rounded-full border border-border p-0.5"
+          >
+            {SUPPORT_FILTERS.map((f) => {
+              const active = supportFilter === f.value;
+              const filterDisabled = disabled || supportFiltersDisabled;
+              return (
+                <button
+                  key={f.value}
+                  type="button"
+                  disabled={filterDisabled}
+                  title={
+                    supportFiltersDisabled
+                      ? "Search for a capability before filtering by support"
+                      : f.title
+                  }
+                  aria-pressed={active}
+                  data-testid={`support-filter-${f.value}`}
+                  onClick={() => onSupportFilterChange(f.value)}
+                  className={cn(
+                    "rounded-full px-2.5 py-0.5 text-[11px] transition-colors",
+                    mobileOptimized && "shrink-0",
+                    "disabled:cursor-not-allowed disabled:opacity-50",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                    active
+                      ? "bg-primary/10 text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {f.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <label
+          className={cn(
+            "flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground",
+            (disabled || descriptionsDisabled) &&
+              "cursor-not-allowed opacity-40",
+            mobileOptimized && "shrink-0"
+          )}
+          title={
+            descriptionsDisabled
+              ? "Descriptions are available in table view"
+              : undefined
+          }
+        >
+          <Switch
+            checked={showDescriptions}
+            disabled={disabled || descriptionsDisabled}
+            onCheckedChange={onShowDescriptionsChange}
+            aria-label="Show field descriptions"
+          />
+          <span>Descriptions</span>
+        </label>
+        <label
+          className={cn(
+            "flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground",
+            disabled && "cursor-not-allowed opacity-40",
+            mobileOptimized && "shrink-0"
+          )}
+        >
+          <Switch
+            checked={divergingOnly}
+            disabled={disabled}
+            onCheckedChange={onDivergingOnlyChange}
+            aria-label="Show only diverging fields"
+          />
+          <span>Only diverging</span>
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function getInlineCompareHosts(
+  hosts: ReadonlyArray<HostListItem>,
+  selectedSet: ReadonlySet<string>
+): ReadonlyArray<HostListItem> {
+  if (hosts.length <= INITIAL_INLINE_CHIP_LIMIT) return hosts;
+
+  const selectedHosts = hosts.filter((host) => selectedSet.has(host.hostId));
+  if (selectedHosts.length === 0) {
+    return hosts.slice(0, INITIAL_INLINE_CHIP_LIMIT);
+  }
+
+  const fillerCount = Math.max(
+    0,
+    INITIAL_INLINE_CHIP_LIMIT - selectedHosts.length
+  );
+  const fillerIds = new Set(
+    hosts
+      .filter((host) => !selectedSet.has(host.hostId))
+      .slice(0, fillerCount)
+      .map((host) => host.hostId)
+  );
+
+  return hosts.filter(
+    (host) => selectedSet.has(host.hostId) || fillerIds.has(host.hostId)
+  );
+}
+
+function CompareViewModeToggle({
+  viewMode,
+  onViewModeChange,
+  disableListView,
+  disabled,
+}: {
+  viewMode: "table" | "list";
+  onViewModeChange: (mode: "table" | "list") => void;
+  disableListView: boolean;
+  disabled: boolean;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="View mode"
+      className="flex shrink-0 items-center gap-0.5 rounded-full border border-border p-0.5"
+    >
+      {(
+        [
+          { value: "table", label: "Tables" },
+          { value: "list", label: "List" },
+        ] as const
+      ).map((v) => {
+        const active = viewMode === v.value;
+        const viewModeDisabled =
+          disabled || (v.value === "list" && disableListView);
+        return (
+          <button
+            key={v.value}
+            type="button"
+            aria-pressed={active}
+            disabled={viewModeDisabled}
+            title={
+              viewModeDisabled
+                ? "Turn descriptions off before switching to list view"
+                : undefined
+            }
+            data-testid={`compare-view-${v.value}`}
+            onClick={() => onViewModeChange(v.value)}
+            className={cn(
+              "rounded-full px-2.5 py-0.5 text-[11px] transition-colors",
+              "disabled:cursor-not-allowed disabled:opacity-40",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+              active
+                ? "bg-primary/10 text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {v.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -85,18 +309,21 @@ function HostCompareChip({
   selected,
   onToggle,
   disabled,
+  themeMode,
 }: {
   host: HostListItem;
   subject?: HostComparisonSubject;
   selected: boolean;
   onToggle: () => void;
   disabled?: boolean;
+  themeMode: HostThemeMode;
 }) {
   const logoSrc =
     subject !== undefined
       ? getChatboxHostLogo(
           subject.hostStyle,
           subject.config.chatUiOverride,
+          themeMode
         )
       : null;
   const reduceMotion = useReducedMotion();
@@ -115,7 +342,7 @@ function HostCompareChip({
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
         selected
           ? "border-primary/35 bg-primary/8 text-foreground shadow-xs"
-          : "border-border bg-background text-muted-foreground hover:bg-muted/40 hover:text-foreground",
+          : "border-border bg-background text-muted-foreground hover:bg-muted/40 hover:text-foreground"
       )}
       whileHover={reduceMotion || disabled ? undefined : { scale: 1.04 }}
       whileTap={reduceMotion || disabled ? undefined : { scale: 0.94 }}
@@ -124,12 +351,13 @@ function HostCompareChip({
       onClick={onToggle}
     >
       {logoSrc ? (
-        <img src={logoSrc} alt="" className="size-3.5 shrink-0 object-contain" />
-      ) : (
-        <span
-          aria-hidden
-          className="size-3.5 shrink-0 rounded-full bg-muted"
+        <img
+          src={logoSrc}
+          alt=""
+          className="size-3.5 shrink-0 object-contain"
         />
+      ) : (
+        <span aria-hidden className="size-3.5 shrink-0 rounded-full bg-muted" />
       )}
       <span className="truncate">{host.name}</span>
     </motion.button>
@@ -142,15 +370,17 @@ function HostCompareOverflowMenu({
   subjectsByHost,
   onToggleHost,
   disabled,
+  themeMode,
 }: {
   hosts: ReadonlyArray<HostListItem>;
   selectedSet: ReadonlySet<string>;
   subjectsByHost: Readonly<Record<string, HostComparisonSubject>>;
   onToggleHost: (hostId: string) => void;
   disabled?: boolean;
+  themeMode: HostThemeMode;
 }) {
   const selectedOverflowCount = hosts.filter((h) =>
-    selectedSet.has(h.hostId),
+    selectedSet.has(h.hostId)
   ).length;
 
   return (
@@ -175,9 +405,9 @@ function HostCompareOverflowMenu({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[240px] p-0">
         <Command shouldFilter>
-          <CommandInput placeholder="Search hosts" />
+          <CommandInput placeholder="Search clients" />
           <CommandList>
-            <CommandEmpty>No matching hosts.</CommandEmpty>
+            <CommandEmpty>No matching clients.</CommandEmpty>
             {hosts.map((host) => {
               const selected = selectedSet.has(host.hostId);
               const subject = subjectsByHost[host.hostId];
@@ -186,6 +416,7 @@ function HostCompareOverflowMenu({
                   ? getChatboxHostLogo(
                       subject.hostStyle,
                       subject.config.chatUiOverride,
+                      themeMode
                     )
                   : null;
 
@@ -214,9 +445,7 @@ function HostCompareOverflowMenu({
                   <span
                     className={cn(
                       "text-[11px]",
-                      selected
-                        ? "text-foreground"
-                        : "text-muted-foreground",
+                      selected ? "text-foreground" : "text-muted-foreground"
                     )}
                   >
                     {selected ? "Shown" : "Hidden"}

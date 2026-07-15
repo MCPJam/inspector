@@ -4,21 +4,14 @@
 
 import { authFetch } from "@/lib/session-token";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:6274";
-
-export interface TunnelResponse {
-  url: string;
-  existed?: boolean;
-}
-
 export interface ServerTunnelResponse {
-  // Full bearer URL (contains the ?k= secret enforced at the ngrok edge).
+  // Full bearer URL (contains the ?k= secret enforced at the relay edge).
   // Only ever returned from the local inspector server's in-memory state
   // or a create/rotate response — never from persisted backend records.
   url: string;
   serverId: string;
   existed?: boolean;
-  domain?: string;
+  slug?: string;
   secretVersion?: number;
 }
 
@@ -30,34 +23,6 @@ export interface TunnelRequestLogEntry {
 
 export interface TunnelError {
   error: string;
-}
-
-/**
- * Create a shared tunnel for all MCP servers
- * @param accessToken - Optional WorkOS access token for authenticated requests
- */
-export async function createTunnel(
-  accessToken?: string
-): Promise<TunnelResponse> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
-  if (accessToken) {
-    headers["Authorization"] = `Bearer ${accessToken}`;
-  }
-
-  const response = await authFetch(`${API_BASE}/api/mcp/tunnels/create`, {
-    method: "POST",
-    headers,
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || "Failed to create tunnel");
-  }
-
-  return response.json();
 }
 
 /**
@@ -78,7 +43,7 @@ export async function createServerTunnel(
   }
 
   const response = await authFetch(
-    `${API_BASE}/api/mcp/tunnels/create/${encodeURIComponent(serverId)}`,
+    `/api/mcp/tunnels/create/${encodeURIComponent(serverId)}`,
     {
       method: "POST",
       headers,
@@ -88,38 +53,6 @@ export async function createServerTunnel(
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.error || "Failed to create server tunnel");
-  }
-
-  return response.json();
-}
-
-/**
- * Get existing shared tunnel URL
- * @param accessToken - Optional WorkOS access token for authenticated requests
- */
-export async function getTunnel(
-  accessToken?: string
-): Promise<TunnelResponse | null> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
-  if (accessToken) {
-    headers["Authorization"] = `Bearer ${accessToken}`;
-  }
-
-  const response = await authFetch(`${API_BASE}/api/mcp/tunnels`, {
-    method: "GET",
-    headers,
-  });
-
-  if (response.status === 404) {
-    return null;
-  }
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || "Failed to get tunnel");
   }
 
   return response.json();
@@ -143,7 +76,7 @@ export async function getServerTunnel(
   }
 
   const response = await authFetch(
-    `${API_BASE}/api/mcp/tunnels/server/${encodeURIComponent(serverId)}`,
+    `/api/mcp/tunnels/server/${encodeURIComponent(serverId)}`,
     {
       method: "GET",
       headers,
@@ -160,30 +93,6 @@ export async function getServerTunnel(
   }
 
   return response.json();
-}
-
-/**
- * Close the shared tunnel
- * @param accessToken - Optional WorkOS access token for authenticated requests
- */
-export async function closeTunnel(accessToken?: string): Promise<void> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
-  if (accessToken) {
-    headers["Authorization"] = `Bearer ${accessToken}`;
-  }
-
-  const response = await authFetch(`${API_BASE}/api/mcp/tunnels`, {
-    method: "DELETE",
-    headers,
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || "Failed to close tunnel");
-  }
 }
 
 /**
@@ -204,7 +113,7 @@ export async function closeServerTunnel(
   }
 
   const response = await authFetch(
-    `${API_BASE}/api/mcp/tunnels/server/${encodeURIComponent(serverId)}`,
+    `/api/mcp/tunnels/server/${encodeURIComponent(serverId)}`,
     {
       method: "DELETE",
       headers,
@@ -222,7 +131,7 @@ export async function closeServerTunnel(
  * the returned URL carries the new secret and the old URL stops working.
  * @param serverId - The MCP server ID
  * @param accessToken - Optional WorkOS access token for authenticated requests
- * @param full - Also rotate the reserved domain (new base URL). Rare.
+ * @param full - Also rotate the tunnel slug (new base URL). Rare.
  */
 export async function rotateServerTunnel(
   serverId: string,
@@ -238,7 +147,7 @@ export async function rotateServerTunnel(
   }
 
   const response = await authFetch(
-    `${API_BASE}/api/mcp/tunnels/rotate/${encodeURIComponent(serverId)}`,
+    `/api/mcp/tunnels/rotate/${encodeURIComponent(serverId)}`,
     {
       method: "POST",
       headers,
@@ -272,7 +181,7 @@ export async function getTunnelRequests(
   }
 
   const response = await authFetch(
-    `${API_BASE}/api/mcp/tunnels/requests/${encodeURIComponent(serverId)}`,
+    `/api/mcp/tunnels/requests/${encodeURIComponent(serverId)}`,
     {
       method: "GET",
       headers,

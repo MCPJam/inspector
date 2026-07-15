@@ -42,7 +42,6 @@ export default defineConfig({
     rollupOptions: {
       external: [
         "electron",
-        "@ngrok/ngrok",
         ...builtinModules,
         ...builtinModules.map((m) => `node:${m}`),
       ],

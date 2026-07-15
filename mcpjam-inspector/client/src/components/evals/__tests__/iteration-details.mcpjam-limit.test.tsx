@@ -6,6 +6,7 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 vi.mock("convex/react", () => ({
   useAction: () => vi.fn(),
+  useQuery: () => undefined,
 }));
 
 vi.mock("@/components/ui/json-editor", () => ({
@@ -23,7 +24,7 @@ vi.mock("../trace-viewer", () => ({
 }));
 
 const makeIteration = (
-  overrides: Partial<EvalIteration> = {},
+  overrides: Partial<EvalIteration> = {}
 ): EvalIteration => ({
   _id: "iteration-1",
   actualToolCalls: [],
@@ -42,6 +43,8 @@ beforeEach(() => {
   useMCPJamLimitDialogStore.setState({
     authStatus: "loading",
     hasPendingLimit: false,
+    outOfCreditsHit: false,
+    outOfCreditsOrganizationId: null,
     isOpen: false,
     intent: null,
     organizationId: null,
@@ -61,7 +64,7 @@ describe("IterationDetails guest daily-limit handling", () => {
           }),
         })}
         testCase={null}
-      />,
+      />
     );
 
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);

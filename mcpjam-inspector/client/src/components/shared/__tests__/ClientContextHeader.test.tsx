@@ -9,7 +9,6 @@ const {
   mockHostContextState,
   mockPatchHostContext,
   mockApplyHostTemplate,
-  mockApplyHostDefaultsToPlayground,
 } = vi.hoisted(() => ({
   mockPreferencesState: {
     themeMode: "light",
@@ -47,7 +46,6 @@ const {
   },
   mockPatchHostContext: vi.fn(),
   mockApplyHostTemplate: vi.fn(),
-  mockApplyHostDefaultsToPlayground: vi.fn(),
 }));
 
 vi.mock("lucide-react", () => ({
@@ -64,6 +62,8 @@ vi.mock("lucide-react", () => ({
   MousePointer2: () => <span data-testid="icon-mouse" />,
   Hand: () => <span data-testid="icon-hand" />,
   Maximize2: () => <span data-testid="icon-maximize" />,
+  History: () => <span data-testid="icon-history" />,
+  Info: () => <span data-testid="icon-info" />,
 }));
 
 vi.mock("@mcpjam/design-system/button", () => ({
@@ -117,19 +117,21 @@ vi.mock("@/components/shared/client-context-constants", () => ({
   TIMEZONE_OPTIONS: [{ zone: "UTC", label: "UTC" }],
 }));
 
-vi.mock("@/components/shared/client-context-picker-bodies", async (importOriginal) => {
-  const actual =
-    await importOriginal<
+vi.mock(
+  "@/components/shared/client-context-picker-bodies",
+  async (importOriginal) => {
+    const actual = await importOriginal<
       typeof import("@/components/shared/client-context-picker-bodies")
     >();
-  return {
-    ...actual,
-    CspPickerBody: () => <div />,
-    DevicePickerBody: () => <div />,
-    LocalePickerBody: () => <div />,
-    TimezonePickerBody: () => <div />,
-  };
-});
+    return {
+      ...actual,
+      CspPickerBody: () => <div />,
+      DevicePickerBody: () => <div />,
+      LocalePickerBody: () => <div />,
+      TimezonePickerBody: () => <div />,
+    };
+  }
+);
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (selector: any) =>
@@ -139,8 +141,6 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
 vi.mock("@/stores/ui-playground-store", () => {
   const useUIPlaygroundStore: any = (selector: any) =>
     selector ? selector(mockUIPlaygroundStore) : mockUIPlaygroundStore;
-  // `applyHostDefaultsToPlayground` reads via `.getState()` — expose the
-  // same shape as the hook selector consumers.
   useUIPlaygroundStore.getState = () => mockUIPlaygroundStore;
   return { useUIPlaygroundStore };
 });
@@ -163,8 +163,6 @@ vi.mock("@/stores/client-context-store", () => {
   });
   const useHostContextStore: any = (selector: any) =>
     selector ? selector(buildState()) : buildState();
-  // `applyHostDefaultsToPlayground` reads `applyHostTemplate` via
-  // `.getState()`; expose the same shape.
   useHostContextStore.getState = buildState;
   return { useHostContextStore };
 });
@@ -177,14 +175,6 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
   },
 }));
 
-// Stub the helper so the test verifies the wire (pill onClick → helper)
-// without pulling in the helper's full dependency graph (host-templates →
-// host-config-v2 → ...). The helper's behavior is covered by its own unit
-// test at lib/playground/__tests__/apply-host-defaults.test.ts.
-vi.mock("@/lib/playground/apply-client-defaults", () => ({
-  applyHostDefaultsToPlayground: mockApplyHostDefaultsToPlayground,
-}));
-
 vi.mock("@/lib/client-config", () => ({
   extractEffectiveHostDisplayMode: (hostContext: Record<string, unknown>) =>
     hostContext.displayMode ?? "inline",
@@ -195,15 +185,12 @@ vi.mock("@/lib/client-config", () => ({
     },
   extractHostDisplayModes: (hostContext: Record<string, unknown>) =>
     hostContext.availableDisplayModes ?? ["inline", "pip", "fullscreen"],
-  extractHostLocale: (
-    hostContext: Record<string, unknown>,
-    fallback: string,
-  ) => hostContext.locale ?? fallback,
-  extractHostTheme: (hostContext: Record<string, unknown>) =>
-    hostContext.theme,
+  extractHostLocale: (hostContext: Record<string, unknown>, fallback: string) =>
+    hostContext.locale ?? fallback,
+  extractHostTheme: (hostContext: Record<string, unknown>) => hostContext.theme,
   extractHostTimeZone: (
     hostContext: Record<string, unknown>,
-    fallback: string,
+    fallback: string
   ) => hostContext.timeZone ?? fallback,
 }));
 
@@ -236,12 +223,12 @@ describe("ClientContextHeader", () => {
       <ClientContextHeader
         activeProjectId="project-1"
         protocol={UIType.MCP_APPS}
-      />,
+      />
     );
 
     await waitFor(() => {
       expect(mockUIPlaygroundStore.setCspMode).toHaveBeenCalledWith(
-        "permissive",
+        "permissive"
       );
     });
     expect(mockUIPlaygroundStore.setMcpAppsCspMode).not.toHaveBeenCalled();
@@ -253,7 +240,7 @@ describe("ClientContextHeader", () => {
         activeProjectId="project-1"
         protocol={null}
         showThemeToggle
-      />,
+      />
     );
 
     expect(screen.getByTestId("icon-sun")).toBeInTheDocument();
@@ -264,53 +251,17 @@ describe("ClientContextHeader", () => {
     expect(mockPreferencesState.setThemeMode).not.toHaveBeenCalled();
   });
 
-  it("invokes the playground snapshot helper for each pill click with the right host id", () => {
-    render(
-      <ClientContextHeader activeProjectId="project-1" protocol={null} />,
-    );
+  it("does not render the client style picker in the playground toolbar", () => {
+    render(<ClientContextHeader activeProjectId="project-1" protocol={null} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Claude" }));
-    fireEvent.click(screen.getByRole("button", { name: "ChatGPT" }));
-
-    // setHostStyle is no longer called directly from the pill onClick —
-    // the helper owns it (so a single seam writes the brand-pill id +
-    // chip stores together). Assert via the helper instead.
-    expect(mockPreferencesState.setHostStyle).not.toHaveBeenCalled();
-    expect(mockApplyHostDefaultsToPlayground).toHaveBeenCalledTimes(2);
-    expect(mockApplyHostDefaultsToPlayground.mock.calls[0]?.[0]).toBe(
-      "claude",
-    );
-    expect(mockApplyHostDefaultsToPlayground.mock.calls[1]?.[0]).toBe(
-      "chatgpt",
-    );
-  });
-
-  it("calls the playground snapshot helper with both preferences setters in a bag", () => {
-    render(
-      <ClientContextHeader activeProjectId="project-1" protocol={null} />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "ChatGPT" }));
-
-    expect(mockApplyHostDefaultsToPlayground).toHaveBeenCalledTimes(1);
-    expect(mockApplyHostDefaultsToPlayground.mock.calls[0]?.[0]).toBe(
-      "chatgpt",
-    );
-    // Second arg is the setters bag — the preferences-store setters that
-    // the helper writes through (preferences store is context-scoped, so
-    // the helper can't `getState()` on it).
-    expect(mockApplyHostDefaultsToPlayground.mock.calls[0]?.[1]).toEqual({
-      setHostStyle: mockPreferencesState.setHostStyle,
-      setHostCapabilitiesOverride:
-        mockPreferencesState.setHostCapabilitiesOverride,
-      setChatUiOverride: mockPreferencesState.setChatUiOverride,
-    });
+    expect(screen.queryByLabelText("Client styles")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("host-style-picker-trigger")
+    ).not.toBeInTheDocument();
   });
 
   it("opens the raw host context dialog when the host context button is clicked", () => {
-    render(
-      <ClientContextHeader activeProjectId="project-1" protocol={null} />,
-    );
+    render(<ClientContextHeader activeProjectId="project-1" protocol={null} />);
 
     fireEvent.click(screen.getByTestId("host-context-trigger"));
 
@@ -318,19 +269,15 @@ describe("ClientContextHeader", () => {
   });
 
   it("labels the host capabilities override control as Host Capabilities", () => {
-    render(
-      <ClientContextHeader activeProjectId="project-1" protocol={null} />,
-    );
+    render(<ClientContextHeader activeProjectId="project-1" protocol={null} />);
 
     expect(screen.getByTestId("host-capabilities-trigger")).toHaveTextContent(
-      "Host Capabilities",
+      "Host Capabilities"
     );
   });
 
   it("does not render the display-mode badge in the toolbar", () => {
-    render(
-      <ClientContextHeader activeProjectId="project-1" protocol={null} />,
-    );
+    render(<ClientContextHeader activeProjectId="project-1" protocol={null} />);
 
     expect(screen.queryByText("Display")).not.toBeInTheDocument();
     expect(screen.queryByText("Inline")).not.toBeInTheDocument();
