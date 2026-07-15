@@ -264,7 +264,7 @@ describe("mcp-oauth hosted callback sessions", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain(
-      "Rejected cross-origin OAuth resource indicator"
+      "Rejected OAuth resource indicator"
     );
     expect(authFetchMock).not.toHaveBeenCalledWith(
       "https://test.convex.site/web/oauth/complete",

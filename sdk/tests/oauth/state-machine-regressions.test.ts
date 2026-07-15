@@ -689,6 +689,7 @@ describe("OAuth state machine regressions", () => {
   const runResourceMetadataStep = async (
     protocolVersion: OAuthProtocolVersion,
     resource: string,
+    enforcement?: "warn" | "reject",
   ) => {
     let state: any = seedResourceMetadataFetch();
 
@@ -704,6 +705,7 @@ describe("OAuth state machine regressions", () => {
       serverName: "Test Server",
       redirectUrl: REDIRECT_URI,
       requestExecutor: prmExecutor(resource),
+      ...(enforcement ? { resourceIndicatorEnforcement: enforcement } : {}),
     });
 
     await machine.proceedToNextStep(); // fetch protected resource metadata
@@ -739,6 +741,80 @@ describe("OAuth state machine regressions", () => {
           (log: any) => log.id === "resource-identifier-mismatch",
         ),
       ).toBeUndefined();
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "persists the resolved resource-indicator decision at PRM discovery in %s",
+    async (protocolVersion) => {
+      const state = await runResourceMetadataStep(
+        protocolVersion,
+        RESOURCE_URN,
+      );
+
+      expect(state.resourceIndicator).toEqual({
+        value: RESOURCE_URN,
+        source: "prm",
+        status: "invalid",
+        strictClientCompatible: false,
+        reason: expect.stringContaining("https URL"),
+      });
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "warns but proceeds on a same-origin non-prefix resource even under reject enforcement in %s",
+    async (protocolVersion) => {
+      // Asana shape: PRM advertises a same-host resource on a different path
+      // than the transport endpoint. Same-origin is the security boundary;
+      // the official-SDK strictness gap is a warning, not a failure.
+      const state = await runResourceMetadataStep(
+        protocolVersion,
+        "https://mcp.example.com/v2/other",
+        "reject",
+      );
+
+      expect(state.currentStep).toBe("received_resource_metadata");
+      expect(state.resourceIndicator?.status).toBe("valid");
+      expect(state.resourceIndicator?.strictClientCompatible).toBe(false);
+      expect(
+        state.infoLogs?.find(
+          (log: any) => log.id === "resource-identifier-mismatch",
+        )?.level,
+      ).toBe("warning");
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "fails the discovery step on an unusable PRM resource under reject enforcement in %s",
+    async (protocolVersion) => {
+      const state = await runResourceMetadataStep(
+        protocolVersion,
+        RESOURCE_URN,
+        "reject",
+      );
+
+      // The machine surfaces step failures via state.error, which the
+      // connect-like drivers (oauth-login, conformance runner) treat as a
+      // failed flow.
+      expect(state.error).toMatch(/https URL/);
+      expect(state.currentStep).not.toBe("received_resource_metadata");
+      expect(state.resourceIndicator).toBeUndefined();
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "reject enforcement still accepts a valid PRM resource in %s",
+    async (protocolVersion) => {
+      const state = await runResourceMetadataStep(
+        protocolVersion,
+        SERVER_URL,
+        "reject",
+      );
+
+      expect(state.currentStep).toBe("received_resource_metadata");
+      expect(state.resourceIndicator?.status).toBe("valid");
+      expect(state.resourceIndicator?.value).toBe(SERVER_URL);
     },
   );
 });

@@ -1918,7 +1918,7 @@ describe("mcp-oauth", () => {
 
       expect(callbackResult.success).toBe(false);
       expect(callbackResult.error).toContain(
-        "Rejected cross-origin OAuth resource indicator"
+        "Rejected OAuth resource indicator"
       );
       expect(mockExchangeAuthorization).not.toHaveBeenCalled();
     });

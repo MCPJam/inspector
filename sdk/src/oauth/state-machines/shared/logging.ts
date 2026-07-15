@@ -6,6 +6,7 @@ import type {
   OAuthFlowState,
   OAuthFlowStep,
 } from "../types.js";
+import type { ResourceIndicatorDecision } from "../../resource-policy.js";
 
 export interface AddInfoLogOptions {
   level?: InfoLogLevel;
@@ -34,6 +35,43 @@ export function addInfoLog(
       error,
     },
   ];
+}
+
+// Warn-mode surfaces (the debugger) proceed with a broken or
+// strict-incompatible advertised resource so users can observe real behavior
+// — but must say so. No-op when no PRM resource was advertised (server
+// fallback) or the decision is fully valid and strict-compatible.
+export function addResourceMismatchWarning(
+  state: OAuthFlowState,
+  infoLogs: Array<InfoLogEntry>,
+  decision: ResourceIndicatorDecision | undefined,
+  serverUrl: string | undefined,
+): Array<InfoLogEntry> {
+  if (
+    !decision ||
+    decision.source !== "prm" ||
+    decision.strictClientCompatible
+  ) {
+    return infoLogs;
+  }
+
+  return addInfoLog(
+    { ...state, infoLogs },
+    "received_resource_metadata",
+    "resource-identifier-mismatch",
+    "Resource identifier mismatch",
+    {
+      "Advertised resource": decision.value,
+      "Server URL": serverUrl,
+      Status: decision.status,
+      Reason: decision.reason,
+      Note:
+        decision.status === "valid"
+          ? "The flow will send the advertised resource, but clients enforcing the official MCP SDK's strict path-prefix binding may refuse to connect to this server."
+          : "The debugger will send the advertised resource as-is (RFC 8707) so you can observe real behavior, but MCP clients — including MCPJam's Quick OAuth and the official MCP SDK — validate it against the server URL and will refuse to connect.",
+    },
+    { level: "warning" },
+  );
 }
 
 export function toLogErrorDetails(error: unknown): LogErrorDetails {

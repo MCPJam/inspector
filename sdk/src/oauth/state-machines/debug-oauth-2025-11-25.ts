@@ -21,6 +21,7 @@ import type {
 import type { DiagramAction } from "./shared/types.js";
 import {
   addInfoLog,
+  addResourceMismatchWarning,
   markLatestHttpEntryAsError,
   toLogErrorDetails,
 } from "./shared/logging.js";
@@ -34,11 +35,12 @@ import {
   generateRandomString,
   generateCodeChallenge,
 } from "./shared/pkce.js";
+import { buildResourceMetadataUrl } from "./shared/urls.js";
 import {
-  buildResourceMetadataUrl,
   canonicalizeResourceUrl,
-  resourceMatchesServerUrl,
-} from "./shared/urls.js";
+  evaluateResourceIndicator,
+  resolveResourceIndicatorValue,
+} from "../resource-policy.js";
 import {
   buildInitializeRequestBody,
   resolveInitializeProtocolVersion,
@@ -69,6 +71,17 @@ export interface DebugOAuthStateMachineConfig
   registrationStrategy?: RegistrationStrategy2025_11_25; // cimd | dcr | preregistered
 }
 
+
+// Sequence-diagram previews must show the resource value the flow actually
+// sends (the decision persisted at PRM discovery), not the raw server URL.
+const previewResourceValue = (
+  flowState: OAuthFlowState,
+): string | undefined =>
+  resolveResourceIndicatorValue({
+    serverUrl: flowState.serverUrl,
+    prmResource: flowState.resourceMetadata?.resource,
+    resolved: flowState.resourceIndicator,
+  });
 
 /**
  * Build the sequence of actions for the 2025-11-25 OAuth flow
@@ -333,9 +346,7 @@ export function buildActions_2025_11_25(
             },
             {
               label: "resource",
-              value: flowState.serverUrl
-                ? canonicalizeResourceUrl(flowState.serverUrl)
-                : "—",
+              value: previewResourceValue(flowState) || "—",
             },
             { label: "Protocol", value: "2025-11-25" },
           ]
@@ -357,9 +368,7 @@ export function buildActions_2025_11_25(
             },
             {
               label: "resource",
-              value: flowState.serverUrl
-                ? canonicalizeResourceUrl(flowState.serverUrl)
-                : "",
+              value: previewResourceValue(flowState) || "",
             },
           ]
         : undefined,
@@ -416,9 +425,7 @@ export function buildActions_2025_11_25(
             { label: "grant_type", value: "authorization_code" },
             {
               label: "resource",
-              value: flowState.serverUrl
-                ? canonicalizeResourceUrl(flowState.serverUrl)
-                : "",
+              value: previewResourceValue(flowState) || "",
             },
           ]
         : undefined,
@@ -537,6 +544,7 @@ export const createDebugOAuthStateMachine = (
     authMode,
     hasClientSecret = false,
     strictConformance = false,
+    resourceIndicatorEnforcement = "warn",
     registrationStrategy = "cimd", // Default to CIMD for 2025-11-25
   } = config;
 
@@ -567,17 +575,21 @@ export const createDebugOAuthStateMachine = (
   // Helper to get current state (use getState if provided, otherwise use initial state)
   const getCurrentState = () => (getState ? getState() : initialState);
 
-  // Per RFC 8707 and the MCP Authorization spec, the OAuth `resource` indicator
-  // must use the identifier advertised in the server's Protected Resource
-  // Metadata when one was discovered. That identifier may be any URI (including
-  // a URN) and is not required to equal the MCP endpoint URL, so the client must
-  // not overwrite it with the canonicalized server URL. Only fall back to the
-  // canonical server URL when no PRM `resource` is available. Resolving through a
-  // single helper also guarantees the authorization request and the token
-  // request send an identical resource value — some authorization servers reject
-  // a mismatch between the two.
-  const resolveResourceParameter = (): string =>
-    getCurrentState().resourceMetadata?.resource ?? canonicalServerUrl;
+  // The resource indicator is decided once at PRM discovery and persisted as
+  // state.resourceIndicator (see resource-policy.ts). Reading through this
+  // helper keeps every request site — authorization URL, token body, token
+  // POST — on the identical value, and re-evaluates lazily for flows seeded
+  // past the discovery step.
+  const resolveResourceParameter = (): string => {
+    const current = getCurrentState();
+    return (
+      resolveResourceIndicatorValue({
+        serverUrl: current.serverUrl ?? serverUrl,
+        prmResource: current.resourceMetadata?.resource,
+        resolved: current.resourceIndicator,
+      }) ?? canonicalServerUrl
+    );
+  };
 
   const executeRequest = (url: string, options: RequestInit = {}) =>
     requestExecutor({
@@ -980,30 +992,36 @@ export const createDebugOAuthStateMachine = (
                 }
               );
 
+              // Resolve the resource indicator ONCE; every later request and
+              // preview site reads state.resourceIndicator instead of
+              // re-deriving it.
+              const resourceIndicator = evaluateResourceIndicator({
+                serverUrl: state.serverUrl ?? serverUrl,
+                prmResource: resourceMetadata.resource,
+              });
+
               if (
-                resourceMetadata.resource &&
-                !resourceMatchesServerUrl(
-                  resourceMetadata.resource,
-                  state.serverUrl
-                )
+                resourceIndicatorEnforcement === "reject" &&
+                resourceIndicator.source === "prm" &&
+                resourceIndicator.status !== "valid"
               ) {
-                infoLogs = addInfoLog(
-                  { ...state, infoLogs },
-                  "received_resource_metadata",
-                  "resource-identifier-mismatch",
-                  "Resource identifier mismatch",
-                  {
-                    "Advertised resource": resourceMetadata.resource,
-                    "Server URL": state.serverUrl,
-                    Note: "The debugger will send the advertised resource as-is (RFC 8707), but strict MCP clients — including MCPJam's Quick OAuth and the official MCP SDK — validate it against the server URL (RFC 9728 §3.3) and will refuse to connect.",
-                  },
-                  { level: "warning" }
+                throw new Error(
+                  resourceIndicator.reason ??
+                    "Protected Resource Metadata advertises an unusable resource identifier."
                 );
               }
+
+              infoLogs = addResourceMismatchWarning(
+                state,
+                infoLogs,
+                resourceIndicator,
+                state.serverUrl ?? serverUrl
+              );
 
               updateState({
                 currentStep: "received_resource_metadata",
                 resourceMetadata,
+                resourceIndicator,
                 resourceMetadataUrl:
                   lastAttempt?.request?.url || state.resourceMetadataUrl,
                 authorizationServerUrl,

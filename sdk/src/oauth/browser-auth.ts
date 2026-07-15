@@ -13,6 +13,7 @@ import type {
   OAuthTokens,
   OpenIdProviderDiscoveryMetadata,
 } from "@modelcontextprotocol/client";
+import { evaluateResourceIndicator } from "./resource-policy.js";
 
 const AUTHORIZATION_CODE_RESPONSE_TYPE = "code";
 const AUTHORIZATION_CODE_CHALLENGE_METHOD = "S256";
@@ -140,40 +141,6 @@ function resourceUrlFromServerUrl(url: string | URL): URL {
   const resourceUrl = typeof url === "string" ? new URL(url) : new URL(url.href);
   resourceUrl.hash = "";
   return resourceUrl;
-}
-
-function checkResourceAllowed({
-  requestedResource,
-  configuredResource,
-}: {
-  requestedResource: string | URL;
-  configuredResource: string | URL;
-}): boolean {
-  const requested =
-    typeof requestedResource === "string"
-      ? new URL(requestedResource)
-      : new URL(requestedResource.href);
-  const configured =
-    typeof configuredResource === "string"
-      ? new URL(configuredResource)
-      : new URL(configuredResource.href);
-
-  if (requested.origin !== configured.origin) {
-    return false;
-  }
-
-  if (requested.pathname.length < configured.pathname.length) {
-    return false;
-  }
-
-  const requestedPath = requested.pathname.endsWith("/")
-    ? requested.pathname
-    : `${requested.pathname}/`;
-  const configuredPath = configured.pathname.endsWith("/")
-    ? configured.pathname
-    : `${configured.pathname}/`;
-
-  return requestedPath.startsWith(configuredPath);
 }
 
 function selectClientAuthMethod(
@@ -743,18 +710,21 @@ export async function selectResourceURL(
     return undefined;
   }
 
-  if (
-    !checkResourceAllowed({
-      requestedResource: defaultResource,
-      configuredResource: resourceMetadata.resource,
-    })
-  ) {
+  // This mirrors the official MCP SDK's auth(), so it keeps the SDK's full
+  // strict binding (origin + path prefix) — unlike Quick OAuth and the debug
+  // flows, which accept same-origin values and warn instead.
+  const decision = evaluateResourceIndicator({
+    serverUrl: defaultResource.href,
+    prmResource: resourceMetadata.resource,
+  });
+
+  if (!decision.strictClientCompatible) {
     throw new Error(
       `Protected resource ${resourceMetadata.resource} does not match expected ${defaultResource} (or origin)`,
     );
   }
 
-  return new URL(resourceMetadata.resource);
+  return new URL(decision.value);
 }
 
 export async function discoverOAuthProtectedResourceMetadata(

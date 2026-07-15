@@ -15,7 +15,10 @@ import {
   type OAuthFlowState,
   type OAuthHttpRequest,
 } from "../oauth/state-machines/types.js";
-import { canonicalizeResourceUrl } from "../oauth/state-machines/shared/urls.js";
+import {
+  canonicalizeResourceUrl,
+  resolveResourceIndicatorValue,
+} from "../oauth/resource-policy.js";
 import { performClientCredentialsGrant } from "./auth-strategies/client-credentials.js";
 import { completeHeadlessAuthorization } from "./auth-strategies/headless.js";
 import {
@@ -428,6 +431,10 @@ export class OAuthConformanceTest {
         customHeaders: this.config.customHeaders,
         authMode: this.config.auth.mode,
         strictConformance: true,
+        // Fail the discovery step on unusable PRM resource metadata so
+        // downstream (negative-test) results aren't produced against a
+        // broken baseline.
+        resourceIndicatorEnforcement: "reject",
       });
 
       let guard = 0;
@@ -484,7 +491,12 @@ export class OAuthConformanceTest {
               clientSecret: tokenClientSecret,
               tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
               scope: this.config.scopes,
-              resource: canonicalizeResourceUrl(this.config.serverUrl),
+              resource:
+                resolveResourceIndicatorValue({
+                  serverUrl: this.config.serverUrl,
+                  prmResource: state.resourceMetadata?.resource,
+                  resolved: state.resourceIndicator,
+                }) ?? canonicalizeResourceUrl(this.config.serverUrl),
               request: trackedRequest,
             });
 

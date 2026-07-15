@@ -2,6 +2,8 @@
  * Shared types for OAuth state machines
  */
 
+import type { ResourceIndicatorDecision } from "../resource-policy.js";
+
 export type MaybePromise<T> = T | Promise<T>;
 
 export type OAuthAuthMode =
@@ -53,6 +55,10 @@ export interface OAuthFlowState {
     resource_signing_alg_values_supported?: string[];
     scopes_supported?: string[];
   };
+  // The resource-indicator decision resolved once at PRM discovery
+  // (resource-policy.ts). Every later request/preview site reads this value
+  // instead of re-deriving it.
+  resourceIndicator?: ResourceIndicatorDecision;
   authorizationServerUrl?: string;
   authorizationServerMetadata?: {
     issuer: string;
@@ -225,6 +231,13 @@ export interface BaseOAuthStateMachineConfig {
   customHeaders?: Record<string, string>;
   authMode?: OAuthAuthMode;
   strictConformance?: boolean;
+  // What to do at PRM discovery when the advertised resource indicator is not
+  // `valid`: the debugger defaults to "warn" (log and continue with the
+  // advertised value so real server behavior stays observable); connect-like
+  // surfaces (oauth-login, conformance) pass "reject" to fail the discovery
+  // step instead. Orthogonal to `strictConformance`, which governs
+  // registration strictness.
+  resourceIndicatorEnforcement?: "warn" | "reject";
 }
 
 // Registration strategies

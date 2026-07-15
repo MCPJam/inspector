@@ -1,4 +1,7 @@
-import { canonicalizeResourceUrl } from "../../oauth/state-machines/shared/urls.js";
+import {
+  canonicalizeResourceUrl,
+  resolveResourceIndicatorValue,
+} from "../../oauth/resource-policy.js";
 import { getConformanceAuthCodeDynamicRegistrationMetadata } from "../../oauth/client-identity.js";
 import type { OAuthFlowState } from "../../oauth/state-machines/types.js";
 import {
@@ -141,7 +144,14 @@ function buildTokenRequestBody(
   overrides: Record<string, string | undefined>,
 ): Record<string, string> {
   const body: Record<string, string> = {};
-  const resource = canonicalizeResourceUrl(input.config.serverUrl);
+  // Negative checks tamper OTHER fields; the resource baseline must be the
+  // same resolved value the positive flow sent.
+  const resource =
+    resolveResourceIndicatorValue({
+      serverUrl: input.config.serverUrl,
+      prmResource: input.state.resourceMetadata?.resource,
+      resolved: input.state.resourceIndicator,
+    }) ?? canonicalizeResourceUrl(input.config.serverUrl);
   const state = input.state;
 
   if (input.config.auth.mode === "client_credentials") {
@@ -488,7 +498,11 @@ export async function runInvalidAuthorizeRedirectCheck(
   );
   authorizeUrl.searchParams.set(
     "resource",
-    canonicalizeResourceUrl(input.config.serverUrl),
+    resolveResourceIndicatorValue({
+      serverUrl: input.config.serverUrl,
+      prmResource: input.state.resourceMetadata?.resource,
+      resolved: input.state.resourceIndicator,
+    }) ?? canonicalizeResourceUrl(input.config.serverUrl),
   );
 
   const requestedScopeValue = resolveRequestedScopeValue({
