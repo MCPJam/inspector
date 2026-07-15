@@ -11,6 +11,11 @@
  * delegated-identity resolver).
  */
 
+import {
+  getInternalBackendConfig,
+  isEntityNotFound,
+} from "./internal-backend.js";
+
 const BINDINGS_PATH = "/internal/v1/workos-api-key-bindings";
 
 export interface WorkosKeyBinding {
@@ -32,36 +37,31 @@ export class WorkosKeyBindingError extends Error {
   }
 }
 
-function getConfig(): { convexUrl: string; serviceToken: string } {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexUrl) {
-    throw new Error("CONVEX_HTTP_URL is not set");
-  }
-  const serviceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!serviceToken) {
-    throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
-  }
-  return { convexUrl, serviceToken };
-}
-
 /**
- * Look up the org a WorkOS API key is bound to. Returns `null` when the
- * backend reports 404 (no binding) — the caller treats that as an orphaned
- * key (401). Throws on transport / unexpected status so the caller can 500.
+ * Look up the org a WorkOS API key is bound to. Returns `null` only on the
+ * route's own "Binding not found" 404 — the caller treats that as an
+ * orphaned key (401). Throws on transport / unexpected status, and on a
+ * routing-level 404 (route not deployed / wrong `CONVEX_HTTP_URL`), so the
+ * caller can 500 instead of mis-reporting a config error as an orphaned key.
  */
 export async function lookupWorkosKeyBinding(
-  workosApiKeyId: string,
+  workosApiKeyId: string
 ): Promise<WorkosKeyBinding | null> {
-  const { convexUrl, serviceToken } = getConfig();
+  const { convexUrl, serviceToken } = getInternalBackendConfig();
   const url = `${convexUrl}${BINDINGS_PATH}?workosApiKeyId=${encodeURIComponent(
-    workosApiKeyId,
+    workosApiKeyId
   )}`;
   const response = await fetch(url, {
     method: "GET",
     headers: { "x-inspector-service-token": serviceToken },
   });
   if (response.status === 404) {
-    return null;
+    if (await isEntityNotFound(response, "Binding not found")) {
+      return null;
+    }
+    throw new Error(
+      `Binding lookup route not found at ${convexUrl}${BINDINGS_PATH} — is the backend bindings route deployed?`
+    );
   }
   if (!response.ok) {
     throw new Error(`Binding lookup failed (${response.status})`);
@@ -83,7 +83,7 @@ export async function createWorkosKeyBinding(args: {
   mcpjamOrganizationId: string;
   mintedByUserId: string;
 }): Promise<void> {
-  const { convexUrl, serviceToken } = getConfig();
+  const { convexUrl, serviceToken } = getInternalBackendConfig();
   const response = await fetch(`${convexUrl}${BINDINGS_PATH}`, {
     method: "POST",
     headers: {
@@ -110,11 +110,11 @@ export async function createWorkosKeyBinding(args: {
  * error as best-effort and does not fail the user-facing revoke.
  */
 export async function removeWorkosKeyBinding(
-  workosApiKeyId: string,
+  workosApiKeyId: string
 ): Promise<void> {
-  const { convexUrl, serviceToken } = getConfig();
+  const { convexUrl, serviceToken } = getInternalBackendConfig();
   const url = `${convexUrl}${BINDINGS_PATH}?workosApiKeyId=${encodeURIComponent(
-    workosApiKeyId,
+    workosApiKeyId
   )}`;
   const response = await fetch(url, {
     method: "DELETE",

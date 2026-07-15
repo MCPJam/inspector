@@ -1,16 +1,18 @@
 import { toast } from "sonner";
-import posthog from "posthog-js";
+import { track } from "@/lib/analytics";
 import type { ConvexReactClient } from "convex/react";
 import {
   EXCALIDRAW_SERVER_CONFIG,
   EXCALIDRAW_SERVER_NAME,
 } from "@/lib/excalidraw-quick-connect";
 import { QUICKSTART_SUITE_TAG } from "@/components/evals/constants";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { navigatePlaygroundEvalsRoute } from "@/components/evals/create-suite-navigation";
 import { EXCALIDRAW_QUICKSTART_CASES } from "./excalidraw-quickstart-cases";
 import type { ServerFormData } from "@/shared/types.js";
-import type { CreateEvalTestCaseInput } from "./generate-and-persist-tests";
+import {
+  buildStepsForCaseInput,
+  type CreateEvalTestCaseInput,
+} from "./generate-and-persist-tests";
 import type { HostAttachmentDraft } from "@/components/evals/client-attachments-editor";
 
 export const EXCALIDRAW_QUICKSTART_SUITE_NAME = "Excalidraw quickstart";
@@ -176,10 +178,8 @@ export async function runExcalidrawQuickstart(
     previewedHostId,
   } = options;
 
-  posthog.capture("eval_excalidraw_quickstart_clicked", {
+  track("eval_excalidraw_quickstart_clicked", {
     location: "playground_tab_empty",
-    platform: detectPlatform(),
-    environment: detectEnvironment(),
     project_id: projectId,
     already_connected: isExcalidrawConnected,
     existing_suite: existingQuickstartSuiteId !== null,
@@ -257,17 +257,21 @@ export async function runExcalidrawQuickstart(
   let createdCases = 0;
   for (const caseDraft of EXCALIDRAW_QUICKSTART_CASES) {
     try {
-      await createTestCase({ ...caseDraft, suiteId: createdSuiteId });
+      await createTestCase({
+        ...caseDraft,
+        suiteId: createdSuiteId,
+        // The Convex mutation rejects `promptTurns`; describe the curated
+        // case as unified `steps` derived from its query + expected calls.
+        steps: buildStepsForCaseInput(caseDraft),
+      });
       createdCases += 1;
     } catch (error) {
       console.error("Excalidraw quickstart: create case failed", error);
     }
   }
 
-  posthog.capture("eval_excalidraw_quickstart_completed", {
+  track("eval_excalidraw_quickstart_completed", {
     location: "playground_tab_empty",
-    platform: detectPlatform(),
-    environment: detectEnvironment(),
     project_id: projectId,
     suite_id: createdSuiteId,
     cases_created: createdCases,

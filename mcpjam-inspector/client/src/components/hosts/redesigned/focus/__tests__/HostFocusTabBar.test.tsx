@@ -9,22 +9,24 @@ describe("HostFocusTabBar", () => {
     const user = userEvent.setup();
     const onTabChange = vi.fn();
 
-    render(
-      <HostFocusTabBar tab="behavior" onTabChange={onTabChange} />,
-    );
+    render(<HostFocusTabBar tab="behavior" onTabChange={onTabChange} />);
 
     const list = screen.getByRole("tablist");
     expect(list).toHaveAttribute("aria-orientation", "horizontal");
 
     screen.getByRole("tab", { name: /^Agent$/ }).focus();
     await user.keyboard("{ArrowRight}");
-    expect(onTabChange).toHaveBeenCalledWith("protocol");
+    // With no `tabs` prop the bar renders the full static set, so Agent's
+    // right neighbour is MCP Protocol (Agent → MCP Protocol → Apps → …).
+    expect(onTabChange).toHaveBeenCalledWith(
+      "protocol" satisfies HostFocusTabId,
+    );
 
     onTabChange.mockClear();
     await user.keyboard("{ArrowLeft}");
-    // Arrow-left from the first tab (Agent) wraps to the last tab.
-    // After the project-scoped server config rollout removed the
-    // per-host Servers tab, the last visible tab is Apps Extension.
-    expect(onTabChange).toHaveBeenCalledWith("apps" satisfies HostFocusTabId);
+    // Arrow-left from the first tab (Agent) wraps to the last tab (Computer).
+    expect(onTabChange).toHaveBeenCalledWith(
+      "computer" satisfies HostFocusTabId,
+    );
   });
 });

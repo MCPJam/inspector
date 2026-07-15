@@ -1,4 +1,4 @@
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import {
   fetchConvexGuestPromotionProof,
   fetchConvexGuestSession,
@@ -11,114 +11,16 @@ import {
 } from "../../utils/guest-session-source.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
+import {
+  GUEST_SESSION_COOKIE_NAME,
+  allowMint,
+  appendGuestSessionSetCookie,
+  extractGuestSessionCookie,
+  shouldFetchGuestSessionFromConvex,
+} from "./guest-session-shared.js";
 import { ErrorCode } from "./errors.js";
 
 const guestSession = new Hono();
-
-// IP-based rate limiting: 10 req/min per IP (sliding window)
-const ipWindows = new Map<string, { count: number; windowStart: number }>();
-const IP_RATE_LIMIT = 10;
-const IP_WINDOW_MS = 60_000;
-
-// Cleanup stale entries every 5 minutes
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, entry] of ipWindows) {
-    if (now - entry.windowStart > IP_WINDOW_MS * 2) {
-      ipWindows.delete(ip);
-    }
-  }
-}, 5 * 60_000).unref();
-
-const GUEST_SESSION_COOKIE_NAME = "__Host-mcpjam_guest_session";
-const LOCAL_GUEST_SESSION_COOKIE_NAME = "mcpjam_guest_session";
-const LOCAL_GUEST_SESSION_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
-
-// Forward only the guest-session cookie to the upstream guest service.
-// Passing the entire Cookie header would leak unrelated auth/CSRF cookies
-// from the Inspector origin to Convex / hosted MCPJam.
-function extractCookieValue(
-  cookieHeader: string | null | undefined,
-  cookieName: string
-): string | null {
-  if (!cookieHeader) return null;
-  const prefix = `${cookieName}=`;
-  for (const part of cookieHeader.split(/;\s*/)) {
-    if (part.startsWith(prefix)) {
-      return part.slice(prefix.length);
-    }
-  }
-  return null;
-}
-
-function extractGuestSessionCookie(
-  cookieHeader: string | null | undefined
-): string | null {
-  const localCookie = extractCookieValue(
-    cookieHeader,
-    LOCAL_GUEST_SESSION_COOKIE_NAME
-  );
-  if (localCookie) {
-    return `${GUEST_SESSION_COOKIE_NAME}=${localCookie}`;
-  }
-
-  const upstreamCookie = extractCookieValue(
-    cookieHeader,
-    GUEST_SESSION_COOKIE_NAME
-  );
-  return upstreamCookie
-    ? `${GUEST_SESSION_COOKIE_NAME}=${upstreamCookie}`
-    : null;
-}
-
-function isLocalHttpRequest(requestUrl: string): boolean {
-  try {
-    const url = new URL(requestUrl);
-    return (
-      url.protocol === "http:" &&
-      LOCAL_GUEST_SESSION_HOSTNAMES.has(url.hostname)
-    );
-  } catch {
-    return false;
-  }
-}
-
-function rewriteGuestSessionCookieForLocalHttp(cookie: string): string {
-  const parts = cookie
-    .split(";")
-    .map((part) => part.trim())
-    .filter(Boolean);
-  const [nameValue, ...attributes] = parts;
-  if (!nameValue?.startsWith(`${GUEST_SESSION_COOKIE_NAME}=`)) {
-    return cookie;
-  }
-
-  return [
-    nameValue.replace(
-      `${GUEST_SESSION_COOKIE_NAME}=`,
-      `${LOCAL_GUEST_SESSION_COOKIE_NAME}=`
-    ),
-    ...attributes.filter((attribute) => !/^secure$/i.test(attribute)),
-  ].join("; ");
-}
-
-function appendGuestSessionSetCookie(c: Context, cookie: string): void {
-  c.header("Set-Cookie", cookie, { append: true });
-  if (isLocalHttpRequest(c.req.url)) {
-    const localCookie = rewriteGuestSessionCookieForLocalHttp(cookie);
-    if (localCookie !== cookie) {
-      c.header("Set-Cookie", localCookie, { append: true });
-    }
-  }
-}
-
-function shouldFetchGuestSessionFromConvex(): boolean {
-  if (process.env.VITE_MCPJAM_HOSTED_MODE === "true") {
-    return true;
-  }
-
-  return process.env.NODE_ENV !== "production";
-}
 
 // Bound the size of the legacy migration token we will forward upstream.
 // Real guest JWTs are well under this limit; anything larger is either
@@ -181,29 +83,16 @@ guestSession.post("/", async (c) => {
     );
   }
   const rateLimitKey = ip ?? "local-dev";
-  const now = Date.now();
 
-  // Check rate limit
-  const entry = ipWindows.get(rateLimitKey);
-  if (entry) {
-    if (now - entry.windowStart < IP_WINDOW_MS) {
-      if (entry.count >= IP_RATE_LIMIT) {
-        return c.json(
-          {
-            code: ErrorCode.RATE_LIMITED,
-            message: "Too many guest session requests. Try again later.",
-          },
-          429
-        );
-      }
-      entry.count++;
-    } else {
-      // Reset window
-      entry.count = 1;
-      entry.windowStart = now;
-    }
-  } else {
-    ipWindows.set(rateLimitKey, { count: 1, windowStart: now });
+  // Check rate limit (shared singleton — see guest-session-shared.ts)
+  if (!allowMint(rateLimitKey)) {
+    return c.json(
+      {
+        code: ErrorCode.RATE_LIMITED,
+        message: "Too many guest session requests. Try again later.",
+      },
+      429
+    );
   }
 
   let body: GuestSessionRequestBody = {};
@@ -379,27 +268,15 @@ guestSession.post("/promotion-proof", async (c) => {
     );
   }
   const rateLimitKey = ip ?? "local-dev";
-  const now = Date.now();
 
-  const entry = ipWindows.get(rateLimitKey);
-  if (entry) {
-    if (now - entry.windowStart < IP_WINDOW_MS) {
-      if (entry.count >= IP_RATE_LIMIT) {
-        return c.json(
-          {
-            code: ErrorCode.RATE_LIMITED,
-            message: "Too many guest session requests. Try again later.",
-          },
-          429
-        );
-      }
-      entry.count++;
-    } else {
-      entry.count = 1;
-      entry.windowStart = now;
-    }
-  } else {
-    ipWindows.set(rateLimitKey, { count: 1, windowStart: now });
+  if (!allowMint(rateLimitKey)) {
+    return c.json(
+      {
+        code: ErrorCode.RATE_LIMITED,
+        message: "Too many guest session requests. Try again later.",
+      },
+      429
+    );
   }
 
   const context: GuestSessionFetchContext = {

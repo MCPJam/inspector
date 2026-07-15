@@ -27,7 +27,7 @@ import { Host } from "../src/host-config/index";
 import type { HostJson } from "../src/host-config/index";
 
 function baseInput(
-  overrides: Partial<HostConfigInputV2> = {},
+  overrides: Partial<HostConfigInputV2> = {}
 ): HostConfigInputV2 {
   return {
     hostStyle: "claude",
@@ -60,7 +60,7 @@ describe("normalizeSdkEvalHostConfigForWire — stripping", () => {
     expect((out as Record<string, unknown>).serverIds).toBeUndefined();
     expect((out as Record<string, unknown>).optionalServerIds).toBeUndefined();
     expect(
-      (out as Record<string, unknown>).serverConnectionOverrides,
+      (out as Record<string, unknown>).serverConnectionOverrides
     ).toBeUndefined();
   });
 
@@ -97,8 +97,8 @@ describe("normalizeSdkEvalHostConfigForWire — stripping", () => {
     // The wire hash is independent of the computer the host carried.
     expect(await computeHostConfigHashV2(out)).toBe(
       await computeHostConfigHashV2(
-        normalizeSdkEvalHostConfigForWire(baseInput()),
-      ),
+        normalizeSdkEvalHostConfigForWire(baseInput())
+      )
     );
   });
 
@@ -109,7 +109,7 @@ describe("normalizeSdkEvalHostConfigForWire — stripping", () => {
       computer: { kind: "personal", toolset: "bash" },
     });
     const json = host.toJSON();
-    expect(json.computer).toEqual({ kind: "personal", toolset: "bash" });
+    expect(json.computer).toEqual({ kind: "personal" });
 
     const out = normalizeSdkEvalHostConfigForWire(json);
     expect((out as Record<string, unknown>).computer).toBeUndefined();
@@ -259,13 +259,13 @@ describe("normalizeSdkEvalHostConfigForWire — hash semantics", () => {
     const withNoIds = baseInput();
 
     const hashA = await computeHostConfigHashV2(
-      normalizeSdkEvalHostConfigForWire(withIdsA),
+      normalizeSdkEvalHostConfigForWire(withIdsA)
     );
     const hashB = await computeHostConfigHashV2(
-      normalizeSdkEvalHostConfigForWire(withIdsB),
+      normalizeSdkEvalHostConfigForWire(withIdsB)
     );
     const hashEmpty = await computeHostConfigHashV2(
-      normalizeSdkEvalHostConfigForWire(withNoIds),
+      normalizeSdkEvalHostConfigForWire(withNoIds)
     );
 
     expect(hashA).toBe(hashB);
@@ -317,10 +317,10 @@ describe("normalizeSdkEvalHostConfigForWire — hash semantics", () => {
     const json = host.toJSON();
 
     const hashCanonical = await computeHostConfigHashV2(
-      normalizeSdkEvalHostConfigForWire(canonical),
+      normalizeSdkEvalHostConfigForWire(canonical)
     );
     const hashFromJson = await computeHostConfigHashV2(
-      normalizeSdkEvalHostConfigForWire(json),
+      normalizeSdkEvalHostConfigForWire(json)
     );
 
     expect(hashFromJson).toBe(hashCanonical);
@@ -360,7 +360,7 @@ describe("normalizeSdkEvalHostConfigForWire — hash semantics", () => {
     // ids at all — this is the golden invariant the backend (Step 2) and
     // the reporter (Step 3) will both rely on.
     const expectedHash = await computeHostConfigHashV2(
-      baseInput({ hostStyle: "claude" }),
+      baseInput({ hostStyle: "claude" })
     );
     expect(hash).toBe(expectedHash);
   });

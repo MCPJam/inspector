@@ -20,6 +20,19 @@ export const HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE === "true";
 
 export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
 
+/**
+ * Feed model-visible widget→host tool calls (recorded by Interact steps) to the
+ * eval model as a per-turn system-prompt addendum, so the model reasons over a
+ * widget interaction on its next turn (the headless analogue of Playground's
+ * browser-side addToolOutput + auto-continue). Reuses the same server-side
+ * mechanism Playground uses for `ui/update-model-context`. OFF by default: it
+ * changes what the model sees, so existing eval verdicts shouldn't shift until a
+ * suite opts in. App-only (`visibility:["app"]`) calls are never included.
+ */
+export const EVAL_WIDGET_MODEL_CONTEXT =
+  process.env.MCPJAM_EVAL_WIDGET_MODEL_CONTEXT === "true";
+
+
 export const EMPLOYEE_EMAIL_DOMAINS = (
   process.env.MCPJAM_EMPLOYEE_EMAIL_DOMAINS ?? ""
 )
@@ -73,6 +86,13 @@ export const WEB_CONNECT_TIMEOUT_MS = 10_000;
 export const WEB_CALL_TIMEOUT_MS = 30_000;
 export const WEB_STREAM_TIMEOUT_MS = 120_000;
 
+// Hosted app origin the LOCAL inspector server forwards XAA hosted-issuer
+// mint requests to (server-to-server; hosted CORS blocks the browser from
+// calling it directly). Override for staging. Never derived from a request.
+export const MCPJAM_HOSTED_ORIGIN =
+  process.env.MCPJAM_HOSTED_ORIGIN?.replace(/\/+$/, "") ||
+  "https://app.mcpjam.com";
+
 // Allowed hosts for token delivery in hosted mode (comma-separated)
 // These hosts will be allowed to receive session tokens in addition to localhost
 export const ALLOWED_HOSTS = process.env.MCPJAM_ALLOWED_HOSTS
@@ -80,3 +100,12 @@ export const ALLOWED_HOSTS = process.env.MCPJAM_ALLOWED_HOSTS
       h.trim().toLowerCase()
     )
   : [];
+
+// Vanity domains whose root path ("/") should land on the host-compare
+// showcase ("Can I use" for MCP hosts). Override via env if more are added.
+export const CANIUSE_LANDING_HOSTS = new Set(
+  (process.env.CANIUSE_LANDING_HOSTS ?? "caniuse.dev,www.caniuse.dev")
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter((h) => h.length > 0),
+);

@@ -8,7 +8,7 @@ icon: "key"
 
 - To call the **[MCPJam API](/reference/public-api)**, you want the **MCPJam API key** (`sk_…`) — the first one below.
 - Two others here are **third-party secrets you supply**, not keys MCPJam issues — they're listed only because the name collides.
-- One older key (`mcpjam_…`) is **deprecated**.
+- One older key (`mcpjam_…`) is **retired** and no longer works.
 
 ## MCPJam API key (`sk_…`)
 
@@ -16,7 +16,7 @@ The key for the **[MCPJam API](/reference/public-api)** — programmatic access 
 
 **Where it lives:** [**Settings → API keys**](https://app.mcpjam.com/settings/api-keys) in the hosted app — that link takes you straight to key creation (sign in if prompted; you'll land back on the page). Shown **exactly once** at creation — store it in your own secret manager or an environment variable.
 
-**When it's used:** Every `Authorization: Bearer sk_…` request to `/api/v1/*` — validating servers, running the doctor, listing tools/prompts/resources, reading resources, exporting snapshots.
+**When it's used:** Every `Authorization: Bearer sk_…` request to `/api/v1/*` — validating servers, running the doctor, listing tools/prompts/resources, reading resources, exporting snapshots, and **saving `@mcpjam/sdk` eval results** (set `MCPJAM_API_KEY` to this key; see [Saving Results](/sdk/concepts/saving-results)).
 
 **Errors you might see**
 - `401 UNAUTHORIZED` → invalid or revoked key.
@@ -48,13 +48,13 @@ A per-server bearer token for an HTTP MCP server that requires `Authorization: B
 
 **Errors:** [`auth/http_401`](/troubleshooting/error-codes#unauthorized-401), [`auth/http_403`](/troubleshooting/error-codes#forbidden-403) — the target server rejected the token.
 
-## Project API Key (`mcpjam_…`)
+## Project API Key (`mcpjam_…`) — retired
 
 <Warning>
-**Deprecated.** Being retired in favor of the **MCPJam API key (`sk_…`)** and the [MCPJam API](/reference/public-api) — don't build new integrations on it. It is currently still what the `@mcpjam/sdk` eval-reporting flow uses to save results to MCPJam.
+**Retired.** Project API keys no longer work: existing keys no longer authenticate, new keys can't be generated, and the `/sdk/v1/evals/*` ingestion endpoints they protected return `410 Gone` for every request. Eval reporting now runs on the **MCPJam API key (`sk_…`)** through the [MCPJam API](/reference/public-api) — see [Saving Results](/sdk/concepts/saving-results).
 </Warning>
 
-A project-scoped token for `@mcpjam/sdk` / CLI traffic to the hosted backend, generated under **Settings → Project API Key** and read from the `MCPJAM_API_KEY` environment variable.
+This was a project-scoped token for `@mcpjam/sdk` / CLI traffic to the hosted backend, read from the `MCPJAM_API_KEY` environment variable. If your CI logs show `410` reporting errors, this retirement is why. **To fix CI:** upgrade `@mcpjam/sdk`, replace the `MCPJAM_API_KEY` value with an `sk_…` key from [Settings → API keys](https://app.mcpjam.com/settings/api-keys), and (optionally) set `MCPJAM_PROJECT_ID` to keep filing results under the same project — otherwise they land in your org's Default project. Old SDK versions' default auto-save path warns and continues, so eval runs themselves keep passing either way.
 
 ## Quick reference
 
@@ -63,4 +63,4 @@ A project-scoped token for `@mcpjam/sdk` / CLI traffic to the hosted backend, ge
 | **MCPJam API key** | `sk_…` | [Settings → API keys](https://app.mcpjam.com/settings/api-keys) | The [MCPJam API](/reference/public-api) (`/api/v1/*`) |
 | LLM provider key | provider-specific | the LLM provider | Playground chat — *third-party* |
 | Playground BYOK | server-specific | your MCP server | Authenticating to one MCP server — *third-party* |
-| Project API Key | `mcpjam_…` | Settings (legacy) | **Deprecated** — `@mcpjam/sdk` / CLI |
+| Project API Key | `mcpjam_…` | — (no longer issued) | **Retired** — no longer works |

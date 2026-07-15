@@ -8,8 +8,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { useFeatureFlagEnabled } from "posthog-js/react";
-import { isKnownProtocolVersion } from "@mcpjam/sdk/browser";
+import { Switch } from "@mcpjam/design-system/switch";
+import { isKnownProtocolVersion, XAA_MCP_EXTENSION } from "@mcpjam/sdk/browser";
 import {
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
@@ -128,6 +128,71 @@ function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
   }
 
   return doc;
+}
+
+/**
+ * Whether the draft's stored clientCapabilities advertise the MCP
+ * Enterprise-Managed Authorization extension. `extensions` is freeform
+ * JSON, so guard for a plain object before the key check — presence of
+ * the key is the signal, whatever its value.
+ */
+export function hasEmaExtension(
+  capabilities: Record<string, unknown> | undefined
+): boolean {
+  const exts = capabilities?.extensions;
+  return (
+    isPlainObject(exts) &&
+    Object.prototype.hasOwnProperty.call(exts, XAA_MCP_EXTENSION)
+  );
+}
+
+/**
+ * Advertise the EMA extension in the stored clientCapabilities. Unlike the
+ * Apps tab's `withMcpUiExtension` (which resets to the default payload),
+ * a pre-existing value object is preserved — same `?? {}` semantics as the
+ * server's connect-time `withXaaExtensionCapability` merge, so toggling
+ * never clobbers a hand-edited payload.
+ */
+export function withEmaExtension(prev: HostConfigInputV2): HostConfigInputV2 {
+  const nextCaps: Record<string, unknown> = {
+    ...(prev.clientCapabilities ?? {}),
+  };
+  const exts: Record<string, unknown> = isPlainObject(nextCaps.extensions)
+    ? { ...nextCaps.extensions }
+    : {};
+  exts[XAA_MCP_EXTENSION] = exts[XAA_MCP_EXTENSION] ?? {};
+  nextCaps.extensions = exts;
+  return { ...prev, clientCapabilities: nextCaps };
+}
+
+/**
+ * Stop advertising the EMA extension. Touches ONLY the extensions map:
+ * sibling extensions are preserved, a now-empty `extensions` container is
+ * dropped (an empty `extensions: {}` on a config that never had the key
+ * reads as a diff to the deep-equal dirty check), and `clientCapabilities`
+ * itself always stays an object — the canonicalizer requires it. Mistral's
+ * inert `extensions: {}` marker is restored the same way
+ * `withoutMcpUiExtension` restores it.
+ */
+export function withoutEmaExtension(
+  prev: HostConfigInputV2
+): HostConfigInputV2 {
+  const nextCaps: Record<string, unknown> = {
+    ...(prev.clientCapabilities ?? {}),
+  };
+  const exts: Record<string, unknown> = isPlainObject(nextCaps.extensions)
+    ? { ...nextCaps.extensions }
+    : {};
+  delete exts[XAA_MCP_EXTENSION];
+  if (Object.keys(exts).length > 0) {
+    nextCaps.extensions = exts;
+  } else {
+    delete nextCaps.extensions;
+  }
+  if (prev.hostStyle === "mistral" && Object.keys(nextCaps).length === 0) {
+    nextCaps.extensions = {};
+  }
+  return { ...prev, clientCapabilities: nextCaps };
 }
 
 function patchProfile(
@@ -272,7 +337,6 @@ export function ProtocolTab({
     applyParsedToDraft: applyJsonToDraft,
     onDraftChange,
   });
-  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
   // Stored stateful literals (legacy carry-over) collapse to "Latest"
   // since they route to the same code path; saving normalizes back to
   // undefined.
@@ -308,38 +372,65 @@ export function ProtocolTab({
   // Shared with the cross-host comparison matrix via the field schema.
   const fProtocolVersion = hostConfigField("mcpProtocolVersion");
 
+  // Default-advertisement control, not an XAA on/off: the connect surfaces
+  // re-merge the extension whenever a server's effective auth method is
+  // XAA (withXaaExtensionCapability), regardless of this Switch. The copy
+  // below says so — the toggle governs the stored baseline only.
+  const emaAdvertised = hasEmaExtension(draft.clientCapabilities);
+  const setEmaAdvertised = (next: boolean) => {
+    onDraftChange((prev) =>
+      next ? withEmaExtension(prev) : withoutEmaExtension(prev)
+    );
+  };
+
   return (
     <div className="flex h-full min-h-[480px] flex-col gap-3">
-      {statelessMcpEnabled ? (
-        <div className="rounded-[10px] border border-border bg-background px-3.5 py-2.5">
-          <div className="flex items-center gap-3">
-            <span
-              className="text-[12px] font-medium"
-              title="Latest: current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
-            >
-              {fProtocolVersion.label}
-            </span>
-            <Select
-              value={selectedDropdownValue}
-              onValueChange={(next) => {
-                setProtocolVersion(next === "rc" ? "2026-07-28" : undefined);
-              }}
-              disabled={readOnly}
-            >
-              <SelectTrigger className="h-9 text-xs">
-                <SelectValue placeholder="Latest" />
-              </SelectTrigger>
-              <SelectContent>
-                {HOST_PROTOCOL_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+      <div className="rounded-[10px] border border-border bg-background px-3.5 py-2.5">
+        <div className="flex items-center gap-3">
+          <span
+            className="text-[12px] font-medium"
+            title="Latest: current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
+          >
+            {fProtocolVersion.label}
+          </span>
+          <Select
+            value={selectedDropdownValue}
+            onValueChange={(next) => {
+              setProtocolVersion(next === "rc" ? "2026-07-28" : undefined);
+            }}
+            disabled={readOnly}
+          >
+            <SelectTrigger className="h-9 text-xs">
+              <SelectValue placeholder="Latest" />
+            </SelectTrigger>
+            <SelectContent>
+              {HOST_PROTOCOL_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-      ) : null}
+        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">
+              Advertise EMA support by default
+            </span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              Adds the enterprise-managed-authorization extension to this
+              host&apos;s initialize capabilities. XAA-configured connections
+              always advertise it regardless of this setting.
+            </p>
+          </div>
+          <Switch
+            checked={emaAdvertised}
+            onCheckedChange={setEmaAdvertised}
+            disabled={readOnly}
+            aria-label="Advertise EMA support by default"
+          />
+        </div>
+      </div>
       <div className="flex min-h-0 flex-1 flex-col">
         <JsonEditor
           rawContent={content}

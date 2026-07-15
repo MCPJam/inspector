@@ -60,7 +60,7 @@ export async function handleJsonRpc(
   serverId: string,
   body: JsonRpcBody,
   clientManager: MCPClientManager,
-  mode: BridgeMode,
+  mode: BridgeMode
 ): Promise<any | null> {
   const id = (body?.id ?? null) as any;
   const method = body?.method as string | undefined;
@@ -78,8 +78,29 @@ export async function handleJsonRpc(
       case "ping":
         return respond({ result: {} });
       case "initialize": {
-        const result = buildInitializeResult(serverId, mode);
-        return respond({ result });
+        // Mirror the real upstream handshake (capabilities, serverInfo,
+        // instructions) so remote clients negotiate against what the
+        // connected server actually supports. The fabricated result is
+        // only a fallback for servers that haven't connected yet.
+        const info = clientManager.getInitializationInfo(serverId);
+        if (info) {
+          const result: any = {
+            protocolVersion:
+              info.protocolVersion ??
+              (typeof params?.protocolVersion === "string"
+                ? params.protocolVersion
+                : "2025-06-18"),
+            capabilities: info.serverCapabilities ?? {},
+            serverInfo:
+              info.serverVersion ??
+              ({ name: serverId, version: "unknown" } as any),
+          };
+          if (info.instructions !== undefined) {
+            result.instructions = info.instructions;
+          }
+          return respond({ result });
+        }
+        return respond({ result: buildInitializeResult(serverId, mode) });
       }
       case "tools/list": {
         const list = await clientManager.listTools(serverId);
@@ -89,7 +110,7 @@ export async function handleJsonRpc(
             description: tool.description,
             inputSchema: toJsonSchemaMaybe(tool.inputSchema),
             outputSchema: toJsonSchemaMaybe(
-              tool.outputSchema ?? tool.resultSchema,
+              tool.outputSchema ?? tool.resultSchema
             ),
           };
           // Preserve _meta field for OpenAI Apps SDK and other metadata
@@ -119,7 +140,7 @@ export async function handleJsonRpc(
           const exec = await clientManager.executeTool(
             targetServerId,
             toolName,
-            (params?.arguments ?? {}) as Record<string, unknown>,
+            (params?.arguments ?? {}) as Record<string, unknown>
           );
           if (mode === "manager") {
             return respond({ result: exec });
@@ -166,8 +187,8 @@ export async function handleJsonRpc(
               typeof firstContent?.text === "string"
                 ? firstContent.text
                 : typeof (resource as any) === "string"
-                  ? (resource as any)
-                  : JSON.stringify(resource, null, 2);
+                ? (resource as any)
+                : JSON.stringify(resource, null, 2);
             const result = {
               contents: [
                 {
@@ -243,6 +264,25 @@ export async function handleJsonRpc(
         return respond({ result: { success: true } });
       }
       default: {
+        // Transparent passthrough: any method without bespoke response
+        // shaping above is forwarded verbatim to the connected server
+        // (resources/templates/list, resources/subscribe,
+        // completion/complete, tasks/*, future spec methods, ...).
+        const managed = clientManager.getManagedClient(serverId);
+        if (managed) {
+          try {
+            const result = await managed.request({ method, params } as any);
+            return respond({ result: result ?? {} });
+          } catch (e: any) {
+            return respond({
+              error: {
+                code: -32000,
+                message: e?.message || String(e),
+                data: { normalized: describeError(e) },
+              },
+            });
+          }
+        }
         const notImpl = new Error(`Method not implemented: ${method}`);
         return respond({
           error: {

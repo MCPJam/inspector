@@ -59,6 +59,8 @@ export type LiveChatTraceEvent =
       turnId: string;
       promptIndex: number;
       startedAtMs: number;
+      engine?: "emulated" | "harness";
+      harness?: string;
     }
   | {
       type: "text_delta";

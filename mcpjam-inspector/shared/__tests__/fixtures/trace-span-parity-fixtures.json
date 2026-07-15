@@ -1,0 +1,99 @@
+{
+  "__readme": "Parity fixtures for the EvalTraceSpan shape across repos. Kept in lockstep with mcpjam-backend (tests/convex/fixtures/trace-span-parity-fixtures.json). The backend cannot import this repo's Zod (Convex bundling isolation), so this JSON is the common ground truth. 'accept' rows are valid spans, several carrying the GenAI harness metadata (finishReason/provider/responseId/responseTimestamp/ttfcMs) added for OTel alignment: evalTraceSpanZ must parse each, and the backend normalizeTraceSpans() must PRESERVE every field. 'reject' rows omit a required field (id/name/category/startMs/endMs) or use an invalid category — both validators must refuse (Zod rejects; normalizeTraceSpans drops the span). NOTE: optional-field TYPE mismatches (e.g. ttfcMs as a string) are intentionally NOT in this shared reject set, because the backend normalizer leniently drops a bad optional rather than failing the whole span — those cases live as inspector-only assertions in eval-trace.test.ts.",
+  "accept": [
+    {
+      "label": "llm span with full harness metadata (finishReason=length)",
+      "value": {
+        "id": "p0-s0-llm",
+        "parentId": "p0-s0",
+        "name": "LLM",
+        "category": "llm",
+        "startMs": 0,
+        "endMs": 1200,
+        "promptIndex": 0,
+        "stepIndex": 0,
+        "status": "ok",
+        "modelId": "claude-opus-4-8",
+        "inputTokens": 100,
+        "outputTokens": 50,
+        "totalTokens": 150,
+        "finishReason": "length",
+        "provider": "anthropic",
+        "responseId": "msg_0123456789",
+        "responseTimestamp": "2026-06-18T00:00:00.000Z",
+        "ttfcMs": 240
+      }
+    },
+    {
+      "label": "llm span with content-filter finish reason",
+      "value": {
+        "id": "p1-s0-llm",
+        "name": "LLM",
+        "category": "llm",
+        "startMs": 0,
+        "endMs": 800,
+        "finishReason": "content-filter",
+        "provider": "openai"
+      }
+    },
+    {
+      "label": "step span without harness metadata (pre-feature shape still valid)",
+      "value": {
+        "id": "p0-s0",
+        "name": "Step 1",
+        "category": "step",
+        "startMs": 0,
+        "endMs": 1300
+      }
+    },
+    {
+      "label": "tool span (harness fields absent, unaffected)",
+      "value": {
+        "id": "p0-s0-tool-abc",
+        "parentId": "p0-s0",
+        "name": "draw_rectangle",
+        "category": "tool",
+        "startMs": 1200,
+        "endMs": 1300,
+        "status": "ok",
+        "toolCallId": "abc",
+        "toolName": "draw_rectangle",
+        "serverId": "excalidraw"
+      }
+    },
+    {
+      "label": "failed tool span with JSON-RPC error code",
+      "value": {
+        "id": "p0-s0-tool-def",
+        "parentId": "p0-s0",
+        "name": "create_view",
+        "category": "tool",
+        "startMs": 1300,
+        "endMs": 1320,
+        "status": "error",
+        "toolCallId": "def",
+        "toolName": "create_view",
+        "serverId": "excalidraw",
+        "mcpErrorCode": -32602
+      }
+    }
+  ],
+  "reject": [
+    {
+      "label": "missing id",
+      "value": { "name": "LLM", "category": "llm", "startMs": 0, "endMs": 1 }
+    },
+    {
+      "label": "missing name",
+      "value": { "id": "x", "category": "llm", "startMs": 0, "endMs": 1 }
+    },
+    {
+      "label": "invalid category",
+      "value": { "id": "x", "name": "LLM", "category": "reasoning", "startMs": 0, "endMs": 1 }
+    },
+    {
+      "label": "missing startMs",
+      "value": { "id": "x", "name": "LLM", "category": "llm", "endMs": 1 }
+    }
+  ]
+}

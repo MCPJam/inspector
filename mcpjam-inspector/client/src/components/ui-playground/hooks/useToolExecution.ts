@@ -13,12 +13,18 @@ import {
   executeToolApi,
   type ToolExecutionResponse,
 } from "@/lib/apis/mcp-tools-api";
-import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { readResource } from "@/lib/apis/mcp-resources-api";
+import {
+  mcpCallToolResultToModelOutput,
+  mcpCallToolResultToModelOutputWithLinkedResources,
+  type McpModelVisibleToolResultPolicy,
+} from "@mcpjam/sdk/browser";
+import { track } from "@/lib/analytics";
 import {
   recordAppToolInvocation,
   useAppToolsRegistry,
 } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
+import { useTrafficLogStore } from "@/stores/traffic-log-store";
 
 // Matches `app_<8 hex chars>` aliases minted by the app-tools registry.
 // Kept local to avoid widening the registry's public surface; the registry
@@ -35,6 +41,7 @@ export interface PendingExecution {
   toolName: string;
   params: Record<string, unknown>;
   result: unknown;
+  modelOutput?: unknown;
   toolMeta: Record<string, unknown> | undefined;
   toolCallId?: string;
 }
@@ -48,6 +55,7 @@ export interface UseToolExecutionOptions {
   setExecutionError: (error: string | null) => void;
   setToolOutput: (output: unknown) => void;
   setToolResponseMetadata: (meta: Record<string, unknown> | null) => void;
+  modelVisibleMcpToolResults?: McpModelVisibleToolResultPolicy["modelVisibleMcpToolResults"];
 }
 
 /**
@@ -70,7 +78,7 @@ export type SelectedToolRef =
  * current classification once, not a reactive subscription.
  */
 export function classifySelectedTool(
-  name: string | null,
+  name: string | null
 ): SelectedToolRef | null {
   if (!name) return null;
   const aliasEntry = useAppToolsRegistry.getState().aliases.get(name);
@@ -86,10 +94,10 @@ export interface UseToolExecutionReturn {
   pendingExecution: PendingExecution | null;
   clearPendingExecution: () => void;
   executeTool: (
-    options?: ExecuteToolInvocationOptions,
+    options?: ExecuteToolInvocationOptions
   ) => Promise<ExecuteToolInvocationResult>;
   injectToolResult: (
-    options: InjectToolResultOptions,
+    options: InjectToolResultOptions
   ) => Promise<CompletedToolInvocationResult>;
 }
 
@@ -145,6 +153,51 @@ function extractMetadata(result: unknown): ToolResponseMeta | undefined {
   return meta as ToolResponseMeta;
 }
 
+function resolveDirectModelOutputForToolResult(
+  result: unknown,
+  policy: McpModelVisibleToolResultPolicy
+): unknown | undefined {
+  try {
+    return mcpCallToolResultToModelOutput(result as never, policy);
+  } catch {
+    return undefined;
+  }
+}
+
+async function resolveModelOutputForToolResult(
+  result: unknown,
+  serverId: string | undefined,
+  policy: McpModelVisibleToolResultPolicy
+): Promise<unknown | undefined> {
+  if (serverId) {
+    let linkedReadFailed = false;
+    try {
+      const modelOutput =
+        await mcpCallToolResultToModelOutputWithLinkedResources(
+          result as never,
+          {
+            ...policy,
+            readResource: async ({ uri }) => {
+              try {
+                return await readResource(serverId, uri);
+              } catch (error) {
+                linkedReadFailed = true;
+                throw error;
+              }
+            },
+          }
+        );
+      return linkedReadFailed
+        ? resolveDirectModelOutputForToolResult(result, policy)
+        : modelOutput;
+    } catch {
+      return resolveDirectModelOutputForToolResult(result, policy);
+    }
+  }
+
+  return resolveDirectModelOutputForToolResult(result, policy);
+}
+
 export function useToolExecution({
   serverName,
   selectedTool,
@@ -154,9 +207,8 @@ export function useToolExecution({
   setExecutionError,
   setToolOutput,
   setToolResponseMetadata,
+  modelVisibleMcpToolResults,
 }: UseToolExecutionOptions): UseToolExecutionReturn {
-  const posthog = usePostHog();
-
   // Pending execution to inject into chat thread
   const [pendingExecution, setPendingExecution] =
     useState<PendingExecution | null>(null);
@@ -172,6 +224,8 @@ export function useToolExecution({
       params: Record<string, unknown>,
       result: unknown,
       toolCallId?: string,
+      serverId?: string,
+      modelOutput?: unknown
     ) => {
       // Store raw output for inspector
       setToolOutput(result);
@@ -182,10 +236,11 @@ export function useToolExecution({
 
       const definitionMeta = toolsMetadata[effectiveToolName];
       const mergedMeta =
-        definitionMeta || resultMeta
+        definitionMeta || resultMeta || serverId
           ? {
               ...(definitionMeta ?? {}),
               ...(resultMeta ?? {}),
+              ...(serverId ? { _serverId: serverId } : {}),
             }
           : undefined;
 
@@ -194,16 +249,17 @@ export function useToolExecution({
         toolName: effectiveToolName,
         params,
         result,
+        ...(modelOutput ? { modelOutput } : {}),
         toolMeta: mergedMeta,
         ...(toolCallId ? { toolCallId } : {}),
       });
     },
-    [setToolOutput, setToolResponseMetadata, toolsMetadata],
+    [setToolOutput, setToolResponseMetadata, toolsMetadata]
   );
 
   const executeTool = useCallback(
     async (
-      options?: ExecuteToolInvocationOptions,
+      options?: ExecuteToolInvocationOptions
     ): Promise<ExecuteToolInvocationResult> => {
       const effectiveToolName = options?.toolName ?? selectedTool;
       const effectiveFormFields = options?.formFields ?? formFields;
@@ -229,10 +285,10 @@ export function useToolExecution({
         return executeAppTool({
           alias: selectedRef.alias,
           params,
-          posthog,
           setExecutionError,
           setIsExecuting,
           storeCompletedToolResult,
+          modelVisibleMcpToolResults,
         });
       }
 
@@ -250,15 +306,13 @@ export function useToolExecution({
         const response = await executeToolApi(
           effectiveServerName,
           effectiveToolName,
-          params,
+          params
         );
 
         if ("error" in response) {
           // Log tool execution failure
-          posthog.capture("app_builder_tool_executed", {
+          track("app_builder_tool_executed", {
             location: "app_builder_tab",
-            platform: detectPlatform(),
-            environment: detectEnvironment(),
             toolName: effectiveToolName,
             source: "server",
             success: false,
@@ -302,13 +356,23 @@ export function useToolExecution({
         }
 
         const result = response.result;
-        storeCompletedToolResult(effectiveToolName, params, result);
+        const modelOutput = await resolveModelOutputForToolResult(
+          result,
+          effectiveServerName,
+          { modelVisibleMcpToolResults }
+        );
+        storeCompletedToolResult(
+          effectiveToolName,
+          params,
+          result,
+          undefined,
+          effectiveServerName,
+          modelOutput
+        );
 
         // Log successful tool execution
-        posthog.capture("app_builder_tool_executed", {
+        track("app_builder_tool_executed", {
           location: "app_builder_tab",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
           toolName: effectiveToolName,
           source: "server",
           success: true,
@@ -326,10 +390,8 @@ export function useToolExecution({
         const errorMessage =
           err instanceof Error ? err.message : "Tool execution failed";
 
-        posthog.capture("app_builder_tool_executed", {
+        track("app_builder_tool_executed", {
           location: "app_builder_tab",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
           toolName: effectiveToolName,
           source: "server",
           success: false,
@@ -349,13 +411,13 @@ export function useToolExecution({
     },
     [
       formFields,
-      posthog,
       selectedTool,
       serverName,
       setExecutionError,
       setIsExecuting,
       storeCompletedToolResult,
-    ],
+      modelVisibleMcpToolResults,
+    ]
   );
 
   const injectToolResult = useCallback(
@@ -366,7 +428,19 @@ export function useToolExecution({
       toolCallId,
     }: InjectToolResultOptions): Promise<CompletedToolInvocationResult> => {
       setExecutionError(null);
-      storeCompletedToolResult(toolName, parameters, result, toolCallId);
+      const modelOutput = await resolveModelOutputForToolResult(
+        result,
+        undefined,
+        { modelVisibleMcpToolResults }
+      );
+      storeCompletedToolResult(
+        toolName,
+        parameters,
+        result,
+        toolCallId,
+        undefined,
+        modelOutput
+      );
 
       return {
         ok: true,
@@ -376,7 +450,11 @@ export function useToolExecution({
         response: { status: "completed", result },
       };
     },
-    [setExecutionError, storeCompletedToolResult],
+    [
+      setExecutionError,
+      storeCompletedToolResult,
+      modelVisibleMcpToolResults,
+    ]
   );
 
   // Keyboard shortcut for execute (Cmd/Ctrl + Enter)
@@ -403,7 +481,6 @@ export function useToolExecution({
 interface ExecuteAppToolArgs {
   alias: string;
   params: Record<string, unknown>;
-  posthog: ReturnType<typeof usePostHog>;
   setExecutionError: (error: string | null) => void;
   setIsExecuting: (executing: boolean) => void;
   storeCompletedToolResult: (
@@ -411,7 +488,10 @@ interface ExecuteAppToolArgs {
     params: Record<string, unknown>,
     result: unknown,
     toolCallId?: string,
+    serverId?: string,
+    modelOutput?: unknown
   ) => void;
+  modelVisibleMcpToolResults?: McpModelVisibleToolResultPolicy["modelVisibleMcpToolResults"];
 }
 
 /**
@@ -428,10 +508,10 @@ interface ExecuteAppToolArgs {
 async function executeAppTool({
   alias,
   params,
-  posthog,
   setExecutionError,
   setIsExecuting,
   storeCompletedToolResult,
+  modelVisibleMcpToolResults,
 }: ExecuteAppToolArgs): Promise<ExecuteToolInvocationResult> {
   const registry = useAppToolsRegistry.getState();
   const entry = registry.resolve(alias);
@@ -443,10 +523,8 @@ async function executeAppTool({
     const message =
       "App tool is no longer available — the widget was closed or replaced.";
     setExecutionError(message);
-    posthog.capture("app_builder_tool_executed", {
+    track("app_builder_tool_executed", {
       location: "app_builder_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       toolName: reportedName,
       source: "app",
       success: false,
@@ -484,26 +562,40 @@ async function executeAppTool({
       call.then(resolve, reject);
     });
 
+    const modelOutput = await resolveModelOutputForToolResult(
+      raw,
+      entry.instance.serverId,
+      { modelVisibleMcpToolResults }
+    );
+
     // Store the full untouched CallToolResult — the playground inspector
     // should be able to see `structuredContent`/`_meta` the chat path
     // intentionally strips before handing back to the model.
-    storeCompletedToolResult(entry.rawName, params, raw);
-
-    recordAppToolInvocation({
-      alias,
-      rawName: entry.rawName,
-      appName: entry.instance.appName,
-      serverId: entry.instance.serverId,
-      parentToolCallId: entry.instance.parentToolCallId,
-      bridgeId: entry.instance.bridgeId,
-      input: params,
+    storeCompletedToolResult(
+      entry.rawName,
+      params,
       raw,
-    });
+      undefined,
+      entry.instance.serverId,
+      modelOutput
+    );
 
-    posthog.capture("app_builder_tool_executed", {
+    recordAppToolInvocation(
+      {
+        alias,
+        rawName: entry.rawName,
+        appName: entry.instance.appName,
+        serverId: entry.instance.serverId,
+        parentToolCallId: entry.instance.parentToolCallId,
+        bridgeId: entry.instance.bridgeId,
+        input: params,
+        raw,
+      },
+      useTrafficLogStore.getState().addLog
+    );
+
+    track("app_builder_tool_executed", {
       location: "app_builder_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       toolName: reportedName,
       source: "app",
       success: true,
@@ -518,13 +610,12 @@ async function executeAppTool({
     };
   } catch (err) {
     console.error("App tool execution error:", err);
-    const message = err instanceof Error ? err.message : "App tool execution failed";
+    const message =
+      err instanceof Error ? err.message : "App tool execution failed";
     setExecutionError(message);
 
-    posthog.capture("app_builder_tool_executed", {
+    track("app_builder_tool_executed", {
       location: "app_builder_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       toolName: reportedName,
       source: "app",
       success: false,

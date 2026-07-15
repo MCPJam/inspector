@@ -13,8 +13,12 @@
  *   - `finish_widget` — a regular AI SDK tool the model calls to dismiss a
  *     rendered widget when it's done interacting.
  *
- * Computer Use is Claude-only; `resolveComputerUseToolVersion` returns `null`
- * for unsupported driver models so the caller drops both tools.
+ * Eligibility is capability-based, not Claude-only: the wire-format `computer`
+ * tool (the form every production path uses) is an ordinary function tool any
+ * vision + tool-calling model can drive — see
+ * `model-capabilities.ts#modelSupportsComputerUse`. `resolveComputerUseToolVersion`
+ * remains the offline fast path for mapped Claude ids and the version picker
+ * for the provider-native form.
  */
 
 import { tool, type ToolSet } from "ai";
@@ -37,36 +41,39 @@ export type ComputerUseToolVersion = "20250124" | "20251124";
  * like `claude-sonnet-4-5-20250929` resolve correctly). Updated whenever a new
  * Claude model with Computer Use ships.
  */
-export const COMPUTER_USE_TOOL_VERSIONS: Record<string, ComputerUseToolVersion> =
-  {
-    // computer_20251124 (Opus 4.5+ generation / newest)
-    "claude-opus-4-8": "20251124",
-    "claude-opus-4-7": "20251124",
-    "claude-opus-4-6": "20251124",
-    "claude-sonnet-4-7": "20251124",
-    "claude-sonnet-4-6": "20251124",
-    "claude-haiku-4-6": "20251124",
-    // computer_20250124 (4.x generation)
-    "claude-sonnet-4-5": "20250124",
-    "claude-haiku-4-5": "20250124",
-    "claude-opus-4-5": "20250124",
-    "claude-sonnet-4": "20250124",
-    "claude-opus-4": "20250124",
-    "claude-haiku-4": "20250124",
-  };
+export const COMPUTER_USE_TOOL_VERSIONS: Record<
+  string,
+  ComputerUseToolVersion
+> = {
+  // computer_20251124 (Opus 4.5+ generation / newest)
+  "claude-opus-4-8": "20251124",
+  "claude-opus-4-7": "20251124",
+  "claude-opus-4-6": "20251124",
+  "claude-sonnet-5": "20251124",
+  "claude-sonnet-4-7": "20251124",
+  "claude-sonnet-4-6": "20251124",
+  "claude-haiku-4-6": "20251124",
+  // computer_20250124 (4.x generation)
+  "claude-sonnet-4-5": "20250124",
+  "claude-haiku-4-5": "20250124",
+  "claude-opus-4-5": "20250124",
+  "claude-sonnet-4": "20250124",
+  "claude-opus-4": "20250124",
+  "claude-haiku-4": "20250124",
+};
 
 // Longest-prefix order so e.g. `claude-opus-4-8` wins over `claude-opus-4`.
 const VERSION_KEYS_BY_LENGTH = Object.keys(COMPUTER_USE_TOOL_VERSIONS).sort(
-  (a, b) => b.length - a.length,
+  (a, b) => b.length - a.length
 );
 
 function normalizeModelId(
-  model: string | { id?: string; modelId?: string } | null | undefined,
+  model: string | { id?: string; modelId?: string } | null | undefined
 ): string | undefined {
   const raw =
     typeof model === "string"
       ? model
-      : (model?.id ?? model?.modelId ?? undefined);
+      : model?.id ?? model?.modelId ?? undefined;
   if (!raw) return undefined;
   // Strip a provider prefix (`anthropic/`, `anthropic.`), lowercase, and
   // convert version dots to hyphens so dotted MCPJam ids
@@ -85,7 +92,7 @@ function normalizeModelId(
  * tools.
  */
 export function resolveComputerUseToolVersion(
-  model: string | { id?: string; modelId?: string } | null | undefined,
+  model: string | { id?: string; modelId?: string } | null | undefined
 ): ComputerUseToolVersion | null {
   const id = normalizeModelId(model);
   if (!id) return null;
@@ -128,7 +135,9 @@ type ComputerModelOutput = {
 };
 
 /** Map the AI SDK computer action to the harness's supported action subset. */
-export function mapToBrowserAction(input: ComputerActionInput): BrowserActionSpec {
+export function mapToBrowserAction(
+  input: ComputerActionInput
+): BrowserActionSpec {
   switch (input.action) {
     case "left_click":
     case "double_click":
@@ -167,7 +176,9 @@ function detectImageMediaType(base64: string): string {
 }
 
 /** Human-readable summary of widget-initiated tools/call for the model. */
-export function summarizeWidgetToolCalls(calls: WidgetToolCall[]): string | null {
+export function summarizeWidgetToolCalls(
+  calls: WidgetToolCall[]
+): string | null {
   if (!calls.length) return null;
   const parts = calls.map((c) => {
     const argStr = Object.entries(c.args ?? {})
@@ -187,7 +198,7 @@ function formatArg(v: unknown): string {
 
 /** Translate the implementation output into model-visible content parts. */
 export function toComputerModelOutput(
-  output: ComputerImplOutput,
+  output: ComputerImplOutput
 ): ComputerModelOutput {
   const value: ComputerModelOutput["value"] = [];
   if (output.screenshotBase64) {
@@ -209,7 +220,11 @@ export function toComputerModelOutput(
 }
 
 export interface BuildComputerUseToolsOptions {
-  version: ComputerUseToolVersion;
+  /** Anthropic provider-native tool version. Required when `wireFormat` is
+   *  false (it picks the factory + beta header); wire-format callers may omit
+   *  it — the hand-rolled schema is version- and provider-independent, which
+   *  is what lets non-Claude drivers use the tool. */
+  version?: ComputerUseToolVersion;
   harness: McpAppBrowserHarness;
   /** The tool-call id of the widget that `computer` actions target (the active
    *  rendered widget). Returns null when no widget is mounted. */
@@ -227,8 +242,86 @@ export interface BuildComputerUseToolsOptions {
    */
   onAction?: (
     result: BrowserActionResult,
-    context: { toolCallId: string },
+    context: { toolCallId: string }
   ) => void;
+  /**
+   * PR 14 (hosted-path Computer Use): emit the `computer` tool as a REGULAR
+   * AI SDK tool with an explicit JSON-serializable input schema instead of
+   * the Anthropic provider-native factory. The hosted backend paths
+   * serialize the tool map to flat `{name, description, inputSchema}` defs
+   * for the Convex `/stream` request (`serializeToolsForConvex`), and the
+   * provider-native tool's lazy schema serializes to an EMPTY object there —
+   * the model would see a `computer` tool it can't call. Wire format trades
+   * the provider beta header (OpenRouter exposes function tools only) for a
+   * faithful hand-rolled schema covering exactly the harness-supported
+   * action set. Local AI-SDK paths keep the default (provider-native).
+   */
+  wireFormat?: boolean;
+}
+
+/**
+ * Actions the wire-format `computer` tool advertises. Mirrors the Anthropic
+ * native action vocabulary restricted to what the harness implements (plus
+ * `triple_click`, which maps to the closest analogue) — advertising actions
+ * that silently degrade to screenshots (drag, hold_key, …) would mislead the
+ * model on a function-tool surface that lacks the native harness prompt.
+ */
+const WIRE_FORMAT_ACTIONS = [
+  "screenshot",
+  "left_click",
+  "double_click",
+  "triple_click",
+  "right_click",
+  "mouse_move",
+  "type",
+  "key",
+  "scroll",
+  "wait",
+] as const;
+
+function buildWireFormatComputerInputSchema(viewport: {
+  width: number;
+  height: number;
+}) {
+  return z.object({
+    action: z
+      .enum(WIRE_FORMAT_ACTIONS)
+      .describe(
+        "The action to perform on the rendered widget. Take a screenshot " +
+          "first to see the current state before clicking or typing."
+      ),
+    coordinate: z
+      .array(z.number().int().min(0))
+      .min(2)
+      .max(2)
+      .optional()
+      .describe(
+        `[x, y] pixel coordinate for click / mouse_move / scroll actions. ` +
+          `x is in [0, ${viewport.width}), y is in [0, ${viewport.height}).`
+      ),
+    text: z
+      .string()
+      .optional()
+      .describe(
+        "Text to type (for `type`), or the key / key-combination to press " +
+          "(for `key`, e.g. 'Return', 'Tab', 'ctrl+a')."
+      ),
+    duration: z
+      .number()
+      .min(0)
+      .optional()
+      .describe("Seconds to pause (for `wait`)."),
+    scroll_amount: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Number of scroll wheel clicks (for `scroll`)."),
+    scroll_direction: z
+      .enum(["up", "down", "left", "right"])
+      .optional()
+      .describe("Direction to scroll (for `scroll`)."),
+  });
 }
 
 /**
@@ -237,12 +330,12 @@ export interface BuildComputerUseToolsOptions {
  * the AI SDK Anthropic provider attach the matching beta header.
  */
 export function buildComputerUseTools(
-  opts: BuildComputerUseToolsOptions,
+  opts: BuildComputerUseToolsOptions
 ): ToolSet {
   const { harness, getActiveToolCallId, viewport } = opts;
 
   const execute = async (
-    input: ComputerActionInput,
+    input: ComputerActionInput
   ): Promise<ComputerImplOutput> => {
     const toolCallId = getActiveToolCallId();
     if (!toolCallId) {
@@ -285,10 +378,45 @@ export function buildComputerUseTools(
     toModelOutput,
   };
 
-  const computer =
-    opts.version === "20251124"
-      ? anthropic.tools.computer_20251124(factoryArgs)
-      : anthropic.tools.computer_20250124(factoryArgs);
+  // Wire format (hosted backend paths): a regular function tool with an
+  // explicit, JSON-serializable schema. Same execute / toModelOutput
+  // implementation — only the model-facing surface differs (function tool
+  // vs. provider-native tool type + beta header). Built as an object literal
+  // rather than via `tool()`: the helper is a pure inference identity, and
+  // its overloads can't unify the zod-v4 schema with `toModelOutput`'s
+  // output type. The consumers are duck-typed (`serializeToolsForConvex`
+  // reads `inputSchema`, `executeToolCallsFromMessages` reads `execute` /
+  // `toModelOutput`), so the literal is a first-class tool.
+  let computer: ToolSet[string];
+  if (opts.wireFormat) {
+    computer = {
+      description:
+        `A virtual ${viewport.width}x${viewport.height} browser viewport ` +
+        "showing the currently rendered MCP App widget. Use it to look at " +
+        "the widget (screenshot) and interact with it (click, type, " +
+        "scroll). Coordinates are pixels with (0, 0) at the top-left. " +
+        "Always take a screenshot first to see the widget before " +
+        "interacting, and after each action to verify its effect. When " +
+        "you are done interacting with the widget, call `finish_widget`.",
+      inputSchema: buildWireFormatComputerInputSchema(viewport),
+      // The wire schema types `coordinate` as number[] (tuple constraints
+      // ride as minItems/maxItems so the JSON round-trips through the
+      // backend's schema reconstruction); the impl type narrows it.
+      execute: (input: ComputerActionInput) => execute(input),
+      toModelOutput,
+    } as unknown as ToolSet[string];
+  } else {
+    if (!opts.version) {
+      throw new Error(
+        "buildComputerUseTools: `version` is required for the provider-native " +
+          "computer tool — only wire-format callers may omit it"
+      );
+    }
+    computer =
+      opts.version === "20251124"
+        ? anthropic.tools.computer_20251124(factoryArgs)
+        : anthropic.tools.computer_20250124(factoryArgs);
+  }
 
   const finish_widget = tool({
     description:

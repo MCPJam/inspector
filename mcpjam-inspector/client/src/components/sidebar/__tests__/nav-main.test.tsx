@@ -62,17 +62,17 @@ describe("NavMain", () => {
         ]}
         onItemClick={onItemClick}
         learnMore={{ onExpand: vi.fn() }}
-      />,
+      />
     );
 
     // Should show learn-more hover card with disabled message
     expect(screen.getByTestId("learn-more-skills")).toBeInTheDocument();
     expect(screen.getByTestId("disabled-message")).toHaveTextContent(
-      HOSTED_LOCAL_ONLY_TOOLTIP,
+      HOSTED_LOCAL_ONLY_TOOLTIP
     );
     // No native title attribute (double tooltip fix)
     expect(
-      screen.queryByTitle(HOSTED_LOCAL_ONLY_TOOLTIP),
+      screen.queryByTitle(HOSTED_LOCAL_ONLY_TOOLTIP)
     ).not.toBeInTheDocument();
 
     const button = screen.getByRole("button", { name: "Skills" });
@@ -95,11 +95,11 @@ describe("NavMain", () => {
           },
         ]}
         learnMore={{ onExpand: vi.fn() }}
-      />,
+      />
     );
 
     expect(
-      screen.queryByTestId("learn-more-no-learn-more"),
+      screen.queryByTestId("learn-more-no-learn-more")
     ).not.toBeInTheDocument();
     expect(screen.getByText("Not available")).toBeInTheDocument();
     expect(screen.queryByTitle("Not available")).not.toBeInTheDocument();
@@ -117,7 +117,7 @@ describe("NavMain", () => {
             disabledTooltip: HOSTED_LOCAL_ONLY_TOOLTIP,
           },
         ]}
-      />,
+      />
     );
 
     expect(screen.queryByTestId("learn-more-skills")).not.toBeInTheDocument();
@@ -137,7 +137,7 @@ describe("NavMain", () => {
           },
         ]}
         onItemClick={onItemClick}
-      />,
+      />
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Servers" }));
@@ -154,11 +154,11 @@ describe("NavMain", () => {
             icon: FakeIcon,
           },
         ]}
-      />,
+      />
     );
 
     expect(
-      screen.getByRole("button", { name: "Chatboxes" }),
+      screen.getByRole("button", { name: "Chatboxes" })
     ).toBeInTheDocument();
     expect(screen.queryByText("Plan upgrade required")).not.toBeInTheDocument();
   });
@@ -179,11 +179,13 @@ describe("NavMain", () => {
           },
         ]}
         learnMore={{ onExpand: vi.fn() }}
-      />,
+      />
     );
 
     expect(screen.getByTestId("learn-more-servers")).toBeInTheDocument();
-    expect(screen.queryByTestId("learn-more-chatboxes")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("learn-more-chatboxes")
+    ).not.toBeInTheDocument();
   });
 
   it("suppresses the built-in collapsed tooltip when learn more is handling it", () => {
@@ -199,11 +201,11 @@ describe("NavMain", () => {
           },
         ]}
         learnMore={{ onExpand: vi.fn() }}
-      />,
+      />
     );
 
     expect(screen.getByRole("button", { name: "Servers" })).not.toHaveAttribute(
-      "data-tooltip",
+      "data-tooltip"
     );
     expect(screen.getByTestId("learn-more-servers")).toBeInTheDocument();
   });

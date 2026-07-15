@@ -10,11 +10,14 @@ import { create } from "zustand";
 import type { Tool } from "@modelcontextprotocol/client";
 import type { FormField } from "@/lib/tool-form";
 
-export type DeviceType = "mobile" | "tablet" | "desktop" | "custom";
+export type DeviceType = "fill" | "mobile" | "tablet" | "desktop" | "custom";
+
+/** Fixed-size emulation presets; "fill" and "custom" size differently. */
+export type PresetDeviceType = Exclude<DeviceType, "fill" | "custom">;
 
 /** Device viewport configurations - shared across playground and MCP apps renderer */
 export const DEVICE_VIEWPORT_CONFIGS: Record<
-  Exclude<DeviceType, "custom">,
+  PresetDeviceType,
   { width: number; height: number }
 > = {
   mobile: { width: 430, height: 932 },
@@ -170,14 +173,18 @@ const getInitialGlobals = (): PlaygroundGlobals => ({
   theme: "dark",
   locale: navigator.language || "en-US",
   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-  deviceType: "desktop",
+  deviceType: "fill",
   displayMode: "inline",
   userLocation: null,
 });
 
 const STORAGE_KEY_SIDEBAR = "mcpjam-ui-playground-sidebar-visible";
 const STORAGE_KEY_CUSTOM_VIEWPORT = "mcpjam-ui-playground-custom-viewport";
-const STORAGE_KEY_DEVICE_TYPE = "mcpjam-ui-playground-device-type";
+// v2: "fill" became the default device. The v1 key is abandoned rather than
+// migrated — applyHostConfigToPlayground used to write "desktop" on every
+// host switch, so v1 values are machine-written and don't reflect a user's
+// deliberate preset choice.
+const STORAGE_KEY_DEVICE_TYPE = "mcpjam-ui-playground-device-type-v2";
 const getStoredVisibility = (key: string, defaultValue: boolean): boolean => {
   if (typeof window === "undefined") return defaultValue;
   const stored = localStorage.getItem(key);
@@ -194,29 +201,35 @@ const getStoredCustomViewport = (): CustomViewport => {
 };
 
 const getStoredDeviceType = (): DeviceType => {
-  if (typeof window === "undefined") return "desktop";
+  if (typeof window === "undefined") return "fill";
   const stored = localStorage.getItem(STORAGE_KEY_DEVICE_TYPE);
-  if (stored && ["mobile", "tablet", "desktop", "custom"].includes(stored)) {
+  if (
+    stored &&
+    ["fill", "mobile", "tablet", "desktop", "custom"].includes(stored)
+  ) {
     return stored as DeviceType;
   }
-  return "desktop";
+  return "fill";
 };
 
 /** Get default capabilities based on device type */
 const getDefaultCapabilities = (
-  deviceType: DeviceType = "desktop",
+  deviceType: DeviceType = "fill",
 ): DeviceCapabilities => {
   switch (deviceType) {
     case "mobile":
       return { hover: false, touch: true };
     case "tablet":
       return { hover: false, touch: true };
+    case "fill":
     case "custom":
     case "desktop":
     default:
       return { hover: true, touch: false };
   }
 };
+
+const initialDeviceType = getStoredDeviceType();
 
 const initialState = {
   isPlaygroundActive: false,
@@ -230,15 +243,15 @@ const initialState = {
   widgetUrl: null,
   widgetState: null,
   isWidgetTool: false,
-  deviceType: getStoredDeviceType(),
+  deviceType: initialDeviceType,
   displayMode: "inline" as DisplayMode,
-  globals: getInitialGlobals(),
+  globals: { ...getInitialGlobals(), deviceType: initialDeviceType },
   lastToolCallId: null,
   followUpMessages: [] as FollowUpMessage[],
   isSidebarVisible: getStoredVisibility(STORAGE_KEY_SIDEBAR, true),
   cspMode: "permissive" as CspMode,
   mcpAppsCspMode: "permissive" as CspMode,
-  capabilities: getDefaultCapabilities("desktop"),
+  capabilities: getDefaultCapabilities(initialDeviceType),
   safeAreaPreset: "none" as SafeAreaPreset,
   safeAreaInsets: SAFE_AREA_PRESETS["none"],
   customViewport: getStoredCustomViewport(),
@@ -395,6 +408,7 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
         isPlaygroundActive: state.isPlaygroundActive,
         // Preserve device type and custom viewport from localStorage
         deviceType: storedDeviceType,
+        globals: { ...initialState.globals, deviceType: storedDeviceType },
         customViewport: getStoredCustomViewport(),
         capabilities: getDefaultCapabilities(storedDeviceType),
         // Preserve CSP modes (may be set via CLI config before reset fires)

@@ -6,12 +6,18 @@ import {
   type NegativeTestMode,
 } from "@/shared/xaa.js";
 
-const XAA_PROFILE_STORAGE_KEY = "mcpjam-xaa-debugger-profile/v1";
-
 export interface XAADebugProfile {
   serverUrl: string;
   authzServerIssuer: string;
   clientId: string;
+  /**
+   * Test-credential client secret for the jwt-bearer grant at confidential-
+   * client auth servers. Persisted in localStorage alongside the rest of the
+   * manual profile — debugger test credentials only, never production
+   * secrets. Registration-backed runs resolve their secret server-side and
+   * leave this empty.
+   */
+  clientSecret: string;
   scope: string;
   userId: string;
   email: string;
@@ -22,6 +28,7 @@ export const EMPTY_XAA_DEBUG_PROFILE: XAADebugProfile = {
   serverUrl: "",
   authzServerIssuer: "",
   clientId: "",
+  clientSecret: "",
   scope: "",
   userId: "user-12345",
   email: "demo.user@example.com",
@@ -43,35 +50,9 @@ function sanitizeNegativeTestMode(value: unknown): NegativeTestMode {
   return isNegativeTestMode(value) ? value : DEFAULT_NEGATIVE_TEST_MODE;
 }
 
-export function loadStoredXAADebugProfile(): XAADebugProfile {
-  try {
-    const raw = localStorage.getItem(XAA_PROFILE_STORAGE_KEY);
-    if (!raw) {
-      return EMPTY_XAA_DEBUG_PROFILE;
-    }
-
-    const parsed = JSON.parse(raw) as Partial<XAADebugProfile>;
-    return {
-      ...EMPTY_XAA_DEBUG_PROFILE,
-      ...parsed,
-      negativeTestMode: sanitizeNegativeTestMode(parsed.negativeTestMode),
-    };
-  } catch {
-    return EMPTY_XAA_DEBUG_PROFILE;
-  }
-}
-
-export function saveStoredXAADebugProfile(profile: XAADebugProfile): void {
-  try {
-    localStorage.setItem(XAA_PROFILE_STORAGE_KEY, JSON.stringify(profile));
-  } catch {
-    // Ignore storage failures.
-  }
-}
-
 export function deriveXAADebugProfileFromServer(
   server?: ServerWithName,
-  existingProfile: XAADebugProfile = EMPTY_XAA_DEBUG_PROFILE,
+  existingProfile: XAADebugProfile = EMPTY_XAA_DEBUG_PROFILE
 ): XAADebugProfile {
   if (!server) {
     return existingProfile;
@@ -99,7 +80,7 @@ export function deriveXAADebugProfileFromServer(
     clientId: existingProfile.clientId || configuredClientId,
     scope: existingProfile.scope || configuredScopes,
     negativeTestMode: sanitizeNegativeTestMode(
-      existingProfile.negativeTestMode,
+      existingProfile.negativeTestMode
     ),
   };
 }

@@ -252,8 +252,12 @@ export function useProjectServerAttachments({
 // Server mutation for creating servers
 export function useServerMutations() {
   const createServer = useMutation("servers:createServer" as any);
+  const createServerIfMissing = useMutation(
+    "servers:createServerIfMissing" as any,
+  );
 
   return {
     createServer,
+    createServerIfMissing,
   };
 }

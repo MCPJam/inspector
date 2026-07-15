@@ -1,8 +1,10 @@
 import { McpJamMcpServer } from "./server.js";
 import {
+  GUEST_ISSUER,
   OAUTH_DISCOVERY_HEADERS,
   normalizeIssuer,
   verifyBearerToken,
+  type VerifyConfig,
 } from "./auth.js";
 
 export { McpJamMcpServer };
@@ -46,6 +48,16 @@ export default {
     const issuer = normalizeIssuer(env.AUTHKIT_DOMAIN);
     if (!issuer) {
       return new Response("Server misconfigured: AUTHKIT_DOMAIN is not set", {
+        status: 500,
+      });
+    }
+    // The token's `aud` and the issuer→JWKS allow-list are both keyed on the
+    // WorkOS client id (public — also shipped to the browser as
+    // VITE_WORKOS_CLIENT_ID), so the worker must know it to verify forwarded
+    // AuthKit tokens. See `authkitIssuerJwks` in auth.ts.
+    const clientId = env.WORKOS_CLIENT_ID;
+    if (!clientId) {
+      return new Response("Server misconfigured: WORKOS_CLIENT_ID is not set", {
         status: 500,
       });
     }
@@ -105,16 +117,63 @@ export default {
         return McpJamMcpServer.serve("/mcp").fetch(request, env, ctx);
       }
 
-      const result = await verifyBearerToken(request, issuer, origin);
-      if (!result.ok) return result.response;
+      // Killswitch: when locked down, the server is AuthKit-only — guest
+      // tokens are not accepted and anonymous (tokenless) connections are
+      // refused with the normal 401 → OAuth challenge.
+      const lockedDown = env.MCPJAM_NONPROD_LOCKDOWN === "true";
+
+      // Guest verification is enabled only when a guest JWKS URL is configured
+      // (and not locked down). Absent it, guest tokens fall through to the
+      // AuthKit allow-list and are rejected.
+      const guest: VerifyConfig["guest"] =
+        !lockedDown && env.MCPJAM_GUEST_JWKS_URL
+          ? { issuer: GUEST_ISSUER, jwksUrl: env.MCPJAM_GUEST_JWKS_URL }
+          : undefined;
+
+      let props: { bearerToken?: string; claims?: unknown; clientIp?: string };
+      if (request.headers.has("authorization")) {
+        // A bearer was presented → it must verify (AuthKit or guest). A
+        // present-but-invalid token still 401s; we never downgrade it to an
+        // anonymous guest.
+        const result = await verifyBearerToken(
+          request,
+          { clientId, authkitDomain: env.AUTHKIT_DOMAIN, guest },
+          origin,
+        );
+        if (!result.ok) return result.response;
+        props = {
+          bearerToken: result.verified.token,
+          claims: result.verified.payload,
+        };
+      } else if (lockedDown) {
+        // Tokenless + locked down → preserve the 401 → OAuth challenge.
+        const result = await verifyBearerToken(
+          request,
+          { clientId, authkitDomain: env.AUTHKIT_DOMAIN },
+          origin,
+        );
+        // verifyBearerToken returns the 401 missing-token response here.
+        if (!result.ok) return result.response;
+        props = {
+          bearerToken: result.verified.token,
+          claims: result.verified.payload,
+        };
+      } else {
+        // Tokenless anonymous session: NO mint here. The Durable Object mints
+        // a guest token lazily on first platform-tool execution. Capture the
+        // edge-provided client IP (trustworthy here — set by Cloudflare on the
+        // inbound hit) so the DO can forward it to the rate-limited mint route.
+        props = {
+          bearerToken: undefined,
+          claims: undefined,
+          clientIp: request.headers.get("cf-connecting-ip") ?? undefined,
+        };
+      }
 
       const authedCtx: ExecutionContext<Record<string, unknown>> = {
         waitUntil: (promise: Promise<unknown>) => ctx.waitUntil(promise),
         passThroughOnException: () => ctx.passThroughOnException(),
-        props: {
-          bearerToken: result.verified.token,
-          claims: result.verified.payload,
-        },
+        props,
       };
 
       return McpJamMcpServer.serve("/mcp").fetch(request, env, authedCtx);

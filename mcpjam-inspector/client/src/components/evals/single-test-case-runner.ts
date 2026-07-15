@@ -1,7 +1,7 @@
 import { HOSTED_MODE } from "@/lib/config";
 import type { ModelDefinition } from "@/shared/types";
 import type { EvalCase, EvalSuite } from "./types";
-import type { PromptTurn } from "@/shared/prompt-turns";
+import type { PromptTurn } from "@/shared/steps";
 import type { EvalMatchOptions } from "@/shared/eval-matching";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 
@@ -36,9 +36,7 @@ export function projectHostConfigRunOverride(
     hostContext: input.hostContext,
     clientCapabilities: input.clientCapabilities,
     hostCapabilitiesOverride: input.hostCapabilitiesOverride,
-    chatUiOverride: input.chatUiOverride as
-      | Record<string, unknown>
-      | undefined,
+    chatUiOverride: input.chatUiOverride as Record<string, unknown> | undefined,
     mcpProfile: input.mcpProfile as Record<string, unknown> | undefined,
     connectionDefaults: input.connectionDefaults,
   };
@@ -52,8 +50,10 @@ type TestCaseRunOverrides = Partial<
     | "isNegativeTest"
     | "runs"
     | "expectedOutput"
+    | "steps"
     | "advancedConfig"
     | "matchOptions"
+    | "predicates"
   >
 >;
 type TestCaseRunOverridesWithTurns = TestCaseRunOverrides & {
@@ -69,6 +69,7 @@ interface PrepareSingleTestCaseRunParams {
   testCaseOverrides?: TestCaseRunOverridesWithTurns;
   /** One-off run override; does not persist on the case. */
   matchOptionsOverride?: EvalMatchOptions;
+  namedHostId?: string;
   /**
    * One-off hostConfig override for this Run. Edited via the test case
    * host header; recorded on the iteration snapshot. Subset of
@@ -203,6 +204,7 @@ export async function prepareSingleTestCaseRun({
   selectedModel,
   testCaseOverrides,
   matchOptionsOverride,
+  namedHostId,
   hostConfigOverride,
 }: PrepareSingleTestCaseRunParams) {
   const modelValue =
@@ -232,6 +234,7 @@ export async function prepareSingleTestCaseRun({
       convexAuthToken,
       testCaseOverrides,
       matchOptionsOverride,
+      namedHostId,
       hostConfigOverride,
     },
   };

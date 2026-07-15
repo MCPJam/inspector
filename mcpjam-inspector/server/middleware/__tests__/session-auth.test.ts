@@ -33,6 +33,11 @@ function createTestApp(): Hono {
   app.get("/health", (c) => c.json({ status: "ok" }));
   app.get("/api/mcp/health", (c) => c.json({ status: "ok" }));
   app.get("/api/session-token", (c) => c.json({ token: "test" }));
+  // Mock OIDC IdP endpoints (external browsers/RPs, no session possible)
+  app.get("/api/mcp/xaa/authorize", (c) => c.html("<html>authorize</html>"));
+  app.get("/api/mcp/xaa/authorize/confirm", (c) => c.json({ ok: true }));
+  app.get("/api/mcp/xaa/token", (c) => c.json({ ok: true }));
+  app.get("/api/mcp/xaa/userinfo", (c) => c.json({ ok: true }));
 
   // Unprotected prefixes
   app.get("/assets/main.js", (c) => c.text("console.log('hello')"));
@@ -192,6 +197,27 @@ describe("sessionAuthMiddleware", () => {
 
       expect(res.status).toBe(200);
     });
+
+    it("allows the mock OIDC IdP endpoints without token", async () => {
+      for (const route of [
+        "/api/mcp/xaa/authorize",
+        "/api/mcp/xaa/authorize/confirm",
+        "/api/mcp/xaa/token",
+        "/api/mcp/xaa/userinfo",
+      ]) {
+        const res = await app.request(route);
+        expect(res.status, route).toBe(200);
+      }
+    });
+
+    it("still requires a token for /api/mcp/xaa/token-exchange", async () => {
+      // Exact-match allowlist: /token must never make /token-exchange public.
+      const res = await app.request("/api/mcp/xaa/token-exchange", {
+        method: "POST",
+      });
+
+      expect(res.status).toBe(401);
+    });
   });
 
   describe("unprotected prefixes", () => {
@@ -329,5 +355,19 @@ describe("scrubTokenFromUrl", () => {
   it("handles URL with no query params", () => {
     const url = "/api/test";
     expect(scrubTokenFromUrl(url)).toBe("/api/test");
+  });
+
+  it("scrubs a bare token= param (e.g. a stray computer terminal token)", () => {
+    const url = "/api/web/computers/terminal?token=eyJhbGciOi.abc.def&cols=80";
+    expect(scrubTokenFromUrl(url)).toBe(
+      "/api/web/computers/terminal?token=[REDACTED]&cols=80",
+    );
+  });
+
+  it("scrubs token= without clobbering _token= in the same URL", () => {
+    const url = "/api/test?_token=session123&token=terminal456";
+    expect(scrubTokenFromUrl(url)).toBe(
+      "/api/test?_token=[REDACTED]&token=[REDACTED]",
+    );
   });
 });
