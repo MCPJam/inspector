@@ -113,6 +113,16 @@ const HTTP_SERVER = makeServer(
   { xaaAuthzIssuer: "https://idp.example.com" },
 );
 
+const MCPJAM_MODE_SERVER = makeServer(
+  "prod-mcp",
+  {
+    url: "https://prod.example.com/mcp",
+    clientId: "client-abc",
+    oauthScopes: ["read", "write"],
+  },
+  { xaaAuthzIssuer: "https://idp.example.com", authServerMode: "mcpjam" },
+);
+
 const STDIO_SERVER = makeServer("local-stdio", {
   command: "npx",
   args: ["my-server"],
@@ -490,6 +500,7 @@ describe("XAARegistrationWizard", () => {
 
       await user.click(screen.getByLabelText(PICKER_LABEL));
       await user.click(screen.getByRole("option", { name: "prod-mcp" }));
+      await user.click(screen.getByRole("button", { name: "Edit details" }));
 
       expect(screen.getByLabelText("Name")).toHaveValue("prod-mcp");
       expect(screen.getByLabelText("Resource URL")).toHaveValue(
@@ -523,6 +534,7 @@ describe("XAARegistrationWizard", () => {
 
       await user.click(screen.getByLabelText(PICKER_LABEL));
       await user.click(screen.getByRole("option", { name: "prod-mcp" }));
+      await user.click(screen.getByRole("button", { name: "Edit details" }));
 
       // Manual edit after the pick sticks.
       await user.clear(screen.getByLabelText("Name"));
@@ -534,6 +546,7 @@ describe("XAARegistrationWizard", () => {
       // draft never mixes two servers' details.
       await user.click(screen.getByLabelText(PICKER_LABEL));
       await user.click(screen.getByRole("option", { name: "staging-mcp" }));
+      await user.click(screen.getByRole("button", { name: "Edit details" }));
       expect(screen.getByLabelText("Name")).toHaveValue("staging-mcp");
       expect(screen.getByLabelText("Resource URL")).toHaveValue(
         "https://staging.example.com/mcp",
@@ -565,6 +578,7 @@ describe("XAARegistrationWizard", () => {
 
       await user.click(screen.getByLabelText(PICKER_LABEL));
       await user.click(screen.getByRole("option", { name: "prod-mcp" }));
+      await user.click(screen.getByRole("button", { name: "Edit details" }));
       expect(screen.getByLabelText("Name")).toHaveValue("prod-mcp");
 
       await user.click(screen.getByRole("button", { name: "Next" }));
@@ -577,6 +591,7 @@ describe("XAARegistrationWizard", () => {
 
       await user.click(screen.getByLabelText(PICKER_LABEL));
       await user.click(screen.getByRole("option", { name: "prod-mcp" }));
+      await user.click(screen.getByRole("button", { name: "Edit details" }));
       await user.click(screen.getByRole("button", { name: "Next" }));
       await user.type(
         screen.getByLabelText("Token endpoint"),
@@ -598,6 +613,204 @@ describe("XAARegistrationWizard", () => {
         targetClientId: "client-abc",
         scopes: ["read", "write"],
       });
+    });
+  });
+
+  describe("one-click review", () => {
+    it("collapses to a review summary of the derived values after a pick", async () => {
+      const user = userEvent.setup();
+      renderWizardWithServers({ "prod-mcp": HTTP_SERVER });
+
+      await user.click(screen.getByLabelText(PICKER_LABEL));
+      await user.click(screen.getByRole("option", { name: "prod-mcp" }));
+
+      const review = screen.getByTestId("xaa-reg-review");
+      expect(review).toHaveTextContent("prod-mcp");
+      expect(review).toHaveTextContent("https://prod.example.com/mcp");
+      // The pick never sets the auth-server mode — the summary presents the
+      // wizard's default honestly, plus the server's issuer snapshot.
+      expect(review).toHaveTextContent("My own auth server");
+      expect(review).toHaveTextContent("https://idp.example.com");
+      expect(review).toHaveTextContent("client-abc");
+      expect(review).toHaveTextContent("read");
+      expect(review).toHaveTextContent("write");
+
+      // The step flow is collapsed: no step chips, no form fields.
+      expect(
+        screen.queryByRole("list", { name: "Registration steps" }),
+      ).toBeNull();
+      expect(screen.queryByLabelText("Name")).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Register app" }),
+      ).toBeInTheDocument();
+      // Re-picking stays possible from the review.
+      expect(screen.getByLabelText(PICKER_LABEL)).toBeInTheDocument();
+    });
+
+    it("shows 'none declared' scopes and the missing issuer honestly", async () => {
+      const user = userEvent.setup();
+      renderWizardWithServers({
+        "staging-mcp": makeServer("staging-mcp", {
+          url: "https://staging.example.com/mcp",
+        }),
+      });
+
+      await user.click(screen.getByLabelText(PICKER_LABEL));
+      await user.click(screen.getByRole("option", { name: "staging-mcp" }));
+
+      const review = screen.getByTestId("xaa-reg-review");
+      expect(review).toHaveTextContent("no issuer set");
+      expect(review).toHaveTextContent("none declared");
+      expect(review).not.toHaveTextContent("Client ID");
+    });
+
+    it("registers with the exact same payload the step flow sends", async () => {
+      const user = userEvent.setup();
+
+      // Route A: pick, then walk the steps and save (today's flow).
+      const stepFlow = renderWizardWithServers({ "prod-mcp": HTTP_SERVER });
+      await user.click(screen.getByLabelText(PICKER_LABEL));
+      await user.click(screen.getByRole("option", { name: "prod-mcp" }));
+      await user.click(screen.getByRole("button", { name: "Edit details" }));
+      await user.click(screen.getByRole("button", { name: "Next" }));
+      await user.type(
+        screen.getByLabelText("Token endpoint"),
+        "https://idp.example.com/oauth/token",
+      );
+      await user.click(screen.getByRole("button", { name: "Next" }));
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
+      stepFlow.unmount();
+
+      // Route B: same draft via one click. The token endpoint is typed
+      // before the pick (a pick never touches it), so validation passes.
+      renderWizardWithServers({ "prod-mcp": HTTP_SERVER });
+      await user.type(screen.getByLabelText("Name"), "placeholder");
+      await user.type(
+        screen.getByLabelText("Resource URL"),
+        "https://placeholder.example.com/mcp",
+      );
+      await user.click(screen.getByRole("button", { name: "Next" }));
+      await user.type(
+        screen.getByLabelText("Token endpoint"),
+        "https://idp.example.com/oauth/token",
+      );
+      await user.click(screen.getByRole("button", { name: "Back" }));
+      await user.click(screen.getByLabelText(PICKER_LABEL));
+      await user.click(screen.getByRole("option", { name: "prod-mcp" }));
+      await user.click(screen.getByRole("button", { name: "Register app" }));
+
+      await waitFor(() => expect(upsert).toHaveBeenCalledTimes(2));
+      expect(upsert.mock.calls[1]![0]).toEqual(upsert.mock.calls[0]![0]);
+      expect(trackMock).toHaveBeenCalledWith(
+        "xaa_resource_app_saved",
+        expect.objectContaining({
+          location: "xaa_registration_wizard",
+          resource_type: "mcp",
+          auth_server_mode: "own",
+        }),
+      );
+    });
+
+    it("drops into edit mode at the failing step instead of dead-ending", async () => {
+      const user = userEvent.setup();
+      renderWizardWithServers({ "prod-mcp": HTTP_SERVER });
+
+      await user.click(screen.getByLabelText(PICKER_LABEL));
+      await user.click(screen.getByRole("option", { name: "prod-mcp" }));
+      // Own-AS mode without a token endpoint: the one-click validation fails
+      // at step 2, so the wizard expands there with the inline message.
+      await user.click(screen.getByRole("button", { name: "Register app" }));
+
+      expect(upsert).not.toHaveBeenCalled();
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Token endpoint is required",
+      );
+      const steps = screen.getAllByRole("listitem");
+      expect(steps[1]).toHaveAttribute("aria-current", "step");
+      expect(screen.getByLabelText("Token endpoint")).toHaveValue("");
+    });
+
+    it("'Edit details' expands the prefilled step flow with the picker intact", async () => {
+      const user = userEvent.setup();
+      renderWizardWithServers({ "prod-mcp": HTTP_SERVER });
+
+      await user.click(screen.getByLabelText(PICKER_LABEL));
+      await user.click(screen.getByRole("option", { name: "prod-mcp" }));
+      await user.click(screen.getByRole("button", { name: "Edit details" }));
+
+      expect(
+        screen.getByRole("list", { name: "Registration steps" }),
+      ).toBeInTheDocument();
+      expect(screen.getByLabelText("Name")).toHaveValue("prod-mcp");
+      expect(screen.getByLabelText(PICKER_LABEL)).toBeInTheDocument();
+      expect(screen.queryByTestId("xaa-reg-review")).toBeNull();
+    });
+
+    it("re-picking from edit mode returns to the review", async () => {
+      const user = userEvent.setup();
+      renderWizardWithServers({
+        "prod-mcp": HTTP_SERVER,
+        "staging-mcp": makeServer("staging-mcp", {
+          url: "https://staging.example.com/mcp",
+        }),
+      });
+
+      await user.click(screen.getByLabelText(PICKER_LABEL));
+      await user.click(screen.getByRole("option", { name: "prod-mcp" }));
+      await user.click(screen.getByRole("button", { name: "Edit details" }));
+      await user.click(screen.getByLabelText(PICKER_LABEL));
+      await user.click(screen.getByRole("option", { name: "staging-mcp" }));
+
+      expect(screen.getByTestId("xaa-reg-review")).toBeInTheDocument();
+      expect(screen.getByTestId("xaa-reg-review")).toHaveTextContent(
+        "staging-mcp",
+      );
+    });
+
+    it("clearing the pick returns to the blank manual wizard", async () => {
+      const user = userEvent.setup();
+      renderWizardWithServers({ "prod-mcp": HTTP_SERVER });
+
+      await user.click(screen.getByLabelText(PICKER_LABEL));
+      await user.click(screen.getByRole("option", { name: "prod-mcp" }));
+      await user.click(
+        screen.getByRole("button", {
+          name: "Clear selection and start from scratch",
+        }),
+      );
+
+      expect(screen.queryByTestId("xaa-reg-review")).toBeNull();
+      expect(screen.getByLabelText("Name")).toHaveValue("");
+      expect(screen.getByLabelText(PICKER_LABEL)).toBeInTheDocument();
+      expect(
+        screen.getByRole("list", { name: "Registration steps" }),
+      ).toBeInTheDocument();
+    });
+
+    it("surfaces the save error in review mode", async () => {
+      upsert.mockRejectedValueOnce(new Error("backend said no"));
+      const user = userEvent.setup();
+      renderWizardWithServers({ "prod-mcp": MCPJAM_MODE_SERVER });
+
+      // The server row stores authServerMode "mcpjam"; the pick carries it
+      // over, so the one-click path passes auth-server validation with no
+      // token endpoint.
+      await user.click(screen.getByLabelText(PICKER_LABEL));
+      await user.click(screen.getByRole("option", { name: "prod-mcp" }));
+
+      expect(screen.getByTestId("xaa-reg-review")).toHaveTextContent(
+        "MCPJam test auth server",
+      );
+      await user.click(screen.getByRole("button", { name: "Register app" }));
+
+      await waitFor(() =>
+        expect(screen.getByRole("alert")).toHaveTextContent("backend said no"),
+      );
+      // Still in review — the user can retry or edit.
+      expect(
+        screen.getByRole("button", { name: "Register app" }),
+      ).toBeInTheDocument();
     });
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -32,6 +32,7 @@ import {
   draftToInput,
   EMPTY_DRAFT,
   isPickableServer,
+  parseScopes,
   validateAuthServer,
   validateBasicInfo,
   validateScopesConfig,
@@ -90,10 +91,18 @@ export function XAARegistrationWizard({
   const [step, setStep] = useState<StepId>(1);
   const [draft, setDraft] = useState<RegistrationDraft>(EMPTY_DRAFT);
   const [pickedServerName, setPickedServerName] = useState("");
+  // After a pick the wizard collapses to a one-click review; "Edit details"
+  // expands the full step flow again without losing the pick.
+  const [stepsExpanded, setStepsExpanded] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const stepHeadingRef = useRef<HTMLHeadingElement | null>(null);
+
+  // Review mode is keyed STRICTLY on an explicit pick: draft prefills from
+  // any other source (editing today, debugger prefill on other branches)
+  // must land in the step flow, never in the collapsed review.
+  const isReview = Boolean(pickedServerName) && !stepsExpanded;
 
   // Reset to a fresh (or edit-seeded) draft whenever the dialog opens. The
   // secret field is intentionally never pre-filled.
@@ -113,6 +122,7 @@ export function XAARegistrationWizard({
           : { ...EMPTY_DRAFT, ...(prefill ?? {}) },
       );
       setPickedServerName("");
+      setStepsExpanded(false);
       setValidationError(null);
       setSaveError(null);
     }
@@ -144,7 +154,20 @@ export function XAARegistrationWizard({
     const server = serverOptions.find((s) => s.name === name);
     if (!server) return;
     setPickedServerName(name);
+    setStepsExpanded(false);
+    setStep(1);
+    setSaveError(null);
     updateDraft(draftFromServer(server));
+  };
+
+  // Back to the unpicked state: manual wizard with a blank draft.
+  const handleClearPick = () => {
+    setPickedServerName("");
+    setStepsExpanded(false);
+    setStep(1);
+    setDraft(EMPTY_DRAFT);
+    setValidationError(null);
+    setSaveError(null);
   };
 
   const handleNext = () => {
@@ -157,12 +180,9 @@ export function XAARegistrationWizard({
     setStep((current) => (current === 1 ? 2 : 3));
   };
 
-  const handleSave = async () => {
-    const error = validateScopesConfig(draft);
-    if (error) {
-      setValidationError(error);
-      return;
-    }
+  // The single save path — review's "Register app" and step 3's "Save" both
+  // land here with the same payload.
+  const persist = async () => {
     setIsSaving(true);
     setSaveError(null);
     try {
@@ -183,6 +203,62 @@ export function XAARegistrationWizard({
     }
   };
 
+  const handleSave = async () => {
+    const error = validateScopesConfig(draft);
+    if (error) {
+      setValidationError(error);
+      return;
+    }
+    await persist();
+  };
+
+  // One-click register: run every step's validation; on the first failure,
+  // expand the step flow at the offending step with the inline message
+  // instead of dead-ending in the review.
+  const handleRegisterFromReview = async () => {
+    const checks: Array<[StepId, string | null]> = [
+      [1, validateBasicInfo(draft)],
+      [2, validateAuthServer(draft)],
+      [3, validateScopesConfig(draft)],
+    ];
+    const failed = checks.find(([, error]) => error !== null);
+    if (failed) {
+      setValidationError(failed[1]);
+      setStep(failed[0]);
+      setStepsExpanded(true);
+      return;
+    }
+    await persist();
+  };
+
+  // The picker is shown on step 1 AND in review mode (so re-picking works
+  // everywhere). Hidden while editing (the registration already has its
+  // details) and when the project has no HTTP servers to pick from.
+  const showPicker = !editing && serverOptions.length > 0;
+  const serverPicker = showPicker && (
+    <div className="space-y-1.5">
+      <Label htmlFor="xaa-reg-server-picker">
+        Start from an existing server
+      </Label>
+      <Select value={pickedServerName} onValueChange={handlePickServer}>
+        <SelectTrigger id="xaa-reg-server-picker">
+          <SelectValue placeholder="Pick one of your servers" />
+        </SelectTrigger>
+        <SelectContent>
+          {serverOptions.map((server) => (
+            <SelectItem key={server.name} value={server.name}>
+              {server.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <p className="text-xs text-muted-foreground">
+        Copies the server&apos;s saved details into the form as a one-time
+        snapshot — edit anything before saving.
+      </p>
+    </div>
+  );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
@@ -196,84 +272,95 @@ export function XAARegistrationWizard({
           </DialogDescription>
         </DialogHeader>
 
-        <ol className="flex items-center gap-2" aria-label="Registration steps">
-          {STEPS.map((s) => {
-            const isCurrent = s.id === step;
-            return (
-              <li
-                key={s.id}
-                aria-current={isCurrent ? "step" : undefined}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs",
-                  isCurrent
-                    ? "border-primary/50 bg-primary/10 font-medium text-foreground"
-                    : "border-border text-muted-foreground",
-                )}
-              >
-                <span className="font-mono">{s.id}</span>
-                {s.title}
-              </li>
-            );
-          })}
-        </ol>
+        {isReview ? (
+          <>
+            {serverPicker}
 
-        <h3
-          ref={stepHeadingRef}
-          tabIndex={-1}
-          className="text-sm font-semibold outline-none"
-        >
-          {STEPS.find((s) => s.id === step)?.title}
-        </h3>
-
-        {step === 1 ? (
-          <div className="space-y-4">
-            {/* Registering starts from picking one of the project's servers;
-                manual entry below is the fallback. Hidden while editing (the
-                registration already has its details) and when the project has
-                no HTTP servers to pick from. */}
-            {!editing && serverOptions.length > 0 && (
-              <>
-                <div className="space-y-1.5">
-                  <Label htmlFor="xaa-reg-server-picker">
-                    Start from an existing server
-                  </Label>
-                  <Select
-                    value={pickedServerName}
-                    onValueChange={handlePickServer}
-                  >
-                    <SelectTrigger id="xaa-reg-server-picker">
-                      <SelectValue placeholder="Pick one of your servers" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {serverOptions.map((server) => (
-                        <SelectItem key={server.name} value={server.name}>
-                          {server.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    Copies the server&apos;s saved details into the form as a
-                    one-time snapshot — edit anything before saving.
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <span aria-hidden="true" className="h-px flex-1 bg-border" />
-                  or enter details manually
-                  <span aria-hidden="true" className="h-px flex-1 bg-border" />
-                </div>
-              </>
-            )}
-            <BasicInfoStep draft={draft} onChange={updateDraft} />
-          </div>
-        ) : step === 2 ? (
-          <AuthServerStep
-            draft={draft}
-            onChange={updateDraft}
-            hasStoredSecret={Boolean(editing?.hasSecret)}
-          />
+            <h3
+              ref={stepHeadingRef}
+              tabIndex={-1}
+              className="text-sm font-semibold outline-none"
+            >
+              Review &amp; register
+            </h3>
+            <ReviewSummary draft={draft} />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={handleClearPick}
+              disabled={isSaving}
+              className="self-start px-0 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Clear selection and start from scratch
+            </Button>
+          </>
         ) : (
-          <ScopesConfigStep draft={draft} onChange={updateDraft} />
+          <>
+            <ol
+              className="flex items-center gap-2"
+              aria-label="Registration steps"
+            >
+              {STEPS.map((s) => {
+                const isCurrent = s.id === step;
+                return (
+                  <li
+                    key={s.id}
+                    aria-current={isCurrent ? "step" : undefined}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs",
+                      isCurrent
+                        ? "border-primary/50 bg-primary/10 font-medium text-foreground"
+                        : "border-border text-muted-foreground",
+                    )}
+                  >
+                    <span className="font-mono">{s.id}</span>
+                    {s.title}
+                  </li>
+                );
+              })}
+            </ol>
+
+            <h3
+              ref={stepHeadingRef}
+              tabIndex={-1}
+              className="text-sm font-semibold outline-none"
+            >
+              {STEPS.find((s) => s.id === step)?.title}
+            </h3>
+
+            {step === 1 ? (
+              <div className="space-y-4">
+                {/* Registering starts from picking one of the project's
+                    servers; manual entry below is the fallback. */}
+                {showPicker && (
+                  <>
+                    {serverPicker}
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span
+                        aria-hidden="true"
+                        className="h-px flex-1 bg-border"
+                      />
+                      or enter details manually
+                      <span
+                        aria-hidden="true"
+                        className="h-px flex-1 bg-border"
+                      />
+                    </div>
+                  </>
+                )}
+                <BasicInfoStep draft={draft} onChange={updateDraft} />
+              </div>
+            ) : step === 2 ? (
+              <AuthServerStep
+                draft={draft}
+                onChange={updateDraft}
+                hasStoredSecret={Boolean(editing?.hasSecret)}
+              />
+            ) : (
+              <ScopesConfigStep draft={draft} onChange={updateDraft} />
+            )}
+          </>
         )}
 
         {(validationError || saveError) && (
@@ -283,34 +370,136 @@ export function XAARegistrationWizard({
         )}
 
         <DialogFooter>
-          {step > 1 && (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setStep((current) => (current === 3 ? 2 : 1))}
-              disabled={isSaving}
-            >
-              Back
-            </Button>
-          )}
-          {step < 3 ? (
-            <Button type="button" onClick={handleNext}>
-              Next
-            </Button>
+          {isReview ? (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setStepsExpanded(true)}
+                disabled={isSaving}
+              >
+                Edit details
+              </Button>
+              <Button
+                type="button"
+                onClick={handleRegisterFromReview}
+                disabled={isSaving}
+              >
+                {isSaving ? (
+                  <>
+                    <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                    Registering
+                  </>
+                ) : (
+                  "Register app"
+                )}
+              </Button>
+            </>
           ) : (
-            <Button type="button" onClick={handleSave} disabled={isSaving}>
-              {isSaving ? (
-                <>
-                  <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                  Saving
-                </>
-              ) : (
-                "Save"
+            <>
+              {step > 1 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setStep((current) => (current === 3 ? 2 : 1))}
+                  disabled={isSaving}
+                >
+                  Back
+                </Button>
               )}
-            </Button>
+              {step < 3 ? (
+                <Button type="button" onClick={handleNext}>
+                  Next
+                </Button>
+              ) : (
+                <Button type="button" onClick={handleSave} disabled={isSaving}>
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                      Saving
+                    </>
+                  ) : (
+                    "Save"
+                  )}
+                </Button>
+              )}
+            </>
           )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ReviewRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-2">
+      <dt className="w-24 shrink-0 text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 flex-1">{children}</dd>
+    </div>
+  );
+}
+
+/** Read-only summary of exactly what "Register app" will save. Honest about
+ * provenance: the auth-server mode is the wizard's default (a pick never sets
+ * it), while the issuer/client id/scopes are the picked server's snapshot. */
+function ReviewSummary({ draft }: { draft: RegistrationDraft }) {
+  const scopes = parseScopes(draft.scopes);
+  return (
+    <dl
+      data-testid="xaa-reg-review"
+      className="space-y-2 rounded-md border border-border bg-muted/30 px-3 py-2.5 text-xs"
+    >
+      <ReviewRow label="Name">
+        <span className="font-medium">{draft.name}</span>
+      </ReviewRow>
+      <ReviewRow label="Resource URL">
+        <code className="font-mono break-all">{draft.resourceUrl}</code>
+      </ReviewRow>
+      <ReviewRow label="Auth server">
+        {draft.authServerMode === "mcpjam" ? (
+          "MCPJam test auth server"
+        ) : draft.issuer.trim() ? (
+          <>
+            My own auth server —{" "}
+            <code className="font-mono break-all">{draft.issuer.trim()}</code>
+          </>
+        ) : (
+          <>
+            My own auth server{" "}
+            <span className="text-muted-foreground">(no issuer set)</span>
+          </>
+        )}
+      </ReviewRow>
+      {draft.targetClientId.trim() && (
+        <ReviewRow label="Client ID">
+          <code className="font-mono break-all">
+            {draft.targetClientId.trim()}
+          </code>
+        </ReviewRow>
+      )}
+      <ReviewRow label="Scopes">
+        {scopes.length > 0 ? (
+          <span className="flex flex-wrap gap-1">
+            {scopes.map((scope) => (
+              <code
+                key={scope}
+                className="rounded bg-muted px-1.5 py-0.5 font-mono"
+              >
+                {scope}
+              </code>
+            ))}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">none declared</span>
+        )}
+      </ReviewRow>
+    </dl>
   );
 }

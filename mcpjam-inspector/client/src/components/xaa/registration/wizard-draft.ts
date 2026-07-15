@@ -68,7 +68,13 @@ export function draftFromServer(
   server: ServerWithName,
 ): Pick<
   RegistrationDraft,
-  "name" | "resourceType" | "resourceUrl" | "issuer" | "targetClientId" | "scopes"
+  | "name"
+  | "resourceType"
+  | "resourceUrl"
+  | "issuer"
+  | "targetClientId"
+  | "scopes"
+  | "authServerMode"
 > {
   const httpConfig =
     "url" in server.config ? (server.config as HttpServerConfig) : null;
@@ -83,6 +89,10 @@ export function draftFromServer(
     scopes: Array.isArray(oauthScopes)
       ? oauthScopes.filter((s): s is string => typeof s === "string").join(" ")
       : "",
+    // The server row knows which IdP mints for it; carrying it over makes a
+    // pick of an MCPJam-test-IdP server truly one-click (no auth-server step
+    // to fall into). Servers without a stored mode keep the wizard default.
+    authServerMode: server.authServerMode ?? "own",
   };
 }
 
