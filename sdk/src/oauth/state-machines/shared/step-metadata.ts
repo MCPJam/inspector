@@ -50,7 +50,7 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
     ],
   },
   received_401_unauthorized: {
-    title: "401 Unauthorized",
+    title: "401 Unauthorized Received",
     summary:
       "The MCP server indicates OAuth is required and often provides discovery hints in WWW-Authenticate.",
     teachableMoments: [
@@ -129,7 +129,7 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
     ],
   },
   request_client_registration: {
-    title: "Dynamic Client Registration",
+    title: "Request Dynamic Client Registration",
     summary:
       "The client submits metadata to register a public client with the authorization server.",
     teachableMoments: [
@@ -138,7 +138,7 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
     ],
   },
   received_client_credentials: {
-    title: "Client Credentials Ready",
+    title: "Client Credentials Received",
     summary:
       "The client stores client_id (and optionally client_secret) for the remainder of the flow.",
     teachableMoments: [
@@ -170,7 +170,7 @@ export const STEP_METADATA: Record<OAuthFlowStep, OAuthStepInfo> = {
     ],
   },
   token_request: {
-    title: "Exchange Authorization Code",
+    title: "Request Tokens with Authorization Code",
     summary:
       "The client calls the token endpoint with the authorization code and PKCE verifier.",
     teachableMoments: [

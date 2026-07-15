@@ -172,7 +172,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
     ],
   },
   fetch_client_metadata_document: {
-    title: "Preflight the Client Metadata Document",
+    title: "Request Client Metadata Document",
     summary:
       "CIMD: the client_id is a URL to MCPJam's hosted metadata document. The debugger fetches and validates it — the Authorization Server does its own fetch later.",
     phase: "bootstrap",
@@ -183,7 +183,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
     ],
   },
   received_client_metadata: {
-    title: "Client Metadata Document Ready",
+    title: "Client Metadata Document Received",
     summary:
       "The hosted document validated: its client_id equals its URL and it declares the XAA grants. The URL is now this run's client_id.",
     phase: "bootstrap",

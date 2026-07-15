@@ -165,7 +165,9 @@ describe("OAuth copy log formatters", () => {
       },
     ]);
 
-    const requestHeader = guide.indexOf("Exchange Authorization Code");
+    const requestHeader = guide.indexOf(
+      "Request Tokens with Authorization Code",
+    );
     const receivedHeader = guide.indexOf("Tokens Received");
     expect(requestHeader).toBeGreaterThan(-1);
     expect(receivedHeader).toBeGreaterThan(requestHeader);
