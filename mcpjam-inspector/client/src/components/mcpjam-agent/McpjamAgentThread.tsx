@@ -13,6 +13,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { StickToBottom } from "use-stick-to-bottom";
+import { ShieldCheck } from "lucide-react";
+import { Switch } from "@mcpjam/design-system/switch";
 import { cn } from "@/lib/utils";
 import { McpjamAgentComposer } from "@/components/mcpjam-agent/McpjamAgentComposer";
 import { Thread } from "@/components/chat-v2/thread";
@@ -211,6 +213,18 @@ export function McpjamAgentThread({
       onStop={() => session.stop()}
       textareaRef={textareaRef}
       className={fillsParent ? composerColumnClassName : undefined}
+      footerControls={
+        <label className="flex cursor-pointer items-center gap-1.5 text-[11px] leading-none text-muted-foreground/80">
+          <ShieldCheck className="size-3.5" aria-hidden />
+          <span>Tool approval</span>
+          <Switch
+            checked={session.requireToolApproval}
+            onCheckedChange={session.setRequireToolApproval}
+            aria-label="Require tool approval"
+            className="scale-90"
+          />
+        </label>
+      }
     />
   );
 
@@ -282,6 +296,7 @@ export function McpjamAgentThread({
               toolServerMap={{}}
               sendFollowUpMessage={handleSubmit}
               isLoading={isStreaming}
+              onToolApprovalResponse={session.addToolApprovalResponse}
               minimalMode
               // Match `Thread`'s standalone-thinking-indicator wrapper
               // (`thread.tsx:368` uses `max-w-4xl mx-auto px-4`) so the dots

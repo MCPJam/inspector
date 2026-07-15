@@ -121,6 +121,7 @@ describe("ChatboxesRoute billing gate", () => {
     expect(mockChatboxesTab).toHaveBeenCalledWith({
       projectId: "project-1",
       isAuthenticated: true,
+      product: "chatbox",
     });
   });
 
@@ -138,6 +139,7 @@ describe("ChatboxesRoute billing gate", () => {
     expect(mockChatboxesTab).toHaveBeenCalledWith({
       projectId: "project-1",
       isAuthenticated: true,
+      product: "chatbox",
     });
   });
 

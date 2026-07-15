@@ -25,6 +25,10 @@ const sdkHostConfigTemplatesEntry = path.resolve(
   rootDir,
   "../sdk/src/host-config/templates/index.ts",
 );
+const sdkHostCompatEntry = path.resolve(
+  rootDir,
+  "../sdk/src/host-compat/index.ts",
+);
 // Tier B Phase 2: @mcpjam/sdk/widget-runtime advertises ./dist via package
 // exports; alias it to source so inspector vitest resolves it without a prior
 // `npm run build -w @mcpjam/sdk` (mirrors the SDK subpath aliases above).
@@ -55,9 +59,8 @@ const mcpSdkSharedAuthEntry = path.resolve(
 export default defineConfig({
   define: {
     __MCPJAM_SDK_VERSION__: JSON.stringify("test"),
-    // Mirrors the Vite build-time constant injected into `client-templates`
-    // and `mcp-apps-renderer`. Tests that exercise the host-style seed
-    // (e.g. via the render-gate scope wrapper) need this defined or the
+    // Mirrors the Vite build-time constant injected into app/runtime code.
+    // Tests that exercise SDK host-style seed paths need this defined or the
     // codex/mcpjam templates throw a `ReferenceError`.
     __APP_VERSION__: JSON.stringify("test"),
   },
@@ -136,6 +139,10 @@ export default defineConfig({
       {
         find: "@mcpjam/sdk/widget-runtime",
         replacement: sdkWidgetRuntimeEntry,
+      },
+      {
+        find: "@mcpjam/sdk/host-compat",
+        replacement: sdkHostCompatEntry,
       },
       {
         find: "@mcpjam/sdk/host-config/templates",

@@ -8,7 +8,6 @@
  *
  *   - `SessionReadinessBadge` — compact verdict pill for synthetic session rows
  *   - `SessionInsightBar`      — findings strip atop a synthetic session detail
- *   - `SessionReadinessStrip`  — chatbox-level rollup above the session list
  */
 
 import {
@@ -17,10 +16,8 @@ import {
   Loader2,
   ShieldAlert,
   ShieldCheck,
-  Wrench,
   XCircle,
 } from "lucide-react";
-import { useQuery } from "convex/react";
 
 // ── types (mirror convex/lib/sessionReadiness.ts) ─────────────────────────────
 
@@ -86,21 +83,24 @@ export interface SessionReadinessRollup {
 
 const VERDICT_META: Record<
   ReadinessVerdict,
-  { label: string; pill: string; Icon: typeof ShieldCheck }
+  { label: string; pill: string; text: string; Icon: typeof ShieldCheck }
 > = {
   ready: {
     label: "Ready",
     pill: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+    text: "text-emerald-600 dark:text-emerald-400",
     Icon: ShieldCheck,
   },
   needs_attention: {
     label: "Needs attention",
     pill: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+    text: "text-amber-600 dark:text-amber-400",
     Icon: AlertTriangle,
   },
   not_ready: {
     label: "Not ready",
     pill: "bg-red-500/10 text-red-700 dark:text-red-400",
+    text: "text-red-600 dark:text-red-400",
     Icon: ShieldAlert,
   },
 };
@@ -110,10 +110,97 @@ function coveragePct(ratio: number | null | undefined): string | null {
   return `${Math.round(ratio * 100)}%`;
 }
 
-/** Host-response latency (server work time, excludes persona-driver time). */
 function formatLatency(ms: number | null | undefined): string | null {
   if (typeof ms !== "number" || ms <= 0) return null;
   return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
+const LOW_COVERAGE_THRESHOLD = 0.5;
+
+/** When the server omits `issues[]`, derive human explanations from denormalized fields. */
+function explainReadinessIssues(
+  readiness: SessionReadiness,
+): SessionReadinessIssue[] {
+  if ((readiness.issues?.length ?? 0) > 0) {
+    return readiness.issues!;
+  }
+
+  const fallbacks: SessionReadinessIssue[] = [];
+
+  if (
+    typeof readiness.coverageRatio === "number" &&
+    readiness.advertisedToolsKnown !== false &&
+    readiness.coverageRatio < LOW_COVERAGE_THRESHOLD
+  ) {
+    fallbacks.push({
+      code: "low_coverage",
+      severity: readiness.coverageRatio < 0.25 ? "error" : "warning",
+      message: `Only ${Math.round(readiness.coverageRatio * 100)}% of advertised tools were used — synthetic sessions should exercise more of your tool surface.`,
+    });
+  }
+
+  if ((readiness.toolErrorCount ?? 0) > 0) {
+    fallbacks.push({
+      code: "tool_errors",
+      severity: "warning",
+      message: `${readiness.toolErrorCount} of ${readiness.toolCallCount} tool call${readiness.toolCallCount === 1 ? "" : "s"} failed.`,
+    });
+  }
+
+  for (const tool of readiness.hallucinatedTools ?? []) {
+    fallbacks.push({
+      code: "hallucinated_tool",
+      severity: "error",
+      message: `Called "${tool}", which is not an advertised tool.`,
+      toolName: tool,
+    });
+  }
+
+  if (
+    readiness.status === "partial" &&
+    readiness.advertisedToolsKnown === false
+  ) {
+    fallbacks.push({
+      code: "partial_inventory",
+      severity: "warning",
+      message:
+        "Tool inventory was unavailable when this session was analyzed, so coverage could not be fully verified.",
+    });
+  }
+
+  if (
+    typeof readiness.usedToolCount === "number" &&
+    typeof readiness.advertisedToolCount === "number" &&
+    readiness.advertisedToolCount > 0 &&
+    readiness.usedToolCount === 0 &&
+    (readiness.toolCallCount ?? 0) === 0
+  ) {
+    fallbacks.push({
+      code: "no_tools_used",
+      severity: "warning",
+      message: `No tools were called, but ${readiness.advertisedToolCount} tool${readiness.advertisedToolCount === 1 ? "" : "s"} ${readiness.advertisedToolCount === 1 ? "is" : "are"} advertised on this swarm.`,
+    });
+  }
+
+  const latency = readiness.hostLatencyMs;
+  if (typeof latency === "number" && latency > 10_000) {
+    fallbacks.push({
+      code: "high_latency",
+      severity: "warning",
+      message: `Host response latency was ${formatLatency(latency)} across turns.`,
+    });
+  }
+
+  const verdict = readiness.verdict ?? "ready";
+  if (verdict !== "ready" && fallbacks.length === 0 && readiness.issueCount > 0) {
+    fallbacks.push({
+      code: "unknown",
+      severity: "warning",
+      message: `Readiness flagged ${readiness.issueCount} issue${readiness.issueCount === 1 ? "" : "s"} — open the Trace tab for details.`,
+    });
+  }
+
+  return fallbacks;
 }
 
 // ── badge (session row) ───────────────────────────────────────────────────────
@@ -127,7 +214,7 @@ export function SessionReadinessBadge({
 
   if (readiness.status === "pending") {
     return (
-      <span className="inline-flex items-center gap-0.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+      <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
         <Loader2 className="size-2.5 animate-spin" />
         Analyzing
       </span>
@@ -135,7 +222,7 @@ export function SessionReadinessBadge({
   }
   if (readiness.status === "failed") {
     return (
-      <span className="inline-flex items-center gap-0.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+      <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
         <XCircle className="size-2.5" />
         Readiness failed
       </span>
@@ -147,7 +234,7 @@ export function SessionReadinessBadge({
   const { Icon } = meta;
   return (
     <span
-      className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${meta.pill}`}
+      className={`inline-flex items-center gap-0.5 text-[10px] font-medium ${meta.text}`}
       title={
         readiness.status === "partial"
           ? "Partial readiness — tool inventory was unavailable"
@@ -208,10 +295,21 @@ export function SessionInsightBar({
   const meta = VERDICT_META[verdict];
   const { Icon } = meta;
   const coverage = coveragePct(readiness.coverageRatio);
-  const issues = readiness.issues ?? [];
+  const issues = explainReadinessIssues(readiness);
+  const showFindings =
+    verdict !== "ready" || issues.length > 0 || readiness.status === "partial";
+  const findingsLabel =
+    verdict === "ready"
+      ? "Readiness"
+      : verdict === "not_ready"
+        ? "Why this is not ready"
+        : "Why this needs attention";
 
   return (
     <div className="border-b bg-muted/20 px-4 py-2.5">
+      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {findingsLabel}
+      </p>
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span
           className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium ${meta.pill}`}
@@ -255,14 +353,14 @@ export function SessionInsightBar({
             <span className="text-muted-foreground/40">·</span>
             <span
               className="text-muted-foreground"
-              title="Host-response latency (server work time across turns; excludes the persona driver's own LLM time)"
+              title="Client-response latency (server work time across turns; excludes the persona driver's own LLM time)"
             >
-              {formatLatency(readiness.hostLatencyMs)} host latency
+              {formatLatency(readiness.hostLatencyMs)} client latency
             </span>
           </>
         ) : null}
       </div>
-      {issues.length > 0 ? (
+      {showFindings && issues.length > 0 ? (
         <ul className="mt-2 space-y-1">
           {issues.map((issue, i) => {
             const IssueIcon = ISSUE_ICON[issue.severity];
@@ -279,98 +377,6 @@ export function SessionInsightBar({
             );
           })}
         </ul>
-      ) : null}
-    </div>
-  );
-}
-
-// ── rollup strip (above the session list) ─────────────────────────────────────
-
-export function useChatboxReadinessRollup(chatboxId: string | null) {
-  return useQuery(
-    "chatSessions:getChatboxReadinessRollup" as any,
-    chatboxId ? ({ chatboxId } as any) : "skip"
-  ) as SessionReadinessRollup | null | undefined;
-}
-
-function RollupStat({
-  count,
-  label,
-  tone,
-}: {
-  count: number;
-  label: string;
-  tone: string;
-}) {
-  return (
-    <span className="inline-flex items-center gap-1">
-      <span className={`text-sm font-semibold tabular-nums ${tone}`}>
-        {count}
-      </span>
-      <span className="text-[11px] text-muted-foreground">{label}</span>
-    </span>
-  );
-}
-
-/**
- * Chatbox-level readiness rollup over synthetic sessions. Renders nothing until
- * at least one synthetic session has been analyzed, so non-synthetic chatboxes
- * never show an empty strip.
- */
-export function SessionReadinessStrip({
-  chatboxId,
-}: {
-  chatboxId: string | null;
-}) {
-  const rollup = useChatboxReadinessRollup(chatboxId);
-  if (!rollup || rollup.analyzed === 0) return null;
-
-  const coverage = coveragePct(rollup.avgCoverageRatio);
-
-  return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b bg-muted/20 px-3 py-2">
-      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        Readiness
-      </span>
-      <RollupStat
-        count={rollup.byVerdict.ready}
-        label="ready"
-        tone="text-emerald-600 dark:text-emerald-400"
-      />
-      <RollupStat
-        count={rollup.byVerdict.needs_attention}
-        label="needs attention"
-        tone="text-amber-600 dark:text-amber-400"
-      />
-      <RollupStat
-        count={rollup.byVerdict.not_ready}
-        label="not ready"
-        tone="text-red-600 dark:text-red-400"
-      />
-      <span className="text-muted-foreground/30">·</span>
-      <RollupStat
-        count={rollup.totalIssues}
-        label="issues"
-        tone="text-foreground"
-      />
-      {coverage ? (
-        <span className="text-[11px] text-muted-foreground">
-          avg coverage {coverage}
-        </span>
-      ) : null}
-      {rollup.topFailingTools.length > 0 ? (
-        <span className="flex flex-wrap items-center gap-1">
-          {rollup.topFailingTools.slice(0, 3).map((t) => (
-            <span
-              key={t.toolName}
-              className="inline-flex items-center gap-0.5 rounded-full bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-700 dark:text-red-400"
-              title={`${t.errorCount} failure${t.errorCount === 1 ? "" : "s"}`}
-            >
-              <Wrench className="size-2.5" />
-              {t.toolName}
-            </span>
-          ))}
-        </span>
       ) : null}
     </div>
   );

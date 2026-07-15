@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { formatRunId } from "../helpers";
 import { computeIterationResult } from "../pass-criteria";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../types";
 
@@ -7,6 +8,20 @@ export type HostColumn = {
   hostName: string | null;
   /** True when this host is no longer in hostAttachments (historical fallback). */
   isHistorical: boolean;
+};
+
+export type CellTrendPoint = {
+  runId: string;
+  runLabel: string;
+  timestamp: number;
+  result: "passed" | "failed" | "pending" | "partial";
+  /** Median (p50) latency for this run in the cell. */
+  latencyMs: number | null;
+  /** 95th percentile latency for this run in the cell. */
+  latencyP95Ms: number | null;
+  tokens: number | null;
+  /** Mean tool calls per iteration in this run. */
+  toolCalls: number | null;
 };
 
 export type CellData = {
@@ -22,6 +37,8 @@ export type CellData = {
   p95LatencyMs: number | null;
   /** Mean `tokensUsed` per iteration in this cell (all iterations in the latest run). */
   avgTokensPerIteration: number | null;
+  /** Chronological run history for this (case, host), oldest first. */
+  trendSeries?: CellTrendPoint[];
 };
 
 export type CrossHostData = {
@@ -31,6 +48,16 @@ export type CrossHostData = {
   hasAnyData: boolean;
   hasHostAttachments: boolean;
 };
+
+export type UseCrossHostDataOptions = {
+  /** When true, attach per-cell run trend series (All runs view). */
+  cellTrends?: boolean;
+};
+
+/** Fallback display name for a host with no resolved name: last 6 id chars. */
+export function formatHostFallback(hostId: string): string {
+  return `…${hostId.slice(-6)}`;
+}
 
 /**
  * Median of a numeric array. Returns null on empty input. Sorts a copy —
@@ -57,6 +84,128 @@ export function percentile(values: number[], p: number): number | null {
   return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
 }
 
+export type CellOutcome = "pass" | "fail" | "part" | "running";
+
+/**
+ * Settle a cell's pass/fail/running state from its iteration counts.
+ *
+ * A cell whose iterations are still pending/running — and where nothing has
+ * completed yet — is "running", NOT "fail". This is the difference between
+ * "this case hasn't produced a verdict yet" and "this case produced a failing
+ * verdict". Without the running branch, every cell flashes red the instant a
+ * "Run all" starts (all iterations pending → passCount 0) and only flips to
+ * green as each iteration finishes. Mirrors `trendResultFromCounts`.
+ */
+export function cellOutcome(cell: {
+  passCount: number;
+  failCount: number;
+  pendingCount: number;
+  totalCount: number;
+}): CellOutcome {
+  if (cell.pendingCount > 0 && cell.passCount + cell.failCount === 0) {
+    return "running";
+  }
+  if (cell.passCount >= cell.totalCount) return "pass";
+  if (cell.passCount === 0) return "fail";
+  return "part";
+}
+
+function trendResultFromCounts(
+  passCount: number,
+  failCount: number,
+  pendingCount: number,
+  totalCount: number,
+): CellTrendPoint["result"] {
+  if (totalCount === 0) return "pending";
+  if (pendingCount > 0 && passCount + failCount === 0) return "pending";
+  if (passCount >= totalCount) return "passed";
+  if (passCount === 0 && failCount > 0) return "failed";
+  if (passCount === 0) return "pending";
+  return "partial";
+}
+
+function iterationLatencyMs(iter: EvalIteration): number | null {
+  if (!iter.startedAt || !iter.updatedAt || iter.status !== "completed") {
+    return null;
+  }
+  const latency = iter.updatedAt - iter.startedAt;
+  return latency > 0 ? latency : null;
+}
+
+/**
+ * Build a chronological run-history series for one (caseId, hostId) pair.
+ * Exported for unit tests.
+ */
+export function buildCellTrendSeries(
+  caseId: string,
+  hostId: string,
+  runs: EvalSuiteRun[],
+  allIterations: EvalIteration[],
+  runHostMap: Map<string, string>,
+  activeRunIds: Set<string>,
+  formatRunIdFn: (id: string) => string = formatRunId,
+): CellTrendPoint[] {
+  const itersByRun = new Map<string, EvalIteration[]>();
+
+  for (const iter of allIterations) {
+    if (!iter.suiteRunId || !activeRunIds.has(iter.suiteRunId)) continue;
+    if (runHostMap.get(iter.suiteRunId) !== hostId) continue;
+    const iterCaseId = iter.testCaseId ?? `__no_case_${iter._id}`;
+    if (iterCaseId !== caseId) continue;
+
+    const list = itersByRun.get(iter.suiteRunId);
+    if (list) list.push(iter);
+    else itersByRun.set(iter.suiteRunId, [iter]);
+  }
+
+  const relevantRuns = runs
+    .filter((run) => itersByRun.has(run._id))
+    .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+
+  return relevantRuns.map((run) => {
+    const iters = itersByRun.get(run._id) ?? [];
+    let passCount = 0;
+    let failCount = 0;
+    let pendingCount = 0;
+    let totalTokens = 0;
+    let totalToolCalls = 0;
+    const latencySamples: number[] = [];
+
+    for (const iter of iters) {
+      const result = computeIterationResult(iter);
+      if (result === "passed") passCount++;
+      else if (result === "failed") failCount++;
+      else pendingCount++;
+
+      totalTokens += iter.tokensUsed || 0;
+      totalToolCalls += iter.actualToolCalls?.length ?? 0;
+
+      const latency = iterationLatencyMs(iter);
+      if (latency != null) latencySamples.push(latency);
+    }
+
+    const totalCount = iters.length;
+
+    return {
+      runId: run._id,
+      runLabel: formatRunIdFn(run._id),
+      timestamp: run.completedAt ?? run.createdAt ?? 0,
+      result: trendResultFromCounts(
+        passCount,
+        failCount,
+        pendingCount,
+        totalCount,
+      ),
+      latencyMs: median(latencySamples),
+      latencyP95Ms: percentile(latencySamples, 95),
+      tokens:
+        totalCount > 0 && totalTokens > 0 ? totalTokens / totalCount : null,
+      toolCalls:
+        totalCount > 0 ? totalToolCalls / totalCount : null,
+    };
+  });
+}
+
 function buildCellData(iterations: EvalIteration[]): CellData {
   let passCount = 0;
   let failCount = 0;
@@ -67,17 +216,13 @@ function buildCellData(iterations: EvalIteration[]): CellData {
   for (const iter of iterations) {
     const result = computeIterationResult(iter);
     if (result === "passed") passCount++;
-    else if (result === "failed" || result === "timed_out") failCount++;
+    else if (result === "failed") failCount++;
     else pendingCount++;
 
     totalTokens += iter.tokensUsed || 0;
 
-    if (iter.startedAt && iter.updatedAt && iter.status === "completed") {
-      const latency = iter.updatedAt - iter.startedAt;
-      if (latency > 0) {
-        latencySamples.push(latency);
-      }
-    }
+    const latency = iterationLatencyMs(iter);
+    if (latency != null) latencySamples.push(latency);
   }
 
   const totalCount = iterations.length;
@@ -106,7 +251,10 @@ export function useCrossHostData(
   cases: EvalCase[],
   runs: EvalSuiteRun[],
   allIterations: EvalIteration[],
+  options: UseCrossHostDataOptions = {},
 ): CrossHostData {
+  const { cellTrends = false } = options;
+
   return useMemo(() => {
     const attachments = suite.hostAttachments ?? [];
     const hasHostAttachments = attachments.length > 0;
@@ -205,7 +353,22 @@ export function useCrossHostData(
     for (const [caseId, byHost] of rawMatrix) {
       const cellMap = new Map<string, CellData>();
       for (const [hostId, iters] of byHost) {
-        cellMap.set(hostId, buildCellData(iters));
+        const cell = buildCellData(iters);
+        if (cellTrends) {
+          const trendSeries = buildCellTrendSeries(
+            caseId,
+            hostId,
+            runs,
+            allIterations,
+            runHostMap,
+            activeRunIds,
+          );
+          if (trendSeries.length > 0) {
+            cellMap.set(hostId, { ...cell, trendSeries });
+            continue;
+          }
+        }
+        cellMap.set(hostId, cell);
       }
       matrix.set(caseId, cellMap);
     }
@@ -225,5 +388,5 @@ export function useCrossHostData(
     const hasAnyData = matrix.size > 0;
 
     return { hostColumns, caseRows, matrix, hasAnyData, hasHostAttachments };
-  }, [suite.hostAttachments, cases, runs, allIterations]);
+  }, [suite.hostAttachments, cases, runs, allIterations, cellTrends]);
 }

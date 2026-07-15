@@ -6,10 +6,10 @@ import {
   ChevronDown,
   Info,
   Loader2,
+  MonitorPlay,
   Wrench,
 } from "lucide-react";
 import { useNavigate } from "react-router";
-import { usePostHog } from "posthog-js/react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -20,68 +20,57 @@ import {
 import type { ServerWithName } from "@/state/app-types";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 import { evaluateAllHosts } from "@/lib/host-compat/engine";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { useWidgetUsage } from "@/lib/host-compat/use-widget-usage";
+import { ConformanceGate } from "@/components/compat/ConformanceGate";
+import { VERDICT_META } from "@/components/compat/verdict-meta";
+import {
+  LiveRenderRow,
+  useLiveRenders,
+} from "@/components/compat/LiveRenderRow";
 import type {
   CompatFinding,
+  CompatLane,
   CompatProvenance,
-  CompatVerdict,
   HostCompatReport,
 } from "@/lib/host-compat/types";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { routePaths } from "@/lib/app-navigation";
 import { useHostMutations } from "@/hooks/useClients";
+import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import {
-  HOST_TEMPLATES,
-  seedFromHostTemplate,
-  type HostTemplateId,
-} from "@/lib/client-templates";
-
-/** Compat profile ids (`claude`, `chatgpt`, …) are the same string literals
- * as the host template ids, so a verdict maps to a template with no lookup
- * table — but we still gate on the catalog so a profile id that ever drifts
- * away from a real template silently hides its CTA instead of crashing. */
-const COMPAT_TEMPLATE_LABEL = new Map<string, string>(
-  HOST_TEMPLATES.map((t) => [t.id, t.label])
-);
-
-const isHostTemplateId = (id: string): id is HostTemplateId =>
-  COMPAT_TEMPLATE_LABEL.has(id);
-
-/** Lightweight verdict styling: a colored dot + colored label, no pill —
- * keeps each host row to a single quiet line. */
-const VERDICT_META: Record<
-  CompatVerdict,
-  { label: string; dot: string; text: string }
-> = {
-  works: {
-    label: "Works",
-    dot: "bg-emerald-500",
-    text: "text-emerald-600 dark:text-emerald-400",
-  },
-  degraded: {
-    label: "Degraded",
-    dot: "bg-amber-500",
-    text: "text-amber-600 dark:text-amber-400",
-  },
-  blocked: {
-    label: "Blocked",
-    dot: "bg-red-500",
-    text: "text-red-600 dark:text-red-400",
-  },
-  unknown: {
-    label: "Unknown",
-    dot: "bg-muted-foreground/40",
-    text: "text-muted-foreground",
-  },
-};
+import { cloneHostTemplateInput } from "@/lib/client-config-v2";
+import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { filterReportsByFeatureFlags } from "@/lib/host-compat/feature-visibility";
 
 const PROVENANCE_LABEL: Record<CompatProvenance, string> = {
+  observed: "Observed from a live run",
   "vendor-doc": "Verified from vendor docs",
   probe: "Probe-captured from a real host",
   assumed: "Best-effort preset — unverified",
 };
+
+const VERIFIED_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: "UTC",
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+
+function formatVerifiedDate(verifiedAt: number | undefined): string | null {
+  if (verifiedAt === undefined || !Number.isFinite(verifiedAt)) return null;
+  return VERIFIED_DATE_FORMATTER.format(new Date(verifiedAt));
+}
+
+function provenanceTooltip(report: HostCompatReport): string {
+  const date = formatVerifiedDate(report.verifiedAt);
+  if (!date) return PROVENANCE_LABEL[report.provenance];
+  const prefix =
+    report.provenance === "assumed" ? "Last reviewed" : "Last verified";
+  return `${PROVENANCE_LABEL[report.provenance]} | ${prefix} ${date}`;
+}
 
 const FINDING_ICON: Record<
   CompatFinding["severity"],
@@ -90,6 +79,14 @@ const FINDING_ICON: Record<
   blocker: { Icon: AlertCircle, className: "text-red-500" },
   degraded: { Icon: AlertTriangle, className: "text-amber-500" },
   info: { Icon: Info, className: "text-muted-foreground" },
+};
+
+/** Findings split into two axes — see `CompatLane`. Apps first (where hosts
+ * most visibly differ), then Server (capability negotiation). */
+const LANE_ORDER = ["apps", "server"] as const;
+const LANE_LABEL: Record<CompatLane, string> = {
+  apps: "Apps",
+  server: "Server",
 };
 
 /**
@@ -103,9 +100,16 @@ export function HostCompatContent({
   projectId,
   serverId,
   onClose,
+  source = "compat_detail_modal",
 }: {
   server: ServerWithName;
   toolsData?: ListToolsResultWithMetadata | null;
+  /**
+   * Analytics surface this report is rendered on — keeps the host-creation
+   * funnel honest (the standalone page must not tag its views/CTAs as modal).
+   * Defaults to the modal so existing callers are unchanged.
+   */
+  source?: "compat_detail_modal" | "compat_page";
   /** Convex project id — required to create a host. */
   projectId?: string | null;
   /** Project-server-ref id to attach to the new host (the modal resolves it
@@ -116,12 +120,34 @@ export function HostCompatContent({
   onClose?: () => void;
 }) {
   const widgetUsage = useWidgetUsage(server.name, toolsData);
+  const protocolVersion = server.initializationInfo?.protocolVersion;
+  // Live catalog in the deps: verdicts render from the bundled catalog first,
+  // then recompute when the live fetch lands.
+  const catalogState = useHostCatalog();
   const { requirements, reports } = useMemo(
-    () => evaluateAllHosts(toolsData, widgetUsage),
-    [toolsData, widgetUsage]
+    () =>
+      evaluateAllHosts(
+        toolsData,
+        widgetUsage,
+        { protocolVersion },
+        catalogState?.catalog
+      ),
+    [toolsData, widgetUsage, protocolVersion, catalogState]
+  );
+  const claudeCodeEnabled = useClaudeCodeHostEnabled();
+  const codexEnabled = useCodexHostEnabled();
+  const visibleReports = useMemo(
+    () =>
+      filterReportsByFeatureFlags(reports, {
+        claudeCode: claudeCodeEnabled,
+        codex: codexEnabled,
+      }),
+    [reports, claudeCodeEnabled, codexEnabled]
   );
 
-  const posthog = usePostHog();
+  // Tier-2: render the server's widget live in each host's emulation.
+  const live = useLiveRenders(server.name, requirements);
+
   const navigate = useNavigate();
   const { createHost } = useHostMutations();
   const [, setPreviewedHostId] = usePreviewedHostId(projectId ?? null);
@@ -142,15 +168,14 @@ export function HostCompatContent({
   useEffect(() => {
     if (viewedServerRef.current === server.name) return;
     viewedServerRef.current = server.name;
-    posthog.capture("host_compat_tab_viewed", {
-      ...standardEventProps("compat_detail_modal"),
+    track("host_compat_tab_viewed", {
+      location: source,
       server_name: server.name,
-      host_count: reports.length,
+      host_count: visibleReports.length,
     });
     // Intentionally keyed on server.name only — reports churn as tools load,
     // but this is a once-per-server view signal, not a verdict snapshot.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [server.name]);
+  }, [server.name, source, visibleReports.length]);
 
   // The CTA that turns a verdict into a host: create a host from the
   // matching template with THIS server attached, select it, and jump to the
@@ -159,11 +184,22 @@ export function HostCompatContent({
   const canCreateHosts = Boolean(projectId && serverId);
   const handleTestInHost = async (report: HostCompatReport) => {
     const templateId = report.hostId;
-    if (!projectId || !serverId || !isHostTemplateId(templateId)) return;
-    const label = COMPAT_TEMPLATE_LABEL.get(templateId) ?? report.hostLabel;
+    if (!projectId || !serverId) return;
+    const catalog =
+      catalogState.status === "live" ? catalogState.catalog : null;
+    const template = catalog
+      ? getCatalogTemplate(catalog, templateId)
+      : undefined;
+    if (!template) {
+      toast.error("Could not load live client templates");
+      return;
+    }
+    const label =
+      (catalog ? getCatalogHost(catalog, templateId)?.label : undefined) ??
+      report.hostLabel;
 
-    posthog.capture("compat_cta_clicked", {
-      ...standardEventProps("compat_detail_modal"),
+    track("compat_cta_clicked", {
+      location: source,
       template_id: templateId,
       host_label: report.hostLabel,
       verdict: report.verdict,
@@ -172,7 +208,7 @@ export function HostCompatContent({
 
     setCreatingTemplateId(templateId);
     try {
-      const seed = seedFromHostTemplate(templateId, { theme: themeMode });
+      const seed = cloneHostTemplateInput(template, { themeMode });
       const { hostId, hostConfigId } = await createHost({
         projectId,
         name: label,
@@ -183,8 +219,8 @@ export function HostCompatContent({
       // creates. Best-effort: a posthog throw must not surface a failure
       // toast after the host already exists.
       try {
-        posthog.capture("client_created", {
-          ...standardEventProps("compat_cta"),
+        track("client_created", {
+          location: "compat_cta",
           via: "compat_report",
           template_id: templateId,
           client_id: hostId,
@@ -208,6 +244,8 @@ export function HostCompatContent({
 
   return (
     <div className="pb-4">
+      <ConformanceGate server={server} />
+
       <p className="pb-1 text-[11px] text-muted-foreground">
         Static checks from connect-time data · best-effort host profiles
         {requirements.unknownDimensions.length > 0
@@ -216,7 +254,7 @@ export function HostCompatContent({
       </p>
 
       <div className="divide-y divide-border/50">
-        {reports.map((report) => {
+        {visibleReports.map((report) => {
           const verdict = VERDICT_META[report.verdict];
           const hasFindings = report.findings.length > 0;
           const isOpen = expandedHostId === report.hostId;
@@ -227,6 +265,10 @@ export function HostCompatContent({
                   : ""
               }`
             : "";
+          const canCreateFromLiveTemplate =
+            catalogState.status === "live" &&
+            getCatalogTemplate(catalogState.catalog, report.hostId) !==
+              undefined;
           return (
             <div key={report.hostId} className="py-2.5 first:pt-1.5">
               <div className="flex items-center gap-2">
@@ -253,7 +295,7 @@ export function HostCompatContent({
                     </span>
                   </TooltipTrigger>
                   <TooltipContent side="top" variant="muted">
-                    {PROVENANCE_LABEL[report.provenance]}
+                    {provenanceTooltip(report)}
                   </TooltipContent>
                 </Tooltip>
 
@@ -276,13 +318,44 @@ export function HostCompatContent({
                 )}
 
                 <div className="flex flex-shrink-0 items-center">
-                  {canCreateHosts && isHostTemplateId(report.hostId) && (
+                  {live.available &&
+                    report.rendersWidgets &&
+                    live.widgetTool && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+                        disabled={live.runningHostId !== null}
+                        onClick={() => live.run(report)}
+                      >
+                        {live.runningHostId === report.hostId ? (
+                          <>
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            Rendering…
+                          </>
+                        ) : (
+                          <>
+                            <MonitorPlay className="h-3 w-3" />
+                            Run live
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  {canCreateHosts && (
                     <Button
                       size="sm"
                       variant="ghost"
                       className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-                      disabled={creatingTemplateId !== null}
+                      disabled={
+                        creatingTemplateId !== null ||
+                        !canCreateFromLiveTemplate
+                      }
                       onClick={() => handleTestInHost(report)}
+                      title={
+                        canCreateFromLiveTemplate
+                          ? "Test in client"
+                          : "Live client template unavailable"
+                      }
                     >
                       {creatingTemplateId === report.hostId ? (
                         <>
@@ -300,34 +373,66 @@ export function HostCompatContent({
                 </div>
               </div>
 
+              {live.results[report.hostId] && (
+                <LiveRenderRow outcome={live.results[report.hostId]} />
+              )}
+
               {hasFindings && isOpen && (
-                <ul className="mt-2 space-y-1.5 pl-6">
-                  {report.findings.map((finding, index) => {
-                    const icon = FINDING_ICON[finding.severity];
+                <div className="mt-2 space-y-2.5 pl-6">
+                  {LANE_ORDER.map((lane) => {
+                    const laneFindings = report.findings.filter(
+                      (f) => f.lane === lane
+                    );
+                    if (laneFindings.length === 0) return null;
+                    const laneDot =
+                      VERDICT_META[report.lanes[lane].verdict].dot;
                     return (
-                      <li key={index} className="flex gap-2 text-xs">
-                        <icon.Icon
-                          className={`mt-0.5 h-3.5 w-3.5 flex-shrink-0 ${icon.className}`}
-                        />
-                        <div className="min-w-0">
-                          <span className="font-medium text-foreground">
-                            {finding.title}
-                          </span>
-                          <span className="text-muted-foreground">
-                            {" — "}
-                            {finding.detail}
-                          </span>
-                          {finding.remediation && (
-                            <div className="mt-1 flex items-start gap-1.5 text-muted-foreground">
-                              <Wrench className="mt-0.5 h-3 w-3 flex-shrink-0" />
-                              <span>{finding.remediation}</span>
-                            </div>
-                          )}
+                      <div key={lane}>
+                        <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                          <span className={`h-1 w-1 rounded-full ${laneDot}`} />
+                          {LANE_LABEL[lane]}
                         </div>
-                      </li>
+                        <ul className="space-y-1.5">
+                          {laneFindings.map((finding, index) => {
+                            const icon = FINDING_ICON[finding.severity];
+                            // Phase 1: a finding's provenance equals the host
+                            // baseline, so this badge stays hidden. It surfaces
+                            // when a Tier-2 live run stamps `observed`.
+                            const showProvenance =
+                              finding.provenance !== report.provenance;
+                            return (
+                              <li key={index} className="flex gap-2 text-xs">
+                                <icon.Icon
+                                  className={`mt-0.5 h-3.5 w-3.5 flex-shrink-0 ${icon.className}`}
+                                />
+                                <div className="min-w-0">
+                                  <span className="font-medium text-foreground">
+                                    {finding.title}
+                                  </span>
+                                  {showProvenance && (
+                                    <span className="ml-1.5 rounded bg-muted px-1 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                      {finding.provenance}
+                                    </span>
+                                  )}
+                                  <span className="text-muted-foreground">
+                                    {" — "}
+                                    {finding.detail}
+                                  </span>
+                                  {finding.remediation && (
+                                    <div className="mt-1 flex items-start gap-1.5 text-muted-foreground">
+                                      <Wrench className="mt-0.5 h-3 w-3 flex-shrink-0" />
+                                      <span>{finding.remediation}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
                     );
                   })}
-                </ul>
+                </div>
               )}
             </div>
           );

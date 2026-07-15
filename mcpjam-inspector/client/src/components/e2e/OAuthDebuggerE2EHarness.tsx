@@ -286,6 +286,9 @@ export function OAuthDebuggerE2EHarness() {
         projectId: PROJECT_ID,
         serverId: serverIdForName(serverName),
         serverUrl,
+        ...(tokens.authorizationServerUrl
+          ? { authorizationServerUrl: tokens.authorizationServerUrl }
+          : {}),
         kind: "generic",
         clientInformation: {
           clientId: tokens.clientId,

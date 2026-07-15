@@ -1,13 +1,14 @@
 import { useMemo, useState } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
-import { cn } from "@/lib/utils";
-import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
-import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
-import { SuiteRunsList } from "./suite-runs-list";
+import {
+  SuiteInsightsCollapsible,
+  type InsightGroupScope,
+} from "./suite-insights-collapsible";
+import { SuiteMetricStrip } from "./suite-metric-strip";
 import { TestCasesOverview } from "./test-cases-overview";
-import { MonitoringTab } from "./monitoring-tab";
+import { SuiteResultsSplit } from "./suite-results-split";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
-import { isPinnedOnly } from "@/shared/prompt-turns";
+import { isModelFree } from "@/shared/steps";
 
 interface RunTrendPoint {
   runId: string;
@@ -26,8 +27,6 @@ interface ModelStat {
   total: number;
 }
 
-type SuiteDashboardTab = "runs" | "cases" | "monitoring";
-
 export interface SuiteDashboardProps {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -40,8 +39,15 @@ export interface SuiteDashboardProps {
   onTestCaseClick: (testCaseId: string) => void;
   /** One-click deep-link from a case row to its latest compare iteration. */
   onOpenLastRun?: (testCaseId: string, iterationId: string) => void;
+  /**
+   * Open a specific iteration in the standardized case editor (split layout,
+   * no legacy compare header). Wired to matrix cell clicks.
+   */
+  onOpenCaseIteration?: (testCaseId: string, iterationId: string) => void;
   /** Click a run row — opens run detail. */
   onRunClick: (runId: string) => void;
+  /** Delete a single run (rail hover trash; groups delete all their host runs). */
+  onDirectDeleteRun?: (runId: string) => Promise<void>;
   /** Per-row Run button inside the cases list. */
   onRunTestCase?: (testCase: EvalCase) => void;
   runningTestCaseId?: string | null;
@@ -50,19 +56,31 @@ export interface SuiteDashboardProps {
   connectedServerNames?: Set<string>;
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   testCasesClickHint?: string;
+  /** Retained for prop compatibility with the parent factory; unused here. */
   userMap?: Map<string, { name: string; imageUrl?: string }>;
-  /** Empty-state CTAs in the Cases tab (Playground) — same actions as the suite header. */
+  /** Empty-state CTAs in the case library — same actions as the suite header. */
   onGenerateTestCases?: () => void;
   canGenerateTestCases?: boolean;
   generateTestCasesDisabledReason?: string;
   isGeneratingTestCases?: boolean;
   onCreateTestCase?: () => void;
+  /**
+   * When set, the results split shows this run's detail in its right pane
+   * (the rail highlights the run). Drives the folded-in run-detail view; the
+   * parent owns the URL, so this is the run currently in the URL.
+   */
+  selectedRunId?: string | null;
+  /** Prebuilt run-detail surface (RunDetailView) rendered when a run is selected. */
+  runDetailPane?: React.ReactNode;
+  /** Leave the selected run (back to suite overview) — clears the URL run id. */
+  onExitRun?: () => void;
 }
 
 /**
- * Unified suite detail view: persistent accuracy chart + run insights, then
- * a Runs / Cases sub-tab switcher. Defaults to Cases when no runs exist so
- * the empty state nudges authoring; otherwise Runs is the hero.
+ * Suite detail view: persistent accuracy strip + run insights, then the unified
+ * master-detail results surface (run-group rail + scoped right pane). This is
+ * the single surface for browsing runs, cases, run groups, and a folded-in
+ * single-run detail — there is no longer a Runs/Cases tab switcher.
  */
 export function SuiteDashboard({
   suite,
@@ -74,7 +92,9 @@ export function SuiteDashboard({
   modelStats,
   onTestCaseClick,
   onOpenLastRun,
+  onOpenCaseIteration,
   onRunClick,
+  onDirectDeleteRun,
   onRunTestCase,
   runningTestCaseId,
   blockTestCaseRuns,
@@ -82,12 +102,14 @@ export function SuiteDashboard({
   connectedServerNames,
   onDeleteTestCasesBatch,
   testCasesClickHint,
-  userMap,
   onGenerateTestCases,
   canGenerateTestCases,
   generateTestCasesDisabledReason,
   isGeneratingTestCases,
   onCreateTestCase,
+  selectedRunId,
+  runDetailPane,
+  onExitRun,
 }: SuiteDashboardProps) {
   const hasRuns = runs.length > 0;
   const hostNamesById = useMemo(() => {
@@ -98,33 +120,19 @@ export function SuiteDashboard({
     return map;
   }, [suite.hostAttachments]);
 
-  const [activeTab, setActiveTab] = useState<SuiteDashboardTab>(
-    hasRuns ? "runs" : "cases"
-  );
-  // Monitoring tab: synthetic-monitors flag AND the suite actually has
+  // Monitoring rail item: synthetic-monitors flag AND the suite actually has
   // monitoring signal (a schedule or at least one widget probe case).
   const syntheticMonitorsEnabled =
     useFeatureFlagEnabled("synthetic-monitors") === true;
-  const showMonitoringTab =
+  const showMonitoring =
     syntheticMonitorsEnabled &&
     (Boolean(suite.schedule) ||
-      cases.some((testCase) =>
-        isPinnedOnly({
-          caseType: testCase.caseType,
-          promptTurns: testCase.promptTurns,
-        }),
-      ));
-  // A stale "monitoring" selection (flag toggled off, schedule/probes
-  // removed) must not strand the tab strip with nothing highlighted —
-  // resolve it to the default tab for both highlighting and content.
-  const effectiveTab: SuiteDashboardTab =
-    activeTab === "monitoring" && !showMonitoringTab
-      ? hasRuns
-        ? "runs"
-        : "cases"
-      : activeTab;
+      cases.some((testCase) => isModelFree(testCase.steps)));
 
-  const testCasesSection = (
+  // The case-authoring library (with add / delete / run affordances). The split
+  // shows it as the "All runs" pane before any host-scoped run data exists, so
+  // empty states and authoring survive on fresh / attachment-less suites.
+  const caseLibrary = (
     <TestCasesOverview
       suite={suite}
       cases={cases}
@@ -133,12 +141,14 @@ export function SuiteDashboard({
       runsViewMode="test-cases"
       onViewModeChange={() => {}}
       onTestCaseClick={onTestCaseClick}
+      showClientResultColumns
       clickHint={testCasesClickHint}
       runTrendData={runTrendData}
       modelStats={modelStats}
       runsLoading={runsLoading}
       onRunClick={onRunClick}
       hideViewModeSelect
+      fillAvailableHeight
       onOpenLastRun={onOpenLastRun}
       onDeleteTestCasesBatch={onDeleteTestCasesBatch}
       onRunTestCase={onRunTestCase}
@@ -154,80 +164,77 @@ export function SuiteDashboard({
     />
   );
 
-  const runsSection = (
-    <SuiteRunsList
-      suite={suite}
-      cases={cases}
-      runs={runs}
-      allIterations={allIterations}
-      suiteSource={suite.source}
-      onRunClick={onRunClick}
-      onTestCaseClick={onTestCaseClick}
-      userMap={userMap}
-      runsLoading={runsLoading}
-      hostNamesById={hostNamesById}
-    />
-  );
+  // The top band is constant across All-runs and a selected run, so switching
+  // never shifts the chrome. The metric strip is the same 4-card component
+  // either way — suite-aggregate (with trends) by default, or scoped to the
+  // run's point-in-time numbers when one is selected. Run insights stays pinned
+  // too (suite latest-vs-previous context); the run pane's own AI insights live
+  // in its side panel.
+  // Selected multi-host run group reported up by the results split; drives the
+  // banner's cross-host diagnosis mode.
+  const [groupScope, setGroupScope] = useState<InsightGroupScope | null>(null);
 
-  const renderTab = (
-    next: SuiteDashboardTab,
-    label: string,
-    count?: number
-  ) => {
-    const active = effectiveTab === next;
-    return (
-      <button
-        key={next}
-        type="button"
-        role="tab"
-        aria-selected={active}
-        onClick={() => setActiveTab(next)}
-        className={cn(
-          "relative -mb-px flex items-center gap-2 border-b-2 border-transparent px-1 pb-3 pt-1 text-sm font-medium transition-colors",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2",
-          active
-            ? "border-primary text-foreground"
-            : "text-muted-foreground hover:text-foreground"
-        )}
-      >
-        <span>{label}</span>
-        {typeof count === "number" ? (
-          <span className="text-xs font-normal tabular-nums text-muted-foreground">
-            {count}
-          </span>
-        ) : null}
-      </button>
-    );
-  };
+  // Scope the header KPIs the same way the results split + insight banner scope:
+  // a single selected run → its point-in-time numbers; a selected run group →
+  // that launch's host runs aggregated; otherwise the whole suite (with trends).
+  // `selectedRunId` wins over `groupScope` because opening a child run is a
+  // narrower selection than its parent group.
+  const scopedRunIds = useMemo<Set<string> | null>(() => {
+    if (selectedRunId) return new Set([selectedRunId]);
+    if (groupScope) return new Set(groupScope.runs.map((r) => r._id));
+    return null;
+  }, [selectedRunId, groupScope]);
+
+  const metricRuns = scopedRunIds
+    ? runs.filter((r) => scopedRunIds.has(r._id))
+    : runs;
+  const metricIterations = scopedRunIds
+    ? allIterations.filter(
+        (i) => i.suiteRunId && scopedRunIds.has(i.suiteRunId),
+      )
+    : allIterations;
+  // A group is a single launch across hosts → aggregate to one point-in-time
+  // reading (no per-host "trend"). A single run is already one point.
+  const metricAggregate = !selectedRunId && groupScope != null;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <SuiteRunsChartGrid
-        suiteSource={suite.source}
-        runTrendData={runTrendData}
-        modelStats={modelStats}
-        runsLoading={runsLoading}
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+      {hasRuns ? (
+        <div className="shrink-0">
+          <SuiteMetricStrip
+            runs={metricRuns}
+            allIterations={metricIterations}
+            aggregate={metricAggregate}
+          />
+        </div>
+      ) : null}
+      {hasRuns ? (
+        <div className="shrink-0">
+          <SuiteInsightsCollapsible
+            runs={runs}
+            groupScope={groupScope}
+            selectedRunId={selectedRunId}
+          />
+        </div>
+      ) : null}
+      <SuiteResultsSplit
+        onGroupScopeChange={setGroupScope}
+        suite={suite}
+        cases={cases}
+        runs={runs}
+        allIterations={allIterations}
+        hostNamesById={hostNamesById}
+        allRunsPane={caseLibrary}
+        onTestCaseClick={onTestCaseClick}
+        onOpenCaseIteration={onOpenCaseIteration}
         onRunClick={onRunClick}
+        showMonitoring={showMonitoring}
+        selectedRunId={selectedRunId}
+        runDetailPane={runDetailPane}
+        onExitRun={onExitRun}
+        onDeleteRun={onDirectDeleteRun}
+        onDeleteTestCasesBatch={onDeleteTestCasesBatch}
       />
-      {hasRuns ? <SuiteInsightsCollapsible runs={runs} /> : null}
-      <div
-        role="tablist"
-        aria-label="Suite content"
-        className="flex w-full shrink-0 items-center gap-8 border-b border-border/40"
-      >
-        {renderTab("runs", "Runs", runs.length)}
-        {renderTab("cases", "Cases", cases.length)}
-        {showMonitoringTab ? renderTab("monitoring", "Monitoring") : null}
-      </div>
-      <div className="flex min-h-0 flex-1 flex-col">
-        {effectiveTab === "runs" ? (
-          runsSection
-        ) : effectiveTab === "monitoring" ? (
-          <MonitoringTab suiteId={suite._id} onRunClick={onRunClick} />
-        ) : (
-          testCasesSection
-        )}
-      </div>
     </div>
   );
 }

@@ -14,6 +14,7 @@ import perplexityLogo from "/perplexity_logo.svg";
 import clineLogoDark from "/cline_logo_dark.svg";
 import clineLogoLight from "/cline_logo_light.svg";
 import notionLogo from "/notion_logo.png";
+import slackLogo from "/slack_logo.png";
 import mcpjamLogo from "/mcp_jam.svg";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
@@ -52,6 +53,12 @@ import {
   GOOSE_PLATFORM,
   getGooseStyleVariables,
 } from "@/config/goose-client-context";
+import {
+  SLACK_CHAT_BACKGROUND,
+  SLACK_FONT_CSS,
+  SLACK_PLATFORM,
+  getSlackStyleVariables,
+} from "@/config/slack-client-context";
 import { ClaudeMarkIndicator } from "./indicators/claude-mark";
 import { ClaudeCodeCliIndicator } from "./indicators/claude-code-cli";
 import { ChatGptDotIndicator } from "./indicators/chatgpt-dot";
@@ -70,6 +77,18 @@ import type {
   ResolvedMcpAppsCapabilities,
   ResolvedOpenAiAppsCapabilities,
 } from "./types";
+// Canonical MCP Apps capability matrices live in the SDK so the compat engine
+// and this playground emulation share ONE source. The SDK types them sparse
+// (`McpAppsCapabilities`); they are complete surfaces, so we present them as
+// the client's resolved (all-required) shape. The cast is guarded by a
+// completeness test (built-ins matrix-parity). SLACK + the OpenAI surfaces stay
+// local — the SDK catalog doesn't carry them.
+import {
+  MCP_APPS_FULL,
+  MCP_APPS_COPILOT,
+  MCP_APPS_GOOSE,
+  MCP_APPS_NO_CLAIMS,
+} from "@mcpjam/sdk/host-compat";
 
 /**
  * Full `window.openai.*` method surface — every method on, every display
@@ -137,31 +156,8 @@ export const OPENAI_APPS_COPILOT_SURFACE: ResolvedOpenAiAppsCapabilities = {
  * model different APIs (`window.openai.*` shim vs `app.*` spec) and never
  * cross-gate.
  */
-export const MCP_APPS_FULL_SURFACE: ResolvedMcpAppsCapabilities = {
-  availableDisplayModes: ["inline", "fullscreen", "pip"],
-  toolInputPartial: true,
-  toolCancelled: true,
-  hostContextChanged: true,
-  resourceTeardown: true,
-  toolInfo: true,
-  openLinks: true,
-  serverTools: true,
-  serverResources: true,
-  logging: true,
-  updateModelContext: true,
-  message: true,
-  sandboxPermissions: true,
-  cspFrameDomains: true,
-  cspBaseUriDomains: true,
-  resourcePrefersBorder: true,
-  downloadFile: true,
-  requestTeardown: true,
-  // Default to today's behavior — host accepts widget-initiated
-  // `ui/request-display-mode` calls. Set to "user-initiated-only" or
-  // "decline" per-preset (or via user override) to harden against
-  // widgets that re-request fullscreen on every host-context-changed.
-  widgetDisplayModeRequests: "accept",
-};
+export const MCP_APPS_FULL_SURFACE: ResolvedMcpAppsCapabilities =
+  MCP_APPS_FULL as ResolvedMcpAppsCapabilities;
 
 /**
  * Spec-default "no claims" surface — every advertise key off, no
@@ -172,27 +168,8 @@ export const MCP_APPS_FULL_SURFACE: ResolvedMcpAppsCapabilities = {
  * silently advertise near-full support on hosts that don't exist
  * (mirrors `SPEC_DEFAULT_HOST_CAPABILITIES` in `registry.ts`).
  */
-export const MCP_APPS_NO_CLAIMS_SURFACE: ResolvedMcpAppsCapabilities = {
-  availableDisplayModes: ["inline"],
-  toolInputPartial: false,
-  toolCancelled: false,
-  hostContextChanged: false,
-  resourceTeardown: false,
-  toolInfo: false,
-  openLinks: false,
-  serverTools: false,
-  serverResources: false,
-  logging: false,
-  updateModelContext: false,
-  message: false,
-  sandboxPermissions: false,
-  cspFrameDomains: false,
-  cspBaseUriDomains: false,
-  resourcePrefersBorder: false,
-  downloadFile: false,
-  requestTeardown: false,
-  widgetDisplayModeRequests: "accept",
-};
+export const MCP_APPS_NO_CLAIMS_SURFACE: ResolvedMcpAppsCapabilities =
+  MCP_APPS_NO_CLAIMS as ResolvedMcpAppsCapabilities;
 
 /**
  * Microsoft 365 Copilot's published MCP Apps spec-bridge surface, verbatim
@@ -224,30 +201,8 @@ export const MCP_APPS_NO_CLAIMS_SURFACE: ResolvedMcpAppsCapabilities = {
  *
  * Note: `updateModelContext` and `message` stay on (Copilot honors both).
  */
-export const MCP_APPS_COPILOT_SURFACE: ResolvedMcpAppsCapabilities = {
-  availableDisplayModes: ["inline", "fullscreen"],
-  toolInputPartial: false,
-  toolCancelled: false,
-  hostContextChanged: false,
-  resourceTeardown: false,
-  toolInfo: false,
-  openLinks: true,
-  serverTools: true,
-  serverResources: false,
-  logging: false,
-  updateModelContext: true,
-  message: true,
-  sandboxPermissions: false,
-  cspFrameDomains: false,
-  cspBaseUriDomains: false,
-  resourcePrefersBorder: false,
-  // Copilot's published spec-bridge table does not list downloadFile or
-  // a request-teardown ack — leave off until Microsoft publishes
-  // otherwise.
-  downloadFile: false,
-  requestTeardown: false,
-  widgetDisplayModeRequests: "accept",
-};
+export const MCP_APPS_COPILOT_SURFACE: ResolvedMcpAppsCapabilities =
+  MCP_APPS_COPILOT as ResolvedMcpAppsCapabilities;
 
 /**
  * Goose Desktop 1.38.0 captured MCP Apps surface. Goose renders MCP Apps and
@@ -255,17 +210,26 @@ export const MCP_APPS_COPILOT_SURFACE: ResolvedMcpAppsCapabilities = {
  * captured `ui/initialize.hostCapabilities` only advertised `openLinks`.
  * Keep the rest off until a probe demonstrates those bridge methods.
  */
-export const MCP_APPS_GOOSE_SURFACE: ResolvedMcpAppsCapabilities = {
-  availableDisplayModes: ["inline", "fullscreen", "pip"],
+export const MCP_APPS_GOOSE_SURFACE: ResolvedMcpAppsCapabilities =
+  MCP_APPS_GOOSE as ResolvedMcpAppsCapabilities;
+
+/**
+ * Slackbot MCP host surface captured on 2026-06-24. Slackbot renders MCP Apps and
+ * exposes HostContext/tool notifications, but the probed `ui/initialize`
+ * hostCapabilities advertised only openLinks, serverTools, serverResources,
+ * and logging. No `window.openai` surface was present in the iframe.
+ */
+export const MCP_APPS_SLACK_SURFACE: ResolvedMcpAppsCapabilities = {
+  availableDisplayModes: ["inline", "fullscreen"],
   toolInputPartial: false,
   toolCancelled: false,
   hostContextChanged: false,
   resourceTeardown: false,
   toolInfo: true,
   openLinks: true,
-  serverTools: false,
-  serverResources: false,
-  logging: false,
+  serverTools: true,
+  serverResources: true,
+  logging: true,
   updateModelContext: false,
   message: false,
   sandboxPermissions: false,
@@ -314,10 +278,9 @@ export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
 // label, logo, and a CLI spinner busy-state instead of the claude.ai
 // mascot. Mirrors how CODEX_HOST_STYLE borrows ChatGPT's surface.
 //
-// Capabilities reuse Claude's preset here, but the "claude-code" template
-// (`client-templates.ts`) overrides hostCapabilities to `{}` since the CLI
-// renders no MCP Apps — the style preset is just the fallback if a host
-// ever clears that override.
+// Capabilities reuse Claude's preset here, but the catalog host definition
+// overrides host app capabilities since the CLI renders no MCP Apps — the style
+// preset is just the fallback if a host ever clears that override.
 export const CLAUDE_CODE_HOST_STYLE: HostStyleDefinition = {
   id: "claude-code",
   mcp: {
@@ -455,6 +418,32 @@ export const GOOSE_HOST_STYLE: HostStyleDefinition = {
   },
 };
 
+/**
+ * Slackbot host style. Captured from the Slackbot MCP host: base MCP advertises
+ * `io.modelcontextprotocol/ui`, the iframe completes `ui/initialize`, and
+ * the host provides Slack-Lato style variables. It does not expose
+ * `window.openai`, so Apps SDK widgets need an MCP Apps bridge or fallback.
+ */
+export const SLACK_HOST_STYLE: HostStyleDefinition = {
+  id: "slack",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: SLACK_PLATFORM,
+    fontCss: SLACK_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_SLACK_SURFACE,
+    resolveStyleVariables: getSlackStyleVariables,
+  },
+  chatUi: {
+    label: "Slackbot",
+    shortLabel: "Slackbot-style host",
+    pickerDescription: "Slackbot MCP host",
+    logoSrc: slackLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => SLACK_CHAT_BACKGROUND[theme],
+    loadingIndicator: CodexShineIndicator,
+  },
+};
+
 export const CURSOR_HOST_STYLE: HostStyleDefinition = {
   id: "cursor",
   mcp: {
@@ -543,7 +532,7 @@ export const COPILOT_HOST_STYLE: HostStyleDefinition = {
 
 /**
  * OpenAI Codex host style. Codex itself is a CLI tool (no widget
- * rendering — see the Codex template in `client-templates.ts` which
+ * rendering — see the Codex catalog host definition, which
  * advertises `elicitation`-only client capabilities), so this entry is
  * a playground stand-in rather than a faithful clone of a real Codex
  * surface. We mirror ChatGPT's MCP profile because Codex is OpenAI-
@@ -642,8 +631,8 @@ export const VSCODE_HOST_STYLE: HostStyleDefinition = {
 /**
  * AWS Bedrock AgentCore host style. AgentCore is a server-side agent
  * runtime that permits only text-based MCP servers — it does not render
- * MCP Apps widgets (analogous to the Codex CLI; see the AgentCore template
- * in `client-templates.ts`, which advertises `elicitation`-only client
+ * MCP Apps widgets (analogous to the Codex CLI; see the AgentCore catalog host
+ * definition, which advertises `elicitation`-only client
  * capabilities). This entry is therefore a playground stand-in, not a
  * faithful clone of a real rendering surface.
  *
@@ -847,6 +836,7 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   CHATGPT_HOST_STYLE,
   MISTRAL_HOST_STYLE,
   GOOSE_HOST_STYLE,
+  SLACK_HOST_STYLE,
   CURSOR_HOST_STYLE,
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,

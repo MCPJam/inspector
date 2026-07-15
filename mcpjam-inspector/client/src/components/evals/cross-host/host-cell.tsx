@@ -1,277 +1,188 @@
-import { useMemo } from "react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@mcpjam/design-system/tooltip";
+import { useMemo, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { computeIterationResult } from "../pass-criteria";
-import { RunCaseIterationBar } from "../run-case-list-shared";
-import type { RunCaseIterationOutcome } from "../run-case-groups";
+import { MetricStrip } from "../metric-strip";
+import {
+  buildCellMetricStripData,
+} from "../metric-strip-data";
 import { formatRunCaseLatencyMs } from "../run-case-groups";
-import type { CellData } from "./use-cross-host-data";
-import type { EvalIteration } from "../types";
+import {
+  CellInsightPanel,
+  InlineJudgeBadge,
+  type JudgeCase,
+  type WorkflowInsight,
+} from "../goal-completion-presentation";
+import { cellAvgToolCalls } from "./case-row-metrics";
+import { cellOutcome, type CellData, type CellOutcome, type CellTrendPoint } from "./use-cross-host-data";
 
 interface HostCellProps {
   data: CellData | undefined;
-  metricComparisons?: HostCellMetricComparisons;
+  /** Taller footprint when the matrix uses All-runs metric strips. */
+  trendsLayout?: boolean;
+  /** Advisory judge verdict for this (case, host) cell, when graded. */
+  judgeCase?: JudgeCase;
+  /** Whether the judge verdict disagrees with the cell's deterministic outcome. */
+  judgeDisagrees?: boolean;
+  /** Server-quality workflow finding for this (case, host) cell, when present. */
+  workflowInsight?: WorkflowInsight;
+  /** Open this cell's trajectory (drill-in); shown as a link in the expansion. */
+  onOpenTrace?: () => void;
 }
 
-export type HostCellMetricKey = "p50" | "p95" | "avgTokens";
-
-export type HostCellMetricComparison = {
-  hostId: string;
-  hostName: string;
-  value: number;
-  formattedValue: string;
-  isCurrent: boolean;
-};
-
-export type HostCellMetricComparisons = Partial<
-  Record<HostCellMetricKey, HostCellMetricComparison[]>
->;
-
-function stableOrder(iterations: EvalIteration[]): EvalIteration[] {
-  return [...iterations].sort((a, b) => {
-    const an = a.iterationNumber ?? Number.MAX_SAFE_INTEGER;
-    const bn = b.iterationNumber ?? Number.MAX_SAFE_INTEGER;
-    if (an !== bn) return an - bn;
-    return (a.createdAt ?? 0) - (b.createdAt ?? 0);
-  });
-}
-
-function iterationOutcome(iteration: EvalIteration): RunCaseIterationOutcome {
-  const result = computeIterationResult(iteration);
-  if (result === "passed") return "pass";
-  if (result === "failed" || result === "timed_out") return "fail";
-  if (result === "cancelled") return "cancelled";
-  return "pending";
-}
-
-export function formatTokens(n: number): string {
+function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(Math.round(n));
 }
 
-const METRIC_COPY: Record<
-  HostCellMetricKey,
-  { title: string; description: string; missing: string }
+function HostCellMetric({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <span
+      className="inline-flex min-w-0 items-center gap-1"
+      aria-label={`${label}: ${value}`}
+    >
+      <span className="text-[9.5px] font-medium uppercase tracking-[0.04em] text-muted-foreground/80">
+        {label}
+      </span>
+      <span className="text-[11px] font-semibold tabular-nums leading-none text-muted-foreground">
+        {value}
+      </span>
+    </span>
+  );
+}
+
+const STATUS_META: Record<
+  CellOutcome,
+  { label: string; dot: string; text: string }
 > = {
-  p50: {
-    title: "P50 latency",
-    description: "Median completed-run latency for this test case.",
-    missing: "No completed latency sample for this host.",
+  pass: {
+    label: "Pass",
+    dot: "bg-success",
+    text: "text-success",
   },
-  p95: {
-    title: "P95 latency",
-    description: "Tail latency for the slowest completed runs in this case.",
-    missing: "No completed tail-latency sample for this host.",
+  fail: {
+    label: "Fail",
+    dot: "bg-destructive",
+    text: "text-destructive",
   },
-  avgTokens: {
-    title: "Average tokens",
-    description: "Mean token usage per iteration in the latest run.",
-    missing: "No token usage sample for this host.",
+  part: {
+    label: "Partial",
+    dot: "bg-amber-500",
+    text: "text-amber-600 dark:text-amber-400",
+  },
+  running: {
+    label: "Running",
+    dot: "bg-muted-foreground animate-pulse",
+    text: "text-muted-foreground",
   },
 };
 
-function formatDeltaFromBest(
-  metricKey: HostCellMetricKey,
-  value: number,
-  bestValue: number
-): string {
-  const delta = value - bestValue;
-  if (delta <= 0) return "best";
-  if (metricKey === "avgTokens") return `+${formatTokens(delta)} tok`;
-  return `+${formatRunCaseLatencyMs(delta)}`;
+function HostCellEmpty({ trendsLayout = false }: { trendsLayout?: boolean }) {
+  return (
+    <div
+      className={cn(
+        "flex items-center justify-center px-3 py-3",
+        trendsLayout ? "min-h-[9rem]" : "min-h-[3.25rem]",
+      )}
+      data-testid="host-cell-empty"
+    >
+      <div
+        className={cn(
+          "flex w-full flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border/50 bg-muted/5 px-3 text-center",
+          trendsLayout ? "py-5" : "py-4",
+        )}
+        role="status"
+        aria-label="Not run — this client has not run this case yet"
+      >
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/75">
+          Not run
+        </span>
+        <p className="max-w-[14rem] text-[10.5px] leading-snug text-muted-foreground/50">
+          This client has not run this case yet
+        </p>
+      </div>
+    </div>
+  );
 }
 
-function HostMetricComparisonTooltip({
-  metricKey,
-  entries,
+/** All-runs view: always use labeled metric strip (sparklines when history ≥ 2). */
+function HostCellMetricStrip({
+  data,
+  judgeCase,
+  judgeDisagrees = false,
 }: {
-  metricKey: HostCellMetricKey;
-  entries: HostCellMetricComparison[];
+  data: CellData;
+  judgeCase?: JudgeCase;
+  judgeDisagrees?: boolean;
 }) {
-  const copy = METRIC_COPY[metricKey];
-  const current = entries.find((entry) => entry.isCurrent);
-  const best = entries[0];
-  const maxValue = entries.reduce(
-    (max, entry) => Math.max(max, entry.value),
-    0
-  );
+  const stripData = useMemo(() => buildStripDataForCell(data), [data]);
+
+  if (!stripData) return null;
 
   return (
-    <div className="w-[18rem] overflow-hidden rounded-xl border border-border/70 bg-popover/95 p-0 text-popover-foreground shadow-2xl shadow-black/10 backdrop-blur supports-[backdrop-filter]:bg-popover/90">
-      <div className="border-b border-border/60 bg-gradient-to-br from-muted/80 via-background to-background px-3 py-2.5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs font-semibold text-foreground">
-              {copy.title}
-            </p>
-            <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
-              {copy.description}
-            </p>
-          </div>
-          {current ? (
-            <span className="rounded-full border border-border/70 bg-background px-2 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
-              #{entries.findIndex((entry) => entry.isCurrent) + 1}
-            </span>
-          ) : null}
+    <div className="flex flex-col gap-1.5">
+      <MetricStrip
+        data={stripData}
+        density="compact"
+        layout="vertical"
+        surface="embedded"
+        testId="cell-metric-strip"
+      />
+      {judgeCase ? (
+        <div className="flex px-1">
+          <InlineJudgeBadge judgeCase={judgeCase} disagrees={judgeDisagrees} />
         </div>
-      </div>
-
-      {entries.length > 0 && best ? (
-        <div className="space-y-1.5 p-2">
-          {entries.map((entry, index) => {
-            const width =
-              maxValue > 0 ? Math.max(10, (entry.value / maxValue) * 100) : 0;
-            const delta = formatDeltaFromBest(
-              metricKey,
-              entry.value,
-              best.value
-            );
-
-            return (
-              <div
-                key={entry.hostId}
-                className={cn(
-                  "rounded-lg border border-transparent px-2 py-1.5",
-                  entry.isCurrent &&
-                    "border-primary/25 bg-primary/[0.07] ring-1 ring-primary/10"
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="w-5 shrink-0 font-mono text-[10px] text-muted-foreground">
-                    #{index + 1}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                    {entry.hostName}
-                  </span>
-                  <span className="font-mono text-[11px] tabular-nums text-foreground">
-                    {entry.formattedValue}
-                  </span>
-                </div>
-                <div className="mt-1.5 flex items-center gap-2">
-                  <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
-                    <div
-                      className={cn(
-                        "h-full rounded-full",
-                        entry.isCurrent
-                          ? "bg-primary"
-                          : "bg-muted-foreground/35"
-                      )}
-                      style={{ width: `${width}%` }}
-                    />
-                  </div>
-                  <span
-                    className={cn(
-                      "w-14 text-right font-mono text-[10px] tabular-nums",
-                      delta === "best"
-                        ? "text-success"
-                        : "text-muted-foreground"
-                    )}
-                  >
-                    {delta}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <p className="px-3 py-2.5 text-xs text-muted-foreground">
-          No peer data yet for this metric.
-        </p>
-      )}
-
-      {!current ? (
-        <p className="border-t border-border/60 px-3 py-2 text-[11px] text-muted-foreground">
-          {copy.missing}
-        </p>
       ) : null}
     </div>
   );
 }
 
-function HostCellMetric({
-  label,
-  value,
-  metricKey,
-  comparisonEntries,
-  valueClassName,
-}: {
-  label: string;
-  value: string;
-  metricKey: HostCellMetricKey;
-  comparisonEntries?: HostCellMetricComparison[];
-  valueClassName?: string;
-}) {
-  const trigger = (
-    <button
-      type="button"
-      className="group/metric flex min-w-0 flex-col items-center gap-0.5 rounded-lg px-1 py-0.5 text-center transition duration-150 hover:-translate-y-px hover:bg-background/80 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-      aria-label={`${METRIC_COPY[metricKey].title}: ${value}`}
-      onClick={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
-    >
-      <span className="font-mono text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground/90 transition-colors group-hover/metric:text-foreground/70">
-        {label}
-      </span>
-      <span
-        className={cn(
-          "font-mono text-[11px] font-medium tabular-nums leading-none text-foreground/90",
-          valueClassName
-        )}
-      >
-        {value}
-      </span>
-    </button>
-  );
-
-  if (!comparisonEntries) return trigger;
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>{trigger}</TooltipTrigger>
-      <TooltipContent
-        side="top"
-        align="center"
-        sideOffset={8}
-        className="border-0 bg-transparent p-0 shadow-none"
-      >
-        <HostMetricComparisonTooltip
-          metricKey={metricKey}
-          entries={comparisonEntries}
-        />
-      </TooltipContent>
-    </Tooltip>
-  );
+function outcomeToTrendResult(
+  outcome: CellOutcome,
+): CellTrendPoint["result"] {
+  if (outcome === "pass") return "passed";
+  if (outcome === "fail") return "failed";
+  if (outcome === "part") return "partial";
+  return "pending";
 }
 
-export function HostCell({ data, metricComparisons }: HostCellProps) {
-  const iterationResults = useMemo(() => {
-    if (!data?.iterations.length) return [];
-    return stableOrder(data.iterations).map(iterationOutcome);
-  }, [data?.iterations]);
-
-  if (!data || data.totalCount === 0) {
-    return (
-      <div className="flex h-full min-h-[4.5rem] items-center justify-center px-3">
-        <span className="font-mono text-xs text-muted-foreground/50">—</span>
-      </div>
-    );
+function buildStripDataForCell(data: CellData) {
+  if (data.trendSeries && data.trendSeries.length > 0) {
+    return buildCellMetricStripData(data.trendSeries);
   }
 
-  const accuracyLabel =
-    data.passRate !== null ? `${Math.round(data.passRate)}%` : null;
-  const accuracyBadge =
-    accuracyLabel != null ? (
-      <span className="font-mono text-xs tabular-nums leading-none text-muted-foreground">
-        {accuracyLabel}
-      </span>
-    ) : null;
+  const avgToolCalls = cellAvgToolCalls(data) ?? 0;
 
+  return buildCellMetricStripData([
+    {
+      runLabel: "latest",
+      result: outcomeToTrendResult(cellOutcome(data)),
+      latencyMs: data.p50LatencyMs,
+      latencyP95Ms: data.p95LatencyMs,
+      tokens: data.avgTokensPerIteration,
+      toolCalls: avgToolCalls,
+    },
+  ]);
+}
+
+/** Run-group / single-run view: snapshot metrics only. */
+function HostCellSnapshot({
+  data,
+  meta,
+  judgeCase,
+  judgeDisagrees = false,
+}: {
+  data: CellData;
+  meta: (typeof STATUS_META)["pass"];
+  judgeCase?: JudgeCase;
+  judgeDisagrees?: boolean;
+}) {
   const p50Value =
     data.p50LatencyMs !== null
       ? formatRunCaseLatencyMs(data.p50LatencyMs)
@@ -282,49 +193,107 @@ export function HostCell({ data, metricComparisons }: HostCellProps) {
       : null;
   const avgTokensValue =
     data.avgTokensPerIteration !== null
-      ? `${formatTokens(data.avgTokensPerIteration)} tok`
+      ? formatTokens(data.avgTokensPerIteration)
       : null;
-
   const hasMetrics = p50Value || p95Value || avgTokensValue;
 
   return (
-    <div className="flex min-h-[4.5rem] flex-col gap-2 px-3 py-2.5">
-      <RunCaseIterationBar
-        results={iterationResults}
-        passed={data.passCount}
-        total={data.totalCount}
-        maxVisible={8}
-        headerEnd={accuracyBadge}
-      />
-      {hasMetrics ? (
-        <div
-          className="grid w-full grid-cols-3 gap-1 border-t border-border/50 pt-2"
-          aria-label="Latency and token metrics"
-        >
-          <HostCellMetric
-            label="p50"
-            metricKey="p50"
-            value={p50Value ?? "—"}
-            comparisonEntries={metricComparisons?.p50}
-            valueClassName={!p50Value ? "text-muted-foreground/50" : undefined}
-          />
-          <HostCellMetric
-            label="p95"
-            metricKey="p95"
-            value={p95Value ?? "—"}
-            comparisonEntries={metricComparisons?.p95}
-            valueClassName={!p95Value ? "text-muted-foreground/50" : undefined}
-          />
-          <HostCellMetric
-            label="avg"
-            metricKey="avgTokens"
-            value={avgTokensValue ?? "—"}
-            comparisonEntries={metricComparisons?.avgTokens}
-            valueClassName={
-              !avgTokensValue ? "text-muted-foreground/50" : undefined
-            }
-          />
+    <div className="flex min-h-[3.25rem] w-full flex-col justify-center gap-1 px-3 py-2">
+      <div className="flex w-full items-center gap-2">
+        <span
+          className={cn("size-1.5 flex-none rounded-full", meta.dot)}
+          aria-hidden
+        />
+        <span className={cn("shrink-0 text-[12.5px] font-semibold", meta.text)}>
+          {meta.label}
+        </span>
+        <span className="shrink-0 text-[11px] font-semibold tabular-nums text-muted-foreground">
+          {data.passCount}/{data.totalCount}
+        </span>
+        {hasMetrics ? (
+          <div
+            className="ml-auto flex min-w-0 shrink items-center gap-1.5"
+            aria-label="Latency and token metrics"
+          >
+            {p50Value ? <HostCellMetric label="p50" value={p50Value} /> : null}
+            {p95Value ? <HostCellMetric label="p95" value={p95Value} /> : null}
+            {avgTokensValue ? (
+              <HostCellMetric label="tok" value={avgTokensValue} />
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+      {judgeCase ? (
+        <div className="flex">
+          <InlineJudgeBadge judgeCase={judgeCase} disagrees={judgeDisagrees} />
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function HostCell({
+  data,
+  trendsLayout = false,
+  judgeCase,
+  judgeDisagrees = false,
+  workflowInsight,
+  onOpenTrace,
+}: HostCellProps) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!data || data.totalCount === 0) {
+    return <HostCellEmpty trendsLayout={trendsLayout} />;
+  }
+
+  const content = trendsLayout ? (
+    <HostCellMetricStrip
+      data={data}
+      judgeCase={judgeCase}
+      judgeDisagrees={judgeDisagrees}
+    />
+  ) : (
+    <HostCellSnapshot
+      data={data}
+      meta={STATUS_META[cellOutcome(data)]}
+      judgeCase={judgeCase}
+      judgeDisagrees={judgeDisagrees}
+    />
+  );
+
+  // No per-cell insight to expand → render the plain cell (no toggle).
+  const hasInsight = Boolean(judgeCase || workflowInsight);
+  if (!hasInsight) {
+    return content;
+  }
+
+  return (
+    <div className="flex flex-col">
+      {content}
+      <button
+        type="button"
+        // Stop propagation so toggling the insight doesn't also trigger the
+        // cell's drill-in click.
+        onClick={(event) => {
+          event.stopPropagation();
+          setExpanded((value) => !value);
+        }}
+        aria-expanded={expanded}
+        aria-label={expanded ? "Hide cell insight" : "Show cell insight"}
+        className="flex items-center justify-center gap-1 border-t border-border/40 px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:bg-muted/30"
+      >
+        {expanded ? "Hide insight" : "Insight"}
+        <ChevronDown
+          className={cn("size-3 transition-transform", expanded && "rotate-180")}
+          aria-hidden
+        />
+      </button>
+      {expanded ? (
+        <CellInsightPanel
+          judgeCase={judgeCase}
+          workflowInsight={workflowInsight}
+          onOpenTrace={onOpenTrace}
+        />
       ) : null}
     </div>
   );

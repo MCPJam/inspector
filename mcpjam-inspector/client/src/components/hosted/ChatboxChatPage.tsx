@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import { Loader2, Link2Off, ShieldX } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
@@ -39,6 +39,7 @@ import {
   ChatboxChatUiOverrideProvider,
   ChatboxHostStyleProvider,
 } from "@/contexts/chatbox-client-style-context";
+import { gateMcpToolResultImageRenderingByModelVisibility } from "@/lib/client-config-v2";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
@@ -241,13 +242,7 @@ export function ChatboxChatPage({
     isLoading: isWorkOsLoading,
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
-  const posthog = usePostHog();
-  const posthogRef = useRef(posthog);
   const themeMode = usePreferencesStore((s) => s.themeMode);
-
-  useEffect(() => {
-    posthogRef.current = posthog;
-  }, [posthog]);
 
   const playgroundParams = useMemo(() => {
     try {
@@ -496,7 +491,8 @@ export function ChatboxChatPage({
         const authMode = getChatboxBootstrapAuthMode(isAuthenticated);
         setIsBootstrapping(true);
         setRouteError(null);
-        posthogRef.current.capture("chatbox_bootstrap_started", {
+        track("chatbox_bootstrap_started", {
+          location: "chatbox",
           surface: "chatbox",
           auth_mode: authMode,
           status: "started",
@@ -555,7 +551,8 @@ export function ChatboxChatPage({
           setRouteError(null);
 
           syncChatboxBootstrapHash(slugify(nextSession.payload.name));
-          posthogRef.current.capture("chatbox_bootstrap_silent_success", {
+          track("chatbox_bootstrap_silent_success", {
+            location: "chatbox",
             surface: "chatbox",
             auth_mode: authMode,
             status: "success",
@@ -585,7 +582,8 @@ export function ChatboxChatPage({
           }
 
           setRouteError(nextError);
-          posthogRef.current.capture("chatbox_bootstrap_silent_failure", {
+          track("chatbox_bootstrap_silent_failure", {
+            location: "chatbox",
             surface: "chatbox",
             auth_mode: authMode,
             status: "failure",
@@ -734,7 +732,8 @@ export function ChatboxChatPage({
     }
 
     interactiveSignInEventKeyRef.current = eventKey;
-    posthogRef.current.capture("interactive_signin_required", {
+    track("interactive_signin_required", {
+      location: "chatbox",
       surface: "chatbox",
       auth_mode: authMode,
       status: "required",
@@ -904,6 +903,13 @@ export function ChatboxChatPage({
             systemPrompt: session.payload.systemPrompt,
             temperature: session.payload.temperature,
             requireToolApproval: session.payload.requireToolApproval,
+            modelVisibleMcpToolResults:
+              session.payload.modelVisibleMcpToolResults,
+            mcpToolResultImageRendering:
+              gateMcpToolResultImageRenderingByModelVisibility(
+                session.payload.mcpToolResultImageRendering,
+                session.payload.modelVisibleMcpToolResults
+              ),
           }}
           onOAuthRequired={handleOAuthRequired}
           chatboxComposerBlocked={introGate.composerBlocked}
@@ -949,47 +955,47 @@ export function ChatboxChatPage({
                     Playground previews keep platform routing (local
                     builds reuse the builder's local connections). */}
                 <WebManagedServersProvider value={!playgroundParams}>
-                <div
-                  className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
-                  data-host-style={hostStyle}
-                  style={shellStyle}
-                >
-                  <header className="border-b border-border/50 bg-background/95 backdrop-blur">
-                    <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-2.5">
-                      <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
-                        {session?.payload.name || "\u00A0"}
-                      </h1>
-                      <button
-                        onClick={handleOpenMcpJam}
-                        className="cursor-pointer flex-shrink-0 border-none bg-transparent p-0"
-                      >
-                        <img
-                          src={
-                            themeMode === "dark"
-                              ? "/mcp_jam_dark.png"
-                              : "/mcp_jam_light.png"
-                          }
-                          alt="MCPJam"
-                          className="h-4 w-auto object-contain"
-                        />
-                      </button>
-                      <div className="flex flex-1 items-center justify-end gap-1.5">
-                        {session && shareableToken ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-muted-foreground"
-                            onClick={handleCopyLink}
-                          >
-                            Copy link
-                          </Button>
-                        ) : null}
+                  <div
+                    className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
+                    data-host-style={hostStyle}
+                    style={shellStyle}
+                  >
+                    <header className="border-b border-border/50 bg-background/95 backdrop-blur">
+                      <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-2.5">
+                        <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+                          {session?.payload.name || "\u00A0"}
+                        </h1>
+                        <button
+                          onClick={handleOpenMcpJam}
+                          className="cursor-pointer flex-shrink-0 border-none bg-transparent p-0"
+                        >
+                          <img
+                            src={
+                              themeMode === "dark"
+                                ? "/mcp_jam_dark.png"
+                                : "/mcp_jam_light.png"
+                            }
+                            alt="MCPJam"
+                            className="h-4 w-auto object-contain"
+                          />
+                        </button>
+                        <div className="flex flex-1 items-center justify-end gap-1.5">
+                          {session && shareableToken ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-muted-foreground"
+                              onClick={handleCopyLink}
+                            >
+                              Copy link
+                            </Button>
+                          ) : null}
+                        </div>
                       </div>
-                    </div>
-                  </header>
+                    </header>
 
-                  {renderContent()}
-                </div>
+                    {renderContent()}
+                  </div>
                 </WebManagedServersProvider>
               </ChatboxSurfaceProvider>
             </ActiveHostCapsResolverScope>

@@ -1,6 +1,7 @@
 import { HOSTED_MODE } from "@/lib/config";
 import { authFetch } from "@/lib/session-token";
 import type { NegativeTestDiff } from "@/shared/xaa.js";
+import { getOrgScopedIssuerSegment } from "./idp-endpoints";
 
 const XAA_API_BASE = HOSTED_MODE ? "/api/web/xaa" : "/api/mcp/xaa";
 
@@ -86,7 +87,7 @@ export interface NegativeTestCase {
   label: string;
   expectedFailure: string;
   outcome: "rejected" | "accepted" | "timeout" | "error";
-  verdict: "pass" | "fail" | "unknown";
+  verdict: "pass" | "fail" | "policy" | "unknown";
   status?: number;
   detail?: string;
   diff?: NegativeTestDiff;
@@ -101,6 +102,11 @@ export interface NegativeTestsInput {
   audience: string;
   resource: string;
   subject?: string;
+  // The subject's email — required alongside `subject` on managed runs: the
+  // issuer's evaluator does an exact claims-match on BOTH (IDs alone are
+  // never trusted), so a managed scorecard without it is denied
+  // `identity_claims_mismatch`.
+  email?: string;
   clientId?: string;
   scope?: string;
   tokenEndpoint?: string;
@@ -110,6 +116,23 @@ export interface NegativeTestsInput {
   // the token endpoint from the server's own config.
   serverId?: string;
   projectId?: string;
+  // Managed-IdP policy context (org-scoped scorecards only) — the server
+  // evaluates policy ONCE before firing the broken-token matrix and 403s a
+  // denied person's scorecard.
+  policyMode?: "managed" | "unmanaged";
+  testIdentityId?: string;
+  resourceAppId?: string;
+  // Hosted runs mint the broken assertions under the org-scoped issuer so
+  // they carry the same `iss` the positive run used.
+  organizationId?: string | null;
+  // LOCAL runs only: "hosted" asks the local server to forward the whole run
+  // to the hosted issuer, so the broken assertions carry the hosted `iss` the
+  // AS actually trusts (a local `iss` would make every case "pass" on issuer
+  // mismatch alone).
+  issuerMode?: "local" | "hosted";
+  // Scoped issuer flavor: "org" (/o/, signed-in members) or "anonymous"
+  // (/g/, guest sessions). Defaults to "org".
+  issuerKind?: "org" | "anonymous";
 }
 
 /**
@@ -121,11 +144,32 @@ export interface NegativeTestsInput {
 export async function runNegativeTests(
   input: NegativeTestsInput
 ): Promise<NegativeTestsResult> {
-  const response = await authFetch(`${XAA_API_BASE}/negative-tests`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
+  const { organizationId, issuerMode, issuerKind, ...requestBody } = input;
+  const resolvedIssuerKind = issuerKind ?? "org";
+  // Hosted builds hit the scoped PATH; local hosted-issuer runs carry the
+  // opt-in in the BODY and the local server forwards server-to-server.
+  const scopedSegment = getOrgScopedIssuerSegment(
+    organizationId,
+    resolvedIssuerKind
+  );
+  const forwardExtras =
+    !HOSTED_MODE && issuerMode === "hosted"
+      ? {
+          issuerMode,
+          ...(organizationId ? { organizationId } : {}),
+          ...(resolvedIssuerKind === "anonymous"
+            ? { issuerKind: "anonymous" }
+            : {}),
+        }
+      : {};
+  const response = await authFetch(
+    `${XAA_API_BASE}${scopedSegment}/negative-tests`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...requestBody, ...forwardExtras }),
+    }
+  );
 
   const body = (await response.json().catch(() => null)) as
     | (NegativeTestsResult & { message?: string })

@@ -1,4 +1,4 @@
-import { render, fireEvent, waitFor } from "@testing-library/react";
+import { render, fireEvent, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   ComputerUsageView,
@@ -7,6 +7,7 @@ import type {
 
 const reserve = vi.fn(async () => ({} as never));
 const deleteComputer = vi.fn(async () => ({ deleted: true }));
+const hibernateComputer = vi.fn(async () => ({ hibernated: true }));
 const mintToken = vi.fn(async () => ({ token: "t", expiresAt: 0 } as never));
 let mockStatus: ComputerViewModel | null | undefined;
 let mockUsage: ComputerUsageView | null | undefined;
@@ -19,8 +20,22 @@ vi.mock("@/hooks/useProjectComputer", () => ({
   useComputerUsage: () => mockUsage,
   useReserveComputer: () => reserve,
   useDeleteComputer: () => deleteComputer,
+  useHibernateComputer: () => hibernateComputer,
   useMintTerminalToken: () => mintToken,
   useComputersDataPlaneConfig: () => mockDataPlane,
+}));
+
+let mockEnvironments: Array<{ environmentId: string; name: string }> = [];
+const resetComputer = vi.fn(async () => ({ reset: true }));
+vi.mock("@/hooks/useComputerEnvironments", () => ({
+  useEnvironments: () => mockEnvironments,
+  useResetComputer: () => resetComputer,
+}));
+
+// The drawer calls its own Convex hooks; stub it (its own tests cover it).
+vi.mock("../EnvironmentsDrawer", () => ({
+  EnvironmentsDrawer: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="env-drawer" /> : null,
 }));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
@@ -45,7 +60,9 @@ afterEach(() => {
   vi.clearAllMocks();
   mockStatus = undefined;
   mockUsage = undefined;
+  mockEnvironments = [];
   mockDataPlane = { localConfigured: true, remoteDataPlaneUrl: null };
+  window.localStorage.clear();
 });
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -83,6 +100,18 @@ describe("ComputerView", () => {
     expect(getByText(/need a synced project/i)).toBeTruthy();
   });
 
+  it("always shows the honest no-backup durability note", () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(
+      getByText(
+        /Files persist when your computer sleeps, but they aren't backed up/i
+      )
+    ).toBeTruthy();
+  });
+
   it("opening the terminal reserves the computer", async () => {
     mockStatus = null; // no computer yet
     const { getByText } = render(
@@ -117,12 +146,34 @@ describe("ComputerView", () => {
       <ComputerView projectId="p1" isAuthenticated />
     );
     fireEvent.click(getByText("Delete"));
-    expect(getByText("Delete this computer?")).toBeTruthy();
+    expect(getByText(/Delete this computer\? All files on it will be deleted/i)).toBeTruthy();
     // The confirm button is the second "Delete" — click via the confirm row.
     fireEvent.click(getByText("Delete", { selector: "button" }));
     await waitFor(() =>
       expect(deleteComputer).toHaveBeenCalledWith({ projectId: "p1" })
     );
+  });
+
+  it("hibernate requires confirmation then calls hibernateComputer", async () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    fireEvent.click(getByText("Hibernate now"));
+    expect(getByText("Hibernate now?")).toBeTruthy();
+    // The confirm button is labelled just "Hibernate".
+    fireEvent.click(getByText("Hibernate", { selector: "button" }));
+    await waitFor(() =>
+      expect(hibernateComputer).toHaveBeenCalledWith({ projectId: "p1" })
+    );
+  });
+
+  it("does not offer Hibernate unless the computer is ready", () => {
+    mockStatus = { computerId: "c1", status: "hibernating", provider: "e2b" };
+    const { queryByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(queryByText("Hibernate now")).toBeNull();
   });
 
   it("does not offer Delete once the computer is deleted", () => {
@@ -161,7 +212,7 @@ describe("ComputerView", () => {
     const { getByText, queryByText } = render(
       <ComputerView projectId="p1" isAuthenticated />
     );
-    expect(getByText(/isn't set up to run computers/i)).toBeTruthy();
+    expect(getByText(/Computers aren't available here/i)).toBeTruthy();
     expect(queryByText("Open terminal")).toBeNull();
     // The computer itself still exists (it lives in Convex/E2B, not on this
     // server), so Delete must stay available.
@@ -235,6 +286,80 @@ describe("ComputerView", () => {
   });
 });
 
+describe("ComputerView image strip", () => {
+  it("shows the base image when no environment is attached", () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(getByText("Base image")).toBeTruthy();
+  });
+
+  it("labels an attached env whose name hasn't resolved as a custom image, not base", () => {
+    mockStatus = {
+      computerId: "c1",
+      status: "ready",
+      provider: "e2b",
+      environmentId: "envX",
+    };
+    mockEnvironments = []; // still loading / not visible to this caller
+    const { getByText, queryByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(getByText("Custom image")).toBeTruthy();
+    expect(queryByText("Base image")).toBeNull();
+  });
+
+  it("shows the attached environment's name", () => {
+    mockStatus = {
+      computerId: "c1",
+      status: "ready",
+      provider: "e2b",
+      environmentId: "env1",
+    };
+    mockEnvironments = [{ environmentId: "env1", name: "ml-toolkit" }];
+    const { getByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(getByText("ml-toolkit")).toBeTruthy();
+  });
+
+  it("Change opens the environments drawer", () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText, queryByTestId, getByTestId } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(queryByTestId("env-drawer")).toBeNull();
+    fireEvent.click(getByText("Change"));
+    expect(getByTestId("env-drawer")).toBeTruthy();
+  });
+
+  it("Reset confirms then resets the computer to its image", async () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    fireEvent.click(getByText("Reset"));
+    expect(
+      getByText(/All files on this computer will be deleted/i)
+    ).toBeTruthy();
+    fireEvent.click(getByText("Reset", { selector: "button" }));
+    await waitFor(() =>
+      expect(resetComputer).toHaveBeenCalledWith({ projectId: "p1" })
+    );
+  });
+
+  it("disables Reset while the computer is mid-provision", () => {
+    mockStatus = { computerId: "c1", status: "provisioning", provider: "e2b" };
+    const { getByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(
+      (getByText("Reset", { selector: "button" }) as HTMLButtonElement).disabled
+    ).toBe(true);
+  });
+});
+
 describe("ComputerView usage meter", () => {
   it("shows awake time against the free allowance with the posted rate", () => {
     mockUsage = usage({ awakeMs: 4.2 * HOUR_MS });
@@ -297,5 +422,117 @@ describe("ComputerView usage meter", () => {
     mockUsage = null;
     const second = render(<ComputerView projectId="p1" isAuthenticated />);
     expect(second.queryByTestId("computer-usage-meter")).toBeNull();
+  });
+});
+
+describe("ComputerView billing-pause warning banner (COMP-7)", () => {
+  it("shows the 80% warning banner when the backend signals it", () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    mockUsage = usage({ awakeMs: 24 * HOUR_MS, billingPauseWarning: true });
+    const { getByTestId, getByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(getByTestId("computer-billing-warning")).toBeTruthy();
+    expect(
+      getByText(/You've used 80% of your included compute hours/i)
+    ).toBeTruthy();
+    expect(
+      getByText(/Files are preserved when your computer pauses/i)
+    ).toBeTruthy();
+    expect(getByText("Add credits")).toBeTruthy();
+  });
+
+  it("does not show the banner when the backend does not signal a warning", () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    mockUsage = usage({ awakeMs: 24 * HOUR_MS, billingPauseWarning: false });
+    const { queryByTestId } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(queryByTestId("computer-billing-warning")).toBeNull();
+  });
+
+  it("does not show the banner against a backend that omits the field", () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    // No billingPauseWarning key at all (older backend).
+    mockUsage = usage({ awakeMs: 24 * HOUR_MS });
+    const { queryByTestId } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(queryByTestId("computer-billing-warning")).toBeNull();
+  });
+
+  it("dismisses the banner and keeps it hidden for the billing window", () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    mockUsage = usage({
+      awakeMs: 24 * HOUR_MS,
+      billingPauseWarning: true,
+      windowStartAt: 1000,
+    });
+    const first = render(<ComputerView projectId="p1" isAuthenticated />);
+    fireEvent.click(first.getByLabelText("Dismiss"));
+    expect(first.queryByTestId("computer-billing-warning")).toBeNull();
+    first.unmount();
+
+    // A later mount in the same billing window stays dismissed (localStorage).
+    const second = render(<ComputerView projectId="p1" isAuthenticated />);
+    expect(second.queryByTestId("computer-billing-warning")).toBeNull();
+  });
+
+  it("re-appears in a new billing window even after a prior dismissal", () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    mockUsage = usage({
+      awakeMs: 24 * HOUR_MS,
+      billingPauseWarning: true,
+      windowStartAt: 1000,
+    });
+    const first = render(<ComputerView projectId="p1" isAuthenticated />);
+    fireEvent.click(first.getByLabelText("Dismiss"));
+    first.unmount();
+
+    // Next month → new windowStartAt → new dismissal key → banner returns.
+    mockUsage = usage({
+      awakeMs: 24 * HOUR_MS,
+      billingPauseWarning: true,
+      windowStartAt: 2000,
+    });
+    const second = render(<ComputerView projectId="p1" isAuthenticated />);
+    expect(second.queryByTestId("computer-billing-warning")).toBeTruthy();
+  });
+});
+
+describe("ComputerView post-hibernate billing state (COMP-7)", () => {
+  it("shows a 'Paused for billing' state with the remedy, not a wake spinner", () => {
+    mockStatus = {
+      computerId: "c1",
+      status: "hibernating",
+      provider: "e2b",
+      hibernatedReason: "billing",
+    };
+    const { getByTestId, queryByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    const notice = getByTestId("computer-paused-for-billing");
+    // The status chip also reads "Paused for billing"; scope to the notice.
+    expect(within(notice).getByText("Paused for billing")).toBeTruthy();
+    expect(
+      within(notice).getByText(/Files are preserved when your computer pauses/i)
+    ).toBeTruthy();
+    expect(within(notice).getByText("Add credits")).toBeTruthy();
+    // Not the generic idle spinner.
+    expect(queryByText(/Starting your computer/i)).toBeNull();
+  });
+
+  it("leaves idle hibernation messaging unchanged (no billing state)", () => {
+    mockStatus = {
+      computerId: "c1",
+      status: "hibernating",
+      provider: "e2b",
+      hibernatedReason: "idle",
+    };
+    const { queryByTestId, queryByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(queryByTestId("computer-paused-for-billing")).toBeNull();
+    expect(queryByText("Paused for billing")).toBeNull();
   });
 });

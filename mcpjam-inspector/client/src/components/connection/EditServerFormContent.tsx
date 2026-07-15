@@ -32,6 +32,8 @@ interface EditServerFormContentProps {
   onMcpProtocolVersionOverrideChange?: (
     mode: McpProtocolVersion | undefined
   ) => void;
+  /** Project default XAA test identity — shown as override placeholders. */
+  projectXaaDefaultIdentity?: { subject: string; email: string } | null;
 }
 
 export function EditServerFormContent({
@@ -41,6 +43,7 @@ export function EditServerFormContent({
   hostedServerId = null,
   mcpProtocolVersionOverride,
   onMcpProtocolVersionOverrideChange,
+  projectXaaDefaultIdentity = null,
 }: EditServerFormContentProps) {
   const hostedUrlPlaceholder = "https://example.com/mcp";
   const [revealingEnv, setRevealingEnv] = useState(false);
@@ -226,7 +229,7 @@ export function EditServerFormContent({
             onOauthScopesChange={formState.setOauthScopesInput}
             oauthProtocolMode={formState.oauthProtocolMode}
             onOauthProtocolModeChange={formState.setOauthProtocolMode}
-            oauthRegistrationMode={formState.oauthRegistrationMode}
+            registrationMode={formState.registrationMode}
             onOauthRegistrationModeChange={formState.setOauthRegistrationMode}
             useCustomClientId={formState.useCustomClientId}
             onUseCustomClientIdChange={(checked) => {
@@ -266,6 +269,18 @@ export function EditServerFormContent({
             clientSecretError={formState.clientSecretError}
             projectId={projectId}
             hostedServerId={hostedServerId}
+            xaaAuthzIssuer={formState.xaaAuthzIssuer}
+            onXaaAuthzIssuerChange={formState.setXaaAuthzIssuer}
+            xaaAllowPathScopedIssuer={formState.xaaAllowPathScopedIssuer}
+            onXaaAllowPathScopedIssuerChange={
+              formState.setXaaAllowPathScopedIssuer
+            }
+            xaaSubject={formState.xaaSubject}
+            onXaaSubjectChange={formState.setXaaSubject}
+            xaaEmail={formState.xaaEmail}
+            onXaaEmailChange={formState.setXaaEmail}
+            autoSelectsXaa={formState.autoSelectsXaa}
+            projectDefaultIdentity={projectXaaDefaultIdentity}
           />
         </div>
       )}

@@ -47,6 +47,8 @@ import type {
   HostMcp,
   HostServerOverride,
   HostStyleId,
+  McpToolResultImageRendering,
+  ModelVisibleMcpToolResults,
   ServerId,
 } from "./public-types.js";
 import {
@@ -175,6 +177,12 @@ function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
   if (c.respectToolVisibility !== undefined) {
     out.respectToolVisibility = c.respectToolVisibility;
   }
+  if (c.modelVisibleMcpToolResults !== undefined) {
+    out.modelVisibleMcpToolResults = c.modelVisibleMcpToolResults;
+  }
+  if (c.mcpToolResultImageRendering !== undefined) {
+    out.mcpToolResultImageRendering = c.mcpToolResultImageRendering;
+  }
   if (c.computer !== undefined) {
     out.computer = c.computer;
   }
@@ -248,6 +256,11 @@ export class Host {
    * implement visibility).
    */
   respectToolVisibility?: boolean;
+
+  /** Host policy for model visibility of MCP tool-result content/resources. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /** Human-facing rendering policy for MCP tool-returned images. */
+  mcpToolResultImageRendering?: McpToolResultImageRendering;
 
   /**
    * Personal cloud workstation attached to this host (chat `bash` tool +
@@ -343,6 +356,8 @@ export class Host {
     this.requireToolApproval = cfg.requireToolApproval ?? false;
     this.progressiveToolDiscovery = cfg.progressiveToolDiscovery;
     this.respectToolVisibility = cfg.respectToolVisibility;
+    this.modelVisibleMcpToolResults = cfg.modelVisibleMcpToolResults;
+    this.mcpToolResultImageRendering = cfg.mcpToolResultImageRendering;
     this.computer = cfg.computer;
     this.harness = cfg.harness;
     this.servers = cfg.servers ? dedup(cfg.servers) : [];
@@ -397,6 +412,18 @@ export class Host {
 
   setRespectToolVisibility(respect: boolean): this {
     this.respectToolVisibility = respect;
+    return this;
+  }
+
+  setModelVisibleMcpToolResults(
+    policy: ModelVisibleMcpToolResults | undefined
+  ): this {
+    this.modelVisibleMcpToolResults = policy;
+    return this;
+  }
+
+  setMcpToolResultImageRendering(rendering: McpToolResultImageRendering): this {
+    this.mcpToolResultImageRendering = rendering;
     return this;
   }
 
@@ -502,6 +529,8 @@ export class Host {
       requireToolApproval: this.requireToolApproval,
       progressiveToolDiscovery: this.progressiveToolDiscovery,
       respectToolVisibility: this.respectToolVisibility,
+      modelVisibleMcpToolResults: this.modelVisibleMcpToolResults,
+      mcpToolResultImageRendering: this.mcpToolResultImageRendering,
       computer: this.computer,
       harness: this.harness,
       servers: this.servers,
@@ -532,6 +561,12 @@ export class Host {
     }
     if (snap.respectToolVisibility !== undefined) {
       input.respectToolVisibility = snap.respectToolVisibility;
+    }
+    if (snap.modelVisibleMcpToolResults !== undefined) {
+      input.modelVisibleMcpToolResults = snap.modelVisibleMcpToolResults;
+    }
+    if (snap.mcpToolResultImageRendering !== undefined) {
+      input.mcpToolResultImageRendering = snap.mcpToolResultImageRendering;
     }
     // `null` (detached) is forwarded — the canonicalizer collapses it to
     // undefined so it hashes identically to "never set".
@@ -659,9 +694,8 @@ export function isHostJson(value: unknown): value is HostJson {
 }
 
 /**
- * Normalize any `HostSource` to an immutable `HostJson` snapshot. Idempotent:
- * an already-snapshotted `HostJson` is returned unchanged (same reference),
- * so `HostRunner` constructed with a pre-snapshotted host does NOT re-snapshot.
+ * Normalize any `HostSource` to an immutable `HostJson` snapshot. Idempotent
+ * for current snapshots.
  */
 export function snapshotHostSource(host: HostSource): HostJson {
   if (isHostJson(host)) return host;

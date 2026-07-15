@@ -1,12 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Info } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@mcpjam/design-system/tooltip";
 import {
   Dialog,
   DialogContent,
@@ -15,10 +9,46 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { Label } from "@mcpjam/design-system/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@mcpjam/design-system/select";
 import { validateServerFormData } from "@/lib/server-form-validation";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import {
+  DEFAULT_IDENTITY_ASSERTION_FORMAT,
+  DEFAULT_REGISTRATION_STRATEGY,
+  IDENTITY_ASSERTION_FORMATS,
+  normalizeIdentityAssertionFormat,
+  normalizeRegistrationStrategy,
+  type IdentityAssertionFormat,
+  type RegistrationStrategy,
+} from "@/shared/xaa.js";
+import { XAA_STRATEGY_OPTIONS } from "@/lib/registration-strategy";
 import { deriveOAuthProfileFromServer } from "../oauth/utils";
+import { XaaCredentialFields } from "../connection/shared/XaaCredentialFields";
+import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
+
+// UI copy for the identity-assertion preset (input axis of the ID-JAG draft).
+// One selector sets both axes at flow time: "saml" mints a SAML assertion AND
+// asks for a saml-nameid `sub_id` on the ID-JAG; "oidc" keeps both defaults.
+const IDENTITY_ASSERTION_FORMAT_LABELS: Record<
+  IdentityAssertionFormat,
+  string
+> = {
+  oidc: "OIDC ID token",
+  saml: "SAML assertion",
+};
+
+const IDENTITY_ASSERTION_FORMAT_HINTS: Record<IdentityAssertionFormat, string> =
+  {
+    oidc: "The MCPJam IdP mints an OIDC ID token as the identity assertion.",
+    saml: "The MCPJam IdP mints a signed SAML 2.0 assertion; the ID-JAG carries a saml-nameid subject identifier.",
+  };
 
 interface XAAServerModalProps {
   open: boolean;
@@ -28,19 +58,15 @@ interface XAAServerModalProps {
   // May be async. The modal stays open (preserving the entered values) if this
   // rejects, so a downstream save failure never discards the form.
   onSave: (payload: { formData: ServerFormData }) => void | Promise<void>;
-  // Global simulated identity (sub/email). Owned by XAAFlowTab's run settings
-  // and edited here because it applies to every target, not just this server —
-  // editing it updates the live run immediately (it is not part of the form
-  // save). Single source of truth, so the running flow always sees the change.
-  simulatedUserId: string;
-  simulatedEmail: string;
-  onIdentityChange: (patch: { userId?: string; email?: string }) => void;
+  /**
+   * The project's admin-controlled default test identity — shown as the
+   * override placeholders (same as the /servers Connect page).
+   */
+  projectDefaultIdentity?: { subject: string; email: string } | null;
+  /** Hosted secret context used to reveal an existing saved client secret. */
+  projectId?: string | null;
+  hostedServerId?: string | null;
 }
-
-// "keep" the saved secret untouched, "replace" it with a new value, or
-// "clear" it (turn the target back into a public client). Only meaningful
-// when editing a server that already has a stored secret.
-type SecretAction = "keep" | "replace" | "clear";
 
 export function XAAServerModal({
   open,
@@ -48,24 +74,49 @@ export function XAAServerModal({
   server,
   existingServerNames,
   onSave,
-  simulatedUserId,
-  simulatedEmail,
-  onIdentityChange,
+  projectDefaultIdentity = null,
+  projectId,
+  hostedServerId,
 }: XAAServerModalProps) {
-  const derived = useMemo(
-    () => deriveOAuthProfileFromServer(server),
-    [server],
-  );
+  const derived = useMemo(() => deriveOAuthProfileFromServer(server), [server]);
   const hasSavedSecret = Boolean(server?.hasClientSecret);
   const isEditing = Boolean(server);
 
   const [serverName, setServerName] = useState("");
   const [serverUrl, setServerUrl] = useState("");
+  // Registration strategy (Client↔Resource-AS leg), read from the UNIFIED
+  // per-server `registrationMode` shared with the OAuth flows. Pre-registered
+  // requires a Client ID; DCR/CIMD mint or URL-address the client identity.
+  const [registrationStrategy, setRegistrationStrategy] =
+    useState<RegistrationStrategy>(DEFAULT_REGISTRATION_STRATEGY);
+  // Auto-clobber guard: the selector DISPLAYS the resolved strategy (a stored
+  // "auto" shows as pre-registered), but only an explicit user edit may write
+  // it back — otherwise saving this modal would silently rewrite a stored
+  // "auto" to "preregistered" and change the OAuth flow's behavior for the
+  // same server. Untouched selector ⇒ the save omits `registrationMode` and
+  // the `?? existing` merge preserves the raw stored value.
+  const [registrationStrategyDirty, setRegistrationStrategyDirty] =
+    useState(false);
+  // Identity assertion preset (debugger-only, persisted per-server). Unlike
+  // registrationMode there is no "auto" shared with other flows, so the save
+  // always sends the displayed value.
+  const [identityAssertionFormat, setIdentityAssertionFormat] =
+    useState<IdentityAssertionFormat>(DEFAULT_IDENTITY_ASSERTION_FORMAT);
   const [clientId, setClientId] = useState("");
   const [scopes, setScopes] = useState("");
   const [authzIssuer, setAuthzIssuer] = useState("");
-  const [secretInput, setSecretInput] = useState("");
-  const [secretAction, setSecretAction] = useState<SecretAction>("keep");
+  const [allowPathScopedIssuer, setAllowPathScopedIssuer] = useState(false);
+  // Client-secret state mirrors the Connect-page model (shared component):
+  // a typed value replaces the saved secret, the Clear toggle removes it.
+  const [clientSecret, setClientSecret] = useState("");
+  const [clearClientSecret, setClearClientSecret] = useState(false);
+  // Per-server identity OVERRIDE — one atomic pair shared with the /servers
+  // Connect page (saved on the server, used by both the debugger run and the
+  // connect mint). Only a user edit marks it dirty; an untouched pair is
+  // omitted from the save so the stored values are preserved.
+  const [xaaSubject, setXaaSubject] = useState("");
+  const [xaaEmail, setXaaEmail] = useState("");
+  const [xaaIdentityDirty, setXaaIdentityDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -73,16 +124,29 @@ export function XAAServerModal({
     if (!open) return;
     setServerName(server?.name ?? "");
     setServerUrl(derived.serverUrl ?? "");
+    setRegistrationStrategy(
+      normalizeRegistrationStrategy(server?.registrationMode) ??
+        DEFAULT_REGISTRATION_STRATEGY
+    );
+    setRegistrationStrategyDirty(false);
+    setIdentityAssertionFormat(
+      normalizeIdentityAssertionFormat(server?.xaaIdentityAssertionFormat) ??
+        DEFAULT_IDENTITY_ASSERTION_FORMAT
+    );
     setClientId(derived.clientId ?? "");
     // Scopes can be stored comma- or space-separated upstream; normalize to
     // the space-separated form this modal edits.
     setScopes((derived.scopes ?? "").replace(/,/g, " ").trim());
     setAuthzIssuer(server?.xaaAuthzIssuer ?? "");
-    setSecretInput("");
-    setSecretAction(hasSavedSecret ? "keep" : "replace");
+    setAllowPathScopedIssuer(server?.xaaAllowPathScopedIssuer === true);
+    setClientSecret("");
+    setClearClientSecret(false);
+    setXaaSubject(server?.xaaSubject ?? "");
+    setXaaEmail(server?.xaaEmail ?? "");
+    setXaaIdentityDirty(false);
     setError(null);
     setSaving(false);
-  }, [open, server, derived, hasSavedSecret]);
+  }, [open, server, derived]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -114,8 +178,10 @@ export function XAAServerModal({
     }
 
     const trimmedClientId = clientId.trim();
-    if (!trimmedClientId) {
-      setError("Client ID is required.");
+    // Client ID is only required for pre-registered clients. DCR mints one and
+    // CIMD addresses the client via a metadata URL, so both leave it optional.
+    if (registrationStrategy === "preregistered" && !trimmedClientId) {
+      setError("Client ID is required for pre-registered clients.");
       return;
     }
 
@@ -135,20 +201,21 @@ export function XAAServerModal({
       .map((scope) => scope.trim())
       .filter((scope) => scope.length > 0);
 
-    // Resolve the secret operation. A new server (or one without a saved
-    // secret) takes whatever was typed; an edit only changes the secret when
-    // the user explicitly replaces or clears it.
-    const trimmedSecret = secretInput.trim();
-    let clientSecret: string | undefined;
-    let clearClientSecret: boolean | undefined;
-    if (hasSavedSecret) {
-      if (secretAction === "replace" && trimmedSecret) {
-        clientSecret = trimmedSecret;
-      } else if (secretAction === "clear") {
-        clearClientSecret = true;
-      }
-    } else if (trimmedSecret) {
-      clientSecret = trimmedSecret;
+    // A typed value replaces the saved secret; the Clear toggle removes it. A
+    // typed replacement always wins over Clear (the save path rejects both).
+    const trimmedSecret = clientSecret.trim();
+    const submittedClearSecret = clearClientSecret && !trimmedSecret;
+
+    // The identity override is atomic: block a partial pair rather than
+    // saving a mixed identity or silently dropping one member.
+    const trimmedXaaSubject = xaaSubject.trim();
+    const trimmedXaaEmail = xaaEmail.trim();
+    if (
+      xaaIdentityDirty &&
+      (trimmedXaaSubject === "") !== (trimmedXaaEmail === "")
+    ) {
+      setError(`${XAA_PARTIAL_OVERRIDE_ERROR}.`);
+      return;
     }
 
     setError(null);
@@ -157,14 +224,36 @@ export function XAAServerModal({
       name: trimmedName,
       type: "http",
       url: trimmedUrl,
-      useOAuth: true,
+      // Cross-App Access discriminator — identical to the /servers Connect
+      // page so a server configured in either surface is unambiguously XAA and
+      // editing it in one place never flips it back to plain OAuth.
+      useXaa: true,
+      useOAuth: false,
+      authServerMode: "mcpjam",
       clientId: trimmedClientId,
-      ...(clientSecret ? { clientSecret } : {}),
-      ...(clearClientSecret ? { clearClientSecret: true } : {}),
+      ...(trimmedSecret ? { clientSecret: trimmedSecret } : {}),
+      ...(submittedClearSecret ? { clearClientSecret: true } : {}),
       hasClientSecret: server?.hasClientSecret,
       oauthScopes: scopesArray,
       // Always send the issuer (possibly empty) so clearing it persists.
       xaaAuthzIssuer: trimmedIssuer,
+      xaaAllowPathScopedIssuer: allowPathScopedIssuer,
+      // Atomic identity override, identical to the Connect page: untouched →
+      // omit both keys (the save path preserves stored values); edited
+      // complete pair → both trimmed values; explicit clear → both "" (the
+      // backend normalizes the empty pair away).
+      ...(xaaIdentityDirty
+        ? { xaaSubject: trimmedXaaSubject, xaaEmail: trimmedXaaEmail }
+        : {}),
+      // Identity assertion preset — always sent (absent stored value = oidc).
+      xaaIdentityAssertionFormat: identityAssertionFormat,
+      // Unified registration mode — written ONLY on explicit user edit (see
+      // the auto-clobber guard above); an untouched selector omits the field
+      // so the save-path `?? existing` merge preserves the stored value
+      // (which may be "auto", shared with the OAuth flow).
+      ...(registrationStrategyDirty
+        ? { registrationMode: registrationStrategy }
+        : {}),
     };
 
     // Final gate: the exact validator the save path runs. Any rule added there
@@ -188,7 +277,7 @@ export function XAAServerModal({
       setError(
         saveError instanceof Error
           ? saveError.message
-          : "Couldn't save this server. Your changes were kept — try again.",
+          : "Couldn't save this server. Your changes were kept — try again."
       );
     } finally {
       setSaving(false);
@@ -231,183 +320,93 @@ export function XAAServerModal({
               />
             </div>
 
+            {/* Registration strategy (Client↔Resource-AS leg). Shares the
+                per-server registrationMode with the OAuth flow — an edit here
+                changes what the Connect page's OAuth flow reads too. */}
             <div className="space-y-2">
-              <Label htmlFor="xaa-client-id">
-                Client ID <span className="text-red-500">*</span>
-              </Label>
-              <Input
-                id="xaa-client-id"
-                value={clientId}
-                onChange={(event) => setClientId(event.target.value)}
-                placeholder="mcpjam-debugger"
-                spellCheck={false}
-                autoComplete="off"
-                data-1p-ignore
-                data-lpignore="true"
-                data-form-type="other"
-              />
+              <Label htmlFor="xaa-registration-strategy">Registration</Label>
+              <Select
+                value={registrationStrategy}
+                onValueChange={(value) => {
+                  setRegistrationStrategy(value as RegistrationStrategy);
+                  setRegistrationStrategyDirty(true);
+                }}
+              >
+                <SelectTrigger id="xaa-registration-strategy" className="h-10">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {XAA_STRATEGY_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
+            {/* Identity assertion format (input axis). A per-server preset the
+                debugger flow reads; changing it resets the current run. */}
             <div className="space-y-2">
-              <Label htmlFor="xaa-client-secret">Client Secret</Label>
-              {hasSavedSecret && secretAction === "keep" ? (
-                <div className="flex items-center gap-2">
-                  <span className="flex-1 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                    •••••••• saved
-                  </span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSecretAction("replace")}
-                  >
-                    Replace
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setSecretAction("clear")}
-                  >
-                    Clear
-                  </Button>
-                </div>
-              ) : hasSavedSecret && secretAction === "clear" ? (
-                <div className="flex items-center gap-2">
-                  <span className="flex-1 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                    Secret will be cleared on save.
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setSecretAction("keep")}
-                  >
-                    Keep
-                  </Button>
-                </div>
-              ) : (
-                <Input
-                  id="xaa-client-secret"
-                  type="password"
-                  autoComplete="off"
-                  data-1p-ignore
-                  data-lpignore="true"
-                  data-form-type="other"
-                  value={secretInput}
-                  onChange={(event) => setSecretInput(event.target.value)}
-                  placeholder={
-                    hasSavedSecret
-                      ? "Enter a new client secret"
-                      : "Required by confidential-client auth servers"
-                  }
-                />
-              )}
+              <Label htmlFor="xaa-identity-assertion">Identity assertion</Label>
+              <Select
+                value={identityAssertionFormat}
+                onValueChange={(value) =>
+                  setIdentityAssertionFormat(value as IdentityAssertionFormat)
+                }
+              >
+                <SelectTrigger id="xaa-identity-assertion" className="h-10">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {IDENTITY_ASSERTION_FORMATS.map((format) => (
+                    <SelectItem key={format} value={format}>
+                      {IDENTITY_ASSERTION_FORMAT_LABELS[format]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {IDENTITY_ASSERTION_FORMAT_HINTS[identityAssertionFormat]}
+              </p>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="xaa-scopes">Scopes</Label>
-              <Input
-                id="xaa-scopes"
-                value={scopes}
-                onChange={(event) => setScopes(event.target.value)}
-                placeholder="read:tools read:resources"
-                spellCheck={false}
-                autoComplete="off"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center gap-1.5">
-                <Label htmlFor="xaa-authz-issuer">
-                  Authorization Server Issuer
-                </Label>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      className="inline-flex items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      aria-label="How the authorization server issuer is auto-discovered"
-                    >
-                      <Info className="h-3.5 w-3.5" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent variant="muted" side="top" className="max-w-xs">
-                    Leave blank to auto-discover it: MCPJam reads the MCP
-                    server&apos;s protected-resource metadata (
-                    <code className="font-mono">
-                      /.well-known/oauth-protected-resource
-                    </code>
-                    ) to find which authorization server protects it.
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-              <Input
-                id="xaa-authz-issuer"
-                value={authzIssuer}
-                onChange={(event) => setAuthzIssuer(event.target.value)}
-                placeholder="Auto-discovered if blank"
-                spellCheck={false}
-                autoComplete="off"
-              />
-            </div>
-
-            <p className="text-xs text-muted-foreground">
-              Client ID, secret, and scopes are this server's OAuth credentials
-              (shared with the OAuth Debugger).
-            </p>
-
-            <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
-              <div className="space-y-0.5">
-                <Label htmlFor="xaa-identity-sub">Simulated identity</Label>
-                <p className="text-xs text-muted-foreground">
-                  The IdP mints a mock login for this user before the flow runs.
-                  Applies to every server you test — not just this one.
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <Label
-                  htmlFor="xaa-identity-sub"
-                  className="text-xs text-muted-foreground"
-                >
-                  Subject (sub)
-                </Label>
-                <Input
-                  id="xaa-identity-sub"
-                  value={simulatedUserId}
-                  onChange={(event) =>
-                    onIdentityChange({ userId: event.target.value })
-                  }
-                  placeholder="user-12345"
-                  spellCheck={false}
-                  autoComplete="off"
-                  data-1p-ignore
-                  data-lpignore="true"
-                  data-form-type="other"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label
-                  htmlFor="xaa-identity-email"
-                  className="text-xs text-muted-foreground"
-                >
-                  Email
-                </Label>
-                <Input
-                  id="xaa-identity-email"
-                  value={simulatedEmail}
-                  onChange={(event) =>
-                    onIdentityChange({ email: event.target.value })
-                  }
-                  placeholder="demo.user@example.com"
-                  spellCheck={false}
-                  autoComplete="off"
-                  data-1p-ignore
-                  data-lpignore="true"
-                  data-form-type="other"
-                />
-              </div>
-            </div>
+            {/* Shared with the /servers Connect page so both surfaces present
+                identical fields, ordering, and style. */}
+            <XaaCredentialFields
+              clientId={clientId}
+              onClientIdChange={setClientId}
+              clientIdRequired={registrationStrategy === "preregistered"}
+              showClientCredentials={registrationStrategy === "preregistered"}
+              clientSecret={clientSecret}
+              onClientSecretChange={(value) => {
+                setClientSecret(value);
+                if (value.trim()) setClearClientSecret(false);
+              }}
+              hasStoredClientSecret={hasSavedSecret}
+              clearClientSecret={clearClientSecret}
+              onClearClientSecret={() => setClearClientSecret(true)}
+              onUndoClearClientSecret={() => setClearClientSecret(false)}
+              scopes={scopes}
+              onScopesChange={setScopes}
+              xaaAuthzIssuer={authzIssuer}
+              onXaaAuthzIssuerChange={setAuthzIssuer}
+              xaaAllowPathScopedIssuer={allowPathScopedIssuer}
+              onXaaAllowPathScopedIssuerChange={setAllowPathScopedIssuer}
+              xaaSubject={xaaSubject}
+              onXaaSubjectChange={(value) => {
+                setXaaIdentityDirty(true);
+                setXaaSubject(value);
+              }}
+              xaaEmail={xaaEmail}
+              onXaaEmailChange={(value) => {
+                setXaaIdentityDirty(true);
+                setXaaEmail(value);
+              }}
+              projectDefaultIdentity={projectDefaultIdentity}
+              projectId={projectId}
+              hostedServerId={hostedServerId}
+            />
           </div>
 
           {error && (

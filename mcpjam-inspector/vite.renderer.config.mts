@@ -63,6 +63,13 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: true,
         },
+        // PostHog same-origin relay (server/routes/relay.ts) — matches the
+        // web client Vite config; without it Electron dev requests to /relay
+        // fall through to Vite's SPA fallback and return index.html with 200.
+        "/relay": {
+          target: "http://localhost:6274",
+          changeOrigin: true,
+        },
       },
     },
     define: {

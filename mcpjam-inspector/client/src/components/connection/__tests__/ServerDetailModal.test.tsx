@@ -9,6 +9,10 @@ const mockUseFeatureFlagEnabled = vi.hoisted(() => vi.fn(() => false));
 const mockUseQuery = vi.hoisted(() => vi.fn(() => undefined));
 const mockSetProjectServerConfig = vi.hoisted(() => vi.fn());
 
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: { email: "tester@example.com" } }),
+}));
+
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: mockCapture,
@@ -20,6 +24,10 @@ vi.mock("posthog-js/react", () => ({
   // `vi.mocked(useFeatureFlagEnabled).mockReturnValue(true)`.
   useFeatureFlagEnabled: (...args: unknown[]) =>
     mockUseFeatureFlagEnabled(...args),
+}));
+
+vi.mock("@/lib/analytics", () => ({
+  track: (...args: unknown[]) => mockCapture(...args),
 }));
 
 // ServerDetailModal reads + writes the project-server config via Convex
@@ -312,7 +320,7 @@ describe("ServerDetailModal", () => {
       screen.getByRole("button", { name: /connection overrides/i })
     );
     const protocolSelect = getProtocolVersionCombobox();
-    expect(protocolSelect).toHaveTextContent("Host default");
+    expect(protocolSelect).toHaveTextContent("Client default");
     expect(protocolSelect).toBeEnabled();
 
     await user.click(protocolSelect);
@@ -360,7 +368,7 @@ describe("ServerDetailModal", () => {
       screen.getByRole("button", { name: /connection overrides/i })
     );
     const hostDefaultSelect = getProtocolVersionCombobox();
-    expect(hostDefaultSelect).toHaveTextContent("Host default");
+    expect(hostDefaultSelect).toHaveTextContent("Client default");
 
     await user.click(hostDefaultSelect);
     await user.click(
@@ -408,7 +416,7 @@ describe("ServerDetailModal", () => {
 
     await user.click(latestSelect);
     await user.click(
-      await screen.findByRole("option", { name: "Host default" })
+      await screen.findByRole("option", { name: "Client default" })
     );
 
     await waitFor(() => {
@@ -453,7 +461,7 @@ describe("ServerDetailModal", () => {
 
     await user.click(protocolSelect);
     await user.click(
-      await screen.findByRole("option", { name: "Host default" })
+      await screen.findByRole("option", { name: "Client default" })
     );
 
     await waitFor(() => {

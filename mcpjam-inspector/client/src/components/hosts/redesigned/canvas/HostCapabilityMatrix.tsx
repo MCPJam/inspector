@@ -17,6 +17,7 @@ import perplexityLogo from "/perplexity_logo.svg";
 import clineLogoDark from "/cline_logo_dark.svg";
 import clineLogoLight from "/cline_logo_light.svg";
 import notionLogo from "/notion_logo.png";
+import slackLogo from "/slack_logo.png";
 import mcpjamLogo from "/mcp_jam_2row.png";
 import {
   APPS_HUB_NODE_ID,
@@ -71,6 +72,7 @@ function getClientLogo(
   if (haystack.includes("cline"))
     return themeMode === "dark" ? clineLogoDark : clineLogoLight;
   if (haystack.includes("notion")) return notionLogo;
+  if (haystack.includes("slack")) return slackLogo;
   if (
     haystack.includes("openai") ||
     haystack.includes("chatgpt") ||
@@ -447,8 +449,8 @@ function ViewIframeInjectedGlobals({
           compatRuntime.openaiApps
             ? compatRuntime.hasMethodOverrides
               ? `Inspector injects window.openai with a custom per-method surface (${compatRuntime.methodCount}/${compatRuntime.methodTotal} methods active). Click to view the matrix.`
-              : "Inspector injects window.openai into widget HTML before sandboxing, so OpenAI Apps SDK widgets keep working on this host."
-            : "Inspector does NOT inject window.openai for this host. SEP-1865-only — widgets that rely on the OpenAI Apps SDK compatibility layer will not run."
+              : "Inspector injects window.openai into widget HTML before sandboxing, so OpenAI Apps SDK widgets keep working on this client."
+            : "Inspector does NOT inject window.openai for this client. SEP-1865-only — widgets that rely on the OpenAI Apps SDK compatibility layer will not run."
         }
       >
         <span className="hp-cap-dot" aria-hidden />

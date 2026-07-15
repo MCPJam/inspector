@@ -9,7 +9,7 @@ import {
   Loader2,
   FileCode2,
 } from "lucide-react";
-import posthog from "posthog-js";
+import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
@@ -24,11 +24,10 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
-import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import type { EvalCase, EvalSuite } from "./types";
 import { getEffectiveSuiteServers } from "./helpers";
-import { isPinnedOnly } from "@/shared/prompt-turns";
+import { isModelFree } from "@/shared/steps";
 import {
   formatCaseTitleForSidebar,
   getEvalCaseSidebarGroupKey,
@@ -120,10 +119,7 @@ export function TestCaseListSidebar({
     (serverName) => !connectedServerNames?.has(serverName),
   );
   const selectedCaseIsProbe = selectedTestCase
-    ? isPinnedOnly({
-        caseType: selectedTestCase.caseType,
-        promptTurns: selectedTestCase.promptTurns,
-      })
+    ? isModelFree(selectedTestCase.steps)
     : false;
   const canRunSelectedCase =
     Boolean(selectedTestCase) &&
@@ -187,10 +183,8 @@ export function TestCaseListSidebar({
                     aria-label="Run selected case"
                     onClick={() => {
                       if (selectedTestCase && onRunTestCase) {
-                        posthog.capture("run_selected_case_button_clicked", {
+                        track("run_selected_case_button_clicked", {
                           location: "test_case_list_sidebar",
-                          platform: detectPlatform(),
-                          environment: detectEnvironment(),
                           test_case_id: selectedTestCase._id,
                         });
                         onRunTestCase(selectedTestCase);
@@ -239,10 +233,8 @@ export function TestCaseListSidebar({
                   size="sm"
                   onClick={() => {
                     if (onGenerateTests) {
-                      posthog.capture("generate_tests_button_clicked", {
+                      track("generate_tests_button_clicked", {
                         location: "test_case_list_sidebar",
-                        platform: detectPlatform(),
-                        environment: detectEnvironment(),
                       });
                       onGenerateTests();
                     }
@@ -298,10 +290,8 @@ export function TestCaseListSidebar({
                 variant="ghost"
                 size="sm"
                 onClick={() => {
-                  posthog.capture("create_test_case_button_clicked", {
+                  track("create_test_case_button_clicked", {
                     location: "test_case_list_sidebar",
-                    platform: detectPlatform(),
-                    environment: detectEnvironment(),
                   });
                   onCreateTestCase();
                 }}

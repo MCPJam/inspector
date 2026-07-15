@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { errorToastMessage } from "@/test/utils";
 import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
@@ -11,6 +12,8 @@ import {
 
 const mocks = vi.hoisted(() => ({
   toastError: vi.fn(),
+  toastLoading: vi.fn(() => "reconnect-toast"),
+  toastSuccess: vi.fn(),
   logger: {
     error: vi.fn(),
     warn: vi.fn(),
@@ -24,6 +27,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("sonner", () => ({
   toast: {
     error: mocks.toastError,
+    loading: mocks.toastLoading,
+    success: mocks.toastSuccess,
   },
 }));
 
@@ -87,6 +92,8 @@ describe("useAutoConnectProjectServers", () => {
     resetAutoConnectAttempts();
     localStorage.removeItem("mcpjam-auto-connect-servers");
     mocks.toastError.mockClear();
+    mocks.toastLoading.mockClear();
+    mocks.toastSuccess.mockClear();
     mocks.logger.error.mockClear();
     mocks.logger.warn.mockClear();
     mocks.logger.info.mockClear();
@@ -344,14 +351,58 @@ describe("useAutoConnectProjectServers", () => {
     await flushMicrotasks();
 
     expect(reconnectServer).toHaveBeenCalledTimes(2);
+    // A single progress toast opens as "Reconnecting…" and, on partial failure,
+    // is replaced in place (same id) by the failure message.
+    expect(mocks.toastLoading).toHaveBeenCalledWith("Reconnecting 2 servers…");
     expect(mocks.logger.error).toHaveBeenCalledWith(
       "Failed to reconnect server after client switch",
       { serverName: "beta", error: "beta exploded" }
     );
     expect(mocks.toastError).toHaveBeenCalledWith(
-      "Failed to reconnect 1 server.",
-      { duration: Infinity }
+      errorToastMessage("Failed to reconnect 1 server."),
+      { duration: Infinity, id: "reconnect-toast" }
     );
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("shows a Reconnecting… → Reconnected progress toast on client switch", async () => {
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: [],
+      failedServerNames: [],
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+    const reconnectServer = vi.fn().mockResolvedValue(undefined);
+    const appState = {
+      servers: {
+        alpha: { name: "alpha", connectionStatus: "connected" },
+        beta: { name: "beta", connectionStatus: "connected" },
+      },
+    } as any;
+
+    renderHook(
+      () =>
+        useAutoConnectProjectServers({
+          projectId: "proj-reconnect-progress",
+          hostScopeKey: "host-a",
+          requiredServerNames: [],
+        }),
+      {
+        wrapper: ({ children }) =>
+          wrapper({ children, ensureServersReady, appState, reconnectServer }),
+      }
+    );
+
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(reconnectServer).toHaveBeenCalledTimes(2);
+    expect(mocks.toastLoading).toHaveBeenCalledWith("Reconnecting 2 servers…");
+    // Same toast id → the loading toast becomes the success toast in place.
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("Reconnected 2 servers.", {
+      id: "reconnect-toast",
+    });
+    expect(mocks.toastError).not.toHaveBeenCalled();
   });
 
   it("reconnects connected servers even when the active host requires none", async () => {
