@@ -1,0 +1,74 @@
+name: Mintlify PR Shepherd
+
+# Deterministic janitor for Mintlify bot PRs. The event-driven triage workflow
+# (mintlify-triage.yml) classifies each PR when it opens; this sweep keeps the
+# queue healthy afterwards and is the backstop that prevents silent pileups
+# (the July 2026 backlog reached 130 open PRs because triage runs were failing
+# and nothing noticed):
+#   - conflicted ("dirty") PRs are closed — the bot regenerates fresh ones
+#   - PRs queued for auto-merge that fell behind main get their branch updated
+#     (the main ruleset requires up-to-date branches, and GitHub auto-merge
+#     does not update branches on its own)
+#   - PRs still untriaged after 7 days (no auto-merge queued) are closed as a
+#     backstop; if the docs are still relevant the bot re-opens them on the
+#     next code change
+# No AI here — every action is a mechanical rule. Scoped strictly to PRs
+# authored by mintlify[bot]; human PRs are never touched.
+
+on:
+  schedule:
+    - cron: "17 */6 * * *" # every 6h, offset to dodge top-of-hour congestion
+  workflow_dispatch:
+
+concurrency:
+  group: mintlify-shepherd
+  cancel-in-progress: false
+
+jobs:
+  shepherd:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # update-branch
+      pull-requests: write # close / comment
+    steps:
+      - name: Sweep open Mintlify PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          now=$(date +%s)
+          closed_dirty=0; updated=0; closed_stale=0; waiting=0
+
+          prs=$(gh api --paginate "repos/$REPO/pulls?state=open&per_page=100" \
+            --jq '.[] | select(.user.login=="mintlify[bot]") | .number')
+
+          for N in $prs; do
+            data=$(gh api "repos/$REPO/pulls/$N")
+            state=$(jq -r '.mergeable_state' <<<"$data")
+            queued=$(jq -r '.auto_merge != null' <<<"$data")
+            created=$(jq -r '.created_at' <<<"$data")
+            age_days=$(( (now - $(date -d "$created" +%s)) / 86400 ))
+
+            if [ "$state" = "dirty" ]; then
+              gh api -X POST "repos/$REPO/issues/$N/comments" \
+                -f body="Closing: this docs PR conflicts with main; the Mintlify bot regenerates an up-to-date PR when the docs change again." >/dev/null
+              gh api -X PATCH "repos/$REPO/pulls/$N" -f state=closed >/dev/null
+              echo "closed (conflict) #$N"; closed_dirty=$((closed_dirty+1))
+            elif [ "$queued" = "true" ] && [ "$state" = "behind" ]; then
+              gh api -X PUT "repos/$REPO/pulls/$N/update-branch" >/dev/null \
+                && { echo "updated branch #$N"; updated=$((updated+1)); } \
+                || echo "update-branch failed #$N (will retry next sweep)"
+            elif [ "$queued" != "true" ] && [ "$age_days" -ge 7 ]; then
+              gh api -X POST "repos/$REPO/issues/$N/comments" \
+                -f body="Closing: not triaged to merge within 7 days (triage backstop); the Mintlify bot re-opens this if the docs are still relevant on the next code change." >/dev/null
+              gh api -X PATCH "repos/$REPO/pulls/$N" -f state=closed >/dev/null
+              echo "closed (stale, untriaged ${age_days}d) #$N"; closed_stale=$((closed_stale+1))
+            else
+              waiting=$((waiting+1))
+            fi
+            sleep 2 # stay clear of secondary rate limits
+          done
+
+          echo "---"
+          echo "summary: closed_dirty=$closed_dirty updated=$updated closed_stale=$closed_stale waiting=$waiting"
