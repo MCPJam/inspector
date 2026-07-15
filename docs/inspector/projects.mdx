@@ -109,6 +109,18 @@ Editing the default host config does **not** change existing chatboxes or eval s
 
 The editor is only visible when you are signed in and have a saved project. Members without manage permissions see the editor in read-only mode.
 
+### XAA test identity defaults
+
+The **XAA test identity defaults** section lets project admins set a project-level default synthetic identity for the MCPJam test identity provider. This section is only visible for Convex-backed projects (not local-only projects) and is only editable by project admins.
+
+The default identity is an atomic pair — both **Subject (sub)** and **Email** must be filled, or both must be empty. Saving with only one field filled shows a validation error.
+
+When set, this identity is used when an authenticated project member connects an XAA server without a per-server override. Clearing both fields and saving removes the project default; the XAA debugger and Connect then fall back to MCPJam's demo identity.
+
+<Note>
+This setting configures the synthetic identity MCPJam's test identity provider puts in the ID token. It does not configure enterprise SSO or bring-your-own identity provider endpoints.
+</Note>
+
 ## What's Next
 
 - **[Servers](/inspector/connecting-servers)** - Configure MCP servers to add to your projects
