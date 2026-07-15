@@ -14,6 +14,10 @@ import {
 } from "lucide-react";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 import {
+  XAA_DEMO_IDENTITY,
+  isCompleteIdentityPair,
+} from "@/lib/xaa/identity";
+import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -62,9 +66,13 @@ export interface XaaCredentialFieldsProps {
   onXaaSubjectChange: (value: string) => void;
   xaaEmail: string;
   onXaaEmailChange: (value: string) => void;
-  /** Shown as the simulated-identity default placeholder. */
-  signedInEmail?: string;
-  /** Per-surface copy under the "Simulated identity" heading. */
+  /**
+   * The project's admin-controlled default identity, shown as the override
+   * placeholders when complete. Absent (or partial) → the placeholders show
+   * the MCPJam demo identity instead.
+   */
+  projectDefaultIdentity?: { subject: string; email: string } | null;
+  /** Per-surface copy under the "Override identity" heading. */
   identityHelpText?: string;
   /** Start the Advanced section expanded (Debugger wants identity visible). */
   defaultAdvancedOpen?: boolean;
@@ -99,7 +107,7 @@ export function XaaCredentialFields({
   onXaaSubjectChange,
   xaaEmail,
   onXaaEmailChange,
-  signedInEmail,
+  projectDefaultIdentity = null,
   identityHelpText,
   defaultAdvancedOpen = false,
   projectId = null,
@@ -206,9 +214,14 @@ export function XaaCredentialFields({
     email: `${baseId}-email`,
   };
 
-  const identityPlaceholder = signedInEmail
-    ? `Defaults to ${signedInEmail}`
-    : "Defaults to your signed-in identity";
+  // Placeholders show the identity a blank override actually resolves to:
+  // the complete project default when one exists, otherwise the documented
+  // MCPJam demo identity.
+  const effectiveDefault = isCompleteIdentityPair(projectDefaultIdentity)
+    ? projectDefaultIdentity
+    : XAA_DEMO_IDENTITY;
+  const subjectPlaceholder = `Defaults to ${effectiveDefault.subject}`;
+  const emailPlaceholder = `Defaults to ${effectiveDefault.email}`;
 
   return (
     <div className="space-y-3">
@@ -590,14 +603,14 @@ export function XaaCredentialFields({
             <div className="space-y-1">
               <div className="flex items-center gap-1">
                 <span className="block text-xs font-medium text-foreground">
-                  Simulated identity
+                  Override identity for this server
                 </span>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
                       type="button"
                       className="inline-flex items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      aria-label="About simulated identity"
+                      aria-label="About the server identity override"
                     >
                       <Info className="h-3.5 w-3.5" />
                     </button>
@@ -608,7 +621,7 @@ export function XaaCredentialFields({
                     className="max-w-xs"
                   >
                     {identityHelpText ??
-                      "MCPJam acts as the test identity provider and puts these values in the ID token. Leave blank to use your signed-in account. Change them to test how your authorization server handles a specific user."}
+                      "MCPJam acts as the test identity provider and puts these values in the ID token. Leave blank to use the project's default test identity when one is set, otherwise MCPJam's demo identity. Set both fields together to test a specific user on this server."}
                   </TooltipContent>
                 </Tooltip>
               </div>
@@ -622,7 +635,7 @@ export function XaaCredentialFields({
                 id={ids.subject}
                 value={xaaSubject}
                 onChange={(e) => onXaaSubjectChange(e.target.value)}
-                placeholder={identityPlaceholder}
+                placeholder={subjectPlaceholder}
                 spellCheck={false}
                 autoComplete="off"
                 data-1p-ignore
@@ -642,7 +655,7 @@ export function XaaCredentialFields({
                 id={ids.email}
                 value={xaaEmail}
                 onChange={(e) => onXaaEmailChange(e.target.value)}
-                placeholder={identityPlaceholder}
+                placeholder={emailPlaceholder}
                 spellCheck={false}
                 autoComplete="off"
                 data-1p-ignore

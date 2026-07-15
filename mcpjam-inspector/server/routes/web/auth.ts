@@ -250,6 +250,12 @@ export type ConvexAuthorizeResponse = {
     oauthScopes?: string[];
     xaaSubject?: string;
     xaaEmail?: string;
+    // Backend-resolved identity failure: a LEGACY partial per-server
+    // override (one member stored) can't resolve an atomic identity, so the
+    // backend omits BOTH identity fields and sends this actionable,
+    // value-free message instead. The mint must fail with it — never
+    // silently fall back to the demo identity.
+    xaaIdentityError?: string;
     // Which IdP mints the XAA assertion — on the wire from the backend
     // projection; needed by the C2 effective-auth resolver's `auto` branch.
     authServerMode?: "mcpjam" | "own";
@@ -873,13 +879,20 @@ export async function createAuthorizedManager(
       const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
       const displayServerName = serverNamesById?.[serverId] ?? serverId;
       // One resolver decides the flow for every dispatch below: canonical
-      // authMethod wins ("auto" selects XAA when configured, OAuth
+      // authMethod wins ("auto" selects XAA when configured, "discover"
       // otherwise); legacy rows fall back to the boolean pair. Must match
       // the local resolver's dispatch (hosted/local/swarm parity).
       const effectiveAuth = resolveEffectiveAuthMethod(auth.serverConfig);
       const usesOAuthFlow = effectiveAuth === "oauth";
+      // "discover" (non-XAA auto) rides the OAuth rails only when a stored
+      // token exists; tokenless discover connects unauthenticated instead of
+      // failing pre-connect — a live 401 then surfaces from the connect
+      // itself (mapRuntimeError gives it a 401 status; only the interactive
+      // validate route tags it oauthRequired for client escalation).
+      const usesStoredTokenFlow =
+        usesOAuthFlow || (effectiveAuth === "discover" && !!oauthToken);
       const onUnauthorized =
-        usesOAuthFlow && auth.oauthAccessToken
+        usesStoredTokenFlow && auth.oauthAccessToken
           ? buildHostedOAuthUnauthorizedHandler({
               bearerToken,
               projectId,
@@ -892,23 +905,21 @@ export async function createAuthorizedManager(
             })
           : undefined;
 
-      if (usesOAuthFlow) {
-        if (auth.serverConfig.url) {
-          oauthServerUrls[serverId] = auth.serverConfig.url;
-        }
-        if (!oauthToken) {
-          throw new WebRouteError(
-            401,
-            ErrorCode.UNAUTHORIZED,
-            `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
-            {
-              oauthRequired: true,
-              serverId,
-              serverName: serverNamesById?.[serverId] ?? null,
-              serverUrl: auth.serverConfig.url,
-            }
-          );
-        }
+      if (usesStoredTokenFlow && auth.serverConfig.url) {
+        oauthServerUrls[serverId] = auth.serverConfig.url;
+      }
+      if (usesOAuthFlow && !oauthToken) {
+        throw new WebRouteError(
+          401,
+          ErrorCode.UNAUTHORIZED,
+          `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
+          {
+            oauthRequired: true,
+            serverId,
+            serverName: serverNamesById?.[serverId] ?? null,
+            serverUrl: auth.serverConfig.url,
+          }
+        );
       }
 
       // Cross-App Access: mint the resource access token server-side (MCPJam as
@@ -934,6 +945,20 @@ export async function createAuthorizedManager(
           logger.info(
             "[XAA connect] registrationMode is dynamic; connect uses stored pre-registered credentials — the mode applies to the debugger and OAuth flows only",
             { serverId, registrationMode: auth.serverConfig.registrationMode }
+          );
+        }
+        // Backend-resolved identity failure (legacy partial per-server
+        // override): a distinct configuration error, surfaced BEFORE any
+        // mint AND before the issuer guard below — eval routes omit
+        // `xaaIssuer`, so checking it first would mask this actionable 400
+        // behind the caller-contract 500. No silent fallback to the demo
+        // identity, no silent XAA→OAuth fallback.
+        if (auth.serverConfig.xaaIdentityError) {
+          throw new WebRouteError(
+            400,
+            ErrorCode.VALIDATION_ERROR,
+            auth.serverConfig.xaaIdentityError,
+            { serverId, serverName: displayServerName }
           );
         }
         if (!options?.xaaIssuer) {
@@ -979,6 +1004,30 @@ export async function createAuthorizedManager(
           }
           reMinted = true;
           return { accessToken: (await mintXaaAccessToken(mintArgs)).accessToken };
+        };
+      }
+
+      // Tokenless "discover" (non-XAA auto): connect unauthenticated, and if
+      // the target answers 401, convert it into the same tagged oauthRequired
+      // shape the pre-connect throw produces. The SDK invokes onUnauthorized
+      // exactly when a request 401s, which is the one moment we have both the
+      // per-server identity and proof the server actually demands auth —
+      // interactive clients escalate into the OAuth flow on this shape, and
+      // the non-interactive chat surfaces already render it as their
+      // "complete OAuth first" affordance.
+      if (effectiveAuth === "discover" && !connectToken) {
+        connectOnUnauthorized = async () => {
+          throw new WebRouteError(
+            401,
+            ErrorCode.UNAUTHORIZED,
+            `Server "${displayServerName}" requires authorization.`,
+            {
+              oauthRequired: true,
+              serverId,
+              serverName: serverNamesById?.[serverId] ?? null,
+              serverUrl: auth.serverConfig.url,
+            }
+          );
         };
       }
 

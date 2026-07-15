@@ -361,6 +361,112 @@ describe("web auth manager batching", () => {
     });
   });
 
+  it("connects a tokenless auto (discover) server unauthenticated and tags a live 401", async () => {
+    global.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          results: {
+            "server-1": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: "https://server-1.example.com/mcp",
+                headers: {},
+                authMethod: "auto",
+              },
+            },
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }) as typeof fetch;
+
+    // No pre-connect throw: discover attempts the server without credentials.
+    await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000,
+      undefined,
+      undefined,
+      { serverNames: ["Asana"] }
+    );
+
+    const config = mcpClientManagerMock.mock.calls[0]?.[0]?.["server-1"];
+    expect(config.requestInit?.headers?.Authorization).toBeUndefined();
+    // A live 401 converts into the tagged oauthRequired shape via the
+    // discover onUnauthorized handler.
+    await expect(
+      config.onUnauthorized({
+        serverId: "server-1",
+        error: Object.assign(new Error("HTTP 401"), { statusCode: 401 }),
+      })
+    ).rejects.toMatchObject<WebRouteError>({
+      status: 401,
+      code: "UNAUTHORIZED",
+      message: 'Server "Asana" requires authorization.',
+      details: {
+        oauthRequired: true,
+        serverId: "server-1",
+        serverName: "Asana",
+        serverUrl: "https://server-1.example.com/mcp",
+      },
+    });
+  });
+
+  it("keeps the oauth path for an auto (discover) server whose batch returned a token", async () => {
+    global.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          results: {
+            "server-1": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              oauthAccessToken: "stored-token",
+              serverConfig: {
+                transportType: "http",
+                url: "https://server-1.example.com/mcp",
+                headers: {},
+                authMethod: "auto",
+              },
+            },
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }) as typeof fetch;
+
+    await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000,
+      undefined,
+      undefined,
+      { serverNames: ["Asana"] }
+    );
+
+    const config = mcpClientManagerMock.mock.calls[0]?.[0]?.["server-1"];
+    expect(config.requestInit?.headers?.Authorization).toBe(
+      "Bearer stored-token"
+    );
+    // Stored-token rung: the refresh handler is attached, not the tagging one.
+    expect(typeof config.onUnauthorized).toBe("function");
+  });
+
   // Codex P2 regression: client now forwards
   // `mcpProfile.initialize.clientInfo` and `supportedProtocolVersions`
   // on every hosted route call. Verify `createAuthorizedManager`

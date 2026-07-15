@@ -13,6 +13,15 @@ vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
 }));
 
+const navigateMock = vi.fn();
+vi.mock("@/lib/app-navigation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/app-navigation")>();
+  return {
+    ...actual,
+    useAppNavigate: () => navigateMock,
+  };
+});
+
 describe("XAAIdpCard", () => {
   // jsdom serves the suite from a fixed origin; derive the expected URLs from
   // it rather than forcing a cross-origin replaceState (which jsdom rejects).
@@ -20,6 +29,7 @@ describe("XAAIdpCard", () => {
 
   beforeEach(() => {
     copyToClipboard.mockClear();
+    navigateMock.mockClear();
   });
 
   // Only unstub globals (e.g. the fetch stub) — NOT restoreAllMocks, which
@@ -180,6 +190,21 @@ describe("XAAIdpCard", () => {
         screen.getByRole("button", { name: /copy issuer url/i })
       ).toHaveAttribute("title", anonIssuer);
     });
+  });
+
+  it("shows the setup gear for org members and navigates to the setup center", async () => {
+    const user = userEvent.setup();
+    render(<XAAIdpCard organizationId="org_a1B2" />);
+
+    await user.click(screen.getByRole("button", { name: /open xaa setup/i }));
+    expect(navigateMock).toHaveBeenCalledWith("/xaa-flow/setup");
+  });
+
+  it("hides the setup gear without an org", () => {
+    render(<XAAIdpCard />);
+    expect(
+      screen.queryByRole("button", { name: /open xaa setup/i })
+    ).toBeNull();
   });
 });
 
