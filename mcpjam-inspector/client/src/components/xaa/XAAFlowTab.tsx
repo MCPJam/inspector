@@ -717,31 +717,6 @@ export function XAAFlowTab({
   );
   const [configurationSaveVersion, setConfigurationSaveVersion] = useState(0);
 
-  // Unlocks and scorecard results belong to the exact client identity the
-  // completed run exercised. Dynamic client ids come from the flow, not the
-  // saved server configuration, and can change after re-registration.
-  const scorecardClientId =
-    flowState.registrationStrategy === "preregistered"
-      ? runInput.clientId
-      : flowState.clientId ?? "";
-  const scorecardTokenEndpointAuthMethod =
-    flowState.registrationStrategy === "dcr"
-      ? flowState.tokenEndpointAuthMethod ?? ""
-      : "";
-  // A positive run unlocks only the exact issuer, policy context, client
-  // identity, auth method, and saved configuration that it exercised.
-  const runGateKey = [
-    targetKey,
-    hostedIssuerOptIn ? "hosted" : "local",
-    organizationId ?? "",
-    hostedIssuerKind,
-    policyMode ?? "",
-    flowState.registrationStrategy,
-    scorecardClientId,
-    scorecardTokenEndpointAuthMethod,
-    flowConfigurationKey,
-    configurationSaveVersion,
-  ].join("|");
   // Person outcomes need a stable key while a dynamic run establishes its
   // client ID. Dynamic identity changes are invalidated by the per-target
   // registration generation below; the scorecard gate remains intentionally
@@ -781,16 +756,9 @@ export function XAAFlowTab({
     targetSourceRef.current = target.targetSource;
   }, [target.targetSource]);
 
-  // In-memory: targets that have completed a successful flow this session,
-  // keyed per target so a green run on one server can't unlock another's
-  // scorecard. A page refresh clears it, re-locking the scorecard.
-  const [positiveRunTargets, setPositiveRunTargets] = useState<Set<string>>(
-    () => new Set()
-  );
-
   // In-memory per-person outcomes, keyed `${personOutcomeKey}|${personId}` so
   // hosted/local/org variants never cross-contaminate. Session-only by
-  // design (mirrors positiveRunTargets).
+  // design.
   const [personOutcomes, setPersonOutcomes] = useState<
     Map<string, RecordedPersonOutcome>
   >(() => new Map());
@@ -923,18 +891,8 @@ export function XAAFlowTab({
         // The strategy the completed run actually used (state-authoritative).
         registration_strategy: flowStateRef.current.registrationStrategy,
       });
-      // This PR enables dynamic scorecards for DCR only. Keep CIMD locked
-      // until its client-auth behavior is implemented and reviewed separately.
-      if (flowStateRef.current.registrationStrategy !== "cimd") {
-        setPositiveRunTargets((current) => {
-          if (current.has(runGateKey)) return current;
-          const next = new Set(current);
-          next.add(runGateKey);
-          return next;
-        });
-      }
     }
-  }, [flowState.currentStep, authServerModeForTelemetry, runGateKey]);
+  }, [flowState.currentStep, authServerModeForTelemetry]);
 
   // Record the run's outcome for the person it STARTED as (captured context —
   // never the currently-selected person/target). Only valid-mode runs count:
@@ -2007,7 +1965,6 @@ export function XAAFlowTab({
                     })
                   : undefined
               }
-              unlocked={positiveRunTargets.has(runGateKey)}
               unavailableReason={scorecard.unavailableReason}
               onResultsReady={expandScorecardForResults}
               onTargetChange={collapseScorecard}

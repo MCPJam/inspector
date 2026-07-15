@@ -267,7 +267,6 @@ vi.mock("../xaa/NegativeTestScorecard", () => ({
     return (
       <div
         data-testid="xaa-scorecard"
-        data-unlocked={String(props.unlocked)}
         data-has-input={String(props.input !== null)}
         data-audience={props.input?.audience ?? ""}
         data-client-id={props.input?.clientId ?? ""}
@@ -534,42 +533,12 @@ describe("XAAFlowTab", () => {
     expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
       "Start"
     );
-    expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
-      "data-unlocked",
-      "false"
-    );
   });
 
-  it("unlocks the scorecard per target — a green run on one leaves another locked", async () => {
-    const user = userEvent.setup();
-    const { rerender } = render(
-      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />
-    );
+  it("shows the scorecard independently of the positive flow", () => {
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
 
-    // A successful run unlocks staging's scorecard.
-    await user.click(screen.getByRole("button", { name: /run all/i }));
-    await waitFor(() =>
-      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
-        "data-unlocked",
-        "true"
-      )
-    );
-
-    // Switching to a different server shows a locked scorecard — the green run
-    // on staging must not unlock prod.
-    currentTarget = makeTarget({
-      targetKey: "bar_server:prod",
-      runInput: {
-        ...makeTarget().runInput,
-        serverUrl: "https://prod.mcp.example.com",
-      },
-    });
-    rerender(<XAAFlowTab serverConfigs={{}} selectedServerName="prod" />);
-
-    expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
-      "data-unlocked",
-      "false"
-    );
+    expect(screen.getByTestId("xaa-scorecard")).toBeInTheDocument();
   });
 
   it("uses the discovered issuer for a confidential server whose AS metadata discovery was skipped", async () => {
@@ -889,8 +858,8 @@ describe("XAAFlowTab", () => {
 
       await waitFor(() =>
         expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
-          "data-unlocked",
-          "true"
+          "data-client-id",
+          "dynamic-client"
         )
       );
       expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
@@ -926,8 +895,8 @@ describe("XAAFlowTab", () => {
 
       await waitFor(() =>
         expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
-          "data-unlocked",
-          "false"
+          "data-auth-method",
+          "client_secret_post"
         )
       );
       expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
@@ -1051,10 +1020,6 @@ describe("XAAFlowTab", () => {
         )
       );
       expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
-        "data-unlocked",
-        "false"
-      );
-      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
         "data-has-input",
         "false"
       );
@@ -1171,9 +1136,8 @@ describe("XAAFlowTab", () => {
       // Drive the run to completion so a later strategy change must confirm.
       await user.click(screen.getByRole("button", { name: /run all/i }));
       await waitFor(() =>
-        expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
-          "data-unlocked",
-          "true"
+        expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
+          "Flow Complete"
         )
       );
 

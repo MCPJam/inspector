@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Card } from "@mcpjam/design-system/card";
-import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
   NEGATIVE_TEST_MODE_DETAILS,
   isPolicyDependentNegativeTestMode,
@@ -32,8 +31,6 @@ interface NegativeTestScorecardProps {
   /** Resolve session-only credentials immediately before the request. The
    * returned secret is never retained in component state or rendered props. */
   resolveInput?: () => NegativeTestsInput;
-  /** A successful positive run has completed for this target this session. */
-  unlocked: boolean;
   /** Why `input` is null — shown when the scorecard can't run at all. */
   unavailableReason?: string;
   /** Lets the parent grow the scorecard panel after a completed run. */
@@ -145,7 +142,6 @@ function VerdictRow({ row }: { row: NegativeTestCase }) {
 export function NegativeTestScorecard({
   input,
   resolveInput,
-  unlocked,
   unavailableReason,
   onResultsReady,
   onTargetChange,
@@ -154,7 +150,6 @@ export function NegativeTestScorecard({
 }: NegativeTestScorecardProps) {
   const [expanded, setExpanded] = useState(true);
   const [run, setRun] = useState<RunState>({ status: "idle" });
-  const [overrideAccepted, setOverrideAccepted] = useState(false);
   const cardContainerRef = useRef<HTMLDivElement>(null);
 
   // Reset the last run whenever the target changes — including when config is
@@ -182,11 +177,10 @@ export function NegativeTestScorecard({
     : "";
   useEffect(() => {
     setRun({ status: "idle" });
-    setOverrideAccepted(false);
     onTargetChange?.();
   }, [onTargetChange, targetKey]);
 
-  const canRun = input !== null && (unlocked || overrideAccepted);
+  const canRun = input !== null;
 
   const handleRun = async () => {
     if (!input) return;
@@ -302,30 +296,7 @@ export function NegativeTestScorecard({
                       "Run negative tests"
                     )}
                   </Button>
-                  {!unlocked && !overrideAccepted && (
-                    <span className="text-xs text-muted-foreground">
-                      Run a successful flow first to unlock.
-                    </span>
-                  )}
                 </div>
-
-                {!unlocked && (
-                  <div className="flex items-start gap-2 rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
-                    <Checkbox
-                      checked={overrideAccepted}
-                      onCheckedChange={(value) =>
-                        setOverrideAccepted(value === true)
-                      }
-                      className="mt-0.5"
-                      aria-label="I own this auth server and want to run before a passing flow"
-                    />
-                    <span>
-                      I&apos;m building this auth server — let me run the tests
-                      before a passing happy-path run. Use this only for a
-                      server you own and are developing.
-                    </span>
-                  </div>
-                )}
 
                 {run.status === "error" && (
                   <div

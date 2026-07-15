@@ -24,7 +24,6 @@ describe("NegativeTestScorecard", () => {
     render(
       <NegativeTestScorecard
         input={null}
-        unlocked={false}
         unavailableReason="MCPJam test auth server has nothing to test."
       />
     );
@@ -37,18 +36,20 @@ describe("NegativeTestScorecard", () => {
     ).toBeNull();
   });
 
-  it("locks the run button until a positive run unlocks it", () => {
-    render(<NegativeTestScorecard input={INPUT} unlocked={false} />);
+  it("runs as soon as an authorization-server target exists", async () => {
+    runMock.mockResolvedValue({ failures: 0, results: [] });
+    const user = userEvent.setup();
+    render(<NegativeTestScorecard input={INPUT} />);
 
-    expect(
-      screen.getByRole("button", { name: /run negative tests/i })
-    ).toBeDisabled();
-    expect(
-      screen.getByText(/run a successful flow first/i)
-    ).toBeInTheDocument();
+    const runButton = screen.getByRole("button", {
+      name: /run negative tests/i,
+    });
+    expect(runButton).toBeEnabled();
+    await user.click(runButton);
+    await waitFor(() => expect(runMock).toHaveBeenCalledWith(INPUT));
   });
 
-  it("runs immediately when unlocked and renders per-case verdicts", async () => {
+  it("runs immediately and renders per-case verdicts", async () => {
     const onResultsReady = vi.fn();
     const onExpandedChange = vi.fn();
     runMock.mockResolvedValue({
@@ -91,7 +92,6 @@ describe("NegativeTestScorecard", () => {
     render(
       <NegativeTestScorecard
         input={INPUT}
-        unlocked
         onResultsReady={onResultsReady}
         onExpandedChange={onExpandedChange}
       />
@@ -160,7 +160,6 @@ describe("NegativeTestScorecard", () => {
       <NegativeTestScorecard
         input={{ ...INPUT, clientId: "dcr-client" }}
         resolveInput={resolveInput}
-        unlocked
       />
     );
 
@@ -184,7 +183,6 @@ describe("NegativeTestScorecard", () => {
         resolveInput={() => {
           throw new Error("Dynamic client secret expired");
         }}
-        unlocked
       />
     );
 
@@ -198,18 +196,11 @@ describe("NegativeTestScorecard", () => {
     );
   });
 
-  it("unlocks via the owner checkbox for the half-built-AS case", async () => {
+  it("runs without an owner override for the half-built-AS case", async () => {
     runMock.mockResolvedValue({ failures: 0, results: [] });
 
     const user = userEvent.setup();
-    render(<NegativeTestScorecard input={INPUT} unlocked={false} />);
-
-    // The run button stays disabled until the owner toggle is checked.
-    expect(
-      screen.getByRole("button", { name: /run negative tests/i })
-    ).toBeDisabled();
-
-    await user.click(screen.getByRole("checkbox"));
+    render(<NegativeTestScorecard input={INPUT} />);
 
     const runButton = screen.getByRole("button", {
       name: /run negative tests/i,
@@ -237,7 +228,7 @@ describe("NegativeTestScorecard", () => {
 
     const user = userEvent.setup();
     const { rerender } = render(
-      <NegativeTestScorecard input={INPUT} unlocked />
+      <NegativeTestScorecard input={INPUT} />
     );
     await user.click(
       screen.getByRole("button", { name: /run negative tests/i })
@@ -250,7 +241,6 @@ describe("NegativeTestScorecard", () => {
     rerender(
       <NegativeTestScorecard
         input={null}
-        unlocked={false}
         unavailableReason="Run the flow first so the token endpoint is discovered."
       />
     );
@@ -260,7 +250,7 @@ describe("NegativeTestScorecard", () => {
     );
   });
 
-  it("clears results and the owner override when only scope changes", async () => {
+  it("clears results when only scope changes", async () => {
     runMock.mockResolvedValue({
       failures: 0,
       results: [
@@ -279,10 +269,8 @@ describe("NegativeTestScorecard", () => {
     const { rerender } = render(
       <NegativeTestScorecard
         input={{ ...INPUT, scope: "mcp.read" }}
-        unlocked={false}
       />
     );
-    await user.click(screen.getByRole("checkbox"));
     await user.click(
       screen.getByRole("button", { name: /run negative tests/i })
     );
@@ -293,16 +281,14 @@ describe("NegativeTestScorecard", () => {
     rerender(
       <NegativeTestScorecard
         input={{ ...INPUT, scope: "mcp.write" }}
-        unlocked={false}
       />
     );
 
     await waitFor(() => {
       expect(screen.queryByTestId("xaa-negtest-row-expired")).toBeNull();
-      expect(screen.getByRole("checkbox")).not.toBeChecked();
       expect(
         screen.getByRole("button", { name: /run negative tests/i })
-      ).toBeDisabled();
+      ).toBeEnabled();
     });
   });
 
@@ -332,7 +318,6 @@ describe("NegativeTestScorecard", () => {
     const { rerender } = render(
       <NegativeTestScorecard
         input={managedInput}
-        unlocked
         onTargetChange={onTargetChange}
       />
     );
@@ -349,7 +334,6 @@ describe("NegativeTestScorecard", () => {
     rerender(
       <NegativeTestScorecard
         input={{ ...managedInput, testIdentityId: "xperson_sam" }}
-        unlocked
         onTargetChange={onTargetChange}
       />
     );
@@ -371,7 +355,6 @@ describe("NegativeTestScorecard", () => {
     rerender(
       <NegativeTestScorecard
         input={{ ...INPUT, policyMode: "unmanaged", resourceAppId: "app_1" }}
-        unlocked
         onTargetChange={onTargetChange}
       />
     );
@@ -412,7 +395,7 @@ describe("NegativeTestScorecard", () => {
 
     const user = userEvent.setup();
     const { rerender } = render(
-      <NegativeTestScorecard input={anonymousInput} unlocked />,
+      <NegativeTestScorecard input={anonymousInput} />,
     );
     await user.click(
       screen.getByRole("button", { name: /run negative tests/i }),
@@ -421,7 +404,7 @@ describe("NegativeTestScorecard", () => {
       expect(screen.getByTestId("xaa-negtest-row-expired")).toBeInTheDocument(),
     );
 
-    rerender(<NegativeTestScorecard input={orgInput} unlocked />);
+    rerender(<NegativeTestScorecard input={orgInput} />);
 
     await waitFor(() =>
       expect(screen.queryByTestId("xaa-negtest-row-expired")).toBeNull(),
@@ -432,7 +415,7 @@ describe("NegativeTestScorecard", () => {
     runMock.mockRejectedValue(new Error("URL not allowed"));
 
     const user = userEvent.setup();
-    render(<NegativeTestScorecard input={INPUT} unlocked />);
+    render(<NegativeTestScorecard input={INPUT} />);
     await user.click(
       screen.getByRole("button", { name: /run negative tests/i })
     );
