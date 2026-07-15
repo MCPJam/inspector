@@ -674,21 +674,21 @@ describe("OAuth state machine regressions", () => {
     infoLogs: [],
   });
 
-  const prmExecutor = (resource: string) =>
+  const prmExecutor = (resource: string | undefined) =>
     jest.fn().mockResolvedValue({
       ok: true,
       status: 200,
       statusText: "OK",
       headers: { "content-type": "application/json" },
       body: {
-        resource,
+        ...(resource !== undefined ? { resource } : {}),
         authorization_servers: ["https://auth.example.com"],
       },
     });
 
   const runResourceMetadataStep = async (
     protocolVersion: OAuthProtocolVersion,
-    resource: string,
+    resource: string | undefined,
     enforcement?: "warn" | "reject",
   ) => {
     let state: any = seedResourceMetadataFetch();
@@ -800,6 +800,39 @@ describe("OAuth state machine regressions", () => {
       expect(state.error).toMatch(/https URL/);
       expect(state.currentStep).not.toBe("received_resource_metadata");
       expect(state.resourceIndicator).toBeUndefined();
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "fails discovery under reject enforcement when PRM omits its resource in %s",
+    async (protocolVersion) => {
+      const state = await runResourceMetadataStep(
+        protocolVersion,
+        undefined,
+        "reject",
+      );
+
+      expect(state.error).toMatch(/missing its required "resource"/);
+      expect(state.currentStep).not.toBe("received_resource_metadata");
+    },
+  );
+
+  it.each<OAuthProtocolVersion>(["2025-06-18", "2025-11-25"])(
+    "warns and falls back to the server URL when PRM omits its resource in %s",
+    async (protocolVersion) => {
+      const state = await runResourceMetadataStep(protocolVersion, undefined);
+
+      expect(state.currentStep).toBe("received_resource_metadata");
+      expect(state.resourceIndicator).toMatchObject({
+        source: "server",
+        status: "valid",
+        value: SERVER_URL,
+      });
+      expect(
+        state.infoLogs?.find(
+          (log: any) => log.id === "resource-identifier-mismatch",
+        )?.level,
+      ).toBe("warning");
     },
   );
 

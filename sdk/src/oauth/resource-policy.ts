@@ -199,7 +199,10 @@ export function resolveResourceIndicatorValue(input: {
   if (input.resolved) {
     return input.resolved.value;
   }
-  if (!input.serverUrl) {
+  // Only a truly ABSENT server URL short-circuits — an empty string is still
+  // evaluated so the string overload's contract holds (the evaluator returns
+  // an invalid string-valued decision for unparseable server URLs).
+  if (input.serverUrl === undefined) {
     return input.prmResource;
   }
   return evaluateResourceIndicator({
