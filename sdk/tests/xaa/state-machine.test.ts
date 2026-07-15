@@ -1443,6 +1443,22 @@ describe("createXAAStateMachine", () => {
       expect(
         externalUrls.some((u) => u.includes("oauth-authorization-server"))
       ).toBe(false);
+      expect(
+        state.infoLogs?.find(
+          (log) => log.id === "xaa-resource-metadata-skipped-request"
+        )
+      ).toBeDefined();
+      expect(
+        state.infoLogs?.find(
+          (log) => log.id === "xaa-authz-metadata-skipped-request"
+        )
+      ).toBeDefined();
+      expect(
+        state.infoLogs?.find((log) => log.id === "xaa-resource-metadata-skipped")
+      ).toBeDefined();
+      expect(
+        state.infoLogs?.find((log) => log.id === "xaa-authz-metadata-skipped")
+      ).toBeDefined();
     });
 
     it("skips resource discovery when the issuer is configured but still discovers the token endpoint", async () => {
@@ -1502,8 +1518,16 @@ describe("createXAAStateMachine", () => {
       // consume one Continue click apiece.
       await machine.proceedToNextStep();
       expect(state.currentStep).toBe("discover_resource_metadata");
+      expect(
+        state.infoLogs?.find(
+          (log) => log.id === "xaa-resource-metadata-skipped-request"
+        )
+      ).toBeDefined();
       await machine.proceedToNextStep();
       expect(state.currentStep).toBe("received_resource_metadata");
+      expect(
+        state.infoLogs?.find((log) => log.id === "xaa-resource-metadata-skipped")
+      ).toBeDefined();
       expect(
         externalUrls.some((u) => u.includes("oauth-protected-resource"))
       ).toBe(false);

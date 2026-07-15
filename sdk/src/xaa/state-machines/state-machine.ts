@@ -728,6 +728,16 @@ export function createXAAStateMachine(
         resourceUrl: state.resourceUrl || activeServerUrl,
         error: undefined,
       });
+      pushInfo(
+        "discover_resource_metadata",
+        "xaa-resource-metadata-skipped-request",
+        "Resource metadata discovery skipped",
+        {
+          reason:
+            "Authorization server issuer is already configured; RFC 9728 discovery is not part of the XAA grant and isn't needed.",
+          authz_server_issuer: state.authzServerIssuer,
+        }
+      );
       return;
     }
 
@@ -860,6 +870,19 @@ export function createXAAStateMachine(
         currentStep: "discover_authz_metadata",
         error: undefined,
       });
+      pushInfo(
+        "discover_authz_metadata",
+        "xaa-authz-metadata-skipped-request",
+        "Authorization metadata discovery skipped",
+        {
+          reason: registrationId
+            ? "The registered resource's token endpoint is resolved server-side; RFC 8414 discovery isn't needed."
+            : "The token endpoint is already configured; RFC 8414 discovery isn't needed.",
+          ...(state.tokenEndpoint
+            ? { token_endpoint: state.tokenEndpoint }
+            : {}),
+        }
+      );
       return;
     }
 
