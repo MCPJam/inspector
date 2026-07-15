@@ -123,9 +123,16 @@ describe("confirmAutoOAuthEscalation", () => {
 
   it("resolves true when the user continues", async () => {
     const promise = confirmAutoOAuthEscalation("Asana");
-    const options = capturedToastOptions();
-    expect(options.duration).toBe(Infinity);
-    options.action.onClick();
+    expect(toastMock).toHaveBeenCalledWith(
+      'Authorize "Asana"?',
+      expect.objectContaining({
+        duration: Infinity,
+        action: expect.objectContaining({ label: "Continue" }),
+        cancel: expect.objectContaining({ label: "Not now" }),
+      }),
+    );
+    expect(capturedToastOptions()).not.toHaveProperty("description");
+    capturedToastOptions().action.onClick();
     await expect(promise).resolves.toBe(true);
   });
 
