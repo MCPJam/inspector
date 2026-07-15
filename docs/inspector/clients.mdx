@@ -111,8 +111,15 @@ Once saved, a Client shows up in the picker at the top of every consumer:
 - **Chat** — Drives the model, system prompt, attached servers, and connection settings for the conversation.
 - **Chatboxes** — Same as Chat, but persisted as a saved chatbox configuration.
 - **Evals** — Every test run inside an Eval uses the selected Client, so results are reproducible across teammates.
+- **Swarms** — Journeys in the Swarms surface can target any project client, including standalone ones.
 
 Switching the active Client in any of these views swaps the entire configuration in place. There's no separate "apply" step.
+
+### Standalone clients (Swarms-managed)
+
+Some clients are **standalone** — they are owned by the Swarms surface and have no Chatbox or publish surface. If you select a standalone client in the Chatboxes tab, the tab shows a **"Managed by Swarms"** notice instead of a chatbox. The client picker stays visible so you can switch to a publishable client.
+
+Standalone clients do not appear as options in the Chatboxes client picker dropdown. If you need a client for both Chatboxes and Swarms journeys, create a regular client from the Connect tab instead of from Swarms → Clients.
 
 ## Server attachments
 
