@@ -19,8 +19,6 @@ let balanceState:
   | undefined;
 let isLoadingState = false;
 let hasWorkOsUserState = true;
-let creditTopupsFlagState = true;
-let teamCreditsFlagState = true;
 
 vi.mock("@/hooks/useCreditBalance", () => ({
   useCreditBalance: () => ({
@@ -28,14 +26,6 @@ vi.mock("@/hooks/useCreditBalance", () => ({
     isLoading: isLoadingState,
     hasWorkOsUser: hasWorkOsUserState,
   }),
-}));
-
-vi.mock("@/lib/team-credits-flag", () => ({
-  useTeamCreditsUiEnabled: () => teamCreditsFlagState,
-}));
-
-vi.mock("@/lib/credit-topups-flag", () => ({
-  useCreditTopupsUiEnabled: () => creditTopupsFlagState,
 }));
 
 describe("SidebarCreditUsage", () => {
@@ -53,8 +43,6 @@ describe("SidebarCreditUsage", () => {
     };
     isLoadingState = false;
     hasWorkOsUserState = true;
-    creditTopupsFlagState = true;
-    teamCreditsFlagState = true;
   });
 
   afterEach(() => {
@@ -70,14 +58,6 @@ describe("SidebarCreditUsage", () => {
     expect(dailyRow).toHaveTextContent("36 / 300");
     expect(dailyRow).toHaveTextContent("resets in 3h");
     expect(screen.queryByText(/10× the credits/i)).not.toBeInTheDocument();
-  });
-
-  it("renders nothing when the top-ups UI flag is off", () => {
-    creditTopupsFlagState = false;
-
-    const { container } = render(<SidebarCreditUsage />);
-
-    expect(container).toBeEmptyDOMElement();
   });
 
   it("keeps the sidebar strip focused on daily limits for paid users", () => {
@@ -145,36 +125,6 @@ describe("SidebarCreditUsage", () => {
     expect(monthlyRow).toHaveTextContent("resets in 16 days");
     expect(screen.queryByTestId("sidebar-usage-daily")).not.toBeInTheDocument();
 
-    const paidRow = screen.getByTestId("sidebar-usage-paid");
-    expect(paidRow).toHaveTextContent("Paid credits");
-    expect(paidRow).toHaveTextContent("988");
-    expect(paidRow).not.toHaveTextContent("24,500");
-  });
-
-  it("keeps the existing daily and paid rows when only the team flag is off", () => {
-    teamCreditsFlagState = false;
-    balanceState = {
-      paidCreditsRemaining: 988,
-      hasPurchaseHistory: true,
-      freeDailyPercentUsed: 0,
-      freeDailyResetAt: 0,
-      freeDailyCreditsRemaining: 0,
-      freeDailyCreditsTotal: 0,
-      walletLocked: false,
-      billingModel: "monthly_per_seat",
-      monthlyAllowanceTotal: 24_000,
-      monthlyAllowanceRemaining: 24_000,
-      monthlyResetAt: Date.now() + 16 * 24 * 60 * 60 * 1000,
-    };
-
-    render(<SidebarCreditUsage variant="full" />);
-
-    expect(
-      screen.queryByTestId("sidebar-usage-monthly")
-    ).not.toBeInTheDocument();
-    expect(screen.getByTestId("sidebar-usage-daily")).toHaveTextContent(
-      "Free daily credits"
-    );
     const paidRow = screen.getByTestId("sidebar-usage-paid");
     expect(paidRow).toHaveTextContent("Paid credits");
     expect(paidRow).toHaveTextContent("988");

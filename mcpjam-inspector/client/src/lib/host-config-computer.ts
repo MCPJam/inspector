@@ -52,6 +52,28 @@ export function computerBackedToolIds(
   return ids;
 }
 
+/**
+ * The catalog rows an editor should actually RENDER, honoring the
+ * `computers-enabled` rollout flag: when the flag is off for this user,
+ * computer-backed rows are hidden — the backend `bash` row can be enabled
+ * deployment-wide without leaking a dead "requires a computer" checkbox to
+ * users who can't see the (flag-gated) computer toggle it points at. A row
+ * whose id is ALREADY selected stays visible regardless, preserving the
+ * checkbox list's invariant that a stale selected id is always removable.
+ * `undefined` passes through (callers treat it as "catalog still loading").
+ */
+export function visibleBuiltInToolCatalog(
+  catalog: ReadonlyArray<BuiltInToolCatalogEntry> | undefined,
+  opts: {
+    computersEnabled: boolean;
+    selectedIds: ReadonlyArray<string>;
+  }
+): ReadonlyArray<BuiltInToolCatalogEntry> | undefined {
+  if (catalog === undefined || opts.computersEnabled) return catalog;
+  const selected = new Set(opts.selectedIds);
+  return catalog.filter((t) => !t.requiresComputer || selected.has(t.id));
+}
+
 /** Patch that attaches a personal computer (the only MVP resource shape). */
 export function attachComputerPatch(): Partial<HostConfigInputV2> {
   return { computer: { kind: "personal" } };
@@ -77,6 +99,10 @@ export function shouldShowComputerToggle(opts: {
  * Patch that detaches the computer AND drops any computer-backed tool ids, so
  * the resulting draft can't fail the backend's requiresComputer invariant on
  * save (detaching the resource must take its dependent capabilities with it).
+ *
+ * Also clears `harness`: the Claude Code harness runs inside the computer, so a
+ * harness without a computer would fail the backend's `harness ⇒ computer`
+ * invariant. Detaching the resource takes the runtime that depends on it too.
  */
 export function detachComputerPatch(
   value: HostConfigInputV2,
@@ -85,6 +111,7 @@ export function detachComputerPatch(
   const backed = computerBackedToolIds(catalog);
   return {
     computer: undefined,
+    harness: undefined,
     builtInToolIds: value.builtInToolIds.filter((id) => !backed.has(id)),
   };
 }
@@ -108,6 +135,18 @@ export function sanitizeHostConfigForEvalSuite(
   const backed = computerBackedToolIds(catalog);
   const cleanedIds = value.builtInToolIds.filter((id) => !backed.has(id));
   const idsChanged = cleanedIds.length !== value.builtInToolIds.length;
-  if (value.computer === undefined && !idsChanged) return value;
-  return { ...value, computer: undefined, builtInToolIds: cleanedIds };
+  // Clear `harness` too: the Claude Code harness runs inside the computer, so a
+  // harness left set with no computer violates the backend `harness ⇒ computer`
+  // invariant and would route an eval run toward the real harness path. Mirrors
+  // detachComputerPatch — dropping the computer takes its dependent runtime.
+  const harnessChanged = value.harness !== undefined;
+  if (value.computer === undefined && !idsChanged && !harnessChanged) {
+    return value;
+  }
+  return {
+    ...value,
+    computer: undefined,
+    harness: undefined,
+    builtInToolIds: cleanedIds,
+  };
 }

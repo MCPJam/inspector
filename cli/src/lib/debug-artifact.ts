@@ -140,6 +140,30 @@ export function buildCommandArtifactError(
   };
 }
 
+/**
+ * Write raw bytes (e.g. a widget-render screenshot PNG) to a file, creating
+ * parent directories as needed. Unlike {@link writeDebugArtifact} this performs
+ * no JSON serialization or redaction — the bytes are written verbatim — so it
+ * suits binary artifacts. Returns the resolved absolute path.
+ */
+export async function writeBinaryArtifact(
+  outputPath: string,
+  data: Uint8Array,
+): Promise<string> {
+  const resolvedPath = path.resolve(process.cwd(), outputPath);
+
+  try {
+    await mkdir(path.dirname(resolvedPath), { recursive: true });
+    await writeFile(resolvedPath, data);
+  } catch (error) {
+    throw operationalError(`Failed to write artifact to "${resolvedPath}".`, {
+      source: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  return resolvedPath;
+}
+
 export async function writeDebugArtifact(
   outputPath: string,
   payload: unknown,

@@ -1,6 +1,8 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import {
   useAppToolsRegistry,
+  useAppToolInvocationLog,
+  recordAppToolInvocation,
   type AppInstance,
   type AppToolDescriptor,
 } from "../app-tools-registry";
@@ -474,5 +476,62 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
         .pendingControllers.get("b-inline")
         ?.has(inFlight),
     ).toBe(true);
+  });
+});
+
+// Phase 3b: traffic logging is injected by the inspector caller rather than
+// reached for via `@/stores`, so the registry carries no inspector telemetry
+// into the widget package. These lock that seam.
+describe("recordAppToolInvocation telemetry injection", () => {
+  const invocation = {
+    alias: "app_12345678",
+    rawName: "do_thing",
+    appName: "Demo",
+    serverId: "srv-1",
+    parentToolCallId: "call-1",
+    bridgeId: "b-1",
+    input: { q: "hi" },
+    raw: { content: [{ type: "text", text: "ok" }] },
+  } as Parameters<typeof recordAppToolInvocation>[0];
+
+  beforeEach(() => {
+    useAppToolInvocationLog.getState().clear();
+  });
+
+  it("always appends to the invocation log", () => {
+    recordAppToolInvocation(invocation);
+    const records = useAppToolInvocationLog.getState().records;
+    expect(records).toHaveLength(1);
+    expect(records[0]?.alias).toBe("app_12345678");
+  });
+
+  it("forwards the scrubbed payload to the injected traffic-log sink", () => {
+    const addTrafficLog = vi.fn();
+    recordAppToolInvocation(invocation, addTrafficLog);
+    expect(addTrafficLog).toHaveBeenCalledTimes(1);
+    expect(addTrafficLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        widgetId: "call-1",
+        serverId: "srv-1",
+        direction: "host-to-ui",
+        protocol: "mcp-apps",
+        method: "tools/call",
+      }),
+    );
+  });
+
+  it("requires no sink (non-inspector host): still records, no throw", () => {
+    expect(() => recordAppToolInvocation(invocation)).not.toThrow();
+    expect(useAppToolInvocationLog.getState().records).toHaveLength(1);
+  });
+
+  it("swallows sink failures (best-effort observability)", () => {
+    const addTrafficLog = vi.fn(() => {
+      throw new Error("logger boom");
+    });
+    expect(() =>
+      recordAppToolInvocation(invocation, addTrafficLog),
+    ).not.toThrow();
+    expect(useAppToolInvocationLog.getState().records).toHaveLength(1);
   });
 });

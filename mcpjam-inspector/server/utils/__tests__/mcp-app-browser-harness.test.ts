@@ -5,6 +5,11 @@ import {
   ChromiumNotInstalledError,
   cspSourceMatchesUrl,
   injectCspMeta,
+  isBlockedEgressHost,
+  isChromiumInstalled,
+  pushBoundedDiagnostic,
+  MAX_DIAGNOSTIC_ENTRIES,
+  MAX_DIAGNOSTIC_ENTRY_CHARS,
   type McpAppBrowserHarnessOptions,
 } from "../mcp-app-browser-harness";
 
@@ -56,15 +61,87 @@ const app = new App({ name: "fixture-blank", version: "1.0.0" });
 app.connect().catch(() => {});
 `;
 
+// A guest that handshakes immediately but only PAINTS after a delay — mimics a
+// data/CDN-driven widget (e.g. Excalidraw) that finishes loading well after the
+// bridge handshake completes. The blank-first-frame must not classify as blank.
+const DELAYED_PAINT_GUEST_SRC = `
+import { App } from "@modelcontextprotocol/ext-apps";
+const app = new App({ name: "fixture-delayed", version: "1.0.0" });
+(async () => {
+  await app.connect();
+  await new Promise((r) => setTimeout(r, 600));
+  const d = document.createElement("div");
+  d.textContent = "painted late";
+  d.style.cssText = "font-size:40px;padding:60px";
+  document.body.appendChild(d);
+})();
+`;
+
 // Plain HTML with no guest SDK: paints text but never handshakes -> bridge_timeout.
 const STATIC_NO_BRIDGE_HTML = `<!doctype html><html><head><meta charset="utf-8"></head><body><p style="font-size:24px;padding:20px">Static content, no bridge handshake</p></body></html>`;
 
+// A guest exercising scripted interaction steps: a text input (by testId), a
+// "Save" button (by role+name) that reveals "Saved!" text and calls a server
+// tool. Drives the runScriptedStep selector + assertion paths.
+const SCRIPTED_GUEST_SRC = `
+import { App } from "@modelcontextprotocol/ext-apps";
+const app = new App({ name: "fixture-scripted", version: "1.0.0" });
+(async () => {
+  await app.connect();
+  const input = document.createElement("input");
+  input.setAttribute("data-testid", "name");
+  input.style.cssText = "display:block;font-size:18px;margin:20px";
+  document.body.appendChild(input);
+
+  const status = document.createElement("div");
+  status.id = "status";
+  status.style.cssText = "font-size:24px;padding:20px";
+  document.body.appendChild(status);
+
+  const btn = document.createElement("button");
+  btn.textContent = "Save";
+  btn.style.cssText = "font-size:18px;padding:10px;margin:20px";
+  btn.addEventListener("click", () => {
+    status.textContent = "Saved!";
+    app.callServerTool({ name: "persist", arguments: {} }).catch(() => {});
+  });
+  document.body.appendChild(btn);
+})();
+`;
+
+// A guest whose button sends a `ui/message` follow-up (the MCP Apps affordance
+// for a widget to add a user message to the chat). Drives the harness's
+// onSendFollowUp capture path.
+const FOLLOWUP_GUEST_SRC = `
+import { App } from "@modelcontextprotocol/ext-apps";
+const app = new App({ name: "fixture-followup", version: "1.0.0" });
+(async () => {
+  await app.connect();
+  const btn = document.createElement("button");
+  btn.textContent = "Show cart";
+  btn.style.cssText = "font-size:18px;padding:10px;margin:20px";
+  btn.addEventListener("click", () => {
+    app.sendMessage({
+      role: "user",
+      content: [{ type: "text", text: "Show my cart" }],
+    }).catch(() => {});
+  });
+  document.body.appendChild(btn);
+})();
+`;
+
 let buttonHtml = "";
 let blankHtml = "";
+let delayedHtml = "";
+let scriptedHtml = "";
+let followupHtml = "";
 
 beforeAll(async () => {
   buttonHtml = guestHtml(await bundleGuest(BUTTON_GUEST_SRC));
   blankHtml = guestHtml(await bundleGuest(BLANK_GUEST_SRC));
+  delayedHtml = guestHtml(await bundleGuest(DELAYED_PAINT_GUEST_SRC));
+  scriptedHtml = guestHtml(await bundleGuest(SCRIPTED_GUEST_SRC));
+  followupHtml = guestHtml(await bundleGuest(FOLLOWUP_GUEST_SRC));
 }, 60_000);
 
 const harnesses: McpAppBrowserHarness[] = [];
@@ -80,7 +157,13 @@ function makeHarness(
   );
   const h = new McpAppBrowserHarness({
     callTool,
-    budgets: { renderTimeoutMs: 1200, settleTimeoutMs: 1200 },
+    // Small paintTimeoutMs keeps the genuinely-blank fixture fast (it waits the
+    // whole paint budget before concluding blank).
+    budgets: {
+      renderTimeoutMs: 1200,
+      settleTimeoutMs: 1200,
+      paintTimeoutMs: 800,
+    },
     ...overrides,
   }) as McpAppBrowserHarness & { calls: typeof calls };
   h.calls = calls;
@@ -93,6 +176,12 @@ afterEach(async () => {
     await harnesses.pop()!.dispose();
   }
 });
+
+// Render/interaction/CSP suites below launch a real Chromium; run them only
+// where one is installed (CI + the hosted image), skip in browser-less envs.
+// The "Chromium gating" suite is intentionally NOT gated — it mocks the
+// missing-binary path and must always run.
+const CHROMIUM_AVAILABLE = await isChromiumInstalled();
 
 describe("McpAppBrowserHarness — Chromium gating", () => {
   it("records browser_unavailable when Chromium is not installed", async () => {
@@ -122,7 +211,22 @@ describe("McpAppBrowserHarness — Chromium gating", () => {
   });
 });
 
-describe("McpAppBrowserHarness — render classification", () => {
+describe("McpAppBrowserHarness — collectVideo (fail-soft + idempotent)", () => {
+  it("returns null when the harness never launched, and stays a no-op", async () => {
+    const h = new McpAppBrowserHarness({
+      callTool: async () => ({ content: [] }),
+    });
+    harnesses.push(h);
+    // No render → no page/video → null, never throws.
+    expect(await h.collectVideo()).toBeNull();
+    // Memoized: a second call (and a later dispose) is a safe no-op.
+    expect(await h.collectVideo()).toBeNull();
+    await expect(h.dispose()).resolves.toBeUndefined();
+    expect(await h.collectVideo()).toBeNull();
+  });
+});
+
+describe.skipIf(!CHROMIUM_AVAILABLE)("McpAppBrowserHarness — render classification", () => {
   it("classifies a handshaking, painting widget as rendered", async () => {
     const h = makeHarness();
     const obs = await h.renderWidget({
@@ -140,6 +244,30 @@ describe("McpAppBrowserHarness — render classification", () => {
     // screenshot within the byte budget (256 KiB default).
     const bytes = Buffer.from(obs.screenshotBase64!, "base64").byteLength;
     expect(bytes).toBeLessThanOrEqual(256 * 1024);
+  }, 30_000);
+
+  it("records a .webm and collectVideo returns its non-empty bytes", async () => {
+    // The ONLY test that exercises the real Playwright close-then-read ordering
+    // in collectVideo (capture video ref → close context to flush → readFile).
+    const h = makeHarness();
+    const obs = await h.renderWidget({
+      toolCallId: "tc-vid",
+      toolName: "show_seats",
+      serverId: "s1",
+      html: buttonHtml,
+      resourceUri: "ui://widget/seats",
+    });
+    expect(obs.status).toBe("rendered");
+
+    const video = await h.collectVideo();
+    expect(video).not.toBeNull();
+    expect(video!.byteLength).toBeGreaterThan(0);
+    // WebM/Matroska EBML magic — proves a real, decodable container was flushed.
+    expect(Array.from(video!.subarray(0, 4))).toEqual([0x1a, 0x45, 0xdf, 0xa3]);
+
+    // Idempotent: a second call returns the cached bytes (context already closed).
+    const again = await h.collectVideo();
+    expect(again).toEqual(video);
   }, 30_000);
 
   it("classifies static HTML that never handshakes as bridge_timeout", async () => {
@@ -163,6 +291,50 @@ describe("McpAppBrowserHarness — render classification", () => {
       html: blankHtml,
     });
     expect(obs.status).toBe("blank_screenshot");
+    expect(obs.bridgeInitialized).toBe(true);
+  }, 30_000);
+
+  it("still classifies blank when the settle wait can outlast the paint budget", async () => {
+    // paintTimeoutMs <= settleTimeoutMs: the upfront networkidle wait could
+    // consume the whole budget. The paint poll must still run at least once and
+    // decide on a real frame — otherwise a blank widget falls through to
+    // "rendered". (Pins the Bugbot "paint deadline before polling" fix.)
+    const h = makeHarness({
+      budgets: {
+        renderTimeoutMs: 1200,
+        settleTimeoutMs: 1200,
+        paintTimeoutMs: 1,
+      },
+    });
+    const obs = await h.renderWidget({
+      toolCallId: "tc-3b",
+      toolName: "blank",
+      serverId: "s1",
+      html: blankHtml,
+    });
+    expect(obs.status).toBe("blank_screenshot");
+    expect(obs.bridgeInitialized).toBe(true);
+  }, 30_000);
+
+  it("waits for a late paint instead of snapshotting a blank first frame", async () => {
+    // The widget handshakes immediately but only paints ~600ms later. Sampling
+    // blankness the instant the bridge handshakes (the old behavior) would
+    // mislabel it blank_screenshot; the paint budget must let it settle so a
+    // data/CDN-driven widget isn't a false negative based on load timing.
+    const h = makeHarness({
+      budgets: {
+        renderTimeoutMs: 1500,
+        settleTimeoutMs: 1200,
+        paintTimeoutMs: 3000,
+      },
+    });
+    const obs = await h.renderWidget({
+      toolCallId: "tc-late",
+      toolName: "late",
+      serverId: "s1",
+      html: delayedHtml,
+    });
+    expect(obs.status).toBe("rendered");
     expect(obs.bridgeInitialized).toBe(true);
   }, 30_000);
 
@@ -216,7 +388,7 @@ describe("McpAppBrowserHarness — render classification", () => {
   }, 30_000);
 });
 
-describe("McpAppBrowserHarness — interaction", () => {
+describe.skipIf(!CHROMIUM_AVAILABLE)("McpAppBrowserHarness — interaction", () => {
   it("dispatches a widget-initiated tools/call from a click", async () => {
     const h = makeHarness();
     const render = await h.renderWidget({
@@ -336,7 +508,7 @@ describe("McpAppBrowserHarness — interaction", () => {
   }, 30_000);
 });
 
-describe("McpAppBrowserHarness — unmount network-allowance lifecycle", () => {
+describe.skipIf(!CHROMIUM_AVAILABLE)("McpAppBrowserHarness — unmount network-allowance lifecycle", () => {
   const sourcesOf = (h: McpAppBrowserHarness) =>
     (h as unknown as { widgetCspSources: string[] }).widgetCspSources;
 
@@ -473,6 +645,57 @@ describe("cspSourceMatchesUrl — CSP host-source matching", () => {
   });
 });
 
+describe("isBlockedEgressHost — SSRF guard", () => {
+  it("ALWAYS blocks cloud metadata + link-local, in both modes", () => {
+    for (const blockPrivate of [false, true]) {
+      // The crown-jewel target: cloud instance metadata.
+      expect(isBlockedEgressHost("169.254.169.254", blockPrivate)).toBe(true);
+      expect(isBlockedEgressHost("169.254.0.1", blockPrivate)).toBe(true);
+      expect(isBlockedEgressHost("metadata.google.internal", blockPrivate)).toBe(
+        true
+      );
+      // IPv6 link-local + IPv4-mapped link-local + unspecified.
+      expect(isBlockedEgressHost("[fe80::1]", blockPrivate)).toBe(true);
+      expect(
+        isBlockedEgressHost("[::ffff:169.254.169.254]", blockPrivate)
+      ).toBe(true);
+      expect(isBlockedEgressHost("0.0.0.0", blockPrivate)).toBe(true);
+      expect(isBlockedEgressHost("[::]", blockPrivate)).toBe(true);
+    }
+  });
+
+  it("blocks loopback/private/CGNAT/ULA only in hosted mode", () => {
+    const internal = [
+      "127.0.0.1",
+      "localhost",
+      "10.1.2.3",
+      "192.168.1.10",
+      "172.16.0.1",
+      "172.31.255.255",
+      "100.64.0.1", // CGNAT
+      "[::1]", // IPv6 loopback
+      "[fd00::1]", // IPv6 ULA
+    ];
+    for (const host of internal) {
+      expect(isBlockedEgressHost(host, true)).toBe(true); // hosted: blocked
+      expect(isBlockedEgressHost(host, false)).toBe(false); // local: allowed
+    }
+    // A public range neighbour of the private blocks stays allowed in hosted.
+    expect(isBlockedEgressHost("172.32.0.1", true)).toBe(false);
+    expect(isBlockedEgressHost("11.0.0.1", true)).toBe(false);
+  });
+
+  it("never blocks ordinary public hosts", () => {
+    for (const blockPrivate of [false, true]) {
+      expect(isBlockedEgressHost("esm.sh", blockPrivate)).toBe(false);
+      expect(isBlockedEgressHost("cdn.excalidraw.com", blockPrivate)).toBe(
+        false
+      );
+      expect(isBlockedEgressHost("8.8.8.8", blockPrivate)).toBe(false);
+    }
+  });
+});
+
 describe("injectCspMeta", () => {
   it("inserts the policy as the first child of <head>", () => {
     const out = injectCspMeta(
@@ -516,7 +739,7 @@ describe("injectCspMeta", () => {
   });
 });
 
-describe("McpAppBrowserHarness — widget-declared CSP enforcement", () => {
+describe.skipIf(!CHROMIUM_AVAILABLE)("McpAppBrowserHarness — widget-declared CSP enforcement", () => {
   // Guest that probes three origins via fetch (a connect-src concern) the
   // instant it parses — before the bridge — so the injected <meta> CSP (first
   // in <head>) governs them. `.invalid` is a reserved TLD (RFC 2606): a
@@ -622,3 +845,141 @@ const app = new App({ name: "fixture-csp1", version: "1.0.0" });
     );
   }, 45_000);
 });
+
+describe("pushBoundedDiagnostic", () => {
+  it("passes short entries through unchanged", () => {
+    const arr: string[] = [];
+    pushBoundedDiagnostic(arr, "console error");
+    expect(arr).toEqual(["console error"]);
+  });
+
+  it("truncates an over-long entry and marks it", () => {
+    const arr: string[] = [];
+    pushBoundedDiagnostic(arr, "x".repeat(MAX_DIAGNOSTIC_ENTRY_CHARS + 500));
+    expect(arr).toHaveLength(1);
+    expect(arr[0]).toHaveLength(MAX_DIAGNOSTIC_ENTRY_CHARS + 1); // + ellipsis
+    expect(arr[0].endsWith("…")).toBe(true);
+  });
+
+  it("caps the count with a single sentinel and drops the rest", () => {
+    const arr: string[] = [];
+    for (let i = 0; i < MAX_DIAGNOSTIC_ENTRIES + 25; i++) {
+      pushBoundedDiagnostic(arr, `e${i}`);
+    }
+    // MAX real entries + exactly one sentinel; everything past that dropped.
+    expect(arr).toHaveLength(MAX_DIAGNOSTIC_ENTRIES + 1);
+    expect(arr[MAX_DIAGNOSTIC_ENTRIES]).toMatch(/suppressed/);
+    expect(arr.filter((e) => /suppressed/.test(e))).toHaveLength(1);
+    expect(arr[0]).toBe("e0"); // earliest entries are the ones kept
+  });
+});
+
+describe.skipIf(!CHROMIUM_AVAILABLE)(
+  "McpAppBrowserHarness — scripted interaction steps",
+  () => {
+    it("types by testId, clicks by role+name, and asserts widget state", async () => {
+      const h = makeHarness();
+      const render = await h.renderWidget({
+        toolCallId: "tc-scripted",
+        toolName: "show_form",
+        serverId: "forms",
+        html: scriptedHtml,
+        keepMounted: true,
+      });
+      expect(render.status).toBe("rendered");
+
+      // type into the input (selector inside the widget iframe)
+      const typed = await h.runScriptedStep({
+        toolCallId: "tc-scripted",
+        step: { kind: "type", target: { testId: "name" }, text: "Ada" },
+      });
+      expect(typed.ok).toBe(true);
+
+      // assert the input value round-tripped
+      const valOk = await h.runScriptedStep({
+        toolCallId: "tc-scripted",
+        step: {
+          kind: "assert",
+          assertion: { type: "inputValue", target: { testId: "name" }, equals: "Ada" },
+        },
+      });
+      expect(valOk.ok).toBe(true);
+
+      // click the Save button by ARIA role + accessible name
+      const clicked = await h.runScriptedStep({
+        toolCallId: "tc-scripted",
+        step: { kind: "click", target: { role: { role: "button", name: "Save" } } },
+      });
+      expect(clicked.ok).toBe(true);
+      // the click triggered a widget→host tool call
+      expect(clicked.widgetToolCalls.map((c) => c.name)).toContain("persist");
+
+      // text revealed by the click is now visible
+      const textOk = await h.runScriptedStep({
+        toolCallId: "tc-scripted",
+        step: { kind: "assert", assertion: { type: "textVisible", text: "Saved!" } },
+      });
+      expect(textOk.ok).toBe(true);
+
+      // widgetToolCalled checks the ACCUMULATED calls (the assert step itself
+      // triggers none) — pass the earlier click's calls as prior.
+      const calledOk = await h.runScriptedStep({
+        toolCallId: "tc-scripted",
+        step: { kind: "assert", assertion: { type: "widgetToolCalled", toolName: "persist" } },
+        priorWidgetToolCalls: clicked.widgetToolCalls,
+      });
+      expect(calledOk.ok).toBe(true);
+    }, 30_000);
+
+    it("fails an assertion on a missing element with a reason", async () => {
+      const h = makeHarness();
+      await h.renderWidget({
+        toolCallId: "tc-scripted-2",
+        toolName: "show_form",
+        serverId: "forms",
+        html: scriptedHtml,
+        keepMounted: true,
+      });
+      const result = await h.runScriptedStep({
+        toolCallId: "tc-scripted-2",
+        step: {
+          kind: "assert",
+          assertion: { type: "elementVisible", target: { testId: "does-not-exist" } },
+        },
+      });
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBeTruthy();
+    }, 30_000);
+
+    it("returns no_rendered_widget for an unmounted tool call", async () => {
+      const h = makeHarness();
+      const result = await h.runScriptedStep({
+        toolCallId: "nope",
+        step: { kind: "wait", ms: 10 },
+      });
+      expect(result.ok).toBe(false);
+      expect(result.note).toBe("no_rendered_widget");
+    });
+
+    it("captures a ui/message follow-up emitted by a clicked widget", async () => {
+      const h = makeHarness();
+      const render = await h.renderWidget({
+        toolCallId: "tc-followup",
+        toolName: "show_store",
+        serverId: "store",
+        html: followupHtml,
+        keepMounted: true,
+      });
+      expect(render.status).toBe("rendered");
+
+      const clicked = await h.runScriptedStep({
+        toolCallId: "tc-followup",
+        step: { kind: "click", target: { role: { role: "button", name: "Show cart" } } },
+      });
+      expect(clicked.ok).toBe(true);
+      // The widget's `ui/message` is captured (not silently dropped) so the
+      // runner can drive it as a new model turn.
+      expect(clicked.followUps).toContain("Show my cart");
+    }, 30_000);
+  }
+);

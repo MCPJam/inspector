@@ -166,6 +166,8 @@ interface ChatboxTopicMapPanelProps {
   onClearChip: (key: string) => void;
   onRebuild: () => void;
   rebuildBusy?: boolean;
+  /** Open the clicked node's session in the Sessions tab. */
+  onOpenSession?: (sessionId: string) => void;
 }
 
 function rebuildButtonLabel(
@@ -538,6 +540,7 @@ export function ChatboxTopicMapPanel({
   onClearChip: _onClearChip,
   onRebuild,
   rebuildBusy,
+  onOpenSession,
 }: ChatboxTopicMapPanelProps) {
   const { latestRun, snapshot, snapshotError, isLoading } = useChatboxTopicMap({
     chatboxId,
@@ -776,17 +779,6 @@ export function ChatboxTopicMapPanel({
       );
     },
     [isNodeDimmed],
-  );
-
-  const focusNode = useCallback(
-    (nodeId: string, zoomLevel = 2.1) => {
-      const node = nodeById.get(nodeId);
-      if (!node) return;
-      setSelectedNodeId(nodeId);
-      graphRef.current?.centerAt?.(node.x, node.y, 560);
-      graphRef.current?.zoom?.(zoomLevel, 560);
-    },
-    [nodeById],
   );
 
   useEffect(() => {
@@ -1157,7 +1149,7 @@ export function ChatboxTopicMapPanel({
         <div className="flex max-w-sm flex-col items-center gap-3 text-center">
           <LoaderCircle className="h-8 w-8 animate-spin text-primary" />
           <div>
-            <p className="text-sm font-medium">Building the historical topic map</p>
+            <p className="text-sm font-medium">Building clusters</p>
             <p className="mt-1 text-xs text-muted-foreground">
               Sessions are being summarized, clustered, and laid out for the graph.
             </p>
@@ -1179,8 +1171,8 @@ export function ChatboxTopicMapPanel({
           <div>
             <p className="text-sm font-medium">
               {latestRun?.status === "failed"
-                ? "Topic map rebuild failed"
-                : "No topic map snapshot yet"}
+                ? "Cluster rebuild failed"
+                : "No clusters yet"}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
               {snapshotError ??
@@ -1229,7 +1221,7 @@ export function ChatboxTopicMapPanel({
                   )}
                 >
                   {latestRun?.status === "running"
-                    ? "Updating historical topic map"
+                    ? "Updating clusters"
                     : latestRun?.status === "queued"
                       ? "Queued for rebuild"
                       : "Last rebuild failed"}
@@ -1356,7 +1348,9 @@ export function ChatboxTopicMapPanel({
               setHoveredNodeId((node as GraphNode | null)?.id ?? null);
             }}
             onNodeClick={(node) => {
-              focusNode((node as GraphNode).id);
+              const graphNode = node as GraphNode;
+              setSelectedNodeId(graphNode.id);
+              onOpenSession?.(graphNode.sessionId);
             }}
             onBackgroundClick={() => {
               setHoveredNodeId(null);

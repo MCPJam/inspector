@@ -208,7 +208,7 @@ describe("ChatHistoryRail", () => {
     }
   });
 
-  it("only exposes chat-to-test-case conversion when authenticated and playground flag is on", () => {
+  it("only exposes chat-to-test-case conversion when authenticated", () => {
     useChatHistoryMock.mockImplementation(() => ({
       personal: [sessionStub("personal-1")],
       project: [],
@@ -262,26 +262,6 @@ describe("ChatHistoryRail", () => {
     expect(chatHistoryRowPropsSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         canConvertToTestCase: true,
-      }),
-    );
-
-    chatHistoryRowPropsSpy.mockReset();
-    useFeatureFlagEnabledMock.mockReturnValue(false);
-
-    rerender(
-      <ChatHistoryRail
-        activeSessionId={null}
-        isAuthenticated
-        isStreaming={false}
-        projectId={null}
-        onSelectThread={vi.fn()}
-        onNewChat={vi.fn()}
-      />,
-    );
-
-    expect(chatHistoryRowPropsSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        canConvertToTestCase: false,
       }),
     );
   });
@@ -535,59 +515,6 @@ describe("ChatHistoryRail", () => {
 
     expect(onNewChat).toHaveBeenNthCalledWith(1);
     expect(onNewChat).toHaveBeenNthCalledWith(2, { shared: true });
-  });
-
-  it("hides the shared sessions section when shared threads are disabled", () => {
-    useChatHistoryMock.mockImplementation(() => ({
-      personal: [sessionStub("p1")],
-      project: [sessionStub("w1", { directVisibility: "project" })],
-      loading: false,
-      error: null,
-      isReactive: false,
-      refetch: refetchMock,
-      actions: {
-        rename: vi.fn(),
-        archive: vi.fn(),
-        unarchive: vi.fn(),
-        share: vi.fn(),
-        unshare: vi.fn(),
-        pin: vi.fn(),
-        unpin: vi.fn(),
-        archiveManySessionIds: archiveManySessionIdsMock,
-        archiveAllActive: vi.fn(),
-      },
-    }));
-
-    render(
-      <ChatHistoryRail
-        activeSessionId={null}
-        isAuthenticated
-        isStreaming={false}
-        sharedThreadsEnabled={false}
-        projectId="project-1"
-        onSelectThread={vi.fn()}
-        onNewChat={vi.fn()}
-      />,
-    );
-
-    expect(
-      screen.getByRole("button", { name: "New chat in Sessions" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Sessions")).toBeInTheDocument();
-    expect(screen.queryByText("Shared Sessions")).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", {
-        name: /archive all sessions in shared sessions/i,
-      }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "New chat in Shared Sessions" }),
-    ).not.toBeInTheDocument();
-    expect(
-      chatHistoryRowPropsSpy.mock.calls
-        .map((call) => call[0] as { session?: ChatHistorySession })
-        .some((props) => props.session?._id === "w1"),
-    ).toBe(false);
   });
 
   it("hides project sharing when there is no project scope", () => {

@@ -26,6 +26,10 @@ vi.mock("@/lib/PosthogUtils", () => ({
   detectPlatform: vi.fn().mockReturnValue("web"),
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
+}));
+
 // Mock OAuth utilities
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
   hasOAuthConfig: vi.fn().mockReturnValue(false),

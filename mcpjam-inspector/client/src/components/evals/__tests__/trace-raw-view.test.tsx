@@ -130,6 +130,40 @@ describe("TraceRawView", () => {
     );
   });
 
+  it("annotates the request with the harness's built-in tools when provided", () => {
+    renderWithProviders(
+      <TraceRawView
+        trace={null}
+        requestPayloadHistory={{
+          entries: [makeEntry(0, "System 1")],
+          hasUiMessages: true,
+        }}
+        harnessBuiltinTools={[
+          { key: "bash", name: "Bash", description: "run shell commands" },
+          { key: "read", name: "Read", description: "read files" },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText(/inside the sandbox/i)).toBeInTheDocument();
+    expect(screen.getByText("Bash")).toBeInTheDocument();
+    expect(screen.getByText("Read")).toBeInTheDocument();
+  });
+
+  it("shows no harness annotation for non-harness hosts (shared reuse stays clean)", () => {
+    renderWithProviders(
+      <TraceRawView
+        trace={null}
+        requestPayloadHistory={{
+          entries: [makeEntry(0, "System 1")],
+          hasUiMessages: true,
+        }}
+      />,
+    );
+
+    expect(screen.queryByText(/inside the sandbox/i)).toBeNull();
+  });
+
   it("falls back to the trace blob when request payload history is empty (e.g. rehydrated session)", () => {
     const trace = {
       traceVersion: 1 as const,

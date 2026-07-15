@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { errorToastMessage } from "@/test/utils";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { toast } from "sonner";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -19,6 +20,10 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => false,
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
+}));
+
 vi.mock("@/lib/apis/mcp-tools-api", () => ({
   listTools: vi.fn().mockResolvedValue({ tools: [], toolsMetadata: {} }),
 }));
@@ -34,7 +39,11 @@ vi.mock("@/lib/apis/mcp-tunnels-api", () => ({
     serverId: "test-server",
   }),
   closeServerTunnel: vi.fn().mockResolvedValue(undefined),
-  cleanupOrphanedTunnels: vi.fn().mockResolvedValue(undefined),
+  rotateServerTunnel: vi.fn().mockResolvedValue({
+    url: "https://rotated.ngrok.app/api/mcp/adapter-http/test-server?k=newsecret",
+    serverId: "test-server",
+  }),
+  getTunnelRequests: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -65,7 +74,7 @@ vi.mock("sonner", () => ({
 import { ServerConnectionCard } from "../ServerConnectionCard";
 
 const createServer = (
-  overrides: Partial<ServerWithName> = {},
+  overrides: Partial<ServerWithName> = {}
 ): ServerWithName =>
   ({
     name: "insecure-http",
@@ -78,7 +87,7 @@ const createServer = (
       url: "http://example.com/mcp",
     },
     ...overrides,
-  }) as ServerWithName;
+  } as ServerWithName);
 
 describe("ServerConnectionCard hosted reconnect guard", () => {
   it("blocks reconnect switch for non-HTTPS servers in hosted mode", () => {
@@ -90,14 +99,15 @@ describe("ServerConnectionCard hosted reconnect guard", () => {
         server={server}
         onDisconnect={vi.fn()}
         onReconnect={onReconnect}
-      />,
+      />
     );
 
     const toggle = screen.getByRole("switch");
     fireEvent.click(toggle);
 
     expect(toast.error).toHaveBeenCalledWith(
-      "HTTP servers are not supported in hosted mode",
+      errorToastMessage("HTTP servers are not supported in hosted mode"),
+      { duration: Infinity }
     );
     expect(onReconnect).not.toHaveBeenCalled();
   });
@@ -118,7 +128,7 @@ describe("ServerConnectionCard hosted reconnect guard", () => {
         server={server}
         onDisconnect={vi.fn()}
         onReconnect={onReconnect}
-      />,
+      />
     );
 
     fireEvent.click(screen.getByRole("switch"));
@@ -144,11 +154,11 @@ describe("ServerConnectionCard hosted reconnect guard", () => {
         hostedServerId="hosted-server-1"
         onDisconnect={vi.fn()}
         onReconnect={vi.fn().mockResolvedValue(undefined)}
-      />,
+      />
     );
 
     expect(
-      screen.queryByRole("button", { name: "Share" }),
+      screen.queryByRole("button", { name: "Share" })
     ).not.toBeInTheDocument();
   });
 });
