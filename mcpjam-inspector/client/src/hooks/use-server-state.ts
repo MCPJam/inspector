@@ -1635,6 +1635,9 @@ export function useServerState({
         ...(serverEntry.xaaIdentityAssertionFormat !== undefined
           ? { xaaIdentityAssertionFormat: serverEntry.xaaIdentityAssertionFormat }
           : {}),
+        ...(serverEntry.xaaClientAuth !== undefined
+          ? { xaaClientAuth: serverEntry.xaaClientAuth }
+          : {}),
         ...(serverEntry.registrationMode !== undefined
           ? { registrationMode: serverEntry.registrationMode }
           : {}),
@@ -2836,6 +2839,8 @@ export function useServerState({
         xaaIdentityAssertionFormat:
           formData.xaaIdentityAssertionFormat ??
           existingServerForSave?.xaaIdentityAssertionFormat,
+        xaaClientAuth:
+          formData.xaaClientAuth ?? existingServerForSave?.xaaClientAuth,
         registrationMode:
           formData.registrationMode ??
           existingServerForSave?.registrationMode,
@@ -3316,6 +3321,8 @@ export function useServerState({
         xaaIdentityAssertionFormat:
           formData.xaaIdentityAssertionFormat ??
           existingServer?.xaaIdentityAssertionFormat,
+        xaaClientAuth:
+          formData.xaaClientAuth ?? existingServer?.xaaClientAuth,
         registrationMode:
           formData.registrationMode ??
           existingServer?.registrationMode,
@@ -4962,6 +4969,8 @@ export function useServerState({
           xaaIdentityAssertionFormat:
             formData.xaaIdentityAssertionFormat ??
             originalServer?.xaaIdentityAssertionFormat,
+          xaaClientAuth:
+            formData.xaaClientAuth ?? originalServer?.xaaClientAuth,
           registrationMode:
             formData.registrationMode ??
             originalServer?.registrationMode,

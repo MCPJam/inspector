@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
 import { Hono } from "hono";
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, type JsonWebKey } from "node:crypto";
 import {
   buildConfidentialCimdUrl,
   evaluateIdJagClientMetadata,
@@ -28,14 +28,14 @@ function buildApp() {
 }
 
 /** A representative EC P-256 public JWK, exactly as the CLI publishes it. */
-function samplePublicJwk() {
+function samplePublicJwk(): JsonWebKey & { kid: string; alg: string; use: string } {
   const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
-  const jwk = publicKey.export({ format: "jwk" }) as Record<string, unknown>;
+  const jwk = publicKey.export({ format: "jwk" }) as JsonWebKey;
   return { ...jwk, kid: "xaa-client-1", alg: "ES256", use: "sig" };
 }
 
 /** The path portion of the URL the CLI would present as client_id. */
-function cimdPath(jwk: Record<string, unknown>): string {
+function cimdPath(jwk: JsonWebKey): string {
   return new URL(buildConfidentialCimdUrl(jwk, "http://localhost")).pathname;
 }
 
@@ -150,6 +150,19 @@ describe("XAA confidential CIMD reflector route", () => {
     const document = await response.json();
     // Behind the proxy the public URL is https://app.mcpjam.com/... — the
     // client presented exactly that, so it must byte-match.
+    expect(document.client_id).toBe(`https://app.mcpjam.com${path}`);
+  });
+
+  it("uses the FIRST hop of a comma-separated forwarded chain", async () => {
+    const jwk = samplePublicJwk();
+    const path = cimdPath(jwk);
+    const response = await buildApp().request(`http://localhost${path}`, {
+      headers: {
+        "x-forwarded-proto": "https, http",
+        "x-forwarded-host": "app.mcpjam.com, internal.lb",
+      },
+    });
+    const document = await response.json();
     expect(document.client_id).toBe(`https://app.mcpjam.com${path}`);
   });
 

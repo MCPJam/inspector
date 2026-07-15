@@ -47,6 +47,7 @@ import { NegativeTestScorecard } from "./NegativeTestScorecard";
 import type { NegativeTestsInput } from "@/lib/xaa/discovery-client";
 import {
   DEFAULT_IDENTITY_ASSERTION_FORMAT,
+  isLoopbackClientMetadataUrl,
   normalizeIdentityAssertionFormat,
   normalizeRegistrationStrategy,
   type IdentityAssertionFormat,
@@ -63,8 +64,12 @@ import {
 } from "@/lib/xaa/types";
 import type { XAAFlowStep } from "@/lib/xaa/types";
 import { XAADcrReRegisterControl } from "./XAADcrReRegisterControl";
+import { buildXaaAssertionFormatResave } from "./xaa-server-form";
 import { createInspectorXAAStateMachine } from "@/lib/xaa/debug-state-machine-adapter";
-import { fetchXaaIdpUrls } from "@/lib/xaa/idp-endpoints";
+import {
+  fetchConfidentialCimdClientUrl,
+  fetchXaaIdpUrls,
+} from "@/lib/xaa/idp-endpoints";
 import { HOSTED_MODE } from "@/lib/config";
 import { hashXaaTargetId } from "@/lib/xaa/target-telemetry";
 
@@ -1314,6 +1319,78 @@ export function XAAFlowTab({
     return () => controller.abort();
   }, [organizationId, hostedIssuerKind]);
 
+  // Confidential CIMD: when the per-server config asks for private_key_jwt on a
+  // cimd run, fetch the reflector document URL that publishes the local
+  // provider's client public key. The browser can't hold the private key, so it
+  // presents this URL as its client_id and /proxy/token delegates signing to
+  // the same SDK provider. Public CIMD (the default) leaves
+  // clientIdMetadataUrl unset and uses the fixed hosted public document.
+  // Gate on !HOSTED_MODE too: only the local inspector injects a confidential
+  // provider, so an imported/migrated config carrying `private_key_jwt` must not
+  // trigger a doomed confidential run on a hosted build (the capability route is
+  // absent → fetch 404s). Hosted falls back to public CIMD.
+  const wantsConfidentialCimd =
+    !HOSTED_MODE &&
+    effectiveStrategy === "cimd" &&
+    selectedServer?.xaaClientAuth === "private_key_jwt";
+  const [confidentialCimdUrl, setConfidentialCimdUrl] = useState<
+    string | undefined
+  >(undefined);
+  const [confidentialCimdStatus, setConfidentialCimdStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
+  // Bumping this re-runs the fetch effect — the recovery path for a transient
+  // failure (a blocked Start/Run all click triggers it; see below).
+  const [confidentialCimdRetry, setConfidentialCimdRetry] = useState(0);
+  const retryConfidentialCimd = useCallback(
+    () => setConfidentialCimdRetry((n) => n + 1),
+    []
+  );
+  useEffect(() => {
+    if (!wantsConfidentialCimd) {
+      setConfidentialCimdUrl(undefined);
+      setConfidentialCimdStatus("idle");
+      return;
+    }
+    const controller = new AbortController();
+    setConfidentialCimdUrl(undefined);
+    setConfidentialCimdStatus("loading");
+    void fetchConfidentialCimdClientUrl(controller.signal).then((url) => {
+      if (controller.signal.aborted) return;
+      if (url) {
+        setConfidentialCimdUrl(url);
+        setConfidentialCimdStatus("ready");
+      } else {
+        setConfidentialCimdStatus("error");
+      }
+    });
+    return () => controller.abort();
+    // confidentialCimdRetry in the deps is the retry trigger.
+  }, [wantsConfidentialCimd, confidentialCimdRetry]);
+
+  // FAIL CLOSED: a confidential run must not silently fall back to public CIMD
+  // (which omits the client_assertion). Block Start/Run all until the reflector
+  // URL has resolved, and surface an actionable error on load/failure.
+  const confidentialCimdBlockReason: string | null = wantsConfidentialCimd
+    ? confidentialCimdStatus === "ready"
+      ? null
+      : confidentialCimdStatus === "error"
+        ? "Confidential CIMD is selected, but the reflector client URL couldn't be loaded. Retrying — click again in a moment, or switch Client authentication to Public in the server config."
+        : "Preparing the confidential CIMD client identity… try again in a moment."
+    : null;
+
+  // A blocked click on an errored fetch actively re-triggers it, so the user can
+  // recover a transient failure without changing the server config.
+  const handleConfidentialCimdBlock = useCallback(() => {
+    if (confidentialCimdStatus === "error") retryConfidentialCimd();
+    updateFlowState({ error: confidentialCimdBlockReason ?? undefined });
+  }, [
+    confidentialCimdStatus,
+    retryConfidentialCimd,
+    updateFlowState,
+    confidentialCimdBlockReason,
+  ]);
+
   const xaaStateMachine = useMemo(() => {
     return createInspectorXAAStateMachine({
       getState: () => flowStateRef.current,
@@ -1355,6 +1432,18 @@ export function XAAFlowTab({
       organizationId,
       issuerMode: hostedIssuerOptIn ? "hosted" : "local",
       issuerKind: hostedIssuerKind,
+      // Confidential CIMD: address the client via the reflector document URL so
+      // the machine adopts private_key_jwt from the fetched doc and the server
+      // signs the assertion. A loopback (local-dev) reflector needs the gated
+      // carve-out for the machine's up-front URL validation. Public CIMD leaves
+      // both unset.
+      ...(confidentialCimdUrl
+        ? {
+            clientIdMetadataUrl: confidentialCimdUrl,
+            allowLoopbackClientMetadata:
+              isLoopbackClientMetadataUrl(confidentialCimdUrl),
+          }
+        : {}),
     });
   }, [
     runInput,
@@ -1369,6 +1458,7 @@ export function XAAFlowTab({
     runsDynamicRegistration,
     dcrCredentialCache,
     targetKey,
+    confidentialCimdUrl,
   ]);
 
   const handleAdvance = useCallback(async () => {
@@ -1376,16 +1466,30 @@ export function XAAFlowTab({
       setIsServerModalOpen(true);
       return;
     }
+    if (confidentialCimdBlockReason) {
+      handleConfidentialCimdBlock();
+      return;
+    }
 
     if (flowStateRef.current.currentStep === "idle") {
       fireFlowStarted();
     }
     await xaaStateMachine.proceedToNextStep();
-  }, [isTestable, xaaStateMachine, fireFlowStarted]);
+  }, [
+    isTestable,
+    xaaStateMachine,
+    fireFlowStarted,
+    confidentialCimdBlockReason,
+    handleConfidentialCimdBlock,
+  ]);
 
   const handleRunAll = useCallback(async () => {
     if (!isTestable) {
       setIsServerModalOpen(true);
+      return;
+    }
+    if (confidentialCimdBlockReason) {
+      handleConfidentialCimdBlock();
       return;
     }
 
@@ -1419,6 +1523,8 @@ export function XAAFlowTab({
     xaaStateMachine,
     fireFlowStarted,
     authServerModeForTelemetry,
+    confidentialCimdBlockReason,
+    handleConfidentialCimdBlock,
   ]);
 
   const handleSelectPerson = useCallback(
@@ -1518,6 +1624,53 @@ export function XAAFlowTab({
   // A server is selected but can't be XAA-tested (STDIO / non-OAuth).
   const showNotTestable = target.targetSource === "bar_server" && !isTestable;
 
+  // ── Header OIDC/SAML toggle ──────────────────────────────────────────
+  // Writes the per-server identity-assertion preset through the SAME save
+  // path as the Configure modal (untouched-resave shape: the format is the
+  // only stored value the save can change). The persisted value flows back
+  // via serverConfigs → effectiveAssertionFormat, so the control always
+  // renders stored state — a failed save simply snaps back — and the single
+  // target-reset owner rebuilds the flow (confirming first if a busy or
+  // completed run would be discarded).
+  const [assertionFormatSaving, setAssertionFormatSaving] = useState(false);
+  const formatToggleApplies =
+    target.targetSource === "bar_server" &&
+    isTestable &&
+    Boolean(selectedServer);
+  const assertionFormatDisabledReason = !formatToggleApplies
+    ? "Configure a server to test first."
+    : flowState.isBusy || isRunningAll
+    ? "Wait for the current run to finish."
+    : assertionFormatSaving
+    ? "Saving…"
+    : null;
+  const handleAssertionFormatChange = useCallback(
+    async (next: IdentityAssertionFormat) => {
+      if (
+        !selectedServer ||
+        !onSaveServerConfig ||
+        next === effectiveAssertionFormat ||
+        assertionFormatSaving
+      ) {
+        return;
+      }
+      setAssertionFormatSaving(true);
+      try {
+        await onSaveServerConfig(
+          buildXaaAssertionFormatResave(selectedServer, next)
+        );
+      } finally {
+        setAssertionFormatSaving(false);
+      }
+    },
+    [
+      selectedServer,
+      onSaveServerConfig,
+      effectiveAssertionFormat,
+      assertionFormatSaving,
+    ]
+  );
+
   return (
     <div className="h-full flex flex-col bg-background">
       <XAAIdpCard
@@ -1527,6 +1680,12 @@ export function XAAFlowTab({
         canUseHostedIssuer={canUseHostedIssuer}
         hostedIssuerDisabledReason={hostedIssuerDisabledReason}
         issuerKind={hostedIssuerKind}
+        identityAssertionFormat={effectiveAssertionFormat}
+        onIdentityAssertionFormatChange={
+          // No persistence path (parent didn't wire saves) → hide the control.
+          onSaveServerConfig ? handleAssertionFormatChange : undefined
+        }
+        identityAssertionFormatDisabledReason={assertionFormatDisabledReason}
       />
       <XAAPeopleStrip
         people={people}

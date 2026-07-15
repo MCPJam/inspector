@@ -1,15 +1,15 @@
 import {
   IDENTITY_ASSERTION_FORMATS,
   XAA_CONFIDENTIAL_CIMD_ORIGIN,
-  buildConfidentialCimdUrl,
-  getXaaClientJwks,
-  initXaaClientKeyPair,
+  getLocalConfidentialCimdProvider,
   isLoopbackHost,
+  normalizeXaaClientAuth,
   normalizeIdentityAssertionFormat,
   normalizeRegistrationStrategy,
   runXaaFlow,
   type IdentityAssertionFormat,
   type RegistrationStrategy,
+  type XaaClientAuthMethod,
   type XaaFlowConfig,
   type XaaFlowResult,
 } from "@mcpjam/sdk";
@@ -22,13 +22,12 @@ type XaaTokenEndpointAuthMethod =
   | "client_secret_post"
   | "client_secret_basic"
   | "none";
-type XaaClientAuth = "none" | "private_key_jwt";
 type XaaCliFlowConfig = XaaFlowConfig & {
   tokenEndpointAuthMethod?: XaaTokenEndpointAuthMethod;
   timeoutMs?: number;
   // CLI-only (ignored by runXaaFlow): resolved in the action into the confidential
   // CIMD metadata URL + the client signing key.
-  clientAuth?: XaaClientAuth;
+  clientAuth?: XaaClientAuthMethod;
   cimdMetadataOrigin?: string;
 };
 
@@ -39,7 +38,7 @@ export interface XaaCommandOptions {
   clientId?: string;
   registration?: RegistrationStrategy;
   clientMetadataUrl?: string;
-  clientAuth?: XaaClientAuth;
+  clientAuth?: XaaClientAuthMethod;
   cimdMetadataOrigin?: string;
   authzServerIssuer?: string;
   tokenEndpoint?: string;
@@ -298,7 +297,7 @@ export function buildXaaConfig(
 
   // Confidential CIMD (private_key_jwt): the CLI generates a client key and
   // publishes it via the hosted reflector, so it serves its own document.
-  const clientAuth: XaaClientAuth = options.clientAuth ?? "none";
+  const clientAuth: XaaClientAuthMethod = options.clientAuth ?? "none";
   const cimdMetadataOrigin = options.cimdMetadataOrigin?.trim() || undefined;
   if (clientAuth === "private_key_jwt" && strategy !== "cimd") {
     throw usageError(
@@ -440,11 +439,8 @@ export function resolveConfidentialCimd(
     );
   }
 
-  initXaaClientKeyPair();
-  config.clientIdMetadataUrl = buildConfidentialCimdUrl(
-    getXaaClientJwks().keys[0],
-    origin,
-  );
+  config.clientIdMetadataUrl =
+    getLocalConfidentialCimdProvider().getClientIdMetadataUrl(origin);
   if (loopback) {
     config.allowLoopbackClientMetadata = true;
     if (!quiet) {
@@ -455,10 +451,11 @@ export function resolveConfidentialCimd(
   }
 }
 
-export function parseClientAuth(value: string): XaaClientAuth {
-  if (value === "none") return "none";
-  if (value === "private-key-jwt" || value === "private_key_jwt")
-    return "private_key_jwt";
+export function parseClientAuth(value: string): XaaClientAuthMethod {
+  const normalized = normalizeXaaClientAuth(
+    value === "private-key-jwt" ? "private_key_jwt" : value,
+  );
+  if (normalized) return normalized;
   throw usageError("--client-auth must be none or private-key-jwt.");
 }
 
