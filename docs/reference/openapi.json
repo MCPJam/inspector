@@ -63,6 +63,128 @@
     }
   ],
   "paths": {
+    "/host-catalog": {
+      "get": {
+        "operationId": "getHostCompatCatalog",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "Get the host-compat catalog",
+        "description": "The versioned host-compatibility catalog backing `mcpjam compat` verdicts. Public and unauthenticated: static host facts and creation config with no project or user scope. Always returns a catalog — `source` is `live` when the backend publish was reachable and `bundled` when serving the SDK's built-in fallback.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The latest catalog envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "schemaVersion",
+                    "version",
+                    "contentHash",
+                    "publishedAt",
+                    "catalog",
+                    "source"
+                  ],
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "integer",
+                      "description": "Catalog document schema version (currently 2)."
+                    },
+                    "version": {
+                      "type": "integer",
+                      "description": "Monotonic backend publish version; 0 when `source` is `bundled`."
+                    },
+                    "contentHash": {
+                      "type": "string",
+                      "description": "SHA-256 of the canonical catalog JSON; empty when `source` is `bundled`."
+                    },
+                    "publishedAt": {
+                      "type": "integer",
+                      "description": "Publish time (ms epoch); 0 when `source` is `bundled`."
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "live",
+                        "bundled"
+                      ],
+                      "description": "Whether this envelope came from the backend publish or the SDK's bundled fallback."
+                    },
+                    "catalog": {
+                      "type": "object",
+                      "required": [
+                        "hostsById"
+                      ],
+                      "properties": {
+                        "hostsById": {
+                          "type": "object",
+                          "description": "Canonical host catalog keyed by host style. Each entry is the full host object: compare/display facts plus HostConfigInputV2 creation fields.",
+                          "additionalProperties": {
+                            "type": "object",
+                            "required": [
+                              "id",
+                              "label",
+                              "provenance",
+                              "rendersMcpApps",
+                              "hostStyle"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "provenance": {
+                                "type": "string",
+                                "enum": [
+                                  "observed",
+                                  "probe",
+                                  "vendor-doc",
+                                  "assumed"
+                                ]
+                              },
+                              "rendersMcpApps": {
+                                "type": "boolean"
+                              },
+                              "supportedProtocolVersions": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "verifiedAt": {
+                                "type": "integer",
+                                "description": "When this host's facts were last verified (ms epoch)."
+                              },
+                              "imageSupport": {
+                                "type": "object",
+                                "additionalProperties": true
+                              },
+                              "hostStyle": {
+                                "type": "string"
+                              },
+                              "mcpProfile": {
+                                "type": "object",
+                                "description": "Host MCP profile. MCP Apps capabilities and OpenAI compat live here.",
+                                "additionalProperties": true
+                              }
+                            },
+                            "additionalProperties": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/harness/{harnessId}/builtin-tools": {
       "get": {
         "operationId": "listHarnessBuiltinTools",
@@ -360,7 +482,7 @@
         "operationId": "createHost",
         "tags": ["Hosts"],
         "summary": "Create a host (from a template or a full config)",
-        "description": "Creates a host in the project and responds `201` with the new host's detail. Seed the host config one of two ways: pass `template` (a built-in template id, optional `theme`) to seed server-side from the same presets the inspector UI uses, OR pass `config` (a full host config v2). Exactly one of `template` or `config` is required.\n\nGuest callers are denied (host creation is a write).",
+        "description": "Creates a host in the project and responds `201` with the new host's detail. Seed the host config one of two ways: pass `template` (a built-in template id, optional `theme`) to seed server-side from the live backend host catalog, falling back to the bundled SDK catalog snapshot if the live catalog is unavailable, OR pass `config` (a full host config v2). Exactly one of `template` or `config` is required.\n\nGuest callers are denied (host creation is a write).",
         "parameters": [{ "$ref": "#/components/parameters/projectId" }],
         "requestBody": {
           "required": true,

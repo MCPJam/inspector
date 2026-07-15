@@ -1,16 +1,13 @@
 /**
  * Node-safe host-template seeds for built-in MCPJam host presets.
  *
- * GENERATED-FROM (verbatim port): inspector client
- * `client/src/lib/client-templates.ts`. Moved into the SDK so the server's
- * `--template` resolver and the CLI can seed a host config in Node without
- * importing browser-only client code. The client re-exports `seedHostTemplate`
- * from here (delegating its UI templates) so the seed logic has one source of
- * truth; UI-only metadata (logos) stays client-side.
+ * Historical origin: this was ported from the old inspector client template
+ * adapter. It now remains in the SDK for CLI/dev fallback paths; normal product
+ * host creation reads the backend-owned host catalog instead.
  *
  * Two deliberate edits vs the client source: the Vite `__APP_VERSION__`
- * constant is parametrized as `opts.appVersion`, and the UI `logoSrc` metadata
- * is dropped. A parity test asserts byte-identical output vs the client seeds.
+ * The old Vite `__APP_VERSION__` constant is parametrized as
+ * `opts.appVersion`, and UI `logoSrc` metadata is kept client-side.
  */
 
 import {
@@ -21,6 +18,7 @@ import {
   MCP_UI_EXTENSION_ID,
   MCP_UI_RESOURCE_MIME_TYPE,
 } from "../../mcp-client-manager/capabilities.js";
+import { XAA_MCP_EXTENSION } from "../../xaa/mcp-init.js";
 import {
   MCPJAM_FONT_CSS,
   MCPJAM_PLATFORM,
@@ -404,6 +402,21 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         logging: {},
         updateModelContext: { text: {}, image: {} },
         message: { text: {} },
+      };
+      // Advertise MCP Enterprise-Managed Authorization support. The MCPJam
+      // persona is the inspector's own client, which implements the full
+      // XAA path (SSO assertion → ID-JAG → RAS token redemption), so the
+      // declaration is honest here. Real-host templates deliberately stay
+      // silent until those hosts ship support — the connect surfaces still
+      // merge the extension at connect time for XAA-configured servers
+      // regardless of the stored baseline. Spread keeps the SDK-default
+      // MCP UI extension intact.
+      base.clientCapabilities = {
+        ...base.clientCapabilities,
+        extensions: {
+          ...(base.clientCapabilities.extensions as Record<string, unknown>),
+          [XAA_MCP_EXTENSION]: {},
+        },
       };
       // Per-resource hostContext for MCPJam's own house chrome. Style
       // variables come straight from the design-system tokens that

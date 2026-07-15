@@ -81,7 +81,8 @@ function execTool(
 
 beforeEach(() => {
   vi.stubEnv("CONVEX_HTTP_URL", CONVEX_URL);
-  vi.stubEnv("COMPUTERS_DATA_PLANE_SECRET", "test-data-plane-secret-000000");
+  vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-svc-token");
+  vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "terminal-secret-16+");
   vi.stubEnv("E2B_API_KEY", "e2b_test");
   installFetchStub();
 });
@@ -120,9 +121,9 @@ describe(`${BASH_TOOL_NAME} tool`, () => {
       "/computers/sandbox-info",
       "/computers/commands",
     ]);
-    // Reserve uses the user's bearer; the secret routes use the shared secret.
+    // Reserve uses the user's bearer; the secret routes use the service token.
     expect(fetchCalls[0].headers.authorization).toBe("Bearer user-token");
-    expect(fetchCalls[1].headers["x-computers-data-plane-secret"]).toBeTruthy();
+    expect(fetchCalls[1].headers["x-inspector-service-token"]).toBeTruthy();
     expect(fetchCalls[2].body).toMatchObject({
       computerId: "comp_1",
       commandId: "call_1",
@@ -190,7 +191,7 @@ describe(`${BASH_TOOL_NAME} tool`, () => {
   });
 
   it("returns a clean error when computers are unconfigured", async () => {
-    vi.stubEnv("COMPUTERS_DATA_PLANE_SECRET", "");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
     const runner = vi.fn();
     const tool = buildBashTool(toolOpts, runner);
     const result = await execTool(tool, { command: "ls" });

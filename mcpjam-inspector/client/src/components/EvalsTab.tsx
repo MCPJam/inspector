@@ -51,14 +51,16 @@ import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { isDraftTestCaseId } from "./evals/draft-test-case";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { SuiteSwitcher } from "./evals/suite-switcher";
-import { stripTimestampSuffix } from "./evals/suite-overview-presentation";
+import {
+  sortSuiteOverviewEntries,
+  stripTimestampSuffix,
+} from "./evals/suite-overview-presentation";
 import {
   CreateSuiteDialog,
   type CreateSuitePayload,
 } from "./evals/create-suite-dialog";
 import { getEvalIterationQuotaDisabledReason } from "@/lib/eval-iteration-quota";
-import posthog from "posthog-js";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 
@@ -190,13 +192,9 @@ function EvalsTabContent({
     isDirectGuest,
   });
 
-  const visibleSuites = useMemo(
-    () =>
-      overviewQueries.sortedSuites.filter(
-        (entry) => entry.suite.source !== "sdk"
-      ),
-    [overviewQueries.sortedSuites]
-  );
+  // All suites are visible in Evaluate regardless of origin (ui or sdk/CI).
+  // SDK-created suites get a CI badge in the switcher instead of being hidden.
+  const visibleSuites = overviewQueries.sortedSuites;
 
   const selectedSuiteEntry = useMemo(() => {
     if (!selectedSuiteId) {
@@ -313,8 +311,10 @@ function EvalsTabContent({
   ]);
 
   // No standalone suites list: landing on /evals jumps straight into the most
-  // recent suite's dashboard (suites are switched via the breadcrumb dropdown).
-  // Only the empty-state (no suites) keeps the bare list route.
+  // recently RUN suite's dashboard (suites are switched via the breadcrumb
+  // dropdown). Never-run suites all tie, so a project with no runs falls back
+  // to the sortedSuites recency order. Only the empty-state (no suites) keeps
+  // the bare list route.
   useEffect(() => {
     if (route.type !== "list") {
       return;
@@ -322,7 +322,7 @@ function EvalsTabContent({
     if (overviewQueries.isOverviewLoading) {
       return;
     }
-    const mostRecent = visibleSuites[0];
+    const mostRecent = sortSuiteOverviewEntries(visibleSuites, "recently_run")[0];
     if (mostRecent) {
       navigatePlaygroundEvalsRoute(
         { type: "suite-overview", suiteId: mostRecent.suite._id },
@@ -337,10 +337,8 @@ function EvalsTabContent({
   // double-fire (once on the null mount, once on the resolved mount).
   useEffect(() => {
     if (isLoading) return;
-    posthog.capture("evaluate_tab_viewed", {
+    track("evaluate_tab_viewed", {
       location: "evals_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       project_id: projectId ?? null,
     });
   }, [isLoading, projectId]);
@@ -348,10 +346,8 @@ function EvalsTabContent({
   useEffect(() => {
     if (isLoading) return;
     if (!selectedSuiteId) return;
-    posthog.capture("suite_viewed", {
+    track("suite_viewed", {
       location: "evals_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       project_id: projectId ?? null,
       suite_id: selectedSuiteId,
       route_type: route.type,

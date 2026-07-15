@@ -6,6 +6,7 @@ import App, {
   ChatboxesRoute,
   CiEvalsRoute,
   ConformanceRoute,
+  CaniuseCapabilityRoute,
   CompatibilityRoute,
   ComputerRoute,
   EvalsRoute,
@@ -26,10 +27,12 @@ import App, {
   SettingsRoute,
   SkillsRoute,
   SupportRoute,
+  SwarmsRoute,
   TasksRoute,
   ToolsRoute,
   TracingRoute,
   XAAFlowRoute,
+  XAASetupRoute,
 } from "./App";
 import { getAppRouter, setAppRouter } from "./router-ref";
 import { buildHostsPath } from "./lib/app-navigation";
@@ -82,6 +85,10 @@ export function createAppRouter(): AppRouter {
         // first-run onboarding redirect. `bare` forces the no-sub-nav render
         // even for signed-in users.
         { path: "embed/host-compare", element: <HostCompareRoute bare /> },
+        {
+          path: "capabilities/:capabilitySlug",
+          element: <CaniuseCapabilityRoute />,
+        },
         { path: "computer", element: <ComputerRoute /> },
         { path: "hosts", element: <HostsRoute /> },
         { path: "hosts/:hostId", element: <HostsRoute /> },
@@ -97,6 +104,11 @@ export function createAppRouter(): AppRouter {
         { path: "compatibility", element: <CompatibilityRoute /> },
         { path: "oauth-flow", element: <OAuthFlowRoute /> },
         { path: "xaa-flow", element: <XAAFlowRoute /> },
+        // Managed test-IdP setup center. Sections (people | apps | access)
+        // are URL segments so each is deep-linkable; the first segment stays
+        // "xaa-flow" so `pathnameToActiveTab` highlights the debugger tab.
+        { path: "xaa-flow/setup", element: <XAASetupRoute /> },
+        { path: "xaa-flow/setup/:section", element: <XAASetupRoute /> },
         { path: "tracing", element: <TracingRoute /> },
         { path: "chat", element: <ChatAliasRoute /> },
         // Catch sub-paths like `/chat/thread-1` so old bookmarks land on
@@ -110,6 +122,10 @@ export function createAppRouter(): AppRouter {
         // exercise the hosted-OAuth callback path via `/hosts` rather
         // than this route directly.
         { path: "chatboxes", element: <ChatboxesRoute /> },
+        // `/swarms` — agent Swarm surface (Publish / Personas / Sessions) over
+        // the same host-backed chatbox as `/chatboxes`. Same billing feature +
+        // `sandboxes-enabled` flag.
+        { path: "swarms", element: <SwarmsRoute /> },
         { path: "playground", element: <PlaygroundRoute /> },
         { path: "support", element: <SupportRoute /> },
         { path: "settings", element: <SettingsRoute /> },

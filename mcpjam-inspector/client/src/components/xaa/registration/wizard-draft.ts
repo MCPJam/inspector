@@ -1,3 +1,5 @@
+import type { HttpServerConfig } from "@mcpjam/sdk/browser";
+import type { ServerWithName } from "@/hooks/use-app-state";
 import type {
   XaaAuthServerMode,
   XaaResourceApp,
@@ -45,6 +47,42 @@ export function draftFromResourceApp(app: XaaResourceApp): RegistrationDraft {
     secret: "",
     scopes: (app.scopes ?? []).join(" "),
     healthCheckUrl: app.healthCheckUrl ?? "",
+  };
+}
+
+/** Only HTTP(S) servers can seed a registration — STDIO servers have no
+ * resource URL for the ID-JAG's `resource` claim to point at. */
+export function isPickableServer(server: ServerWithName): boolean {
+  return "url" in server.config;
+}
+
+/**
+ * The draft fields the "start from an existing server" picker derives — an
+ * admin-owned SNAPSHOT of the server row at pick time, never a live
+ * reference. A pick overwrites exactly these fields (a deliberate pick is an
+ * explicit action, and applying only the populated ones would silently mix
+ * two servers' details); everything the picker has no data for — secret,
+ * token endpoint, auth-server mode, health-check settings — is untouched.
+ */
+export function draftFromServer(
+  server: ServerWithName,
+): Pick<
+  RegistrationDraft,
+  "name" | "resourceType" | "resourceUrl" | "issuer" | "targetClientId" | "scopes"
+> {
+  const httpConfig =
+    "url" in server.config ? (server.config as HttpServerConfig) : null;
+  const clientId = (httpConfig as any)?.clientId;
+  const oauthScopes = (httpConfig as any)?.oauthScopes;
+  return {
+    name: server.name,
+    resourceType: "mcp",
+    resourceUrl: httpConfig?.url ? String(httpConfig.url) : "",
+    issuer: server.xaaAuthzIssuer ?? "",
+    targetClientId: typeof clientId === "string" ? clientId : "",
+    scopes: Array.isArray(oauthScopes)
+      ? oauthScopes.filter((s): s is string => typeof s === "string").join(" ")
+      : "",
   };
 }
 

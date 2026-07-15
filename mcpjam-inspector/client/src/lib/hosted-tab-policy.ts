@@ -13,6 +13,7 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "host-compare",
   "registry",
   "chatboxes",
+  "swarms",
   "playground",
   "client-config",
   "evals",
@@ -38,11 +39,12 @@ export const HOSTED_HASH_ALLOWED_TABS = [
   // server-side, not by this list). Reached via the Connect tab switcher, not
   // a standalone sidebar item, so it needs the hash allow-list only — see PR.
   "computer",
-  // Cloud Skills are supported in hosted mode when the Computer feature is on
-  // (skills live on the project's Computer). Kept OUT of the sidebar-allowed
-  // list so the nav item stays disabled-by-default until the Computer flag
-  // flips it on at render time (see `withCloudSkillsGate`); the route guard
-  // (`SkillsRoute`) enforces the flag on direct navigation.
+  // Cloud Skills are a project-membership resource (Convex-backed, usable in
+  // the Playground without a Computer) but gated behind the `skills-enabled`
+  // PostHog flag until QA completes. Kept OUT of the sidebar-allowed list so the
+  // nav item is disabled-by-default; `resolveHostedSkillsNav` (mcp-sidebar)
+  // enables it only when the flag is on, and the route guard (`SkillsRoute`)
+  // redirects direct navigation when the flag is off.
   "skills",
 ] as const;
 

@@ -63,7 +63,17 @@ type AvailableTool = {
   description?: string;
   inputSchema?: any;
   serverId?: string;
+  /** "system" = harness-native built-in (bash, read, …). Assertable by name,
+   *  but not invokable through MCPJam and never a widget view — the pinned
+   *  tool-call and "View (tool)" pickers filter these back out. */
+  source?: "system";
 };
+
+/** Tools MCPJam can actually invoke / render as a widget view — everything
+ *  except harness system tools. */
+function invokableTools(tools: AvailableTool[]): AvailableTool[] {
+  return tools.filter((t) => t.source !== "system");
+}
 
 type StepListEditorProps = {
   steps: TestStep[];
@@ -386,12 +396,13 @@ function WidgetAssertionFields({
 }) {
   const target =
     "target" in value ? (value.target as ElementLocator) : undefined;
+  const viewTools = invokableTools(availableTools);
   return (
     <div className="flex flex-col gap-2">
       <div className="grid gap-2 sm:grid-cols-2">
         <div className="space-y-1">
           <Label className="text-[11px]">View (tool)</Label>
-          {availableTools.length > 0 ? (
+          {viewTools.length > 0 ? (
             <Select
               value={value.toolName || undefined}
               onValueChange={(next) => onChange({ ...value, toolName: next })}
@@ -400,7 +411,7 @@ function WidgetAssertionFields({
                 <SelectValue placeholder="Pick a view tool…" />
               </SelectTrigger>
               <SelectContent>
-                {Array.from(new Set(availableTools.map((t) => t.name))).map(
+                {Array.from(new Set(viewTools.map((t) => t.name))).map(
                   (name) => (
                     <SelectItem key={name} value={name} className="text-[11px]">
                       {name}
@@ -523,6 +534,7 @@ function AssertStepBody({
       predicate={a}
       onChange={(next: Predicate) => setAssertion(next)}
       availableTools={availableTools.map((t) => t.name)}
+      widgetToolNames={invokableTools(availableTools).map((t) => t.name)}
       toolArgSchemas={Object.fromEntries(
         availableTools.map((t) => [t.name, t.inputSchema?.properties ?? {}])
       )}
@@ -691,7 +703,7 @@ function StepRow({
               <div className="grid gap-2 sm:grid-cols-2">
                 <div className="space-y-1">
                   <Label className="text-[11px]">View (tool)</Label>
-                  {availableTools.length > 0 ? (
+                  {invokableTools(availableTools).length > 0 ? (
                     <Select
                       value={step.toolName || undefined}
                       onValueChange={(next) =>
@@ -703,7 +715,9 @@ function StepRow({
                       </SelectTrigger>
                       <SelectContent>
                         {Array.from(
-                          new Set(availableTools.map((t) => t.name))
+                          new Set(
+                            invokableTools(availableTools).map((t) => t.name)
+                          )
                         ).map((name) => (
                           <SelectItem
                             key={name}
@@ -795,7 +809,7 @@ function ToolCallStepBody({
           })
         }
         suiteServers={suiteServers}
-        availableTools={availableTools}
+        availableTools={invokableTools(availableTools)}
         projectServers={projectServers}
         readOnly={readOnly}
       />

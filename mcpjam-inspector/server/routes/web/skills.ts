@@ -29,9 +29,18 @@ import {
   updateCloudSkill,
   deleteCloudSkill,
   promoteCloudSkill,
+  listCloudSkillFiles,
+  generateCloudSkillFileUploadUrl,
+  attachCloudSkillFiles,
+  removeCloudSkillFile,
+  readCloudSkillFile,
   MAX_SKILL_CONTENT_BYTES,
   type CloudSkillsContext,
 } from "../../utils/computers/cloud-skills.js";
+import {
+  parseSkillMdWithExtras,
+  type ParsedSkillMdWithExtras,
+} from "../../utils/skill-extra-frontmatter.js";
 
 const skills = new Hono();
 
@@ -80,6 +89,33 @@ const projectOnly = z.object({ projectId: z.string().min(1) });
 const skillIdSchema = projectOnly.extend({ skillId: z.string().min(1) });
 const sharingSchema = z.enum(["user", "project"]).optional();
 
+/**
+ * A non-empty skill-content string capped by BYTE length (UTF-8), matching the
+ * backend's byte cap. `z.string().max()` counts UTF-16 code units, so a
+ * multibyte body could slip past a char cap and be rejected server-side — refine
+ * on real byte length instead.
+ */
+const skillContentSchema = z
+  .string()
+  .min(1)
+  .refine(
+    (s) => new TextEncoder().encode(s).length <= MAX_SKILL_CONTENT_BYTES,
+    `Skill content must be at most ${MAX_SKILL_CONTENT_BYTES} bytes`,
+  );
+
+/**
+ * Raw SKILL.md cap: the body cap plus headroom for frontmatter (mirrors the
+ * sandbox-adoption scanner's bound-before-parse rule).
+ */
+const MAX_RAW_SKILL_MD_BYTES = MAX_SKILL_CONTENT_BYTES + 64 * 1024;
+const skillMdSchema = z
+  .string()
+  .min(1)
+  .refine(
+    (s) => new TextEncoder().encode(s).length <= MAX_RAW_SKILL_MD_BYTES,
+    `SKILL.md must be at most ${MAX_RAW_SKILL_MD_BYTES} bytes`,
+  );
+
 skills.post("/list", async (c) =>
   handleRoute(c, async () => {
     const body = parseWithSchema(projectOnly, await readJsonBody(c));
@@ -126,17 +162,66 @@ skills.post("/create", async (c) =>
       projectOnly.extend({
         name: z.string().min(1),
         description: z.string().min(1),
-        content: z.string().min(1).max(MAX_SKILL_CONTENT_BYTES),
+        content: skillContentSchema,
         sharing: sharingSchema,
+        // Optional RAW SKILL.md. When present it is parsed SERVER-SIDE and its
+        // description/content/extraFrontmatter become authoritative (the
+        // client's naive frontmatter parse drops preserved fields like
+        // `allowed-tools`). Absent ⇒ legacy behavior, unchanged.
+        skillMd: skillMdSchema.optional(),
       }),
       await readJsonBody(c),
     );
+    let description = body.description;
+    let content = body.content;
+    let extraFrontmatter: ParsedSkillMdWithExtras["extraFrontmatter"];
+    if (body.skillMd !== undefined) {
+      const parsed = parseSkillMdWithExtras(body.skillMd, "uploaded SKILL.md");
+      if (!parsed) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          "Invalid SKILL.md — frontmatter must include a valid 'name' and a 'description' (max 1024 characters).",
+        );
+      }
+      if (parsed.name !== body.name) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          `SKILL.md frontmatter name '${parsed.name}' does not match the skill name '${body.name}'.`,
+        );
+      }
+      // Server-parsed content bypasses the Zod `skillContentSchema` preflight
+      // that guards `body.content`, so re-apply the same non-empty + byte-cap
+      // checks to the authoritative parsed body before accepting it.
+      if (parsed.content.length === 0) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          "SKILL.md body must not be empty.",
+        );
+      }
+      if (
+        new TextEncoder().encode(parsed.content).length >
+        MAX_SKILL_CONTENT_BYTES
+      ) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          `Skill content must be at most ${MAX_SKILL_CONTENT_BYTES} bytes`,
+        );
+      }
+      description = parsed.description;
+      content = parsed.content;
+      extraFrontmatter = parsed.extraFrontmatter;
+    }
     const skill = await run(async () =>
       createCloudSkill(await ctxFrom(c, body.projectId), {
         name: body.name,
-        description: body.description,
-        content: body.content,
+        description,
+        content,
         ...(body.sharing ? { sharing: body.sharing } : {}),
+        ...(extraFrontmatter ? { extraFrontmatter } : {}),
       }),
     );
     return { success: true, skill };
@@ -145,18 +230,17 @@ skills.post("/create", async (c) =>
 
 skills.post("/update", async (c) =>
   handleRoute(c, async () => {
+    // No `name` — skill names are immutable in v1 (the backend rejects renames).
     const body = parseWithSchema(
       skillIdSchema.extend({
-        name: z.string().min(1).optional(),
         description: z.string().min(1).optional(),
-        content: z.string().min(1).max(MAX_SKILL_CONTENT_BYTES).optional(),
+        content: skillContentSchema.optional(),
       }),
       await readJsonBody(c),
     );
     const skill = await run(async () =>
       updateCloudSkill(await ctxFrom(c, body.projectId), {
         skillId: body.skillId,
-        ...(body.name !== undefined ? { name: body.name } : {}),
         ...(body.description !== undefined
           ? { description: body.description }
           : {}),
@@ -184,6 +268,96 @@ skills.post("/promote", async (c) =>
       promoteCloudSkill(await ctxFrom(c, body.projectId), body.skillId),
     );
     return { success: true, skill };
+  }),
+);
+
+// ── supporting files (v2) ──────────────────────────────────────────────────
+
+skills.post("/files/list", async (c) =>
+  handleRoute(c, async () => {
+    const body = parseWithSchema(skillIdSchema, await readJsonBody(c));
+    const files = await run(async () =>
+      listCloudSkillFiles(await ctxFrom(c, body.projectId), body.skillId),
+    );
+    return { files };
+  }),
+);
+
+// Mint a browser→Convex direct upload URL (blob bypasses the inspector body
+// limit by design). The manage-gate runs in Convex before the URL is issued.
+skills.post("/files/upload-url", async (c) =>
+  handleRoute(c, async () => {
+    const body = parseWithSchema(skillIdSchema, await readJsonBody(c));
+    const { uploadUrl } = await run(async () =>
+      generateCloudSkillFileUploadUrl(
+        await ctxFrom(c, body.projectId),
+        body.skillId,
+      ),
+    );
+    return { uploadUrl };
+  }),
+);
+
+skills.post("/files/attach", async (c) =>
+  handleRoute(c, async () => {
+    const body = parseWithSchema(
+      skillIdSchema.extend({
+        files: z
+          .array(
+            z.object({
+              path: z.string().min(1),
+              storageId: z.string().min(1),
+              contentHash: z.string().min(1),
+            }),
+          )
+          .min(1),
+      }),
+      await readJsonBody(c),
+    );
+    const { files } = await run(async () =>
+      attachCloudSkillFiles(
+        await ctxFrom(c, body.projectId),
+        body.skillId,
+        body.files,
+      ),
+    );
+    return { files };
+  }),
+);
+
+skills.post("/files/remove", async (c) =>
+  handleRoute(c, async () => {
+    const body = parseWithSchema(
+      skillIdSchema.extend({ path: z.string().min(1) }),
+      await readJsonBody(c),
+    );
+    const { removed } = await run(async () =>
+      removeCloudSkillFile(
+        await ctxFrom(c, body.projectId),
+        body.skillId,
+        body.path,
+      ),
+    );
+    return { success: true, removed };
+  }),
+);
+
+// Read a file's content: resolves the storage URL + fetches bytes SERVER-SIDE
+// (the browser never sees the storage URL), returning a SkillFileContent.
+skills.post("/files/read", async (c) =>
+  handleRoute(c, async () => {
+    const body = parseWithSchema(
+      skillIdSchema.extend({ path: z.string().min(1) }),
+      await readJsonBody(c),
+    );
+    const file = await run(async () =>
+      readCloudSkillFile(
+        await ctxFrom(c, body.projectId),
+        body.skillId,
+        body.path,
+      ),
+    );
+    return { file };
   }),
 );
 

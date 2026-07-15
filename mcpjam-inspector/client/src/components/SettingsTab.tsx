@@ -1,6 +1,5 @@
 import { useByokAllowed } from "@/hooks/use-byok-allowed";
 import { useAuth } from "@workos-inc/authkit-react";
-import { usePostHog } from "posthog-js/react";
 import { SettingsSection } from "./setting/SettingsSection";
 import { SettingsRow } from "./setting/SettingsRow";
 import { EmptyState } from "./ui/empty-state";
@@ -8,7 +7,7 @@ import { Switch } from "@mcpjam/design-system/switch";
 import { Button } from "@mcpjam/design-system/button";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { Info, KeyRound } from "lucide-react";
 import { HOSTED_MODE } from "@/lib/config";
 import { SettingsNav } from "./settings/SettingsNav";
@@ -26,7 +25,6 @@ export function SettingsTab({
   const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
   const byokAllowed = useByokAllowed();
   const { signIn } = useAuth();
-  const posthog = usePostHog();
 
   // Model providers are tied to organizations. The Settings tab only points
   // users at the right place to configure them — it does not store keys
@@ -87,10 +85,8 @@ export function SettingsTab({
               <Button
                 type="button"
                 onClick={() => {
-                  posthog.capture("login_button_clicked", {
+                  track("login_button_clicked", {
                     location: "byok_signin_gate",
-                    platform: detectPlatform(),
-                    environment: detectEnvironment(),
                   });
                   signIn();
                 }}

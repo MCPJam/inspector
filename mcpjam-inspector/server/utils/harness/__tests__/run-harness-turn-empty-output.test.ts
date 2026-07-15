@@ -105,6 +105,7 @@ import {
   HARNESS_EMPTY_VISIBLE_OUTPUT_TEXT,
   runHarnessTurn,
 } from "../run-harness-turn";
+import { claimHarnessSessionState } from "../harness-session-state.js";
 
 function baseOptions(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -201,5 +202,30 @@ describe("runHarnessTurn empty output projection", () => {
       type: "text",
       text: " \n " + HARNESS_EMPTY_VISIBLE_OUTPUT_TEXT,
     });
+  });
+
+  it("maps a swarm sourceType to the swarm-chat owner lane keyed on journeyRunId + hostId (NOT direct-chat)", async () => {
+    harnessState.streamParts = [{ type: "finish", finishReason: "stop" }];
+    harnessState.finalText = "done";
+
+    await runHarnessTurn(
+      baseOptions({
+        sourceType: "swarm",
+        chatSessionId: "synth_run-1_host-1_0",
+        journeyRunId: "run-1",
+        hostId: "host-1",
+      }) as any,
+      "none"
+    );
+
+    // The continuity claim (and therefore the resume-state commit) resolves the
+    // `swarm-chat` owner keyed on the run + pinned host + session — never the
+    // Direct/Chatbox lane a swarm turn used to misfile under.
+    expect(claimHarnessSessionState).toHaveBeenCalled();
+    const owner = (vi.mocked(claimHarnessSessionState).mock.calls[0]![0] as any)
+      .owner;
+    expect(owner.ownerType).toBe("swarm-chat");
+    expect(owner.journeyRunId).toBe("run-1");
+    expect(owner.hostId).toBe("host-1");
   });
 });

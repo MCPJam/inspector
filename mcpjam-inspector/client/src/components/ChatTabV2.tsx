@@ -42,12 +42,7 @@ import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-c
 import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
-import { usePostHog } from "posthog-js/react";
-import {
-  detectEnvironment,
-  detectPlatform,
-  standardEventProps,
-} from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { CreditTopupDialog } from "@/components/billing/CreditTopupDialog";
 import { TopupGatedErrorBox } from "@/components/billing/TopupGatedErrorBox";
 import { useCreditTopupReturnFlow } from "@/hooks/useCreditTopupReturnFlow";
@@ -194,7 +189,6 @@ export function ChatTabV2({
   const appState = useSharedAppState();
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
     useJsonRpcPanelVisibility();
-  const posthog = usePostHog();
   const effectiveMcpToolResultImageRendering = useMemo(
     () =>
       gateMcpToolResultImageRenderingByModelVisibility(
@@ -320,6 +314,7 @@ export function ChatTabV2({
       : null
   );
   const hostedChatboxId = hostedContext?.chatboxId;
+  const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
   const effectiveHostedProjectId = hostedContext?.projectId ?? convexProjectId;
   const modelConfigOrganizationId = hostedContext?.projectId
@@ -376,6 +371,7 @@ export function ChatTabV2({
     multiModelEnabled,
     setMultiModelEnabled,
     availableModels,
+    authHeaders,
     isAuthLoading,
     isSessionBootstrapComplete,
     systemPrompt,
@@ -1496,12 +1492,10 @@ export function ChatTabV2({
 
   // PostHog tracking
   useEffect(() => {
-    posthog.capture("chat_tab_viewed", {
+    track("chat_tab_viewed", {
       location: "chat_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
-  }, [posthog]);
+  }, []);
 
   // Notify parent when messages change
   useEffect(() => {
@@ -1738,10 +1732,13 @@ export function ChatTabV2({
       // would carry an empty message into checkout.
       return;
     }
-    posthog.capture("credit_topup_cta_clicked", { source: "chat_banner" });
+    track("credit_topup_cta_clicked", {
+      location: "chat_tab",
+      source: "chat_banner",
+    });
     setPendingResendMessage(text);
     setIsTopupDialogOpen(true);
-  }, [posthog]);
+  }, []);
 
   const handleTopupDialogOpenChange = useCallback((open: boolean) => {
     setIsTopupDialogOpen(open);
@@ -1773,10 +1770,10 @@ export function ChatTabV2({
     messages: [],
   };
   const handleResetAllChats = useCallback(() => {
-    posthog.capture("chat_cleared", standardEventProps("chat_tab"));
+    track("chat_cleared", { location: "chat_tab" });
     baseResetChat();
     resetMultiModelSessions();
-  }, [baseResetChat, posthog, resetMultiModelSessions]);
+  }, [baseResetChat, resetMultiModelSessions]);
 
   const handleSingleModelChange = useCallback(
     (model: ModelDefinition) => {
@@ -1846,10 +1843,8 @@ export function ChatTabV2({
       request: Omit<BroadcastChatTurnRequest, "id">,
       captureProps?: Record<string, unknown>
     ) => {
-      posthog.capture("send_message", {
+      track("send_message", {
         location: "chat_tab",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         model_id: selectedModel?.id ?? null,
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
@@ -1865,7 +1860,6 @@ export function ChatTabV2({
     },
     [
       isMultiModelMode,
-      posthog,
       resolvedSelectedModels.length,
       selectedModel?.id,
       selectedModel?.name,
@@ -1912,10 +1906,8 @@ export function ChatTabV2({
   }, [error, handleOAuthRequired, onOAuthRequired]);
 
   const handleSignUp = () => {
-    posthog.capture("sign_up_button_clicked", {
+    track("sign_up_button_clicked", {
       location: "chat_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
     signUp();
   };
@@ -1963,10 +1955,8 @@ export function ChatTabV2({
           setMessages((prev) => [...prev, ...skillMessages]);
         }
 
-        posthog.capture("send_message", {
+        track("send_message", {
           location: "chat_tab",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
           model_id: selectedModel?.id ?? null,
           model_name: selectedModel?.name ?? null,
           model_provider: selectedModel?.provider ?? null,
@@ -1993,10 +1983,7 @@ export function ChatTabV2({
   };
 
   const handleStarterPrompt = async (prompt: string) => {
-    posthog.capture(
-      "chat_starter_prompt_clicked",
-      standardEventProps("chat_tab")
-    );
+    track("chat_starter_prompt_clicked", { location: "chat_tab" });
     if (composerDisabled || sendBlocked) {
       setInput(prompt);
       return;
@@ -2013,10 +2000,8 @@ export function ChatTabV2({
       });
       setModelContextQueue([]);
     } else {
-      posthog.capture("send_message", {
+      track("send_message", {
         location: "chat_tab",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         model_id: selectedModel?.id ?? null,
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
@@ -2084,6 +2069,19 @@ export function ChatTabV2({
     onReconnectServer,
     onDisconnectServer,
     onAddServer,
+    voiceInputContext: effectiveHostedProjectId
+      ? {
+          projectId: effectiveHostedProjectId,
+          ...(effectiveHostedSelectedServerIds.length > 0
+            ? { selectedServerIds: effectiveHostedSelectedServerIds }
+            : {}),
+          ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
+          ...(hostedAccessVersion !== undefined
+            ? { accessVersion: hostedAccessVersion }
+            : {}),
+        }
+      : undefined,
+    voiceInputAuthHeaders: authHeaders,
     chatboxAttachableServers:
       chatboxOptionalInventory && chatboxOptionalInventory.length > 0
         ? chatboxOptionalInventory

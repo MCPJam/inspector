@@ -4,8 +4,13 @@
 // assembly here (see `buildJwtBearerBody`) is what prevents the two surfaces
 // from drifting on the wire.
 import type { Context } from "hono";
-import { issueIdJag } from "./xaa-idjag-signer.js";
-import { getXAAIssuerUrl } from "./xaa-idp-keypair.js";
+import {
+  buildJwtBearerBody,
+  buildJwtBearerRequest,
+  getXAAIssuerUrl,
+  issueIdJag,
+  type XaaTokenEndpointAuthMethod,
+} from "@mcpjam/sdk";
 import {
   buildDiscoveryCandidates,
   buildResourceMetadataCandidates,
@@ -41,6 +46,7 @@ type ResolveServerSecretFn = (args: {
   serverId: string;
   projectId: string;
   bearerToken: string;
+  clientIp?: string | null;
 }) => Promise<ServerClientSecretResult>;
 
 // RFC 9728: ask the resource (the MCP server URL) which authorization server
@@ -81,10 +87,27 @@ async function discoverIssuerFromResourceMetadata(
 //      protected-resource metadata;
 //   3. otherwise the resource URL itself (legacy behavior — covers servers that
 //      self-host RFC 8414 metadata at the resource origin and serve no PRM).
+// Same scheme + host + port. Used to bind a path-scoped AS's token endpoint
+// to its issuer origin before the confidential secret is posted. Unparseable
+// input fails closed (not same origin).
+function isSameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
 export async function discoverServerTargetTokenEndpoint(
   args: {
     resource?: string;
     explicitIssuer?: string;
+    /**
+     * Per-server opt-in: accept an advertised issuer that is a same-origin
+     * path-prefix ancestor of the requested URL (multi-tenant AS deployments
+     * with path-scoped issuers, e.g. /resources/res_x). Off = strict RFC 8414 match.
+     */
+    allowPathScopedIssuer?: boolean;
   },
   httpsOnly: boolean
 ): Promise<{ issuer: string; tokenEndpoint: string }> {
@@ -124,12 +147,51 @@ export async function discoverServerTargetTokenEndpoint(
       });
       // Fail closed on an issuer mismatch: the metadata's advertised issuer
       // differs from the one we asked for, so its token endpoint can't be
-      // trusted with the stored confidential client secret.
-      if (verdict.issuerMismatch) {
+      // trusted with the stored confidential client secret. This deliberate
+      // abort must NOT wear a 502/504 — CDN edges (Cloudflare in hosted)
+      // replace origin 502/504 bodies with their own branded error page, which
+      // would hide this message from the user entirely.
+      // A same-origin path-prefix "mismatch" is the multi-tenant AS shape
+      // (issuer at the origin root, endpoints scoped under a path). Only the
+      // per-server opt-in accepts it.
+      const originPrefixOptIn =
+        args.allowPathScopedIssuer === true &&
+        verdict.issuerMismatch?.originPrefix === true;
+      // Even under the opt-in, the token endpoint must stay on the advertised
+      // issuer's own origin. Otherwise a same-origin tenant's metadata (the
+      // exact scenario this feature relaxes trust for) could advertise the
+      // origin-root issuer to pass the prefix check yet point token_endpoint
+      // at an arbitrary public host, redirecting the confidential client
+      // secret off-origin. Bind it explicitly; the strict path never reaches
+      // this branch.
+      const tokenEndpointEscapesOrigin =
+        originPrefixOptIn &&
+        verdict.tokenEndpoint != null &&
+        !isSameOrigin(verdict.tokenEndpoint, verdict.issuerMismatch!.advertised);
+      const acceptedPathScoped = originPrefixOptIn && !tokenEndpointEscapesOrigin;
+      if (verdict.issuerMismatch && !acceptedPathScoped) {
+        const { requested, advertised, schemeOnly, originPrefix } =
+          verdict.issuerMismatch;
+        const hint = tokenEndpointEscapesOrigin
+          ? `The path-scoped authorization server's token endpoint ("${verdict.tokenEndpoint}") is on a different origin than its issuer ("${advertised}"); refusing to send the client secret off-origin.`
+          : schemeOnly
+            ? "Only the scheme differs — the authorization server is likely behind a TLS-terminating proxy but advertises an http:// issuer."
+            : originPrefix
+              ? "The advertised issuer is the same-origin root of the requested URL — a multi-tenant, path-scoped authorization server. Enable \"Path-scoped authorization server\" in the server's XAA settings to allow this."
+              : "Set the server's Authorization Server issuer to the advertised value (or fix the server URL).";
         throw new WebRouteError(
-          502,
-          ErrorCode.SERVER_UNREACHABLE,
-          "Authorization server metadata issuer does not match the requested issuer"
+          409,
+          ErrorCode.VALIDATION_ERROR,
+          `Authorization server issuer mismatch: the stored config expects "${requested}" but the server's metadata advertises "${advertised}". ${hint}`,
+          {
+            requestedIssuer: requested,
+            advertisedIssuer: advertised,
+            schemeOnly,
+            originPrefix,
+            ...(tokenEndpointEscapesOrigin
+              ? { tokenEndpointOffOrigin: true }
+              : {}),
+          }
         );
       }
       // The AS explicitly declares it doesn't support the jwt-bearer grant —
@@ -166,6 +228,7 @@ export async function resolveServerTarget(deps: {
   serverId: string;
   projectId?: string;
   bearerToken: string;
+  clientIp?: string | null;
 }): Promise<ResolvedServerTarget> {
   if (!deps.resolveServerSecret) {
     throw new WebRouteError(
@@ -186,6 +249,7 @@ export async function resolveServerTarget(deps: {
     serverId: deps.serverId,
     projectId: deps.projectId,
     bearerToken: deps.bearerToken,
+    clientIp: deps.clientIp,
   });
 
   if (!resolved.xaaAuthzIssuer && !resolved.serverUrl) {
@@ -200,6 +264,7 @@ export async function resolveServerTarget(deps: {
     {
       resource: resolved.serverUrl ?? undefined,
       explicitIssuer: resolved.xaaAuthzIssuer ?? undefined,
+      allowPathScopedIssuer: resolved.xaaAllowPathScopedIssuer === true,
     },
     deps.httpsOnly
   );
@@ -213,26 +278,13 @@ export async function resolveServerTarget(deps: {
   };
 }
 
-// The jwt-bearer (RFC 7523) token-request body posted to the resource
-// authorization server. SINGLE SOURCE OF TRUTH — both `/proxy/token` (debugger)
-// and `mintXaaAccessToken` (connect) build their request body here so the two
-// surfaces stay byte-identical on the wire.
-export function buildJwtBearerBody(args: {
-  assertion: string;
-  clientId?: string | null;
-  clientSecret?: string | null;
-  scope?: string | null;
-  resource?: string | null;
-}): Record<string, string> {
-  return {
-    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-    assertion: args.assertion,
-    ...(args.clientId ? { client_id: args.clientId } : {}),
-    ...(args.clientSecret ? { client_secret: args.clientSecret } : {}),
-    ...(args.scope ? { scope: args.scope } : {}),
-    ...(args.resource ? { resource: args.resource } : {}),
-  };
-}
+// `buildJwtBearerBody`, `buildJwtBearerRequest`, and `XaaTokenEndpointAuthMethod`
+// (the single-source jwt-bearer request body + method-aware client-auth request)
+// now live in @mcpjam/sdk and are re-exported here so existing importers keep
+// their path. This is the ONE implementation shared by the debugger's
+// `/proxy/token` endpoint, the connect-page server-side mint, and the CLI.
+export { buildJwtBearerBody, buildJwtBearerRequest };
+export type { XaaTokenEndpointAuthMethod };
 
 // Derive the MCPJam test-IdP issuer from the inbound request. Shared by the XAA
 // router endpoints and the connect-page mint so the signed ID-JAG `iss` matches

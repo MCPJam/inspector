@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
-import { getCanonicalModelId, isMCPJamProvidedModel } from "@/shared/types";
+import { getCanonicalModelId } from "@/shared/types";
+import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
 import { isMCPAuthError } from "@mcpjam/sdk";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
@@ -15,6 +16,7 @@ import {
 } from "../../utils/chat-v2-orchestration.js";
 import { buildDirectHostConfig } from "../../utils/chat-ingestion.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
+import { captureServerEvent } from "../../utils/analytics.js";
 import {
   hostedChatSchema,
   createAuthorizedManager,
@@ -310,7 +312,7 @@ chatV2.post("/", async (c) => {
         // "no MCP servers" fail-closed gate.
         hasSelectedMcpServers:
           (resolvedExecution.selectedServerIds ?? selectedServerIds).length > 0,
-        modelEligible: isMCPJamProvidedModel(
+        modelEligible: isHostedCatalogModel(
           String(modelDefinition.id),
           modelDefinition.provider,
         ),
@@ -425,15 +427,24 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
-    // WebMCP UI tools: same boundary treatment as appTools.
+    // WebMCP UI tools: same boundary treatment as appTools. Chatbox-bound
+    // turns never accept them — ui_* tools drive the inspector UI, which is
+    // not part of the published/preview chatbox surface, so a stale or
+    // tampered client snapshot must not re-advertise them here.
     let validatedUiTools;
-    try {
-      validatedUiTools = validateUiToolEntries(body.uiTools);
-    } catch (error) {
-      if (error instanceof UiToolValidationError) {
-        throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, error.message);
+    if (!isChatboxSession) {
+      try {
+        validatedUiTools = validateUiToolEntries(body.uiTools);
+      } catch (error) {
+        if (error instanceof UiToolValidationError) {
+          throw new WebRouteError(
+            400,
+            ErrorCode.VALIDATION_ERROR,
+            error.message
+          );
+        }
+        throw error;
       }
-      throw error;
     }
 
     let validatedWidgetModelContext;
@@ -455,6 +466,24 @@ chatV2.post("/", async (c) => {
       // own route (mcpjam-agent.ts) and never lands here.
       const origin = isChatboxSession ? "chatbox" : "playground";
       const isDirectChat = !isChatboxSession;
+
+      // Server twin of the client's `send_message` — fires even when the
+      // browser can't reach PostHog. Identity: guests always resolve (the
+      // bearer-auth middleware sets c.get("guestId") before this handler,
+      // independent of the authorize exchange); signed-in identity comes from
+      // the authorize exchange above. One slice is intentionally not twinned:
+      // a signed-in user chatting with ZERO MCP servers selected, where
+      // createAuthorizedManager short-circuits before the exchange so no
+      // client-matching WorkOS id is available — capturing with the Convex
+      // internal id would split the person from their client events. That
+      // slice is small (model-only chats are dominated by guests, who are
+      // covered) and captureServerEvent drops it rather than mis-attribute;
+      // the client `send_message` still fires, so the block-rate ratio stays
+      // directionally correct.
+      captureServerEvent(c, "send_message_server", {
+        origin,
+        source_type: sourceType,
+      });
 
       return await streamWebChatTurn({
         manager,

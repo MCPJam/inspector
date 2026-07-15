@@ -406,6 +406,16 @@ export interface MCPJamHandlerOptions {
   chatSessionId?: string;
   sourceType?: string;
   /**
+   * Swarm (journey-execution) continuity identity. When `sourceType === "swarm"`
+   * these key the harness `swarm-chat` owner lane (`journeyRunId` + `hostId` +
+   * `chatSessionId`) so a multi-turn swarm harness session resumes only its own
+   * runtime sidecar and never collides with a Direct/Chatbox lane. Set by the
+   * swarm runner; absent for every other surface. See
+   * `mcpjam-backend/convex/harnessSessions.ts` (`swarm-chat` owner).
+   */
+  journeyRunId?: string;
+  hostId?: string;
+  /**
    * Phase 3 execution scope from the server-resolved runtime config (chatbox OR
    * host-by-id). Threaded into the harness path (sandbox reserve, runtime skills,
    * broker start, session-state, ingest commit) so the backend re-resolves live

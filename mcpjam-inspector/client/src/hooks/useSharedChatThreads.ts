@@ -5,7 +5,7 @@ import type {
 } from "@/shared/eval-trace";
 import type { SessionReadiness } from "@/components/chatboxes/session-readiness";
 
-export type SharedChatSourceType = "chatbox";
+export type SharedChatSourceType = "chatbox" | "swarm";
 
 export interface SharedChatThread {
   _id: string;
@@ -59,6 +59,20 @@ export interface SharedChatThread {
    * (`getSession`) returns the full record with denormalized findings.
    */
   readiness?: SessionReadiness;
+  /**
+   * Goal-completion judge verdict for SWARM sessions — the compact
+   * denormalized `chatSessions.goalScore` subset (see backend
+   * `convex/swarmJudge.ts`). Absent on non-swarm sessions and before the
+   * first grading; `getSession` spreads the whole doc so this flows through.
+   */
+  goalScore?: {
+    status?: string;
+    score?: number;
+    passed?: boolean;
+    threshold?: number;
+    reason?: string;
+    error?: string;
+  };
 }
 
 /**

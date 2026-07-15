@@ -78,7 +78,7 @@ describe("useServerForm", () => {
       url: "https://example.com/mcp",
       useOAuth: true,
       oauthProtocolMode: "2025-06-18",
-      oauthRegistrationMode: "dcr",
+      registrationMode: "dcr",
       oauthScopes: ["openid", "profile"],
     });
   });
@@ -112,10 +112,8 @@ describe("useServerForm", () => {
     });
   });
 
-  it("defaults the XAA simulated identity to the signed-in user when the fields are blank", () => {
-    const { result } = renderHook(() =>
-      useServerForm(undefined, { signedInEmail: "john@mcpjam.com" })
-    );
+  it("omits the identity pair entirely when the override fields are untouched (no force-default)", () => {
+    const { result } = renderHook(() => useServerForm());
 
     act(() => {
       result.current.setName("XAA server");
@@ -124,30 +122,125 @@ describe("useServerForm", () => {
       result.current.setClientId("resource-client-id");
     });
 
-    expect(result.current.buildFormData()).toMatchObject({
+    // Untouched pair → BOTH keys omitted so the save path preserves stored
+    // values; nothing is force-defaulted (to the signed-in user or anything
+    // else).
+    const built = result.current.buildFormData();
+    expect(built.useXaa).toBe(true);
+    expect("xaaSubject" in built).toBe(false);
+    expect("xaaEmail" in built).toBe(false);
+  });
+
+  it("omits the identity pair on an untouched edit of a server with a stored override", async () => {
+    const server = {
+      name: "Saved XAA server",
+      config: { url: "https://example.com/mcp" },
       useXaa: true,
-      xaaSubject: "john@mcpjam.com",
-      xaaEmail: "john@mcpjam.com",
+      useOAuth: false,
+      authServerMode: "mcpjam",
+      xaaSubject: "stored-sub",
+      xaaEmail: "stored@example.com",
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+    await waitFor(() => {
+      expect(result.current.xaaSubject).toBe("stored-sub");
+    });
+
+    act(() => {
+      result.current.setOauthScopesInput("read:tools");
+    });
+
+    // An unrelated edit leaves the identity pair untouched → omitted, so the
+    // save path preserves the stored values instead of re-writing them.
+    const built = result.current.buildFormData();
+    expect("xaaSubject" in built).toBe(false);
+    expect("xaaEmail" in built).toBe(false);
+  });
+
+  it("emits the complete trimmed pair when both override fields are edited", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("XAA server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setClientId("resource-client-id");
+      result.current.setXaaSubject("  alice  ");
+      result.current.setXaaEmail(" alice@example.com ");
+    });
+
+    expect(result.current.validateForm()).toBeNull();
+    expect(result.current.buildFormData()).toMatchObject({
+      xaaSubject: "alice",
+      xaaEmail: "alice@example.com",
     });
   });
 
-  it("uses an explicit XAA subject/email override instead of the signed-in default", () => {
-    const { result } = renderHook(() =>
-      useServerForm(undefined, { signedInEmail: "john@mcpjam.com" })
-    );
+  it('emits "" for both fields on an explicit clear of a stored override', async () => {
+    const server = {
+      name: "Saved XAA server",
+      config: { url: "https://example.com/mcp" },
+      useXaa: true,
+      useOAuth: false,
+      authServerMode: "mcpjam",
+      xaaSubject: "stored-sub",
+      xaaEmail: "stored@example.com",
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+    await waitFor(() => {
+      expect(result.current.xaaSubject).toBe("stored-sub");
+    });
+
+    act(() => {
+      result.current.setXaaSubject("");
+      result.current.setXaaEmail("");
+    });
+
+    expect(result.current.validateForm()).toBeNull();
+    // The explicit empty pair reaches the backend, which normalizes it away.
+    expect(result.current.buildFormData()).toMatchObject({
+      xaaSubject: "",
+      xaaEmail: "",
+    });
+  });
+
+  it("blocks save with an actionable validation error on a partial identity pair", () => {
+    const { result } = renderHook(() => useServerForm());
 
     act(() => {
       result.current.setName("XAA server");
       result.current.setUrl("https://example.com/mcp");
       result.current.setAuthType("xaa");
       result.current.setClientId("resource-client-id");
-      result.current.setXaaSubject("john");
+      result.current.setXaaSubject("alice");
     });
 
-    expect(result.current.buildFormData()).toMatchObject({
-      xaaSubject: "john",
-      xaaEmail: "john@mcpjam.com",
+    expect(result.current.validateForm()).toBe(
+      "Complete or clear the server identity override"
+    );
+
+    // Completing the pair clears the error…
+    act(() => {
+      result.current.setXaaEmail("alice@example.com");
     });
+    expect(result.current.validateForm()).toBeNull();
+
+    // …and so does clearing both.
+    act(() => {
+      result.current.setXaaSubject("");
+      result.current.setXaaEmail("");
+    });
+    expect(result.current.validateForm()).toBeNull();
   });
 
   it("resolves an XAA server (useXaa, useOAuth false) to authType=xaa and never downgrades it to oauth on save", async () => {
@@ -784,8 +877,153 @@ describe("useServerForm", () => {
     const { result } = renderHook(() => useServerForm(server));
 
     await waitFor(() => {
-      expect(result.current.oauthRegistrationMode).toBe("auto");
+      expect(result.current.registrationMode).toBe("auto");
     });
+  });
+
+  it("prefers the canonical registrationMode over the legacy concrete profile strategy", async () => {
+    // A row saved by the unified pipeline: canonical "auto" plus the
+    // rollback-compat concrete on the legacy profile field. The form must
+    // show "auto" — preferring the concrete would rewrite the stored "auto"
+    // on any unrelated edit (the Edit-form flavor of the auto-clobber bug).
+    const server = {
+      name: "Canonical auto server",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      useOAuth: true,
+      registrationMode: "auto",
+      oauthFlowProfile: {
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "dcr",
+      },
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.registrationMode).toBe("auto");
+    });
+
+    // An unrelated edit + save keeps emitting the canonical "auto".
+    act(() => {
+      result.current.setAuthType("oauth");
+      result.current.setOauthScopesInput("openid");
+    });
+    expect(result.current.buildFormData()).toMatchObject({
+      registrationMode: "auto",
+    });
+  });
+
+  it("emits authMethod 'auto' with backend-mirrored derived booleans", async () => {
+    // Auto on a server WITH sticky XAA config + a client id → selects XAA.
+    const xaaConfigured = {
+      name: "auto-xaa",
+      config: { url: "https://example.com/mcp" },
+      authMethod: "auto",
+      authServerMode: "mcpjam",
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+    const { result } = renderHook(() => useServerForm(xaaConfigured));
+    await waitFor(() => {
+      expect(result.current.authType).toBe("auto");
+    });
+    act(() => {
+      result.current.setClientId("client-1");
+    });
+    expect(result.current.buildFormData()).toMatchObject({
+      authMethod: "auto",
+      useXaa: true,
+      useOAuth: false,
+    });
+
+    // Auto WITHOUT XAA config → selects OAuth.
+    const { result: plain } = renderHook(() => useServerForm());
+    act(() => {
+      plain.current.setName("auto-oauth");
+      plain.current.setUrl("https://example.com/mcp");
+      plain.current.setAuthType("auto");
+    });
+    expect(plain.current.buildFormData()).toMatchObject({
+      authMethod: "auto",
+      useOAuth: true,
+      useXaa: false,
+    });
+  });
+
+  it("defaults new servers to Auto and emits it on save", () => {
+    const { result } = renderHook(() => useServerForm());
+    expect(result.current.authType).toBe("auto");
+
+    act(() => {
+      result.current.setName("brand-new");
+      result.current.setUrl("https://example.com/mcp");
+    });
+    expect(result.current.buildFormData()).toMatchObject({
+      authMethod: "auto",
+      useOAuth: true,
+      useXaa: false,
+    });
+
+    // resetForm restores the Auto default, not None.
+    act(() => {
+      result.current.setAuthType("bearer");
+      result.current.resetForm();
+    });
+    expect(result.current.authType).toBe("auto");
+  });
+
+  it("sends clearXaaConfig only when explicitly moving off XAA", async () => {
+    const xaaServer = {
+      name: "was-xaa",
+      config: { url: "https://example.com/mcp" },
+      useXaa: true,
+      authServerMode: "mcpjam",
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    // Switching to OAuth clears the sticky XAA identity config.
+    const { result } = renderHook(() => useServerForm(xaaServer));
+    await waitFor(() => {
+      expect(result.current.authType).toBe("xaa");
+    });
+    act(() => {
+      result.current.setAuthType("oauth");
+    });
+    expect(result.current.buildFormData()).toMatchObject({
+      authMethod: "oauth",
+      clearXaaConfig: true,
+    });
+
+    // Switching to "auto" preserves it — auto selects ON that config.
+    const { result: toAuto } = renderHook(() => useServerForm(xaaServer));
+    await waitFor(() => {
+      expect(toAuto.current.authType).toBe("xaa");
+    });
+    act(() => {
+      toAuto.current.setAuthType("auto");
+    });
+    const autoData = toAuto.current.buildFormData();
+    expect(autoData.authMethod).toBe("auto");
+    expect(autoData.clearXaaConfig).toBeUndefined();
+
+    // Staying on XAA never sends the reset.
+    const { result: stays } = renderHook(() => useServerForm(xaaServer));
+    await waitFor(() => {
+      expect(stays.current.authType).toBe("xaa");
+    });
+    const xaaData = stays.current.buildFormData();
+    expect(xaaData.clearXaaConfig).toBeUndefined();
   });
 
   it("blocks submit for preregistered OAuth until client ID passes validation", () => {

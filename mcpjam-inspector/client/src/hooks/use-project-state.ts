@@ -513,6 +513,7 @@ export function useProjectState({
             sharedProjectId: rw._id,
             organizationId: rw.organizationId,
             visibility: rw.visibility,
+            xaaTestDefaults: rw.xaaTestDefaults,
           } as Project,
         ];
       }),
@@ -1063,6 +1064,11 @@ export function useProjectState({
           if (updates.icon !== undefined) updateData.icon = updates.icon;
           if (updates.visibility !== undefined) {
             updateData.visibility = updates.visibility;
+          }
+          if (updates.xaaTestDefaults !== undefined) {
+            // Atomic replace; an explicit `null` clears the stored default
+            // (omitting the key preserves it, per the mutation contract).
+            updateData.xaaTestDefaults = updates.xaaTestDefaults;
           }
           if (updates.servers !== undefined) {
             logger.warn(

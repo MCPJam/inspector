@@ -9,10 +9,10 @@
  * instance.
  */
 import { useEffect } from "react";
-import { usePostHog } from "posthog-js/react";
 import { AgentSidePanel } from "@/components/mcpjam-agent/AgentSidePanel";
 import { useAppReady } from "@/hooks/use-app-ready";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
+import { track } from "@/lib/analytics";
 
 interface AgentSidePanelMountProps {
   projectId: string | null;
@@ -34,7 +34,6 @@ export function AgentSidePanelMount({
   activeTab,
 }: AgentSidePanelMountProps) {
   const toggle = useAgentPanelStore((s) => s.toggle);
-  const posthog = usePostHog();
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -45,7 +44,8 @@ export function AgentSidePanelMount({
       event.preventDefault();
       const willOpen = !useAgentPanelStore.getState().isOpen;
       if (willOpen) {
-        posthog?.capture("mcpjam_agent_panel_opened", {
+        track("mcpjam_agent_panel_opened", {
+          location: "agent_side_panel",
           via: "shortcut",
           tab: activeTab,
         });
@@ -54,7 +54,7 @@ export function AgentSidePanelMount({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeTab, posthog, toggle]);
+  }, [activeTab, toggle]);
 
   // Drop the persisted session pointer whenever the panel state and the
   // current active project disagree about which project the session belongs

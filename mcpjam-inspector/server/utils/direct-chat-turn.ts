@@ -381,7 +381,7 @@ export interface RunDirectChatTurnHandle {
   isAborted: () => boolean;
 }
 
-function stampMcpToolOriginProviderOptions(
+export function stampMcpToolOriginProviderOptions(
   messages: ModelMessage[],
   tools: ToolSet
 ): ModelMessage[] {
