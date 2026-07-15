@@ -210,8 +210,14 @@ export const hostedChatSchema = z
      * `elicitation`: without it, deploying server support would make every
      * stale browser bundle hang for a full TTL on any server that elicits.
      * Bump only if the wire contract changes incompatibly.
+     *
+     * Accepts ANY non-negative integer, not `literal(1)`: a newer client
+     * advertising v2 against this older server must degrade to
+     * elicitation-disabled, not 400 the entire chat request. The exact-version
+     * check lives in `resolveElicitationGate`, which is what actually decides
+     * whether to honor it.
      */
-    hostedElicitationVersion: z.literal(1).optional(),
+    hostedElicitationVersion: z.number().int().nonnegative().optional(),
     chatSessionId: z.string().min(1).optional(),
     surface: z.enum(["preview", "share_link"]).optional(),
     oauthTokens: z.record(z.string(), z.string()).optional(),

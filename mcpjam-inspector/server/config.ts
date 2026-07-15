@@ -104,6 +104,13 @@ export const ELICITATION_POLL_JITTER_MS = 250;
 /** Consecutive poll transport failures tolerated before resolving `cancel`. */
 export const ELICITATION_POLL_MAX_FAILURES = 5;
 /**
+ * Deadline for a single Convex service-route call (poll/ack/cancel). These are
+ * tiny reads/writes; anything slower is a stall. Unbounded, a hung Convex would
+ * park the poll loop forever — the tool call would outlive its TTL and
+ * end-of-stream cleanup would block behind it.
+ */
+export const ELICITATION_SERVICE_ROUTE_TIMEOUT_MS = 10_000;
+/**
  * Total suspended-time budget granted to ONE tool call across all of its
  * sequential elicitations. Slack over the longest single TTL so a form answered
  * at the last second still lands.

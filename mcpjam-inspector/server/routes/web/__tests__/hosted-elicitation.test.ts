@@ -405,6 +405,59 @@ describe("HostedElicitationBridge", () => {
     await expect(promise).resolves.toEqual({ action: "cancel" });
   });
 
+  it("bounds a stalled Convex call instead of hanging the tool forever", async () => {
+    // Without a deadline the poll never returns: the TTL check only runs
+    // between polls, so the tool call would outlive its TTL with nothing able
+    // to resolve it. A stall must degrade to a poll failure, not a hang.
+    const hang = vi.fn(
+      (_url: string, init: any) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () =>
+            reject(new Error("aborted")),
+          );
+        }),
+    );
+    vi.stubGlobal("fetch", hang);
+    const { writer } = makeWriter();
+    const bridge = makeBridge();
+    bridge.attachStreamWriter(writer);
+
+    const promise = bridge.callback(formRequest());
+    // 5 failures × (10s deadline + ~1s backoff) — comfortably covered.
+    await vi.advanceTimersByTimeAsync(90_000);
+
+    await expect(promise).resolves.toEqual({ action: "cancel" });
+  });
+
+  it("does not bind cancel to the turn signal", async () => {
+    // dispose() runs BECAUSE the turn ended. Binding the withdraw request to
+    // the turn's signal would abort the very call meant to retract the prompt,
+    // leaving it answerable for its whole TTL.
+    const seen: Array<boolean> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: any) => {
+        if (new URL(url).pathname === "/elicitations/cancel") {
+          seen.push(Boolean(init.signal?.aborted));
+        }
+        return { ok: true, json: async () => ({ ok: true }) } as any;
+      }),
+    );
+    const controller = new AbortController();
+    const { writer } = makeWriter();
+    const bridge = makeBridge({ abortSignal: controller.signal });
+    bridge.attachStreamWriter(writer);
+
+    void bridge.callback(formRequest());
+    await vi.advanceTimersByTimeAsync(50);
+    controller.abort();
+    await bridge.dispose();
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((aborted) => aborted === false)).toBe(true);
+  });
+
   it("withdraws still-pending rows on dispose", async () => {
     const { calls } = stubFetch({ "/elicitations/poll": [pollPending] });
     const { writer } = makeWriter();

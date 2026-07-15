@@ -119,19 +119,46 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Optional string: absent is fine, present-but-wrong-type is not. */
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+function isAction(value: unknown): value is HostedElicitationAction {
+  return value === "accept" || value === "decline" || value === "cancel";
+}
+
+/**
+ * Validates a `data-elicitation` payload before consumers treat it as typed.
+ *
+ * Strict about optional fields, not just required ones: this guard is what
+ * stands between a malformed part and UI that dereferences it. A `url`-mode
+ * request without a `url` would render a consent dialog with nothing to
+ * consent to, and an unconstrained `action` would be forwarded to the backend
+ * as an answer it must then reject.
+ */
 export function isHostedElicitationEvent(
   value: unknown,
 ): value is HostedElicitationEvent {
   if (!isRecord(value)) return false;
 
   if (value.kind === "request") {
-    return (
-      typeof value.rendezvousId === "string" &&
-      typeof value.serverId === "string" &&
-      (value.mode === "form" || value.mode === "url") &&
-      typeof value.message === "string" &&
-      typeof value.expiresAt === "number"
-    );
+    if (
+      typeof value.rendezvousId !== "string" ||
+      typeof value.serverId !== "string" ||
+      typeof value.message !== "string" ||
+      typeof value.expiresAt !== "number" ||
+      !Number.isFinite(value.expiresAt) ||
+      !isOptionalString(value.serverName) ||
+      !isOptionalString(value.serverElicitationId) ||
+      !isOptionalString(value.chatSessionId)
+    ) {
+      return false;
+    }
+    // Mode-specific payload: each mode's dialog is useless without its field.
+    if (value.mode === "url") return typeof value.url === "string";
+    if (value.mode === "form") return true;
+    return false;
   }
 
   if (value.kind === "resolved") {
@@ -139,19 +166,24 @@ export function isHostedElicitationEvent(
       typeof value.rendezvousId === "string" &&
       (value.outcome === "answered" ||
         value.outcome === "expired" ||
-        value.outcome === "cancelled")
+        value.outcome === "cancelled") &&
+      (value.action === undefined || isAction(value.action))
     );
   }
 
   if (value.kind === "url_required") {
     return (
       typeof value.serverId === "string" &&
+      isOptionalString(value.serverName) &&
+      isOptionalString(value.toolCallId) &&
       Array.isArray(value.elicitations) &&
+      value.elicitations.length > 0 &&
       value.elicitations.every(
         (entry) =>
           isRecord(entry) &&
           typeof entry.url === "string" &&
-          typeof entry.elicitationId === "string",
+          typeof entry.elicitationId === "string" &&
+          isOptionalString(entry.message),
       )
     );
   }

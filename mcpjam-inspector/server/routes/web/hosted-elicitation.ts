@@ -51,6 +51,7 @@ import {
   ELICITATION_POLL_INTERVAL_MS,
   ELICITATION_POLL_JITTER_MS,
   ELICITATION_POLL_MAX_FAILURES,
+  ELICITATION_SERVICE_ROUTE_TIMEOUT_MS,
   ELICITATION_URL_CONSENT_TTL_MS,
 } from "../../config.js";
 import { logger } from "../../utils/logger.js";
@@ -302,35 +303,79 @@ export class HostedElicitationBridge {
    * fresh. Safe because `rendezvousId` is a replica-minted UUID and these routes
    * are read/withdraw-only.
    */
-  private async serviceRoute<T>(path: string, body: unknown): Promise<T> {
-    const response = await fetch(
-      new URL(path, requireConvexHttpUrl()).toString(),
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-inspector-service-token": serviceToken(),
-        },
-        body: JSON.stringify(body),
-      },
+  /**
+   * @param bindToTurn abort this call when the TURN aborts, on top of the
+   *   per-call deadline. True for polling — a closed stream has no use for the
+   *   answer. **False for cancel/ack**: those run *because* the turn is ending,
+   *   so binding them to its signal would abort the very request meant to
+   *   withdraw the row, and the prompt would stay answerable for its whole TTL.
+   */
+  private async serviceRoute<T>(
+    path: string,
+    body: unknown,
+    opts: { bindToTurn: boolean },
+  ): Promise<T> {
+    // Every service call is bounded. Without a deadline a stalled Convex
+    // request would park the poll loop forever: the tool call would outlive its
+    // TTL (nothing else can resolve it — the deadline check only runs between
+    // polls), and `dispose()` would await a cancel that never returns, blocking
+    // end-of-stream cleanup. A timed-out call surfaces as a poll failure, which
+    // the loop already tolerates and eventually resolves as `cancel`.
+    //
+    // setTimeout rather than `AbortSignal.timeout()`: the latter is driven by
+    // the platform's own clock, which fake timers don't control — the deadline
+    // would be untestable.
+    const controller = new AbortController();
+    const deadline = setTimeout(
+      () => controller.abort(new Error("service route deadline exceeded")),
+      ELICITATION_SERVICE_ROUTE_TIMEOUT_MS,
     );
-    if (!response.ok) {
-      throw new Error(`${path} returned ${response.status}`);
+    const onTurnAbort = () => controller.abort();
+    const turnSignal = opts.bindToTurn ? this.options.abortSignal : undefined;
+    if (turnSignal) {
+      if (turnSignal.aborted) controller.abort();
+      else turnSignal.addEventListener("abort", onTurnAbort, { once: true });
     }
-    return (await response.json()) as T;
+
+    try {
+      const response = await fetch(
+        new URL(path, requireConvexHttpUrl()).toString(),
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-inspector-service-token": serviceToken(),
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        },
+      );
+      if (!response.ok) {
+        throw new Error(`${path} returned ${response.status}`);
+      }
+      return (await response.json()) as T;
+    } finally {
+      clearTimeout(deadline);
+      turnSignal?.removeEventListener("abort", onTurnAbort);
+    }
   }
 
   private async poll(rendezvousId: string): Promise<PollResult | null> {
     const payload = await this.serviceRoute<{
       ok: boolean;
       elicitation: PollResult | null;
-    }>("/elicitations/poll", { rendezvousId });
+    }>("/elicitations/poll", { rendezvousId }, { bindToTurn: true });
     return payload.elicitation ?? null;
   }
 
   /** Fire-and-forget: scrubs the payload once we've resolved to the server. */
   private ackRow(rendezvousId: string): void {
-    void this.serviceRoute("/elicitations/ack", { rendezvousId }).catch(
+    // Not bound to the turn: the ack usually fires as the turn is wrapping up.
+    void this.serviceRoute(
+      "/elicitations/ack",
+      { rendezvousId },
+      { bindToTurn: false },
+    ).catch(
       (error) => {
         // Harmless: the backend's 24h cleanup is the real retention bound.
         logger.warn("[elicitation] ack failed; payload waits for cleanup", {
@@ -343,7 +388,11 @@ export class HostedElicitationBridge {
 
   private async cancelRow(rendezvousId: string): Promise<void> {
     try {
-      await this.serviceRoute("/elicitations/cancel", { rendezvousId });
+      await this.serviceRoute(
+        "/elicitations/cancel",
+        { rendezvousId },
+        { bindToTurn: false },
+      );
     } catch (error) {
       logger.warn("[elicitation] cancel failed; TTL will expire the row", {
         error,
