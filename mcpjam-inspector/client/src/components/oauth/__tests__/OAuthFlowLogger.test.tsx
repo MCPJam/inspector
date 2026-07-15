@@ -116,9 +116,12 @@ describe("OAuthFlowLogger request/response card split", () => {
 
     await user.click(screen.getByRole("tab", { name: "Raw" }));
 
-    // One full entry: no split hint, one status, one method line.
-    expect(screen.queryByText("response → next step")).not.toBeInTheDocument();
-    // Status appears in the raw timeline badge and the entry header.
+    // Raw keeps chronological detail, but still labels the request and its
+    // response as separate debugger steps.
+    expect(screen.getByText("response → next step")).toBeInTheDocument();
+    expect(screen.getAllByText("request_without_token")).toHaveLength(1);
+    expect(screen.getAllByText("received_401_unauthorized")).toHaveLength(1);
+    // Status appears on the response item, not the request item.
     expect(screen.getAllByText(/401/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("POST").length).toBeGreaterThanOrEqual(1);
   });

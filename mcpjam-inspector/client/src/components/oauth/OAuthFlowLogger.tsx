@@ -205,6 +205,8 @@ export function OAuthFlowLogger({
           type: "http";
           timestamp: number;
           entry: NonNullable<OAuthFlowState["httpHistory"]>[number];
+          step: OAuthFlowStep;
+          view: HttpEntryView;
           key: string;
         };
 
@@ -221,12 +223,20 @@ export function OAuthFlowLogger({
         });
       });
 
-    (oauthFlowState.httpHistory || []).forEach((entry, index) => {
+    splitHttpEntriesForDisplay<
+      OAuthFlowStep,
+      NonNullable<OAuthFlowState["httpHistory"]>[number]
+    >({
+      entries: oauthFlowState.httpHistory || [],
+      pairedReceivedStep: getOAuthReceivedStepForRequest,
+    }).forEach((item, index) => {
       items.push({
         type: "http",
-        timestamp: entry.timestamp,
-        entry,
-        key: `http-${entry.timestamp}-${index}`,
+        timestamp: item.timestamp,
+        entry: item.entry,
+        step: item.step,
+        view: item.view,
+        key: `http-${item.entry.timestamp}-${item.step}-${item.view}-${index}`,
       });
     });
 
@@ -831,6 +841,7 @@ export function OAuthFlowLogger({
                   }
 
                   const httpEntry: HttpHistoryEntry = entry.entry;
+                  const view = entry.view;
                   const status = httpEntry.response?.status;
                   const isExpectedAuthChallenge =
                     httpEntry.step === "request_without_token" &&
@@ -841,7 +852,9 @@ export function OAuthFlowLogger({
                       status >= 400 &&
                       !isExpectedAuthChallenge);
                   const statusLabel =
-                    status !== undefined
+                    view === "request" && status !== undefined
+                      ? "request sent"
+                      : status !== undefined
                       ? `${status}${
                           httpEntry.response?.statusText
                             ? ` ${httpEntry.response?.statusText}`
@@ -852,8 +865,8 @@ export function OAuthFlowLogger({
                   return (
                     <div key={entry.key} className="space-y-1">
                       <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                        <span className="font-mono">{httpEntry.step}</span>
-                        <span>{formatTimestamp(httpEntry.timestamp)}</span>
+                        <span className="font-mono">{entry.step}</span>
+                        <span>{formatTimestamp(entry.timestamp)}</span>
                         <Badge
                           variant="outline"
                           className="font-mono uppercase"
@@ -879,6 +892,7 @@ export function OAuthFlowLogger({
                         responseBody={httpEntry.response?.body}
                         error={httpEntry.error}
                         step={httpEntry.step}
+                        view={view}
                       />
                     </div>
                   );

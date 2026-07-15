@@ -184,4 +184,59 @@ describe("OAuth copy log formatters", () => {
     expect(receivedSection).toContain("Response Body:");
     expect(receivedSection).not.toContain("Request Body:");
   });
+
+  it("prints raw request and response halves under their own steps", () => {
+    const httpEntry = {
+      step: "request_without_token" as OAuthFlowStep,
+      timestamp: 10,
+      duration: 25,
+      request: {
+        method: "POST",
+        url: "https://mcp.example.com/mcp",
+        headers: { Accept: "application/json" },
+        body: { jsonrpc: "2.0" },
+      },
+      response: {
+        status: 401,
+        statusText: "Unauthorized",
+        headers: { "www-authenticate": "Bearer" },
+        body: { error: "unauthorized" },
+      },
+    } as any;
+    const raw = generateRawText({} as OAuthFlowState, [
+      {
+        type: "http",
+        timestamp: 10,
+        entry: httpEntry,
+        step: "request_without_token",
+        view: "request",
+        key: "request",
+      },
+      {
+        type: "http",
+        timestamp: 35,
+        entry: httpEntry,
+        step: "received_401_unauthorized",
+        view: "response",
+        key: "response",
+      },
+    ]);
+
+    const requestSection = raw.indexOf("[request sent]");
+    const responseSection = raw.lastIndexOf("[401 Unauthorized]");
+    expect(requestSection).toBeGreaterThan(-1);
+    expect(responseSection).toBeGreaterThan(requestSection);
+    const requestText = raw.slice(requestSection, responseSection);
+    const responseText = raw.slice(responseSection);
+    expect(raw).toContain("request_without_token");
+    expect(raw).toContain("received_401_unauthorized");
+    expect(requestText).toContain("Request Body:");
+    expect(requestText).toContain(
+      "Response: recorded under [received_401_unauthorized]",
+    );
+    expect(requestText).not.toContain("Response Headers:");
+    expect(responseText).toContain("[401 Unauthorized]");
+    expect(responseText).toContain("Response Headers:");
+    expect(responseText).not.toContain("Request Body:");
+  });
 });

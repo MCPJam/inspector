@@ -358,6 +358,9 @@ export function generateRawText(
         type: "http";
         timestamp: number;
         entry: NonNullable<OAuthFlowState["httpHistory"]>[number];
+        /** Display step/view; omitted by older callers to preserve full view. */
+        step?: OAuthFlowStep;
+        view?: HttpEntryView;
         key: string;
       }
   >,
@@ -388,21 +391,27 @@ export function generateRawText(
       text += "\n";
     } else {
       const httpEntry = entry.entry;
+      const view = entry.view ?? "full";
+      const displayStep = entry.step ?? httpEntry.step;
+      const showRequest = view !== "response";
+      const showResponse = view !== "request";
       const status = httpEntry.response?.status;
       const statusLabel =
-        status !== undefined
+        view === "request" && status !== undefined
+          ? "request sent"
+          : status !== undefined
           ? `${status}${httpEntry.response?.statusText ? ` ${httpEntry.response?.statusText}` : ""}`
           : "pending";
 
-      text += `[${formatTimestamp(httpEntry.timestamp)}] [${httpEntry.request.method}] [${statusLabel}] ${httpEntry.step}\n`;
+      text += `[${formatTimestamp(entry.timestamp)}] [${httpEntry.request.method}] [${statusLabel}] ${displayStep}\n`;
       text += `URL: ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
 
-      if (httpEntry.duration) {
+      if (showResponse && httpEntry.duration) {
         text += `Duration: ${httpEntry.duration}ms\n`;
       }
 
       // Request details
-      if (
+      if (showRequest &&
         httpEntry.request.headers &&
         Object.keys(httpEntry.request.headers).length > 0
       ) {
@@ -414,13 +423,20 @@ export function generateRawText(
         )}\n`;
       }
 
-      if (httpEntry.request.body) {
+      if (showRequest && httpEntry.request.body) {
         text += "\nRequest Body:\n";
         text += `${stringifyCopyValue(httpEntry.request.body)}\n`;
       }
 
+      if (view === "request" && httpEntry.response) {
+        text += `Response: recorded under [${getOAuthReceivedStepForRequest(
+          httpEntry.step,
+        )}]\n`;
+      }
+
       // Response details
       if (
+        showResponse &&
         httpEntry.response?.headers &&
         Object.keys(httpEntry.response.headers).length > 0
       ) {
@@ -432,7 +448,7 @@ export function generateRawText(
         )}\n`;
       }
 
-      if (httpEntry.response?.body) {
+      if (showResponse && httpEntry.response?.body) {
         text += "\nResponse Body:\n";
         text += `${stringifyCopyValue(httpEntry.response.body)}\n`;
       }
