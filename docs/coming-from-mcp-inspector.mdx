@@ -4,7 +4,7 @@ description: "Map your MCP Inspector workflow to MCPJam Inspector in minutes. Fe
 icon: "arrow-right-left"
 ---
 
-MCPJam Inspector covers the same protocol validation workflow as the official MCP Inspector and extends into behavior debugging. Everything you do in MCP Inspector has a direct equivalent in MCPJam. This page maps them one to one.
+MCPJam Inspector covers the same protocol validation workflow as MCP Inspector and then extends into behavior debugging with a model in the loop. The overlap ends after you've verified that your server speaks MCP correctly. From there, MCPJam focuses on understanding how AI clients and models actually use your server. This page maps the MCP Inspector workflow to the MCPJam surface you reach for next.
 
 <video
   controls
@@ -22,24 +22,27 @@ MCPJam Inspector covers the same protocol validation workflow as the official MC
 
 | Capability | In MCP Inspector | In MCPJam Inspector |
 |---|---|---|
-| Manual tool execution | Open the Tools tab, click List Tools, select one, fill its typed arguments in a form, and run it. The result appears as the raw structured content returned by the server. | Open the [**Tools**](/inspector/tools-prompts-resources) tab, search or pick a tool from the list, fill its params, and hit Execute. The return value appears below, and you can save a request to re-run it later with the same params. |
-| Resources & prompts | The Resources and Prompts tabs list what the server exposes; selecting an item fetches and displays its content. | The **Resources** and **Prompts** tabs list each server's resources (with location and mimetype) and prompts (with params); selecting an item reads or fetches its content. |
-| Protocol logs | The History panel records every protocol call (initialize, tools/list, tools/call...) in order; expanding an entry shows the raw JSON request and response. | [**Tracing & debugging**](/inspector/debugging) logs every message sent between MCPJam and your server, tagged with `ERROR` / `WARNING` / `TRACE` levels. |
-| Auth configuration | Before connecting, you set Custom Headers (e.g. an Authorization Bearer token) and OAuth 2.0 Flow fields (Client ID, Client Secret, Redirect URI) in the connection sidebar. | Auth is chosen per server when [adding a server](/inspector/connecting-servers) — No Authentication, Bearer Token, or OAuth 2.0 — and saved with the server entry for reconnects. |
-| OAuth debugging | No dedicated flow view: a bad or missing token fails at connection time with the server's error message (e.g. invalid_token, 401). | [**Guided OAuth Testing**](/inspector/guided-oauth) runs the OAuth exchange step by step — metadata discovery, client registration, auth code, access token — so you can see which step fails. |
-| Natural-language tool calls | Not available. | The [**LLM Playground**](/inspector/llm-playground) connects a model of your choice to your server; you type a request in plain language and watch which tool the model calls, with what arguments, and what it answers. You can set the system prompt and temperature to simulate an agent. |
-| Agent execution timeline | Not available. | **Tracing** captures a run's execution — the prompt, each tool call, and the final response — so you can verify the model used your tools correctly. |
-| Automated eval suites | Not available in the UI. CLI mode can script individual tool calls and return pass/fail exit codes for CI checks. | [**MCP Evals**](/inspector/mcp-evals) runs test suites through the MCPJam CLI: an agent executes realistic queries against your server, and an LLM judge checks each case's trace for correct tool usage. |
+| Quick protocol validation | Initialize the server, list tools, and manually execute a tool to verify the protocol path works. | The same protocol validation is available here too. This is the only overlap between the two tools. |
+| Manual tool execution | Select a tool, fill in the arguments manually, run it directly, and inspect the structured response returned by the server. | Use [**Tools, Prompts, and Resources**](/inspector/tools-prompts-resources) for the same direct protocol-level check, or continue into [**Playground**](/inspector/playground) when you want to see how a real model chooses and uses those tools. |
+| Protocol message view | Inspect the raw protocol messages exchanged during connection and tool calls. | [**Tracing & debugging**](/inspector/debugging) captures MCP protocol messages, while [**Trace**](/inspector/debugging) extends that into the complete agent execution once a model is involved. |
+| Auth configuration | Configure Bearer headers or OAuth fields before connecting, then retry until the request succeeds. | Configure auth when adding the server in [**Connecting Servers**](/inspector/connecting-servers). MCPJam supports Bearer Token, OAuth, and Cross-App Access authentication. |
+| OAuth debugging | Not available. | [**OAuth Debugger**](/inspector/guided-oauth) runs the OAuth exchange step by step — metadata discovery, client registration, auth code, and access token — so you can see which step fails. |
+| Real model using the server | No equivalent. MCP Inspector validates the tool itself, not how an AI model would actually use it. | [**Playground**](/inspector/playground): a real agent runs your server, just like in production. |
+| Agent / tool-call debugging | No equivalent. There is no agent execution timeline to inspect. | [**Trace**](/inspector/debugging): every step from the prompt to the response, visible and timed. |
+| Testing across clients and models | No equivalent. | [**Clients**](/inspector/clients): reproduce major AI clients, including their supported models, host capabilities, prompts, and client-specific behavior, so you can test the same server under production-like client environments. |
+| Automated eval suites | No equivalent in the UI. CLI mode can script individual tool calls with pass/fail exit codes for protocol-level CI checks. | [**Evals**](/inspector/evals): generate tests, run them with a real model, and diagnose the failures. |
 
 ## Connect your existing server
 
-A server already configured in MCP Inspector needs no changes to connect to MCPJam.
+Most servers already configured in MCP Inspector can connect to MCPJam without modification. The main exception is deployment mode: the hosted web app requires remote HTTPS servers, while local STDIO servers use the desktop or terminal client.
 
 **HTTP servers**
 
 1. Click "Add server" in the MCP Servers tab.
-2. Select the `SSE/HTTP` transport and paste the same URL (e.g. `http://localhost:3000/mcp`).
+2. Select the `Streamable HTTP` transport and paste the same URL (for example `https://your-server.example.com/mcp`, or `http://localhost:3000/mcp` if you're on the desktop client).
 3. If the server uses a Bearer token, choose `Bearer Token` under authentication and add the same token.
+
+The hosted web app accepts HTTPS URLs only. Localhost and STDIO servers require the desktop or terminal client.
 
 **Stdio servers**
 
@@ -51,4 +54,4 @@ See [Multi-server connections](/inspector/connecting-servers) for details on eac
 
 ## When to keep using MCP Inspector
 
-MCP Inspector remains a good fit as a lightweight, zero-setup protocol checker — especially its CLI mode for scripting protocol-level checks in CI with pass/fail exit codes. If all you need is verifying that a server initializes and its tools respond according to the spec, it does the job.
+MCP Inspector remains a good fit as a lightweight protocol and deterministic response checker. If all you need is verifying that a server initializes and its tools respond according to the spec, it does the job.
