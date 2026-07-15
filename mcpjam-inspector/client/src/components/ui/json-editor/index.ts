@@ -1,6 +1,7 @@
 export { JsonEditor } from "./json-editor";
 export { JsonEditorEdit } from "./json-editor-edit";
 export { JsonEditorToolbar } from "./json-editor-toolbar";
+export { JsonEditorCopyOverlay } from "./json-editor-copy-overlay";
 export { JsonEditorStatusBar } from "./json-editor-status-bar";
 export { JsonTreeView } from "./json-tree-view";
 export { JsonTreeNode } from "./json-tree-node";

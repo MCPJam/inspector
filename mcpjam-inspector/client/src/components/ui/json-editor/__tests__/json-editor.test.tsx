@@ -1,7 +1,17 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi } from "vitest";
 import { JsonEditor } from "../json-editor";
 import { buildLineLayouts } from "../json-editor-edit";
+
+function mockClipboard() {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(window.navigator, "clipboard", {
+    configurable: true,
+    value: { writeText },
+  });
+  return writeText;
+}
 
 function getParseErrorMessage(source: string): string {
   try {
@@ -185,19 +195,15 @@ describe("JsonEditor", () => {
         />,
       );
 
-      expect(screen.getByText("Unexpected token at line 3")).toBeInTheDocument();
+      expect(
+        screen.getByText("Unexpected token at line 3"),
+      ).toBeInTheDocument();
     });
 
     it("renders the built-in validation error in the status bar by default", () => {
       const syntaxErrorMessage = getParseErrorMessage("{invalid");
 
-      render(
-        <JsonEditor
-          height="100%"
-          rawContent="{invalid"
-          mode="edit"
-        />,
-      );
+      render(<JsonEditor height="100%" rawContent="{invalid" mode="edit" />);
 
       expect(screen.getByText(syntaxErrorMessage)).toBeInTheDocument();
     });
@@ -215,7 +221,9 @@ describe("JsonEditor", () => {
         />,
       );
 
-      expect(screen.getByText("Top-level validation error")).toBeInTheDocument();
+      expect(
+        screen.getByText("Top-level validation error"),
+      ).toBeInTheDocument();
       expect(screen.queryByText(syntaxErrorMessage)).not.toBeInTheDocument();
     });
   });
@@ -330,6 +338,40 @@ describe("JsonEditor", () => {
       expect(layouts[2]?.top).toBe(
         (layouts[0]?.height ?? 0) + (layouts[1]?.height ?? 0),
       );
+    });
+  });
+
+  // The toolbar already carries a copy button, but a large share of the product
+  // renders the editor without one (viewOnly surfaces, showToolbar={false}). The
+  // overlay guarantees those surfaces still expose a single discoverable copy
+  // action instead of only the buried per-value glyph in the tree.
+  describe("discoverable copy overlay", () => {
+    it("copies the whole payload as pretty JSON from a viewOnly editor", async () => {
+      const user = userEvent.setup();
+      const writeText = mockClipboard();
+
+      render(<JsonEditor value={{ a: 1, b: [2, 3] }} viewOnly />);
+
+      await user.click(screen.getByTitle("Copy to clipboard"));
+
+      expect(writeText).toHaveBeenCalledTimes(1);
+      expect(writeText.mock.calls[0][0]).toBe(
+        JSON.stringify({ a: 1, b: [2, 3] }, null, 2),
+      );
+    });
+
+    it("renders the overlay when the toolbar is hidden", () => {
+      render(<JsonEditor height="100%" value={{ a: 1 }} showToolbar={false} />);
+
+      expect(screen.getByTitle("Copy to clipboard")).toBeInTheDocument();
+    });
+
+    it("does not add a second copy affordance when the toolbar is shown", () => {
+      render(<JsonEditor height="100%" value={{ a: 1 }} showToolbar />);
+
+      // The toolbar's copy button relies on a tooltip (no title attribute), so a
+      // titled overlay button appearing here would mean a duplicate.
+      expect(screen.queryByTitle("Copy to clipboard")).not.toBeInTheDocument();
     });
   });
 });

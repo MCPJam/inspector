@@ -9,6 +9,7 @@ import { JsonEditorEdit } from "./json-editor-edit";
 import { CodeMirrorJsonEditor } from "./codemirror-json-editor";
 import { JsonEditorToolbar } from "./json-editor-toolbar";
 import { JsonEditorStatusBar } from "./json-editor-status-bar";
+import { JsonEditorCopyOverlay } from "./json-editor-copy-overlay";
 import type { JsonEditorProps, JsonEditorMode } from "./types";
 
 function stringifyValue(value: unknown): string {
@@ -178,19 +179,25 @@ export function JsonEditor({
   if (viewOnly) {
     return (
       <ErrorBoundary fallback={<JsonEditorErrorFallback />}>
-        <JsonEditorView
-          value={viewValue}
-          className={className}
-          height={height ?? "100%"}
-          maxHeight={maxHeight}
-          collapsible={collapsible}
-          defaultExpandDepth={defaultExpandDepth}
-          collapsedPaths={collapsedPaths}
-          onCollapseChange={onCollapseChange}
-          showLineNumbers={showLineNumbers}
-          collapseStringsAfterLength={collapseStringsAfterLength}
-          wrapLongLinesInView={wrapLongLinesInView}
-        />
+        {/* `group` + `relative` let the copy overlay reveal on hover/focus and
+            position against the viewer. viewOnly surfaces never have a toolbar,
+            so this is their only discoverable copy affordance. */}
+        <div className="group relative h-full">
+          <JsonEditorView
+            value={viewValue}
+            className={className}
+            height={height ?? "100%"}
+            maxHeight={maxHeight}
+            collapsible={collapsible}
+            defaultExpandDepth={defaultExpandDepth}
+            collapsedPaths={collapsedPaths}
+            onCollapseChange={onCollapseChange}
+            showLineNumbers={showLineNumbers}
+            collapseStringsAfterLength={collapseStringsAfterLength}
+            wrapLongLinesInView={wrapLongLinesInView}
+          />
+          <JsonEditorCopyOverlay onCopy={handleCopy} />
+        </div>
       </ErrorBoundary>
     );
   }
@@ -214,12 +221,17 @@ export function JsonEditor({
     <ErrorBoundary fallback={<JsonEditorErrorFallback />}>
       <div
         className={cn(
-          "flex flex-col rounded-lg bg-background overflow-hidden",
+          "group relative flex flex-col rounded-lg bg-background overflow-hidden",
           isMaximized && "rounded-none",
           className,
         )}
         style={containerStyle}
       >
+        {/* When the toolbar is hidden the editor would otherwise expose no
+            discoverable copy action, so surface the same overlay used by
+            viewOnly surfaces. With a toolbar its copy button already covers this. */}
+        {!showToolbar && <JsonEditorCopyOverlay onCopy={handleCopy} />}
+
         {/* Toolbar */}
         {showToolbar && (
           <JsonEditorToolbar
