@@ -87,35 +87,86 @@ function normalizeExpectedToolCalls(
     });
 }
 
+/**
+ * Project an authored `TestStep[]` (the new unified test-step model — see the
+ * inspector's `shared/steps.ts`) onto the per-prompt summary shape this
+ * reporter groups by. Each `prompt` step opens a turn; the `assert` steps that
+ * follow it (until the next `prompt`) supply that turn's expected tool calls
+ * (the `toolCalledWith` predicates). `interact` / widget asserts / non-tool
+ * predicates are not reflected in this per-turn projection.
+ *
+ * BREAKING (Phase 2.5): this REPLACES reading `advancedConfig.promptTurns`. The
+ * old per-turn authoring model (`promptTurns` with inline `expectedToolCalls`)
+ * is gone; the authoring contract is now `advancedConfig.steps`. No users
+ * existed for the old field, so this is a deliberate clean break.
+ */
+function extractTurnsFromSteps(
+  steps: unknown[],
+  overrides: PromptsToEvalResultOverrides
+): PromptTurnLike[] | undefined {
+  if (!Array.isArray(steps) || steps.length === 0) return undefined;
+  const turns: PromptTurnLike[] = [];
+  let current: PromptTurnLike | undefined;
+  for (const step of steps) {
+    if (!step || typeof step !== "object") continue;
+    const s = step as {
+      kind?: unknown;
+      prompt?: unknown;
+      assertion?: unknown;
+    };
+    if (s.kind === "prompt") {
+      current = {
+        prompt: typeof s.prompt === "string" ? s.prompt : "",
+        expectedToolCalls: [],
+        expectedOutput: undefined,
+      };
+      turns.push(current);
+    } else if (s.kind === "assert" && s.assertion && typeof s.assertion === "object") {
+      const a = s.assertion as {
+        type?: unknown;
+        toolName?: unknown;
+        args?: unknown;
+      };
+      // Only `toolCalledWith` predicate asserts carry an expected tool call.
+      // (Widget assertions key on `kind`, not `type`, and are skipped here.)
+      if (a.type === "toolCalledWith" && typeof a.toolName === "string") {
+        const target =
+          current ??
+          (() => {
+            // An assert before any prompt belongs to an implicit first turn
+            // seeded from the case query.
+            const seeded: PromptTurnLike = {
+              prompt: overrides.query ?? "",
+              expectedToolCalls: [],
+              expectedOutput: undefined,
+            };
+            turns.push(seeded);
+            current = seeded;
+            return seeded;
+          })();
+        const argMatcher = a.args as { args?: unknown } | undefined;
+        target.expectedToolCalls.push({
+          toolName: a.toolName,
+          arguments:
+            argMatcher?.args && typeof argMatcher.args === "object"
+              ? (argMatcher.args as Record<string, unknown>)
+              : {},
+        });
+      }
+    }
+  }
+  return turns.length > 0 ? turns : undefined;
+}
+
 function extractPromptTurns(
   overrides: PromptsToEvalResultOverrides
 ): PromptTurnLike[] {
-  const rawTurns = (overrides.advancedConfig as { promptTurns?: unknown } | undefined)
-    ?.promptTurns;
-  if (Array.isArray(rawTurns) && rawTurns.length > 0) {
-    return rawTurns
-      .filter((turn) => turn && typeof turn === "object")
-      .map((turn, index) => {
-        const raw = turn as {
-          prompt?: unknown;
-          expectedToolCalls?: unknown;
-          expectedOutput?: unknown;
-        };
-        return {
-          prompt:
-            typeof raw.prompt === "string"
-              ? raw.prompt
-              : index === 0
-                ? overrides.query ?? ""
-                : "",
-          expectedToolCalls: normalizeExpectedToolCalls(raw.expectedToolCalls),
-          expectedOutput:
-            typeof raw.expectedOutput === "string"
-              ? raw.expectedOutput
-              : undefined,
-        };
-      });
-  }
+  const steps = (overrides.advancedConfig as { steps?: unknown } | undefined)
+    ?.steps;
+  const fromSteps = Array.isArray(steps)
+    ? extractTurnsFromSteps(steps, overrides)
+    : undefined;
+  if (fromSteps) return fromSteps;
 
   return [
     {

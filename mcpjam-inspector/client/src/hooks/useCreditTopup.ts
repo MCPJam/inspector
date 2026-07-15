@@ -1,6 +1,6 @@
 import { useAction, useQuery } from "convex/react";
 import { useCallback, useMemo, useState } from "react";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 
 export interface CreditTopupPreset {
   packageId: string;
@@ -191,7 +191,6 @@ export function useCreditTopupPresets(options?: UseCreditTopupPresetsOptions): {
 
 export function useCreditTopup() {
   const { presets, isLoading: presetsLoading } = useCreditTopupPresets();
-  const posthog = usePostHog();
 
   const createCheckoutSession = useAction(
     "billing:createCreditCheckoutSession" as any
@@ -212,7 +211,8 @@ export function useCreditTopup() {
     }: StartCheckoutInput): Promise<void> => {
       setIsStartingCheckout(true);
       setError(null);
-      posthog?.capture("credit_topup_checkout_started", {
+      track("credit_topup_checkout_started", {
+        location: "credit_topup",
         package_id: packageId,
         price_cents: priceCents,
         source,
@@ -242,7 +242,8 @@ export function useCreditTopup() {
         }
         window.location.assign(checkoutUrl);
       } catch (err) {
-        posthog?.capture("credit_topup_checkout_failed", {
+        track("credit_topup_checkout_failed", {
+          location: "credit_topup",
           package_id: packageId,
           price_cents: priceCents,
           error_kind: errorKind,
@@ -258,7 +259,7 @@ export function useCreditTopup() {
         setIsStartingCheckout(false);
       }
     },
-    [createCheckoutSession, posthog]
+    [createCheckoutSession]
   );
 
   return {

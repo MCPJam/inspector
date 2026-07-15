@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Clock, Globe, Lock, Users } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import {
   type ChatboxMember,
@@ -15,7 +15,12 @@ import {
   settingsFromChatboxAccessPreset,
   type ChatboxAccessPreset,
 } from "@/lib/chatbox-access-presets";
-import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
+import { ChatboxGuestExecutionSection } from "./ChatboxGuestExecutionSection";
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from "@mcpjam/design-system/avatar";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import {
@@ -44,11 +49,8 @@ export function ChatboxShareSection({
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
-  const {
-    setChatboxMode,
-    upsertChatboxMember,
-    removeChatboxMember,
-  } = useChatboxMutations();
+  const { setChatboxMode, upsertChatboxMember, removeChatboxMember } =
+    useChatboxMutations();
 
   const [settings, setSettings] = useState<ChatboxSettings>(chatbox);
   const [email, setEmail] = useState("");
@@ -81,9 +83,7 @@ export function ChatboxShareSection({
 
   const otherAccepted = useMemo(
     () =>
-      acceptedInvitees.filter(
-        (m) => m.email.toLowerCase() !== selfEmailLower,
-      ),
+      acceptedInvitees.filter((m) => m.email.toLowerCase() !== selfEmailLower),
     [acceptedInvitees, selfEmailLower],
   );
 
@@ -182,7 +182,7 @@ export function ChatboxShareSection({
   if (!isAuthenticated) {
     return (
       <p className="pt-4 text-sm text-muted-foreground">
-        Sign in to manage chatbox access.
+        Sign in to manage swarm access.
       </p>
     );
   }
@@ -213,9 +213,7 @@ export function ChatboxShareSection({
           </div>
           <Button
             onClick={() => void handleInvite()}
-            disabled={
-              !normalizedEmail || !!emailValidationError || isInviting
-            }
+            disabled={!normalizedEmail || !!emailValidationError || isInviting}
           >
             {isInviting ? "..." : "Invite"}
           </Button>
@@ -256,8 +254,8 @@ export function ChatboxShareSection({
                     {projectLabel}
                   </div>
                   <p className="text-xs font-normal text-muted-foreground">
-                    Signed-in members of this project can open the chatbox
-                    with the link. Guests cannot.
+                    Signed-in members of this project can open the swarm with
+                    the link. Guests cannot.
                   </p>
                 </div>
               </DropdownMenuRadioItem>
@@ -271,7 +269,7 @@ export function ChatboxShareSection({
                     Invited users only
                   </div>
                   <p className="text-xs font-normal text-muted-foreground">
-                    Only people you invite by email can open this chatbox.
+                    Only people you invite by email can open this swarm.
                   </p>
                 </div>
               </DropdownMenuRadioItem>
@@ -285,7 +283,7 @@ export function ChatboxShareSection({
                     Anyone with the link (guests included)
                   </div>
                   <p className="text-xs font-normal text-muted-foreground">
-                    Anyone with the link can open the chatbox, including guests
+                    Anyone with the link can open the swarm, including guests
                     without an account.
                   </p>
                 </div>
@@ -294,6 +292,13 @@ export function ChatboxShareSection({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      {accessPreset === "link_guests" ? (
+        <ChatboxGuestExecutionSection
+          chatbox={settings}
+          onUpdated={updateSettings}
+        />
+      ) : null}
 
       <div className="space-y-2">
         <label className="text-sm font-medium">Has access</label>
@@ -332,7 +337,9 @@ export function ChatboxShareSection({
                     src={member.user?.imageUrl || undefined}
                     alt={name}
                   />
-                  <AvatarFallback className="text-sm">{initials}</AvatarFallback>
+                  <AvatarFallback className="text-sm">
+                    {initials}
+                  </AvatarFallback>
                 </Avatar>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">

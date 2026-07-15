@@ -28,12 +28,15 @@ Object.defineProperty(window, "matchMedia", {
   })),
 });
 
-// Mock ResizeObserver (required for some UI components)
-global.ResizeObserver = vi.fn().mockImplementation(() => ({
-  observe: vi.fn(),
-  unobserve: vi.fn(),
-  disconnect: vi.fn(),
-}));
+// Mock ResizeObserver (required for some UI components). A plain class — NOT
+// a vi.fn() — so a suite-level vi.restoreAllMocks() can't strip its
+// implementation and break every later test that mounts a measuring
+// component (Radix Switch/Slider use it via useSize).
+global.ResizeObserver = class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+} as unknown as typeof ResizeObserver;
 
 // cmdk / Command dialogs call scrollIntoView on active items
 Element.prototype.scrollIntoView = vi.fn();

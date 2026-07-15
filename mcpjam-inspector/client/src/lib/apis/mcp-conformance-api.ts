@@ -6,7 +6,7 @@ import type {
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { buildServerRequest } from "@/lib/apis/web/context";
 import { webPost } from "@/lib/apis/web/base";
-import { authFetch } from "@/lib/session-token";
+import { localPost } from "@/lib/apis/local-post";
 
 // ── Types ───────────────────────────────────────────────────────────────
 
@@ -37,21 +37,6 @@ export interface OAuthStartInput {
   };
   runNegativeChecks?: boolean;
   callbackOrigin?: string;
-}
-
-// ── Local API helpers ───────────────────────────────────────────────────
-
-async function localPost<T>(path: string, body: unknown): Promise<T> {
-  const response = await authFetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || `Request failed (${response.status})`);
-  }
-  return data as T;
 }
 
 // ── Public API ──────────────────────────────────────────────────────────

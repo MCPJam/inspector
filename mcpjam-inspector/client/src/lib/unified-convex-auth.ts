@@ -5,6 +5,7 @@ import {
   forceRefreshGuestSession,
   getCachedGuestSession,
   getOrCreateGuestSession,
+  markGuestActivated,
 } from "@/lib/guest-session";
 
 /**
@@ -32,6 +33,14 @@ const GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS = [500, 1500, 3000] as const;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Persist the "this browser used Convex as a guest" marker for the currently
+// cached guest. No-op when no guestId is resolved (e.g. a bootstrap seed that
+// carried no guestId — those are never seeded; see seedFromBootstrap).
+function markActiveGuest(): void {
+  const guestId = getCachedGuestSession()?.guestId;
+  if (guestId) markGuestActivated(guestId);
 }
 
 export function useUnifiedConvexAuth() {
@@ -124,11 +133,18 @@ export function useUnifiedConvexAuth() {
         if (opts?.forceRefreshToken) {
           const refreshed = await forceRefreshGuestSession();
           setGuestToken(refreshed);
+          markActiveGuest();
           return refreshed;
         }
         // Prefer the latest in-memory cache so a fresh token is used even
         // if React hasn't yet re-rendered with the new state.
         const cached = getCachedGuestSession()?.token ?? guestToken;
+        // Convex calls this to authenticate as the guest — the true "activated
+        // as a guest" signal. Marking HERE (rather than in the resolve effect)
+        // is immune to the effect-cancel race when a guest signs in mid-resolve,
+        // and never fires for an authed user (whose memo branch returns the
+        // WorkOS getAccessToken above). Keyed by guestId; idempotent.
+        if (cached) markActiveGuest();
         return cached ?? null;
       },
     };

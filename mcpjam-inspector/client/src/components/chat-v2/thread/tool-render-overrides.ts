@@ -8,6 +8,15 @@ export interface ToolRenderOverride {
   isOffline?: boolean;
   cachedWidgetHtmlUrl?: string;
   /**
+   * Recorded screenshot of how this tool's widget ACTUALLY rendered during the
+   * run (from the eval `widgetRenderObservations`). When set, the transcript
+   * shows this frozen image INSTEAD of mounting a live widget — so a completed
+   * run's replay can't drift to the widget's default state when its backing MCP
+   * server is gone. Only the eval trace-viewer sets this, only for completed,
+   * non-interactive runs; live/record-armed surfaces leave it unset.
+   */
+  frozenScreenshotUrl?: string | null;
+  /**
    * Try the live MCP Apps fetch path before falling back to
    * `cachedWidgetHtmlUrl`. Used by in-flow session revisit so the widget
    * re-renders against the active host's current CSP / bridge state when the
@@ -44,4 +53,19 @@ export interface ToolRenderOverride {
    * surface (runtime default at capture time).
    */
   injectedOpenAiCompatCapabilities?: import("@/lib/client-styles").OpenAiAppsCapabilities;
+}
+
+/**
+ * Whether `PartSwitch` enters the widget-slot render block for a tool. True when
+ * the tool is live-widget eligible OR a frozen recorded screenshot exists. The
+ * frozen capture (eval replay) must show even when live rendering is
+ * unavailable — a completed run's widget can fail host-caps / server / `uiType`
+ * checks at view-time, but we still have its screenshot. See
+ * [[feedback_check_gate_not_just_join]].
+ */
+export function widgetSlotShouldRender(
+  liveWidgetEligible: boolean,
+  override: Pick<ToolRenderOverride, "frozenScreenshotUrl"> | undefined
+): boolean {
+  return liveWidgetEligible || !!override?.frozenScreenshotUrl;
 }

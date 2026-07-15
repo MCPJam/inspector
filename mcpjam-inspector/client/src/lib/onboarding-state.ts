@@ -80,17 +80,21 @@ export function clearOnboardingState(): void {
  * - Onboarding has never been shown for the current identity. When a remote
  *   user row is available, that row is the source of truth; localStorage is
  *   only a fallback for runtimes without an identity.
- * - The user is not signed in with WorkOS. Hosted guests may be
- *   Convex-authenticated, but should still be eligible for first-run NUX.
+ * - The user is either a hosted guest (Convex-authenticated, no WorkOS) or a
+ *   freshly-created signed-in account. Signed-in users land on Home by default;
+ *   only brand-new accounts (`isNewSignedInAccount`) get the first-run NUX so
+ *   returning users — including older accounts whose onboarding flag was never
+ *   set — are never bounced off Home.
  */
 export function isFirstRunEligible(
   hasAnyBlockingServers: boolean,
   currentRouteTab: string,
   isSignedInWithWorkOs = false,
-  hasSeenRemoteOnboarding?: boolean
+  hasSeenRemoteOnboarding?: boolean,
+  isNewSignedInAccount = false
 ): boolean {
   if (hasAnyBlockingServers) return false;
-  if (isSignedInWithWorkOs) return false;
+  if (isSignedInWithWorkOs && !isNewSignedInAccount) return false;
 
   // Drop query strings and trailing slashes so `connect?foo=bar` and
   // `/connect/` still pass the allowlist — both land on the same hub route.

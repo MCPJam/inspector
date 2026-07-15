@@ -363,6 +363,29 @@ describe("OrganizationsTab member management", () => {
     ).toBeInTheDocument();
   });
 
+  it("lets a non-admin member leave from the access restricted screen", async () => {
+    currentUserEmail = "member@example.com";
+    mockUseOrganizationQueries.mockReturnValue({
+      sortedOrganizations: [{ ...organization, myRole: "member" }],
+      isLoading: false,
+    });
+
+    render(<OrganizationsTab organizationId="org-1" />);
+
+    // The subtle "Leave organization" link is visible on the restricted screen.
+    fireEvent.click(screen.getByRole("button", { name: "Leave organization" }));
+
+    // Confirming in the dialog removes the current user by their own email.
+    fireEvent.click(screen.getByRole("button", { name: "Leave Organization" }));
+
+    await waitFor(() => {
+      expect(mockRemoveMember).toHaveBeenCalledWith({
+        organizationId: "org-1",
+        email: "member@example.com",
+      });
+    });
+  });
+
   it("shows the sign-in prompt instead of mounting organization billing while Convex auth is unavailable", () => {
     const signIn = vi.fn();
 

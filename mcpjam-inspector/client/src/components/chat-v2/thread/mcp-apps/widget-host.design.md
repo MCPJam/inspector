@@ -1,7 +1,11 @@
 # Tier B — interactive widget runtime extraction (`WidgetHost`)
 
-Status: **Phase 0 (design)** — `widget-host.ts` lands the contract only; nothing
-consumes it yet and there is no behavior change.
+Status: **Phases 0–2 merged** (for inspector-internal consumption); **Phase 3 in
+progress**. The `WidgetHost` contract + `useWidgetHost()` hook (Phases 0–1) and
+the framework-free core in `@mcpjam/sdk/widget-runtime` (Phase 2) are landed; the
+React renderer relocation into `@mcpjam/widget-react` is underway. npm-publishing
+the SDK `widget-runtime` surface still needs a public-surface pass (see
+"Pre-publish").
 
 This is the follow-on to the Tier A extraction (`@mcpjam/chat-ui`, the read-only
 transcript renderer). Tier A renders a **placeholder** for widget-bearing tool
@@ -141,20 +145,58 @@ reads for a single `useWidgetHost()`.
 
 ## Phased plan
 
-| Phase | What | Risk |
+| Phase | What | Status |
 | --- | --- | --- |
-| **0** (this) | `WidgetHost` contract + this doc. No behavior change. | low |
-| **1** | In-place DI refactor: land `WidgetHostProvider` + `useWidgetHost`; migrate services → environment → surface → debug reads; renderer imports zero `@/stores`/`@/contexts`. Run the Tier-B guard against it *before* moving. | med |
-| **2** | Extract the framework-free core (`host-app-bridge`, transports, `iframe-sandbox-policy`, reconciled `mcp-apps-utils`). | low–med |
-| **3** | Relocate the React renderer into the package; inspector becomes a thin `WidgetHost` adapter; add a Tier-B import guard. | med |
-| **4** | Wire the package's `renderWidget` seam; optionally collapse the inspector's parallel `PartSwitch`. Unblocks the eval trace viewer (Option B). | med |
+| **0** | `WidgetHost` contract + this doc. | ✅ merged |
+| **1** | In-place DI refactor. **Shipped as a composite `useWidgetHost()` hook (not a provider)** with an `environment`/`resolvers` split; `resolveEnvironment` deferred. Renderer imports zero `@/stores`/`@/contexts` (Tier-B guard enforced). | ✅ merged |
+| **2** | Framework-free core relocated to **`@mcpjam/sdk/widget-runtime`** (not the React package): tool-visibility, LoggingTransport, iframe-sandbox-policy, host-app-bridge, app-tool-invocation types. Inspector consumes via shims. | ✅ merged (internal); needs a pre-publish public-surface pass |
+| **3** | Relocate the React renderer into a new **`@mcpjam/widget-react`** package; inspector becomes a thin adapter; add the package's Tier-B guard. Sliced 3a–3d below. | 🚧 in progress |
+| **4** | Wire the package's `renderWidget` seam; optionally collapse the inspector's parallel `PartSwitch`. Unblocks the eval trace viewer. | later |
 
-## Package shape (open decision)
+### Phase 3 slices
 
-Recommended: a new **`@mcpjam/widget-react`** package (heavy
-`@modelcontextprotocol/ext-apps` + `@mcp-ui/client` deps), depending on
-`@mcpjam/sdk` for the policy/compat core, consumed by the inspector via the
-`renderWidget` seam. `@mcpjam/chat-ui` stays the lean Tier-A renderer and never
-imports it. Alternative considered: a `@mcpjam/chat-ui/widget` subpath — rejected
-because it would force Tier A consumers to risk pulling the heavy widget peer
-deps and would require a carve-out in the Tier-A import guard.
+| Slice | What | Risk |
+| --- | --- | --- |
+| **3a** | Finish the in-place DI: invert the **modal** — the last app-state island (it builds its own AppBridge and read `useActiveMcpProfile`/`useWebManagedServers`/`resolveHostInfo`). Resolved `hostInfo`/`webManagedServers` now flow down as props. | med |
+| **3b** ✅ | Invert the remaining app-state islands + lock the guard. `widget-replay` host-support gate → injected `resolveHostSupportsWidget` prop (PartSwitch, which already owns the identical gate, binds it — preserves WidgetReplay's `serverId` semantics without `@/contexts` / `@/lib/host-capabilities`, and matches the 3d seam: inspector owns host policy, package component applies it). `app-tools-registry` traffic logging → injected `addTrafficLog` callback supplied by the chat/playground dispatch hooks (registry drops `@/stores`). `useToolInputStreaming` / `widget-replay` type-only imports → contract module. Tier-B guard extended to 7 cluster files. | low–med |
+| **3c** | Scaffold `@mcpjam/widget-react` and prove the **full** integration contract: source alias, build order, package guard, CSS/runtime imports, and a tiny inspector consumer through the same provider/adapter path the bulk move will use. | low |
+| **3d** | Relocate the renderer + cluster into the package; the package owns the `WidgetHost` React context + `useWidgetHost()` *contract* while the inspector supplies the concrete host via a **provider/adapter**; inject the modal chrome + `checkout-dialog` via `components.Modal` (drops `@mcpjam/design-system` from the modal); move the deferred service/config couplings onto `services`/`surface` — `widget-file-messages` `authFetch`, the `SANDBOX_ORIGIN`/`HOSTED_MODE` consts, and `sandboxed-iframe`'s `@/lib/client-config` — so the modal + sandboxed-iframe can join the guard; fold `environment`+`resolvers` into a real `resolveEnvironment`; inspector files become shims. | med |
+
+## Package shape (decided)
+
+A new **`@mcpjam/widget-react`** package (heavy `@modelcontextprotocol/ext-apps`
++ `@mcp-ui/client` deps), depending on `@mcpjam/sdk` (widget-runtime + browser)
+for the policy/compat core, consumed by the inspector via the `renderWidget`
+seam. `@mcpjam/chat-ui` stays the lean Tier-A renderer and never imports it — its
+Tier-A guard forbids `ext-apps`/`@mcp-ui/client`/`sandboxed-iframe`/
+`design-system`, so the renderer cannot live there. Build mirrors chat-ui:
+ESM/tsup, `moduleResolution: bundler`, source-aliased into the inspector; build
+order `sdk → chat-ui → widget-react → inspector`. (Alternative considered: a
+`@mcpjam/chat-ui/widget` subpath — rejected: it would force Tier-A consumers to
+risk the heavy peer deps and need a carve-out in the Tier-A guard.)
+
+Decisions locked for Phase 3:
+- **`useWidgetHost()` ownership:** the package owns the `WidgetHost` React
+  context + `useWidgetHost()` *contract*; the inspector supplies the concrete
+  host via a provider/adapter (keeping the `@/stores`/`@/contexts` reads). This
+  is where the Phase-1 "hook, not provider" choice flips — with a package
+  boundary, the relocated renderer reads from the package's context.
+- **Peer deps:** `react`/`react-dom` are peers. Do **not** copy chat-ui's
+  `ai`/`@ai-sdk/react` peers blindly — audit for a real runtime import and
+  prefer package-local/structural types otherwise.
+- **Modal seam:** the package owns widget lifecycle + bridge; `components.Modal`
+  receives children/state/callbacks only — the inspector keeps the portal/chrome
+  (`design-system` dialog), billing, and `checkout-dialog`.
+- **detectUIType:** verify the inspector's `MCP_UI` inline-resource branch
+  matches chat-ui's pure detector, then share chat-ui's `UIType` vocabulary;
+  defer collapsing the inspector's parallel `PartSwitch` to Phase 4.
+
+## Pre-publish (separate from Phase 3 implementation)
+
+Phases 0–2 are merged for **inspector-internal** consumption. Publishing
+`@mcpjam/sdk/widget-runtime` to npm still needs a public-surface pass: the barrel
+imports `AppBridge` from `@modelcontextprotocol/ext-apps`, so the whole subpath
+requires `skipLibCheck:true` for NodeNext consumers. Fix by splitting the bridge
+into a narrower subpath (e.g. `@mcpjam/sdk/widget-runtime/host-bridge`) or hiding
+`AppBridge` behind a structural interface — settled **before** `@mcpjam/widget-react`
+bakes in its final SDK import paths for publish.

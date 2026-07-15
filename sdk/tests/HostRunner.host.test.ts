@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { HostRunner } from "../src/HostRunner.js";
-import { Host, isHostJson, snapshotHostSource } from "../src/host-config/host.js";
+import {
+  Host,
+  isHostJson,
+  snapshotHostSource,
+} from "../src/host-config/host.js";
 
 describe("HostRunner host integration", () => {
   describe("config.host derives runner defaults", () => {
@@ -205,7 +209,10 @@ describe("HostRunner host integration", () => {
     });
 
     it("explicit options.host wins over the existing snapshot", () => {
-      const baseHost = new Host({ style: "claude", model: "anthropic/claude-3" });
+      const baseHost = new Host({
+        style: "claude",
+        model: "anthropic/claude-3",
+      });
       const runner = new HostRunner({ host: baseHost, tools: [], apiKey: "k" });
 
       const otherHost = new Host({
@@ -436,7 +443,7 @@ describe("HostRunner host integration", () => {
       // @ts-expect-error — discriminated union forbids this at compile time;
       // exercising the runtime defense-in-depth.
       expect(() => new HostRunner({ tools: [], apiKey: "k" })).toThrow(
-        /requires either `host`.*or an explicit `model`/i,
+        /requires either `host`.*or an explicit `model`/i
       );
     });
   });
@@ -457,6 +464,30 @@ describe("snapshotHostSource + isHostJson", () => {
   it("snapshotHostSource is idempotent on HostJson", () => {
     const snap = new Host({ style: "mcpjam", model: "openai/gpt-4o" }).toJSON();
     expect(snapshotHostSource(snap)).toBe(snap);
+  });
+
+  it("snapshotHostSource preserves explicit image policies on HostJson", () => {
+    const snap = new Host({
+      style: "mcpjam",
+      model: "openai/gpt-4o",
+      modelVisibleMcpToolResults: {
+        directContent: { image: false },
+        embeddedResources: { blob: { image: false } },
+        linkedResources: { blob: { image: true } },
+      },
+      mcpToolResultImageRendering: { placement: "collapsed" },
+    }).toJSON();
+
+    const normalized = snapshotHostSource(snap);
+    expect(normalized).toBe(snap);
+    expect(normalized.modelVisibleMcpToolResults).toEqual({
+      directContent: { image: false },
+      embeddedResources: { blob: { image: false } },
+      linkedResources: { blob: { image: true } },
+    });
+    expect(normalized.mcpToolResultImageRendering).toEqual({
+      placement: "collapsed",
+    });
   });
 
   it("snapshotHostSource calls toJSON on a Host", () => {

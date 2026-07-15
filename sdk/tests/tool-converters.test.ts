@@ -1,9 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { ListToolsResult } from "@modelcontextprotocol/client";
 import {
   convertMCPToolsToVercelTools,
   isAppOnlyTool,
 } from "../src/mcp-client-manager/tool-converters.js";
+import { MCP_PRESERVE_RAW_RESULT_FOR_UI } from "../src/mcp-client-manager/model-output.js";
 
 const callTool = async () => ({ content: [{ type: "text", text: "ok" }] });
 
@@ -91,5 +92,221 @@ describe("convertMCPToolsToVercelTools — SEP-1865 visibility filtering", () =>
     expect(tools.model_only).toBeDefined();
     expect(tools.model_and_app).toBeDefined();
     expect(tools.default_visibility).toBeDefined();
+  });
+
+  it("maps direct MCP image results through toModelOutput", async () => {
+    const tools = await convertMCPToolsToVercelTools(listToolsFixture, {
+      callTool,
+    });
+    const toModelOutput = (tools.default_visibility as any).toModelOutput;
+
+    expect(typeof toModelOutput).toBe("function");
+    expect(
+      (tools.default_visibility as any)[MCP_PRESERVE_RAW_RESULT_FOR_UI]
+    ).toBe(true);
+    expect(
+      toModelOutput({
+        toolCallId: "call-1",
+        input: {},
+        output: {
+          content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+        },
+      })
+    ).toEqual({
+      type: "content",
+      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+    });
+  });
+
+  it("maps embedded MCP image resources through toModelOutput", async () => {
+    const tools = await convertMCPToolsToVercelTools(listToolsFixture, {
+      callTool,
+    });
+    const toModelOutput = (tools.default_visibility as any).toModelOutput;
+
+    expect(
+      toModelOutput({
+        toolCallId: "call-1",
+        input: {},
+        output: {
+          content: [
+            {
+              type: "resource",
+              resource: {
+                uri: "mcp://images/one",
+                blob: "aGVsbG8=",
+                mimeType: "image/png",
+              },
+            },
+          ],
+        },
+      })
+    ).toEqual({
+      type: "content",
+      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+    });
+  });
+
+  it("resolves linked MCP image resources through toModelOutput", async () => {
+    const readResource = vi.fn(async ({ uri }: { uri: string }) => ({
+      contents: [{ uri, blob: "aGVsbG8=", mimeType: "image/png" }],
+    }));
+    const tools = await convertMCPToolsToVercelTools(listToolsFixture, {
+      callTool,
+      readResource,
+    });
+    const toModelOutput = (tools.default_visibility as any).toModelOutput;
+
+    await expect(
+      toModelOutput({
+        toolCallId: "call-1",
+        input: {},
+        output: {
+          content: [
+            {
+              type: "resource_link",
+              uri: "mcp://images/one",
+              name: "one.png",
+              mimeType: "image/png",
+            },
+          ],
+        },
+      })
+    ).resolves.toEqual({
+      type: "content",
+      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+    });
+    expect(readResource).toHaveBeenCalledWith({
+      uri: "mcp://images/one",
+      options: undefined,
+    });
+  });
+
+  it("passes abortSignal to linked MCP resource reads through toModelOutput", async () => {
+    const abortController = new AbortController();
+    const readResource = vi.fn(
+      async ({
+        uri,
+        options,
+      }: {
+        uri: string;
+        options?: { abortSignal?: AbortSignal };
+      }) => ({
+        contents: [{ uri, blob: "aGVsbG8=", mimeType: "image/png" }],
+        signal: options?.abortSignal,
+      })
+    );
+    const tools = await convertMCPToolsToVercelTools(listToolsFixture, {
+      callTool,
+      readResource,
+    });
+    const toModelOutput = (tools.default_visibility as any).toModelOutput;
+
+    await expect(
+      toModelOutput({
+        toolCallId: "call-1",
+        input: {},
+        output: {
+          content: [
+            {
+              type: "resource_link",
+              uri: "mcp://images/one",
+              name: "one.png",
+              mimeType: "image/png",
+            },
+          ],
+        },
+        abortSignal: abortController.signal,
+      })
+    ).resolves.toEqual({
+      type: "content",
+      value: [{ type: "media", data: "aGVsbG8=", mediaType: "image/png" }],
+    });
+    expect(readResource).toHaveBeenCalledWith({
+      uri: "mcp://images/one",
+      options: { abortSignal: abortController.signal },
+    });
+  });
+
+  it("omits direct MCP image results when direct images are disabled", async () => {
+    const tools = await convertMCPToolsToVercelTools(listToolsFixture, {
+      callTool,
+      modelVisibleMcpToolResults: {
+        directContent: { image: false },
+      },
+    });
+    const output = {
+      content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+    };
+
+    expect(
+      (tools.default_visibility as any).toModelOutput({
+        toolCallId: "call-1",
+        input: {},
+        output,
+      })
+    ).toEqual({
+      type: "content",
+      value: [
+        { type: "text", text: "[image omitted: direct image policy disabled]" },
+      ],
+    });
+  });
+
+  it("omits linked MCP image resources when linked images are disabled", async () => {
+    const readResource = vi.fn(async () => ({
+      contents: [{ blob: "aGVsbG8=", mimeType: "image/png" }],
+    }));
+    const tools = await convertMCPToolsToVercelTools(listToolsFixture, {
+      callTool,
+      readResource,
+      modelVisibleMcpToolResults: {
+        linkedResources: { blob: { image: false } },
+      },
+    });
+    const output = {
+      content: [
+        {
+          type: "resource_link",
+          uri: "mcp://images/one",
+          name: "one.png",
+          mimeType: "image/png",
+        },
+      ],
+    };
+
+    await expect(
+      (tools.default_visibility as any).toModelOutput({
+        toolCallId: "call-1",
+        input: {},
+        output,
+      })
+    ).resolves.toEqual({
+      type: "content",
+      value: [
+        { type: "text", text: "[resource link omitted: policy disabled]" },
+      ],
+    });
+    expect(readResource).not.toHaveBeenCalled();
+  });
+
+  it("keeps text-only MCP results on the JSON fallback path", async () => {
+    const tools = await convertMCPToolsToVercelTools(listToolsFixture, {
+      callTool,
+    });
+    const output = {
+      content: [{ type: "text", text: "ok" }],
+    };
+
+    expect(
+      (tools.default_visibility as any).toModelOutput({
+        toolCallId: "call-1",
+        input: {},
+        output,
+      })
+    ).toEqual({
+      type: "json",
+      value: output,
+    });
   });
 });
