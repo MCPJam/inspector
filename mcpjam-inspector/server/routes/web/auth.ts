@@ -131,6 +131,15 @@ export const projectServerSchema = z.object({
   // and never reach the SDK's open-routing predicate. Absent means
   // "use SDK default (negotiates at request time)".
   mcpProtocolVersion: mcpProtocolVersionEnum.optional(),
+  // Host enterprise-managed authorization policy, resolved client-side from
+  // `hostConfig.mcpProfile.extensions`. Declared here (like the pins above)
+  // so the wire contract documents it, but VALIDATED by
+  // `parseXaaPolicyValue` from the pre-parse raw body in
+  // `createManualHostedConnection` — enforcement must never be silently
+  // stripped by a route schema that forgot to declare it (fail-open), and
+  // the strict gate 409s with the standard xaa_policy_invalid shape rather
+  // than a generic Zod 400.
+  xaaPolicy: z.unknown().optional(),
 });
 
 export const toolsListSchema = projectServerSchema.extend({
@@ -1458,7 +1467,11 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     }
     xaaPolicy = xaaPolicyFromMcpProfile(runtime.config.mcpProfile);
   } else {
-    xaaPolicy = parseXaaPolicyValue(raw.xaaPolicy);
+    // Read from the PRE-PARSE raw body, not the schema-parsed `raw`: most
+    // route schemas are stripping z.objects, and a schema that forgot to
+    // declare xaaPolicy would silently drop enforcement (fail-open). The
+    // strict gate below still 409s on anything malformed.
+    xaaPolicy = parseXaaPolicyValue(rawBody.xaaPolicy);
   }
 
   const { manager } = await createAuthorizedManager(

@@ -1891,10 +1891,12 @@ export function ServersTab({
           projectClientConfig={selectedProject?.clientConfig}
           projectId={hostedProjectId}
           hostedServerId={detailModalHostedServerId}
-          // Servers tab doesn't mount under ActiveMcpProfileProvider,
-          // so surface the host default explicitly from the
-          // previewedHost's `mcpProfile.mcpProtocolVersion` for the chip's
-          // source attribution.
+          // The tab now mounts under ActiveMcpProfileProvider (see the
+          // root wrapper), which is the source for general host-profile
+          // reads (e.g. the auth section's enterprise-policy guidance).
+          // The protocol chip stays PROP-FIRST: this explicit value wins
+          // over the provider (see the modal's resolution comment), so
+          // its source attribution is unchanged.
           hostDefaultMcpProtocolVersion={
             previewedHost?.config?.mcpProfile?.mcpProtocolVersion
           }
