@@ -710,6 +710,14 @@ export async function selectResourceURL(
     return undefined;
   }
 
+  // RFC 9728 §2 makes `resource` REQUIRED; a PRM document without one is
+  // broken metadata, not license to fall back to the server URL.
+  if (!resourceMetadata.resource?.trim()) {
+    throw new Error(
+      `Protected resource metadata for ${defaultResource} is missing its required "resource" identifier (RFC 9728 §2)`,
+    );
+  }
+
   // This mirrors the official MCP SDK's auth(), so it keeps the SDK's full
   // strict binding (origin + path prefix) — unlike Quick OAuth and the debug
   // flows, which accept same-origin values and warn instead.
@@ -720,7 +728,9 @@ export async function selectResourceURL(
 
   if (!decision.strictClientCompatible) {
     throw new Error(
-      `Protected resource ${resourceMetadata.resource} does not match expected ${defaultResource} (or origin)`,
+      `Protected resource ${resourceMetadata.resource} does not match expected ${defaultResource} (or origin)${
+        decision.reason ? `: ${decision.reason}` : ""
+      }`,
     );
   }
 

@@ -18,10 +18,7 @@ import {
   type OAuthHttpRequest,
   type OAuthProtocolVersion,
 } from "./oauth/state-machines/types.js";
-import {
-  canonicalizeResourceUrl,
-  resolveResourceIndicatorValue,
-} from "./oauth/resource-policy.js";
+import { resolveResourceIndicatorValue } from "./oauth/resource-policy.js";
 import { performClientCredentialsGrant } from "./oauth-conformance/auth-strategies/client-credentials.js";
 import { completeHeadlessAuthorization } from "./oauth-conformance/auth-strategies/headless.js";
 import {
@@ -647,12 +644,11 @@ export async function runOAuthLogin(
             clientSecret: state.clientSecret || config.auth.clientSecret,
             tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
             scope: config.scopes,
-            resource:
-              resolveResourceIndicatorValue({
-                serverUrl: config.serverUrl,
-                prmResource: state.resourceMetadata?.resource,
-                resolved: state.resourceIndicator,
-              }) ?? canonicalizeResourceUrl(config.serverUrl),
+            resource: resolveResourceIndicatorValue({
+              serverUrl: config.serverUrl,
+              prmResource: state.resourceMetadata?.resource,
+              resolved: state.resourceIndicator,
+            }),
             request: trackedRequest,
           });
 

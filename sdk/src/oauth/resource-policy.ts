@@ -33,7 +33,10 @@ export type ResourceIndicatorSource =
 export type ResourceIndicatorStatus = "valid" | "incompatible" | "invalid";
 
 export interface ResourceIndicatorDecision {
-  /** The value to send on the wire. Canonicalized when `valid`, verbatim otherwise. */
+  /**
+   * The value to send on the wire: the advertised candidate verbatim
+   * (trimmed), or the canonicalized server URL for the `server` fallback.
+   */
   value: string;
   source: ResourceIndicatorSource;
   status: ResourceIndicatorStatus;
@@ -124,9 +127,11 @@ function evaluateCandidate(
     );
   }
 
-  // RFC 9728 §2 requires an https URL. `http` is tolerated because local
-  // development servers are themselves plain http, and the origin check below
-  // still applies.
+  // RFC 9728 §2 requires an https URL. `http` is deliberately let through to
+  // the origin check below rather than rejected here: origin equality
+  // includes the scheme, so an http candidate can only ever reach `valid`
+  // against a server the client is ALREADY talking to over http (local
+  // development) — against an https server it lands on `incompatible`.
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     return invalid(
       `Resource indicator "${candidate}" must be an https URL (RFC 9728 §2).`
@@ -153,7 +158,12 @@ function evaluateCandidate(
   const strictClientCompatible = passesStrictClientBinding(parsed, server);
 
   return {
-    value: canonicalizeResourceUrl(candidate),
+    // Echo the advertised value verbatim: the authorization server compares
+    // the request's `resource` against what the RS advertised, so rewriting
+    // it (even canonicalization like stripping a trailing slash) risks an
+    // audience mismatch the client invented. Only the server-URL fallback,
+    // which nobody advertised, is canonicalized.
+    value: candidate,
     source,
     status: "valid",
     strictClientCompatible,
@@ -169,7 +179,18 @@ function evaluateCandidate(
  * Convenience for flow-state readers: prefer the decision persisted at PRM
  * discovery, re-evaluate when the flow was seeded past discovery, and fall
  * back to the raw PRM value only when no server URL is known at all.
+ * With a `serverUrl` present the result is always a string.
  */
+export function resolveResourceIndicatorValue(input: {
+  serverUrl: string;
+  prmResource?: string;
+  resolved?: ResourceIndicatorDecision;
+}): string;
+export function resolveResourceIndicatorValue(input: {
+  serverUrl?: string;
+  prmResource?: string;
+  resolved?: ResourceIndicatorDecision;
+}): string | undefined;
 export function resolveResourceIndicatorValue(input: {
   serverUrl?: string;
   prmResource?: string;
@@ -209,6 +230,18 @@ export function evaluateResourceIndicator(
     if (trimmed) {
       return evaluateCandidate(trimmed, source, input.serverUrl);
     }
+  }
+
+  try {
+    new URL(input.serverUrl);
+  } catch {
+    return {
+      value: input.serverUrl,
+      source: "server",
+      status: "invalid",
+      strictClientCompatible: false,
+      reason: `Server URL "${input.serverUrl}" is not a parseable URI.`,
+    };
   }
 
   return {

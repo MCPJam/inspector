@@ -377,7 +377,7 @@ describe("runOAuthLogin", () => {
     expect(result.error).toBeUndefined();
     expect(performClientCredentialsGrant).toHaveBeenCalledTimes(1);
     expect(performClientCredentialsGrant.mock.calls[0][0]).toMatchObject({
-      resource: "https://mcp.example.com/",
+      resource: "https://mcp.example.com",
     });
   });
 

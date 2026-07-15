@@ -7,7 +7,7 @@ import {
 const SERVER_URL = "https://mcp.example.com/mcp";
 
 describe("evaluateResourceIndicator", () => {
-  it("accepts an exact-match PRM resource and canonicalizes it", () => {
+  it("accepts an exact-match PRM resource", () => {
     const decision = evaluateResourceIndicator({
       serverUrl: SERVER_URL,
       prmResource: "https://mcp.example.com/mcp",
@@ -27,16 +27,19 @@ describe("evaluateResourceIndicator", () => {
     });
     expect(decision.status).toBe("valid");
     expect(decision.strictClientCompatible).toBe(true);
-    expect(decision.value).toBe("https://mcp.example.com/");
+    expect(decision.value).toBe("https://mcp.example.com");
   });
 
-  it("canonicalizes host case and trailing slashes of a valid candidate", () => {
+  it("echoes a valid advertised value verbatim — no canonicalization rewrites", () => {
+    // The AS compares the request's `resource` against what the RS
+    // advertised; rewriting (case, trailing slash) risks an invented
+    // audience mismatch.
     const decision = evaluateResourceIndicator({
       serverUrl: "https://mcp.example.com/api/mcp",
       prmResource: "HTTPS://MCP.EXAMPLE.COM/api/",
     });
     expect(decision.status).toBe("valid");
-    expect(decision.value).toBe("https://mcp.example.com/api");
+    expect(decision.value).toBe("HTTPS://MCP.EXAMPLE.COM/api/");
   });
 
   it("accepts a same-origin non-prefix resource but flags strict incompatibility (Asana shape)", () => {
@@ -114,6 +117,21 @@ describe("evaluateResourceIndicator", () => {
     expect(decision.status).toBe("valid");
     expect(decision.strictClientCompatible).toBe(true);
     expect(decision.value).toBe("http://localhost:8000/mcp");
+  });
+
+  it("rejects an http resource against an https server (scheme is part of origin)", () => {
+    const decision = evaluateResourceIndicator({
+      serverUrl: SERVER_URL,
+      prmResource: "http://mcp.example.com/mcp",
+    });
+    expect(decision.status).toBe("incompatible");
+  });
+
+  it("reports an unparseable server URL as an invalid fallback", () => {
+    const decision = evaluateResourceIndicator({ serverUrl: "not a url" });
+    expect(decision.source).toBe("server");
+    expect(decision.status).toBe("invalid");
+    expect(decision.strictClientCompatible).toBe(false);
   });
 
   it("falls back to the canonicalized server URL when nothing is advertised", () => {

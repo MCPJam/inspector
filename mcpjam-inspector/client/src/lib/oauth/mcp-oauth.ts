@@ -1603,11 +1603,13 @@ const RESOURCE_INDICATOR_SOURCE_LABELS: Record<string, string> = {
  * debugger, oauth-login, and conformance surfaces send.
  *
  * Quick OAuth is a connect surface, so server-supplied candidates (PRM, a
- * previously built authorization URL) that fail the strict origin/path-prefix
- * validation are rejected — honoring an arbitrary value there would let a
- * compromised server steer tokens to a different audience. A caller-configured
- * override stays trusted (it is user-, not server-supplied) and is only
- * canonicalized, matching the historical behavior.
+ * previously built authorization URL) are rejected when they are invalid or
+ * cross-origin — honoring an arbitrary origin would let a compromised server
+ * steer tokens to a different audience. Same-origin values that merely fail
+ * the official SDK's path-prefix binding stay accepted (real servers like
+ * Asana advertise them; `strictClientCompatible` reports the gap). A
+ * caller-configured override stays trusted (it is user-, not
+ * server-supplied) and is only canonicalized, matching historical behavior.
  */
 function resolveOAuthResourceUrl(input: {
   serverUrl: string;

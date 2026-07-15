@@ -15,10 +15,7 @@ import {
   type OAuthFlowState,
   type OAuthHttpRequest,
 } from "../oauth/state-machines/types.js";
-import {
-  canonicalizeResourceUrl,
-  resolveResourceIndicatorValue,
-} from "../oauth/resource-policy.js";
+import { resolveResourceIndicatorValue } from "../oauth/resource-policy.js";
 import { performClientCredentialsGrant } from "./auth-strategies/client-credentials.js";
 import { completeHeadlessAuthorization } from "./auth-strategies/headless.js";
 import {
@@ -491,12 +488,11 @@ export class OAuthConformanceTest {
               clientSecret: tokenClientSecret,
               tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
               scope: this.config.scopes,
-              resource:
-                resolveResourceIndicatorValue({
-                  serverUrl: this.config.serverUrl,
-                  prmResource: state.resourceMetadata?.resource,
-                  resolved: state.resourceIndicator,
-                }) ?? canonicalizeResourceUrl(this.config.serverUrl),
+              resource: resolveResourceIndicatorValue({
+                serverUrl: this.config.serverUrl,
+                prmResource: state.resourceMetadata?.resource,
+                resolved: state.resourceIndicator,
+              }),
               request: trackedRequest,
             });
 

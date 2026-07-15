@@ -21,7 +21,6 @@ import type {
 import type { DiagramAction } from "./shared/types.js";
 import {
   addInfoLog,
-  addResourceMismatchWarning,
   markLatestHttpEntryAsError,
   toLogErrorDetails,
 } from "./shared/logging.js";
@@ -37,9 +36,9 @@ import {
 } from "./shared/pkce.js";
 import { buildResourceMetadataUrl } from "./shared/urls.js";
 import {
-  evaluateResourceIndicator,
-  resolveResourceIndicatorValue,
-} from "../resource-policy.js";
+  resolveDiscoveryResourceIndicator,
+  resolveFlowResourceValue,
+} from "./shared/resource-indicator.js";
 import {
   buildInitializeRequestBody,
   resolveInitializeProtocolVersion,
@@ -74,12 +73,7 @@ export interface DebugOAuthStateMachineConfig
 // sends (the decision persisted at PRM discovery), not the raw server URL.
 const previewResourceValue = (
   flowState: OAuthFlowState,
-): string | undefined =>
-  resolveResourceIndicatorValue({
-    serverUrl: flowState.serverUrl,
-    prmResource: flowState.resourceMetadata?.resource,
-    resolved: flowState.resourceIndicator,
-  });
+): string | undefined => resolveFlowResourceValue(flowState);
 
 /**
  * Build the sequence of actions for the 2025-06-18 OAuth flow
@@ -459,14 +453,8 @@ export const createDebugOAuthStateMachine = (
   // helper keeps every request site — authorization URL, token body, token
   // POST — on the identical value, and re-evaluates lazily for flows seeded
   // past the discovery step.
-  const resolveResourceParameter = (): string | undefined => {
-    const current = getCurrentState();
-    return resolveResourceIndicatorValue({
-      serverUrl: current.serverUrl ?? serverUrl,
-      prmResource: current.resourceMetadata?.resource,
-      resolved: current.resourceIndicator,
-    });
-  };
+  const resolveResourceParameter = (): string =>
+    resolveFlowResourceValue(getCurrentState(), serverUrl);
 
   const executeRequest = (url: string, options: RequestInit = {}) =>
     requestExecutor({
@@ -881,27 +869,8 @@ export const createDebugOAuthStateMachine = (
               const authorizationServerUrl =
                 resourceMetadata.authorization_servers?.[0] || serverUrl;
 
-              // Resolve the resource indicator ONCE; every later request and
-              // preview site reads state.resourceIndicator instead of
-              // re-deriving it.
-              const resourceIndicator = evaluateResourceIndicator({
-                serverUrl: state.serverUrl,
-                prmResource: resourceMetadata.resource,
-              });
-
-              if (
-                resourceIndicatorEnforcement === "reject" &&
-                resourceIndicator.source === "prm" &&
-                resourceIndicator.status !== "valid"
-              ) {
-                throw new Error(
-                  resourceIndicator.reason ??
-                    "Protected Resource Metadata advertises an unusable resource identifier.",
-                );
-              }
-
               // Add info log for Authorization Servers
-              let infoLogs = addInfoLog(
+              const authServersLog = addInfoLog(
                 state,
                 "received_resource_metadata",
                 "authorization-servers",
@@ -913,12 +882,18 @@ export const createDebugOAuthStateMachine = (
                 },
               );
 
-              infoLogs = addResourceMismatchWarning(
-                state,
-                infoLogs,
-                resourceIndicator,
-                state.serverUrl,
-              );
+              // Resolve the resource indicator ONCE (rejecting/warning per
+              // the surface's enforcement mode); every later request and
+              // preview site reads state.resourceIndicator instead of
+              // re-deriving it.
+              const { resourceIndicator, infoLogs } =
+                resolveDiscoveryResourceIndicator({
+                  state,
+                  fallbackServerUrl: serverUrl,
+                  prmResource: resourceMetadata.resource,
+                  enforcement: resourceIndicatorEnforcement,
+                  infoLogs: authServersLog,
+                });
 
               updateState({
                 currentStep: "received_resource_metadata",
