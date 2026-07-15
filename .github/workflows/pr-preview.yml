@@ -97,7 +97,7 @@ jobs:
           echo "head_sha=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
 
       - name: Install preview tooling
-        run: npm install -g @railway/cli@4.57.1 workos
+        run: npm install -g @railway/cli@4.57.1 workos@0.17.1
 
       - name: Resolve preview environment metadata
         id: meta
@@ -368,7 +368,7 @@ jobs:
           echo "head_sha=${{ github.event.client_payload.inspector_head_sha || '' }}" >> "$GITHUB_OUTPUT"
 
       - name: Install preview tooling
-        run: npm install -g @railway/cli@4.57.1 workos
+        run: npm install -g @railway/cli@4.57.1 workos@0.17.1
 
       - name: Resolve preview environment metadata
         id: meta
@@ -726,7 +726,7 @@ jobs:
           echo "head_sha=${{ github.event.client_payload.inspector_head_sha || '' }}" >> "$GITHUB_OUTPUT"
 
       - name: Install preview tooling
-        run: npm install -g @railway/cli@4.57.1 workos
+        run: npm install -g @railway/cli@4.57.1 workos@0.17.1
 
       - name: Resolve backend target
         id: backend_target

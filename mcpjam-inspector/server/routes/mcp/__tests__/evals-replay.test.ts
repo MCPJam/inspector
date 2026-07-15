@@ -123,6 +123,7 @@ describe("mcp replay route", () => {
         tests: [],
         environment: { servers: ["excalidraw"] },
       },
+      hostConfig: {},
     });
     runEvalSuiteWithAiSdkMock.mockResolvedValue(undefined);
     storeReplayConfigMock.mockResolvedValue(undefined);

@@ -40,6 +40,7 @@ import {
   normalizeImportHostedOAuthTokens,
   type ImportHostedOAuthTokensRequest,
 } from "@/lib/apis/hosted-oauth-import-tokens-api";
+import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
 import { captureCurrentReturnPath } from "@/lib/app-navigation";
@@ -375,6 +376,7 @@ function stripOAuthTraceDataFromFlowState(
 ): OAuthFlowState {
   return {
     ...cloneFlowState(state),
+    clientSecret: undefined,
     httpHistory: [],
     infoLogs: [],
     lastRequest: undefined,
@@ -808,6 +810,12 @@ async function persistOAuthStateArtifacts(
     await provider.saveCodeVerifier(state.codeVerifier);
   }
 
+  // Persist discovery (incl. authorizationServerUrl) BEFORE saveTokens: the
+  // hosted-OAuth import inside saveTokens reads the AS URL from discoveryState()
+  // (localStorage), so it must already be written or the import omits it and a
+  // later hosted refresh can't reach localhost servers to rediscover it.
+  await saveDiscoveryStateFromFlowState(provider, state);
+
   if (state.accessToken) {
     await provider.saveTokens({
       access_token: state.accessToken,
@@ -818,8 +826,6 @@ async function persistOAuthStateArtifacts(
         : {}),
     });
   }
-
-  await saveDiscoveryStateFromFlowState(provider, state);
 }
 
 function buildOAuthTraceFromFlowState(input: {
@@ -1883,15 +1889,13 @@ async function readHostedOAuthSessionProgress(input: {
 }
 
 /**
- * Simple localStorage-based OAuth provider for MCP
+ * Browser OAuth provider for MCP
  */
 /**
  * Optional Convex binding threaded through to `saveTokens` so that — in local
  * mode — pre-exchanged OAuth tokens get imported into the Convex
  * `hostedOAuthCredentials` store via `/api/web/oauth/import-tokens`. Without
- * a binding, `saveTokens` falls back to localStorage-only (legacy behaviour),
- * which is the right path for brand-new servers that haven't been synced to
- * Convex yet — the resolver path also falls back in that case.
+ * a binding, `saveTokens` rejects instead of storing tokens in localStorage.
  *
  * `kind` is `"registry"` iff BOTH `registryServerId` AND `useRegistryOAuthProxy`
  * are set on the originating flow; a stored `registryServerId` alone does not
@@ -1902,6 +1906,7 @@ export interface MCPOAuthProviderConvexBinding {
   serverId: string;
   oauthResourceUrl?: string;
   kind: "generic" | "registry";
+  hasClientSecret?: boolean;
   registryServerId?: string;
   useRegistryOAuthProxy?: boolean;
 }
@@ -1913,6 +1918,8 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   private customClientId?: string;
   private customClientSecret?: string;
   private convexBinding?: MCPOAuthProviderConvexBinding;
+  private runtimeClientSecret?: string;
+  private storedClientSecretPromise?: Promise<string | undefined>;
 
   constructor(
     serverName: string,
@@ -1943,7 +1950,9 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     // with a secret would tell the server to expect no creds at the token
     // endpoint and the SDK would honor that hint on later exchanges,
     // silently dropping the secret and producing `invalid_client`.
-    const hasSecret = Boolean(this.customClientSecret);
+    const hasSecret = Boolean(
+      this.customClientSecret || this.convexBinding?.hasClientSecret
+    );
     return {
       client_name: `MCPJam - ${this.serverName}`,
       client_uri: "https://github.com/mcpjam/inspector",
@@ -1955,17 +1964,56 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     };
   }
 
-  clientInformation() {
+  private readStoredClientInformation(): Record<string, any> | undefined {
     const stored = localStorage.getItem(`mcp-client-${this.serverName}`);
-    const storedJson = stored ? JSON.parse(stored) : undefined;
-    const storedClientInformation =
-      HOSTED_MODE && storedJson
-        ? Object.fromEntries(
-            Object.entries(storedJson).filter(
-              ([key]) => key !== "client_secret"
-            )
-          )
-        : storedJson;
+    let storedJson: unknown;
+    try {
+      storedJson = stored ? JSON.parse(stored) : undefined;
+    } catch {
+      return undefined;
+    }
+    if (!storedJson || typeof storedJson !== "object") {
+      return undefined;
+    }
+    const storedClientInformation = Object.fromEntries(
+      Object.entries(storedJson).filter(([key]) => key !== "client_secret")
+    );
+    if ("client_secret" in storedJson) {
+      localStorage.setItem(
+        `mcp-client-${this.serverName}`,
+        JSON.stringify(storedClientInformation)
+      );
+    }
+    return storedClientInformation;
+  }
+
+  private async loadStoredClientSecret(): Promise<string | undefined> {
+    if (this.customClientSecret) {
+      return this.customClientSecret;
+    }
+    if (this.runtimeClientSecret) {
+      return this.runtimeClientSecret;
+    }
+    if (!this.convexBinding?.hasClientSecret) {
+      return undefined;
+    }
+    if (!this.storedClientSecretPromise) {
+      this.storedClientSecretPromise = fetchOAuthClientSecret({
+        projectId: this.convexBinding.projectId,
+        serverId: this.convexBinding.serverId,
+      })
+        .then((result) => result.clientSecret)
+        .catch((error) => {
+          this.storedClientSecretPromise = undefined;
+          throw error;
+        });
+    }
+    return this.storedClientSecretPromise;
+  }
+
+  async clientInformation() {
+    const storedClientInformation = this.readStoredClientInformation();
+    const clientSecret = await this.loadStoredClientSecret();
 
     // If custom client ID is provided, use it
     if (this.customClientId) {
@@ -1976,8 +2024,8 @@ export class MCPOAuthProvider implements OAuthClientProvider {
           client_id: this.customClientId,
         };
         // Add client secret if provided
-        if (this.customClientSecret) {
-          result.client_secret = this.customClientSecret;
+        if (clientSecret) {
+          result.client_secret = clientSecret;
           // Drop only the specific `"none"` hint inherited from a prior
           // DCR registration. Our DCR metadata advertises "none" when no
           // secret is set, and servers echo that back into the stored
@@ -1997,18 +2045,31 @@ export class MCPOAuthProvider implements OAuthClientProvider {
         const result: any = {
           client_id: this.customClientId,
         };
-        if (this.customClientSecret) {
-          result.client_secret = this.customClientSecret;
+        if (clientSecret) {
+          result.client_secret = clientSecret;
         }
         return result;
       }
+    }
+    if (storedClientInformation && clientSecret) {
+      const result: any = {
+        ...storedClientInformation,
+        client_secret: clientSecret,
+      };
+      if (result.token_endpoint_auth_method === "none") {
+        delete result.token_endpoint_auth_method;
+      }
+      return result;
     }
     return storedClientInformation;
   }
 
   async saveClientInformation(clientInformation: any) {
+    if (typeof clientInformation?.client_secret === "string") {
+      this.runtimeClientSecret = clientInformation.client_secret;
+    }
     const clientInformationToStore =
-      HOSTED_MODE && clientInformation
+      clientInformation && typeof clientInformation === "object"
         ? Object.fromEntries(
             Object.entries(clientInformation).filter(
               ([key]) => key !== "client_secret"
@@ -2023,7 +2084,14 @@ export class MCPOAuthProvider implements OAuthClientProvider {
 
   tokens() {
     const stored = localStorage.getItem(`mcp-tokens-${this.serverName}`);
-    return stored ? JSON.parse(stored) : undefined;
+    if (!stored) {
+      return undefined;
+    }
+    try {
+      return JSON.parse(stored);
+    } catch {
+      return undefined;
+    }
   }
 
   async saveTokens(tokens: any) {
@@ -2031,53 +2099,62 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       return;
     }
 
-    localStorage.setItem(
-      `mcp-tokens-${this.serverName}`,
-      JSON.stringify(tokens)
-    );
-
-    // Local mode: also persist tokens into Convex `hostedOAuthCredentials` so
-    // that the resolver path (/web/authorize-batch-local) can serve them on
-    // subsequent /api/mcp/connect calls. Without this, OAuth-protected servers
-    // either 401 on the resolver path or fall through to the legacy
-    // {serverConfig} body. localStorage stays the source for in-memory
-    // refresh until Slice 2b purges it.
     const normalizedTokens = normalizeImportHostedOAuthTokens(tokens);
-    if (this.convexBinding && normalizedTokens) {
-      const stored = this.clientInformation();
-      const clientId = (stored?.client_id as string | undefined) ?? this.customClientId;
-      if (!clientId) {
-        // No clientId means we can't write a usable record; bail loudly so
-        // the OAuth-completion error surfaces in the UI rather than 401ing
-        // silently on the next connect.
-        throw new Error(
-          "OAuth client information missing client_id; cannot import tokens to Convex"
-        );
-      }
-      const clientSecret =
-        (stored?.client_secret as string | undefined) ?? this.customClientSecret;
-      const importPayload: ImportHostedOAuthTokensRequest = {
-        projectId: this.convexBinding.projectId,
-        serverId: this.convexBinding.serverId,
-        serverUrl: this.serverUrl,
-        ...(this.convexBinding.oauthResourceUrl
-          ? { oauthResourceUrl: this.convexBinding.oauthResourceUrl }
-          : {}),
-        kind: this.convexBinding.kind,
-        ...(this.convexBinding.registryServerId
-          ? { registryServerId: this.convexBinding.registryServerId }
-          : {}),
-        ...(this.convexBinding.useRegistryOAuthProxy
-          ? { useRegistryOAuthProxy: this.convexBinding.useRegistryOAuthProxy }
-          : {}),
-        clientInformation: {
-          clientId,
-          ...(clientSecret ? { clientSecret } : {}),
-        },
-        tokens: normalizedTokens,
-      };
-      await importHostedOAuthTokens(importPayload);
+    if (!normalizedTokens) {
+      localStorage.removeItem(`mcp-tokens-${this.serverName}`);
+      throw new Error(
+        "OAuth token response missing access_token; cannot import tokens to Convex"
+      );
     }
+    if (!this.convexBinding) {
+      localStorage.removeItem(`mcp-tokens-${this.serverName}`);
+      throw new Error(
+        "OAuth server is not synced; cannot store tokens securely"
+      );
+    }
+
+    const stored = await this.clientInformation();
+    const clientId =
+      (stored?.client_id as string | undefined) ?? this.customClientId;
+    if (!clientId) {
+      localStorage.removeItem(`mcp-tokens-${this.serverName}`);
+      // No clientId means we can't write a usable record; bail loudly so
+      // the OAuth-completion error surfaces in the UI rather than 401ing
+      // silently on the next connect.
+      throw new Error(
+        "OAuth client information missing client_id; cannot import tokens to Convex"
+      );
+    }
+    const clientSecret =
+      (stored?.client_secret as string | undefined) ?? this.customClientSecret;
+    // Forward the AS URL we discovered locally so the hosted backend can
+    // persist a refresh fallback for servers it can't reach (e.g. localhost);
+    // without it, the backend re-discovers against an unreachable resource on
+    // refresh and the credential becomes unusable.
+    const authorizationServerUrl = this.discoveryState()?.authorizationServerUrl;
+    const importPayload: ImportHostedOAuthTokensRequest = {
+      projectId: this.convexBinding.projectId,
+      serverId: this.convexBinding.serverId,
+      serverUrl: this.serverUrl,
+      ...(this.convexBinding.oauthResourceUrl
+        ? { oauthResourceUrl: this.convexBinding.oauthResourceUrl }
+        : {}),
+      ...(authorizationServerUrl ? { authorizationServerUrl } : {}),
+      kind: this.convexBinding.kind,
+      ...(this.convexBinding.registryServerId
+        ? { registryServerId: this.convexBinding.registryServerId }
+        : {}),
+      ...(this.convexBinding.useRegistryOAuthProxy
+        ? { useRegistryOAuthProxy: this.convexBinding.useRegistryOAuthProxy }
+        : {}),
+      clientInformation: {
+        clientId,
+        ...(clientSecret ? { clientSecret } : {}),
+      },
+      tokens: normalizedTokens,
+    };
+    await importHostedOAuthTokens(importPayload);
+    localStorage.removeItem(`mcp-tokens-${this.serverName}`);
   }
 
   prepareTokenRequest() {
@@ -2250,7 +2327,7 @@ const oauthBindingStorage = {
         JSON.stringify(binding)
       );
     } catch {
-      // best-effort — saveTokens still writes to localStorage; the only
+      // best-effort — if the persisted binding is missing, the only
       // downside of a missed persist is that the post-redirect callback
       // can't import to Convex and the user re-OAuths after expiry.
     }
@@ -2272,20 +2349,24 @@ const oauthBindingStorage = {
  * `initiateOAuth` time); falls back to the localStorage-persisted binding
  * written at initiation so post-redirect callbacks can still resolve the
  * mapping while `getProjectServers` is still loading. Returns undefined
- * only when both lookups fail (server not yet synced to Convex), in which
- * case `saveTokens` falls back to localStorage-only.
+ * only when both lookups fail; `saveTokens` treats that as an unsafe token
+ * storage path and rejects.
  */
 function buildConvexBindingForServer(input: {
   serverName: string;
   oauthResourceUrl?: string;
+  hasClientSecret?: boolean;
   registryServerId?: string;
   useRegistryOAuthProxy?: boolean;
 }): MCPOAuthProviderConvexBinding | undefined {
   if (HOSTED_MODE) return undefined;
+  const previousBinding = oauthBindingStorage.get(input.serverName);
   const resolved = tryResolveProjectServer(input.serverName);
   if (resolved) {
     const isRegistry =
       !!input.registryServerId && input.useRegistryOAuthProxy === true;
+    const hasClientSecret =
+      input.hasClientSecret ?? previousBinding?.hasClientSecret;
     const binding: MCPOAuthProviderConvexBinding = {
       projectId: resolved.projectId,
       serverId: resolved.serverId,
@@ -2293,6 +2374,7 @@ function buildConvexBindingForServer(input: {
         ? { oauthResourceUrl: input.oauthResourceUrl }
         : {}),
       kind: isRegistry ? "registry" : "generic",
+      ...(hasClientSecret ? { hasClientSecret: true } : {}),
       ...(isRegistry
         ? {
             registryServerId: input.registryServerId,
@@ -2305,7 +2387,7 @@ function buildConvexBindingForServer(input: {
     oauthBindingStorage.set(input.serverName, binding);
     return binding;
   }
-  return oauthBindingStorage.get(input.serverName);
+  return previousBinding;
 }
 
 /**
@@ -2320,6 +2402,7 @@ function createMCPOAuthProvider(input: {
   serverUrl: string;
   clientId?: string;
   clientSecret?: string;
+  hasClientSecret?: boolean;
   oauthConfig: {
     resourceUrl?: string;
     registryServerId?: string;
@@ -2334,6 +2417,7 @@ function createMCPOAuthProvider(input: {
     buildConvexBindingForServer({
       serverName: input.serverName,
       oauthResourceUrl: input.oauthConfig.resourceUrl,
+      hasClientSecret: input.clientSecret ? true : input.hasClientSecret,
       registryServerId: input.oauthConfig.registryServerId,
       useRegistryOAuthProxy: input.oauthConfig.useRegistryOAuthProxy,
     })
@@ -2350,14 +2434,18 @@ function readStoredClientInformation(
     }
 
     const parsed = JSON.parse(stored) as StoredOAuthClientInformation;
+    if (parsed && typeof parsed === "object" && "client_secret" in parsed) {
+      const sanitized = Object.fromEntries(
+        Object.entries(parsed).filter(([key]) => key !== "client_secret")
+      );
+      localStorage.setItem(
+        `mcp-client-${serverName}`,
+        JSON.stringify(sanitized)
+      );
+    }
     return {
       client_id:
         typeof parsed.client_id === "string" ? parsed.client_id : undefined,
-      client_secret:
-        !HOSTED_MODE &&
-        typeof parsed.client_secret === "string"
-          ? parsed.client_secret
-          : undefined,
     };
   } catch {
     return {};
@@ -2415,6 +2503,7 @@ export async function initiateOAuth(
       serverUrl: options.serverUrl,
       clientId: options.clientId,
       clientSecret: options.clientSecret,
+      hasClientSecret: options.hasClientSecret,
       oauthConfig: {
         resourceUrl: options.resourceUrl,
         registryServerId: options.registryServerId,
@@ -2470,8 +2559,9 @@ export async function initiateOAuth(
       JSON.stringify(oauthConfig)
     );
 
-    // Store custom client credentials if provided, so they can be retrieved during callback
-    if (options.clientId || (!HOSTED_MODE && options.clientSecret)) {
+    // Store custom client id if provided, so it can be retrieved during callback.
+    // Client secrets are stored in the encrypted backend server-secret table.
+    if (options.clientId) {
       const existingClientInfo = localStorage.getItem(
         `mcp-client-${options.serverName}`
       );
@@ -2483,21 +2573,15 @@ export async function initiateOAuth(
           existingJsonRaw = {};
         }
       }
-      const existingJson =
-        HOSTED_MODE && existingJsonRaw
-          ? Object.fromEntries(
-              Object.entries(existingJsonRaw).filter(
-                ([key]) => key !== "client_secret"
-              )
-            )
-          : existingJsonRaw;
+      const existingJson = Object.fromEntries(
+        Object.entries(existingJsonRaw).filter(
+          ([key]) => key !== "client_secret"
+        )
+      );
 
       const updatedClientInfo: any = { ...existingJson };
       if (options.clientId) {
         updatedClientInfo.client_id = options.clientId;
-      }
-      if (!HOSTED_MODE && options.clientSecret) {
-        updatedClientInfo.client_secret = options.clientSecret;
       }
 
       localStorage.setItem(
@@ -2523,7 +2607,7 @@ export async function initiateOAuth(
       sanitizeTrace: SANITIZE_OAUTH_TRACES,
       requestExecutor,
       loadPreregisteredCredentials: async () => {
-        const clientInformation = provider.clientInformation();
+        const clientInformation = await provider.clientInformation();
         return {
           clientId: clientInformation?.client_id,
           clientSecret: clientInformation?.client_secret,
@@ -3034,19 +3118,13 @@ export async function handleOAuthCallback(
     }
 
     // Get stored client credentials if any
-    const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
-    const customClientId = storedClientInfo
-      ? JSON.parse(storedClientInfo).client_id
-      : undefined;
-    const customClientSecret = storedClientInfo
-      ? JSON.parse(storedClientInfo).client_secret
-      : undefined;
+    const storedClientInfo = readStoredClientInformation(serverName);
+    const customClientId = storedClientInfo.client_id;
 
     const provider = createMCPOAuthProvider({
       serverName,
       serverUrl,
       clientId: customClientId,
-      clientSecret: customClientSecret,
       oauthConfig,
     });
     const fetchFn = createOAuthFetchInterceptor(oauthConfig, undefined);
@@ -3081,6 +3159,15 @@ export async function handleOAuthCallback(
         authorizationCode,
         error: undefined,
       });
+      const clientInformation = await provider.clientInformation();
+      if (clientInformation?.client_id) {
+        updateState({
+          clientId: clientInformation.client_id,
+          ...(clientInformation.client_secret
+            ? { clientSecret: clientInformation.client_secret }
+            : {}),
+        });
+      }
       emitTraceSnapshot(
         projectOAuthTraceSnapshot({
           state: getState(),
@@ -3100,7 +3187,7 @@ export async function handleOAuthCallback(
         sanitizeTrace: SANITIZE_OAUTH_TRACES,
         requestExecutor,
         loadPreregisteredCredentials: async () => {
-          const clientInformation = provider.clientInformation();
+          const clientInformation = await provider.clientInformation();
           return {
             clientId: clientInformation?.client_id,
             clientSecret: clientInformation?.client_secret,
@@ -3245,7 +3332,7 @@ export async function handleOAuthCallback(
       message: "Authorization code exchange succeeded.",
     });
     completeOAuthTraceStep(callbackTrace, "received_access_token", {
-      message: "OAuth tokens were stored locally.",
+      message: "OAuth tokens were stored securely.",
     });
     completeOAuthTraceStep(callbackTrace, "complete", {
       message: "OAuth callback completed successfully.",
@@ -3313,13 +3400,12 @@ export function getStoredTokensState(serverName: string): StoredTokensState {
     return { tokens: undefined, isInvalid: false };
   }
   const tokens = localStorage.getItem(`mcp-tokens-${serverName}`);
-  const clientInfo = localStorage.getItem(`mcp-client-${serverName}`);
   // TODO: Maybe we should move clientID away from the token info? Not sure if clientID is bonded to token
   if (!tokens) return { tokens: undefined, isInvalid: false };
 
   try {
     const tokensJson = JSON.parse(tokens);
-    const clientJson = clientInfo ? JSON.parse(clientInfo) : {};
+    const clientJson = readStoredClientInformation(serverName);
 
     // Merge tokens with client_id from client information
     return {
@@ -3402,13 +3488,8 @@ export async function refreshOAuthTokens(
 
   try {
     // Get stored client credentials if any
-    const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
-    const customClientId = storedClientInfo
-      ? JSON.parse(storedClientInfo).client_id
-      : undefined;
-    const customClientSecret = storedClientInfo
-      ? JSON.parse(storedClientInfo).client_secret
-      : undefined;
+    const storedClientInfo = readStoredClientInformation(serverName);
+    const customClientId = storedClientInfo.client_id;
 
     // Get server URL
     const serverUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
@@ -3424,7 +3505,6 @@ export async function refreshOAuthTokens(
       serverName,
       serverUrl,
       clientId: customClientId,
-      clientSecret: customClientSecret,
       oauthConfig,
     });
     const existingTokens = provider.tokens();
@@ -3481,7 +3561,7 @@ export async function refreshOAuthTokens(
       message: "Refresh token exchange succeeded.",
     });
     completeOAuthTraceStep(trace, "received_access_token", {
-      message: "Refreshed OAuth tokens were stored locally.",
+      message: "Refreshed OAuth tokens were stored securely.",
     });
     completeOAuthTraceStep(trace, "complete", {
       message: "OAuth token refresh completed successfully.",

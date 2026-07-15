@@ -1,4 +1,4 @@
-import type { PromptTurn } from "@/shared/prompt-turns";
+import type { PromptTurn } from "@/shared/steps";
 
 export interface ExpectedToolCall {
   toolName: string;

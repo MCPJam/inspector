@@ -107,11 +107,11 @@ export function CreateSuiteDialog({
     if (name.trim().length === 0) return "Add a suite name first.";
     if (attachmentsRequired && serverAttachmentId === null) {
       return hostAttachments.length === 0
-        ? "Attach a server and at least one host first."
-        : "Pick a server attachment first.";
+        ? "Attach a server and at least one client first."
+        : "Pick a server group first.";
     }
     if (attachmentsRequired && hostAttachments.length === 0) {
-      return "Attach at least one host first.";
+      return "Attach at least one client first.";
     }
     return null;
   })();
@@ -167,7 +167,7 @@ export function CreateSuiteDialog({
                     Servers
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    Server set all hosts run against.
+                    Server group all hosts run against.
                   </p>
                 </div>
                 <div className="shrink-0">
@@ -175,6 +175,8 @@ export function CreateSuiteDialog({
                     projectId={projectId}
                     value={serverAttachmentId}
                     onChange={setServerAttachmentId}
+                    onClearSelection={() => setServerAttachmentId(null)}
+                    inModal
                     disabled={isSaving}
                   />
                 </div>
