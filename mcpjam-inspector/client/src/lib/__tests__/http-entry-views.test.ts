@@ -30,17 +30,15 @@ const entry = (overrides: Partial<Entry> = {}): Entry => ({
   ...overrides,
 });
 
-const split = (entries: Entry[], reachedIndex: number) =>
+const split = (entries: Entry[]) =>
   splitHttpEntriesForDisplay<Step, Entry>({
     entries,
     pairedReceivedStep,
-    getStepIndex,
-    reachedIndex,
   });
 
 describe("splitHttpEntriesForDisplay", () => {
-  it("splits a reached exchange into request + response items with derived timestamp", () => {
-    const items = split([entry()], getStepIndex("recv_a"));
+  it("splits a completed exchange into request + response items with derived timestamp", () => {
+    const items = split([entry()]);
     expect(items).toHaveLength(2);
     expect(items[0]).toMatchObject({
       step: "req_a",
@@ -56,19 +54,20 @@ describe("splitHttpEntriesForDisplay", () => {
     expect(items[0].entry).toBe(items[1].entry);
   });
 
-  it("keeps the exchange whole while the received step is not reached", () => {
-    // Resting right after the request click, or parked with a flow error.
-    const items = split([entry()], getStepIndex("req_a"));
+  it("splits a completed exchange before the received step is reached", () => {
+    // Resting right after the request click: the response is visible in the
+    // received-step card even though that step still needs its own Continue.
+    const items = split([entry()]);
     expect(items).toEqual([
-      expect.objectContaining({ step: "req_a", view: "full" }),
+      expect.objectContaining({ step: "req_a", view: "request" }),
+      expect.objectContaining({ step: "recv_a", view: "response" }),
     ]);
   });
 
   it("keeps errored exchanges whole on the request card", () => {
-    const items = split(
-      [entry({ error: { message: "boom" }, response: undefined })],
-      getStepIndex("recv_a"),
-    );
+    const items = split([
+      entry({ error: { message: "boom" }, response: undefined }),
+    ]);
     expect(items).toEqual([
       expect.objectContaining({ step: "req_a", view: "full" }),
     ]);
@@ -76,7 +75,7 @@ describe("splitHttpEntriesForDisplay", () => {
 
   it("renders a response-less entry as the request view (genuine pending)", () => {
     // OAuth's prepared-but-not-yet-sent rest.
-    const items = split([entry({ response: undefined })], getStepIndex("req_a"));
+    const items = split([entry({ response: undefined })]);
     expect(items).toEqual([
       expect.objectContaining({ step: "req_a", view: "request" }),
     ]);
@@ -86,7 +85,7 @@ describe("splitHttpEntriesForDisplay", () => {
     // Multi-URL discovery: failed candidates are diagnostics.
     const failed = entry({ timestamp: 900, response: { status: 404 } });
     const succeeded = entry({ timestamp: 1000 });
-    const items = split([failed, succeeded], getStepIndex("recv_a"));
+    const items = split([failed, succeeded]);
     expect(items).toEqual([
       expect.objectContaining({ view: "full", entry: failed }),
       expect.objectContaining({ view: "request", entry: succeeded }),
@@ -95,10 +94,7 @@ describe("splitHttpEntriesForDisplay", () => {
   });
 
   it("leaves unpaired steps whole", () => {
-    const items = split(
-      [entry({ step: "lonely" })],
-      getStepIndex("lonely"),
-    );
+    const items = split([entry({ step: "lonely" })]);
     expect(items).toEqual([
       expect.objectContaining({ step: "lonely", view: "full" }),
     ]);

@@ -213,16 +213,14 @@ export function generateXAAFlowText(
     add(entry.step, { type: "info", timestamp: entry.timestamp, value: entry });
   }
   // Same request/response placement as the logger UI: the request prints under
-  // the request step, the response under the paired received step once the
-  // flow has reached it — otherwise the exchange prints whole.
+  // the request step, and a completed response prints under the paired
+  // received step immediately. Failed or unpaired exchanges print whole.
   for (const item of splitHttpEntriesForDisplay<
     XAAFlowStep,
     XAAHttpHistoryEntry
   >({
     entries: flowState.httpHistory ?? [],
     pairedReceivedStep: getXAAReceivedStepForRequest,
-    getStepIndex: getXAAStepIndex,
-    reachedIndex: getXAAStepIndex(flowState.currentStep),
   })) {
     add(item.step, {
       type: "http",

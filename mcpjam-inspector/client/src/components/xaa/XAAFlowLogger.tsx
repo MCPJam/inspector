@@ -443,9 +443,9 @@ export function XAAFlowLogger({
         /** Raw entries tagged with this step — feeds error guidance and the
          * phase-skip check, which read the unsplit data. */
         httpEntries: NonNullable<XAAFlowState["httpHistory"]>;
-        /** What this card actually renders: each exchange's request half under
-         * its request step, the response half under the paired received step
-         * once reached. */
+        /** What this card actually renders: each completed exchange's request
+         * half under its request step, the response half under the paired
+         * received step immediately. */
         displayItems: HttpEntryDisplayItem<XAAFlowStep, XAAHttpEntry>[];
       }
     >();
@@ -474,8 +474,6 @@ export function XAAFlowLogger({
     splitHttpEntriesForDisplay<XAAFlowStep, XAAHttpEntry>({
       entries: flowState.httpHistory || [],
       pairedReceivedStep: getXAAReceivedStepForRequest,
-      getStepIndex: getXAAStepIndex,
-      reachedIndex: currentStepIndex,
     }).forEach((item) => {
       ensureGroup(item.step).displayItems.push(item);
     });
@@ -513,7 +511,7 @@ export function XAAFlowLogger({
 
     try {
       const success = await copyToClipboard(
-        generateXAAFlowText(flowState, summary),
+        generateXAAFlowText(flowState, summary)
       );
       if (!success) {
         setCopyError("Copy failed");
@@ -869,7 +867,7 @@ export function XAAFlowLogger({
               {section.groups.map((group, indexInPhase) => {
                 const stepInfo = getXAAStepInfo(
                   group.step,
-                  flowState.identityAssertionFormat,
+                  flowState.identityAssertionFormat
                 );
                 const status = getStatus(group.step);
                 const StatusIcon = status.icon;
@@ -985,7 +983,6 @@ export function XAAFlowLogger({
                             view={view}
                           />
                         ))}
-
                       </div>
                     )}
                   </div>

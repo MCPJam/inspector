@@ -24,7 +24,7 @@ export interface SplittableHttpEntry<TStep extends string> {
 
 export interface HttpEntryDisplayItem<
   TStep extends string,
-  TEntry extends SplittableHttpEntry<TStep>,
+  TEntry extends SplittableHttpEntry<TStep>
 > {
   /** Card this item renders under (request step, or its paired received step). */
   step: TStep;
@@ -38,17 +38,13 @@ export interface HttpEntryDisplayItem<
 
 export function splitHttpEntriesForDisplay<
   TStep extends string,
-  TEntry extends SplittableHttpEntry<TStep>,
+  TEntry extends SplittableHttpEntry<TStep>
 >(options: {
   entries: readonly TEntry[];
   /** Received step paired with a request step; undefined = never split. */
   pairedReceivedStep: (step: TStep) => TStep | undefined;
-  getStepIndex: (step: TStep) => number;
-  /** Index of the flow's current step — responses only move to a received
-   * card once that step has actually been reached. */
-  reachedIndex: number;
 }): HttpEntryDisplayItem<TStep, TEntry>[] {
-  const { entries, pairedReceivedStep, getStepIndex, reachedIndex } = options;
+  const { entries, pairedReceivedStep } = options;
 
   // Only the LATEST entry per request step splits: earlier entries for the
   // same step are failed discovery candidates whose request+response pair is
@@ -85,11 +81,10 @@ export function splitHttpEntriesForDisplay<
     }
     // 4. Superseded discovery candidate — keep the pair together.
     if (lastIndexForStep.get(entry.step) !== index) return full();
-    // 5. Received step not reached (parked error, terminal probe, or resting
-    //    right after the request click) — hide nothing, keep the pair whole.
-    if (getStepIndex(pair) > reachedIndex) return full();
-
-    // 6. Split: request under the request card, response under the received card.
+    // 5. Split as soon as the exchange has a response: request under the
+    //    request card, response under the received card. The received card may
+    //    still be the current/next step; its status is handled by the logger,
+    //    while the response evidence is already available to inspect.
     items.push({
       step: entry.step,
       entry,

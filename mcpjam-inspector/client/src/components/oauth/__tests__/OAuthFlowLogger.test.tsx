@@ -2,7 +2,10 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { OAuthFlowLogger } from "../OAuthFlowLogger";
-import { EMPTY_OAUTH_FLOW_STATE, type OAuthFlowState } from "@mcpjam/sdk/browser";
+import {
+  EMPTY_OAUTH_FLOW_STATE,
+  type OAuthFlowState,
+} from "@mcpjam/sdk/browser";
 
 // The logger auto-scrolls its guide pane on mount; jsdom has no Element.scrollTo.
 beforeAll(() => {
@@ -45,7 +48,7 @@ function renderLogger(state: Partial<OAuthFlowState>) {
         onContinue: vi.fn(),
         continueLabel: "Continue",
       }}
-    />,
+    />
   );
 }
 
@@ -59,7 +62,7 @@ describe("OAuthFlowLogger request/response card split", () => {
 
     // The received card (current step) auto-expands; open the request card too.
     await user.click(
-      screen.getByRole("button", { name: /Initial MCP Request/i }),
+      screen.getByRole("button", { name: /Initial MCP Request/i })
     );
 
     // Request card shows the request half with the deferred-response hint.
@@ -70,7 +73,8 @@ describe("OAuthFlowLogger request/response card split", () => {
     expect(screen.getAllByText("POST")).toHaveLength(2);
   });
 
-  it("keeps a failed token exchange whole on the token_request card", () => {
+  it("parks a failed token response on the received card", async () => {
+    const user = userEvent.setup();
     renderLogger({
       currentStep: "token_request",
       error: "Token exchange failed: invalid_grant",
@@ -95,10 +99,12 @@ describe("OAuthFlowLogger request/response card split", () => {
       ],
     });
 
-    // Parked at the request step: the full exchange stays on that card.
-    expect(screen.queryByText("response → next step")).not.toBeInTheDocument();
+    // Parked at the request step: the request card has only the request, while
+    // the completed response is available on the next card.
+    expect(screen.getByText("response → next step")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Tokens Received/i }));
     expect(screen.getAllByText("400")).toHaveLength(1);
-    expect(screen.getAllByText("POST")).toHaveLength(1);
+    expect(screen.getAllByText("POST")).toHaveLength(2);
   });
 
   it("keeps the Raw tab as the full chronological wire log", async () => {

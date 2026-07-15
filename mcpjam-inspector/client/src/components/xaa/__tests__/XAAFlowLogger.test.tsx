@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 function renderLogger(
-  actions: Partial<React.ComponentProps<typeof XAAFlowLogger>["actions"]> = {},
+  actions: Partial<React.ComponentProps<typeof XAAFlowLogger>["actions"]> = {}
 ) {
   const onContinue = vi.fn();
   const onRunAll = vi.fn();
@@ -36,7 +36,7 @@ function renderLogger(
         ...actions,
       }}
       summary={{ serverUrl: "https://mcp.example.com" }}
-    />,
+    />
   );
   return { onContinue, onRunAll, ...view };
 }
@@ -56,9 +56,7 @@ describe("XAAFlowLogger run controls", () => {
     const user = userEvent.setup();
     const { onContinue, onRunAll } = renderLogger();
 
-    await user.click(
-      screen.getByRole("button", { name: /more run options/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /more run options/i }));
     await user.click(screen.getByRole("menuitem", { name: /run all/i }));
 
     expect(onRunAll).toHaveBeenCalledTimes(1);
@@ -70,9 +68,7 @@ describe("XAAFlowLogger run controls", () => {
 
     expect(screen.getByText("Running")).toBeInTheDocument();
     // The primary button is the one carrying the spinner label.
-    expect(
-      screen.getByRole("button", { name: /running/i }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: /running/i })).toBeDisabled();
   });
 
   it("labels client id and scope in the run bar", () => {
@@ -94,7 +90,7 @@ describe("XAAFlowLogger run controls", () => {
           clientId: "client_bc147d46f04cb865",
           scope: "mcp.access",
         }}
-      />,
+      />
     );
 
     expect(screen.getByText("Client ID")).toBeInTheDocument();
@@ -150,7 +146,7 @@ describe("XAAFlowLogger run controls", () => {
           serverUrl: "https://mcp.example.com",
           clientId: "test-client",
         }}
-      />,
+      />
     );
 
     await user.click(screen.getByRole("button", { name: "Copy" }));
@@ -160,7 +156,7 @@ describe("XAAFlowLogger run controls", () => {
     expect(copied).toContain("=== XAA Debugger - Flow ===");
     expect(copied).toContain("Client ID: test-client");
     expect(copied).toContain(
-      "GET https://mcp.example.com/.well-known/oauth-protected-resource",
+      "GET https://mcp.example.com/.well-known/oauth-protected-resource"
     );
     expect(copied).toContain("Resource metadata received");
     expect(screen.getByRole("button", { name: "Copied!" })).toBeInTheDocument();
@@ -181,20 +177,16 @@ describe("XAAFlowLogger run controls", () => {
 
   it("shows a copy error and clears it on a successful retry", async () => {
     const user = userEvent.setup();
-    copyToClipboard
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true);
+    copyToClipboard.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     renderLogger();
 
     await user.click(screen.getByRole("button", { name: "Copy" }));
     expect(
-      screen.getByRole("button", { name: "Copy failed" }),
+      screen.getByRole("button", { name: "Copy failed" })
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Copy failed" }));
-    expect(
-      screen.getByRole("button", { name: "Copied!" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copied!" })).toBeInTheDocument();
   });
 });
 
@@ -218,9 +210,7 @@ describe("XAAFlowLogger request/response card split", () => {
   };
 
   function renderWithExchange(
-    overrides: Partial<
-      Parameters<typeof createInitialXAAFlowState>[0]
-    > = {},
+    overrides: Partial<Parameters<typeof createInitialXAAFlowState>[0]> = {}
   ) {
     return render(
       <XAAFlowLogger
@@ -238,18 +228,21 @@ describe("XAAFlowLogger request/response card split", () => {
           continueLabel: "Continue",
         }}
         summary={{ serverUrl: "https://mcp.example.com" }}
-      />,
+      />
     );
   }
 
-  async function expandStep(user: ReturnType<typeof userEvent.setup>, step: Parameters<typeof getXAAStepInfo>[0]) {
+  async function expandStep(
+    user: ReturnType<typeof userEvent.setup>,
+    step: Parameters<typeof getXAAStepInfo>[0]
+  ) {
     const title = getXAAStepInfo(step).title;
     await user.click(
-      screen.getByRole("button", { name: new RegExp(title, "i") }),
+      screen.getByRole("button", { name: new RegExp(title, "i") })
     );
   }
 
-  it("renders the response on the received card once the step is reached", async () => {
+  it("renders the response on the received card once the exchange completes", async () => {
     const user = userEvent.setup();
     renderWithExchange();
 
@@ -265,11 +258,12 @@ describe("XAAFlowLogger request/response card split", () => {
     expect(screen.getAllByText("POST")).toHaveLength(2);
   });
 
-  it("keeps the exchange whole on the request card while parked there", async () => {
+  it("shows the response on the next card while parked at the request step", async () => {
     renderWithExchange({ currentStep: "jwt_bearer_request" });
-    // Current step auto-expands; the full exchange renders in place.
-    expect(screen.queryByText("response → next step")).not.toBeInTheDocument();
-    expect(screen.getAllByText("200")).toHaveLength(1);
+    // Current step auto-expands; the request half renders in place and the
+    // completed response is parked on the collapsed received card.
+    expect(screen.getByText("response → next step")).toBeInTheDocument();
+    expect(screen.queryByText("Status: 200 OK")).not.toBeInTheDocument();
     expect(screen.getAllByText("POST")).toHaveLength(1);
   });
 
@@ -279,7 +273,7 @@ describe("XAAFlowLogger request/response card split", () => {
       negativeTestMode: "bad_signature",
       negativeProbe: { outcome: "rejected", status: 400 },
     });
-    expect(screen.queryByText("response → next step")).not.toBeInTheDocument();
-    expect(screen.getAllByText("200")).toHaveLength(1);
+    expect(screen.getByText("response → next step")).toBeInTheDocument();
+    expect(screen.queryByText("Status: 200 OK")).not.toBeInTheDocument();
   });
 });

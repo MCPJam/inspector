@@ -183,7 +183,7 @@ describe("generateXAAFlowText", () => {
     expect(receivedSection).not.toContain("Request Body:");
   });
 
-  it("keeps the exchange whole under the request step while parked there", () => {
+  it("prints a completed response under the received step while parked there", () => {
     const copied = generateXAAFlowText(
       createInitialXAAFlowState({
         currentStep: "jwt_bearer_request",
@@ -208,11 +208,14 @@ describe("generateXAAFlowText", () => {
       {}
     );
 
-    // Not reached received_access_token: nothing is deferred or hidden.
-    expect(copied).not.toContain("[received_access_token]");
+    // The response is visible in the received-step section even though the
+    // flow is still parked at the request step.
+    expect(copied).toContain("[received_access_token]");
     expect(copied).toContain("Status: 200 OK");
     expect(copied).toContain("Response Body:");
-    expect(copied).not.toContain("Response: recorded under");
+    expect(copied).toContain(
+      "Response: recorded under [received_access_token]"
+    );
   });
 
   it("redacts failed requests duplicated into info logs and error text", () => {

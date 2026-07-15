@@ -2,7 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AlertDescription } from "@mcpjam/design-system/alert";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@mcpjam/design-system/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@mcpjam/design-system/tabs";
 import { HTTPHistoryEntry } from "@/components/oauth/HTTPHistoryEntry";
 import { InfoLogEntry } from "@/components/oauth/InfoLogEntry";
 import {
@@ -87,9 +92,9 @@ export function OAuthFlowLogger({
       (oauthFlowState.infoLogs || []).some(
         (log) =>
           log.label?.includes("HTTP+SSE Transport Detected") ||
-          log.id === "http-sse-detected",
+          log.id === "http-sse-detected"
       ),
-    [oauthFlowState.infoLogs],
+    [oauthFlowState.infoLogs]
   );
 
   const groups = useMemo(() => {
@@ -133,17 +138,16 @@ export function OAuthFlowLogger({
         group.firstTimestamp = Math.min(group.firstTimestamp, log.timestamp);
       });
 
-    // Each exchange's request half renders under its request step and the
-    // response half under the paired received step once reached; failed or
-    // unpaired exchanges stay whole on their own card.
+    // Each completed exchange's request half renders under its request step
+    // and the response half under the paired received step immediately; the
+    // received card can still be the next step. Failed or unpaired exchanges
+    // stay whole on their own card.
     splitHttpEntriesForDisplay<
       OAuthFlowStep,
       NonNullable<OAuthFlowState["httpHistory"]>[number]
     >({
       entries: oauthFlowState.httpHistory || [],
       pairedReceivedStep: getOAuthReceivedStepForRequest,
-      getStepIndex,
-      reachedIndex: currentStepIndex,
     }).forEach((item) => {
       const group = ensureGroup(item.step);
       group.entries.push({
@@ -186,7 +190,7 @@ export function OAuthFlowLogger({
       groups.reduce((sum, group) => {
         return sum + group.entries.length;
       }, 0),
-    [groups],
+    [groups]
   );
 
   const timelineEntries = useMemo(() => {
@@ -247,7 +251,7 @@ export function OAuthFlowLogger({
 
   // Track which steps are expanded (auto-expand current step)
   const [expandedSteps, setExpandedSteps] = useState<Set<OAuthFlowStep>>(
-    new Set(),
+    new Set()
   );
 
   // Auto-expand current step
@@ -519,10 +523,10 @@ export function OAuthFlowLogger({
                   const isLastStep = groupIndex === groups.length - 1;
 
                   const infoEntries = group.entries.filter(
-                    (entry) => entry.type === "info",
+                    (entry) => entry.type === "info"
                   );
                   const httpEntries = group.entries.filter(
-                    (entry) => entry.type === "http",
+                    (entry) => entry.type === "http"
                   );
                   const totalEntries = infoEntries.length + httpEntries.length;
 
@@ -530,11 +534,11 @@ export function OAuthFlowLogger({
                   const hasDeprecatedTransport = infoEntries.some(
                     ({ log }) =>
                       log.label?.includes("HTTP+SSE Transport Detected") ||
-                      log.id === "http-sse-detected",
+                      log.id === "http-sse-detected"
                   );
 
                   const errorInfoCount = infoEntries.filter(
-                    ({ log }) => log.level === "error",
+                    ({ log }) => log.level === "error"
                   ).length;
                   const httpErrorCount = httpEntries.filter((item) => {
                     const { entry } = item;
@@ -602,10 +606,10 @@ export function OAuthFlowLogger({
                           hasError
                             ? "border-red-400 ring-1 ring-red-400/20 shadow-md"
                             : hasDeprecatedTransport
-                              ? "border-yellow-400 ring-1 ring-yellow-400/20 shadow-md"
-                              : isActive
-                                ? "border-blue-400 shadow-md ring-1 ring-blue-400/20"
-                                : "border-border shadow-sm hover:shadow-md",
+                            ? "border-yellow-400 ring-1 ring-yellow-400/20 shadow-md"
+                            : isActive
+                            ? "border-blue-400 shadow-md ring-1 ring-blue-400/20"
+                            : "border-border shadow-sm hover:shadow-md"
                         )}
                       >
                         {/* Step header - clickable */}
@@ -800,8 +804,8 @@ export function OAuthFlowLogger({
                       level === "error"
                         ? "destructive"
                         : level === "warning"
-                          ? "outline"
-                          : "secondary";
+                        ? "outline"
+                        : "secondary";
 
                     return (
                       <div key={entry.key} className="space-y-1">
@@ -838,7 +842,11 @@ export function OAuthFlowLogger({
                       !isExpectedAuthChallenge);
                   const statusLabel =
                     status !== undefined
-                      ? `${status}${httpEntry.response?.statusText ? ` ${httpEntry.response?.statusText}` : ""}`
+                      ? `${status}${
+                          httpEntry.response?.statusText
+                            ? ` ${httpEntry.response?.statusText}`
+                            : ""
+                        }`
                       : "pending";
 
                   return (
