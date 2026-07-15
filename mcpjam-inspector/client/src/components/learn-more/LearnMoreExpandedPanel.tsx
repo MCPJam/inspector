@@ -284,25 +284,27 @@ export function LearnMoreExpandedPanel({
             </button>
 
             {/* Title + docs link */}
-            <div className="px-6 pt-8 pb-2 sm:px-10 flex items-start justify-between gap-4">
-              <h2
-                id="learn-more-panel-title"
-                className="text-3xl font-bold leading-tight"
-              >
-                {entry.title}
-              </h2>
-              {entry.docsUrl && (
-                <a
-                  href={entry.docsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="shrink-0 mt-1 flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            {!isXAAGuide && (
+              <div className="px-6 pt-8 pb-2 sm:px-10 flex items-start justify-between gap-4">
+                <h2
+                  id="learn-more-panel-title"
+                  className="text-3xl font-bold leading-tight"
                 >
-                  Docs
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </a>
-              )}
-            </div>
+                  {entry.title}
+                </h2>
+                {entry.docsUrl && (
+                  <a
+                    href={entry.docsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 mt-1 flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Docs
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                )}
+              </div>
+            )}
 
             {entry.videoUrl && (
               <div className="px-6 pt-2 pb-4 sm:px-10">
@@ -311,7 +313,7 @@ export function LearnMoreExpandedPanel({
             )}
 
             {isXAAGuide ? (
-              <XAAHowItWorksContent />
+              <XAAHowItWorksContent title={entry.title} />
             ) : (
               <div className="px-6 pb-8 sm:px-10">
                 <p className="text-base text-muted-foreground leading-relaxed">

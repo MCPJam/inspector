@@ -1,4 +1,7 @@
-import { CheckCircle2, HelpCircle } from "lucide-react";
+import { useState } from "react";
+import { CheckCircle2, HelpCircle, Play } from "lucide-react";
+
+const xaaVideoUrl = "https://www.youtube.com/embed/3ym_V4Pm5Qc";
 
 const registrationMethods = [
   {
@@ -94,22 +97,68 @@ function SectionHeading({
   );
 }
 
-export function XAAHowItWorksContent() {
+function VideoThumbnail() {
+  const [playing, setPlaying] = useState(false);
+
+  if (playing) {
+    return (
+      <div className="relative aspect-video overflow-hidden rounded-lg border bg-black shadow-sm">
+        <iframe
+          src={`${xaaVideoUrl}?autoplay=1`}
+          className="h-full w-full"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+          title="Cross-App Access video"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setPlaying(true)}
+        aria-label="Play Cross-App Access video"
+        className="group relative mx-auto block aspect-video w-full overflow-hidden rounded-lg border bg-muted shadow-sm"
+      >
+        <img
+          src="/xaa-guide/xaa-video-thumbnail.png"
+          alt="XAA Debugger video thumbnail"
+          className="h-full w-full object-cover"
+        />
+        <span className="absolute inset-0 flex items-center justify-center bg-black/20 transition-colors group-hover:bg-black/35">
+          <span className="flex h-14 w-14 items-center justify-center rounded-full bg-white/95 shadow-lg">
+            <Play className="ml-1 h-7 w-7 fill-black text-black" />
+          </span>
+        </span>
+      </button>
+    </div>
+  );
+}
+
+export function XAAHowItWorksContent({ title }: { title: string }) {
   return (
     <div className="px-6 pb-10 sm:px-10">
       <div className="border-b pb-10 pt-4">
-        <div className="grid items-center gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(360px,520px)]">
-          <p className="max-w-3xl text-base leading-7 text-muted-foreground">
-            The XAA Debugger tests an MCP server and its authorization setup.
-            MCPJam acts as both the test identity provider that signs the ID
-            token and ID-JAG, and the client/agent that uses them to request
-            access.
-          </p>
-          <img
-            src="/xaa-guide/xaa-actors.png"
-            alt="XAA flow participants: Agent, IdP, MCP Server, and Authorization Server"
-            className="hidden h-16 w-full object-contain object-left lg:block"
-          />
+        <div>
+          <div className="flex flex-col justify-center gap-5">
+            <h2
+              id="learn-more-panel-title"
+              className="text-4xl font-bold leading-tight"
+            >
+              {title}
+            </h2>
+            <p className="text-base leading-7 text-muted-foreground">
+              The XAA Debugger tests an MCP server and its authorization setup.
+              MCPJam acts as both the test identity provider that signs the ID
+              token and ID-JAG, and the client/agent that uses them to request
+              access.
+            </p>
+          </div>
+          <div className="mt-8">
+            <VideoThumbnail />
+          </div>
         </div>
       </div>
 

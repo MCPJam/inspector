@@ -4,21 +4,20 @@ description: "Configure and debug Cross-App Access flows with MCPJam as the test
 icon: "shield-check"
 ---
 
+<iframe
+  className="w-full aspect-video rounded-xl"
+  src="https://www.youtube.com/embed/3ym_V4Pm5Qc"
+  title="XAA Debugger walkthrough"
+  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+  allowFullScreen
+></iframe>
+
 The XAA (Cross-App Access) Debugger tests an MCP server and its authorization setup.
 
 MCPJam acts as both:
 
 - The **identity provider**, which signs the ID token and ID-JAG.
 - The **client/agent**, which presents the ID-JAG and uses the access token.
-
-<Frame>
-  <img
-    className="block"
-    src="/images/xaa-flow.png"
-    alt="XAA debugger sequence diagram and flow log"
-    width="1000"
-  />
-</Frame>
 
 ## Before You Run the Test
 
