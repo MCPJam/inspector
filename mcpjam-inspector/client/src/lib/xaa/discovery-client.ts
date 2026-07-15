@@ -1,5 +1,6 @@
 import { HOSTED_MODE } from "@/lib/config";
 import { authFetch } from "@/lib/session-token";
+import type { XaaTokenEndpointAuthMethod } from "@/lib/xaa/types";
 import type { NegativeTestDiff } from "@/shared/xaa.js";
 import { getOrgScopedIssuerSegment } from "./idp-endpoints";
 
@@ -111,6 +112,7 @@ export interface NegativeTestsInput {
   scope?: string;
   tokenEndpoint?: string;
   clientSecret?: string;
+  tokenEndpointAuthMethod?: XaaTokenEndpointAuthMethod;
   registrationId?: string;
   // Server-target runs: the server resolves the stored secret and discovers
   // the token endpoint from the server's own config.

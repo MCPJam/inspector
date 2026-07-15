@@ -36,7 +36,11 @@ import type {
   XAARequestResult,
   XAAStateMachine,
 } from "./types.js";
-import { createInitialXAAFlowState } from "./types.js";
+import {
+  buildXaaDcrCredentialCacheKey,
+  createInitialXAAFlowState,
+  isXaaDcrClientSecretExpired,
+} from "./types.js";
 import {
   analyzeAsCompatibility,
   selectTokenEndpointAuthMethod,
@@ -1043,22 +1047,11 @@ export function createXAAStateMachine(
   // component is encodeURIComponent-escaped (which escapes ":") so a "::" inside
   // any component can't collide with the "::" delimiter between components.
   const dcrCacheKeyFor = (registrationEndpoint: string) =>
-    [
-      dcrCacheTargetKey ?? serverUrl,
+    buildXaaDcrCredentialCacheKey({
+      targetKey: dcrCacheTargetKey ?? serverUrl,
       registrationEndpoint,
-      currentState().scope ?? "",
-    ]
-      .map(encodeURIComponent)
-      .join("::");
-
-  const dcrSecretExpired = (creds: {
-    clientSecret?: string;
-    clientSecretExpiresAt?: number;
-  }) =>
-    Boolean(creds.clientSecret) &&
-    typeof creds.clientSecretExpiresAt === "number" &&
-    creds.clientSecretExpiresAt !== 0 &&
-    creds.clientSecretExpiresAt <= Math.floor(Date.now() / 1000);
+      scope: currentState().scope,
+    });
 
   const registerClientDynamically = async () => {
     const state = currentState();
@@ -1076,7 +1069,7 @@ export function createXAAStateMachine(
 
     const cacheKey = dcrCacheKeyFor(registrationEndpoint);
     const cached = dcrCredentialCache?.get(cacheKey);
-    if (cached && dcrSecretExpired(cached)) {
+    if (cached && isXaaDcrClientSecretExpired(cached)) {
       // The registered remote client still exists; only its secret died.
       // Replacing it means minting ANOTHER remote client, so gate that behind
       // the same "Register another client" confirmation as every other
@@ -2035,7 +2028,7 @@ export function createXAAStateMachine(
         // secret), so registering another is what recovery requires — and the
         // flag is what keeps the "Register another client" action visible, which
         // this error tells the user to use.
-        if (dcrSecretExpired(cached)) {
+        if (isXaaDcrClientSecretExpired(cached)) {
           if (cacheKey) dcrCredentialCache?.delete(cacheKey);
           machine.updateState({
             currentStep: "jwt_bearer_request",

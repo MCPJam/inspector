@@ -60,7 +60,9 @@ import {
   type SubjectIdentifierFormat,
 } from "@/shared/xaa.js";
 import {
+  buildXaaDcrCredentialCacheKey,
   createInitialXAAFlowState,
+  isXaaDcrClientSecretExpired,
   type XaaEphemeralDcrCredentials,
   type RegistrationStrategy,
   type XAAFlowState,
@@ -121,6 +123,25 @@ function buildFlowStateFromInput(
     ),
     ...(dcrRetryMayCreateDuplicate ? { dcrRetryMayCreateDuplicate: true } : {}),
   });
+}
+
+function buildXaaFlowConfigurationKey(
+  input: XAAFlowInput,
+  usesServerSideSecret: boolean
+): string {
+  return [
+    input.serverUrl.trim(),
+    input.authzServerIssuer.trim(),
+    input.clientId.trim(),
+    input.scope.trim(),
+    // Never include the secret itself. Presence is enough for the key; a
+    // replacement is handled by the successful server-config save signal.
+    usesServerSideSecret || Boolean(input.clientSecret.trim())
+      ? "confidential"
+      : "public",
+  ]
+    .map(encodeURIComponent)
+    .join("|");
 }
 
 // ── Per-person outcome recording (session-only) ─────────────────────────────
@@ -581,16 +602,10 @@ export function XAAFlowTab({
   });
   const runInput = target.runInput;
   const { targetKey, isTestable } = target;
-
-  // The positive-run unlock must be specific to the exact issuer the run
-  // exercised: switching issuer mode (local↔hosted), organization, issuer
-  // kind (org↔anonymous, e.g. guest→signed-in promotion), or policy mode
-  // changes the minted `iss` or the evaluator that ruled — a green run under
-  // one must NOT unlock negative tests under another, and a managed and an
-  // unmanaged (bypass) run must never cross-validate.
-  const runGateKey = `${targetKey}|${
-    hostedIssuerOptIn ? "hosted" : "local"
-  }|${organizationId ?? ""}|${hostedIssuerKind}|${policyMode ?? ""}`;
+  const flowConfigurationKey = buildXaaFlowConfigurationKey(
+    runInput,
+    target.usesServerSideSecret
+  );
 
   // ── Bar-server register prompt ───────────────────────────────────────
   // A managed-capable org running against a plain bar server: policy can't
@@ -700,6 +715,44 @@ export function XAAFlowTab({
       effectiveAssertionFormat
     )
   );
+  const [configurationSaveVersion, setConfigurationSaveVersion] = useState(0);
+
+  // Unlocks and scorecard results belong to the exact client identity the
+  // completed run exercised. Dynamic client ids come from the flow, not the
+  // saved server configuration, and can change after re-registration.
+  const scorecardClientId =
+    flowState.registrationStrategy === "preregistered"
+      ? runInput.clientId
+      : flowState.clientId ?? "";
+  const scorecardTokenEndpointAuthMethod =
+    flowState.registrationStrategy === "dcr"
+      ? flowState.tokenEndpointAuthMethod ?? ""
+      : "";
+  // A positive run unlocks only the exact issuer, policy context, client
+  // identity, auth method, and saved configuration that it exercised.
+  const runGateKey = [
+    targetKey,
+    hostedIssuerOptIn ? "hosted" : "local",
+    organizationId ?? "",
+    hostedIssuerKind,
+    policyMode ?? "",
+    flowState.registrationStrategy,
+    scorecardClientId,
+    scorecardTokenEndpointAuthMethod,
+    flowConfigurationKey,
+    configurationSaveVersion,
+  ].join("|");
+  // Person outcomes need a stable key while a dynamic run establishes its
+  // client ID. Dynamic identity changes are invalidated by the per-target
+  // registration generation below; the scorecard gate remains intentionally
+  // specific to the resolved client ID and auth method.
+  const personOutcomeKey = [
+    targetKey,
+    hostedIssuerOptIn ? "hosted" : "local",
+    organizationId ?? "",
+    hostedIssuerKind,
+    policyMode ?? "",
+  ].join("|");
 
   // The machine reads state through this ref (lazy getState). Keep it in
   // sync *synchronously* with every write so a run that resets and then
@@ -735,7 +788,7 @@ export function XAAFlowTab({
     () => new Set()
   );
 
-  // In-memory per-person outcomes, keyed `${runGateKey}|${personId}` so
+  // In-memory per-person outcomes, keyed `${personOutcomeKey}|${personId}` so
   // hosted/local/org variants never cross-contaminate. Session-only by
   // design (mirrors positiveRunTargets).
   const [personOutcomes, setPersonOutcomes] = useState<
@@ -815,7 +868,7 @@ export function XAAFlowTab({
     /** The run's target — the per-target generation is read against it at
      * recording time (never the currently-selected target). */
     targetKey: string;
-    runGateKey: string;
+    personOutcomeKey: string;
     negativeTestMode: NegativeTestMode;
     targetFingerprint: string;
   } | null>(null);
@@ -832,7 +885,7 @@ export function XAAFlowTab({
           personId: selectedPerson._id,
           personUpdatedAt: selectedPerson.updatedAt,
           targetKey,
-          runGateKey,
+          personOutcomeKey,
           negativeTestMode: runInput.negativeTestMode,
           targetFingerprint,
         }
@@ -852,7 +905,7 @@ export function XAAFlowTab({
     runInput.negativeTestMode,
     target.targetSource,
     targetKey,
-    runGateKey,
+    personOutcomeKey,
     targetFingerprint,
     selectedPerson,
     authServerModeForTelemetry,
@@ -870,13 +923,9 @@ export function XAAFlowTab({
         // The strategy the completed run actually used (state-authoritative).
         registration_strategy: flowStateRef.current.registrationStrategy,
       });
-      // A green run proves the user holds valid client credentials the AS
-      // issued — that authorizes broken-token testing against it. Only unlock
-      // for pre-registered runs though: a dcr/cimd run's negative tests would
-      // fire with the configured (often absent) client, not the identity the
-      // run established, so the scorecard stays disabled for those (see the
-      // scorecard memo) and must not be unlocked here either.
-      if (flowStateRef.current.registrationStrategy === "preregistered") {
+      // This PR enables dynamic scorecards for DCR only. Keep CIMD locked
+      // until its client-auth behavior is implemented and reviewed separately.
+      if (flowStateRef.current.registrationStrategy !== "cimd") {
         setPositiveRunTargets((current) => {
           if (current.has(runGateKey)) return current;
           const next = new Set(current);
@@ -969,7 +1018,7 @@ export function XAAFlowTab({
     }
     if (!outcome) return;
 
-    const key = `${ctx.runGateKey}|${ctx.personId}`;
+    const key = `${ctx.personOutcomeKey}|${ctx.personId}`;
     const next = outcome;
     // Last-write-wins: a person who failed and then succeeds after the user
     // fixes their AS must flip. Skip the setState only when the value is
@@ -995,6 +1044,7 @@ export function XAAFlowTab({
   // ── Negative-test scorecard input ───────────────────────────────────
   const scorecard = useMemo((): {
     input: NegativeTestsInput | null;
+    resolveInput?: () => NegativeTestsInput;
     unavailableReason?: string;
   } => {
     // A partial per-server override is a configuration error that blocks every
@@ -1018,19 +1068,91 @@ export function XAAFlowTab({
     const resource =
       flowState.resourceMetadata?.resource || runInput.serverUrl || "";
 
-    // The scorecard fires broken tokens using the run's CONFIGURED client
-    // (runInput.clientId), not the identity a dcr/cimd run established. For a
-    // dynamic run those don't match — often the config client_id is empty —
-    // so results would be about the wrong (or no) client and could read as an
-    // all-green pass that proves nothing. Disable it rather than mislead.
-    if (
-      flowState.registrationStrategy === "dcr" ||
-      flowState.registrationStrategy === "cimd"
-    ) {
+    if (flowState.registrationStrategy === "cimd") {
       return {
         input: null,
-        unavailableReason:
-          "Negative tests run against the pre-registered client credentials, not the client this DCR/CIMD run established — so they can't be trusted here. Switch to the pre-registered strategy to exercise the scorecard.",
+        unavailableReason: "CIMD negative tests are not supported yet.",
+      };
+    }
+
+    if (flowState.registrationStrategy === "dcr") {
+      const registrationEndpoint =
+        flowState.authzMetadata?.registration_endpoint;
+      if (
+        !flowState.tokenEndpoint ||
+        !flowState.clientId ||
+        !registrationEndpoint
+      ) {
+        return {
+          input: null,
+          unavailableReason:
+            "Run dynamic client registration first so the client credentials and token endpoint are known.",
+        };
+      }
+
+      const cacheKey = buildXaaDcrCredentialCacheKey({
+        targetKey,
+        registrationEndpoint,
+        scope: flowState.scope,
+      });
+      const credentials = dcrCredentialCacheRef.current.get(cacheKey);
+      if (!credentials || credentials.clientId !== flowState.clientId) {
+        return {
+          input: null,
+          unavailableReason:
+            "This session's dynamic registration credentials are no longer available. Register another client to run negative tests.",
+        };
+      }
+      if (isXaaDcrClientSecretExpired(credentials)) {
+        return {
+          input: null,
+          unavailableReason:
+            "This session's dynamic client secret has expired. Register another client to run negative tests.",
+        };
+      }
+      if (hostedIssuerOptIn && credentials.clientSecret) {
+        return {
+          input: null,
+          unavailableReason:
+            "Negative tests for confidential DCR clients are unavailable when using the hosted issuer.",
+        };
+      }
+      if (!audience || !resource) return { input: null };
+
+      const input: NegativeTestsInput = {
+        tokenEndpoint: flowState.tokenEndpoint,
+        audience,
+        resource,
+        subject: runInput.userId || undefined,
+        clientId: flowState.clientId,
+        tokenEndpointAuthMethod: credentials.tokenEndpointAuthMethod,
+        scope: runInput.scope || undefined,
+      };
+
+      return {
+        input,
+        // Re-read immediately before the request. A secret may expire or the
+        // cache may be cleared after render; never retain it in React state.
+        resolveInput: () => {
+          const current = dcrCredentialCacheRef.current.get(cacheKey);
+          if (!current || current.clientId !== input.clientId) {
+            throw new Error(
+              "This session's dynamic registration credentials are no longer available. Register another client and rerun the flow."
+            );
+          }
+          if (isXaaDcrClientSecretExpired(current)) {
+            throw new Error(
+              "This session's dynamic client secret has expired. Register another client and rerun the flow."
+            );
+          }
+          return {
+            ...input,
+            tokenEndpointAuthMethod: current.tokenEndpointAuthMethod,
+            ...(current.clientSecret
+              ? { clientSecret: current.clientSecret }
+              : {}),
+          };
+        },
       };
     }
 
@@ -1138,16 +1260,18 @@ export function XAAFlowTab({
     runInput,
     selectedRegistration,
     target,
+    targetKey,
     runsDynamicRegistration,
+    hostedIssuerOptIn,
   ]);
 
   // ── Single target-reset owner ──────────────────────────────────────
-  // One effect keyed on (targetKey, negativeTestMode, registrationStrategy,
-  // identityAssertionFormat, policyMode) rebuilds the flow when the resolved
-  // target or a run-defining mode changes. Guarded by value-compared refs;
-  // confirms via AlertDialog before discarding a busy or completed run.
-  // (lastAppliedTargetKey is declared with the registration-generation
-  // tracking above, which needs it earlier.)
+  // One effect keyed on the target and all run-defining configuration rebuilds
+  // the flow. Guarded by value-compared refs; confirms via AlertDialog before
+  // discarding a busy or completed run. (lastAppliedTargetKey is declared with
+  // the registration-generation tracking above, which needs it earlier.)
+  const lastAppliedFlowConfigurationKey = useRef<string | null>(null);
+  const lastAppliedConfigurationSaveVersion = useRef(0);
   const lastNegativeTestMode = useRef(runSettings.negativeTestMode);
   const lastAssertionFormat = useRef<IdentityAssertionFormat>(
     effectiveAssertionFormat
@@ -1173,6 +1297,8 @@ export function XAAFlowTab({
   });
   const [pendingReset, setPendingReset] = useState<{
     targetKey: string;
+    flowConfigurationKey: string;
+    configurationSaveVersion: number;
     negativeTestMode: NegativeTestMode;
     registrationStrategy: RegistrationStrategy;
     identityAssertionFormat: IdentityAssertionFormat;
@@ -1232,12 +1358,30 @@ export function XAAFlowTab({
   const applyTargetReset = useCallback(
     (
       nextTargetKey: string,
+      nextFlowConfigurationKey: string,
+      nextConfigurationSaveVersion: number,
       nextMode: NegativeTestMode,
       nextStrategy: RegistrationStrategy,
       nextAssertionFormat: IdentityAssertionFormat,
       nextPolicyMode: "managed" | "unmanaged" | undefined
     ) => {
+      const previousTargetKey = lastAppliedTargetKey.current;
       lastAppliedTargetKey.current = nextTargetKey;
+      const dcrConfigurationChanged =
+        previousTargetKey === nextTargetKey &&
+        lastAppliedFlowConfigurationKey.current !== null &&
+        lastAppliedFlowConfigurationKey.current !== nextFlowConfigurationKey;
+      if (dcrConfigurationChanged) {
+        const targetPrefix = `${encodeURIComponent(nextTargetKey)}::`;
+        for (const key of Array.from(dcrCredentialCacheRef.current.keys())) {
+          if (key.startsWith(targetPrefix)) {
+            dcrCredentialCacheRef.current.delete(key);
+          }
+        }
+      }
+      lastAppliedFlowConfigurationKey.current = nextFlowConfigurationKey;
+      lastAppliedConfigurationSaveVersion.current =
+        nextConfigurationSaveVersion;
       lastNegativeTestMode.current = nextMode;
       lastRegistrationStrategy.current = nextStrategy;
       lastAssertionFormat.current = nextAssertionFormat;
@@ -1251,9 +1395,13 @@ export function XAAFlowTab({
     const nextMode = runSettings.negativeTestMode;
     const nextStrategy = effectiveStrategy;
     const nextAssertionFormat = effectiveAssertionFormat;
+    const nextConfigurationSaveVersion = configurationSaveVersion;
     const nextPolicyMode = policyMode;
     if (
       lastAppliedTargetKey.current === targetKey &&
+      lastAppliedFlowConfigurationKey.current === flowConfigurationKey &&
+      lastAppliedConfigurationSaveVersion.current ===
+        nextConfigurationSaveVersion &&
       lastNegativeTestMode.current === nextMode &&
       lastRegistrationStrategy.current === nextStrategy &&
       lastAssertionFormat.current === nextAssertionFormat &&
@@ -1269,6 +1417,8 @@ export function XAAFlowTab({
     if (needsConfirm) {
       setPendingReset({
         targetKey,
+        flowConfigurationKey,
+        configurationSaveVersion: nextConfigurationSaveVersion,
         negativeTestMode: nextMode,
         registrationStrategy: nextStrategy,
         identityAssertionFormat: nextAssertionFormat,
@@ -1278,6 +1428,8 @@ export function XAAFlowTab({
     }
     applyTargetReset(
       targetKey,
+      flowConfigurationKey,
+      nextConfigurationSaveVersion,
       nextMode,
       nextStrategy,
       nextAssertionFormat,
@@ -1285,6 +1437,8 @@ export function XAAFlowTab({
     );
   }, [
     targetKey,
+    flowConfigurationKey,
+    configurationSaveVersion,
     runSettings.negativeTestMode,
     effectiveStrategy,
     effectiveAssertionFormat,
@@ -1429,7 +1583,7 @@ export function XAAFlowTab({
     void fetchXaaIdpUrls(
       controller.signal,
       organizationId,
-      hostedIssuerKind,
+      hostedIssuerKind
     ).then((urls) => {
       if (urls && !controller.signal.aborted) {
         setResolvedIssuerBaseUrl(urls.issuerBaseUrl);
@@ -1586,7 +1740,7 @@ export function XAAFlowTab({
 
   const outcomeForPerson = useCallback(
     (personId: string): XaaPersonOutcome | undefined => {
-      const record = personOutcomes.get(`${runGateKey}|${personId}`);
+      const record = personOutcomes.get(`${personOutcomeKey}|${personId}`);
       if (!record || record.targetFingerprint !== targetFingerprint) {
         return undefined;
       }
@@ -1610,7 +1764,7 @@ export function XAAFlowTab({
     },
     [
       personOutcomes,
-      runGateKey,
+      personOutcomeKey,
       targetFingerprint,
       registrationGeneration,
       people,
@@ -1841,6 +1995,18 @@ export function XAAFlowTab({
                     }
                   : null
               }
+              resolveInput={
+                scorecard.resolveInput
+                  ? () => ({
+                      ...scorecard.resolveInput!(),
+                      organizationId: organizationId ?? null,
+                      issuerKind: hostedIssuerKind,
+                      ...(hostedIssuerOptIn
+                        ? { issuerMode: "hosted" as const }
+                        : {}),
+                    })
+                  : undefined
+              }
               unlocked={positiveRunTargets.has(runGateKey)}
               unavailableReason={scorecard.unavailableReason}
               onResultsReady={expandScorecardForResults}
@@ -1959,6 +2125,7 @@ export function XAAFlowTab({
           // values) if the save rejects. Selection only follows a save that
           // didn't throw.
           await onSaveServerConfig?.(formData);
+          setConfigurationSaveVersion((version) => version + 1);
           onSelectServer?.(formData.name);
           // A bar server overrides any selected registration.
           setSelectedRegistrationId(null);
@@ -1987,6 +2154,10 @@ export function XAAFlowTab({
             // rebuilds from it — nothing is pinned to the discarded run.
             if (pendingReset) {
               lastAppliedTargetKey.current = pendingReset.targetKey;
+              lastAppliedFlowConfigurationKey.current =
+                pendingReset.flowConfigurationKey;
+              lastAppliedConfigurationSaveVersion.current =
+                pendingReset.configurationSaveVersion;
               lastNegativeTestMode.current = pendingReset.negativeTestMode;
               lastRegistrationStrategy.current =
                 pendingReset.registrationStrategy;
@@ -2000,10 +2171,10 @@ export function XAAFlowTab({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Switch target?</AlertDialogTitle>
+            <AlertDialogTitle>Reset flow?</AlertDialogTitle>
             <AlertDialogDescription>
-              The current run will be discarded and the flow reset for the new
-              target.
+              The current run will be discarded and rebuilt with the new
+              configuration.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -2013,6 +2184,8 @@ export function XAAFlowTab({
                 if (pendingReset) {
                   applyTargetReset(
                     pendingReset.targetKey,
+                    pendingReset.flowConfigurationKey,
+                    pendingReset.configurationSaveVersion,
                     pendingReset.negativeTestMode,
                     pendingReset.registrationStrategy,
                     pendingReset.identityAssertionFormat,
@@ -2022,7 +2195,7 @@ export function XAAFlowTab({
                 setPendingReset(null);
               }}
             >
-              Switch and reset
+              Switch and reset flow
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
