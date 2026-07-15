@@ -74,14 +74,27 @@ export const URL_WARNING_COPY: Record<ElicitationUrlWarning, string> = {
   "ip-host": "This link points at a raw IP address rather than a named domain.",
 };
 
-/** Split for display: the host is emphasized, everything else is muted. */
+/**
+ * Split for display: the host is emphasized, everything else is muted.
+ *
+ * `userinfo` is surfaced separately rather than dropped. Hiding it would break
+ * the promise this dialog makes — it shows the FULL url — and would be actively
+ * misleading next to the embedded-credentials warning: we'd be warning about a
+ * `user:pass@` segment the user cannot see. It renders in the muted prefix,
+ * never emphasized, so `https://example.com@evil.test` still reads as evil.test.
+ */
 export function splitUrlForDisplay(parsed: URL): {
   origin: string;
+  userinfo: string;
   host: string;
   rest: string;
 } {
+  const userinfo = parsed.username
+    ? `${parsed.username}${parsed.password ? `:${parsed.password}` : ""}@`
+    : "";
   return {
     origin: `${parsed.protocol}//`,
+    userinfo,
     host: parsed.host,
     rest: `${parsed.pathname}${parsed.search}${parsed.hash}`,
   };

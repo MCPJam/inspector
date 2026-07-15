@@ -1,9 +1,49 @@
 import type {
   HostedElicitationAction,
   HostedElicitationRequestEvent,
+  HostedElicitationUrlRequiredEvent,
 } from "@/shared/hosted-elicitation";
 import { ElicitationDialog } from "../ElicitationDialog";
 import { UrlElicitationConsent } from "./UrlElicitationConsent";
+
+/**
+ * A tool call failed with `-32042`: the server needs an out-of-band interaction
+ * finished before it can serve the request.
+ *
+ * Advisory — the call already failed, so nothing is waiting on an answer and
+ * there is no rendezvous. The user opens the URL, then retries (the tool result
+ * carries a retry hint for the model, and they can also just ask again).
+ *
+ * Renders the same consent surface as a live URL elicitation so the safety rules
+ * (full URL shown, no prefetch, domain emphasis, punycode warnings) hold on this
+ * path too — a URL is no safer for having arrived via an error.
+ */
+export function UrlElicitationRequiredDialog({
+  event,
+  onDismiss,
+}: {
+  event: HostedElicitationUrlRequiredEvent | null;
+  onDismiss: (toolCallId?: string) => void;
+}) {
+  const first = event?.elicitations[0];
+  if (!event || !first) return null;
+
+  return (
+    <UrlElicitationConsent
+      advisory
+      request={{
+        rendezvousId: first.elicitationId,
+        serverId: event.serverId,
+        serverName: event.serverName,
+        message:
+          first.message ??
+          "This tool needs you to finish something at the link below before it can run.",
+        url: first.url,
+      }}
+      onResponse={() => onDismiss(event.toolCallId)}
+    />
+  );
+}
 
 /**
  * Renders whichever elicitation UI the request's mode calls for.

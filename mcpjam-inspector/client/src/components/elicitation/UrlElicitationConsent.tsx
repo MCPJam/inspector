@@ -46,8 +46,9 @@ export interface UrlElicitationConsentProps {
   loading?: boolean;
   /**
    * Advisory mode: no server call is blocked on the answer (the -32042 path,
-   * where the tool already failed). Opening still works; there's just nothing
-   * to accept, so the footer reads as "open / close".
+   * where the tool already failed). There is nothing to decline, so that button
+   * is hidden — but `onResponse` still fires, and the parent decides what it
+   * means (there, dismissal).
    */
   advisory?: boolean;
 }
@@ -87,7 +88,7 @@ export function UrlElicitationConsent({
     win.opener = null;
     win.location.replace(analysis.parsed.href);
     setPopupBlocked(false);
-    if (!advisory) void onResponse("accept");
+    void onResponse("accept");
   };
 
   const copy = async () => {
@@ -108,8 +109,10 @@ export function UrlElicitationConsent({
       open
       onOpenChange={(next) => {
         // Dismissing without choosing is `cancel`, not `decline` — the spec
-        // distinguishes "no explicit choice" from an explicit refusal.
-        if (!next && !advisory) void onResponse("cancel");
+        // distinguishes "no explicit choice" from an explicit refusal. In
+        // advisory mode the parent reads this as dismissal; either way the
+        // dialog must always be closable.
+        if (!next) void onResponse("cancel");
       }}
     >
       <DialogContent className="sm:max-w-lg">
@@ -157,6 +160,11 @@ export function UrlElicitationConsent({
                 {/* Plain text, never an <a>: the user must read before they go. */}
                 <div className="max-h-24 overflow-auto break-all font-mono text-xs">
                   <span className="text-muted-foreground">{display.origin}</span>
+                  {display.userinfo && (
+                    <span className="text-muted-foreground">
+                      {display.userinfo}
+                    </span>
+                  )}
                   <span className="font-semibold text-foreground">
                     {display.host}
                   </span>

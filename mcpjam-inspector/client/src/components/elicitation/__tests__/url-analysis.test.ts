@@ -76,8 +76,25 @@ describe("splitUrlForDisplay", () => {
     const parsed = new URL("https://evil.test/login?next=https://example.com");
     expect(splitUrlForDisplay(parsed)).toEqual({
       origin: "https://",
+      userinfo: "",
       host: "evil.test",
       rest: "/login?next=https://example.com",
     });
+  });
+
+  it("surfaces userinfo instead of hiding it", () => {
+    // Dropping it would contradict both the full-url promise and the
+    // embedded-credentials warning shown right beside it.
+    expect(splitUrlForDisplay(new URL("https://example.com@evil.test/x"))).toEqual(
+      {
+        origin: "https://",
+        userinfo: "example.com@",
+        host: "evil.test",
+        rest: "/x",
+      },
+    );
+    expect(splitUrlForDisplay(new URL("https://u:p@evil.test/x")).userinfo).toBe(
+      "u:p@",
+    );
   });
 });

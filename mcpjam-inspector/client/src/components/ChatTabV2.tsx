@@ -25,7 +25,10 @@ import {
   ResizableHandle,
 } from "./ui/resizable";
 import { ElicitationDialog } from "@/components/ElicitationDialog";
-import { ElicitationRequestDialog } from "@/components/elicitation/ElicitationRequestDialog";
+import {
+  ElicitationRequestDialog,
+  UrlElicitationRequiredDialog,
+} from "@/components/elicitation/ElicitationRequestDialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -405,6 +408,8 @@ export function ChatTabV2({
     pendingElicitations,
     respondToElicitation,
     elicitationResponding,
+    urlElicitationRequired,
+    dismissUrlElicitationRequired,
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
     directVisibility: pendingDirectVisibility,
@@ -2766,9 +2771,18 @@ export function ChatTabV2({
               loading={elicitationLoading}
             />
             <ElicitationRequestDialog
+              // Keyed so a second request can't inherit the first's internal
+              // dialog state (popup-blocked notice, half-filled form).
+              key={pendingElicitations[0]?.rendezvousId ?? "none"}
               request={pendingElicitations[0] ?? null}
               onRespond={respondToElicitation}
               loading={elicitationResponding}
+            />
+            {/* -32042: a tool needs an out-of-band interaction finished first. */}
+            <UrlElicitationRequiredDialog
+              key={urlElicitationRequired[0]?.toolCallId ?? "no-url-required"}
+              event={urlElicitationRequired[0] ?? null}
+              onDismiss={dismissUrlElicitationRequired}
             />
           </div>
         </ResizablePanel>

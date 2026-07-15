@@ -114,8 +114,10 @@ describe("UrlElicitationConsent", () => {
     expect(screen.getByText(/look like a different/i)).toBeInTheDocument();
   });
 
-  it("advisory mode neither accepts nor offers decline", () => {
-    // The -32042 path: the tool already failed, so no server call is waiting.
+  it("advisory mode hides decline but still opens and reports", () => {
+    // The -32042 path: the tool already failed, so there's nothing to decline.
+    // onResponse still fires — the parent reads it as dismissal. An earlier
+    // cut suppressed it entirely, which made the dialog impossible to close.
     const location = { replace: vi.fn() };
     openSpy.mockReturnValue({ opener: {}, location });
     const onResponse = vi.fn();
@@ -128,7 +130,21 @@ describe("UrlElicitationConsent", () => {
     ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /open in new tab/i }));
-    expect(location.replace).toHaveBeenCalled();
-    expect(onResponse).not.toHaveBeenCalled();
+    expect(location.replace).toHaveBeenCalledWith(request.url);
+    expect(onResponse).toHaveBeenCalledWith("accept");
+  });
+
+  it("shows embedded credentials rather than hiding them", () => {
+    // The dialog promises the FULL url and warns that userinfo can disguise a
+    // destination — hiding the segment we warn about would be worse than useless.
+    render(
+      <UrlElicitationConsent
+        request={{ ...request, url: "https://example.com@evil.test/x" }}
+        onResponse={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("example.com@")).toBeInTheDocument();
+    expect(screen.getByText("evil.test")).toBeInTheDocument();
+    expect(screen.getByText(/disguise the real destination/i)).toBeInTheDocument();
   });
 });
