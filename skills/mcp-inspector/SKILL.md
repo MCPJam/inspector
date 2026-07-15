@@ -1,6 +1,6 @@
 ---
 name: mcp-inspector
-description: Interpret and use `mcpjam` probe, doctor, OAuth, apps conformance, tools, resources, and prompts output conservatively against MCP 2025-11-25. Use when interacting with MCP servers, executing tools, triaging findings, performing security reviews, deciding whether a CLI finding is real or overstated, or turning inspection output into an engineer-facing report with severity and confidence.
+description: Interpret and use `mcpjam` probe, doctor, OAuth, XAA (Cross-App Access / ID-JAG), apps conformance, tools, resources, and prompts output conservatively against MCP 2025-11-25. Use when interacting with MCP servers, executing tools, triaging findings, performing security reviews, debugging enterprise-managed authorization, deciding whether a CLI finding is real or overstated, or turning inspection output into an engineer-facing report with severity and confidence.
 ---
 
 # MCPJam CLI Investigation
@@ -61,8 +61,9 @@ When the user asks to investigate, audit, or triage, use the Investigation workf
   - Use `--require-render` when a skipped render should become a hard error instead of a warning.
 9. If a field may be CLI-added or SDK-normalized, read `references/cli-surface-notes.md` before concluding anything.
 10. If the claim depends on MCP semantics, read `references/mcp-2025-11-25-interpretation.md`.
-11. If the task involves security review, read `references/security-best-practices.md` for the full checklist and follow the security review workflow below.
-12. Write the result using the output contract below.
+11. If the claim involves Cross-App Access, ID-JAG, or enterprise-managed authorization, read `references/xaa-id-jag-interpretation.md` before triaging `xaa run` output.
+12. If the task involves security review, read `references/security-best-practices.md` for the full checklist and follow the security review workflow below.
+13. Write the result using the output contract below.
 
 ## Security review workflow
 
@@ -134,6 +135,7 @@ Use `pending` instead of manufacturing a `medium` or `high` security severity fr
 - `oauth metadata`, `oauth proxy`, `oauth debug-proxy`: exact endpoint and metadata inspection when conformance output looks surprising.
 - `oauth login`: obtain reusable credentials and verify the authenticated MCP path. Use `--credentials-out <path>` to save tokens to disk (mode 0600) so later connected commands can use `--credentials-file <path>` without manual token extraction; check `references/cli-surface-notes.md` for commands that require a non-expired access token. Use this when the goal is to inspect a server that requires OAuth, then follow it with connected commands rather than stopping at the login result.
 - `oauth conformance`, `oauth conformance-suite`: flow-level auth checks. Treat these as targeted probes, not a complete security review. Use `--credentials-out <path>` when a passing flow should hand credentials to later connected commands; use `--credentials-file <path>` after that instead of extracting tokens from JSON output. Raw JSON output redacts OAuth secrets by default. When `--conformance-checks` is enabled, the command can directly probe DCR non-loopback `http://` redirects, invalid client rejection, authorization-endpoint redirect mismatch handling, invalid bearer-token rejection at the MCP server, and token-endpoint redirect mismatch handling.
+- `xaa run`: headless Cross-App Access (ID-JAG) flow against an authorization server and MCP server — mint, redeem via JWT bearer grant, and authenticated MCP initialize. Use when the task involves enterprise-managed authorization or ID-JAG trust debugging. Requires `--issuer-base-url` to point at an origin publishing the CLI's local signing key (typically `mcpjam inspector start`); read `references/xaa-id-jag-interpretation.md` before triaging its output. These are targeted checks for the current ID-JAG draft, not a conformance suite; the negative-test scorecard (tampered ID-JAGs) lives in the Inspector UI, not the CLI.
 - `apps conformance`: server-side MCP Apps checks for `_meta.ui.resourceUri`, `ui://` resources, `resources/read`, HTML MIME and payload shape, and `_meta.ui` metadata. Use this for MCP Apps surface triage.
 - `server info`, `server capabilities`, `server validate`, `server ping`, `server export`: connected behavior after initialization and auth.
 - `tools list` and `tools call`, `resources list/read/templates`, `prompts list/get/list-multi`: direct post-connect capability checks. With `--ui`, `tools call` renders the completed tool result in Inspector and reports `inspectorRender` as UI command/render evidence.
@@ -190,6 +192,12 @@ For each claimed security-review finding, return:
 - Public unauthenticated access is not itself a finding. Check whether behavior matches advertised posture and whether exposed surfaces are safe by design.
 - Anonymous trial or rate-limited access is a posture note, not a separate severity finding.
 - When compounding findings, explain the compound attack path. Do not just list unrelated findings and call the combination worse.
+- Never triage an `xaa run` failure against the target server when `verify_issuer_publication` failed or the error is a bare connection failure with an empty `steps` array. Those are local issuer-setup problems: `--issuer-base-url` must serve the CLI's local signing key.
+- Never treat `not_advertised` capability evidence in `xaa run` output as a failure when redemption succeeded, and never treat advertisement as proof redemption would succeed. Advertisement is evidence; the token-endpoint response is the verdict. `unknown` (metadata key absent) is weaker evidence than `not_advertised` (key present without the value) — do not conflate them.
+- Never treat `idJag.verified: true` as proof the authorization server validated the assertion. It is the CLI verifying its own mint against its own issuer.
+- Never claim ID-JAG conformance or a secure XAA posture from one completed `xaa run`. It proves one happy path for one registration strategy.
+- Never describe `--assertion-format saml` as producing a SAML ID-JAG. It changes the identity-assertion leg and the `sub_id` claim; the ID-JAG is always a JWT. ID-JAG is an active IETF Internet-Draft — anchor MUST/SHOULD claims to the draft revision, not to an RFC.
+- Never report `[REDACTED]` values in `xaa run` output as missing data, and never ask for un-redacted output. Redaction is by design and survives server-reflected secrets.
 
 ## Reference map
 
@@ -197,5 +205,7 @@ For each claimed security-review finding, return:
   Use for command-specific caveats, artifact shapes, local enrichments, merged errors, and normalized empty arrays.
 - `references/mcp-2025-11-25-interpretation.md`
   Use for capability, lifecycle, transport, authorization, tools, resources, and prompts interpretation against the latest MCP spec.
+- `references/xaa-id-jag-interpretation.md`
+  Use for `xaa run` output: the three-party trust model, issuer prerequisites, capability-evidence semantics, registration-warning taxonomy, SAML axes, and severity calibration for Cross-App Access findings.
 - `references/security-best-practices.md`
   Use for security review checks mapped to CLI commands. Covers SSRF, confused deputy, PKCE, token passthrough, scope minimization, auth-posture checks, and session security. Source: https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices
