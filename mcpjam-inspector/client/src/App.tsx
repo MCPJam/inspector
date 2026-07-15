@@ -1370,7 +1370,8 @@ export function XAASetupRoute() {
   const { xaaEnabled, activeOrganizationId } = useAppRouteContext();
   // Same gates as the surfaces that link here: the debugger flag plus the
   // registration flag (the setup center manages registered resource apps).
-  if (xaaEnabled !== true) return null;
+  const registrationEnabled = useFeatureFlagEnabled("xaa-registration");
+  if (xaaEnabled !== true || registrationEnabled !== true) return null;
 
   return (
     <ErrorBoundary

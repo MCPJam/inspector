@@ -4,6 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { XAAResourceAppsSection } from "../XAAResourceAppsSection";
 import type { XaaResourceApp } from "@/lib/xaa/types";
 
+let flagValue: boolean | undefined = true;
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => flagValue,
+}));
+
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
 }));
@@ -55,6 +60,7 @@ const APP: XaaResourceApp = {
 
 describe("XAAResourceAppsSection", () => {
   beforeEach(() => {
+    flagValue = true;
     resourceApps = [];
     hookAuthenticated = true;
     myRole = "admin";
@@ -62,6 +68,18 @@ describe("XAAResourceAppsSection", () => {
   });
 
   describe("gating", () => {
+    it("renders nothing when the flag is false", () => {
+      flagValue = false;
+      render(<XAAResourceAppsSection organizationId={ORG_ID} />);
+      expect(screen.queryByText("Registered resource apps")).toBeNull();
+    });
+
+    it("renders nothing when the flag is undefined", () => {
+      flagValue = undefined;
+      render(<XAAResourceAppsSection organizationId={ORG_ID} />);
+      expect(screen.queryByText("Registered resource apps")).toBeNull();
+    });
+
     it("renders nothing when the hook gate is closed (local mode / logged out)", () => {
       hookAuthenticated = false;
       render(<XAAResourceAppsSection organizationId={ORG_ID} />);

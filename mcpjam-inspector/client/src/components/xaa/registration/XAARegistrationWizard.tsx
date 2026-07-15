@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -66,6 +67,9 @@ export function XAARegistrationWizard({
   prefill,
   onSaved,
 }: XAARegistrationWizardProps) {
+  // Hooks run unconditionally — the flag gate returns null at the bottom of
+  // the hook block, never before a hook call.
+  const registrationEnabled = useFeatureFlagEnabled("xaa-registration");
   const { upsert } = useXaaResourceApps(organizationId);
 
   // Project server catalog for the "start from an existing server" picker
@@ -122,6 +126,10 @@ export function XAARegistrationWizard({
       stepHeadingRef.current?.focus();
     }
   }, [step, open]);
+
+  if (registrationEnabled !== true) {
+    return null;
+  }
 
   const updateDraft = (updates: Partial<RegistrationDraft>) => {
     setDraft((current) => ({ ...current, ...updates }));
