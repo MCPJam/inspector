@@ -20,6 +20,21 @@ mcpjam xaa run \
   --client-id my-registered-client
 ```
 
+## Recommended: use with Agent Skills
+
+The easiest way to use the CLI is through the
+[MCPJam skill](https://github.com/MCPJam/inspector/tree/main/skills/mcp-inspector),
+which gives your agent full context on every command and workflow.
+
+```bash
+npx skills add mcpjam/inspector --skill mcp-inspector
+```
+
+Once installed, your agent will know how and when to invoke `mcpjam` commands
+automatically — and how to read `xaa run` output conservatively (advertisement
+is evidence, redemption is the verdict; an issuer it can't reach is your setup,
+not a server bug).
+
 ## The three parties
 
 Cross-App Access separates trust into three relationships that are easy to
