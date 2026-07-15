@@ -442,9 +442,9 @@ const negativeTestsSchema = z
     audience: z.string().trim().min(1),
     resource: z.string().trim().min(1),
     subject: z.string().trim().min(1).optional(),
-    // The subject's email. Optional and currently unused by the local mint;
-    // kept for forward compatibility with callers that send the full
-    // identity pair.
+    // The subject's email, minted into the ID-JAG next to `subject`. Optional,
+    // but a hosted run needs the full identity pair: its evaluator matches both
+    // claims exactly and denies the rest outright.
     email: z.string().trim().min(1).optional(),
     clientId: z.string().trim().min(1).optional(),
     scope: z.string().trim().min(1).optional(),
@@ -734,6 +734,21 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     if (path === "/negative-tests" && typeof body.clientSecret === "string") {
       return toJsonError(
         "Confidential DCR negative tests are unavailable with the hosted issuer",
+        { status: 400, code: "VALIDATION_ERROR" }
+      );
+    }
+    // Same shape for confidential CIMD: the signing key is local-only (hosted
+    // owns no confidential-CIMD private key), so a forwarded run could not
+    // produce the client_assertion. Refuse at the boundary with the real
+    // reason instead of letting hosted answer "not available on this
+    // deployment", which reads as a broken deployment rather than an
+    // unsupported combination.
+    if (
+      path === "/negative-tests" &&
+      body.tokenEndpointAuthMethod === "private_key_jwt"
+    ) {
+      return toJsonError(
+        "Confidential CIMD negative tests are unavailable with the hosted issuer",
         { status: 400, code: "VALIDATION_ERROR" }
       );
     }
@@ -1548,6 +1563,13 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           {
             issuer,
             subject,
+            // Minted alongside `subject`: a hosted evaluator matches BOTH
+            // claims exactly, so omitting the email gets every case denied on
+            // identity before the intended mutation is ever evaluated — the
+            // whole scorecard would read green without testing anything. The
+            // mutation modes rely on it too (missing_claims drops it,
+            // unknown_sub rewrites it), which they can't do if it's absent.
+            email: parsed.email,
             audience: parsed.audience,
             resource: parsed.resource,
             clientId: resolvedClientId,

@@ -648,11 +648,58 @@ describe("POST /negative-tests", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  // A hosted evaluator matches subject AND email exactly. Minting without the
+  // email gets every case denied on identity before its mutation is evaluated —
+  // 11 rejections that would score as 11 passes.
+  it("mints the full identity pair into the assertion", async () => {
+    // Params are typed so mock.calls carries the request tuple the assertions
+    // below read back.
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await buildApp().request("/api/web/xaa/negative-tests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...INLINE_BODY,
+        subject: "user-42",
+        email: "person@example.com",
+      }),
+    });
+    expect(response.status).toBe(200);
+
+    // Read the claims off the wire rather than trusting the request body.
+    const assertions = fetchMock.mock.calls.map(([, init]) =>
+      decodeJwtPayload(
+        new URLSearchParams(String(init?.body)).get("assertion") as string
+      )
+    );
+    expect(assertions).toHaveLength(11);
+
+    // Most modes leave the email intact; missing_claims drops it and
+    // unknown_sub rewrites it — mutations that can only happen to a real email.
+    expect(
+      assertions.filter((claims) => claims.email === "person@example.com")
+        .length
+    ).toBeGreaterThan(0);
+    expect(
+      assertions.some((claims) =>
+        String(claims.email).endsWith("@unknown.invalid")
+      )
+    ).toBe(true);
+  });
+
   // Public CIMD: the client_id is the metadata document URL and there is no
   // secret to present.
   it("uses a public CIMD URL client_id without sending a secret", async () => {
     const fetchMock = vi.fn(
-      async () =>
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
         new Response(JSON.stringify({ error: "invalid_grant" }), {
           status: 400,
           headers: { "content-type": "application/json" },
@@ -719,7 +766,7 @@ describe("POST /negative-tests", () => {
 
   it("signs a fresh private_key_jwt client_assertion for every confidential CIMD case", async () => {
     const fetchMock = vi.fn(
-      async () =>
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
         new Response(JSON.stringify({ error: "invalid_grant" }), {
           status: 400,
           headers: { "content-type": "application/json" },
@@ -895,6 +942,65 @@ describe("hosted-issuer forwarding on the local router", () => {
     // The opt-in fields are stripped before the upstream call.
     const forwarded = JSON.parse(String(init.body));
     expect(forwarded).toEqual({ userId: "user-12345" });
+  });
+
+  // The confidential-CIMD signing key is local-only, so a forwarded run could
+  // never sign the client_assertion. Refused at the boundary, like confidential
+  // DCR, rather than dead-ending on hosted's "no provider" 400.
+  it("refuses to forward confidential CIMD negative tests to the hosted issuer", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await buildApp().request("/api/mcp/xaa/negative-tests", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer workos-token",
+      },
+      body: JSON.stringify({
+        audience: "https://auth.example.com",
+        resource: "https://mcp.example.com",
+        tokenEndpoint: "https://auth.example.com/oauth/token",
+        clientId: "https://localhost/.well-known/oauth/xaa-cimd/AbC123",
+        tokenEndpointAuthMethod: "private_key_jwt",
+        issuerMode: "hosted",
+        organizationId: "org_123",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("Confidential CIMD"),
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still forwards public CIMD negative tests to the hosted issuer", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ results: [], failures: 0 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await buildApp().request("/api/mcp/xaa/negative-tests", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer workos-token",
+      },
+      body: JSON.stringify({
+        audience: "https://auth.example.com",
+        resource: "https://mcp.example.com",
+        tokenEndpoint: "https://auth.example.com/oauth/token",
+        clientId: "https://app.mcpjam.com/.well-known/oauth/client.json",
+        tokenEndpointAuthMethod: "none",
+        issuerMode: "hosted",
+        organizationId: "org_123",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("forwards issuerKind:anonymous mints to the /g/ hosted endpoint", async () => {

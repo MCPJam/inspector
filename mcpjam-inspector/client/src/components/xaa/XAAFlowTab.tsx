@@ -565,10 +565,14 @@ export function XAAFlowTab({
     flowState.registrationStrategy === "preregistered"
       ? runInput.clientId
       : flowState.clientId ?? "";
+  // Every dynamic strategy establishes its own auth method (DCR from the
+  // registration response, CIMD from the document it validated), and the
+  // method is part of what a run proved. Pre-registered keeps it out: its
+  // method comes from saved config, already covered by flowConfigurationKey.
   const scorecardTokenEndpointAuthMethod =
-    flowState.registrationStrategy === "dcr"
-      ? flowState.tokenEndpointAuthMethod ?? ""
-      : "";
+    flowState.registrationStrategy === "preregistered"
+      ? ""
+      : flowState.tokenEndpointAuthMethod ?? "";
   // A positive run unlocks only the exact issuer, client identity, auth
   // method, and saved configuration that it exercised.
   const runGateKey = [
@@ -888,6 +892,20 @@ export function XAAFlowTab({
           input: null,
           unavailableReason:
             "Run the flow first so the client identity and token endpoint are known.",
+        };
+      }
+      // Mirrors the confidential-DCR rule below: the confidential-CIMD signing
+      // key exists only on the local inspector, so a hosted-issuer run (which
+      // forwards the whole run server-to-server) could never sign the
+      // client_assertion. Say so here rather than letting the forward 400.
+      if (
+        hostedIssuerOptIn &&
+        flowState.tokenEndpointAuthMethod === "private_key_jwt"
+      ) {
+        return {
+          input: null,
+          unavailableReason:
+            "Negative tests for confidential CIMD clients are unavailable when using the hosted issuer.",
         };
       }
       if (!audience || !resource) return { input: null };
