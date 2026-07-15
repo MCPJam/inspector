@@ -312,7 +312,7 @@ export function ClientConfigEditor({
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor={`${reactId}-hostStyle`}>Host style</Label>
+              <Label htmlFor={`${reactId}-hostStyle`}>Client style</Label>
               <Select
                 value={value.hostStyle}
                 onValueChange={(next) =>
@@ -475,7 +475,7 @@ export function ClientConfigEditor({
 
         {owner !== "connection-only" ? (
           <div className="grid gap-2">
-            <Label>Host context (JSON)</Label>
+            <Label>Client context (JSON)</Label>
             <JsonRecordEditor
               value={value.hostContext}
               onChange={(hostContext) => update({ hostContext })}
@@ -1331,14 +1331,14 @@ function McpProfileSandboxAttrsEditor({
           <Switch
             checked={isEnabled}
             onCheckedChange={setEnabled}
-            aria-label="Model host sandbox tokens"
+            aria-label="Model client sandbox tokens"
           />
         </div>
       </div>
       <p className="text-xs text-muted-foreground">
         {isEnabled
-          ? "Profile is authoritative: the iframe gets allow-scripts / allow-same-origin (spec-mandated) plus exactly the tokens checked below. Leave everything off to model a host that emits the spec minimum only."
-          : "Using the inspector's legacy permissive sandbox default. Toggle on to model the real host's emitted sandbox= tokens — empty = spec minimum only."}
+          ? "Profile is authoritative: the iframe gets allow-scripts / allow-same-origin (spec-mandated) plus exactly the tokens checked below. Leave everything off to model a client that emits the spec minimum only."
+          : "Using the inspector's legacy permissive sandbox default. Toggle on to model the real client's emitted sandbox= tokens — empty = spec minimum only."}
       </p>
       <div
         className={`flex flex-wrap gap-1 ${
@@ -1548,14 +1548,14 @@ function McpProfileAllowFeaturesEditor({
           <Switch
             checked={isEnabled}
             onCheckedChange={setEnabled}
-            aria-label="Model host allow features"
+            aria-label="Model client allow features"
           />
         </div>
       </div>
       <p className="text-xs text-muted-foreground">
         {isEnabled
-          ? "Profile is authoritative: the outer iframe's allow= is the 4 spec permissions (above) plus exactly the features listed below. Leave empty to model a host that grants only the spec features."
-          : "Using the inspector's legacy outer-iframe allow= default (adds local-network-access / midi on top of spec permissions). Toggle on to model the real host's emitted allow= — empty = spec permissions only."}
+          ? "Profile is authoritative: the outer iframe's allow= is the 4 spec permissions (above) plus exactly the features listed below. Leave empty to model a client that grants only the spec features."
+          : "Using the inspector's legacy outer-iframe allow= default (adds local-network-access / midi on top of spec permissions). Toggle on to model the real client's emitted allow= — empty = spec permissions only."}
       </p>
       <div className={isEnabled ? "" : "opacity-50 pointer-events-none"}>
         {rows.length === 0 ? (

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getXAAPhaseNumber,
+  getXAAStepInfo,
   XAA_PHASE_ORDER,
   XAA_PHASES,
   XAA_STEP_METADATA,
@@ -58,5 +59,78 @@ describe("XAA phase metadata", () => {
         m.includes("Identity Assertion JWT Authorization Grant")
       )
     ).toBe(true);
+  });
+});
+
+describe("identity assertion format overrides", () => {
+  const overriddenSteps = [
+    "user_authentication",
+    "received_identity_assertion",
+    "token_exchange_request",
+  ] as const;
+
+  it("returns the base metadata when no format is passed (back-compat)", () => {
+    for (const step of XAA_STEP_ORDER) {
+      expect(getXAAStepInfo(step)).toEqual(XAA_STEP_METADATA[step]);
+    }
+  });
+
+  it("returns the base metadata for the oidc format", () => {
+    for (const step of XAA_STEP_ORDER) {
+      expect(getXAAStepInfo(step, "oidc")).toEqual(XAA_STEP_METADATA[step]);
+    }
+  });
+
+  it("overrides only the three identity-leg steps for saml", () => {
+    for (const step of XAA_STEP_ORDER) {
+      const info = getXAAStepInfo(step, "saml");
+      if ((overriddenSteps as readonly string[]).includes(step)) {
+        expect(info.title).not.toBe(XAA_STEP_METADATA[step].title);
+        expect(info.summary).not.toBe(XAA_STEP_METADATA[step].summary);
+        // Phase membership is shared; copy is format-accurate. No SAML-flow
+        // wording may say "ID token", and it must not claim a real SP-initiated
+        // SSO round-trip (the mock issues the assertion directly).
+        expect(info.phase).toBe(XAA_STEP_METADATA[step].phase);
+        const copy = [
+          info.title,
+          info.summary,
+          ...(info.teachableMoments ?? []),
+        ].join(" ");
+        expect(copy).not.toMatch(/ID token/i);
+        expect(copy).not.toMatch(/SP-initiated/i);
+      } else {
+        expect(info).toEqual(XAA_STEP_METADATA[step]);
+      }
+    }
+  });
+
+  it("names SAML in the saml override titles/summaries", () => {
+    for (const step of overriddenSteps) {
+      const info = getXAAStepInfo(step, "saml");
+      expect(`${info.title} ${info.summary}`).toMatch(/SAML/);
+    }
+  });
+
+  it("keeps the sso and token_exchange phase copy format-neutral", () => {
+    for (const phase of ["sso", "token_exchange"] as const) {
+      // The phase headers render once regardless of format, so they must not
+      // hard-code either assertion format in the title.
+      expect(XAA_PHASES[phase].title).not.toMatch(/ID token|SAML/);
+      expect(XAA_PHASES[phase].title).toContain("identity assertion");
+    }
+  });
+});
+
+describe("dynamic registration steps", () => {
+  it("keeps all four strategy-specific steps in the bootstrap phase", () => {
+    for (const step of [
+      "request_client_registration",
+      "received_client_credentials",
+      "fetch_client_metadata_document",
+      "received_client_metadata",
+    ] as const) {
+      expect(XAA_STEP_ORDER).toContain(step);
+      expect(XAA_STEP_METADATA[step].phase).toBe("bootstrap");
+    }
   });
 });

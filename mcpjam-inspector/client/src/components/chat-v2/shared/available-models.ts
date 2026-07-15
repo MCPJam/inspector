@@ -1,7 +1,6 @@
 import type { ProviderTokens } from "@/hooks/use-ai-provider-keys";
 import {
   isMCPJamGuestAllowedModel,
-  isMCPJamProvidedModel,
   type ModelDefinition,
 } from "@/shared/types";
 import type { CustomProvider } from "@mcpjam/sdk/browser";
@@ -9,6 +8,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import {
   buildAvailableModels,
   buildAvailableModelsFromOrgConfig,
+  isMCPJamProvidedModelMenuItem,
   type OrgVisibleConfig,
 } from "./model-helpers";
 
@@ -25,13 +25,16 @@ export const GUEST_LOCKED_MODEL_REASON =
  */
 export function applyGuestModelLocks(
   models: ModelDefinition[],
-  isAuthenticated: boolean,
+  isAuthenticated: boolean
 ): ModelDefinition[] {
   if (isAuthenticated) return models;
 
   return models.map((model) => {
     const modelId = String(model.id);
-    if (!isMCPJamProvidedModel(modelId) || isMCPJamGuestAllowedModel(modelId)) {
+    // Prefer the catalog-sourced `guestAllowed` flag; fall back to the static
+    // guest allow-list for models without it. Unknown → guest-gated (locked).
+    const guestAllowed = model.guestAllowed ?? isMCPJamGuestAllowedModel(modelId);
+    if (!isMCPJamProvidedModelMenuItem(model) || guestAllowed) {
       return model;
     }
 
@@ -43,6 +46,34 @@ export function applyGuestModelLocks(
   });
 }
 
+export const OUT_OF_CREDITS_MODEL_REASON =
+  "You're out of credits. Top up or use your own key.";
+
+/**
+ * Once the org/guest is out of MCPJam credits, MCPJam-provided ("free")
+ * models can't run — show them locked (grayed + tooltip) instead of letting
+ * the user pick one and only discover the limit on send. BYOK/custom and
+ * org-configured provider models stay enabled (that's the way out). Mirrors
+ * applyGuestModelLocks.
+ */
+export function applyOutOfCreditsLocks(
+  models: ModelDefinition[],
+  outOfCredits: boolean
+): ModelDefinition[] {
+  if (!outOfCredits) return models;
+
+  return models.map((model) => {
+    if (!isMCPJamProvidedModelMenuItem(model)) {
+      return model;
+    }
+    return {
+      ...model,
+      disabled: true,
+      disabledReason: OUT_OF_CREDITS_MODEL_REASON,
+    };
+  });
+}
+
 /**
  * Append locally-detected Ollama models that the base list doesn't already
  * contain (e.g. org-managed lists never include the user's local daemon).
@@ -50,14 +81,14 @@ export function applyGuestModelLocks(
 export function appendDetectedLocalOllamaModels(
   models: ModelDefinition[],
   isOllamaRunning: boolean,
-  ollamaModels: ModelDefinition[],
+  ollamaModels: ModelDefinition[]
 ): ModelDefinition[] {
   if (!isOllamaRunning || ollamaModels.length === 0) return models;
   return models.concat(
     ollamaModels.filter(
       (ollamaModel) =>
-        !models.some((model) => String(model.id) === String(ollamaModel.id)),
-    ),
+        !models.some((model) => String(model.id) === String(ollamaModel.id))
+    )
   );
 }
 
@@ -78,6 +109,14 @@ export function composeAvailableModels(params: {
   getOpenRouterSelectedModels: () => string[];
   getAzureBaseUrl: () => string;
   customProviders: CustomProvider[];
+  /** Lock MCPJam-provided ("free") models when the org/guest has 0 credits. */
+  outOfCredits?: boolean;
+  /**
+   * The hosted ("free") model source from the backend catalog. When omitted,
+   * composition falls back to the static `SUPPORTED_MODELS` hosted subset —
+   * so this stays a drop-in for any caller that hasn't wired the catalog yet.
+   */
+  hostedCatalog?: ModelDefinition[];
 }): ModelDefinition[] {
   const {
     orgConfig,
@@ -88,16 +127,21 @@ export function composeAvailableModels(params: {
     getOpenRouterSelectedModels,
     getAzureBaseUrl,
     customProviders,
+    outOfCredits = false,
+    hostedCatalog,
   } = params;
 
   if ((orgConfig?.providers.length ?? 0) > 0) {
-    const orgModels = buildAvailableModelsFromOrgConfig(orgConfig);
+    const orgModels = buildAvailableModelsFromOrgConfig(orgConfig, hostedCatalog);
     const orgModelsWithLocalOllama = appendDetectedLocalOllamaModels(
       orgModels,
       isOllamaRunning,
-      ollamaModels,
+      ollamaModels
     );
-    return applyGuestModelLocks(orgModelsWithLocalOllama, isAuthenticated);
+    return applyOutOfCreditsLocks(
+      applyGuestModelLocks(orgModelsWithLocalOllama, isAuthenticated),
+      outOfCredits
+    );
   }
 
   const localModels = buildAvailableModels({
@@ -107,12 +151,11 @@ export function composeAvailableModels(params: {
     ollamaModels,
     getAzureBaseUrl,
     customProviders,
+    hostedCatalog,
   });
-  const visibleModels = applyGuestModelLocks(localModels, isAuthenticated);
-  if (HOSTED_MODE) {
-    return visibleModels.filter((model) =>
-      isMCPJamProvidedModel(String(model.id)),
-    );
-  }
-  return visibleModels;
+  const guestLockedModels = applyGuestModelLocks(localModels, isAuthenticated);
+  const visibleModels = HOSTED_MODE
+    ? guestLockedModels.filter((model) => isMCPJamProvidedModelMenuItem(model))
+    : guestLockedModels;
+  return applyOutOfCreditsLocks(visibleModels, outOfCredits);
 }

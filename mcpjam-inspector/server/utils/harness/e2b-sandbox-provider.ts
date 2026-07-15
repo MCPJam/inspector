@@ -111,13 +111,14 @@ export function createE2BHarnessSandboxProvider(
   // (`pnpm install`). Background `spawn` is not subject to this cap.
   const commandTimeoutMs = opts.commandTimeoutMs ?? 10 * 60_000;
 
-  return {
-    specificationVersion: "harness-sandbox-v1",
-    providerId: "mcpjam-e2b",
-    // Single-port pool — the bridge leases this one port.
-    bridgePorts: [bridgePort],
-
-    createSession: async () => {
+  // Connect to the host's persistent computer and build a session bound to it.
+  // Shared by createSession (fresh) and resumeSession (reattach): for our E2B
+  // provider both are the same operation — reconnect to the SAME long-lived box.
+  // On resume the Claude Code adapter rehydrates its thread from the workdir
+  // (which persists on the box) using the `resumeFrom` state; our provider just
+  // has to supply the sandbox connection.
+  const connectSession =
+    async (): Promise<HarnessV1NetworkSandboxSession> => {
       // Reuse the host's existing computer. It must already be awake — the
       // caller wakes it via the control plane (`ensureComputerReady`) before
       // resolving the sandboxId. We never create or kill a box here.
@@ -305,6 +306,22 @@ export function createE2BHarnessSandboxProvider(
       };
 
       return session;
-    },
+    };
+
+  return {
+    specificationVersion: "harness-sandbox-v1",
+    providerId: "mcpjam-e2b",
+    // Single-port pool — the bridge leases this one port.
+    bridgePorts: [bridgePort],
+
+    createSession: () => connectSession(),
+
+    // Reattach for multi-turn continuity. The harness only invokes this when a
+    // turn passes `resumeFrom`; presence of this method is the capability the
+    // agent checks (`_acquireSandbox` throws HarnessCapabilityUnsupportedError
+    // otherwise). We ignore the harness `sessionId` — the box is the project's
+    // single computer resolved per-turn via the control plane — and reconnect;
+    // the Claude Code adapter restores the thread from the workdir.
+    resumeSession: () => connectSession(),
   };
 }

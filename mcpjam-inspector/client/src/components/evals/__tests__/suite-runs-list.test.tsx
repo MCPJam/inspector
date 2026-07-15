@@ -96,7 +96,7 @@ describe("SuiteRunsList run-group rendering", () => {
 
     // Parent row visible.
     expect(screen.getByText(/Run group g/i)).toBeInTheDocument();
-    expect(screen.getByText(/2 hosts/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 clients/i)).toBeInTheDocument();
 
     // Children NOT visible until expanded — assert by run id label.
     expect(
@@ -192,7 +192,48 @@ describe("SuiteRunsList run-group rendering", () => {
 
     // No parent row markers at all.
     expect(screen.queryByText(/Run group g/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/hosts/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/clients/i)).not.toBeInTheDocument();
+  });
+
+  it("shows cancelled directly on standalone run rows", () => {
+    const run = makeRun({
+      _id: "cancelled0",
+      status: "cancelled",
+      result: "cancelled",
+      completedAt: 2_000,
+    });
+
+    renderWithProviders(
+      <SuiteRunsList runs={[run]} allIterations={[]} onRunClick={vi.fn()} />,
+    );
+
+    expect(screen.getByLabelText(/Open run cancelle/i)).toBeInTheDocument();
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+  });
+
+  it("shows cancelled directly on run group rows", () => {
+    const runs: EvalSuiteRun[] = [
+      makeRun({
+        _id: "cancelAaa",
+        runGroupId: "g-cancel",
+        namedHostId: "host-a",
+        status: "cancelled",
+        result: "cancelled",
+      }),
+      makeRun({
+        _id: "cancelBbb",
+        runGroupId: "g-cancel",
+        namedHostId: "host-b",
+        status: "cancelled",
+        result: "cancelled",
+      }),
+    ];
+
+    renderWithProviders(
+      <SuiteRunsList runs={runs} allIterations={[]} onRunClick={vi.fn()} />,
+    );
+
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
   });
 
   it("expanding a group reveals its child runs", async () => {

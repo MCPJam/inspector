@@ -31,7 +31,7 @@ import {
  */
 function resolveNormalized(
   message: string | undefined,
-  normalized: NormalizedError | undefined,
+  normalized: NormalizedError | undefined
 ): NormalizedError | undefined {
   if (isNormalizedError(normalized)) return normalized;
   if (!message) return undefined;
@@ -41,11 +41,11 @@ function resolveNormalized(
 const setStatus = (
   server: ServerWithName,
   status: ConnectionStatus,
-  patch: Partial<ServerWithName> = {},
+  patch: Partial<ServerWithName> = {}
 ): ServerWithName => ({ ...server, connectionStatus: status, ...patch });
 
 const buildProjectServerProjection = (
-  server: ServerWithName,
+  server: ServerWithName
 ): ServerWithName => ({
   name: server.name,
   config: server.config,
@@ -57,10 +57,54 @@ const buildProjectServerProjection = (
     ? { initializationInfo: server.initializationInfo }
     : {}),
   ...(server.useOAuth === undefined ? {} : { useOAuth: server.useOAuth }),
+  ...(server.useXaa === undefined ? {} : { useXaa: server.useXaa }),
+  ...(server.authServerMode === undefined
+    ? {}
+    : { authServerMode: server.authServerMode }),
+  ...(server.xaaAuthzIssuer === undefined
+    ? {}
+    : { xaaAuthzIssuer: server.xaaAuthzIssuer }),
+  ...(server.xaaAllowPathScopedIssuer === undefined
+    ? {}
+    : { xaaAllowPathScopedIssuer: server.xaaAllowPathScopedIssuer }),
+  ...(server.xaaSubject === undefined ? {} : { xaaSubject: server.xaaSubject }),
+  ...(server.xaaEmail === undefined ? {} : { xaaEmail: server.xaaEmail }),
+  ...(server.xaaIdentityAssertionFormat === undefined
+    ? {}
+    : { xaaIdentityAssertionFormat: server.xaaIdentityAssertionFormat }),
+  ...(server.registrationMode === undefined
+    ? {}
+    : { registrationMode: server.registrationMode }),
+  ...(server.authMethod === undefined
+    ? {}
+    : { authMethod: server.authMethod }),
+  ...(server.hasClientSecret === undefined
+    ? {}
+    : { hasClientSecret: server.hasClientSecret }),
+  ...(server.hasEnv === undefined ? {} : { hasEnv: server.hasEnv }),
+  ...(server.hasHeaders === undefined ? {} : { hasHeaders: server.hasHeaders }),
+  ...(server.hasBearerToken === undefined
+    ? {}
+    : { hasBearerToken: server.hasBearerToken }),
   ...(server.oauthFlowProfile
     ? { oauthFlowProfile: server.oauthFlowProfile }
     : {}),
 });
+
+const redactionFlagsFromConfig = (
+  config: ServerWithName["config"] | undefined
+): Partial<ServerWithName> => {
+  if (!config || typeof config !== "object") {
+    return {};
+  }
+
+  const record = config as Record<string, unknown>;
+  return {
+    ...(record.hasEnv === true ? { hasEnv: true } : {}),
+    ...(record.hasHeaders === true ? { hasHeaders: true } : {}),
+    ...(record.hasBearerToken === true ? { hasBearerToken: true } : {}),
+  };
+};
 
 export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
@@ -169,7 +213,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             lastError: action.error,
             lastNormalizedError: resolveNormalized(
               action.error,
-              action.normalized,
+              action.normalized
             ),
             lastOAuthTrace: action.oauthTrace,
           }),
@@ -228,7 +272,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         },
         selectedServer: nextSelected,
         selectedMultipleServers: state.selectedMultipleServers.filter(
-          (n) => n !== action.name,
+          (n) => n !== action.name
         ),
       };
     }
@@ -244,7 +288,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         selectedServer:
           state.selectedServer === action.name ? "none" : state.selectedServer,
         selectedMultipleServers: state.selectedMultipleServers.filter(
-          (n) => n !== action.name,
+          (n) => n !== action.name
         ),
         projects: {
           ...state.projects,
@@ -272,6 +316,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             ...server,
             connectionStatus: agentInfo.status,
             ...(agentInfo.config ? { config: agentInfo.config } : {}),
+            ...redactionFlagsFromConfig(agentInfo.config),
           };
         } else {
           updated[name] = { ...server, connectionStatus: "disconnected" };
@@ -294,12 +339,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             connectionStatus: agentInfo.status,
             retryCount: 0,
             enabled: true,
+            ...redactionFlagsFromConfig(agentInfo.config),
           };
         }
 
         if (!projectServers[agentInfo.id]) {
           projectServers[agentInfo.id] = buildProjectServerProjection(
-            updated[agentInfo.id],
+            updated[agentInfo.id]
           );
           shouldUpdateProject = true;
         }
@@ -464,8 +510,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     }
 
     case "DELETE_PROJECT": {
-      const { [action.projectId]: _, ...remainingProjects } =
-        state.projects;
+      const { [action.projectId]: _, ...remainingProjects } = state.projects;
       return {
         ...state,
         projects: remainingProjects,
@@ -482,7 +527,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         Object.entries(targetProject.servers).map(([name, server]) => [
           name,
           { ...server, connectionStatus: "disconnected" as ConnectionStatus },
-        ]),
+        ])
       );
 
       return {
@@ -499,7 +544,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         Object.entries(state.projects).map(([id, project]) => [
           id,
           { ...project, isDefault: id === action.projectId },
-        ]),
+        ])
       );
       return {
         ...state,

@@ -428,6 +428,14 @@ describe("web routes — evals", () => {
     expect(prepareEvalRunMock.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
         ...runSuiteBody,
+        // The wire transform projects this legacy body (query/expectedToolCalls,
+        // no `steps`) onto the steps-first contract before prepareEvalRun runs.
+        tests: [
+          expect.objectContaining({
+            ...runSuiteBody.tests[0],
+            steps: [{ id: "step-1-prompt", kind: "prompt", prompt: "Hello" }],
+          }),
+        ],
         serverNames: ["Server One"],
         convexAuthToken: token,
       }),

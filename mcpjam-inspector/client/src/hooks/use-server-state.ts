@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, type Dispatch } from "react";
 import { useConvex } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import type {
   HttpServerConfig,
   MCPServerConfig,
   NormalizedError,
 } from "@mcpjam/sdk/browser";
-import { isKnownProtocolVersion } from "@mcpjam/sdk/browser";
+import {
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+} from "@mcpjam/sdk/browser";
+import { normalizeRegistrationMode } from "@/shared/xaa.js";
 import type {
   AppAction,
   AppState,
@@ -29,7 +33,6 @@ import { toMCPConfig } from "@/state/server-helpers";
 import {
   completeHostedOAuthCallback,
   handleOAuthCallback,
-  getStoredTokens,
   clearOAuthData,
   initiateOAuth,
   isElectronMcpCallbackState,
@@ -41,11 +44,19 @@ import {
 } from "@/lib/apis/hosted-oauth-import-tokens-api";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import {
+  autoOAuthEscalation,
+  confirmAutoOAuthEscalation,
+  type AutoEscalationIdentity,
+} from "@/lib/oauth/auto-oauth-escalation";
+import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
+  resolveHostedOAuthReturnPath,
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
 import { HOSTED_MODE } from "@/lib/config";
+import { isPrivateNetworkUrl } from "@/lib/oauth/private-address";
+import { resolveXaaIdentitySaveFields } from "@/lib/xaa/identity";
 import { validateServerFormData } from "@/lib/server-form-validation";
 import {
   injectHostedServerMapping,
@@ -56,6 +67,7 @@ import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
 import {
   captureCurrentReturnPath,
+  isDebugOAuthCallbackPath,
   navigateApp,
   normalizeReturnTargetPath,
   routePaths,
@@ -80,6 +92,9 @@ import {
 } from "@/lib/client-config-v2";
 import { resolveServerConnectionSettings } from "@/lib/client-connection-resolve";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
+import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
+import type { ConnectionDefaults } from "@/shared/connection-defaults";
 
 /** Skip noisy connect toast while first-run App Builder onboarding is in progress. */
 function shouldSuppressExcalidrawConnectToastForOnboarding(
@@ -118,6 +133,52 @@ function extractRequestHeaders(
   ) as Record<string, string>;
 }
 
+function hasBearerAuthorizationHeader(
+  headers?: Record<string, string>
+): boolean {
+  if (!headers) {
+    return false;
+  }
+
+  return Object.entries(headers).some(
+    ([key, value]) =>
+      key.trim().toLowerCase() === "authorization" &&
+      value.trim().toLowerCase().startsWith("bearer ")
+  );
+}
+
+function getRedactedConfigFlag(
+  config: unknown,
+  flag: "hasBearerToken"
+): boolean {
+  return (
+    !!config &&
+    typeof config === "object" &&
+    (config as Record<string, unknown>)[flag] === true
+  );
+}
+
+function getServerBearerTokenState(
+  server: ServerWithName | undefined
+): boolean | undefined {
+  if (!server) {
+    return undefined;
+  }
+
+  const config = server.config as {
+    requestInit?: RequestInit;
+    hasBearerToken?: true;
+  };
+  if (
+    getRedactedConfigFlag(config, "hasBearerToken") ||
+    hasBearerAuthorizationHeader(extractRequestHeaders(config.requestInit))
+  ) {
+    return true;
+  }
+
+  return server.hasBearerToken;
+}
+
 function omitAuthorizationHeader(
   headers?: Record<string, string>
 ): Record<string, string> | undefined {
@@ -145,18 +206,24 @@ function mergeOAuthCallbackServerConfig(
     ...(omitAuthorizationHeader(
       extractRequestHeaders(existingHttpConfig?.requestInit)
     ) ?? {}),
-    ...(extractRequestHeaders(callbackConfig.requestInit) ?? {}),
+    ...(omitAuthorizationHeader(
+      extractRequestHeaders(callbackConfig.requestInit)
+    ) ?? {}),
   };
   const nextRequestInit =
     existingHttpConfig?.requestInit || callbackConfig.requestInit
       ? {
           ...(existingHttpConfig?.requestInit ?? {}),
           ...(callbackConfig.requestInit ?? {}),
-          ...(Object.keys(mergedHeaders).length > 0
-            ? { headers: mergedHeaders }
-            : {}),
         }
       : undefined;
+  if (nextRequestInit) {
+    if (Object.keys(mergedHeaders).length > 0) {
+      nextRequestInit.headers = mergedHeaders;
+    } else {
+      delete nextRequestInit.headers;
+    }
+  }
 
   return {
     ...(existingHttpConfig ?? {}),
@@ -173,9 +240,33 @@ function mergeOAuthCallbackServerConfig(
   } as HttpServerConfig;
 }
 
+function stripAuthorizationFromHttpConfig(
+  config: HttpServerConfig
+): HttpServerConfig {
+  const headers = omitAuthorizationHeader(
+    extractRequestHeaders(config.requestInit)
+  );
+  const requestInit = config.requestInit
+    ? {
+        ...config.requestInit,
+      }
+    : undefined;
+  if (requestInit) {
+    if (headers) {
+      requestInit.headers = headers;
+    } else {
+      delete requestInit.headers;
+    }
+  }
+  return {
+    ...config,
+    ...(requestInit ? { requestInit } : {}),
+  };
+}
+
 /**
  * Saves OAuth-related configuration to localStorage for reconnection purposes.
- * This persists server URL, scopes, headers, and client credentials.
+ * This persists server URL, scopes, headers, and non-secret client metadata.
  */
 function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   if (HOSTED_MODE) {
@@ -192,7 +283,7 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   const existingOAuthConfig = readStoredOAuthConfig(formData.name);
   const protocolMode = formData.oauthProtocolMode ?? "auto";
   const registrationMode =
-    formData.oauthRegistrationMode ??
+    formData.registrationMode ??
     (formData.clientId || formData.clientSecret ? "preregistered" : "auto");
 
   oauthConfig.protocolMode = protocolMode;
@@ -232,13 +323,10 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
     );
   }
 
-  if (formData.clientId || (!HOSTED_MODE && formData.clientSecret)) {
+  if (formData.clientId) {
     const clientInfo: Record<string, string> = {};
     if (formData.clientId) {
       clientInfo.client_id = formData.clientId;
-    }
-    if (!HOSTED_MODE && formData.clientSecret) {
-      clientInfo.client_secret = formData.clientSecret;
     }
     localStorage.setItem(
       `mcp-client-${formData.name}`,
@@ -295,16 +383,19 @@ function readStoredClientCredentials(serverName: string): {
     }
 
     const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && "client_secret" in parsed) {
+      const sanitized = Object.fromEntries(
+        Object.entries(parsed).filter(([key]) => key !== "client_secret")
+      );
+      localStorage.setItem(
+        `mcp-client-${serverName}`,
+        JSON.stringify(sanitized)
+      );
+    }
     return {
       clientId:
         typeof parsed?.client_id === "string" && parsed.client_id.trim() !== ""
           ? parsed.client_id
-          : undefined,
-      clientSecret:
-        !HOSTED_MODE &&
-        typeof parsed?.client_secret === "string" &&
-        parsed.client_secret.trim() !== ""
-          ? parsed.client_secret
           : undefined,
     };
   } catch {
@@ -380,10 +471,7 @@ function buildResolvedOAuthProfile(input: {
       "",
     clientId:
       existingProfile?.clientId ?? storedClientCredentials.clientId ?? "",
-    clientSecret:
-      existingProfile?.clientSecret ??
-      storedClientCredentials.clientSecret ??
-      "",
+    clientSecret: "",
     scopes:
       existingProfile?.scopes ?? storedOAuthConfig.scopes?.join(",") ?? "",
     customHeaders,
@@ -396,7 +484,13 @@ function buildOAuthProfileFromFormData(
   formData: ServerFormData,
   existingProfile?: OAuthTestProfile
 ): OAuthTestProfile | undefined {
-  if (formData.type !== "http" || !formData.useOAuth || !formData.url) {
+  // XAA reuses this profile as the carrier for its resource-AS client id /
+  // scopes / resource url, so it is built for XAA too (not just OAuth).
+  if (
+    formData.type !== "http" ||
+    !(formData.useOAuth || formData.useXaa) ||
+    !formData.url
+  ) {
     return undefined;
   }
 
@@ -405,8 +499,8 @@ function buildOAuthProfileFromFormData(
       ? formData.oauthProtocolMode
       : existingProfile?.protocolVersion ?? "2025-11-25";
   const registrationStrategy =
-    formData.oauthRegistrationMode && formData.oauthRegistrationMode !== "auto"
-      ? formData.oauthRegistrationMode
+    formData.registrationMode && formData.registrationMode !== "auto"
+      ? formData.registrationMode
       : existingProfile?.registrationStrategy ??
         (formData.clientId || formData.clientSecret || formData.hasClientSecret
           ? "preregistered"
@@ -419,9 +513,7 @@ function buildOAuthProfileFromFormData(
     serverUrl: formData.url,
     resourceUrl: existingProfile?.resourceUrl ?? "",
     clientId: formData.clientId ?? existingProfile?.clientId ?? "",
-    clientSecret: HOSTED_MODE
-      ? ""
-      : formData.clientSecret ?? existingProfile?.clientSecret ?? "",
+    clientSecret: "",
     scopes: formData.oauthScopes?.join(",") ?? existingProfile?.scopes ?? "",
     customHeaders,
     protocolVersion,
@@ -457,12 +549,31 @@ function requiresFreshOAuthAuthorization(error: unknown): boolean {
   const normalized = errorMessage.toLowerCase();
   return (
     normalized.includes("requires oauth authentication") ||
+    normalized.includes("no hosted oauth credential found") ||
     normalized.includes(
       "stored hosted oauth credential is missing refresh_token"
     ) ||
     (normalized.includes("authentication failed") &&
       normalized.includes("invalid_token"))
   );
+}
+
+/**
+ * Structured-first detection of "this connect needs an interactive OAuth
+ * flow". The connect surfaces tag a live 401 from a discover attempt
+ * (non-XAA auto, no stored token) with `oauthRequired: true` — top-level on
+ * the local envelope (respondWithLocalRouteError spreads details), threaded
+ * through `safeValidateHostedServer` on the hosted one. The string heuristic
+ * stays as the fallback for pre-tagging server responses and thrown errors.
+ */
+function connectFailureRequiresOAuth(
+  result:
+    | { error?: string; oauthRequired?: unknown }
+    | null
+    | undefined
+): boolean {
+  if (result?.oauthRequired === true) return true;
+  return requiresFreshOAuthAuthorization(result?.error);
 }
 
 export function shouldRetryOAuthConnectionFailure(
@@ -519,6 +630,14 @@ interface UseServerStateParams {
   isAuthLoading: boolean;
   isLoadingProjects: boolean;
   useLocalFallback: boolean;
+  activeOrganizationId?: string;
+  /**
+   * Re-applies an organization as the user's explicit selection. Called when
+   * an OAuth callback settles, with the organization the flow was pinned to,
+   * so the post-callback UI returns to the org the user connected from
+   * (routes like /servers carry no org of their own).
+   */
+  restoreActiveOrganizationId?: (organizationId: string) => void;
   effectiveProjects: Record<string, Project>;
   effectiveActiveProjectId: string;
   activeProjectServersFlat: RemoteServer[] | undefined;
@@ -555,6 +674,17 @@ const PROJECT_SERVERS_SNAPSHOT_WAIT_MS = 10_000;
 /** Must stay below Vitest's default 30s test timeout so callers can finish after a full wait + margin. */
 const PROJECT_SERVER_ECHO_WAIT_MS = 25_000;
 const PROJECT_SERVERS_POLL_MS = 100;
+const SERVER_PROJECT_ORG_MISMATCH_ERROR_MESSAGE =
+  "Cannot save server: the selected project is not in the active organization. Refresh and try again.";
+
+function remoteServerBelongsToProject(
+  server: RemoteServer,
+  projectId: string | null | undefined
+): boolean {
+  if (!projectId) return false;
+  const rowProjectId = (server as { projectId?: string }).projectId;
+  return !rowProjectId || rowProjectId === projectId;
+}
 
 export interface ServerUpdateResult {
   ok: boolean;
@@ -565,7 +695,13 @@ type EnsureServerConnectionStatus =
   | "connected"
   | "failed"
   | "missing"
-  | "reauth";
+  | "reauth"
+  // A newer connect/reconnect op for the same server started while this one
+  // was in flight (stale op token). The connection isn't failing — it's just
+  // still in progress under the newer op, which now owns the outcome. Callers
+  // should treat this as "leave it alone", NOT as a reconnect failure, so it
+  // never surfaces a spurious "Failed to reconnect" toast.
+  | "superseded";
 
 interface EnsureServerConnectionResult {
   status: EnsureServerConnectionStatus;
@@ -577,6 +713,63 @@ interface ReconnectServerInternalOptions {
   allowInteractiveOAuthFlow?: boolean;
   select?: boolean;
   suppressErrors?: boolean;
+}
+
+type StatelessProtocolConnectAttempt =
+  | "direct"
+  | "forced_oauth"
+  | "synced_oauth_credentials"
+  | "authorized_reconnect"
+  | "protocol_revalidation";
+
+type StatelessProtocolConnectMetadata = ReturnType<
+  typeof standardEventProps
+> & {
+  mcp_protocol_version: McpProtocolVersion;
+  protocol_pin_source: "server_override" | "host_default" | "unknown";
+  connection_transport: string;
+  auth_mode: "oauth" | "bearer" | "none" | "unknown";
+  hosted_mode: boolean;
+  has_project_context: boolean;
+  has_host_config: boolean;
+  has_mcp_profile: boolean;
+  has_timeout_ms: boolean;
+  connection_defaults_header_count: number;
+  client_capability_count: number;
+  has_client_info: boolean;
+  supported_protocol_version_count: number;
+  reconnect_attempt: StatelessProtocolConnectAttempt;
+  reconnect_attempt_index: number;
+  reconnect_select: boolean;
+  reconnect_suppressed_errors: boolean;
+  allow_interactive_oauth_flow: boolean;
+  had_synced_oauth_retry: boolean;
+};
+
+type StatelessProtocolConnectTelemetry = {
+  attempt?: StatelessProtocolConnectAttempt;
+  attemptIndex?: number;
+  select?: boolean;
+  suppressErrors?: boolean;
+  allowInteractiveOAuthFlow?: boolean;
+  hadSyncedOAuthRetry?: boolean;
+  capture?: (metadata: StatelessProtocolConnectMetadata) => void;
+};
+
+function getConnectionTransport(serverConfig: MCPServerConfig): string {
+  const configuredType = (serverConfig as { type?: unknown }).type;
+  if (typeof configuredType === "string" && configuredType.trim() !== "") {
+    return configuredType;
+  }
+  if ("url" in serverConfig) return "http";
+  if ("command" in serverConfig) return "stdio";
+  return "unknown";
+}
+
+function countRecordKeys(value: unknown): number {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? Object.keys(value).length
+    : 0;
 }
 
 export interface EnsureServersReadyResult {
@@ -595,6 +788,8 @@ export function useServerState({
   isAuthLoading,
   isLoadingProjects,
   useLocalFallback,
+  activeOrganizationId,
+  restoreActiveOrganizationId,
   effectiveProjects,
   effectiveActiveProjectId,
   activeProjectServersFlat,
@@ -627,6 +822,10 @@ export function useServerState({
   useLocalFallbackRef.current = useLocalFallback;
   const effectiveActiveProjectIdRef = useRef(effectiveActiveProjectId);
   effectiveActiveProjectIdRef.current = effectiveActiveProjectId;
+  const activeOrganizationIdRef = useRef(activeOrganizationId);
+  activeOrganizationIdRef.current = activeOrganizationId;
+  const effectiveProjectsRef = useRef(effectiveProjects);
+  effectiveProjectsRef.current = effectiveProjects;
   const appStateServersRef = useRef(appState.servers);
   appStateServersRef.current = appState.servers;
   const activeProjectServersFlatRef = useRef(activeProjectServersFlat);
@@ -679,6 +878,13 @@ export function useServerState({
   const isStaleOp = (name: string, token: number) =>
     (opTokenRef.current.get(name) ?? 0) !== token;
 
+  // Pins the org/project/server the OAuth flow starts from so the callback
+  // can write back to the same rows. Written in BOTH hosted and local modes:
+  // local-mode completion runs client-side, but the post-callback Convex sync
+  // is identical, and without the pin it targets whatever project is active
+  // after the redirect remount (the fallback org's default project).
+  // Hosted-only behavior (the backend session) stays gated inside
+  // createHostedOAuthSessionIfNeeded, which checks HOSTED_MODE itself.
   const prepareHostedProjectOAuthRedirect = useCallback(
     (params: {
       serverId?: string | null;
@@ -686,7 +892,6 @@ export function useServerState({
       serverUrl?: string | null;
     }): boolean => {
       if (
-        !HOSTED_MODE ||
         !isAuthenticated ||
         !effectiveActiveProjectId ||
         !params.serverId ||
@@ -726,6 +931,8 @@ export function useServerState({
     const serversWithRuntime: Record<string, ServerWithName> = {};
     for (const [name, server] of Object.entries(project.servers)) {
       const runtimeState = appState.servers[name];
+      const runtimeHasBearerToken = getServerBearerTokenState(runtimeState);
+      const projectHasBearerToken = getServerBearerTokenState(server);
       // Env now lives on the Convex server doc and is returned by the
       // resolver inside `server.config.env`; no localStorage read needed.
       serversWithRuntime[name] = {
@@ -737,6 +944,11 @@ export function useServerState({
         lastConnectionTime:
           runtimeState?.lastConnectionTime || server.lastConnectionTime,
         retryCount: runtimeState?.retryCount || 0,
+        hasClientSecret:
+          runtimeState?.hasClientSecret ?? server.hasClientSecret,
+        hasEnv: runtimeState?.hasEnv ?? server.hasEnv,
+        hasHeaders: runtimeState?.hasHeaders ?? server.hasHeaders,
+        hasBearerToken: runtimeHasBearerToken ?? projectHasBearerToken,
       };
     }
 
@@ -783,16 +995,16 @@ export function useServerState({
   );
 
   // What chat-input's "Servers" popover (and any other "show me everything
-  // we can talk to" surface) should iterate: the project catalog PLUS any
-  // runtime-connected/connecting servers that aren't in it yet. The catalog
-  // (effectiveServers) is the Convex `project_servers` query in hosted mode
-  // and can lag mcpjam-backend's `MCPClientManager` — a server is genuinely
-  // connected (Tools pane and tool calls work against it) but its catalog
-  // row hasn't synced, so the popover used to hide it. We only merge
-  // runtime entries that are currently connected/connecting; disconnected
-  // runtime leftovers from a previous session/project never surface here.
+  // we can talk to" surface) should iterate. In Convex-backed projects this
+  // must be the project catalog only: runtime-only entries are global app
+  // state and can otherwise bleed across organization/project switches.
+  // Local/fallback mode still merges connected/connecting runtime entries
+  // because there is no scoped Convex project-server catalog to wait for.
   const displayServerConfigs = useMemo(() => {
     const result: Record<string, ServerWithName> = { ...effectiveServers };
+    if (isAuthenticated && !useLocalFallback) {
+      return result;
+    }
     for (const [name, runtime] of Object.entries(appState.servers)) {
       if (result[name]) continue;
       if (
@@ -804,7 +1016,7 @@ export function useServerState({
       result[name] = runtime;
     }
     return result;
-  }, [effectiveServers, appState.servers]);
+  }, [effectiveServers, appState.servers, isAuthenticated, useLocalFallback]);
 
   const latestEffectiveServersRef = useRef(effectiveServers);
 
@@ -983,17 +1195,7 @@ export function useServerState({
       // bug PR #2257 review flagged).
       serverId?: string
     ) => {
-      const defaults: {
-        headers?: Record<string, string>;
-        timeoutMs?: number;
-        clientCapabilities?: Record<string, unknown>;
-        clientInfo?: { name?: string; version?: string } & Record<
-          string,
-          unknown
-        >;
-        supportedProtocolVersions?: string[];
-        mcpProtocolVersion?: import("@mcpjam/sdk/browser").McpProtocolVersion;
-      } = {};
+      const defaults: ConnectionDefaults = {};
       if ("url" in serverConfig) {
         const headers = omitAuthorizationHeader(
           extractRequestHeaders(serverConfig.requestInit)
@@ -1059,6 +1261,72 @@ export function useServerState({
     [activeHostConfig]
   );
 
+  const buildStatelessProtocolConnectMetadata = useCallback(
+    (
+      serverName: string,
+      serverConfig: MCPServerConfig,
+      serverId: string,
+      connectionDefaults: ConnectionDefaults | undefined,
+      effectiveProtocolVersion: McpProtocolVersion,
+      telemetry?: StatelessProtocolConnectTelemetry
+    ): StatelessProtocolConnectMetadata => {
+      const server =
+        latestEffectiveServersRef.current[serverName] ??
+        appStateServersRef.current[serverName];
+      const usesOAuth = server?.useOAuth === true;
+      const hasBearerToken = getServerBearerTokenState(server) === true;
+      const rawServerOverride =
+        activeHostConfig?.serverConnectionOverrides?.[serverId]
+          ?.mcpProtocolVersionOverride;
+      const serverOverride =
+        typeof rawServerOverride === "string" &&
+        isKnownProtocolVersion(rawServerOverride)
+          ? rawServerOverride
+          : undefined;
+      const rawHostPin = activeMcpProfile?.mcpProtocolVersion;
+      const hostPin =
+        typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
+          ? rawHostPin
+          : undefined;
+      const protocolPinSource =
+        serverOverride === effectiveProtocolVersion
+          ? "server_override"
+          : hostPin === effectiveProtocolVersion
+          ? "host_default"
+          : "unknown";
+
+      return {
+        ...standardEventProps("use_server_state"),
+        mcp_protocol_version: effectiveProtocolVersion,
+        protocol_pin_source: protocolPinSource,
+        connection_transport: getConnectionTransport(serverConfig),
+        auth_mode: usesOAuth ? "oauth" : hasBearerToken ? "bearer" : "none",
+        hosted_mode: HOSTED_MODE,
+        has_project_context: true,
+        has_host_config: Boolean(activeHostConfig),
+        has_mcp_profile: Boolean(activeMcpProfile),
+        has_timeout_ms: typeof connectionDefaults?.timeoutMs === "number",
+        connection_defaults_header_count: countRecordKeys(
+          connectionDefaults?.headers
+        ),
+        client_capability_count: countRecordKeys(
+          connectionDefaults?.clientCapabilities
+        ),
+        has_client_info: Boolean(connectionDefaults?.clientInfo),
+        supported_protocol_version_count:
+          connectionDefaults?.supportedProtocolVersions?.length ?? 0,
+        reconnect_attempt: telemetry?.attempt ?? "direct",
+        reconnect_attempt_index: telemetry?.attemptIndex ?? 1,
+        reconnect_select: telemetry?.select ?? true,
+        reconnect_suppressed_errors: telemetry?.suppressErrors ?? false,
+        allow_interactive_oauth_flow:
+          telemetry?.allowInteractiveOAuthFlow ?? false,
+        had_synced_oauth_retry: telemetry?.hadSyncedOAuthRetry ?? false,
+      };
+    },
+    [activeHostConfig, activeMcpProfile]
+  );
+
   const guardedTestConnection = useCallback(
     async (serverConfig: MCPServerConfig, serverName: string) => {
       assertClientConfigSynced();
@@ -1093,7 +1361,11 @@ export function useServerState({
   );
 
   const guardedReconnectServer = useCallback(
-    async (serverName: string, serverConfig: MCPServerConfig) => {
+    async (
+      serverName: string,
+      serverConfig: MCPServerConfig,
+      telemetry?: StatelessProtocolConnectTelemetry
+    ) => {
       assertClientConfigSynced();
       const resolved = tryResolveProjectServer(serverName);
       if (resolved) {
@@ -1101,15 +1373,41 @@ export function useServerState({
           serverConfig,
           resolved.serverId
         );
-        return reconnectServer(resolved.serverId, configWithDefaults, {
-          projectId: resolved.projectId,
-          serverName,
-          connectionDefaults: buildResolverConnectionDefaults(
+        const connectionDefaults = buildResolverConnectionDefaults(
+          configWithDefaults,
+          activeMcpProfile,
+          resolved.serverId
+        );
+        const effectiveProtocolVersion = connectionDefaults?.mcpProtocolVersion;
+        const result = await reconnectServer(
+          resolved.serverId,
+          configWithDefaults,
+          {
+            projectId: resolved.projectId,
+            serverName,
+            connectionDefaults,
+          }
+        );
+        if (
+          result?.success &&
+          effectiveProtocolVersion &&
+          isStatelessProtocolVersion(effectiveProtocolVersion)
+        ) {
+          const metadata = buildStatelessProtocolConnectMetadata(
+            serverName,
             configWithDefaults,
-            activeMcpProfile,
-            resolved.serverId
-          ),
-        });
+            resolved.serverId,
+            connectionDefaults,
+            effectiveProtocolVersion,
+            telemetry
+          );
+          if (telemetry?.capture) {
+            telemetry.capture(metadata);
+          } else {
+            track("stateless_protocol_connect", metadata);
+          }
+        }
+        return result;
       }
       throw new Error(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE);
     },
@@ -1118,6 +1416,7 @@ export function useServerState({
       buildResolverConnectionDefaults,
       activeMcpProfile,
       withProjectConnectionDefaults,
+      buildStatelessProtocolConnectMetadata,
     ]
   );
 
@@ -1140,13 +1439,25 @@ export function useServerState({
       secretOptions?: {
         clientSecret?: string;
         clearClientSecret?: boolean;
+        // One-shot command (like clearClientSecret): resets the sticky XAA
+        // identity config server-side. Rides the call, never app state — a
+        // persisted flag would re-fire on every future sync.
+        clearXaaConfig?: boolean;
         env?: Record<string, string>;
         headers?: Record<string, string>;
-      }
+      },
+      // Explicit write target for flows that pinned their project/server
+      // before a redirect (hosted OAuth). The ambient active project can
+      // legitimately change while such a flow is in flight — post-callback
+      // remounts resolve the fallback organization until hydration settles —
+      // so a pinned target must win over the refs or the write lands in
+      // whatever project happens to be active.
+      target?: { projectId: string; serverId?: string | null }
     ): Promise<string | undefined> => {
       const latestUseLocalFallback = useLocalFallbackRef.current;
       const latestIsAuthenticated = isAuthenticatedRef.current;
-      const latestProjectId = effectiveActiveProjectIdRef.current;
+      const latestProjectId =
+        target?.projectId ?? effectiveActiveProjectIdRef.current;
       if (
         latestUseLocalFallback ||
         !latestIsAuthenticated ||
@@ -1156,11 +1467,33 @@ export function useServerState({
         return undefined;
       }
 
+      // The ambient org/project coherence guard only applies to ambient
+      // writes: a pinned target is allowed to differ from the active
+      // organization (that is the point of pinning).
+      const latestActiveOrganizationId = activeOrganizationIdRef.current;
+      if (!target && latestActiveOrganizationId) {
+        const latestProject = effectiveProjectsRef.current[latestProjectId];
+        const latestProjectOrganizationId = latestProject?.organizationId;
+        if (latestProjectOrganizationId !== latestActiveOrganizationId) {
+          logger.warn(
+            "Refusing to sync server because active project does not belong to active organization",
+            {
+              serverName,
+              projectId: latestProjectId,
+              projectOrganizationId: latestProjectOrganizationId ?? null,
+              activeOrganizationId: latestActiveOrganizationId,
+            }
+          );
+          throw new Error(SERVER_PROJECT_ORG_MISMATCH_ERROR_MESSAGE);
+        }
+      }
+
       const flatSnapshot =
         activeProjectServersFlatRef.current ?? activeProjectServersFlat;
 
       const clientSecret = secretOptions?.clientSecret?.trim();
       const clearClientSecret = secretOptions?.clearClientSecret === true;
+      const clearXaaConfig = secretOptions?.clearXaaConfig === true;
       const config = serverEntry.config as any;
       const headers = extractRequestHeaders(config?.requestInit);
       const hasEnvSecretPatch = Object.prototype.hasOwnProperty.call(
@@ -1194,9 +1527,22 @@ export function useServerState({
         snapshot: RemoteServer[] | undefined,
         options?: { queryWhenLoaded?: boolean }
       ): Promise<RemoteServer | undefined> => {
-        const local = snapshot?.find((s) => s.name === serverName);
+        // A pinned serverId is authoritative: the row was created before the
+        // OAuth redirect and the hosted session validated it. Match by id
+        // first; fall back to name-within-pinned-project in case the row was
+        // deleted and recreated mid-flow.
+        const matches = (s: RemoteServer) =>
+          target?.serverId
+            ? s._id === target.serverId
+            : s.name === serverName &&
+              remoteServerBelongsToProject(s, latestProjectId);
+        const local = snapshot?.find(matches);
         if (local) return local;
-        if (snapshot !== undefined && options?.queryWhenLoaded !== true) {
+        // The snapshot tracks the ambient active project. For a pinned
+        // target it can describe a different project entirely, so a miss
+        // there proves nothing — always fall through to the one-shot query
+        // against the pinned project.
+        if (!target && snapshot !== undefined && options?.queryWhenLoaded !== true) {
           return undefined;
         }
         if (!isUserReadyRef.current) {
@@ -1207,7 +1553,12 @@ export function useServerState({
             "servers:getProjectServers" as any,
             { projectId: latestProjectId } as any
           )) as RemoteServer[] | undefined;
-          return fresh?.find((s) => s.name === serverName);
+          return (
+            fresh?.find(matches) ??
+            (target?.serverId
+              ? fresh?.find((s) => s.name === serverName)
+              : undefined)
+          );
         } catch {
           return undefined;
         }
@@ -1228,6 +1579,10 @@ export function useServerState({
           ? secretOptions.headers
           : undefined
         : headers;
+      const hasBearerTokenForPayload =
+        headersForPayload !== undefined
+          ? hasBearerAuthorizationHeader(headersForPayload)
+          : getServerBearerTokenState(serverEntry);
       const storedOAuthConfig = readStoredOAuthConfig(serverName);
 
       const payload = {
@@ -1241,6 +1596,9 @@ export function useServerState({
         ...(headersForPayload !== undefined
           ? { headers: headersForPayload }
           : {}),
+        ...(hasBearerTokenForPayload !== undefined
+          ? { hasBearerToken: hasBearerTokenForPayload }
+          : {}),
         timeout: config?.timeout,
         clientCapabilities: config?.clientCapabilities,
         useOAuth: serverEntry.useOAuth,
@@ -1251,8 +1609,37 @@ export function useServerState({
         oauthResourceUrl:
           serverEntry.oauthFlowProfile?.resourceUrl ||
           storedOAuthConfig.resourceUrl,
+        // Persist the debugger test-profile choices so the catalog
+        // round-trip doesn't silently reset them to DCR / 2025-11-25.
+        oauthProtocolVersion: serverEntry.oauthFlowProfile?.protocolVersion,
+        oauthRegistrationStrategy:
+          serverEntry.oauthFlowProfile?.registrationStrategy,
         ...(serverEntry.xaaAuthzIssuer !== undefined
           ? { xaaAuthzIssuer: serverEntry.xaaAuthzIssuer }
+          : {}),
+        ...(serverEntry.xaaAllowPathScopedIssuer !== undefined
+          ? { xaaAllowPathScopedIssuer: serverEntry.xaaAllowPathScopedIssuer }
+          : {}),
+        ...(serverEntry.useXaa !== undefined
+          ? { useXaa: serverEntry.useXaa }
+          : {}),
+        ...(serverEntry.authServerMode !== undefined
+          ? { authServerMode: serverEntry.authServerMode }
+          : {}),
+        ...(serverEntry.xaaSubject !== undefined
+          ? { xaaSubject: serverEntry.xaaSubject }
+          : {}),
+        ...(serverEntry.xaaEmail !== undefined
+          ? { xaaEmail: serverEntry.xaaEmail }
+          : {}),
+        ...(serverEntry.xaaIdentityAssertionFormat !== undefined
+          ? { xaaIdentityAssertionFormat: serverEntry.xaaIdentityAssertionFormat }
+          : {}),
+        ...(serverEntry.registrationMode !== undefined
+          ? { registrationMode: serverEntry.registrationMode }
+          : {}),
+        ...(serverEntry.authMethod !== undefined
+          ? { authMethod: serverEntry.authMethod }
           : {}),
       } as const;
 
@@ -1263,6 +1650,7 @@ export function useServerState({
             ...payload,
             ...(clientSecret ? { clientSecret } : {}),
             ...(clearClientSecret ? { clearClientSecret: true } : {}),
+            ...(clearXaaConfig ? { clearXaaConfig: true } : {}),
           };
           if (hasSecretOperation) {
             await convexUpdateServerWithClientSecret(updatePayload);
@@ -1311,6 +1699,7 @@ export function useServerState({
               ...payload,
               ...(clientSecret ? { clientSecret } : {}),
               ...(clearClientSecret ? { clearClientSecret: true } : {}),
+              ...(clearXaaConfig ? { clearXaaConfig: true } : {}),
             };
             if (hasSecretOperation) {
               await convexUpdateServerWithClientSecret(updatePayload);
@@ -1489,7 +1878,12 @@ export function useServerState({
         }
         runtime = liveRuntime;
 
-        if (flatAfterWait.some((s) => s.name === serverName)) {
+        if (
+          flatAfterWait.some(
+            (s) =>
+              s.name === serverName && remoteServerBelongsToProject(s, projectId)
+          )
+        ) {
           logger.warn(
             "persistRuntimeServerToProjectIfNeeded: runtime server not persisted because a saved server with the same name already exists",
             { serverName, projectId }
@@ -1535,7 +1929,13 @@ export function useServerState({
         let echoed = false;
         while (Date.now() - echoStarted < PROJECT_SERVER_ECHO_WAIT_MS) {
           const flatEcho = activeProjectServersFlatRef.current;
-          if (flatEcho?.some((s) => s.name === serverName)) {
+          if (
+            flatEcho?.some(
+              (s) =>
+                s.name === serverName &&
+                remoteServerBelongsToProject(s, projectId)
+            )
+          ) {
             echoed = true;
             break;
           }
@@ -1568,6 +1968,47 @@ export function useServerState({
       }
     },
     [effectiveActiveProjectId, syncServerToConvex, logger]
+  );
+
+  /**
+   * Resolve selected runtime server names → persisted Convex server ids for a
+   * HOSTED send, persisting any ad-hoc/App server that isn't saved yet. The
+   * hosted harness proxy + `authorize-batch` operate on real `Id<'servers'>`, so
+   * a display name like "Excalidraw (App)" must become a Convex id before the
+   * send (otherwise the mint endpoint 422s and the turn fails closed). Mirrors
+   * the manual-connect persist path (`syncServerToConvex` → inject mapping).
+   * THROWS if a name can't be resolved/persisted — the caller must fail the send
+   * closed rather than send a name.
+   */
+  const ensureHostedServerIdsForNames = useCallback(
+    async (
+      serverNames: string[]
+    ): Promise<Array<{ serverName: string; serverId: string }>> => {
+      const out: Array<{ serverName: string; serverId: string }> = [];
+      for (const serverName of serverNames) {
+        const resolved = tryResolveProjectServer(serverName);
+        if (resolved?.serverId) {
+          out.push({ serverName, serverId: resolved.serverId });
+          continue;
+        }
+        const entry = appStateServersRef.current[serverName];
+        if (!entry) {
+          throw new Error(
+            `Cannot start: server "${serverName}" is not connected, so it can't be saved to the project.`
+          );
+        }
+        const serverId = await syncServerToConvex(serverName, entry);
+        if (!serverId) {
+          throw new Error(
+            `Cannot start: failed to save server "${serverName}" to the project.`
+          );
+        }
+        injectHostedServerMapping(serverName, serverId);
+        out.push({ serverName, serverId });
+      }
+      return out;
+    },
+    [syncServerToConvex]
   );
 
   const removeServerFromConvex = useCallback(
@@ -1768,14 +2209,16 @@ export function useServerState({
       const token = nextOpToken(name);
       void (async () => {
         try {
-          const result = await guardedReconnectServer(name, serverConfig);
+          const result = await guardedReconnectServer(name, serverConfig, {
+            attempt: "protocol_revalidation",
+          });
           if (isStaleOp(name, token)) return;
           if (result?.success) {
             dispatch({
               type: "CONNECT_SUCCESS",
               name,
               config: serverConfig,
-              tokens: getStoredTokens(name),
+              tokens: undefined,
               useOAuth,
             });
             if (result.initInfo) {
@@ -1955,7 +2398,10 @@ export function useServerState({
             });
 
         localStorage.removeItem("mcp-oauth-return-hash");
-        if (isHostedProjectCallback) {
+        if (hostedCallbackContext) {
+          // The pending marker is written for local-mode project flows too —
+          // clear it whenever a marker-backed callback settles, not only on
+          // the hosted completion path.
           clearHostedOAuthPendingState();
         }
         if (result.success) {
@@ -1964,7 +2410,14 @@ export function useServerState({
 
         if (result.success && result.serverConfig && result.serverName) {
           const serverName = result.serverName;
-          const existingServer = latestEffectiveServersRef.current[serverName];
+          // Prefer the runtime entry over the project catalog: it holds the
+          // user's freshly-saved OAuth config (clientId/secret/scopes/issuer),
+          // which the catalog round-trip can lag or drop. Rebuilding from the
+          // catalog here — then syncing back — is what reset the config after a
+          // reconnect that needed re-auth.
+          const existingServer =
+            appStateServersRef.current[serverName] ??
+            latestEffectiveServersRef.current[serverName];
           const mergedServerConfig = mergeOAuthCallbackServerConfig(
             existingServer?.config,
             result.serverConfig
@@ -1993,6 +2446,8 @@ export function useServerState({
             oauthTokens: existingServer?.oauthTokens,
             oauthFlowProfile: resolvedOAuthProfile,
             hasClientSecret: existingServer?.hasClientSecret,
+            xaaAuthzIssuer: existingServer?.xaaAuthzIssuer,
+            xaaAllowPathScopedIssuer: existingServer?.xaaAllowPathScopedIssuer,
             initializationInfo: existingServer?.initializationInfo,
             useOAuth: true,
             lastOAuthTrace: result.oauthTrace,
@@ -2006,7 +2461,26 @@ export function useServerState({
           if (!isAuthenticated || useLocalFallback) {
             persistServerToLocalProject(serverName, oauthServerEntry);
           } else {
-            syncServerToConvex(serverName, oauthServerEntry).catch((error) =>
+            // Sync against the project/server the OAuth flow was pinned to
+            // when the redirect started, not the ambient active project. The
+            // active organization can resolve to the fallback org (first
+            // owned org) during the post-callback remount, and syncing by
+            // name against that org's project used to create an
+            // unauthenticated duplicate of the server there. The pin applies
+            // to hosted AND legacy (local-mode) completions — both funnel
+            // into this same Convex sync.
+            const pinnedTarget = hostedCallbackContext?.projectId
+              ? {
+                  projectId: hostedCallbackContext.projectId,
+                  serverId: hostedCallbackContext.serverId ?? null,
+                }
+              : undefined;
+            syncServerToConvex(
+              serverName,
+              oauthServerEntry,
+              undefined,
+              pinnedTarget
+            ).catch((error) =>
               logger.warn("Failed to sync OAuth profile to Convex", {
                 serverName,
                 error,
@@ -2031,9 +2505,7 @@ export function useServerState({
                 type: "CONNECT_SUCCESS",
                 name: serverName,
                 config: mergedServerConfig,
-                tokens: isHostedProjectCallback
-                  ? undefined
-                  : getStoredTokens(serverName),
+                tokens: undefined,
                 useOAuth: true,
                 oauthTrace: result.oauthTrace,
               });
@@ -2136,7 +2608,7 @@ export function useServerState({
   );
 
   useEffect(() => {
-    if (window.location.pathname.startsWith("/oauth/callback/debug")) {
+    if (isDebugOAuthCallbackPath(window.location.pathname)) {
       return;
     }
 
@@ -2157,9 +2629,11 @@ export function useServerState({
     const error = urlParams.get("error");
     const errorDescription = urlParams.get("error_description");
     const electronCallbackUrl = buildElectronMcpCallbackUrl();
-    const hostedOAuthCallbackContext = HOSTED_MODE
-      ? getHostedOAuthCallbackContext()
-      : null;
+    // Read in local mode too: the pending marker pins the org/project/server
+    // the flow started from, and the post-callback sync needs that pin
+    // regardless of whether completion runs hosted (backend session) or
+    // legacy (client-side token exchange).
+    const hostedOAuthCallbackContext = getHostedOAuthCallbackContext();
     if (electronCallbackUrl) {
       return;
     }
@@ -2194,18 +2668,39 @@ export function useServerState({
         }
       }
 
+      // Captured before completion: handleOAuthCallbackComplete clears the
+      // return-hash key as part of its cleanup.
       const savedHash = localStorage.getItem("mcp-oauth-return-hash") || "";
-      window.history.replaceState(
-        {},
-        document.title,
-        restorePathAfterOAuthCallback(window.location.pathname, savedHash)
-      );
+      const restoreCallbackUrl = () => {
+        // The pending marker pinned the organization the flow started in.
+        // Re-apply it as the explicit selection before navigating: most
+        // routes (e.g. /servers) carry no org, so restoring the path alone
+        // would render it under whatever org the fallback resolution picks
+        // once the marker is cleared.
+        const markerOrganizationId = hostedOAuthCallbackContext?.organizationId;
+        if (markerOrganizationId) {
+          restoreActiveOrganizationId?.(markerOrganizationId);
+        }
+        // Navigate through the app router, not raw history.replaceState —
+        // the router never observes replaceState, so route-derived state
+        // (org-scoped routes, active tab) would go stale. The marker's
+        // returnPath is the exact location the user connected from.
+        const returnTarget = hostedOAuthCallbackContext?.returnPath
+          ? resolveHostedOAuthReturnPath(hostedOAuthCallbackContext)
+          : restorePathAfterOAuthCallback(window.location.pathname, savedHash);
+        navigateApp(returnTarget, { replace: true });
+      };
 
-      handleOAuthCallbackComplete(
+      // Strip the ?code from the URL only after completion settles. The
+      // pending-marker org pin (use-app-state) is scoped to "callback params
+      // present in the URL"; stripping eagerly killed the pin mid-completion,
+      // so the active org/project flipped to the fallback organization while
+      // the token exchange was still in flight.
+      void handleOAuthCallbackComplete(
         code,
         state,
         isHostedProjectCallback ? hostedOAuthCallbackContext : null
-      );
+      ).finally(restoreCallbackUrl);
     } else if (error) {
       if (hostedOAuthCallbackContext && !isHostedProjectCallback) {
         return; // Handled by App.tsx hosted OAuth interception
@@ -2223,11 +2718,16 @@ export function useServerState({
         errorDescription,
       });
       oauthCallbackHandledRef.current = true;
-      window.history.replaceState(
-        {},
-        document.title,
-        restorePathAfterOAuthCallback(window.location.pathname, savedHash)
-      );
+      // Denied/failed authorizations return the user to where they started
+      // too: same org restore + router-aware navigation as the success path.
+      const markerOrganizationId = hostedOAuthCallbackContext?.organizationId;
+      if (markerOrganizationId) {
+        restoreActiveOrganizationId?.(markerOrganizationId);
+      }
+      const returnTarget = hostedOAuthCallbackContext?.returnPath
+        ? resolveHostedOAuthReturnPath(hostedOAuthCallbackContext)
+        : restorePathAfterOAuthCallback(window.location.pathname, savedHash);
+      navigateApp(returnTarget, { replace: true });
     }
   }, [
     isLoading,
@@ -2238,6 +2738,7 @@ export function useServerState({
     effectiveActiveProjectId,
     failPendingOAuthConnection,
     handleOAuthCallbackComplete,
+    restoreActiveOrganizationId,
     logger,
   ]);
 
@@ -2271,7 +2772,7 @@ export function useServerState({
         existingServerForSave?.oauthFlowProfile
       );
       const nextHasClientSecret =
-        formData.useOAuth && !formData.clearClientSecret
+        (formData.useOAuth || formData.useXaa) && !formData.clearClientSecret
           ? Boolean(
               formData.clientSecret ||
                 formData.hasClientSecret ||
@@ -2283,6 +2784,8 @@ export function useServerState({
           ? { clientSecret: formData.clientSecret }
           : {}),
         ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
+        // One-shot XAA-config reset (modal moved the server off XAA).
+        ...(formData.clearXaaConfig ? { clearXaaConfig: true } : {}),
         ...(formData.secretPatch?.env !== undefined
           ? { env: formData.secretPatch.env }
           : {}),
@@ -2309,8 +2812,34 @@ export function useServerState({
           formData.secretPatch?.headers !== undefined
             ? Object.keys(formData.secretPatch.headers).length > 0
             : existingServerForSave?.hasHeaders,
+        hasBearerToken:
+          formData.secretPatch?.headers !== undefined
+            ? hasBearerAuthorizationHeader(formData.secretPatch.headers)
+            : getServerBearerTokenState(existingServerForSave),
         xaaAuthzIssuer:
           formData.xaaAuthzIssuer ?? existingServerForSave?.xaaAuthzIssuer,
+        xaaAllowPathScopedIssuer:
+          formData.xaaAllowPathScopedIssuer ??
+          existingServerForSave?.xaaAllowPathScopedIssuer,
+        useXaa: formData.useXaa ?? false,
+        // Shared atomic identity-pair semantics (omitted pair preserves the
+        // stored values, explicit "" pair clears) + authServerMode default.
+        ...resolveXaaIdentitySaveFields({
+          useXaa: formData.useXaa === true,
+          formAuthServerMode: formData.authServerMode,
+          formSubject: formData.xaaSubject,
+          formEmail: formData.xaaEmail,
+          existing: existingServerForSave,
+        }),
+        // Unified fields: preserve any saved value when a save that omits
+        // them comes through, rather than erasing it.
+        xaaIdentityAssertionFormat:
+          formData.xaaIdentityAssertionFormat ??
+          existingServerForSave?.xaaIdentityAssertionFormat,
+        registrationMode:
+          formData.registrationMode ??
+          existingServerForSave?.registrationMode,
+        authMethod: formData.authMethod ?? existingServerForSave?.authMethod,
       };
       // Both modes: await Convex sync so the returned serverId is available
       // for OAuth binding (hosted) and for the new {projectId, serverId}
@@ -2335,15 +2864,20 @@ export function useServerState({
           err,
         });
       }
-      if (HOSTED_MODE && formData.useOAuth && !hostedServerId) {
-        // OAuth in hosted mode requires a Convex serverId to bind credentials
-        // to; without it the OAuth dance would complete without a durable
-        // credential. Local-mode OAuth follows the same constraint post-
-        // unification but the legacy localStorage fallback still catches it.
+      if (
+        HOSTED_MODE &&
+        isAuthenticated &&
+        !useLocalFallback &&
+        (syncErr || !hostedServerId)
+      ) {
+        // Hosted project connects require a Convex server row before any
+        // runtime connection starts. Continuing after a cloud save failure
+        // creates an unscoped runtime-only server that can appear under another
+        // organization while remaining unauthenticated.
         const errorMessage =
           syncErr instanceof Error
-            ? `Could not save the hosted server before starting OAuth: ${syncErr.message}`
-            : "Could not save the hosted server before starting OAuth. Please try again.";
+            ? syncErr.message
+            : "Could not save the hosted server before connecting. Please try again.";
         dispatch({
           type: "CONNECT_FAILURE",
           name: formData.name,
@@ -2372,50 +2906,102 @@ export function useServerState({
 
       try {
         if (formData.type === "http" && formData.useOAuth && formData.url) {
-          const existingTokens = getStoredTokens(formData.name);
-          if (existingTokens?.access_token) {
-            logger.info("Connecting with existing OAuth tokens", {
-              serverName: formData.name,
+          // Keyed by project + server id so identically named servers across
+          // projects don't share escalation state; name is the last-resort
+          // key for servers that haven't synced an id yet.
+          const escalationIdentity: AutoEscalationIdentity = {
+            projectId: appState.activeProjectId,
+            serverId: hostedServerId ?? null,
+            serverName: formData.name,
+          };
+          const serverConfig = {
+            url: formData.url,
+            ...(formData.headers && Object.keys(formData.headers).length > 0
+              ? { requestInit: { headers: formData.headers } }
+              : {}),
+          } satisfies HttpServerConfig;
+          logger.info("Connecting with synced OAuth credentials", {
+            serverName: formData.name,
+          });
+          const storedCredentialResult = await guardedTestConnection(
+            withProjectConnectionDefaults(serverConfig),
+            formData.name
+          );
+          if (isStaleOp(formData.name, token)) return;
+          if (storedCredentialResult.success) {
+            autoOAuthEscalation.markSucceeded(escalationIdentity);
+            dispatch({
+              type: "CONNECT_SUCCESS",
+              name: formData.name,
+              config: serverConfig,
+              tokens: undefined,
+              useOAuth: true,
             });
-            const serverConfig = {
-              url: formData.url,
-              requestInit: {
-                headers: {
-                  Authorization: `Bearer ${existingTokens.access_token}`,
-                  ...(formData.headers || {}),
-                },
-              },
-            } satisfies HttpServerConfig;
-            const connectionResult = await guardedTestConnection(
-              withProjectConnectionDefaults(serverConfig),
-              formData.name
+            // An Auto server may have connected without credentials — don't
+            // claim OAuth happened when it didn't.
+            toast.success(
+              formData.authMethod === "auto"
+                ? "Connected successfully!"
+                : "Connected successfully with OAuth!"
             );
-            if (isStaleOp(formData.name, token)) return;
-            if (connectionResult.success) {
+            storeInitInfo(formData.name, storedCredentialResult.initInfo).catch(
+              (err) =>
+                logger.warn("Failed to fetch init info", {
+                  serverName: formData.name,
+                  err,
+                })
+            );
+            return;
+          }
+          if (!connectFailureRequiresOAuth(storedCredentialResult)) {
+            const errorMessage =
+              storedCredentialResult.error || "OAuth connection failed";
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: formData.name,
+              error: errorMessage,
+              normalized: (storedCredentialResult as { normalized?: unknown })
+                .normalized as any,
+            });
+            toast.error(errorMessage);
+            return;
+          }
+          // Auto escalation gate: the user picked Auto, not OAuth, so a 401
+          // asks before redirecting. A still-pending marker means a confirmed
+          // flow already ran and the server 401'd again — surface the config
+          // problem (and clear, so a later manual attempt re-prompts) instead
+          // of looping.
+          if (formData.authMethod === "auto") {
+            const failWithoutEscalation = (message: string) => {
               dispatch({
-                type: "CONNECT_SUCCESS",
+                type: "CONNECT_FAILURE",
                 name: formData.name,
-                config: serverConfig,
-                tokens: existingTokens,
-                useOAuth: true,
+                error: message,
+                normalized: (storedCredentialResult as { normalized?: unknown })
+                  .normalized as any,
               });
-              toast.success(
-                "Connected successfully with existing OAuth tokens!"
-              );
-              storeInitInfo(formData.name, connectionResult.initInfo).catch(
-                (err) =>
-                  logger.warn("Failed to fetch init info", {
-                    serverName: formData.name,
-                    err,
-                  })
+            };
+            if (autoOAuthEscalation.hasPendingAttempt(escalationIdentity)) {
+              autoOAuthEscalation.markFailed(escalationIdentity);
+              const errorMessage = `Server "${formData.name}" still returns 401 after OAuth. Check the server's authorization configuration.`;
+              failWithoutEscalation(errorMessage);
+              toast.error(errorMessage);
+              return;
+            }
+            const proceed = await confirmAutoOAuthEscalation(formData.name);
+            if (isStaleOp(formData.name, token)) return;
+            if (!proceed) {
+              failWithoutEscalation(
+                `Server "${formData.name}" requires authorization. Reconnect to sign in with OAuth.`
               );
               return;
             }
-            logger.warn("Existing tokens failed, will trigger OAuth flow", {
-              serverName: formData.name,
-              error: connectionResult.error,
-            });
+            autoOAuthEscalation.markPending(escalationIdentity);
           }
+          logger.info("Synced OAuth credentials require a fresh OAuth flow", {
+            serverName: formData.name,
+            error: storedCredentialResult.error,
+          });
 
           dispatch({
             type: "UPSERT_SERVER",
@@ -2436,7 +3022,7 @@ export function useServerState({
             existingOAuthProfile?.protocolVersion ??
             "auto";
           const registrationMode =
-            formData.oauthRegistrationMode ??
+            formData.registrationMode ??
             existingOAuthProfile?.registrationStrategy ??
             "auto";
           const oauthOptions: any = {
@@ -2473,20 +3059,21 @@ export function useServerState({
           const oauthResult = await initiateOAuth(oauthOptions);
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {
+              const oauthServerConfig = stripAuthorizationFromHttpConfig(
+                oauthResult.serverConfig
+              );
               const connectionResult = await guardedTestConnection(
-                withProjectConnectionDefaults(oauthResult.serverConfig),
+                withProjectConnectionDefaults(oauthServerConfig),
                 formData.name
               );
               if (isStaleOp(formData.name, token)) return;
               if (connectionResult.success) {
+                autoOAuthEscalation.markSucceeded(escalationIdentity);
                 dispatch({
                   type: "CONNECT_SUCCESS",
                   name: formData.name,
-                  config: oauthResult.serverConfig,
-                  tokens:
-                    HOSTED_MODE && isAuthenticated
-                      ? undefined
-                      : getStoredTokens(formData.name),
+                  config: oauthServerConfig,
+                  tokens: undefined,
                   useOAuth: true,
                   oauthTrace: oauthResult.oauthTrace,
                 });
@@ -2499,6 +3086,10 @@ export function useServerState({
                     })
                 );
               } else {
+                // Terminal in this page-session: OAuth completed but the
+                // connect failed. Clear the pending marker so a later manual
+                // attempt re-prompts instead of being muted all session.
+                autoOAuthEscalation.markFailed(escalationIdentity);
                 dispatch({
                   type: "CONNECT_FAILURE",
                   name: formData.name,
@@ -2511,6 +3102,9 @@ export function useServerState({
                 );
               }
             } else {
+              // Redirect pending — the marker stays PENDING on purpose; it's
+              // what survives the page navigation so the post-callback
+              // reconnect doesn't re-prompt.
               toast.success(
                 "OAuth flow initiated. You will be redirected to authorize access."
               );
@@ -2519,6 +3113,8 @@ export function useServerState({
           }
 
           if (isStaleOp(formData.name, token)) return;
+          // OAuth init failed before any redirect — nothing is pending.
+          autoOAuthEscalation.markFailed(escalationIdentity);
           dispatch({
             type: "CONNECT_FAILURE",
             name: formData.name,
@@ -2578,7 +3174,28 @@ export function useServerState({
             serverName: formData.name,
             error: result.error,
           });
-          toast.error(`Failed to connect to ${formData.name}`);
+          toast.error(
+            `Failed to connect to ${formData.name}${
+              result.error ? `: ${result.error}` : ""
+            }`,
+            // For XAA servers, offer a shortcut to the XAA Debugger so the dev
+            // can step through the handshake and pinpoint the failing claim
+            // (subject not provisioned, audience/issuer mismatch, etc.).
+            formData.useXaa
+              ? {
+                  action: {
+                    label: "Open XAA Debugger",
+                    onClick: () => {
+                      dispatch({
+                        type: "SELECT_SERVER",
+                        name: formData.name,
+                      });
+                      navigateApp(routePaths.xaaFlow);
+                    },
+                  },
+                }
+              : undefined
+          );
         }
       } catch (error) {
         const errorMessage =
@@ -2638,16 +3255,17 @@ export function useServerState({
 
       const existingServer = appState.servers[serverName];
       const mcpConfig = toMCPConfig(formData);
-      const nextOAuthProfile = formData.useOAuth
-        ? options?.oauthProfile ??
-          buildOAuthProfileFromFormData(
-            formData,
+      const nextOAuthProfile =
+        formData.useOAuth || formData.useXaa
+          ? options?.oauthProfile ??
+            buildOAuthProfileFromFormData(
+              formData,
+              existingServer?.oauthFlowProfile
+            ) ??
             existingServer?.oauthFlowProfile
-          ) ??
-          existingServer?.oauthFlowProfile
-        : undefined;
+          : undefined;
       const nextHasClientSecret =
-        formData.useOAuth && !formData.clearClientSecret
+        (formData.useOAuth || formData.useXaa) && !formData.clearClientSecret
           ? Boolean(
               formData.clientSecret ||
                 formData.hasClientSecret ||
@@ -2674,8 +3292,34 @@ export function useServerState({
           formData.secretPatch?.headers !== undefined
             ? Object.keys(formData.secretPatch.headers).length > 0
             : existingServer?.hasHeaders,
+        hasBearerToken:
+          formData.secretPatch?.headers !== undefined
+            ? hasBearerAuthorizationHeader(formData.secretPatch.headers)
+            : getServerBearerTokenState(existingServer),
         xaaAuthzIssuer:
           formData.xaaAuthzIssuer ?? existingServer?.xaaAuthzIssuer,
+        xaaAllowPathScopedIssuer:
+          formData.xaaAllowPathScopedIssuer ??
+          existingServer?.xaaAllowPathScopedIssuer,
+        useXaa: formData.useXaa ?? false,
+        // Shared atomic identity-pair semantics (omitted pair preserves the
+        // stored values, explicit "" pair clears) + authServerMode default.
+        ...resolveXaaIdentitySaveFields({
+          useXaa: formData.useXaa === true,
+          formAuthServerMode: formData.authServerMode,
+          formSubject: formData.xaaSubject,
+          formEmail: formData.xaaEmail,
+          existing: existingServer,
+        }),
+        // Unified fields: preserve any saved value when a save that omits
+        // them comes through, rather than erasing it.
+        xaaIdentityAssertionFormat:
+          formData.xaaIdentityAssertionFormat ??
+          existingServer?.xaaIdentityAssertionFormat,
+        registrationMode:
+          formData.registrationMode ??
+          existingServer?.registrationMode,
+        authMethod: formData.authMethod ?? existingServer?.authMethod,
       } as ServerWithName;
 
       const hasPendingOAuthCallback = new URLSearchParams(
@@ -2685,14 +3329,6 @@ export function useServerState({
         clearOAuthData(serverName);
       }
 
-      dispatch({
-        type: "UPSERT_SERVER",
-        name: serverName,
-        server: serverEntry,
-      });
-
-      saveOAuthConfigToLocalStorage(formData);
-
       if (
         isAuthenticated &&
         !useLocalFallback &&
@@ -2700,26 +3336,53 @@ export function useServerState({
         effectiveActiveProjectId !== "none"
       ) {
         try {
-          await syncServerToConvex(serverName, serverEntry, {
-            ...(formData.clientSecret
-              ? { clientSecret: formData.clientSecret }
-              : {}),
-            ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
-            ...(formData.secretPatch?.env !== undefined
-              ? { env: formData.secretPatch.env }
-              : {}),
-            ...(formData.secretPatch?.headers !== undefined
-              ? { headers: formData.secretPatch.headers }
-              : {}),
-          });
+          const syncedServerId = await syncServerToConvex(
+            serverName,
+            serverEntry,
+            {
+              ...(formData.clientSecret
+                ? { clientSecret: formData.clientSecret }
+                : {}),
+              ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
+              // One-shot XAA-config reset (modal moved the server off XAA).
+              ...(formData.clearXaaConfig ? { clearXaaConfig: true } : {}),
+              ...(formData.secretPatch?.env !== undefined
+                ? { env: formData.secretPatch.env }
+                : {}),
+              ...(formData.secretPatch?.headers !== undefined
+                ? { headers: formData.secretPatch.headers }
+                : {}),
+            }
+          );
+          if (!syncedServerId) {
+            logger.error("Failed to sync server to Convex", {
+              error: "Server sync returned no server id",
+            });
+            toast.error("Could not save the server. Please try again.");
+            return;
+          }
         } catch (error) {
           logger.error("Failed to sync server to Convex", {
             error: error instanceof Error ? error.message : "Unknown error",
           });
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Could not save the server. Please try again."
+          );
+          return;
         }
       } else {
         persistServerToLocalProject(serverName, serverEntry);
       }
+
+      dispatch({
+        type: "UPSERT_SERVER",
+        name: serverName,
+        server: serverEntry,
+      });
+
+      saveOAuthConfigToLocalStorage(formData);
 
       logger.info("Saved server configuration without connecting", {
         serverName,
@@ -2752,6 +3415,7 @@ export function useServerState({
         expiresIn?: number;
         clientId?: string;
         clientSecret?: string;
+        authorizationServerUrl?: string;
       },
       serverUrl: string
     ): Promise<{ success: boolean; error?: string }> => {
@@ -2761,19 +3425,11 @@ export function useServerState({
         token_type: tokens.tokenType || "Bearer",
         expires_in: tokens.expiresIn,
       };
-      if (!HOSTED_MODE) {
-        localStorage.setItem(
-          `mcp-tokens-${serverName}`,
-          JSON.stringify(tokenData)
-        );
-      }
-
       if (!HOSTED_MODE && tokens.clientId) {
         localStorage.setItem(
           `mcp-client-${serverName}`,
           JSON.stringify({
             client_id: tokens.clientId,
-            client_secret: tokens.clientSecret,
           })
         );
       }
@@ -2782,51 +3438,66 @@ export function useServerState({
         localStorage.setItem(`mcp-serverUrl-${serverName}`, serverUrl);
       }
 
-      if (!HOSTED_MODE) {
-        const resolved = tryResolveProjectServer(serverName);
-        const normalizedTokens = normalizeImportHostedOAuthTokens(tokenData);
-        if (resolved && normalizedTokens) {
-          if (!tokens.clientId) {
-            return {
-              success: false,
-              error:
-                "OAuth client information missing client_id; cannot import tokens to Convex",
-            };
-          }
-          const storedOAuthConfig = readStoredOAuthConfig(serverName);
-          const isRegistry =
-            !!storedOAuthConfig.registryServerId &&
-            storedOAuthConfig.useRegistryOAuthProxy === true;
-          await importHostedOAuthTokens({
-            projectId: resolved.projectId,
-            serverId: resolved.serverId,
-            serverUrl,
-            ...(storedOAuthConfig.resourceUrl
-              ? { oauthResourceUrl: storedOAuthConfig.resourceUrl }
-              : {}),
-            kind: isRegistry ? "registry" : "generic",
-            ...(isRegistry
-              ? {
-                  registryServerId: storedOAuthConfig.registryServerId,
-                  useRegistryOAuthProxy: true,
-                }
-              : {}),
-            clientInformation: {
-              clientId: tokens.clientId,
-              ...(tokens.clientSecret
-                ? { clientSecret: tokens.clientSecret }
-                : {}),
-            },
-            tokens: normalizedTokens,
-          });
-        }
+      const resolved = tryResolveProjectServer(serverName);
+      const normalizedTokens = normalizeImportHostedOAuthTokens(tokenData);
+      if (!resolved) {
+        localStorage.removeItem(`mcp-tokens-${serverName}`);
+        return {
+          success: false,
+          error: "OAuth server is not synced; cannot store tokens securely",
+        };
       }
+      if (!normalizedTokens) {
+        localStorage.removeItem(`mcp-tokens-${serverName}`);
+        return {
+          success: false,
+          error:
+            "OAuth token response missing access_token; cannot import tokens to Convex",
+        };
+      }
+      if (!tokens.clientId) {
+        localStorage.removeItem(`mcp-tokens-${serverName}`);
+        return {
+          success: false,
+          error:
+            "OAuth client information missing client_id; cannot import tokens to Convex",
+        };
+      }
+      const storedOAuthConfig = readStoredOAuthConfig(serverName);
+      const isRegistry =
+        !!storedOAuthConfig.registryServerId &&
+        storedOAuthConfig.useRegistryOAuthProxy === true;
+      await importHostedOAuthTokens({
+        projectId: resolved.projectId,
+        serverId: resolved.serverId,
+        serverUrl,
+        ...(storedOAuthConfig.resourceUrl
+          ? { oauthResourceUrl: storedOAuthConfig.resourceUrl }
+          : {}),
+        // Forward the AS URL discovered by the debugger flow so the hosted
+        // backend can refresh without re-discovering against a resource it
+        // can't reach itself (e.g. localhost). Mirrors the live OAuth path in
+        // MCPOAuthProvider.saveTokens.
+        ...(tokens.authorizationServerUrl
+          ? { authorizationServerUrl: tokens.authorizationServerUrl }
+          : {}),
+        kind: isRegistry ? "registry" : "generic",
+        ...(isRegistry
+          ? {
+              registryServerId: storedOAuthConfig.registryServerId,
+              useRegistryOAuthProxy: true,
+            }
+          : {}),
+        clientInformation: {
+          clientId: tokens.clientId,
+          ...(tokens.clientSecret ? { clientSecret: tokens.clientSecret } : {}),
+        },
+        tokens: normalizedTokens,
+      });
+      localStorage.removeItem(`mcp-tokens-${serverName}`);
 
       const serverConfig = {
         url: serverUrl,
-        requestInit: {
-          headers: { Authorization: `Bearer ${tokens.accessToken}` },
-        },
       } satisfies HttpServerConfig;
 
       dispatch({
@@ -2851,7 +3522,7 @@ export function useServerState({
             type: "CONNECT_SUCCESS",
             name: serverName,
             config: serverConfig,
-            tokens: getStoredTokens(serverName),
+            tokens: undefined,
             useOAuth: true,
           });
           await storeInitInfo(serverName, result.initInfo);
@@ -2896,6 +3567,22 @@ export function useServerState({
     ]
   );
 
+  // The hosted backend refreshes imported OAuth tokens from its cloud
+  // environment, so an authorization server on the user's machine (or LAN)
+  // is unreachable at refresh time even though the browser could reach it
+  // during the debugger flow. Warn up front instead of letting the first
+  // refresh fail with a discovery error.
+  const warnIfHostedCannotRefresh = useCallback(
+    (authorizationServerUrl?: string) => {
+      if (!HOSTED_MODE || !authorizationServerUrl) return;
+      if (!isPrivateNetworkUrl(authorizationServerUrl)) return;
+      toast.warning(
+        "This server's authorization server runs on your machine, so tokens can't auto-refresh in hosted mode. Re-run the OAuth flow when they expire, or use local mode for fully-local servers."
+      );
+    },
+    []
+  );
+
   const handleConnectWithTokensFromOAuthFlow = useCallback(
     async (
       serverName: string,
@@ -2906,6 +3593,7 @@ export function useServerState({
         expiresIn?: number;
         clientId?: string;
         clientSecret?: string;
+        authorizationServerUrl?: string;
       },
       serverUrl: string
     ) => {
@@ -2923,6 +3611,7 @@ export function useServerState({
       );
       if (result.success) {
         toast.success(`Connected to ${serverName}!`);
+        warnIfHostedCannotRefresh(tokens.authorizationServerUrl);
       } else {
         toast.error(`Connection failed: ${result.error}`);
       }
@@ -2931,6 +3620,7 @@ export function useServerState({
       applyTokensFromOAuthFlow,
       notifyIfClientConfigSyncPending,
       notifyIfProjectNotProvisioned,
+      warnIfHostedCannotRefresh,
     ]
   );
 
@@ -2944,6 +3634,7 @@ export function useServerState({
         expiresIn?: number;
         clientId?: string;
         clientSecret?: string;
+        authorizationServerUrl?: string;
       },
       serverUrl: string
     ) => {
@@ -2961,6 +3652,7 @@ export function useServerState({
       );
       if (result.success) {
         toast.success(`Tokens refreshed for ${serverName}!`);
+        warnIfHostedCannotRefresh(tokens.authorizationServerUrl);
       } else {
         toast.error(`Token refresh failed: ${result.error}`);
       }
@@ -2969,6 +3661,7 @@ export function useServerState({
       applyTokensFromOAuthFlow,
       notifyIfClientConfigSyncPending,
       notifyIfProjectNotProvisioned,
+      warnIfHostedCannotRefresh,
     ]
   );
 
@@ -3391,6 +4084,29 @@ export function useServerState({
       const hostedProjectServerId = activeProjectServersFlat?.find(
         (remoteServer) => remoteServer.name === serverName
       )?._id;
+      let statelessProtocolConnectCaptured = false;
+      let reconnectAttemptIndex = 0;
+      let hadSyncedOAuthRetry = false;
+      const captureStatelessProtocolConnect = (
+        metadata: StatelessProtocolConnectMetadata
+      ) => {
+        if (statelessProtocolConnectCaptured) {
+          return;
+        }
+        statelessProtocolConnectCaptured = true;
+        track("stateless_protocol_connect", metadata);
+      };
+      const buildStatelessTelemetry = (
+        attempt: StatelessProtocolConnectAttempt
+      ): StatelessProtocolConnectTelemetry => ({
+        attempt,
+        attemptIndex: (reconnectAttemptIndex += 1),
+        select,
+        suppressErrors,
+        allowInteractiveOAuthFlow: options?.allowInteractiveOAuthFlow ?? false,
+        hadSyncedOAuthRetry,
+        capture: captureStatelessProtocolConnect,
+      });
 
       if (options?.forceOAuthFlow) {
         const serverUrl = (server.config as any)?.url?.toString?.();
@@ -3418,7 +4134,13 @@ export function useServerState({
           server.oauthFlowProfile?.protocolVersion ??
           storedOAuthConfig.protocolMode ??
           "auto";
+        // Canonical per-server registrationMode wins over the legacy
+        // profile/localStorage concretes — a persisted "auto" must keep
+        // resolving from current server metadata on forced reconnects too
+        // (same precedence as buildReconnectOAuthOptions in
+        // oauth-orchestrator.ts).
         const registrationMode =
+          normalizeRegistrationMode(server.registrationMode) ??
           server.oauthFlowProfile?.registrationStrategy ??
           storedOAuthConfig.registrationMode ??
           "auto";
@@ -3434,14 +4156,9 @@ export function useServerState({
             server.oauthFlowProfile?.clientId ??
             storedClientCredentials.clientId,
           clientSecret:
-            server.oauthTokens?.client_secret ??
-            server.oauthFlowProfile?.clientSecret ??
-            storedClientCredentials.clientSecret,
+            undefined,
           hasClientSecret: Boolean(
-            server.oauthTokens?.client_secret ||
-              server.oauthFlowProfile?.clientSecret ||
-              storedClientCredentials.clientSecret ||
-              server.hasClientSecret
+            server.hasClientSecret
           ),
           customHeaders: mergeWithProjectHeaders(
             profileHeaders ??
@@ -3494,7 +4211,7 @@ export function useServerState({
         } catch (error) {
           if (isStaleOp(serverName, token)) {
             return {
-              status: "failed",
+              status: "superseded",
               error:
                 error instanceof Error ? error.message : "OAuth flow failed",
             };
@@ -3524,7 +4241,7 @@ export function useServerState({
         if (!oauthResult.success) {
           if (isStaleOp(serverName, token)) {
             return {
-              status: "failed",
+              status: "superseded",
               error: oauthResult.error || "OAuth flow failed",
             };
           }
@@ -3541,13 +4258,17 @@ export function useServerState({
             error: errorMessage,
           };
         }
+        const oauthServerConfig = stripAuthorizationFromHttpConfig(
+          oauthResult.serverConfig!
+        );
         const result = await guardedReconnectServer(
           serverName,
-          withProjectConnectionDefaults(oauthResult.serverConfig!)
+          withProjectConnectionDefaults(oauthServerConfig),
+          buildStatelessTelemetry("forced_oauth")
         );
         if (isStaleOp(serverName, token)) {
           return {
-            status: "failed",
+            status: "superseded",
             error: result.error || "Reconnection failed after OAuth",
           };
         }
@@ -3555,11 +4276,8 @@ export function useServerState({
           dispatch({
             type: "CONNECT_SUCCESS",
             name: serverName,
-            config: oauthResult.serverConfig!,
-            tokens:
-              HOSTED_MODE && isAuthenticated
-                ? undefined
-                : getStoredTokens(serverName),
+            config: oauthServerConfig,
+            tokens: undefined,
             useOAuth: true,
             oauthTrace: oauthResult.oauthTrace,
           });
@@ -3585,22 +4303,88 @@ export function useServerState({
         };
       }
 
-      if (HOSTED_MODE && isAuthenticated && server.useOAuth === true) {
-        const hostedReconnectConfig = withProjectConnectionDefaults(
+      // Auto's escalation gate for the reconnect path: same confirm +
+      // pending/succeeded/failed lifecycle as handleConnect. Returns null to
+      // proceed into the interactive flow, or the outcome to return
+      // immediately. Keyed by project + server id so identically named
+      // servers across projects don't share state.
+      const escalationIdentity: AutoEscalationIdentity = {
+        projectId: appState.activeProjectId,
+        serverId: hostedProjectServerId ?? null,
+        serverName,
+      };
+      let autoInteractiveConfirmed = false;
+      const gateAutoEscalation = async (): Promise<
+        | null
+        | { status: "failed" | "reauth" | "superseded"; error: string }
+      > => {
+        if (server.authMethod !== "auto") return null;
+        const fail = (errorMessage: string, status: "failed" | "reauth") => {
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: errorMessage,
+          });
+          reportError(errorMessage);
+          return { status, error: errorMessage };
+        };
+        if (autoOAuthEscalation.hasPendingAttempt(escalationIdentity)) {
+          // A confirmed flow already ran this session and the server 401'd
+          // again — surface the config problem and clear, so a later manual
+          // attempt re-prompts instead of being muted all session.
+          autoOAuthEscalation.markFailed(escalationIdentity);
+          return fail(
+            `Server "${serverName}" still returns 401 after OAuth. Check the server's authorization configuration.`,
+            "failed"
+          );
+        }
+        if (options?.allowInteractiveOAuthFlow === false) {
+          // Non-interactive reconnect-all (client/host switch, load loop):
+          // never prompt or redirect from here; a manual reconnect offers
+          // the escalation.
+          return fail(
+            `Server "${serverName}" requires authorization. Reconnect to sign in with OAuth.`,
+            "reauth"
+          );
+        }
+        const proceed = await confirmAutoOAuthEscalation(serverName);
+        // A newer op superseded this one while the prompt sat open — don't
+        // write ITS marker state (that would poison the newer attempt).
+        if (isStaleOp(serverName, token)) {
+          return {
+            status: "superseded",
+            error: "Reconnection superseded",
+          };
+        }
+        if (!proceed) {
+          return fail(
+            `Server "${serverName}" requires authorization. Reconnect to sign in with OAuth.`,
+            "failed"
+          );
+        }
+        autoOAuthEscalation.markPending(escalationIdentity);
+        autoInteractiveConfirmed = true;
+        return null;
+      };
+
+      if (server.useOAuth === true) {
+        const syncedReconnectConfig = withProjectConnectionDefaults(
           server.config
         );
         try {
           const result = await guardedReconnectServer(
             serverName,
-            hostedReconnectConfig
+            syncedReconnectConfig,
+            buildStatelessTelemetry("synced_oauth_credentials")
           );
           if (isStaleOp(serverName, token)) {
             return {
-              status: "failed",
+              status: "superseded",
               error: result.error || "Reconnection failed",
             };
           }
           if (result.success) {
+            autoOAuthEscalation.markSucceeded(escalationIdentity);
             dispatch({
               type: "CONNECT_SUCCESS",
               name: serverName,
@@ -3608,7 +4392,7 @@ export function useServerState({
               tokens: undefined,
               useOAuth: true,
             });
-            logger.info("Hosted reconnect successful using stored OAuth", {
+            logger.info("Reconnect successful using synced OAuth credentials", {
               serverName,
               result,
             });
@@ -3618,14 +4402,14 @@ export function useServerState({
             return { status: "connected" };
           }
 
-          if (!requiresFreshOAuthAuthorization(result.error)) {
+          if (!connectFailureRequiresOAuth(result)) {
             const errorMessage = result.error || "Reconnection failed";
             dispatch({
               type: "CONNECT_FAILURE",
               name: serverName,
               error: errorMessage,
             });
-            logger.error("Hosted reconnect failed", { serverName, result });
+            logger.error("OAuth reconnect failed", { serverName, result });
             reportError(errorMessage || `Failed to reconnect: ${serverName}`);
             return {
               status: "failed",
@@ -3633,14 +4417,24 @@ export function useServerState({
             };
           }
 
+          const gated = await gateAutoEscalation();
+          if (gated) return gated;
+          if (isStaleOp(serverName, token)) {
+            return {
+              status: "superseded",
+              error: result.error || "Reconnection failed",
+            };
+          }
+
           logger.info(
-            "Hosted reconnect requires a fresh OAuth flow after stored credential lookup",
+            "Reconnect requires a fresh OAuth flow after synced credential lookup",
             { serverName, error: result.error }
           );
+          hadSyncedOAuthRetry = true;
         } catch (error) {
           if (isStaleOp(serverName, token)) {
             return {
-              status: "failed",
+              status: "superseded",
               error: error instanceof Error ? error.message : "Unknown error",
             };
           }
@@ -3654,7 +4448,7 @@ export function useServerState({
               name: serverName,
               error: errorMessage,
             });
-            logger.error("Hosted reconnect failed", {
+            logger.error("OAuth reconnect failed", {
               serverName,
               error: errorMessage,
             });
@@ -3665,10 +4459,20 @@ export function useServerState({
             };
           }
 
+          const gated = await gateAutoEscalation();
+          if (gated) return gated;
+          if (isStaleOp(serverName, token)) {
+            return {
+              status: "superseded",
+              error: errorMessage,
+            };
+          }
+
           logger.info(
-            "Hosted reconnect requires a fresh OAuth flow after stored credential lookup",
+            "Reconnect requires a fresh OAuth flow after synced credential lookup",
             { serverName, error: errorMessage }
           );
+          hadSyncedOAuthRetry = true;
         }
       }
 
@@ -3687,6 +4491,11 @@ export function useServerState({
               updateServerOAuthTrace(serverName, oauthTrace);
             },
             allowInteractiveOAuthFlow: options?.allowInteractiveOAuthFlow,
+            // Auto servers reach the interactive flow only through the
+            // user-confirmed escalation gate above; without this flag the
+            // orchestrator treats a tokenless auto server as
+            // ready-unauthenticated instead of redirecting.
+            interactiveOAuthConfirmed: autoInteractiveConfirmed,
           }
         );
         if (authResult.kind === "redirect") {
@@ -3717,9 +4526,13 @@ export function useServerState({
         if (authResult.kind === "error") {
           if (isStaleOp(serverName, token)) {
             return {
-              status: "failed",
+              status: "superseded",
               error: authResult.error,
             };
+          }
+          if (autoInteractiveConfirmed) {
+            // OAuth init failed before any redirect — nothing is pending.
+            autoOAuthEscalation.markFailed(escalationIdentity);
           }
           dispatch({
             type: "CONNECT_FAILURE",
@@ -3733,21 +4546,27 @@ export function useServerState({
             error: authResult.error,
           };
         }
+        const authServerConfig =
+          "url" in authResult.serverConfig
+            ? stripAuthorizationFromHttpConfig(authResult.serverConfig)
+            : authResult.serverConfig;
         const result = await guardedReconnectServer(
           serverName,
-          withProjectConnectionDefaults(authResult.serverConfig)
+          withProjectConnectionDefaults(authServerConfig),
+          buildStatelessTelemetry("authorized_reconnect")
         );
         if (isStaleOp(serverName, token)) {
           return {
-            status: "failed",
+            status: "superseded",
             error: result.error || "Reconnection failed",
           };
         }
         if (result.success) {
+          autoOAuthEscalation.markSucceeded(escalationIdentity);
           dispatch({
             type: "CONNECT_SUCCESS",
             name: serverName,
-            config: authResult.serverConfig,
+            config: authServerConfig,
             tokens: authResult.tokens,
             useOAuth: server.useOAuth === true || authResult.tokens != null,
             oauthTrace: authResult.oauthTrace,
@@ -3757,6 +4576,12 @@ export function useServerState({
             logger.warn("Failed to fetch init info", { serverName, err })
           );
           return { status: "connected" };
+        }
+        if (autoInteractiveConfirmed) {
+          // Terminal in this page-session: OAuth completed but the connect
+          // failed. Clear the pending marker so a later manual attempt
+          // re-prompts instead of being muted all session.
+          autoOAuthEscalation.markFailed(escalationIdentity);
         }
         const errorMessage = result.error || "Reconnection failed";
         dispatch({
@@ -3780,7 +4605,7 @@ export function useServerState({
           error instanceof Error ? error.message : "Unknown error";
         if (isStaleOp(serverName, token)) {
           return {
-            status: "failed",
+            status: "superseded",
             error: errorMessage,
           };
         }
@@ -3849,9 +4674,16 @@ export function useServerState({
         select: false,
         suppressErrors: true,
       });
-      if (result.status !== "connected") {
-        throw new Error(result.error || `Failed to reconnect ${serverName}`);
+      // "superseded" means a newer connect/reconnect op for this server took
+      // over while this one was in flight (e.g. the user kept switching
+      // clients). The connection is just in progress under the newer op, which
+      // owns the outcome — not a failure. Treat it as a no-op so the
+      // client-switch recycle doesn't surface a spurious "Failed to reconnect"
+      // toast.
+      if (result.status === "connected" || result.status === "superseded") {
+        return;
       }
+      throw new Error(result.error || `Failed to reconnect ${serverName}`);
     },
     [reconnectServerInternal]
   );
@@ -3977,6 +4809,12 @@ export function useServerState({
           case "reauth":
             reauthServerNames.push(serverName);
             break;
+          case "superseded":
+            // A newer op is already handling this server; it owns the
+            // outcome. Don't classify it as failed — that would produce a
+            // false "failed to connect" signal for a connection that's just
+            // still in progress.
+            break;
           case "failed":
           default:
             failedServerNames.push(serverName);
@@ -4094,14 +4932,43 @@ export function useServerState({
           retryCount: originalServer?.retryCount ?? 0,
           enabled: originalServer?.enabled ?? false,
           oauthTokens: originalServer?.oauthTokens,
-          oauthFlowProfile: originalServer?.oauthFlowProfile,
+          oauthFlowProfile:
+            formData.useOAuth || formData.useXaa
+              ? buildOAuthProfileFromFormData(
+                  formData,
+                  originalServer?.oauthFlowProfile
+                ) ?? originalServer?.oauthFlowProfile
+              : undefined,
           initializationInfo: originalServer?.initializationInfo,
           useOAuth: formData.useOAuth ?? false,
           xaaAuthzIssuer:
             formData.xaaAuthzIssuer ?? originalServer?.xaaAuthzIssuer,
+          xaaAllowPathScopedIssuer:
+            formData.xaaAllowPathScopedIssuer ??
+            originalServer?.xaaAllowPathScopedIssuer,
+          useXaa: formData.useXaa ?? false,
+          // Shared atomic identity-pair semantics (omitted pair preserves
+          // the stored values, explicit "" pair clears) + authServerMode
+          // default.
+          ...resolveXaaIdentitySaveFields({
+            useXaa: formData.useXaa === true,
+            formAuthServerMode: formData.authServerMode,
+            formSubject: formData.xaaSubject,
+            formEmail: formData.xaaEmail,
+            existing: originalServer,
+          }),
+          // Unified fields: preserve any saved value when a save that omits
+          // them comes through, rather than erasing it.
+          xaaIdentityAssertionFormat:
+            formData.xaaIdentityAssertionFormat ??
+            originalServer?.xaaIdentityAssertionFormat,
+          registrationMode:
+            formData.registrationMode ??
+            originalServer?.registrationMode,
+          authMethod: formData.authMethod ?? originalServer?.authMethod,
         } as ServerWithName;
 
-        if (!formData.useOAuth) {
+        if (!formData.useOAuth && !formData.useXaa) {
           clearOAuthData(nextServerName);
         }
         dispatch({
@@ -4261,5 +5128,6 @@ export function useServerState({
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
     persistRuntimeServerToProjectIfNeeded,
+    ensureHostedServerIdsForNames,
   };
 }

@@ -1,11 +1,10 @@
 import {
   clearOAuthData,
-  getStoredTokens,
   initiateOAuth,
   readStoredOAuthConfig,
-  refreshOAuthTokens,
   MCPOAuthOptions,
 } from "@/lib/oauth/mcp-oauth";
+import { normalizeRegistrationMode } from "@/shared/xaa.js";
 import { ServerWithName } from "./app-types";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 
@@ -69,16 +68,20 @@ function sanitizeOAuthSetupHeaders(
 
 function readStoredClientInfo(serverName: string): {
   client_id?: string;
-  client_secret?: string;
 } {
   try {
     const raw = localStorage.getItem(`mcp-client-${serverName}`);
     if (!raw) return {};
 
     const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && "client_secret" in parsed) {
+      localStorage.setItem(
+        `mcp-client-${serverName}`,
+        JSON.stringify({ client_id: nonEmptyString(parsed?.client_id) }),
+      );
+    }
     return {
       client_id: nonEmptyString(parsed?.client_id),
-      client_secret: nonEmptyString(parsed?.client_secret),
     };
   } catch {
     return {};
@@ -129,12 +132,19 @@ function buildReconnectOAuthOptions(
 ): MCPOAuthOptions {
   const oauthConfig = readStoredOAuthConfig(server.name);
   const storedClientInfo = readStoredClientInfo(server.name);
-  const storedTokens = getStoredTokens(server.name);
   const profile = server.oauthFlowProfile;
   const protocolMode =
     profile?.protocolVersion ?? oauthConfig.protocolMode ?? "auto";
+  // The CANONICAL per-server registrationMode wins — it can be "auto" (resolve
+  // from current server metadata at connect time), while the legacy
+  // profile/localStorage values are rollback-compat concretes. Preferring a
+  // concrete here would pin every reconnect to it and "auto" would never
+  // dynamically resolve again.
   const registrationMode =
-    profile?.registrationStrategy ?? oauthConfig.registrationMode ?? "auto";
+    normalizeRegistrationMode(server.registrationMode) ??
+    profile?.registrationStrategy ??
+    oauthConfig.registrationMode ??
+    "auto";
   const profileScopes = parseOAuthScopes(profile?.scopes);
 
   return {
@@ -151,12 +161,9 @@ function buildReconnectOAuthOptions(
     clientId:
       nonEmptyString(server.oauthTokens?.client_id) ??
       nonEmptyString(profile?.clientId) ??
-      nonEmptyString(storedTokens?.client_id) ??
       storedClientInfo.client_id,
-    clientSecret:
-      nonEmptyString(server.oauthTokens?.client_secret) ??
-      nonEmptyString(profile?.clientSecret) ??
-      storedClientInfo.client_secret,
+    clientSecret: undefined,
+    hasClientSecret: Boolean(server.hasClientSecret),
     protocolMode,
     protocolVersion:
       protocolMode !== "auto"
@@ -176,6 +183,13 @@ export async function ensureAuthorizedForReconnect(
     beforeRedirect?: (oauthOptions: MCPOAuthOptions) => void;
     onTraceUpdate?: (trace: OAuthTrace) => void;
     allowInteractiveOAuthFlow?: boolean;
+    /**
+     * Set by the reconnect path after the user explicitly confirmed Auto's
+     * OAuth escalation. Without it, a tokenless Auto server is treated as
+     * ready-unauthenticated (discover semantics) — never front-run a
+     * redirect the user didn't ask for.
+     */
+    interactiveOAuthConfirmed?: boolean;
   },
 ): Promise<OAuthResult> {
   // If server is explicitly configured without OAuth, skip OAuth flow entirely
@@ -194,29 +208,18 @@ export async function ensureAuthorizedForReconnect(
     return { kind: "ready", serverConfig: server.config, tokens: undefined };
   }
 
-  // If OAuth was configured, try to refresh or re-initiate. Local mode does
-  // not hydrate `server.oauthTokens` from localStorage at startup, so a
-  // page-reload + auto-reconnect arrives here with `oauthTokens: undefined`
-  // even when a refresh_token sits in localStorage. Probe getStoredTokens
-  // too so the silent refresh runs; refreshOAuthTokens self-reads from
-  // localStorage anyway and returns success: false cleanly if nothing is
-  // persisted.
-  let refreshTrace: OAuthTrace | undefined;
-  const hasRefreshCandidate =
-    server.oauthTokens || getStoredTokens(server.name);
-  if (hasRefreshCandidate) {
-    const refreshed = await refreshOAuthTokens(server.name, {
-      onTraceUpdate: options?.onTraceUpdate,
-    });
-    if (refreshed.success && refreshed.serverConfig) {
-      return {
-        kind: "ready",
-        serverConfig: refreshed.serverConfig,
-        tokens: getStoredTokens(server.name),
-        oauthTrace: refreshed.oauthTrace,
-      };
-    }
-    refreshTrace = refreshed.oauthTrace;
+  // Auto (discover) servers carry useOAuth: true as a derived mirror, but a
+  // tokenless Auto server connects unauthenticated by design — the connect
+  // surfaces tag a real 401 and the reconnect path asks the user before
+  // coming back here with interactiveOAuthConfirmed. Without this guard,
+  // every auto-connect loop (load, client switch) would surprise-redirect
+  // open Auto servers into OAuth.
+  if (
+    server.authMethod === "auto" &&
+    !server.oauthTokens &&
+    options?.interactiveOAuthConfirmed !== true
+  ) {
+    return { kind: "ready", serverConfig: server.config, tokens: undefined };
   }
 
   const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${server.name}`);
@@ -224,12 +227,11 @@ export async function ensureAuthorizedForReconnect(
 
   if (options?.allowInteractiveOAuthFlow === false) {
     if (url) {
-      return buildOAuthReauthRequired(server.name, refreshTrace);
+      return buildOAuthReauthRequired(server.name);
     }
     return {
       kind: "error",
-      error: "OAuth refresh failed and no URL present",
-      oauthTrace: refreshTrace,
+      error: "OAuth authorization required and no URL present",
     };
   }
 
@@ -245,7 +247,7 @@ export async function ensureAuthorizedForReconnect(
       return {
         kind: "ready",
         serverConfig: init.serverConfig,
-        tokens: getStoredTokens(server.name),
+        tokens: undefined,
         oauthTrace: init.oauthTrace,
       };
     }
@@ -259,5 +261,8 @@ export async function ensureAuthorizedForReconnect(
     };
   }
 
-  return { kind: "error", error: "OAuth refresh failed and no URL present" };
+  return {
+    kind: "error",
+    error: "OAuth authorization required and no URL present",
+  };
 }

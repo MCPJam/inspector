@@ -20,7 +20,6 @@ import {
   type ReactNode,
 } from "react";
 import { ArrowLeft, Plus, X } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Sheet,
@@ -37,6 +36,7 @@ import {
   AGENT_PANEL_MIN_WIDTH,
   useAgentPanelStore,
 } from "@/stores/agent-panel/agent-panel-store";
+import { track } from "@/lib/analytics";
 
 interface AgentSidePanelProps {
   projectId: string | null;
@@ -62,7 +62,6 @@ export function AgentSidePanel({
   const setOpen = useAgentPanelStore((s) => s.setOpen);
   const setWidth = useAgentPanelStore((s) => s.setWidth);
   const setActiveSession = useAgentPanelStore((s) => s.setActiveSession);
-  const posthog = usePostHog();
 
   // Only honor the persisted session pointer when it was stored under the
   // currently active project. Cross-tab sync or a fresh reload landing on a
@@ -78,10 +77,13 @@ export function AgentSidePanel({
   const previousOpenRef = useRef(isOpen);
   useEffect(() => {
     if (previousOpenRef.current && !isOpen) {
-      posthog?.capture("mcpjam_agent_panel_closed", { tab: activeTab });
+      track("mcpjam_agent_panel_closed", {
+        location: "agent_side_panel",
+        tab: activeTab,
+      });
     }
     previousOpenRef.current = isOpen;
-  }, [activeTab, isOpen, posthog]);
+  }, [activeTab, isOpen]);
 
   const handleNewChat = useCallback(() => {
     setActiveSession(null, null);
@@ -221,7 +223,10 @@ export function AgentSidePanel({
         if (committed < AGENT_PANEL_MIN_WIDTH * 0.9) {
           setOpen(false);
         } else {
-          posthog?.capture("mcpjam_agent_panel_resized", { width: committed });
+          track("mcpjam_agent_panel_resized", {
+            location: "agent_side_panel",
+            width: committed,
+          });
         }
       }}
     >

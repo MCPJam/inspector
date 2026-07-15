@@ -25,7 +25,7 @@ const MCP_PROTOCOL_OPTIONS: Array<{
   value: DropdownValue;
   label: string;
 }> = [
-  { value: "inherit", label: "Host default" },
+  { value: "inherit", label: "Client default" },
   { value: "latest", label: "Latest (2025-11-25)" },
   { value: "rc", label: "2026 RC (2026-07-28)" },
 ];

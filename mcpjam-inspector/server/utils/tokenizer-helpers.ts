@@ -42,6 +42,8 @@ const MODEL_ID_MAPPINGS: Record<string, string> = {
   "gpt-5.1": "openai/gpt-5.1-instant", // Map to closest available
   "gpt-5.1-codex": "openai/gpt-5.1-codex",
   "gpt-5.1-codex-mini": "openai/gpt-5.1-codex-mini",
+  "gpt-5.5": "openai/gpt-5",
+  "openai/gpt-5.5": "openai/gpt-5",
 
   // DeepSeek models
   "deepseek-chat": "deepseek/deepseek-v3.1",

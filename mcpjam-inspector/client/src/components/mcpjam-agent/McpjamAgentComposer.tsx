@@ -40,6 +40,9 @@ export interface McpjamAgentComposerProps {
   minRows?: number;
   maxRows?: number;
   header?: ReactNode;
+  /** Compact controls rendered at the left of the footer row (e.g. the
+   *  Tool Approval toggle). */
+  footerControls?: ReactNode;
 }
 
 export function McpjamAgentComposer({
@@ -56,6 +59,7 @@ export function McpjamAgentComposer({
   minRows,
   maxRows,
   header,
+  footerControls,
 }: McpjamAgentComposerProps) {
   const [focused, setFocused] = useState(false);
   const chatboxHostStyle = useChatboxHostStyle();
@@ -155,6 +159,16 @@ export function McpjamAgentComposer({
         className={textareaClasses}
       />
       <div className={footerClasses}>
+        {footerControls ? (
+          <div
+            className={cn(
+              "flex shrink-0 items-center gap-2",
+              isChatboxMode && "mr-auto",
+            )}
+          >
+            {footerControls}
+          </div>
+        ) : null}
         {!isChatboxMode ? (
           <span
             className={cn(
