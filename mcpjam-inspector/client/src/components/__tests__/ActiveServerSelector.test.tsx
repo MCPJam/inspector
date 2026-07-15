@@ -661,6 +661,41 @@ describe("ActiveServerSelector", () => {
 
       expect(onServerChange).not.toHaveBeenCalled();
     });
+
+    it("auto-selects an eligible debugger server when the current selection is filtered out", async () => {
+      const onServerChange = vi.fn();
+      const httpConfig = {
+        transportType: "streamableHttp",
+        url: "http://localhost:3000/mcp",
+      } as const;
+      const serverConfigs = {
+        "selected-plain-http": createServer({
+          name: "selected-plain-http",
+          config: httpConfig,
+        }),
+        "visible-oauth": createServer({
+          name: "visible-oauth",
+          config: httpConfig,
+          useOAuth: true,
+          lastConnectionTime: new Date("2024-01-03"),
+        }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          selectedServer="selected-plain-http"
+          onServerChange={onServerChange}
+          showOnlyOAuthServers
+          autoSelectFilteredServer
+        />,
+      );
+
+      await waitFor(() => {
+        expect(onServerChange).toHaveBeenCalledWith("visible-oauth");
+      });
+    });
   });
 
   describe("reconnect button", () => {

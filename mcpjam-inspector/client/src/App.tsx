@@ -3369,9 +3369,9 @@ export default function App() {
           // x button; other surfaces omit onHideServer so no x renders.
           hiddenServers: hiddenHeaderServers,
           onHideServer: headerHiddenSurface ? hideHeaderServer : undefined,
-          autoSelectFilteredServer:
-            activeTab !== "oauth-flow" &&
-            !(activeTab === "xaa-flow" && xaaEnabled === true),
+          // If the debugger header already has an eligible target, select it
+          // instead of leaving the canvas in a prompt-less empty state.
+          autoSelectFilteredServer: true,
           showOnlyServersWithViews: false,
           hasMessages: false,
         }
