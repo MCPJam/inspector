@@ -112,9 +112,18 @@ server, mirroring the client-registration models MCP clients use:
 | Strategy | Credentials needed | Posture notes |
 | --- | --- | --- |
 | `preregistered` (default) | `--client-id` (+ optional `--client-secret`) | Matches the draft's recommended deployment |
-| `dcr` | none | A diagnostic: the CLI performs open [RFC 7591](https://www.rfc-editor.org/rfc/rfc7591) registration and supplies the IdP→RAS client mapping itself. Each run may leave a registration behind. RFC 7591 conformance findings (e.g. missing `Cache-Control: no-store`) are reported as warnings |
+| `dcr` | none | A diagnostic: the CLI performs open [RFC 7591](https://www.rfc-editor.org/rfc/rfc7591) registration and supplies the IdP→RAS client mapping itself. Each run may leave a registration behind. RFC 7591 conformance findings are reported as warnings in `registration.warnings[]` |
 | `cimd` | none | Public client by default — the run completes but is flagged: the draft recommends confidential clients |
 | `cimd` + `--client-auth private-key-jwt` | none | Confidential CIMD: the CLI generates a local EC P-256 key, publishes it through the hosted reflector, and signs a `client_assertion`. The private key never leaves your machine |
+
+The `registration.warnings[]` array in the result uses these codes:
+
+| Code | Meaning | Weight |
+| --- | --- | --- |
+| `public_client` | Client authenticates with no key or secret | Posture note — the draft recommends confidential clients, but this is not itself a vulnerability |
+| `profile_metadata_not_echoed` | DCR response omitted `authorization_grant_profiles_supported` | Informational — RFC 7591 allows a server to ignore unknown metadata |
+| `grant_types_not_echoed` | DCR response omitted `grant_types` | Informational — same rationale; redemption is the real signal |
+| `missing_no_store` | DCR credential response lacked `Cache-Control: no-store` | Low compliance finding — RFC 7591 requires this header for credential-bearing responses |
 
 For confidential CIMD, **the key is the identity**: the reflector URL derived
 from the public key becomes the `client_id`. Deleting
