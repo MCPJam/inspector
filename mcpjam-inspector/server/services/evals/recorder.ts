@@ -7,15 +7,55 @@ import type {
   RunnerBrowserInteractionStep,
   RunnerWidgetRenderObservation,
 } from "@/shared/eval-trace";
-import type { PromptTurn } from "@/shared/prompt-turns";
+import { isModelFree, type PromptTurn, type TestStep } from "@/shared/steps";
 import type { UsageTotals } from "./types";
 import { logger } from "../../utils/logger";
 import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
+import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
+import { ConvexError } from "convex/values";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
+// Run-level (not per-iteration) terminal stop reason, threaded into the
+// suite-run finalize so the dashboard can show why a run stopped.
+type RunStopReason = "user_cancelled" | "run_timeout" | "iteration_timeout";
+
+/**
+ * When a Convex mutation rejects because a billing/entitlement cap was hit
+ * (e.g. `maxEvalIterationsPerMonth`), the structured payload lives on
+ * `ConvexError.data`. Re-emit it as a 402 `WebRouteError` carrying that exact
+ * payload in `details`, so the route serializes it onto the JSON body and the
+ * client can rebuild a ConvexError and render the proper upgrade message —
+ * instead of collapsing it into a generic 500 where the billing fields are
+ * lost. Returns null for any non-billing error so callers fall through to
+ * their normal handling.
+ */
+function asBillingRouteError(error: unknown): WebRouteError | null {
+  if (!(error instanceof ConvexError)) {
+    return null;
+  }
+  const data = error.data as { code?: unknown; message?: unknown } | undefined;
+  if (
+    !data ||
+    typeof data !== "object" ||
+    (data.code !== "billing_limit_reached" &&
+      data.code !== "billing_feature_not_included")
+  ) {
+    return null;
+  }
+  const message =
+    typeof data.message === "string" && data.message.length > 0
+      ? data.message
+      : "Your plan limit was reached.";
+  return new WebRouteError(
+    402,
+    ErrorCode.BILLING_LIMIT_REACHED,
+    message,
+    data as Record<string, unknown>
+  );
+}
 
 type SuiteRunEnvironmentSnapshot = {
   servers: string[];
@@ -44,6 +84,7 @@ export type SuiteRunRecorder = {
       isNegativeTest?: boolean; // When true, test passes if NO tools are called
       expectedOutput?: string;
       promptTurns?: PromptTurn[];
+      steps?: TestStep[];
       advancedConfig?: Record<string, unknown>;
     };
     iterationNumber: number;
@@ -77,6 +118,12 @@ export type SuiteRunRecorder = {
      */
     widgetRenderObservations?: RunnerWidgetRenderObservation[];
     browserInteractionSteps?: RunnerBrowserInteractionStep[];
+    /**
+     * Iteration replay `.webm` bytes. Pure pass-through to
+     * `finalizeEvalIteration`, which uploads it (best-effort) alongside the
+     * screenshots.
+     */
+    videoBytes?: Buffer | null;
     status?: IterationStatus;
     startedAt?: number;
     error?: string;
@@ -88,7 +135,7 @@ export type SuiteRunRecorder = {
     metadata?: Record<string, unknown>;
   }): Promise<void>;
   finalize(args: {
-    status: "completed" | "failed" | "cancelled";
+    status: "completed" | "failed" | "cancelled" | "timed_out";
     summary?: {
       total: number;
       passed: number;
@@ -96,11 +143,12 @@ export type SuiteRunRecorder = {
       passRate: number;
     };
     notes?: string;
+    stopReason?: RunStopReason;
   }): Promise<void>;
 };
 
 function isSuiteRunEnvironmentSnapshot(
-  value: unknown,
+  value: unknown
 ): value is SuiteRunEnvironmentSnapshot {
   if (!value || typeof value !== "object") {
     return false;
@@ -126,11 +174,7 @@ export const createSuiteRunRecorder = ({
   return {
     runId,
     suiteId,
-    async startIteration({
-      testCaseId,
-      testCaseSnapshot,
-      iterationNumber,
-    }) {
+    async startIteration({ testCaseId, testCaseSnapshot, iterationNumber }) {
       if (runDeleted) {
         // Silently skip if run was deleted
         return undefined;
@@ -143,7 +187,7 @@ export const createSuiteRunRecorder = ({
         // Query all iterations for this run
         const response = await convexClient.query(
           "testSuites:getTestSuiteRunDetails" as any,
-          { runId },
+          { runId }
         );
 
         const iterations = response?.iterations || [];
@@ -176,7 +220,7 @@ export const createSuiteRunRecorder = ({
               testCaseId,
               testCaseSnapshot,
               iterationNumber,
-            },
+            }
           );
           return undefined;
         }
@@ -203,7 +247,7 @@ export const createSuiteRunRecorder = ({
 
         logger.error(
           "[evals] Failed to record iteration start:",
-          new Error(errorMessage),
+          new Error(errorMessage)
         );
         return undefined;
       }
@@ -225,7 +269,7 @@ export const createSuiteRunRecorder = ({
         },
       });
     },
-    async finalize({ status, summary, notes }) {
+    async finalize({ status, summary, notes, stopReason }) {
       if (runDeleted) {
         // Silently skip if run was deleted
         return;
@@ -237,6 +281,7 @@ export const createSuiteRunRecorder = ({
           status,
           summary,
           notes,
+          stopReason,
         });
       } catch (error) {
         const errorMessage =
@@ -254,7 +299,7 @@ export const createSuiteRunRecorder = ({
 
         logger.error(
           "[evals] Failed to finalize suite run:",
-          new Error(errorMessage),
+          new Error(errorMessage)
         );
       }
     },
@@ -273,6 +318,7 @@ export const startSuiteRunWithRecorder = async ({
   toolSnapshot,
   toolSnapshotDebug,
   iterationOverride,
+  caseIds,
   matchOptionsOverride,
   namedHostId,
   runGroupId,
@@ -294,6 +340,11 @@ export const startSuiteRunWithRecorder = async ({
       serverName: string;
       projectServerId?: string;
     }>;
+    // Reproducible-env pin, forwarded from getRunReplayMetadata on a
+    // current-config replay so the replay keeps the source run's frozen
+    // computer environment (must be declared here or a reconstruction of this
+    // object would silently drop it before Convex).
+    computerEnvironmentId?: string;
   };
   toolSnapshot?: ServerToolSnapshot;
   toolSnapshotDebug?: Record<string, unknown>;
@@ -303,6 +354,12 @@ export const startSuiteRunWithRecorder = async ({
    * `testCase.runs` is untouched.
    */
   iterationOverride?: number;
+  /**
+   * Run-only case subset. When set, the `startTestSuiteRun` mutation narrows
+   * the run's snapshot to just these suite cases; precreate + the runner are
+   * unchanged. Used by single-case runs from the public API / CLI.
+   */
+  caseIds?: string[];
   /**
    * One-off match-option override for this run only. Convex
    * `precreateIterationsForRun` resolves it on top of suite default +
@@ -336,25 +393,38 @@ export const startSuiteRunWithRecorder = async ({
    */
   idempotencyKey?: string;
 }) => {
-  const response = await convexClient.mutation(
-    "testSuites:startTestSuiteRun" as any,
-    {
-      suiteId,
-      notes,
-      passCriteria,
-      replayedFromRunId,
-      useCurrentSuiteConfig,
-      environmentOverride,
-      toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
-      toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
-      iterationOverride,
-      matchOptionsOverride,
-      ...(namedHostId ? { namedHostId } : {}),
-      ...(runGroupId ? { runGroupId } : {}),
-      ...(source ? { source } : {}),
-      ...(idempotencyKey ? { idempotencyKey } : {}),
-    },
-  );
+  let response: any;
+  try {
+    response = await convexClient.mutation(
+      "testSuites:startTestSuiteRun" as any,
+      {
+        suiteId,
+        notes,
+        passCriteria,
+        replayedFromRunId,
+        useCurrentSuiteConfig,
+        environmentOverride,
+        toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
+        toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
+        iterationOverride,
+        ...(caseIds && caseIds.length ? { caseIds } : {}),
+        matchOptionsOverride,
+        ...(namedHostId ? { namedHostId } : {}),
+        ...(runGroupId ? { runGroupId } : {}),
+        ...(source ? { source } : {}),
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+      }
+    );
+  } catch (error) {
+    // The eval-iteration cap is checked fail-fast inside startTestSuiteRun
+    // (before any run row is created), so an out-of-quota launch rejects here
+    // with the billing ConvexError and NO pending run group is stranded.
+    const billing = asBillingRouteError(error);
+    if (billing) {
+      throw billing;
+    }
+    throw error;
+  }
 
   const runId = response?.runId as string;
   const testCases = response?.testCases as Array<Record<string, any>>;
@@ -363,16 +433,58 @@ export const startSuiteRunWithRecorder = async ({
     throw new Error("Failed to start suite run");
   }
 
-  // Pre-create all iterations
-  await convexClient.mutation("testSuites:precreateIterationsForRun" as any, {
-    runId,
-  });
-
   const recorder = createSuiteRunRecorder({
     convexClient,
     suiteId,
     runId,
   });
+
+  // Pre-create all iterations
+  try {
+    await convexClient.mutation("testSuites:precreateIterationsForRun" as any, {
+      runId,
+    });
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    logger.error("[evals] Failed to pre-create suite run iterations", error, {
+      suiteId,
+      runId,
+    });
+    try {
+      await convexClient.mutation(
+        "testSuites:markSetupPendingIterationsFailed" as any,
+        { runId, error: cause }
+      );
+    } catch (cleanupError) {
+      logger.warn("[evals] Failed to mark setup iterations failed", {
+        suiteId,
+        runId,
+        error:
+          cleanupError instanceof Error
+            ? cleanupError.message
+            : String(cleanupError),
+      });
+    }
+    await recorder.finalize({
+      status: "failed",
+      notes: "Failed to prepare eval test attempts.",
+    });
+    // Defense in depth: the run-start pre-check normally rejects out-of-quota
+    // launches before the run row exists, but a launch that races another to
+    // exhaust the cap can still trip the reserve here. Preserve the billing
+    // payload so the client renders the proper upgrade message; the run was
+    // already finalized failed above, so no pending group is left behind.
+    const billing = asBillingRouteError(error);
+    if (billing) {
+      throw billing;
+    }
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Could not start eval because MCPJam failed to prepare the test attempts. Try again.",
+      { runId, cause }
+    );
+  }
 
   // Use the full environment Convex snapshotted into the run (derived
   // from suite.hostConfigId.serverIds when available, else the legacy
@@ -381,7 +493,7 @@ export const startSuiteRunWithRecorder = async ({
   // needs before calling getToolsForAiSdk. Falling back to the raw request
   // refs is only for older backend responses without configSnapshot.
   const snapshotEnvironment = isSuiteRunEnvironmentSnapshot(
-    (response?.configSnapshot as any)?.environment,
+    (response?.configSnapshot as any)?.environment
   )
     ? ((response?.configSnapshot as any)
         .environment as SuiteRunEnvironmentSnapshot)
@@ -395,29 +507,32 @@ export const startSuiteRunWithRecorder = async ({
   // suite defaults added after run-precreate retroactively gate frozen
   // cases. Only the absent-or-non-array case falls back to a live query.
   const snapshotDefaults = (response?.configSnapshot as any)?.defaultPredicates;
-  let suiteDefaultPredicates: import("@/shared/eval-matching").Predicate[] | undefined;
+  let suiteDefaultPredicates:
+    | import("@/shared/eval-matching").Predicate[]
+    | undefined;
   if (Array.isArray(snapshotDefaults)) {
-    suiteDefaultPredicates = snapshotDefaults.length > 0
-      ? (snapshotDefaults as import("@/shared/eval-matching").Predicate[])
-      : undefined;
+    suiteDefaultPredicates =
+      snapshotDefaults.length > 0
+        ? (snapshotDefaults as import("@/shared/eval-matching").Predicate[])
+        : undefined;
   } else {
     try {
-      const suite = await convexClient.query(
-        "testSuites:getTestSuite" as any,
-        { suiteId },
-      );
+      const suite = await convexClient.query("testSuites:getTestSuite" as any, {
+        suiteId,
+      });
       const defaults = (suite as { defaultPredicates?: unknown } | undefined)
         ?.defaultPredicates;
-      suiteDefaultPredicates = Array.isArray(defaults) && defaults.length > 0
-        ? (defaults as import("@/shared/eval-matching").Predicate[])
-        : undefined;
+      suiteDefaultPredicates =
+        Array.isArray(defaults) && defaults.length > 0
+          ? (defaults as import("@/shared/eval-matching").Predicate[])
+          : undefined;
     } catch {
       suiteDefaultPredicates = undefined;
     }
   }
 
   const resolvePredicatesForCase = (
-    tc: Record<string, any>,
+    tc: Record<string, any>
   ): import("@/shared/eval-matching").Predicate[] | undefined =>
     resolveCaseSuccessPredicates({
       suiteDefaults: suiteDefaultPredicates,
@@ -433,32 +548,24 @@ export const startSuiteRunWithRecorder = async ({
   const config = {
     tests: testCases.flatMap((tc: any) => {
       const successPredicates = resolvePredicatesForCase(tc);
-      // Widget probes have no models — without this branch the model
-      // fan-out below would silently drop them from the run. The sentinel
-      // model/provider strings are display-only; the runner forks off the
-      // LLM path before any model resolution.
-      if (tc.caseType === "widget_probe" && !tc.probeConfig) {
-        // Malformed probe (caseType without a pinned call): the model-free
-        // fallthrough below would drop it without a trace — surface it.
-        logger.warn("[evals] widget probe case missing probeConfig; skipped", {
-          testCaseId: tc._id ?? tc.testCaseId,
-          title: tc.title,
-        });
-        return [];
-      }
-      if (tc.caseType === "widget_probe" && tc.probeConfig) {
+      // Model-free step cases have no persisted models. Emit one sentinel row so
+      // the runner executes and pairs the pre-created iteration by testCaseId.
+      if (isModelFree(tc.steps)) {
         return [
           {
             title: tc.title,
-            query: "",
+            query: tc.query ?? "",
             model: "widget-probe",
             provider: "none",
             runs: tc.runs || 1,
             expectedToolCalls: [],
+            isNegativeTest: tc.isNegativeTest,
+            expectedOutput: tc.expectedOutput,
+            steps: tc.steps,
+            advancedConfig: tc.advancedConfig,
+            matchOptions: tc.matchOptions,
             successPredicates,
             testCaseId: tc._id ?? tc.testCaseId,
-            caseType: "widget_probe" as const,
-            probeConfig: tc.probeConfig,
           },
         ];
       }
@@ -472,7 +579,7 @@ export const startSuiteRunWithRecorder = async ({
           expectedToolCalls: tc.expectedToolCalls || [],
           isNegativeTest: tc.isNegativeTest,
           expectedOutput: tc.expectedOutput,
-          promptTurns: tc.promptTurns,
+          steps: tc.steps,
           advancedConfig: tc.advancedConfig,
           matchOptions: tc.matchOptions,
           successPredicates,
@@ -491,7 +598,7 @@ export const startSuiteRunWithRecorder = async ({
             expectedToolCalls: tc.expectedToolCalls || [],
             isNegativeTest: tc.isNegativeTest,
             expectedOutput: tc.expectedOutput,
-            promptTurns: tc.promptTurns,
+            steps: tc.steps,
             advancedConfig: tc.advancedConfig,
             matchOptions: tc.matchOptions,
             successPredicates,

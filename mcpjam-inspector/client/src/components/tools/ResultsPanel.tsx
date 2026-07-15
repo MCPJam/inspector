@@ -1,15 +1,36 @@
+import { useEffect, useState } from "react";
 import type { CallToolResult } from "@modelcontextprotocol/client";
-import { CheckCircle, Info, ExternalLink, Clock3 } from "lucide-react";
+import {
+  Check,
+  CheckCircle,
+  Clock3,
+  Copy,
+  ExternalLink,
+  Info,
+  Loader2,
+} from "lucide-react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@mcpjam/design-system/toggle-group";
 import type { NormalizedError } from "@mcpjam/sdk/browser";
 import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { copyToClipboard } from "@/lib/clipboard";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { ErrorCard } from "@/components/ui/error-card";
 import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
+import { useChatboxHostStyle } from "@/contexts/chatbox-client-style-context";
 import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
+import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
+import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-tool-result-image-preview-grid";
+import {
+  getMcpToolResultImageRenderPlacement,
+  type McpToolResultImageRenderingPolicy,
+} from "@/lib/client-config-v2";
 
 interface ResultsPanelProps {
   error: string;
@@ -31,7 +52,10 @@ interface ResultsPanelProps {
    * the same effective capabilities as `initialize`.
    */
   serverName?: string;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
 }
+
+type ResultViewMode = "images" | "raw";
 
 export function ResultsPanel({
   error,
@@ -41,7 +65,9 @@ export function ResultsPanel({
   toolMeta,
   responseDurationMs,
   serverName,
+  mcpToolResultImageRendering,
 }: ResultsPanelProps) {
+  const [imageMode, setImageMode] = useState<ResultViewMode>("images");
   const rawResult = result as unknown as Record<string, unknown> | null;
   const extractedDisplay = rawResult
     ? extractDisplayFromToolResult(rawResult)
@@ -61,17 +87,49 @@ export function ResultsPanel({
   // serverId the resolver looks up. The tools tab is single-server per
   // panel, so one lookup per render is all we need.
   const resolveHostCaps = useActiveHostCapsResolver();
+  const hostStyle = useChatboxHostStyle();
   const hostSupportsWidgets = hostSupportsWidgetRendering(
-    resolveHostCaps(serverName)
+    resolveHostCaps(serverName),
+    { hostStyle }
   );
   const hasUIComponent =
     hostSupportsWidgets && (hasOpenAIComponent || hasMCPAppsComponent);
+  const canRenderImages =
+    getMcpToolResultImageRenderPlacement(mcpToolResultImageRendering) !==
+    "none";
+  const imageState = useMcpToolResultImagePreviews(
+    canRenderImages ? result : undefined,
+    {
+      serverId: serverName,
+      renderingPolicy: mcpToolResultImageRendering,
+    }
+  );
   const formattedResponseTime =
     responseDurationMs == null
       ? null
       : responseDurationMs < 1000
       ? `${Math.round(responseDurationMs)} ms`
       : `${(responseDurationMs / 1000).toFixed(2)} s`;
+
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyAll = async () => {
+    let textToCopy: string;
+    try {
+      textToCopy = JSON.stringify(displayValue, null, 2) ?? "null";
+    } catch {
+      textToCopy = String(displayValue ?? "");
+    }
+    const success = await copyToClipboard(textToCopy);
+    if (success) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  useEffect(() => {
+    setImageMode("images");
+  }, [result]);
 
   return (
     <div className="h-full flex flex-col bg-background break-all">
@@ -95,6 +153,21 @@ export function ResultsPanel({
             </span>
           )}
         </div>
+        {!error && rawResult && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs px-2 flex-shrink-0"
+            onClick={handleCopyAll}
+          >
+            {copied ? (
+              <Check className="h-3 w-3 mr-1 text-success" />
+            ) : (
+              <Copy className="h-3 w-3 mr-1" />
+            )}
+            {copied ? "Copied!" : "Copy all"}
+          </Button>
+        )}
       </div>
 
       {/* Content - fills remaining space */}
@@ -129,15 +202,70 @@ export function ResultsPanel({
               </Button>
             </div>
           )}
-          {/* JSON Editor - fills ALL remaining space */}
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <JsonEditor
-              value={displayValue}
-              readOnly
-              showToolbar={false}
-              height="100%"
-            />
-          </div>
+          {imageState.hasCandidate &&
+          (imageState.status === "idle" || imageState.status === "loading") ? (
+            <div className="flex-1 min-h-0 rounded border border-border bg-muted/20 flex items-center justify-center">
+              <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Resolving images...
+              </div>
+            </div>
+          ) : imageState.status === "ready" &&
+            imageState.previews.length > 0 ? (
+            <>
+              <div className="flex flex-shrink-0 items-center justify-end">
+                <ToggleGroup
+                  type="single"
+                  value={imageMode}
+                  onValueChange={(value) => {
+                    if (value) setImageMode(value as ResultViewMode);
+                  }}
+                  className="gap-0.5"
+                >
+                  <ToggleGroupItem
+                    value="images"
+                    aria-label="Images"
+                    className="h-7 px-2 text-xs"
+                  >
+                    Images
+                  </ToggleGroupItem>
+                  <ToggleGroupItem
+                    value="raw"
+                    aria-label="Raw"
+                    className="h-7 px-2 text-xs"
+                  >
+                    Raw
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </div>
+              {imageMode === "images" ? (
+                <div className="flex-1 min-h-0 overflow-auto rounded border border-border bg-muted/20 p-3">
+                  <McpToolResultImagePreviewGrid
+                    previews={imageState.previews}
+                    className="sm:grid-cols-[repeat(auto-fit,minmax(220px,1fr))]"
+                  />
+                </div>
+              ) : (
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  <JsonEditor
+                    value={rawResult}
+                    readOnly
+                    showToolbar={false}
+                    height="100%"
+                  />
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <JsonEditor
+                value={displayValue}
+                readOnly
+                showToolbar={false}
+                height="100%"
+              />
+            </div>
+          )}
         </div>
       ) : (
         <div className="flex-1 flex items-center justify-center">

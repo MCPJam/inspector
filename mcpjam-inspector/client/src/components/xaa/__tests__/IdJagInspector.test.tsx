@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { IdJagInspector } from "../IdJagInspector";
 import type { XAADecodedJwt } from "@/lib/xaa/types";
@@ -33,6 +34,7 @@ function buildDecoded(
       jti: "jti-1",
       iat: NOW,
       exp: NOW + 300,
+      email: "user@example.com",
       ...overrides.payload,
     },
     signature: "signature-bytes",
@@ -79,8 +81,64 @@ describe("IdJagInspector claim lint", () => {
 
     expect(screen.getByText(/2 failing/)).toBeInTheDocument();
     expect(screen.getByTestId("idjag-lint-aud")).toHaveTextContent(
-      "exactly match",
+      "https://wrong-audience.example.com",
     );
-    expect(screen.getByTestId("idjag-lint-exp")).toHaveTextContent("expired");
+    expect(screen.getByTestId("idjag-lint-exp")).toHaveTextContent(
+      "RFC 7523",
+    );
+  });
+
+  it("warns when no subject-resolution hint (email / aud_sub) is present", () => {
+    render(
+      <IdJagInspector
+        rawJwt="aaa.bbb.ccc"
+        decoded={buildDecoded({ payload: { email: undefined } })}
+        negativeTestMode="valid"
+        lintContext={{ expectedAudience: "https://as.example.com" }}
+      />,
+    );
+
+    expect(screen.getByText(/1 warning/)).toBeInTheDocument();
+    expect(
+      screen.getByTestId("idjag-lint-subject_resolution"),
+    ).toHaveTextContent("email / aud_sub");
+  });
+
+  it("fails the iss row when the issuer doesn't match the configured IdP", () => {
+    render(
+      <IdJagInspector
+        rawJwt="aaa.bbb.ccc"
+        decoded={buildDecoded()}
+        negativeTestMode="valid"
+        lintContext={{ expectedIssuer: "https://other-idp.example.com" }}
+      />,
+    );
+
+    expect(screen.getByText(/1 failing/)).toBeInTheDocument();
+    expect(screen.getByTestId("idjag-lint-iss")).toHaveTextContent(
+      "https://idp.example.com",
+    );
+  });
+
+  it("collapses and expands the inspector body", async () => {
+    const user = userEvent.setup();
+    render(
+      <IdJagInspector
+        rawJwt="aaa.bbb.ccc"
+        decoded={buildDecoded()}
+        negativeTestMode="valid"
+      />,
+    );
+
+    expect(screen.getByText("Claim lint")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("idjag-inspector-toggle"));
+
+    expect(screen.queryByText("Claim lint")).toBeNull();
+    expect(screen.getByText("All claims pass")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("idjag-inspector-toggle"));
+
+    expect(screen.getByText("Claim lint")).toBeInTheDocument();
   });
 });

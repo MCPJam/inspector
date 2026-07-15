@@ -9,8 +9,7 @@ import {
   SlidersHorizontal,
   Trash2,
 } from "lucide-react";
-import posthog from "posthog-js";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
@@ -532,10 +531,8 @@ function SuiteOverviewRow({
               e.preventDefault();
               e.stopPropagation();
               if (onRunAll) {
-                posthog.capture("run_all_cases_button_clicked", {
+                track("run_all_cases_button_clicked", {
                   location: "suite_list_sidebar",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
                   suite_id: suite._id,
                 });
                 void onRunAll(suite);
@@ -753,7 +750,18 @@ export function EvalsSuiteListSidebar({
                   {visibleSuites.map((entry) => {
                     const suite = entry.suite;
                     const isSelected = selectedSuiteId === suite._id;
-                    const isThisSuiteRerunning = rerunningSuiteId === suite._id;
+                    const latestRunInProgress =
+                      entry.latestRun?.status === "running" ||
+                      entry.latestRun?.status === "pending";
+                    const isThisSuiteRerunning =
+                      rerunningSuiteId === suite._id || latestRunInProgress;
+                    const rowRunAllBlocked =
+                      runAllBlocked || latestRunInProgress;
+                    const rowRunAllDisabledReason =
+                      runAllDisabledReason ??
+                      (latestRunInProgress
+                        ? "A suite run is already in progress."
+                        : null);
 
                     return (
                       <SuiteOverviewRow
@@ -767,8 +775,8 @@ export function EvalsSuiteListSidebar({
                         onSelectSuite={onSelectSuite}
                         onRunAll={onRunAll}
                         onEditSuite={onEditSuite}
-                        runAllBlocked={runAllBlocked}
-                        runAllDisabledReason={runAllDisabledReason}
+                        runAllBlocked={rowRunAllBlocked}
+                        runAllDisabledReason={rowRunAllDisabledReason}
                         isThisSuiteRerunning={isThisSuiteRerunning}
                       />
                     );

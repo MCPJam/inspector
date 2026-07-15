@@ -30,7 +30,7 @@ import {
   type SandboxConfigSubKey,
 } from "../types";
 import { fieldsWithIssues } from "../focus/useHostDraftValidation";
-import { clientAdvertisesMcpApps } from "@/lib/host-capabilities";
+import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 
 /* ============================================================
    Layout constants. The host renders as a single matrix node;
@@ -737,16 +737,12 @@ export function buildRedesignedHostCanvas(
     return { name, version };
   })();
 
-  // Whether the client advertises the MCP UI extension with the spec-
-  // required MIME type. Host-side Apps capabilities only matter when the
-  // client opts in to rendering iframes; a CLI like codex-mcp-client
-  // publishes neither the extension nor any UI ext block, so the matrix
-  // should hide the Apps section entirely. Shared predicate keeps this
-  // gate aligned with `hostSupportsWidgetRendering` at runtime — earlier
-  // versions accepted a bare `{}` payload here while the renderer
-  // refused, which silently desynced the canvas from what would render.
-  const appsExtensionAdvertised = clientAdvertisesMcpApps(
+  // Whether this host can render MCP Apps iframes. The normalized templates
+  // advertise the MCP UI extension when the host demonstrated Apps support,
+  // so use the runtime helper to keep the canvas and renderer in lockstep.
+  const appsExtensionAdvertised = hostSupportsWidgetRendering(
     draft.clientCapabilities,
+    { hostStyle: draft.hostStyle },
   );
 
   // Resolved vendor compat-runtime shim state. Drives the injected-globals
@@ -839,12 +835,14 @@ export function buildRedesignedHostCanvas(
   });
 
   // 1b) Project Computers islands — Built-in tools (left) + Computer
-  // (right), flanking the matrix header. Gated entirely behind
-  // `computersEnabled`; when off/omitted the canvas is the GA layout with
-  // no island nodes or edges. Both island edges source from the matrix
-  // (which never reflows — it sits at y=0 and grows downward), so the
-  // RedesignedHostCanvas measured-height shift leaves them pinned.
-  if (context.computersEnabled === true) {
+  // (right), flanking the matrix header. The built-in-tools island is gated on
+  // `computersEnabled`; the Computer island ALSO shows whenever a computer is
+  // attached (`draft.computer`), so a harness host (which seeds a computer)
+  // surfaces its island even when the rollout flag is off — mirroring
+  // `visibleHostFocusTabs`, which keeps the Computer tab visible while attached.
+  // Both island edges source from the matrix (which never reflows — it sits at
+  // y=0 and grows downward), so the measured-height shift leaves them pinned.
+  if (context.computersEnabled === true || draft.computer !== undefined) {
     const catalog = context.builtInToolCatalog ?? [];
     const catalogById = new Map(catalog.map((entry) => [entry.id, entry]));
     const tools = draft.builtInToolIds.map((id) => {
@@ -858,29 +856,32 @@ export function buildRedesignedHostCanvas(
       };
     });
 
-    // Built-in tools node (left of the matrix).
-    nodes.push({
-      id: BUILTIN_TOOLS_NODE_ID,
-      type: "redesignBuiltinTools",
-      position: { x: -(ISLAND_W + ISLAND_GAP), y: ISLAND_Y },
-      style: { width: ISLAND_W },
-      data: { kind: "builtin-tools", tools },
-      draggable: false,
-    });
-    edges.push({
-      id: "host-to-builtin-tools",
-      source: HOST_MATRIX_NODE_ID,
-      target: BUILTIN_TOOLS_NODE_ID,
-      type: "hostBranch",
-      // Matrix left edge → built-in node right edge, level on the header band.
-      data: {
-        fixedSourceX: 0,
-        fixedSourceY: ISLAND_ANCHOR_Y,
-        fixedTargetX: -ISLAND_GAP,
-        fixedTargetY: ISLAND_ANCHOR_Y,
-      },
-      style: { stroke: "oklch(0.68 0.11 40 / 0.55)", strokeWidth: 1.5 },
-    });
+    // Built-in tools node (left of the matrix) — flag-only; a stale built-in
+    // toggle shouldn't appear just because a computer is attached.
+    if (context.computersEnabled === true) {
+      nodes.push({
+        id: BUILTIN_TOOLS_NODE_ID,
+        type: "redesignBuiltinTools",
+        position: { x: -(ISLAND_W + ISLAND_GAP), y: ISLAND_Y },
+        style: { width: ISLAND_W },
+        data: { kind: "builtin-tools", tools },
+        draggable: false,
+      });
+      edges.push({
+        id: "host-to-builtin-tools",
+        source: HOST_MATRIX_NODE_ID,
+        target: BUILTIN_TOOLS_NODE_ID,
+        type: "hostBranch",
+        // Matrix left edge → built-in node right edge, level on the header band.
+        data: {
+          fixedSourceX: 0,
+          fixedSourceY: ISLAND_ANCHOR_Y,
+          fixedTargetX: -ISLAND_GAP,
+          fixedTargetY: ISLAND_ANCHOR_Y,
+        },
+        style: { stroke: "oklch(0.68 0.11 40 / 0.55)", strokeWidth: 1.5 },
+      });
+    }
 
     // Computer node (right of the matrix). `attached` is the config intent
     // (`draft.computer`); `status` is the orthogonal backend lifecycle.

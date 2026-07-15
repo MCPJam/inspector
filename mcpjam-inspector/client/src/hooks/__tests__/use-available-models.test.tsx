@@ -66,6 +66,13 @@ vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => sharedAppState,
 }));
 
+// useAvailableModels now reads the credit balance (to lock free models at 0
+// credits) which pulls in WorkOS auth — stub it as a signed-out session so the
+// balance query stays skipped and outOfCredits resolves false.
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: null, isLoading: false }),
+}));
+
 vi.mock("@/hooks/use-ai-provider-keys", () => ({
   useAiProviderKeys: () => ({
     hasToken: () => false,

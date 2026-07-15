@@ -69,6 +69,21 @@ function createApp() {
   return app;
 }
 
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function flushPromises() {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  await Promise.resolve();
+}
+
 describe("web replay route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -126,6 +141,7 @@ describe("web replay route", () => {
         tests: [],
         environment: { servers: ["excalidraw"] },
       },
+      hostConfig: {},
     });
     runEvalSuiteWithAiSdkMock.mockResolvedValue(undefined);
     storeReplayConfigMock.mockResolvedValue(undefined);
@@ -136,6 +152,9 @@ describe("web replay route", () => {
   });
 
   it("stores replay config on the new run and executes with replay-config server ids", async () => {
+    const execution = deferred();
+    runEvalSuiteWithAiSdkMock.mockReturnValueOnce(execution.promise);
+
     const response = await createApp().request("/api/web/evals/replay-run", {
       method: "POST",
       headers: {
@@ -147,7 +166,15 @@ describe("web replay route", () => {
       }),
     });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      suiteId: "suite-1",
+      runId: "replay-run",
+      sourceRunId: "source-run",
+      status: "running",
+      message: "Replay started. Results will appear shortly.",
+    });
     expect(startSuiteRunWithRecorderMock).toHaveBeenCalledWith(
       expect.objectContaining({
         serverIds: ["excalidraw"],
@@ -176,7 +203,95 @@ describe("web replay route", () => {
       ],
       "token-123",
     );
+    expect(disconnectAllServersMock).not.toHaveBeenCalled();
+
+    await flushPromises();
     expect(runEvalSuiteWithAiSdkMock).toHaveBeenCalledTimes(1);
+    expect(disconnectAllServersMock).not.toHaveBeenCalled();
+
+    execution.resolve(undefined);
+    await flushPromises();
+
+    expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks replay runs failed when detached execution rejects", async () => {
+    const execution = deferred();
+    const finalize = vi.fn().mockResolvedValue(undefined);
+    startSuiteRunWithRecorderMock.mockResolvedValueOnce({
+      runId: "replay-run",
+      recorder: { finalize },
+      config: {
+        tests: [],
+        environment: { servers: ["excalidraw"] },
+      },
+      hostConfig: {},
+    });
+    runEvalSuiteWithAiSdkMock.mockReturnValueOnce(execution.promise);
+
+    const response = await createApp().request("/api/web/evals/replay-run", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer token-123",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        runId: "source-run",
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    await flushPromises();
+
+    execution.reject(new Error("replay provider failed"));
+    await flushPromises();
+
+    expect(finalize).toHaveBeenCalledWith({
+      status: "failed",
+      notes: "replay provider failed",
+    });
+    expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-finalize replay runs that are already terminal", async () => {
+    const execution = deferred();
+    const finalize = vi.fn().mockResolvedValue(undefined);
+    convexQueryMock
+      .mockResolvedValueOnce({
+        suiteId: "suite-1",
+        hasServerReplayConfig: true,
+        environment: { servers: ["srv_asana"] },
+      })
+      .mockResolvedValue({ status: "completed" });
+    startSuiteRunWithRecorderMock.mockResolvedValueOnce({
+      runId: "replay-run",
+      recorder: { finalize },
+      config: {
+        tests: [],
+        environment: { servers: ["excalidraw"] },
+      },
+      hostConfig: {},
+    });
+    runEvalSuiteWithAiSdkMock.mockReturnValueOnce(execution.promise);
+
+    const response = await createApp().request("/api/web/evals/replay-run", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer token-123",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        runId: "source-run",
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    await flushPromises();
+
+    execution.reject(new Error("cancelled elsewhere"));
+    await flushPromises();
+
+    expect(finalize).not.toHaveBeenCalled();
     expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
   });
 });

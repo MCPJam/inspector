@@ -35,7 +35,7 @@ export function ShareChatboxDialog({
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle>Share &ldquo;{settings.name}&rdquo; Chatbox</DialogTitle>
+          <DialogTitle>Share &ldquo;{settings.name}&rdquo; Swarm</DialogTitle>
           <DialogDescription className="sr-only">
             Invite people and manage access for this chatbox.
           </DialogDescription>

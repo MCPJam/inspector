@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
+import type { ClientAnalyticsEventName } from "@/shared/analytics-events";
 import {
   ChevronRight,
   AlertCircle,
@@ -29,7 +29,7 @@ import {
 } from "@/stores/traffic-log-store";
 import type { LoggingLevel } from "@modelcontextprotocol/client";
 import { setServerLoggingLevel } from "@/state/mcp-api";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useSharedAppState } from "@/state/app-state-context";
 import type { ServerWithName } from "@/state/app-types";
 import {
@@ -361,15 +361,11 @@ export function LoggerView({
     });
   };
 
-  const posthog = usePostHog();
   const captureLogger = useCallback(
-    (event: string, props?: Record<string, unknown>) => {
-      posthog?.capture(event, {
-        ...standardEventProps("logger_view"),
-        ...props,
-      });
+    (event: ClientAnalyticsEventName, props?: Record<string, unknown>) => {
+      track(event, { location: "logger_view", ...props });
     },
-    [posthog],
+    [],
   );
 
   // Fire `logger_search_used` once per non-empty search session — i.e. the
