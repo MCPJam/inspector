@@ -24,7 +24,9 @@ vi.mock("lucide-react", () => {
     Minimize2: s,
     Pencil: s,
     PictureInPicture2: s,
+    Play: s,
     Redo2: s,
+    RotateCcw: s,
     Shield: s,
     Undo2: s,
   };
@@ -108,7 +110,7 @@ describe("ToolPart display mode controls", () => {
 
   const renderWithDisplayModes = (
     appSupportedDisplayModes?: ("inline" | "pip" | "fullscreen")[],
-    options?: { minimalMode?: boolean; onSaveView?: () => void },
+    options?: { minimalMode?: boolean; allowInlineEdit?: boolean },
   ) =>
     render(
       <ToolPart
@@ -118,7 +120,7 @@ describe("ToolPart display mode controls", () => {
         onDisplayModeChange={onDisplayModeChange}
         appSupportedDisplayModes={appSupportedDisplayModes}
         minimalMode={options?.minimalMode}
-        onSaveView={options?.onSaveView}
+        allowInlineEdit={options?.allowInlineEdit}
       />,
     );
 
@@ -234,15 +236,17 @@ describe("ToolPart display mode controls", () => {
     expect(screen.getByLabelText("Fullscreen")).toBeInTheDocument();
   });
 
-  it("hides debug tabs and save view in minimal mode", () => {
+  it("hides debug tabs and edit controls in minimal mode", () => {
     renderWithDisplayModes(["inline", "pip", "fullscreen"], {
       minimalMode: true,
-      onSaveView: vi.fn(),
+      allowInlineEdit: true,
     });
 
     expect(screen.queryByLabelText("Data")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Widget State")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("CSP")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Save as View")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Edit input and output"),
+    ).not.toBeInTheDocument();
   });
 });

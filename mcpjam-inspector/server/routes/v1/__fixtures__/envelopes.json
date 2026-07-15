@@ -1,0 +1,18 @@
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Project not found",
+    "details": { "projectId": "p_123" }
+  },
+  "errorNoDetails": {
+    "code": "UNAUTHORIZED",
+    "message": "Missing or invalid bearer token"
+  },
+  "page": {
+    "items": [{ "id": "a" }, { "id": "b" }],
+    "nextCursor": "1700000000000"
+  },
+  "pageNoCursor": {
+    "items": [{ "id": "a" }]
+  }
+}

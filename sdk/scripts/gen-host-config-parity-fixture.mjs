@@ -198,6 +198,31 @@ const inputs = [
     input: { ...base(), hostCapabilitiesOverride: {}, chatUiOverride: { logo: "x" } },
   },
   {
+    label: "computer-personal-with-untrimmed-workdir",
+    input: {
+      ...base(),
+      computer: { kind: "personal", toolset: "bash", workdir: " /home/u " },
+    },
+  },
+  {
+    // Optional harness selector. Absent ⇒ emulated (base-minimal proves that
+    // hash is unchanged); an explicit "claude-code" writes the key and hashes
+    // distinctly. Validated pass-through, like progressiveToolDiscovery.
+    label: "harness-claude-code",
+    input: { ...base(), harness: "claude-code" },
+  },
+  {
+    // Empty builtInToolIds collapses to absent → canonical JSON has no key,
+    // byte-identical to base-minimal for that dimension (hash-neutral default).
+    label: "builtin-tool-ids-empty-omitted",
+    input: { ...base(), builtInToolIds: [] },
+  },
+  {
+    // Unsorted + duplicate opaque ids → deduped + sorted in the canonical shape.
+    label: "builtin-tool-ids-unsorted-dupes",
+    input: { ...base(), builtInToolIds: ["web_search", "code_exec", "web_search"] },
+  },
+  {
     label: "adversarial-stray-deny-must-be-dropped",
     input: {
       ...base(),

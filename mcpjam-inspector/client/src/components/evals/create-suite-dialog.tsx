@@ -108,7 +108,7 @@ export function CreateSuiteDialog({
     if (attachmentsRequired && serverAttachmentId === null) {
       return hostAttachments.length === 0
         ? "Attach a server and at least one client first."
-        : "Pick a server attachment first.";
+        : "Pick a server group first.";
     }
     if (attachmentsRequired && hostAttachments.length === 0) {
       return "Attach at least one client first.";
@@ -167,7 +167,7 @@ export function CreateSuiteDialog({
                     Servers
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    Server set all clients run against.
+                    Server group all hosts run against.
                   </p>
                 </div>
                 <div className="shrink-0">
@@ -175,6 +175,8 @@ export function CreateSuiteDialog({
                     projectId={projectId}
                     value={serverAttachmentId}
                     onChange={setServerAttachmentId}
+                    onClearSelection={() => setServerAttachmentId(null)}
+                    inModal
                     disabled={isSaving}
                   />
                 </div>
@@ -182,10 +184,10 @@ export function CreateSuiteDialog({
               <div className="space-y-2 p-3">
                 <div className="space-y-0.5">
                   <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Clients
+                    Hosts
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    Each attached client fans out into its own run.
+                    Each attached host fans out into its own run.
                   </p>
                 </div>
                 <ClientAttachmentsEditor

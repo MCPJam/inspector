@@ -5,6 +5,8 @@ import type {
   EvalTraceSpan,
   EvalTraceWidgetSnapshot,
   PromptTraceSummary,
+  SerializedBrowserInteractionStep,
+  SerializedWidgetRenderObservation,
 } from "@/shared/eval-trace";
 import {
   lockEvalSessionAfterUpdate,
@@ -638,5 +640,142 @@ describe("persistEvalTraceFanout — widget serialization", () => {
       resourceDomains: ["good.com"],
     });
     expect(csp.unrelatedField).toBeUndefined();
+  });
+});
+
+describe("persistEvalTraceFanout — browser artifact fanout (PR 6b)", () => {
+  const twoPrompts: PromptTraceSummary[] = [0, 1].map((promptIndex) => ({
+    promptIndex,
+    prompt: `p${promptIndex}`,
+    expectedToolCalls: [],
+    actualToolCalls: [],
+    passed: true,
+    missing: [],
+    unexpected: [],
+    argumentMismatches: [],
+  }));
+  const twoTurnMessages: ModelMessage[] = [
+    { role: "user", content: "q0" } as ModelMessage,
+    { role: "assistant", content: "a0" } as ModelMessage,
+    { role: "user", content: "q1" } as ModelMessage,
+    { role: "assistant", content: "a1" } as ModelMessage,
+  ];
+
+  const obs = (
+    promptIndex: number,
+    toolCallId: string,
+  ): SerializedWidgetRenderObservation => ({
+    toolCallId,
+    toolName: "create_view",
+    serverId: "excalidraw",
+    status: "rendered",
+    screenshotBlobId: `blob-${toolCallId}`,
+    elapsedMs: 5,
+    ts: 1,
+    promptIndex,
+  });
+  const step = (
+    promptIndex: number,
+    stepIndex: number,
+  ): SerializedBrowserInteractionStep => ({
+    toolCallId: `tc-${promptIndex}`,
+    stepIndex,
+    promptIndex,
+    action: "left_click",
+    coordinateX: stepIndex,
+    coordinateY: stepIndex,
+    elapsedMs: 3,
+    ts: 1,
+  });
+
+  test("observations + steps bucket PER turn (not last-turn-batched like widgets)", async () => {
+    const { client, calls } = makeMockClient();
+
+    await persistEvalTraceFanout({
+      convexClient: client,
+      iterationId: "iter1",
+      messages: twoTurnMessages,
+      spans: undefined,
+      prompts: twoPrompts,
+      widgetRenderObservations: [obs(0, "tc-0"), obs(1, "tc-1")],
+      browserInteractionSteps: [step(0, 0), step(0, 1), step(1, 0)],
+    });
+
+    const appendCalls = calls.filter(
+      (c) => c.ref === "testSuites:appendEvalTurnTrace",
+    );
+    expect(appendCalls).toHaveLength(2);
+
+    const turn0 = appendCalls[0]!.args.turn as {
+      widgetRenderObservations?: Array<{ toolCallId: string }>;
+      browserInteractionSteps?: Array<{ stepIndex: number }>;
+    };
+    const turn1 = appendCalls[1]!.args.turn as {
+      widgetRenderObservations?: Array<{ toolCallId: string }>;
+      browserInteractionSteps?: Array<{ stepIndex: number }>;
+    };
+
+    // Turn 0 sees ONLY its own observation + steps.
+    expect(turn0.widgetRenderObservations?.map((o) => o.toolCallId)).toEqual([
+      "tc-0",
+    ]);
+    expect(turn0.browserInteractionSteps?.map((s) => s.stepIndex)).toEqual([
+      0, 1,
+    ]);
+    // Turn 1 sees ONLY its own.
+    expect(turn1.widgetRenderObservations?.map((o) => o.toolCallId)).toEqual([
+      "tc-1",
+    ]);
+    expect(turn1.browserInteractionSteps?.map((s) => s.stepIndex)).toEqual([0]);
+  });
+
+  test("strips per-entry promptIndex (backend stamps it from turn.promptIndex)", async () => {
+    const { client, calls } = makeMockClient();
+
+    await persistEvalTraceFanout({
+      convexClient: client,
+      iterationId: "iter1",
+      messages: twoTurnMessages,
+      spans: undefined,
+      prompts: twoPrompts,
+      widgetRenderObservations: [obs(0, "tc-0")],
+      browserInteractionSteps: [step(0, 0)],
+    });
+
+    const turn0 = calls.find(
+      (c) => c.ref === "testSuites:appendEvalTurnTrace",
+    )!.args.turn as {
+      widgetRenderObservations: Array<Record<string, unknown>>;
+      browserInteractionSteps: Array<Record<string, unknown>>;
+    };
+    expect(turn0.widgetRenderObservations[0]).not.toHaveProperty("promptIndex");
+    expect(turn0.browserInteractionSteps[0]).not.toHaveProperty("promptIndex");
+    // The blob id (already uploaded by finalize) rides through verbatim.
+    expect(turn0.widgetRenderObservations[0]!.screenshotBlobId).toBe("blob-tc-0");
+  });
+
+  test("omits the arrays entirely on turns with no artifacts (non-CU evals untouched)", async () => {
+    const { client, calls } = makeMockClient();
+
+    await persistEvalTraceFanout({
+      convexClient: client,
+      iterationId: "iter1",
+      messages: twoTurnMessages,
+      spans: undefined,
+      prompts: twoPrompts,
+      // Only turn 1 has a step; turn 0 has nothing.
+      browserInteractionSteps: [step(1, 0)],
+    });
+
+    const appendCalls = calls.filter(
+      (c) => c.ref === "testSuites:appendEvalTurnTrace",
+    );
+    const turn0 = appendCalls[0]!.args.turn as Record<string, unknown>;
+    const turn1 = appendCalls[1]!.args.turn as Record<string, unknown>;
+    // Absent (not []), so the wire shape of artifact-free turns is unchanged.
+    expect(turn0).not.toHaveProperty("widgetRenderObservations");
+    expect(turn0).not.toHaveProperty("browserInteractionSteps");
+    expect(turn1).not.toHaveProperty("widgetRenderObservations");
+    expect(turn1).toHaveProperty("browserInteractionSteps");
   });
 });

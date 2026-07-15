@@ -32,37 +32,45 @@ servers.post("/validate", async (c) =>
   withEphemeralConnection(
     c,
     projectServerSchema,
-    async (manager, body) => {
-      await manager.getToolsForAiSdk([body.serverId]);
-      // Capture the inspection snapshot synchronously while the ephemeral
-      // manager is still live — `withManager`'s `finally` will call
-      // `disconnectAllServers()` the moment we return, which would race any
-      // `listTools` we left pending here. Only the Convex write is
-      // fire-and-forget, so persistence failures still don't affect the
-      // validate response. (Port of PR #1731's `use-inspection-coordinator`.)
-      const snapshot = await exportSingleServerForInspection(
-        manager,
-        body.serverId,
-        body.serverId,
-        { logPrefix: "hosted-connect-inspection" },
-      );
-      void persistHostedConnectInspection(c, {
-        projectId: body.projectId,
-        snapshot,
-      }).catch((error) => {
-        logger.debug("Failed to persist hosted connect-time inspection", {
-          serverId: body.serverId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-      // Same success envelope as the local /api/mcp/connect path so the
-      // inspector client's `storeInitInfo` takes one code path on both
-      // surfaces and we don't drift on the success shape.
-      return buildConnectSuccessEnvelope(manager, body.serverId);
-    },
+    (manager, body) => validateServerCore(c, manager, body),
     { timeoutMs: WEB_CONNECT_TIMEOUT_MS }
   )
 );
+
+/**
+ * Connect-and-inspect core shared by POST /api/web/servers/validate and the
+ * public POST /v1/projects/:projectId/servers/:serverId/validate adapter.
+ * Captures the inspection snapshot synchronously while the ephemeral manager is
+ * still live — `withManager`'s `finally` disconnects the moment we return,
+ * which would race any pending listTools. Only the Convex write is
+ * fire-and-forget, so persistence failures don't affect the validate response.
+ * (Port of PR #1731's `use-inspection-coordinator`.)
+ */
+export async function validateServerCore(
+  c: any,
+  manager: any,
+  body: { projectId: string; serverId: string }
+) {
+  await manager.getToolsForAiSdk([body.serverId]);
+  const snapshot = await exportSingleServerForInspection(
+    manager,
+    body.serverId,
+    body.serverId,
+    { logPrefix: "hosted-connect-inspection" }
+  );
+  void persistHostedConnectInspection(c, {
+    projectId: body.projectId,
+    snapshot,
+  }).catch((error) => {
+    logger.debug("Failed to persist hosted connect-time inspection", {
+      serverId: body.serverId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+  // Same success envelope as the local /api/mcp/connect path so the inspector
+  // client's `storeInitInfo` takes one code path on both surfaces.
+  return buildConnectSuccessEnvelope(manager, body.serverId);
+}
 
 async function persistHostedConnectInspection(
   c: any,
@@ -129,14 +137,14 @@ servers.post("/doctor", async (c) => {
       routeError.code,
       routeError.message,
       routeError.details,
-      rpcCollector?.buildEnvelope()
+      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
     );
   }
 });
 
 export default servers;
 
-async function runHostedDoctor(
+export async function runHostedDoctor(
   c: any,
   rawBody: Record<string, unknown>,
   timeoutMs: number,

@@ -13,13 +13,13 @@ import type {
 export function getDisplayPriceCentsForPlan(
   _plan: OrganizationPlan,
   interval: BillingInterval,
-  catalogEntry: PlanCatalogEntry,
+  catalogEntry: PlanCatalogEntry
 ): number | null {
   return catalogEntry.prices[interval];
 }
 
 export function getAnnualDiscountPercent(
-  planCatalog: PlanCatalog | undefined,
+  planCatalog: PlanCatalog | undefined
 ): number {
   if (!planCatalog) {
     return 0;
@@ -36,10 +36,12 @@ export const BILLING_FEATURE_BY_TAB = {
   evals: "evals",
   "ci-evals": "cicd",
   chatboxes: "chatboxes",
+  // The agent Swarm surface shares the human Chatbox's billing feature.
+  swarms: "chatboxes",
 } as const satisfies Record<string, BillingFeatureName>;
 
 export function getRequiredBillingFeatureForTab(
-  tab: string,
+  tab: string
 ): BillingFeatureName | null {
   return (
     BILLING_FEATURE_BY_TAB[tab as keyof typeof BILLING_FEATURE_BY_TAB] ?? null
@@ -48,7 +50,7 @@ export function getRequiredBillingFeatureForTab(
 
 /** Maps inspector tabs to premiumness gate keys (feature gates only). */
 export function getPremiumnessGateForTab(
-  tab: string,
+  tab: string
 ): PremiumnessGateKey | null {
   const feature = getRequiredBillingFeatureForTab(tab);
   if (!feature) return null;
@@ -56,14 +58,14 @@ export function getPremiumnessGateForTab(
 }
 
 export function isBillingEnforcementActive(
-  premiumness: PremiumnessState | undefined,
+  premiumness: PremiumnessState | undefined
 ): boolean {
   return !!premiumness && premiumness.enforcementState !== "disabled";
 }
 
 export function isGateAccessDenied(
   premiumness: PremiumnessState | undefined,
-  gateKey: PremiumnessGateKey,
+  gateKey: PremiumnessGateKey
 ): boolean {
   const decision = getGateDecision(premiumness, gateKey);
   if (!decision) {
@@ -105,7 +107,7 @@ export function isPremiumnessGateDeniedForShell(params: {
 
 export function getUpgradePlanForDeniedGate(
   premiumness: PremiumnessState | undefined,
-  gateKey: PremiumnessGateKey | null,
+  gateKey: PremiumnessGateKey | null
 ): OrganizationPlan | null {
   const decision = gateKey ? getGateDecision(premiumness, gateKey) : null;
   if (!decision || decision.canAccess !== false) {
@@ -116,7 +118,7 @@ export function getUpgradePlanForDeniedGate(
 
 export function getGateDecision(
   premiumness: PremiumnessState | undefined,
-  gateKey: PremiumnessGateKey,
+  gateKey: PremiumnessGateKey
 ): GateDecision | null {
   if (!premiumness) {
     return null;
@@ -133,7 +135,7 @@ export function formatBillingFeatureName(feature: BillingFeatureName): string {
     case "cicd":
       return "Evals CI/CD";
     case "chatboxes":
-      return "Chatboxes";
+      return "Swarms";
     case "auditLog":
       return "Audit Log";
     case "customDomains":
@@ -161,9 +163,11 @@ export function formatPremiumnessGateKey(gateKey: PremiumnessGateKey): string {
     case "maxServersPerProject":
       return "Servers per project";
     case "maxChatboxesPerProject":
-      return "Chatboxes per project";
+      return "Swarms per project";
     case "maxEvalRunsPerMonth":
       return "Eval runs per month";
+    case "maxEvalIterationsPerMonth":
+      return "Eval iterations per month";
     case "insightsPerDay":
       return "Insights per day";
     default:
@@ -172,7 +176,7 @@ export function formatPremiumnessGateKey(gateKey: PremiumnessGateKey): string {
 }
 
 export function formatPlanName(
-  plan: OrganizationPlan | null | undefined,
+  plan: OrganizationPlan | null | undefined
 ): string {
   switch (plan) {
     case "free":
@@ -200,6 +204,8 @@ type BillingErrorPayload = {
   allowedValue?: number | null;
   currentValue?: number | null;
   current?: number | null;
+  resetsAt?: number | null;
+  windowKind?: "day" | "month";
 };
 
 function tryParseJsonPayload(value: string): BillingErrorPayload | null {
@@ -230,7 +236,7 @@ function tryParseJsonPayload(value: string): BillingErrorPayload | null {
 }
 
 function extractBillingErrorPayload(
-  error: unknown,
+  error: unknown
 ): BillingErrorPayload | null {
   if (error instanceof ConvexError) {
     if (error.data && typeof error.data === "object") {
@@ -266,6 +272,10 @@ export function formatBillingLimitReachedMessage(
   limitName: BillingLimitName | string | undefined,
   allowedValue: number | null | undefined,
   canManageBilling = true,
+  options?: {
+    resetsAt?: number | null;
+    windowKind?: "day" | "month";
+  }
 ): string | null {
   if (typeof allowedValue !== "number") {
     return null;
@@ -276,10 +286,27 @@ export function formatBillingLimitReachedMessage(
       ? `This organization has reached its monthly eval run limit (${allowedValue}). Upgrade to continue.`
       : `This organization has reached its monthly eval run limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
+  if (limitName === "maxEvalIterationsPerMonth") {
+    if (
+      typeof options?.resetsAt === "number" &&
+      Number.isFinite(options.resetsAt)
+    ) {
+      const resetTime = new Intl.DateTimeFormat(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(new Date(options.resetsAt));
+      return `This organization has reached its eval iteration limit (${allowedValue}). Resets ${resetTime}.`;
+    }
+    return canManageBilling
+      ? `This organization has reached its eval iteration limit (${allowedValue}). Upgrade to continue.`
+      : `This organization has reached its eval iteration limit (${allowedValue}). Ask an organization owner to upgrade.`;
+  }
   if (limitName === "maxChatboxesPerProject") {
     return canManageBilling
-      ? `This project has reached its chatbox limit (${allowedValue}). Upgrade to continue.`
-      : `This project has reached its chatbox limit (${allowedValue}). Ask an organization owner to upgrade.`;
+      ? `This project has reached its swarm limit (${allowedValue}). Upgrade to continue.`
+      : `This project has reached its swarm limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "insightsPerDay") {
     return canManageBilling
@@ -296,14 +323,42 @@ export function formatBillingLimitReachedMessage(
       ? `This organization has reached its project limit (${allowedValue}). Upgrade to create more projects.`
       : `This organization has reached its project limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
+  if (limitName === "computerStartsPerDay") {
+    if (
+      typeof options?.resetsAt === "number" &&
+      Number.isFinite(options.resetsAt)
+    ) {
+      const resetTime = new Intl.DateTimeFormat(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(new Date(options.resetsAt));
+      return `Daily computer limit reached (${allowedValue}). Resets ${resetTime}.`;
+    }
+    return `Daily computer limit reached (${allowedValue}).`;
+  }
 
   return null;
+}
+
+/**
+ * The guest daily computer-start cap (`computerStartsPerDay`). Detected
+ * separately so the computer surface can route it to the MCPJam limit dialog
+ * (sign-in CTA for guests) instead of a plain toast.
+ */
+export function isComputerStartLimitError(error: unknown): boolean {
+  const payload = extractBillingErrorPayload(error);
+  if (!payload || payload.code !== "billing_limit_reached") {
+    return false;
+  }
+  return (payload.limitName ?? payload.limit) === "computerStartsPerDay";
 }
 
 export function getBillingErrorMessage(
   error: unknown,
   fallback: string,
-  canManageBilling = true,
+  canManageBilling = true
 ): string {
   const payload = extractBillingErrorPayload(error);
   if (!payload) {
@@ -322,8 +377,8 @@ export function getBillingErrorMessage(
           ? `${featureName} is not included in the ${currentPlanName} plan. Upgrade to ${upgradePlanName} to continue.`
           : `${featureName} is not included in the ${currentPlanName} plan. Upgrade the organization to continue.`
         : upgradePlanName
-          ? `${featureName} is not included in the ${currentPlanName} plan. Ask an organization owner to upgrade to ${upgradePlanName}.`
-          : `${featureName} is not included in the ${currentPlanName} plan. Ask an organization owner to upgrade.`;
+        ? `${featureName} is not included in the ${currentPlanName} plan. Ask an organization owner to upgrade to ${upgradePlanName}.`
+        : `${featureName} is not included in the ${currentPlanName} plan. Ask an organization owner to upgrade.`;
     }
   }
 
@@ -333,13 +388,17 @@ export function getBillingErrorMessage(
       typeof payload.allowedValue === "number"
         ? payload.allowedValue
         : typeof payload.current === "number"
-          ? payload.current
-          : null;
+        ? payload.current
+        : null;
     const canManage = payload.canManageBilling ?? canManageBilling;
     const message = formatBillingLimitReachedMessage(
       limitName,
       allowedValue,
       canManage,
+      {
+        resetsAt: payload.resetsAt,
+        windowKind: payload.windowKind,
+      }
     );
     if (message) {
       return message;

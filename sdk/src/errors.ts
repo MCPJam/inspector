@@ -18,12 +18,14 @@ export type EvalReportingErrorOptions = SdkErrorOptions & {
   statusCode?: number;
   endpoint?: string;
   attemptCount?: number;
+  isBillingLimitReached?: boolean;
 };
 
 export class EvalReportingError extends SdkError {
   public readonly statusCode?: number;
   public readonly endpoint?: string;
   public readonly attemptCount?: number;
+  public readonly isBillingLimitReached: boolean;
 
   constructor(message: string, options: EvalReportingErrorOptions = {}) {
     super(message, "EVAL_REPORTING_ERROR", options);
@@ -31,5 +33,6 @@ export class EvalReportingError extends SdkError {
     this.statusCode = options.statusCode;
     this.endpoint = options.endpoint;
     this.attemptCount = options.attemptCount;
+    this.isBillingLimitReached = options.isBillingLimitReached ?? false;
   }
 }

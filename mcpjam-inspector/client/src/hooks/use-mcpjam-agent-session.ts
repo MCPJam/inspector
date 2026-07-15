@@ -1,9 +1,11 @@
 /**
  * useMcpjamAgentSession
  *
- * Tiny hook for the MCPJam Agent surfaces (Home page hero, future bubble).
- * Wraps `useChat` against `/api/web/mcpjam-agent` with hosted auth and
- * transcript hydration on mount — and nothing else.
+ * Tiny hook for the MCPJam Agent surfaces (Home page hero, side panel).
+ * Wraps `useChat` against `/api/web/mcpjam-agent` with hosted auth,
+ * transcript hydration on mount, and WebMCP UI tool fulfillment (the agent
+ * panel is the primary surface for driving the inspector UI) — and nothing
+ * else.
  *
  * Per the plan, this is deliberately NOT a second `useChatSession`. If
  * Ollama / custom providers / app tools / chatbox / widget / trace
@@ -12,8 +14,15 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
-import { DefaultChatTransport, generateId } from "ai";
-import { authFetch } from "@/lib/session-token";
+import { generateId } from "ai";
+import { getOrCreateAgentChat } from "@/lib/mcpjam-agent/agent-chat-instances";
+import { fulfillOrphanedDeferredUiToolCalls } from "@/lib/webmcp/ui-tool-approval";
+import {
+  loadAgentRequireToolApproval,
+  saveAgentRequireToolApproval,
+  subscribeAgentRequireToolApproval,
+} from "@/lib/agent-tool-approval-storage";
+import { track } from "@/lib/analytics";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
 import {
@@ -26,8 +35,6 @@ import {
   transcriptToUIMessages,
 } from "@/lib/transcript-to-ui-messages";
 import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
-
-const AGENT_API_PATH = "/api/web/mcpjam-agent";
 
 export interface UseMcpjamAgentSessionArgs {
   /**
@@ -43,6 +50,11 @@ export interface UseMcpjamAgentSessionArgs {
   organizationId?: string | null;
   /** Optional override to override the persisted default model. */
   modelOverride?: ModelDefinition;
+  /**
+   * Telemetry surface — passed into PostHog lifecycle events so we can split
+   * engagement/error/latency by home vs. side-panel vs. future bubble.
+   */
+  surface?: string;
 }
 
 export interface UseMcpjamAgentSessionResult {
@@ -60,12 +72,21 @@ export interface UseMcpjamAgentSessionResult {
   model: ModelDefinition | undefined;
   /** True while the persisted transcript is being seeded on mount. */
   hydrating: boolean;
+  /** "Tool Approval" preference (persisted, agent-global, default off). */
+  requireToolApproval: boolean;
+  setRequireToolApproval: (value: boolean) => void;
+  /** UI-tool-aware approval responses — pass as `onToolApprovalResponse`. */
+  addToolApprovalResponse: (response: {
+    id: string;
+    approved: boolean;
+  }) => void;
 }
 
 export function useMcpjamAgentSession(
   args: UseMcpjamAgentSessionArgs
 ): UseMcpjamAgentSessionResult {
   const { projectId, organizationId, chatSessionId: providedSessionId } = args;
+  const surface = args.surface ?? "unknown";
 
   const [chatSessionId, setChatSessionId] = useState<string>(
     () => providedSessionId ?? generateId()
@@ -100,10 +121,58 @@ export function useMcpjamAgentSession(
     return getDefaultModel(availableModels);
   }, [args.modelOverride, availableModels, selectedModelId]);
 
-  const modelRef = useRef<ModelDefinition | undefined>(resolvedModel);
+  // "Tool Approval" preference — persisted, shared across agent surfaces
+  // (hero + panel) via the storage-change subscription. Default off.
+  const [requireToolApproval, setRequireToolApprovalState] = useState(
+    loadAgentRequireToolApproval
+  );
+  useEffect(
+    () =>
+      subscribeAgentRequireToolApproval(() => {
+        setRequireToolApprovalState(loadAgentRequireToolApproval());
+      }),
+    []
+  );
+  const setRequireToolApproval = useCallback((value: boolean) => {
+    setRequireToolApprovalState(value);
+    saveAgentRequireToolApproval(value);
+  }, []);
+
+  // The Chat instance lives OUTSIDE React (see agent-chat-instances.ts) so
+  // an in-flight stream survives this hook unmounting — e.g. a `ui_navigate`
+  // tool call leaving the Home takeover mid-turn. The hook attaches via
+  // `useChat({ chat })` and keeps the instance's mutable config current.
+  // `instanceWasPristine`: whether this hook found the instance pristine at
+  // resolution time. Distinguishes "we own the fresh instance and may seed
+  // it (even merging around a racing user send)" from "we adopted a live
+  // instance from another surface (panel adoption during a navigation
+  // handoff) and must never re-seed stale history". Computed inside the
+  // memo — NOT a mount-scoped ref — so a `chatSessionId` change without a
+  // remount re-evaluates it for the new session's instance.
+  const { chat, config, handleToolApprovalResponse, instanceWasPristine } =
+    useMemo(() => {
+      const entry = getOrCreateAgentChat(chatSessionId);
+      return {
+        chat: entry.chat,
+        config: entry.config,
+        handleToolApprovalResponse: entry.handleToolApprovalResponse,
+        instanceWasPristine:
+          !entry.config.seeded &&
+          entry.chat.messages.length === 0 &&
+          entry.chat.status === "ready",
+      };
+    }, [chatSessionId]);
   useEffect(() => {
-    modelRef.current = resolvedModel;
-  }, [resolvedModel]);
+    config.projectId = projectId ?? null;
+    config.model = resolvedModel;
+    config.requireToolApproval = requireToolApproval;
+  });
+  useEffect(() => {
+    config.attachedSurfaces.add(surface);
+    return () => {
+      config.attachedSurfaces.delete(surface);
+    };
+  }, [config, surface]);
 
   // Transcript hydration: when we mount with a known session id, fetch the
   // persisted transcript and seed `useChat`. Without this, reload would
@@ -160,47 +229,131 @@ export function useMcpjamAgentSession(
     };
   }, [providedSessionId, projectId]);
 
-  const transport = useMemo(
-    () =>
-      new DefaultChatTransport({
-        api: AGENT_API_PATH,
-        fetch: authFetch,
-        body: () => ({
-          model: modelRef.current,
-          projectId,
-          chatSessionId,
-        }),
-      }),
-    [chatSessionId, projectId]
-  );
-
+  // Transport, `onToolCall` (WebMCP UI tool fulfillment), and
+  // `sendAutomaticallyWhen` are wired at instance creation in
+  // `agent-chat-instances.ts` — they read the mutable `config` synced above.
   const { messages, sendMessage, status, error, stop, setMessages } = useChat({
-    id: chatSessionId,
-    transport,
+    chat,
   });
 
-  // Seed `useChat` with hydrated history once it arrives.
-  const seededForRef = useRef<string | null>(null);
+  // Lifecycle telemetry — track each user message round-trip so we can read
+  // engagement (message_sent), latency (response_finished.duration_ms), tool
+  // usage (response_finished.tool_call_count), and reliability
+  // (response_error). Uses status edge transitions instead of a non-existent
+  // useChat `onFinish` callback in this @ai-sdk/react version.
+  const turnStartedAtRef = useRef<number | null>(null);
+  const turnIndexRef = useRef<number>(0);
+  const prevStatusRef = useRef(status);
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = status;
+    if (prev === status) return;
+    if ((prev === "submitted" || prev === "streaming") && status === "ready") {
+      const startedAt = turnStartedAtRef.current;
+      turnStartedAtRef.current = null;
+      const last = messages[messages.length - 1];
+      let toolCallCount = 0;
+      if (last && last.role === "assistant" && Array.isArray(last.parts)) {
+        toolCallCount = last.parts.filter((p) =>
+          typeof (p as { type?: unknown }).type === "string" &&
+          (p as { type: string }).type.startsWith("tool-")
+        ).length;
+      }
+      track("mcpjam_agent_response_finished", {
+        location: "mcpjam_agent",
+        surface,
+        session_id: chatSessionId,
+        message_index: turnIndexRef.current,
+        duration_ms: startedAt != null ? Date.now() - startedAt : null,
+        tool_call_count: toolCallCount,
+        message_count: messages.length,
+      });
+    } else if (status === "error") {
+      const startedAt = turnStartedAtRef.current;
+      turnStartedAtRef.current = null;
+      track("mcpjam_agent_response_error", {
+        location: "mcpjam_agent",
+        surface,
+        session_id: chatSessionId,
+        message_index: turnIndexRef.current,
+        duration_ms: startedAt != null ? Date.now() - startedAt : null,
+        error_message: error?.message ?? null,
+      });
+    }
+  }, [chatSessionId, error, messages, status, surface]);
+
+  // Orphaned-defer fallback: a UI tool call deferred for approval whose
+  // approval request never arrived (client/server flag disagreement for one
+  // turn) executes once the stream settles so the turn can't hang.
+  const messagesForDeferRef = useRef(messages);
+  messagesForDeferRef.current = messages;
+  const prevStatusForDeferRef = useRef(status);
+  useEffect(() => {
+    const prev = prevStatusForDeferRef.current;
+    prevStatusForDeferRef.current = status;
+    if (prev === status || status !== "ready") return;
+    fulfillOrphanedDeferredUiToolCalls({
+      messages: messagesForDeferRef.current,
+      addToolOutput: (output) => {
+        chat.addToolOutput(output);
+      },
+    });
+  }, [chat, status]);
+
+  // Seed the instance with hydrated history once it arrives. The guard is
+  // per-INSTANCE (`config.seeded`), not per-hook: a second surface adopting
+  // a live instance (panel adoption during a navigation handoff) must never
+  // re-seed stale history over an in-flight turn — only the hook that found
+  // the instance pristine may seed. If the user sent a message BEFORE
+  // hydration finished (racing a resumed session), everything live is new by
+  // construction, so prepend the hydrated history instead of dropping it —
+  // waiting for `status === "ready"` (a dep, so the effect re-runs when the
+  // racing turn settles) keeps setMessages off a mid-stream instance.
   useEffect(() => {
     if (hydrating) return;
     if (initialMessages.length === 0) return;
-    if (seededForRef.current === chatSessionId) return;
-    seededForRef.current = chatSessionId;
-    setMessages(initialMessages);
-  }, [chatSessionId, hydrating, initialMessages, setMessages]);
+    if (config.seeded) return;
+    if (!instanceWasPristine) return;
+    if (status !== "ready") return;
+    config.seeded = true;
+    if (chat.messages.length === 0) {
+      setMessages(initialMessages);
+    } else {
+      setMessages([...initialMessages, ...chat.messages]);
+    }
+  }, [
+    chat,
+    config,
+    hydrating,
+    initialMessages,
+    instanceWasPristine,
+    setMessages,
+    status,
+  ]);
 
   const submit = useCallback(
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
-      // Mint an id on first submit when the caller didn't provide one,
-      // so the persistence path has something to dedupe on.
-      if (!providedSessionId && seededForRef.current === null) {
-        seededForRef.current = chatSessionId;
+      // A fresh session minted by this submit has no persisted transcript —
+      // mark it seeded so late hydration can never overwrite the live turn.
+      if (!providedSessionId) {
+        config.seeded = true;
       }
+      turnIndexRef.current += 1;
+      turnStartedAtRef.current = Date.now();
+      track("mcpjam_agent_message_sent", {
+        location: "mcpjam_agent",
+        surface,
+        session_id: chatSessionId,
+        message_index: turnIndexRef.current,
+        prompt_length: trimmed.length,
+        model_id: config.model?.id ?? null,
+        provider: config.model?.provider ?? null,
+      });
       void sendMessage({ text: trimmed });
     },
-    [chatSessionId, providedSessionId, sendMessage]
+    [chatSessionId, config, providedSessionId, sendMessage, surface]
   );
 
   return {
@@ -212,5 +365,8 @@ export function useMcpjamAgentSession(
     stop,
     model: resolvedModel,
     hydrating,
+    requireToolApproval,
+    setRequireToolApproval,
+    addToolApprovalResponse: handleToolApprovalResponse,
   };
 }

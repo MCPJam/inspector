@@ -1,7 +1,7 @@
 import { useConvexAuth } from "convex/react";
 import { useHostList } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
-import { MultiHostPicker } from "@/components/clients/MultiHostPicker";
+import { MultiHostPicker } from "@/components/hosts/MultiHostPicker";
 
 interface PlaygroundHostPickerProps {
   /**

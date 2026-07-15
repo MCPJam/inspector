@@ -7,7 +7,10 @@ import {
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { createLlmModel } from "./chat-helpers";
-import { appendDedupedModelMessages } from "@/shared/eval-trace";
+import {
+  appendDedupedModelMessages,
+  normalizeFinishReason,
+} from "@/shared/eval-trace";
 import {
   createAiSdkEvalTraceContext,
   emitAiSdkOnStepFinish,
@@ -33,10 +36,13 @@ import { isAbortError } from "@/shared/abort-errors";
 import {
   commitNewlyLoaded,
   gateToolsToActiveSubset,
+  META_TOOL_SEARCH,
   resolveActiveToolNames,
+  shouldForceInitialToolSearch,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
+import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
 import type { PersistedTurnTrace } from "./chat-ingestion";
 import { logger } from "./logger";
 import {
@@ -192,9 +198,85 @@ export interface DirectChatTurnTraceEvents {
   onTurnFinish?: (event: DirectChatTurnFinish) => void;
 }
 
+/**
+ * Engine consolidation parity (route 3 collapse, see
+ * `~/mcpjam-docs/unification.md`): chat-v2's `runAssistantTurn` exposes
+ * `onLiveTextDelta` for streaming-text consumers that need every model
+ * text-delta without going through the SSE writer. Shape mirrors
+ * `MCPJamHandlerOptions.onLiveTextDelta` so routes 1+2 and route 3+4
+ * agree on the live-text surface.
+ *
+ * Held as a top-level option on `RunDirectChatTurnOptions` (sibling to
+ * `onPersist`, NOT inside `traceEvents`) because it's not a trace
+ * concern — it fires alongside the trace `text_delta` callback but is
+ * a separate consumer surface.
+ */
+export type DirectChatTurnLiveTextDelta = (delta: string) => void;
+
+/**
+ * Engine consolidation parity (route 3 collapse): structured per-step
+ * settle event. Shape mirrors `MCPJamStepFinishEvent` so eval and SSE
+ * consumers can map it 1:1 across all four routes. Fires once per
+ * `streamText` step AFTER `traceTurn.turnSpans` has been refreshed
+ * with the step's accumulated spans. `settledWithError: false` for
+ * `runDirectChatTurn` since the AI SDK's `streamText` routes mid-turn
+ * errors through `onError` rather than completing the step — callers
+ * still receive a separate `onEngineError` event for those.
+ */
+export interface DirectChatTurnStepFinishEvent {
+  stepIndex: number;
+  promptIndex: number;
+  /**
+   * Cumulative usage for the turn as of step completion (the engine
+   * tracks per-turn aggregates, not per-step deltas). Undefined when
+   * the step had no usage signal.
+   */
+  turnUsage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
+  settledWithError: boolean;
+  /**
+   * Defensive copy of `traceTurn.turnSpans` as of step settlement.
+   * Callers may retain across step boundaries without racing against
+   * engine mutation of `traceTurn.turnSpans` on the next step.
+   */
+  turnSpans: DirectChatTurnTraceTurn["turnSpans"];
+}
+
+/**
+ * Engine consolidation parity (route 3 collapse): structured error
+ * event mirrored from `MCPJamEngineErrorEvent`. Fires from the
+ * `streamText` `onError` branch BEFORE `onTurnError` (which is
+ * SSE-shaped) so `streamSink: "none"` consumers (eval) can surface
+ * the actual provider/guardrail error without parsing UI chunks. Chat
+ * still consumes `onTurnError` for the SSE writer; both fire.
+ *
+ * `runDirectChatTurn` has only one error site (the SDK's `onError`),
+ * unlike `mcpjam-stream-handler` which has three (HTTP non-OK,
+ * processStream catch, outer loop catch); `httpStatus` / `code` /
+ * `details` are therefore always undefined here.
+ */
+export interface DirectChatTurnEngineErrorEvent {
+  message: string;
+  code?: string;
+  details?: string;
+  httpStatus?: number;
+  rawText: string;
+  promptIndex: number;
+  stepIndex?: number;
+}
+
 export interface RunDirectChatTurnOptions {
   llmModel: ReturnType<typeof createLlmModel>;
   modelId: string;
+  /**
+   * Logical provider for span metadata (OTel `gen_ai.provider.name`, e.g.
+   * "anthropic"). Threaded from the caller's model config — never derived from
+   * `modelId`. Optional: when omitted, llm/step spans simply lack `provider`.
+   */
+  provider?: string;
   messageHistory: ModelMessage[];
   systemPrompt: string;
   temperature?: number;
@@ -215,6 +297,30 @@ export interface RunDirectChatTurnOptions {
   abortSignal?: AbortSignal;
   /** Optional bag of trace-event callbacks. Chat passes these; eval/headless omits. */
   traceEvents?: DirectChatTurnTraceEvents;
+  /**
+   * Engine consolidation parity (route 3 collapse): mirror of
+   * `MCPJamHandlerOptions.onLiveTextDelta`. Fires synchronously from
+   * the `chunk.type === "text-delta"` branch of `onChunk` (alongside
+   * the trace `onTextDelta` callback). Wrapped in try/catch so a buggy
+   * consumer can't crash the turn — failures are logged via
+   * `logger.warn`. Held outside `traceEvents` because it's a separate
+   * consumer surface, not a trace concern.
+   */
+  onLiveTextDelta?: DirectChatTurnLiveTextDelta;
+  /**
+   * Engine consolidation parity (route 3 collapse): mirror of
+   * `MCPJamHandlerOptions.onStepFinish`. Fires from `onStepFinish`
+   * after `traceTurn.turnSpans` has been refreshed. Wrapped in
+   * try/catch (mirrors the safe-fire pattern in `mcpjam-stream-handler`).
+   */
+  onStepFinish?: (event: DirectChatTurnStepFinishEvent) => void;
+  /**
+   * Engine consolidation parity (route 3 collapse): mirror of
+   * `MCPJamHandlerOptions.onEngineError`. Fires from the `onError`
+   * branch BEFORE the SSE-shaped `traceEvents.onTurnError`. Wrapped in
+   * try/catch.
+   */
+  onEngineError?: (event: DirectChatTurnEngineErrorEvent) => void;
   /**
    * Optional post-turn persistence callback. Fires from `onFinish` after the
    * response messages are assembled. Chat passes this to write a
@@ -245,6 +351,17 @@ export interface RunDirectChatTurnOptions {
    */
   toolChoice?: ToolChoice<Record<string, AiTool>>;
   /**
+   * Per-turn step ceiling. CodeRabbit PR-review fix (Major "Do not
+   * silently drop maxSteps"): the route-3 collapse silently lost
+   * `OrgLocalModelHandlerOptions.maxSteps` (legacy default 30,
+   * caller-configurable) when it switched to this helper's hardcoded
+   * `stepCountIs(20)`. Exposing the option here lets the local-org
+   * BYOK wrapper restore its legacy default + caller configurability
+   * without affecting other callers (route 4 + eval headless still
+   * omit and get the 20 default).
+   */
+  maxSteps?: number;
+  /**
    * Optional `experimental_telemetry` block forwarded verbatim to
    * `streamText`. Eval populates with suite/test/iteration metadata for
    * observability; chat currently omits.
@@ -256,10 +373,75 @@ export interface RunDirectChatTurnHandle {
   result: ReturnType<typeof streamText>;
   traceContext: ReturnType<typeof createAiSdkEvalTraceContext>;
   traceTurn: DirectChatTurnTraceTurn;
+  /** Model id for this turn — lets headless consumers build the real turnTrace. */
+  modelId: string;
   /** Removes the abort listener (idempotent). Call from a finally block. */
   cleanup: () => void;
   /** True once the abort signal has fired (mirrors chat's local flag). */
   isAborted: () => boolean;
+}
+
+export function stampMcpToolOriginProviderOptions(
+  messages: ModelMessage[],
+  tools: ToolSet
+): ModelMessage[] {
+  let didChange = false;
+  const stamped = messages.map((message) => {
+    if (!Array.isArray((message as { content?: unknown }).content)) {
+      return message;
+    }
+
+    let messageChanged = false;
+    const content = ((message as { content: unknown[] }).content).map(
+      (part) => {
+        if (!part || typeof part !== "object" || Array.isArray(part)) {
+          return part;
+        }
+        const record = part as Record<string, unknown>;
+        if (
+          record.type !== "tool-call" &&
+          record.type !== "tool-result"
+        ) {
+          return part;
+        }
+        const toolName = record.toolName;
+        if (typeof toolName !== "string") return part;
+        const serverId = readToolServerId(tools, toolName);
+        const providerOptions = mergeMcpToolOriginMetadata(
+          record.providerOptions,
+          serverId
+        );
+        if (!providerOptions) return part;
+        messageChanged = true;
+        return { ...record, providerOptions };
+      }
+    );
+
+    if (!messageChanged) return message;
+    didChange = true;
+    return { ...message, content } as ModelMessage;
+  });
+
+  return didChange ? stamped : messages;
+}
+
+export function withMcpToolOriginChunkMetadata<
+  T extends { type?: string; toolName?: unknown; providerMetadata?: unknown },
+>(chunk: T, tools: ToolSet): T {
+  if (
+    chunk.type !== "tool-input-start" &&
+    chunk.type !== "tool-input-available" &&
+    chunk.type !== "tool-input-error"
+  ) {
+    return chunk;
+  }
+  if (typeof chunk.toolName !== "string") return chunk;
+  const serverId = readToolServerId(tools, chunk.toolName);
+  const providerMetadata = mergeMcpToolOriginMetadata(
+    chunk.providerMetadata,
+    serverId
+  );
+  return providerMetadata ? { ...chunk, providerMetadata } : chunk;
 }
 
 function toLiveChatTraceUsage(
@@ -281,6 +463,32 @@ function toLiveChatTraceUsage(
   return Object.keys(next).length > 0 ? next : undefined;
 }
 
+/**
+ * Engine consolidation parity (route 3 collapse): safe-fire helper for the
+ * three MCPJam-parity callbacks. Mirrors `safelyEmitLiveTextDelta` /
+ * `safelyEmitEngineError` in `mcpjam-stream-handler.ts` — a sync throw or
+ * a rejected promise from the consumer is logged via `logger.warn` and
+ * doesn't crash the turn.
+ */
+function safelyFireCallback<T>(
+  callback: ((event: T) => void | Promise<void>) | undefined,
+  event: T,
+  label: string,
+): void {
+  if (!callback) return;
+  try {
+    void Promise.resolve(callback(event)).catch((error) => {
+      logger.warn(`[direct-chat-turn] ${label} callback failed`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  } catch (error) {
+    logger.warn(`[direct-chat-turn] ${label} callback failed`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 function collectStepToolCallIds(
   toolCalls: Array<{ toolCallId?: string } | undefined> | null | undefined,
 ): Set<string> {
@@ -300,6 +508,7 @@ export function runDirectChatTurn(
   const {
     llmModel,
     modelId,
+    provider,
     messageHistory,
     systemPrompt,
     temperature,
@@ -309,12 +518,20 @@ export function runDirectChatTurn(
     prepareAdvertisedTools,
     abortSignal,
     traceEvents,
+    onLiveTextDelta,
+    onStepFinish,
+    onEngineError,
     onPersist,
     onPersistError,
     toolChoice,
     experimentalTelemetry,
     traceStartedAt,
+    maxSteps,
   } = options;
+  const resolvedMaxSteps =
+    typeof maxSteps === "number" && Number.isFinite(maxSteps) && maxSteps > 0
+      ? Math.floor(maxSteps)
+      : 20;
 
   // Separate array for tracing — we must NOT mutate `messageHistory` because
   // `streamText` holds a reference and internally accumulates step responses.
@@ -338,6 +555,10 @@ export function runDirectChatTurn(
   const traceContext = createAiSdkEvalTraceContext(traceAnchor);
   const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
   let currentStepIndex = 0;
+  // Time-to-first-chunk capture (OTel gen_ai.response.time_to_first_chunk):
+  // absolute Date.now() of the first streamed chunk for each step, set once in
+  // `onChunk`. `onStepFinish` turns it into `ttfcMs` relative to step start.
+  const stepFirstChunkAt = new Map<number, number>();
   let turnFinished = false;
   let aborted = abortSignal?.aborted === true;
   let listenerAttached = false;
@@ -462,7 +683,7 @@ export function runDirectChatTurn(
     ...(temperature !== undefined ? { temperature } : {}),
     system: providerSystemPrompt,
     tools: executableTools,
-    stopWhen: stepCountIs(20),
+    stopWhen: stepCountIs(resolvedMaxSteps),
     ...(abortSignal ? { abortSignal } : {}),
     ...(toolChoice ? { toolChoice } : {}),
     ...(experimentalTelemetry
@@ -500,12 +721,42 @@ export function runDirectChatTurn(
         // a hidden tool call can't take effect (read by `executableTools`).
         advertisedToolNames = new Set(activeToolNames);
       }
-      return activeToolNames !== undefined
-        ? { activeTools: activeToolNames }
-        : {};
+      const stepOptions: {
+        activeTools?: string[];
+        toolChoice?: ToolChoice<Record<string, AiTool>>;
+      } = {};
+      if (activeToolNames !== undefined) {
+        stepOptions.activeTools = activeToolNames;
+      }
+      if (
+        toolChoice === undefined &&
+        shouldForceInitialToolSearch(
+          progressivePlan,
+          discoveryState,
+          stepNumber,
+        ) &&
+        activeToolNames?.includes(META_TOOL_SEARCH)
+      ) {
+        stepOptions.toolChoice = {
+          type: "tool",
+          toolName: META_TOOL_SEARCH,
+        };
+      }
+      return stepOptions;
     },
     onChunk: async ({ chunk }) => {
+      // First streamed chunk of this step → TTFC anchor (any chunk type).
+      if (!stepFirstChunkAt.has(currentStepIndex)) {
+        stepFirstChunkAt.set(currentStepIndex, Date.now());
+      }
       if (chunk.type === "text-delta") {
+        // Parity callback fires alongside the trace surface so
+        // streaming-text consumers (mirrors `onLiveTextDelta` on the
+        // MCPJam handler) receive every delta without parsing trace
+        // events. Safe-fired so a buggy consumer can't crash the turn.
+        if (chunk.text) {
+          safelyFireCallback(onLiveTextDelta, chunk.text, "onLiveTextDelta");
+        }
         traceEvents?.onTextDelta?.({
           turnId: traceTurn.turnId,
           promptIndex: traceTurn.promptIndex,
@@ -544,9 +795,12 @@ export function runDirectChatTurn(
       }
     },
     onStepFinish: async (step) => {
-      const responseMessages = Array.isArray(step?.response?.messages)
-        ? (step.response.messages as ModelMessage[])
-        : [];
+      const responseMessages = stampMcpToolOriginProviderOptions(
+        Array.isArray(step?.response?.messages)
+          ? (step.response.messages as ModelMessage[])
+          : [],
+        tools
+      );
       const beforeLength = traceHistory.length;
       appendDedupedModelMessages(traceHistory, responseMessages);
       const afterLength = traceHistory.length;
@@ -561,6 +815,17 @@ export function runDirectChatTurn(
         stepUsage,
       );
 
+      const stepStartAt = traceContext.openSteps.get(currentStepIndex)?.startAt;
+      const firstChunkAt = stepFirstChunkAt.get(currentStepIndex);
+      const ttfcMs =
+        typeof stepStartAt === "number" && typeof firstChunkAt === "number"
+          ? Math.max(0, firstChunkAt - stepStartAt)
+          : undefined;
+      const responseTimestamp =
+        step?.response?.timestamp instanceof Date
+          ? step.response.timestamp.toISOString()
+          : undefined;
+
       emitAiSdkOnStepFinish(traceContext, Date.now(), {
         modelId,
         inputTokens: stepUsage?.inputTokens,
@@ -568,6 +833,11 @@ export function runDirectChatTurn(
         totalTokens: stepUsage?.totalTokens,
         messageStartIndex,
         messageEndIndex,
+        finishReason: normalizeFinishReason(step?.finishReason),
+        provider,
+        responseId: step?.response?.id,
+        responseTimestamp,
+        ttfcMs,
       });
 
       setToolSpanMessageRangesFromResults(
@@ -585,6 +855,48 @@ export function runDirectChatTurn(
         tracedTools,
         traceTurn,
       });
+
+      // Parity callback fires AFTER `traceTurn.turnSpans` is refreshed so
+      // mid-turn consumers (eval `step_finish`) see the active turn's
+      // engine spans. Defensive copy of the spans array — see
+      // `MCPJamStepFinishEvent.turnSpans` doc for the race rationale.
+      // `settledWithError: false` here because `streamText` routes
+      // mid-turn errors through `onError`, not through a settled step;
+      // those callers also receive `onEngineError`.
+      safelyFireCallback(
+        onStepFinish,
+        {
+          stepIndex: currentStepIndex,
+          promptIndex: traceTurn.promptIndex,
+          turnUsage: traceTurn.turnUsage
+            ? {
+                ...(traceTurn.turnUsage.inputTokens !== undefined
+                  ? { inputTokens: traceTurn.turnUsage.inputTokens }
+                  : {}),
+                ...(traceTurn.turnUsage.outputTokens !== undefined
+                  ? { outputTokens: traceTurn.turnUsage.outputTokens }
+                  : {}),
+                ...(traceTurn.turnUsage.totalTokens !== undefined
+                  ? { totalTokens: traceTurn.turnUsage.totalTokens }
+                  : {}),
+              }
+            : undefined,
+          settledWithError: false,
+          // CodeRabbit PR-review fix (Major "Deep-clone turnSpans"):
+          // shallow `[...traceTurn.turnSpans]` only copies the array
+          // shell — span OBJECTS are still references to entries in
+          // `traceContext.recordedSpans`, and those get patched in
+          // place by `patchAiSdkRecordedSpansMessageRangesFromSteps`
+          // during `onFinish` (mutates `span.messageStartIndex` /
+          // `.messageEndIndex`). Consumers retaining earlier
+          // `onStepFinish` events would see historical spans mutate
+          // underneath them, breaking the "safe to retain across step
+          // boundaries" contract documented at line 217. Clone each
+          // span object so retained snapshots are immutable.
+          turnSpans: traceTurn.turnSpans.map((s) => ({ ...s })),
+        },
+        "onStepFinish",
+      );
     },
     onError: async ({ error }) => {
       if (turnFinished) return;
@@ -603,6 +915,21 @@ export function runDirectChatTurn(
       });
       traceTurn.turnSpans = [...traceContext.recordedSpans];
       const errorText = error instanceof Error ? error.message : String(error);
+
+      // Parity callback fires BEFORE the SSE-shaped `onTurnError` so
+      // `streamSink: "none"` consumers (eval) surface the actual
+      // provider/guardrail error without parsing UI chunks. Mirrors
+      // `safelyEmitEngineError` in `mcpjam-stream-handler.ts`.
+      safelyFireCallback(
+        onEngineError,
+        {
+          message: errorText,
+          rawText: errorText,
+          promptIndex: traceTurn.promptIndex,
+          stepIndex: currentStepIndex,
+        },
+        "onEngineError",
+      );
 
       traceEvents?.onTurnError?.({
         turnId: traceTurn.turnId,
@@ -649,9 +976,12 @@ export function runDirectChatTurn(
       for (const step of event.steps) {
         appendDedupedModelMessages(
           responseMessages,
-          Array.isArray(step?.response?.messages)
-            ? (step.response.messages as ModelMessage[])
-            : [],
+          stampMcpToolOriginProviderOptions(
+            Array.isArray(step?.response?.messages)
+              ? (step.response.messages as ModelMessage[])
+              : [],
+            tools
+          ),
         );
       }
       try {
@@ -687,6 +1017,7 @@ export function runDirectChatTurn(
     result,
     traceContext,
     traceTurn,
+    modelId,
     cleanup,
     isAborted: () => aborted || abortSignal?.aborted === true,
   };
@@ -700,6 +1031,13 @@ export interface DirectChatTurnHeadlessResult {
   spans: Awaited<
     ReturnType<typeof createAiSdkEvalTraceContext>
   >["recordedSpans"];
+  /**
+   * The turn's real `PersistedTurnTrace`, built from the engine's own
+   * `traceTurn` accumulator + `recordedSpans` — the SAME construction the
+   * streaming `onPersist` path uses (see runDirectChatTurn). Lets the unified
+   * turn facade hand direct + hosted callers an identical trace shape.
+   */
+  turnTrace: PersistedTurnTrace;
   /** True if the abort signal fired mid-turn. The caller should drop the result on true. */
   aborted: boolean;
 }
@@ -721,12 +1059,26 @@ export async function consumeDirectChatTurnHeadless(
     const messages = Array.isArray(response?.messages)
       ? (response.messages as ModelMessage[])
       : [];
+    // Build the real turnTrace from the engine's own accumulator — mirrors the
+    // streaming `onPersist` construction (runDirectChatTurn ~902) so headless
+    // and streaming produce the identical PersistedTurnTrace.
+    const turnTrace: PersistedTurnTrace = {
+      turnId: handle.traceTurn.turnId,
+      promptIndex: handle.traceTurn.promptIndex,
+      startedAt: handle.traceTurn.turnStartedAt,
+      endedAt: Date.now(),
+      spans: [...handle.traceContext.recordedSpans],
+      usage: handle.traceTurn.turnUsage,
+      finishReason: finishReason ?? undefined,
+      modelId: handle.modelId,
+    };
     return {
       messages,
       steps,
       totalUsage,
       finishReason,
       spans: handle.traceContext.recordedSpans,
+      turnTrace,
       aborted: handle.isAborted(),
     };
   } finally {

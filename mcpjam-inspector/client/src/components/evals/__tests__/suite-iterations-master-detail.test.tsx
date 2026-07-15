@@ -17,6 +17,10 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
 }));
 
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ user: null, isLoading: false, signIn: vi.fn() }),
+}));
+
 vi.mock("../use-suite-data", () => ({
   useSuiteData: () => ({
     runTrendData: [],

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Trash2, Loader2, X } from "lucide-react";
+import { Trash2, Loader2, X, Server } from "lucide-react";
 import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
 import { cn } from "@/lib/utils";
 
@@ -59,8 +59,37 @@ export function SuitesOverview({
     [overview],
   );
 
+  const aggregateCounts = useMemo(() => {
+    let passing = 0, partial = 0, failing = 0;
+    for (const { latestRun } of sortedOverview) {
+      if (!latestRun?.summary) { failing++; continue; }
+      const rate = latestRun.summary.passRate;
+      if (rate >= 1) passing++;
+      else if (rate > 0) partial++;
+      else failing++;
+    }
+    return { total: sortedOverview.length, passing, partial, failing };
+  }, [sortedOverview]);
+
   return (
     <div className="space-y-4">
+      {/* Stats banner */}
+      <div className="flex items-stretch divide-x divide-border/50 rounded-xl border border-border/50 bg-card shadow-sm">
+        {[
+          { label: "Suites", value: aggregateCounts.total, cls: "" },
+          { label: "Passing", value: aggregateCounts.passing, cls: "text-success" },
+          { label: "Partial", value: aggregateCounts.partial, cls: "text-warning" },
+          { label: "Failing", value: aggregateCounts.failing, cls: "text-destructive" },
+        ].map(({ label, value, cls }) => (
+          <div key={label} className="flex flex-1 flex-col px-5 py-3.5">
+            <span className={cn("text-2xl font-semibold tabular-nums leading-none", cls)}>
+              {value}
+            </span>
+            <span className="mt-1 text-xs text-muted-foreground">{label}</span>
+          </div>
+        ))}
+      </div>
+
       <div className="space-y-3">
         {sortedOverview.map((entry) => {
           const { suite, latestRun, totals } = entry;
@@ -132,7 +161,17 @@ export function SuitesOverview({
                       {servers.length > 0 ? (
                         <>
                           <span>•</span>
-                          <span>{servers.join(", ")}</span>
+                          <span className="flex flex-wrap gap-1">
+                            {servers.map((s) => (
+                              <span
+                                key={s}
+                                className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/60 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
+                              >
+                                <Server className="h-2.5 w-2.5" />
+                                {s}
+                              </span>
+                            ))}
+                          </span>
                         </>
                       ) : null}
                     </div>

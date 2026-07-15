@@ -21,7 +21,7 @@ import {
 import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
 import { type HostListItem } from "@/hooks/useClients";
 import {
-  buildClientsPath,
+  buildHostsPath,
   buildHostComparePath,
   navigateApp,
   routePaths,
@@ -126,7 +126,7 @@ export function SuiteOverviewClientBar({
   };
 
   const openClientsPage = () => {
-    navigateApp(routePaths.clients);
+    navigateApp(routePaths.hosts);
   };
 
   const editable = Boolean(onUpdate) && !readOnly;
@@ -203,7 +203,7 @@ export function SuiteOverviewClientBar({
         <div className="space-y-0.5">
           <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-0.5">
             <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Clients
+              Hosts
             </span>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -217,16 +217,16 @@ export function SuiteOverviewClientBar({
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-[240px]">
                 <p className="text-xs leading-snug">
-                  Clients are the MCP hosts this suite evaluates. Attach
-                  one or more to compare how each handles the same
-                  scenarios.
+                  Hosts are the configurations this suite evaluates.
+                  Attach one or more to compare how each handles the
+                  same scenarios.
                 </p>
               </TooltipContent>
             </Tooltip>
           </div>
           {projectHosts.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-muted-foreground">
-              No clients in this project yet — add one below.
+              No hosts in this project yet — add one below.
             </p>
           ) : null}
           {projectHosts.map((host) => {
@@ -267,7 +267,7 @@ export function SuiteOverviewClientBar({
                   {isLastAttached ? (
                     <TooltipContent side="right">
                       <p className="text-xs">
-                        Attach another client first
+                        Attach another host first
                       </p>
                     </TooltipContent>
                   ) : null}
@@ -281,7 +281,7 @@ export function SuiteOverviewClientBar({
                       onClick={(event) => {
                         event.stopPropagation();
                         setPickerOpen(false);
-                        navigateApp(buildClientsPath(host.hostId));
+                        navigateApp(buildHostsPath(host.hostId));
                       }}
                       className={cn(
                         "absolute right-1 top-1/2 inline-flex size-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground outline-none transition-opacity",
@@ -333,8 +333,10 @@ export function SuiteOverviewClientBar({
     >
       <div
         className={cn(
-          "flex min-h-9 flex-wrap items-center gap-x-2 gap-y-2 px-1 sm:px-2",
-          containerVariant === "inline" && "w-full min-w-0 max-w-full",
+          "flex min-h-9 items-center gap-x-2 px-1 sm:px-2",
+          containerVariant === "inline"
+            ? "w-max min-w-0 max-w-full flex-nowrap"
+            : "flex-wrap gap-y-2",
         )}
       >
         {showServersSection ? (
@@ -374,7 +376,7 @@ export function SuiteOverviewClientBar({
               clientPicker
             ) : attachments.length === 0 ? (
               <span className="shrink-0 text-[13px] font-normal text-muted-foreground">
-                No clients attached
+                No hosts attached
               </span>
             ) : (
               attachments.map((attachment) => {

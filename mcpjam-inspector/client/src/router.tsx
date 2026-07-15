@@ -1,13 +1,17 @@
-import { createBrowserRouter, RouterProvider } from "react-router";
+import { createBrowserRouter, RouterProvider, redirect } from "react-router";
 import App, {
+  ApiKeysSettingsRoute,
   AuthRoute,
   ChatAliasRoute,
   ChatboxesRoute,
   CiEvalsRoute,
   ConformanceRoute,
+  CaniuseCapabilityRoute,
+  CompatibilityRoute,
+  ComputerRoute,
   EvalsRoute,
   HostCompareRoute,
-  ClientsRoute,
+  HostsRoute,
   HomeRoute,
   LearningRoute,
   OAuthFlowRoute,
@@ -23,13 +27,15 @@ import App, {
   SettingsRoute,
   SkillsRoute,
   SupportRoute,
+  SwarmsRoute,
   TasksRoute,
   ToolsRoute,
   TracingRoute,
-  ViewsRoute,
   XAAFlowRoute,
+  XAASetupRoute,
 } from "./App";
 import { getAppRouter, setAppRouter } from "./router-ref";
+import { buildHostsPath } from "./lib/app-navigation";
 
 export { getAppRouter };
 
@@ -44,17 +50,48 @@ export function createAppRouter(): AppRouter {
   const existing = getAppRouter();
   if (existing) return existing;
   const router = createBrowserRouter([
+    ...(import.meta.env.DEV
+      ? [
+          {
+            path: "__e2e/oauth-debugger",
+            lazy: async () => {
+              const { OAuthDebuggerE2EHarness } = await import(
+                "./components/e2e/OAuthDebuggerE2EHarness"
+              );
+              return { Component: OAuthDebuggerE2EHarness };
+            },
+          },
+        ]
+      : []),
     {
       element: <App />,
       children: [
         { index: true, element: <HomeRoute /> },
         { path: "home", element: <HomeRoute /> },
         { path: "servers", element: <ServersRoute /> },
-        { path: "clients", element: <ClientsRoute /> },
-        { path: "clients/:hostId", element: <ClientsRoute /> },
+        // Legacy `/clients` URLs redirect to canonical `/hosts` (the tab was
+        // renamed Client → Host). Route through `buildHostsPath` so the
+        // `:hostId` deep-link is re-encoded exactly like canonical links
+        // (router params arrive decoded; ids with reserved chars would
+        // otherwise split into extra path segments and fail to match).
+        { path: "clients", loader: () => redirect(buildHostsPath()) },
+        {
+          path: "clients/:hostId",
+          loader: ({ params }) => redirect(buildHostsPath(params.hostId)),
+        },
         { path: "host-compare", element: <HostCompareRoute /> },
-        { path: "hosts", element: <ClientsRoute /> },
-        { path: "hosts/:hostId", element: <ClientsRoute /> },
+        // Chrome-less host-compare surface for vanity domains (caniuse.dev):
+        // App renders this full-bleed (no sidebar/header) and skips the
+        // first-run onboarding redirect. `bare` forces the no-sub-nav render
+        // even for signed-in users.
+        { path: "embed/host-compare", element: <HostCompareRoute bare /> },
+        {
+          path: "capabilities/:capabilitySlug",
+          element: <CaniuseCapabilityRoute />,
+        },
+        { path: "computer", element: <ComputerRoute /> },
+        { path: "hosts", element: <HostsRoute /> },
+        { path: "hosts/:hostId", element: <HostsRoute /> },
         { path: "registry", element: <RegistryRoute /> },
         { path: "tools", element: <ToolsRoute /> },
         { path: "resources", element: <ResourcesRoute /> },
@@ -64,8 +101,14 @@ export function createAppRouter(): AppRouter {
         { path: "skills", element: <SkillsRoute /> },
         { path: "learning", element: <LearningRoute /> },
         { path: "conformance", element: <ConformanceRoute /> },
+        { path: "compatibility", element: <CompatibilityRoute /> },
         { path: "oauth-flow", element: <OAuthFlowRoute /> },
         { path: "xaa-flow", element: <XAAFlowRoute /> },
+        // Managed test-IdP setup center. Sections (people | apps | access)
+        // are URL segments so each is deep-linkable; the first segment stays
+        // "xaa-flow" so `pathnameToActiveTab` highlights the debugger tab.
+        { path: "xaa-flow/setup", element: <XAASetupRoute /> },
+        { path: "xaa-flow/setup/:section", element: <XAASetupRoute /> },
         { path: "tracing", element: <TracingRoute /> },
         { path: "chat", element: <ChatAliasRoute /> },
         // Catch sub-paths like `/chat/thread-1` so old bookmarks land on
@@ -79,10 +122,14 @@ export function createAppRouter(): AppRouter {
         // exercise the hosted-OAuth callback path via `/hosts` rather
         // than this route directly.
         { path: "chatboxes", element: <ChatboxesRoute /> },
+        // `/swarms` — agent Swarm surface (Publish / Personas / Sessions) over
+        // the same host-backed chatbox as `/chatboxes`. Same billing feature +
+        // `sandboxes-enabled` flag.
+        { path: "swarms", element: <SwarmsRoute /> },
         { path: "playground", element: <PlaygroundRoute /> },
-        { path: "views", element: <ViewsRoute /> },
         { path: "support", element: <SupportRoute /> },
         { path: "settings", element: <SettingsRoute /> },
+        { path: "settings/api-keys", element: <ApiKeysSettingsRoute /> },
         { path: "profile", element: <ProfileRoute /> },
         { path: "project-settings", element: <ProjectSettingsRoute /> },
         { path: "client-config", element: <ServersRedirectRoute /> },

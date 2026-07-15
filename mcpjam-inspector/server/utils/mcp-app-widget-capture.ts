@@ -266,6 +266,91 @@ async function uploadWidgetHtmlBlob(
 }
 
 /**
+ * PR 6b sibling to `uploadWidgetHtmlBlob`. Same content-agnostic upload mutation
+ * (`chatSessions:generateSnapshotUploadUrl` → `ctx.storage.generateUploadUrl()`);
+ * only the Blob mime type changes. The caller hands base64 from the harness —
+ * decode → Blob → POST → return the storageId. Exported (unlike its HTML
+ * sibling) because `finalize-iteration.ts` serializes browser artifacts.
+ */
+export async function uploadScreenshotBlob(
+  convexClient: ConvexHttpClient,
+  base64: string,
+): Promise<string | undefined> {
+  const uploadUrl = await convexClient.mutation(
+    "chatSessions:generateSnapshotUploadUrl" as any,
+    {},
+  );
+
+  if (typeof uploadUrl !== "string" || uploadUrl.length === 0) {
+    return undefined;
+  }
+
+  const mediaType = detectScreenshotMediaType(base64);
+  const bytes = Buffer.from(base64, "base64");
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    headers: { "Content-Type": mediaType },
+    body: new Blob([bytes], { type: mediaType }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to upload screenshot (${response.status})`);
+  }
+
+  const body = (await response.json().catch(() => null)) as
+    | { storageId?: string }
+    | null;
+  return typeof body?.storageId === "string" ? body.storageId : undefined;
+}
+
+// Mirrors `detectImageMediaType` in computer-use-tool.ts but kept local so
+// widget-capture stays the single owner of screenshot upload concerns. The
+// harness emits PNG by default and JPEG only after re-encoding to fit the byte
+// budget; JPEG base64 begins with "/9j/".
+function detectScreenshotMediaType(base64: string): "image/jpeg" | "image/png" {
+  return base64.startsWith("/9j/") ? "image/jpeg" : "image/png";
+}
+
+/**
+ * Upload one iteration's Playwright replay `.webm` to Convex storage and return
+ * its storageId. Same path as {@link uploadScreenshotBlob} (generate URL → POST
+ * bytes → storageId); only the mime type differs. One video per iteration, so
+ * this runs at most once per finalize. Throws on transport failure — the caller
+ * (`finalize-iteration.ts`) wraps it best-effort so a missing replay never fails
+ * the iteration.
+ */
+export async function uploadVideoBlob(
+  convexClient: ConvexHttpClient,
+  bytes: Buffer,
+): Promise<string | undefined> {
+  const uploadUrl = await convexClient.mutation(
+    "chatSessions:generateSnapshotUploadUrl" as any,
+    {},
+  );
+
+  if (typeof uploadUrl !== "string" || uploadUrl.length === 0) {
+    return undefined;
+  }
+
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    headers: { "Content-Type": "video/webm" },
+    // `new Uint8Array(bytes)` so a Node `Buffer` is a valid `BlobPart`
+    // regardless of its backing-buffer type.
+    body: new Blob([new Uint8Array(bytes)], { type: "video/webm" }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to upload replay video (${response.status})`);
+  }
+
+  const body = (await response.json().catch(() => null)) as
+    | { storageId?: string }
+    | null;
+  return typeof body?.storageId === "string" ? body.storageId : undefined;
+}
+
+/**
  * Walk an AI SDK message transcript, find every tool result whose tool
  * metadata identifies an MCP App, fetch the widget HTML via
  * `MCPClientManager.readResource()`, upload it to Convex, and return one

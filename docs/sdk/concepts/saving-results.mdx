@@ -1,8 +1,12 @@
 ---
 title: "Save Results to MCPJam"
-description: "Save eval results to the MCPJam dashboard for tracking and CI visibility"
+description: "Save eval results to the MCPJam dashboard with an MCPJam API key (sk_…) for tracking and CI visibility"
 icon: "cloud-upload"
 ---
+
+<Warning>
+Reporting authenticates with **MCPJam API keys (`sk_…`)** from Settings → API keys. The legacy project API keys (`mcpjam_…`) are retired and no longer work anywhere — see [API keys](/reference/api-keys).
+</Warning>
 
 After running evals, you can save results to MCPJam to track accuracy over time, compare across branches, and get visibility in the CI Evals dashboard.
 
@@ -12,15 +16,15 @@ After running evals, you can save results to MCPJam to track accuracy over time,
 
 ## Setup
 
-Set your MCPJam API key as an environment variable:
+Create an MCPJam API key (`sk_…`) under **Settings → API keys** and export it:
 
 ```bash
-export MCPJAM_API_KEY=mcpjam_...
+export MCPJAM_API_KEY=sk_...
+# Optional: file results under a specific project (defaults to your org's Default project).
+export MCPJAM_PROJECT_ID=<project id>
 ```
 
-That's it — both `EvalTest` and `EvalSuite` will auto-save results when this key is available.
-
-`MCPJAM_API_KEY` enables result uploads.
+That's it — both `EvalTest` and `EvalSuite` auto-save results when this key is available. Results land in the project named by `MCPJAM_PROJECT_ID` (or the `project` option in the `mcpjam:` config), falling back to your organization's **Default** project.
 
 **Attach the connected `MCPClientManager` to [`HostRunner`](/sdk/reference/host-runner)** (or pass `agent` / `mcpClientManager` to manual reporting APIs) when you need either of the following:
 

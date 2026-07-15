@@ -7,7 +7,7 @@ import {
 
 /**
  * React subscription to the "previewed host" for a project. Multiple
- * surfaces (Connect's `ClientOverlayBar`, Playground's `PlaygroundHeader`,
+ * surfaces (Connect's `HostOverlayBar`, Playground's `PlaygroundHeader`,
  * future tabs) call this — when any one calls the setter, the others
  * update through the same-tab `previewed-host-changed` event.
  */

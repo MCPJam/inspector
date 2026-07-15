@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import type { EnsureServersReadyResult } from "@/hooks/use-server-state";
 import { useLogger } from "@/hooks/use-logger";
 import { useSharedAppState } from "@/state/app-state-context";
@@ -45,6 +45,18 @@ function reconnectFailureToastMessage(count: number): string {
   return count === 1
     ? "Failed to reconnect 1 server."
     : `Failed to reconnect ${count} servers.`;
+}
+
+function reconnectingToastMessage(count: number): string {
+  return count === 1
+    ? "Reconnecting 1 server…"
+    : `Reconnecting ${count} servers…`;
+}
+
+function reconnectSuccessToastMessage(count: number): string {
+  return count === 1
+    ? "Reconnected 1 server."
+    : `Reconnected ${count} servers.`;
 }
 
 function buildAttemptKey(hostScopeKey: string, serverNamesKey: string): string {
@@ -121,7 +133,7 @@ interface UseAutoConnectProjectServersResult {
  * servers are additionally auto-connected via the candidate path. Gated on a
  * host being active (`hostScopeKey` non-null). Selection is NOT managed here:
  * the connected set is the active set, mirrored by
- * `ActiveClientServerReconciler`.
+ * `ActiveHostServerReconciler`.
  */
 export function useAutoConnectProjectServers({
   projectId,
@@ -218,6 +230,17 @@ export function useAutoConnectProjectServers({
     const connectedNow = Object.entries(sharedAppState.servers)
       .filter(([, server]) => server.connectionStatus === "connected")
       .map(([name]) => name);
+    if (connectedNow.length === 0) return;
+
+    // Surface the client-switch recycle as one progress toast so the dev can
+    // see it happening: a "Reconnecting…" spinner flips in place to
+    // "Reconnected" (or a failure message) once the batch settles. Reusing the
+    // same toast id keeps the loading → result transition on a single toast
+    // instead of stacking a second one.
+    const toastId = toast.loading(
+      reconnectingToastMessage(connectedNow.length)
+    );
+
     void Promise.allSettled(
       connectedNow.map(async (name) => {
         await reconnectServer(name);
@@ -234,12 +257,19 @@ export function useAutoConnectProjectServers({
         ];
       });
 
-      if (failures.length === 0) return;
+      if (failures.length === 0) {
+        toast.success(reconnectSuccessToastMessage(connectedNow.length), {
+          id: toastId,
+        });
+        return;
+      }
 
       for (const failure of failures) {
         logger.error("Failed to reconnect server after client switch", failure);
       }
-      toast.error(reconnectFailureToastMessage(failures.length));
+      toast.error(reconnectFailureToastMessage(failures.length), {
+        id: toastId,
+      });
     });
     // `sharedAppState.servers` is read via closure but excluded from deps on
     // purpose: this must fire only on scope transitions, not whenever the

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { COMPARE_PLAN_MARKETING_SECTIONS } from "@/components/organization/compare-plan-marketing";
 import { buildComparePlanSectionsFromCatalog } from "@/components/organization/billing-compare-view-model";
 import type { PlanCatalog } from "@/hooks/useOrganizationBilling";
 
@@ -52,40 +53,17 @@ function createPlanCatalog(): PlanCatalog {
   };
 }
 
-function findRow(
-  sections: ReturnType<typeof buildComparePlanSectionsFromCatalog>,
-  label: string,
-) {
-  for (const section of sections) {
-    const row = section.rows.find((r) => r.label === label);
-    if (row) return row;
-  }
-  throw new Error(`${label} row not found`);
-}
-
 describe("buildComparePlanSectionsFromCatalog", () => {
-  it("renders uncapped Free and Team org/project limits from the catalog", () => {
+  it("returns the static marketing compare sections", () => {
     const sections = buildComparePlanSectionsFromCatalog(createPlanCatalog());
-    const seatLimit = findRow(sections, "Seat limit");
-    const projects = findRow(sections, "Projects");
 
-    expect(seatLimit.free).toMatchObject({
-      kind: "text",
-      text: "Unlimited",
-    });
-    expect(seatLimit.team).toEqual({
-      kind: "text",
-      text: "Unlimited",
-      emphasize: true,
-    });
-    expect(projects.free).toMatchObject({
-      kind: "text",
-      text: "Unlimited",
-    });
-    expect(projects.team).toEqual({
-      kind: "text",
-      text: "Unlimited",
-      emphasize: true,
-    });
+    expect(sections).toBe(COMPARE_PLAN_MARKETING_SECTIONS);
+    expect(sections.map((section) => section.title)).toEqual([
+      "Credits & seats",
+      "Evaluations",
+      "Security & Compliance",
+      "Support",
+      "Standard features",
+    ]);
   });
 });

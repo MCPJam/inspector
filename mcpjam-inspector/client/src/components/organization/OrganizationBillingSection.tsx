@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, CheckCircle2, CreditCard, Info, Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { Card, CardContent, CardTitle } from "@mcpjam/design-system/card";
@@ -256,34 +256,29 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
   string,
   { ariaLabel: string; content: string; contentClassName?: string }
 > = {
-  "Triage Insights": {
-    ariaLabel: "About Triage Insights",
-    content: "Recommendations for how to improve your server.",
-    contentClassName: "max-w-[20rem]",
-  },
-  "Evaluation traces": {
-    ariaLabel: "What are evaluation traces?",
+  "Included credits": {
+    ariaLabel: "About included credits",
     content:
-      "Traces for evaluations: configured user prompts, tool execution, agent reasoning, errors, and latency breakdown for playground and CI/CD runs.",
-    contentClassName: "max-w-[26rem]",
-  },
-  "Insights Data Export": {
-    ariaLabel: "About insights data export",
-    content:
-      "Export triage and evaluation insights for analysis outside MCPJam.",
+      "Model credits for playground, chat, and agent usage. Free resets daily; Team is allocated per seat each month.",
     contentClassName: "max-w-[22rem]",
-  },
-  Projects: {
-    ariaLabel: "What is a project?",
-    content:
-      "Projects are containers for your MCP servers and related objects.",
-    contentClassName: "max-w-[16rem]",
   },
   "Seat limit": {
     ariaLabel: "About seat limits",
     content:
       "You're charged only for active members. Pending invites are free until accepted.",
     contentClassName: "max-w-[18rem]",
+  },
+  "Eval iterations": {
+    ariaLabel: "About eval iterations",
+    content:
+      "Suite and quick eval runs count toward your plan's iteration allowance. Free resets daily; Team resets monthly.",
+    contentClassName: "max-w-[22rem]",
+  },
+  "Evaluation traces": {
+    ariaLabel: "What are evaluation traces?",
+    content:
+      "Traces for evaluations: configured user prompts, tool execution, agent reasoning, errors, and latency breakdown for playground and CI/CD runs.",
+    contentClassName: "max-w-[26rem]",
   },
   "SSO / SAML": {
     ariaLabel: "About SSO",
@@ -294,7 +289,7 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
   "Role-based access control (RBAC)": {
     ariaLabel: "About RBAC",
     content:
-      "Basic Admin/Member-style access on Team; customizable roles and fine-grained permissions on Enterprise.",
+      "Basic Admin/Member-style access on Free and Team; customizable roles and fine-grained permissions on Enterprise.",
     contentClassName: "max-w-[22rem]",
   },
   "Data processing agreement (DPA)": {
@@ -347,6 +342,8 @@ function ComparePlanRowLabel({
   );
 }
 
+const COMPARE_PLAN_PERIOD_SUFFIXES = ["/ seat / mo", "/ day", "/ mo"] as const;
+
 function ComparePlanMatrixCell({ cell }: { cell: ComparePlanCell }) {
   if (cell.kind === "check") {
     return (
@@ -364,6 +361,24 @@ function ComparePlanMatrixCell({ cell }: { cell: ComparePlanCell }) {
       </span>
     );
   }
+
+  const periodSuffix = COMPARE_PLAN_PERIOD_SUFFIXES.find((suffix) =>
+    cell.text.endsWith(suffix)
+  );
+  if (periodSuffix) {
+    const amount = cell.text.slice(0, -periodSuffix.length).trimEnd();
+    return (
+      <span className="flex w-full items-baseline justify-center gap-x-1 text-sm">
+        <span className="font-semibold tabular-nums text-foreground">
+          {amount}
+        </span>
+        <span className="font-normal text-muted-foreground">
+          {periodSuffix}
+        </span>
+      </span>
+    );
+  }
+
   return (
     <span
       className={cn(
@@ -421,6 +436,183 @@ function BillingIntervalToggle({
       >
         Monthly
       </button>
+    </div>
+  );
+}
+
+/**
+ * Compact Team upsell shown beside the current-plan card while on Free, so that
+ * panel doesn't sit alone. Mirrors the Team column of the comparison table
+ * (price, Popular badge, Upgrade CTA) and reuses the same CTA logic.
+ */
+function FreePlanTeamUpsell({
+  planCatalog,
+  currentPlan,
+  billingConfigured,
+  canManageBilling,
+  isBillingActionPending,
+  pendingPlanChangeTarget,
+  deferredTrialBillingCopy,
+  onDowngradePlan,
+  onStartPlanChange,
+}: {
+  planCatalog: PlanCatalog;
+  currentPlan: OrganizationPlan;
+  billingConfigured: boolean;
+  canManageBilling: boolean;
+  isBillingActionPending: boolean;
+  pendingPlanChangeTarget: "team" | null;
+  deferredTrialBillingCopy: string | null;
+  onDowngradePlan: (
+    plan: OrganizationPlan,
+    billingInterval: BillingInterval
+  ) => void;
+  onStartPlanChange: (
+    plan: "team",
+    billingInterval: BillingInterval
+  ) => Promise<void>;
+}) {
+  const [billingInterval, setBillingInterval] =
+    useState<BillingInterval>("annual");
+  const entry = planCatalog.plans.team;
+  if (!entry) {
+    return null;
+  }
+
+  const displayCents = getDisplayPriceCentsForPlan(
+    "team",
+    billingInterval,
+    entry
+  );
+  const priceLabel = formatPlanPriceLabel(
+    "team",
+    displayCents,
+    planCatalog.currency,
+    billingInterval
+  );
+  const priceSubtext = formatPerSeatCadence("team", entry, billingInterval);
+  const cta = getPlanColumnCta({
+    plan: "team",
+    currentPlan,
+    entry,
+    billingConfigured,
+    canManageBilling,
+    isBillingActionPending,
+    scheduledCancellationDate: null,
+    onDowngradePlan,
+    onStartPlanChange,
+    billingInterval,
+  });
+  const showCtaSpinner =
+    pendingPlanChangeTarget === "team" && cta.label === "Upgrade";
+  const showDeferredTrialBillingCopy =
+    deferredTrialBillingCopy != null &&
+    cta.label === "Upgrade" &&
+    !cta.disabled &&
+    !cta.tooltip;
+
+  return (
+    <div
+      data-testid="free-plan-team-upsell"
+      className="flex h-full flex-col gap-5 rounded-xl border border-primary/35 bg-card p-5 md:p-6"
+    >
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <span className="text-base font-semibold">{entry.displayName}</span>
+          <Badge className="rounded-md bg-primary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-foreground">
+            Popular
+          </Badge>
+        </div>
+        <div className="w-full space-y-1">
+          <div
+            role="group"
+            aria-label="Billing interval"
+            className="mb-2 inline-flex items-center gap-0.5 rounded-md border border-border/60 bg-muted/40 p-0.5 text-xs"
+          >
+            <button
+              type="button"
+              className={cn(
+                "rounded px-2 py-1 font-medium transition-colors",
+                billingInterval === "annual"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground"
+              )}
+              onClick={() => setBillingInterval("annual")}
+            >
+              Annual
+            </button>
+            <button
+              type="button"
+              className={cn(
+                "rounded px-2 py-1 font-medium transition-colors",
+                billingInterval === "monthly"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground"
+              )}
+              onClick={() => setBillingInterval("monthly")}
+            >
+              Monthly
+            </button>
+          </div>
+          <PlanPriceDisplay label={priceLabel} />
+          <p className="text-xs leading-snug text-muted-foreground">
+            {priceSubtext}
+          </p>
+          {entry.seatMinimum ? (
+            <p className="text-xs leading-snug text-muted-foreground">
+              {entry.seatMinimum} seat minimum
+            </p>
+          ) : null}
+          {showDeferredTrialBillingCopy ? (
+            <p className="text-[11px] font-medium leading-tight text-muted-foreground">
+              {deferredTrialBillingCopy}
+            </p>
+          ) : null}
+        </div>
+      </div>
+      {cta.tooltip ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              className="w-full shrink-0 rounded-lg"
+              size="sm"
+              variant={cta.variant}
+              aria-disabled={true}
+              tabIndex={0}
+              onClick={undefined}
+            >
+              {showCtaSpinner ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Loading...
+                </>
+              ) : (
+                cta.label
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-[14rem] text-center">
+            {cta.tooltip}
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        <Button
+          className="w-full shrink-0 rounded-lg"
+          size="sm"
+          variant={cta.variant}
+          disabled={cta.disabled}
+          onClick={cta.onClick}
+        >
+          {showCtaSpinner ? (
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              Loading...
+            </>
+          ) : (
+            cta.label
+          )}
+        </Button>
+      )}
     </div>
   );
 }
@@ -610,6 +802,14 @@ export function OrganizationBillingSection({
     ? buildComparePlanSectionsFromCatalog(planCatalog)
     : null;
   const deferredTrialBillingCopy = getDeferredTrialBillingCopy(billingStatus);
+  const isTrial = billingStatus?.source === "trial";
+  const showFreeTeamUpsell =
+    showPlanBilling &&
+    !isLoadingBilling &&
+    !isTrial &&
+    currentPlan === "free" &&
+    planCatalog != null &&
+    planCatalog.plans.team != null;
 
   return (
     <div className="space-y-5">
@@ -699,13 +899,35 @@ export function OrganizationBillingSection({
         </ErrorBoundary>
       ) : null}
 
-      {currentPlanPanel}
+      {showFreeTeamUpsell && planCatalog ? (
+        <div className="grid items-stretch gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          {currentPlanPanel}
+          <FreePlanTeamUpsell
+            planCatalog={planCatalog}
+            currentPlan={currentPlan}
+            billingConfigured={billingConfigured}
+            canManageBilling={canManageBilling}
+            isBillingActionPending={isBillingActionPending}
+            pendingPlanChangeTarget={pendingPlanChangeTarget}
+            deferredTrialBillingCopy={deferredTrialBillingCopy}
+            onDowngradePlan={(plan, interval) =>
+              void onDowngradePlan(plan, interval)
+            }
+            onStartPlanChange={onStartPlanChange}
+          />
+        </div>
+      ) : (
+        currentPlanPanel
+      )}
 
-      {showCredits ? (
+      {showCredits || (showPlanBilling && billingStatus?.canManageBilling) ? (
         <ErrorBoundary fallback={null}>
           <PaymentsHistorySection
             organizationId={organizationId}
-            canViewHistory={canManageCredits}
+            canViewHistory={showCredits && canManageCredits}
+            canViewInvoices={
+              !!(showPlanBilling && billingStatus?.canManageBilling)
+            }
           />
         </ErrorBoundary>
       ) : null}
@@ -982,16 +1204,18 @@ export function OrganizationBillingSection({
                       <TableBody>
                         {(compareSections ?? []).map((section) => (
                           <Fragment key={section.title}>
-                            <TableRow className="border-b hover:bg-transparent">
-                              <TableCell
-                                className="bg-muted/40 py-2.5 pl-4"
-                                colSpan={PLAN_ORDER.length + 1}
-                              >
-                                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                                  {section.title}
-                                </div>
-                              </TableCell>
-                            </TableRow>
+                            {!section.hideTitle ? (
+                              <TableRow className="border-b hover:bg-transparent">
+                                <TableCell
+                                  className="bg-muted/40 py-2.5 pl-4"
+                                  colSpan={PLAN_ORDER.length + 1}
+                                >
+                                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                    {section.title}
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            ) : null}
                             {section.rows.map((row, rowIndex) => {
                               const cells: ComparePlanCell[] = [
                                 row.free,

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import {
   PlaygroundStateProvider,
   usePlaygroundState,
@@ -14,6 +13,7 @@ import {
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
+import LoadingScreen from "@/components/LoadingScreen";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/resizable";
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
-import { LoggerView } from "@/components/logger-view";
+import { PlaygroundRightRail } from "@/components/playground/PlaygroundRightRail";
 import { PlaygroundCenter } from "./PlaygroundCenter";
 import { PlaygroundPreviewedClientSync } from "./PlaygroundPreviewedClientSync";
 import { PlaygroundLeftRail } from "./PlaygroundLeftRail";
@@ -41,14 +41,17 @@ import type {
 } from "@/hooks/use-app-state";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
-import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+import {
+  gateMcpToolResultImageRenderingByModelVisibility,
+  type HostConfigDtoV2,
+} from "@/lib/client-config-v2";
 
 interface PlaygroundTabProps {
   activeProjectId?: string | null;
   /**
    * Shared (Convex) project id for the active project, when synced. Used as
    * the canonical previewed-host storage scope so this tab agrees with the
-   * global host bar and ClientsTab. Falls back to `activeProjectId` for
+   * global host bar and HostsTab. Falls back to `activeProjectId` for
    * CLI / no-cloud-sync flows.
    */
   sharedProjectId?: string | null;
@@ -100,24 +103,21 @@ interface PlaygroundTabProps {
 export function PlaygroundTab(props: PlaygroundTabProps) {
   const themeMode = usePreferencesStore((state) => state.themeMode);
 
-  const posthog = usePostHog();
   const hasCapturedViewRef = useRef(false);
   useEffect(() => {
     // Wait until auth is settled so the boolean flags reflect the user's
     // real state, not a pre-hydration false. After that, fire exactly once
     // per mount.
     if (hasCapturedViewRef.current) return;
-    if (!posthog) return;
     if (props.isWorkOsAuthLoading) return;
     hasCapturedViewRef.current = true;
-    posthog.capture("playground_tab_viewed", {
-      ...standardEventProps("playground_tab"),
+    track("playground_tab_viewed", {
+      location: "playground_tab",
       has_active_project: !!props.activeProjectId,
       has_shared_project: !!props.sharedProjectId,
       is_signed_in: !!props.isSignedInWithWorkOs,
     });
   }, [
-    posthog,
     props.activeProjectId,
     props.sharedProjectId,
     props.isSignedInWithWorkOs,
@@ -200,6 +200,13 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     onConnect: props.onConnect,
     onSaveHostContext: props.onSaveHostContext,
     ensureServersReady: props.ensureServersReady,
+    modelVisibleMcpToolResults:
+      effectiveHostConfig?.modelVisibleMcpToolResults,
+    mcpToolResultImageRendering:
+      gateMcpToolResultImageRenderingByModelVisibility(
+        effectiveHostConfig?.mcpToolResultImageRendering,
+        effectiveHostConfig?.modelVisibleMcpToolResults
+      ),
     onOnboardingChange: props.onOnboardingChange,
     // Playground supports multi-server tool selection — pass the active
     // multi-server set through so the docked tools pane aggregates across
@@ -218,6 +225,14 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // user clicks the corresponding `CollapsedPanelStrip` peek button.
   const leftPanelRef = useRef<ImperativePanelHandle | null>(null);
   const rightPanelRef = useRef<ImperativePanelHandle | null>(null);
+
+  if (playgroundState.loadingState.kind === "skeleton") {
+    return (
+      <div className="fixed inset-0 z-[100] bg-background">
+        <LoadingScreen />
+      </div>
+    );
+  }
 
   return (
     <PlaygroundStateProvider value={playgroundState}>
@@ -274,7 +289,9 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                             onCollapse={() => setIsLeftRailVisible(false)}
                             className="min-h-0 min-w-0 overflow-hidden"
                           >
-                            <PlaygroundLeftRail />
+                            <PlaygroundLeftRail
+                              previewedHostId={previewedHostId}
+                            />
                           </ResizablePanel>
                           <ResizableHandle withHandle />
                         </>
@@ -329,8 +346,16 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                             className="min-h-0 overflow-hidden"
                           >
                             <div className="h-full min-h-0 overflow-hidden">
-                              <LoggerView
+                              <PlaygroundRightRail
                                 onClose={() => setIsRightRailVisible(false)}
+                                hostConfig={effectiveHostConfig}
+                                hostId={previewedHostId ?? null}
+                                projectId={
+                                  props.sharedProjectId ??
+                                  props.activeProjectId ??
+                                  null
+                                }
+                                isAuthenticated={isConvexAuthenticated}
                               />
                             </div>
                           </ResizablePanel>

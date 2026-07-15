@@ -1,5 +1,9 @@
 import { UIMessage } from "ai";
 import type { ModelDefinition } from "./types";
+import type {
+  McpToolResultImageRenderingPolicy,
+  ModelVisibleMcpToolResults,
+} from "@mcpjam/sdk/host-config";
 
 export interface ChatV2Request {
   messages: UIMessage[];
@@ -35,7 +39,25 @@ export interface ChatV2Request {
    * hosted web route gets real Ids from a separate request schema.
    */
   selectedServerIds?: string[];
+  /**
+   * Local inspector must own the tool loop for this turn because at least one
+   * selected MCP server is reachable only from this machine (stdio, localhost,
+   * or private IP HTTP). For org BYOK, the server forces the cloud runtime so
+   * the model call is proxied through Convex (`/stream/org`) — the org key
+   * stays in Convex and is never sent to the inspector — while the tool loop
+   * still runs locally against the local MCP connection.
+   */
+  localMcpRuntimeRequired?: boolean;
   requireToolApproval?: boolean;
+  /**
+   * HostConfig v2 built-in tool ids (e.g. `["web_search"]`) the client wants
+   * advertised this turn. For chatbox-bound requests the server re-resolves
+   * from the host's pinned config (host wins); for playground/direct chat the
+   * body value is used as-is. Billing authorization happens server-side in
+   * Convex (bearer + projectId), so a tampered body can't bill a project the
+   * caller isn't authorized on.
+   */
+  builtInToolIds?: string[];
   /**
    * Host-level opt-in for progressive MCP tool discovery
    * (`search_mcp_tools` / `load_mcp_tools` meta-tools instead of sending
@@ -51,6 +73,10 @@ export interface ChatV2Request {
    * the request is chatbox-bound, so the host value wins.
    */
   respectToolVisibility?: boolean;
+  /** Host-level MCP tool-result content/resource visibility policy. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /** Host-level UI rendering policy for MCP tool-returned images. */
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   /**
    * Phase 3 read switch: real host style for direct chat traces. When
    * unset, the backend's chatIngestion path defaults to `'claude'` —
@@ -60,7 +86,7 @@ export interface ChatV2Request {
    * the backend accepts both and normalizes with a
    * `legacy_direct_style` warn.
    */
-  hostStyle?: "claude" | "chatgpt";
+  hostStyle?: string;
   /**
    * Project ID for direct-chat history persistence and, when set, the server
    * resolves model-provider config from the org backing this project.
@@ -78,6 +104,17 @@ export interface ChatV2Request {
    * inclusion gate.
    */
   appTools?: AppToolSnapshotEntry[];
+  /**
+   * WebMCP-shaped MCPJam UI tools snapshot — per chat POST.
+   *
+   * Registered by the client catalog into the UI tools registry
+   * (`client/src/lib/webmcp/ui-tools-registry.ts`) and snapshotted fresh at
+   * POST time, exactly like `appTools`. The server defends the boundary in
+   * `validateUiToolEntries` (caps, `ui_` name regex, schema size) and
+   * registers them as no-execute AI SDK tools; `useChat.onToolCall` fulfills
+   * them in-page.
+   */
+  uiTools?: UiToolSnapshotEntry[];
   /**
    * SEP-1865 `ui/update-model-context` snapshots for the next model turn.
    *
@@ -106,6 +143,23 @@ export interface AppToolSnapshotEntry {
   parentToolCallId: string;
   rawName: string;
   description?: string;
+  inputSchema?: Record<string, unknown>;
+  readOnly: boolean;
+}
+
+/**
+ * WebMCP-shaped MCPJam UI tool snapshot entry. Mirrors `UiToolEntry` in
+ * `server/utils/chat-v2-orchestration.ts` so the client snapshotter and the
+ * server validator share a single shape.
+ *
+ * Unlike app tools, UI tools are first-party and curated: `name` is the
+ * model-facing tool name directly (reserved `ui_` prefix, validated at the
+ * boundary), with no alias indirection. `readOnly` is metadata for policy
+ * and native `annotations.readOnlyHint`, not an inclusion gate.
+ */
+export interface UiToolSnapshotEntry {
+  name: string;
+  description: string;
   inputSchema?: Record<string, unknown>;
   readOnly: boolean;
 }

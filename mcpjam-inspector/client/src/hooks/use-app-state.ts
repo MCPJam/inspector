@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useConvexAuth, useQuery } from "convex/react";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import { useLogger } from "./use-logger";
@@ -179,7 +179,6 @@ export function useAppState({
   hasOrganizations,
   isLoadingOrganizations,
   validOrganizations,
-  hostsHubFlagEnabled,
   requestSignIn,
 }: {
   currentUserId: string | null;
@@ -194,12 +193,6 @@ export function useAppState({
   hasOrganizations: boolean;
   isLoadingOrganizations: boolean;
   validOrganizations: Array<{ _id: string; myRole?: string }>;
-  /**
-   * Hosts-hub feature flag. When off, host queries are skipped and the
-   * connection path falls back to the project default (still authoritative
-   * via its shadow `projects.clientConfig`).
-   */
-  hostsHubFlagEnabled: boolean;
   requestSignIn?: () => void | Promise<void>;
 }) {
   const logger = useLogger("Connections");
@@ -246,10 +239,10 @@ export function useAppState({
     validOrganizations.some(
       (organization) => organization._id === pendingOAuthMarkerOrgId
     );
-  const activeOrganizationId = isStoredActiveOrganizationValid
-    ? storedActiveOrganizationId
-    : isPendingOAuthMarkerOrgValid
+  const activeOrganizationId = isPendingOAuthMarkerOrgValid
     ? pendingOAuthMarkerOrgId
+    : isStoredActiveOrganizationValid
+    ? storedActiveOrganizationId
     : fallbackActiveOrganizationId;
   const setActiveOrganizationId = useCallback(
     (organizationId: string | undefined) => {
@@ -500,14 +493,14 @@ export function useAppState({
   ) as HostConfigDtoV2 | null | undefined;
 
   // Single active-host state, shared with the Servers/Playground/Hosts
-  // top-bar preview and the Chat tab's ClientPicker. Picking a host anywhere
+  // top-bar preview and the Chat tab's HostPicker. Picking a host anywhere
   // in the product points every MCP `initialize` and widget `ui/initialize`
   // at the same `HostConfigDtoV2`.
   const [activeHostId, setActiveHostId] = usePreviewedHostId(
     activeSharedProjectId ?? null,
   );
   const { host: selectedHost } = useHost({
-    isAuthenticated: isAuthenticated && hostsHubFlagEnabled,
+    isAuthenticated,
     hostId: activeHostId,
   });
   const activeHost = resolveEffectiveHost({
@@ -524,6 +517,8 @@ export function useAppState({
     isAuthLoading,
     isLoadingProjects: projectState.isLoadingProjects,
     useLocalFallback: projectState.useLocalFallback,
+    activeOrganizationId,
+    restoreActiveOrganizationId: setActiveOrganizationId,
     effectiveProjects: projectState.effectiveProjects,
     effectiveActiveProjectId: projectState.effectiveActiveProjectId,
     activeProjectServersFlat: projectState.activeProjectServersFlat,
@@ -822,7 +817,7 @@ export function useAppState({
     // `mcpProfile` powers `ActiveMcpProfileProvider`, its `clientCapabilities`
     // and `connectionDefaults` flow through `withProjectConnectionDefaults`,
     // and `setActiveHostId` is the canonical writer for both the Chat tab's
-    // ClientPicker and the global top-bar preview.
+    // HostPicker and the global top-bar preview.
     activeHost,
     activeHostId,
     setActiveHostId,
@@ -855,6 +850,7 @@ export function useAppState({
       serverState.handleRefreshTokensFromOAuthFlow,
     persistRuntimeServerToProjectIfNeeded:
       serverState.persistRuntimeServerToProjectIfNeeded,
+    ensureHostedServerIdsForNames: serverState.ensureHostedServerIdsForNames,
 
     handleSwitchProject,
     handleCreateProject: projectState.handleCreateProject,

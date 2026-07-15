@@ -14,7 +14,7 @@ vi.mock("@axiomhq/js", () => ({
   })),
 }));
 
-import { authorizeBatch } from "../auth.js";
+import { authorizeBatch, callerContextFromHono } from "../auth.js";
 
 const baseContext: RequestLogContext = {
   event: "http.request.completed",
@@ -32,6 +32,9 @@ function makeContext(): { c: Context; vars: Record<string, unknown> } {
   const vars: Record<string, unknown> = { requestLogContext: { ...baseContext } };
   const c = {
     var: new Proxy(vars, { get: (t, p) => t[p as string] }),
+    // Faithful to Hono: `c.get(k)` mirrors `c.var[k]`. The delegated-auth
+    // header builder reads context via `c.get(...)`.
+    get: (key: string) => vars[key],
     set: (key: string, value: unknown) => {
       vars[key] = value;
     },
@@ -93,7 +96,7 @@ describe("authorizeBatch — request log context attribution", () => {
     );
 
     const { c, vars } = makeContext();
-    await authorizeBatch(c, "bearer", "ws-1", ["srv-alpha"]);
+    await authorizeBatch(callerContextFromHono(c), "bearer", "ws-1", ["srv-alpha"]);
 
     const merged = vars.requestLogContext as RequestLogContext;
     expect(merged.serverId).toBe("srv-alpha");
@@ -142,7 +145,7 @@ describe("authorizeBatch — request log context attribution", () => {
     );
 
     const { c, vars } = makeContext();
-    await authorizeBatch(c, "bearer", "ws-1", ["srv-alpha", "srv-beta"]);
+    await authorizeBatch(callerContextFromHono(c), "bearer", "ws-1", ["srv-alpha", "srv-beta"]);
 
     const merged = vars.requestLogContext as RequestLogContext;
     expect(merged.serverId).toBeNull();
@@ -174,7 +177,7 @@ describe("authorizeBatch — request log context attribution", () => {
 
     const { c, vars } = makeContext();
     const before = { ...(vars.requestLogContext as RequestLogContext) };
-    const result = await authorizeBatch(c, "bearer", "ws-1", ["srv-alpha"]);
+    const result = await authorizeBatch(callerContextFromHono(c), "bearer", "ws-1", ["srv-alpha"]);
 
     expect(vars.requestLogContext).toEqual(before);
     expect(result.results["srv-alpha"]).toMatchObject({
@@ -227,7 +230,7 @@ describe("authorizeBatch — request log context attribution", () => {
     );
 
     const { c } = makeContext();
-    const result = await authorizeBatch(c, "bearer", "ws-1", [
+    const result = await authorizeBatch(callerContextFromHono(c), "bearer", "ws-1", [
       "srv-stdio-leak",
       "srv-http-with-leak",
     ]);
@@ -273,7 +276,7 @@ describe("authorizeBatch — request log context attribution", () => {
     );
 
     const { c } = makeContext();
-    const result = await authorizeBatch(c, "bearer", "ws-1", [
+    const result = await authorizeBatch(callerContextFromHono(c), "bearer", "ws-1", [
       "srv-alpha",
       "srv-beta",
     ]);

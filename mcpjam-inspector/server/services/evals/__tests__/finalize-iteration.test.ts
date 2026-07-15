@@ -4,7 +4,22 @@ import type { ModelMessage } from "ai";
 import type {
   EvalTraceSpan,
   PromptTraceSummary,
+  RunnerBrowserInteractionStep,
+  RunnerWidgetRenderObservation,
 } from "@/shared/eval-trace";
+
+// Mock screenshot + video upload so the serializers don't hit Convex storage.
+// Tests that pass no browser artifacts never call them (the serializers /
+// video block short-circuit).
+const { uploadScreenshotBlob, uploadVideoBlob } = vi.hoisted(() => ({
+  uploadScreenshotBlob: vi.fn(),
+  uploadVideoBlob: vi.fn(),
+}));
+vi.mock("../../../utils/mcp-app-widget-capture.js", () => ({
+  uploadScreenshotBlob,
+  uploadVideoBlob,
+}));
+
 import { finalizeEvalIteration } from "../finalize-iteration.js";
 
 type Call = { ref: string; args: Record<string, unknown> };
@@ -91,6 +106,22 @@ describe("finalizeEvalIteration", () => {
       messages,
     });
     // Only the pre-check `getTestIteration` query should have happened.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.ref).toBe("testSuites:getTestIteration");
+  });
+
+  test("skips update when the iteration already timed out (keeps it terminal)", async () => {
+    // A timed-out iteration whose original work ignores the abort and finishes
+    // late must NOT overwrite the `timed_out` row with completed/failed.
+    const { client, calls } = makeClient({ iterationStatus: "timed_out" });
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: true,
+      toolsCalled: [],
+      usage: usageZero,
+      messages,
+    });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.ref).toBe("testSuites:getTestIteration");
   });
@@ -429,5 +460,175 @@ describe("finalizeEvalIteration", () => {
     });
     const lock = calls.find((c) => c.ref === "testSuites:lockEvalSession");
     expect(lock).toBeDefined();
+  });
+
+  describe("browser artifacts (PR 6b)", () => {
+    const obs: RunnerWidgetRenderObservation = {
+      toolCallId: "tc-0",
+      toolName: "create_view",
+      serverId: "excalidraw",
+      status: "rendered",
+      screenshotBase64: "c2hvdA==",
+      elapsedMs: 5,
+      ts: 1,
+      promptIndex: 0,
+    };
+    const step: RunnerBrowserInteractionStep = {
+      toolCallId: "tc-0",
+      stepIndex: 0,
+      promptIndex: 0,
+      action: "left_click",
+      screenshotBase64: "c2hvdA==",
+      elapsedMs: 3,
+      ts: 1,
+    };
+
+    test("W1 fallback carries artifacts — uploaded once, base64 dropped, promptIndex stripped", async () => {
+      uploadScreenshotBlob.mockResolvedValue("blob-1");
+      const { client, calls } = makeClient({
+        appendThrows: new Error("fanout pre-turn failure"),
+      });
+
+      await finalizeEvalIteration({
+        convexClient: client,
+        iterationId: "iter1",
+        passed: true,
+        toolsCalled: [],
+        usage: usageZero,
+        messages,
+        widgetRenderObservations: [obs],
+        browserInteractionSteps: [step],
+      });
+
+      const update = calls.find(
+        (c) => c.ref === "testSuites:updateTestIteration",
+      );
+      expect(update).toBeDefined();
+      const obsOut = update!.args.widgetRenderObservations as any[];
+      const stepsOut = update!.args.browserInteractionSteps as any[];
+      expect(obsOut).toHaveLength(1);
+      expect(obsOut[0].screenshotBlobId).toBe("blob-1");
+      expect(obsOut[0]).not.toHaveProperty("screenshotBase64");
+      // Backend stamps promptIndex from the W1 turn (promptIndex:0).
+      expect(obsOut[0]).not.toHaveProperty("promptIndex");
+      expect(stepsOut).toHaveLength(1);
+      expect(stepsOut[0].screenshotBlobId).toBe("blob-1");
+      expect(stepsOut[0]).not.toHaveProperty("promptIndex");
+
+      // Serialize-once: one upload per artifact total, even though the same
+      // serialized records feed BOTH the (failed) W2 fanout and the W1 fallback.
+      expect(uploadScreenshotBlob).toHaveBeenCalledTimes(2);
+    });
+
+    test("W1 fallback omits browser arrays when none were collected", async () => {
+      const { client, calls } = makeClient({
+        appendThrows: new Error("fanout pre-turn failure"),
+      });
+
+      await finalizeEvalIteration({
+        convexClient: client,
+        iterationId: "iter1",
+        passed: true,
+        toolsCalled: [],
+        usage: usageZero,
+        messages,
+      });
+
+      const update = calls.find(
+        (c) => c.ref === "testSuites:updateTestIteration",
+      );
+      expect("widgetRenderObservations" in update!.args).toBe(false);
+      expect("browserInteractionSteps" in update!.args).toBe(false);
+      expect(uploadScreenshotBlob).not.toHaveBeenCalled();
+    });
+
+    test("happy path (fanout persists) does NOT W1-spread artifacts to updateTestIteration", async () => {
+      uploadScreenshotBlob.mockResolvedValue("blob-1");
+      const { client, calls } = makeClient({});
+
+      await finalizeEvalIteration({
+        convexClient: client,
+        iterationId: "iter1",
+        passed: true,
+        toolsCalled: [],
+        usage: usageZero,
+        messages,
+        widgetRenderObservations: [obs],
+        browserInteractionSteps: [step],
+      });
+
+      // Artifacts rode the per-turn appendEvalTurnTrace call (W2); the
+      // updateTestIteration call must NOT also carry them.
+      const update = calls.find(
+        (c) => c.ref === "testSuites:updateTestIteration",
+      );
+      expect("widgetRenderObservations" in update!.args).toBe(false);
+      expect("browserInteractionSteps" in update!.args).toBe(false);
+      // Still serialized exactly once.
+      expect(uploadScreenshotBlob).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("replay video", () => {
+    test("forwards videoBlobId to the persisted turn when upload succeeds", async () => {
+      uploadVideoBlob.mockResolvedValueOnce("vid-store-1");
+      const { client, calls } = makeClient({});
+      await finalizeEvalIteration({
+        convexClient: client,
+        iterationId: "iter1",
+        passed: true,
+        toolsCalled: [],
+        usage: usageZero,
+        messages,
+        videoBytes: Buffer.from([0x1a, 0x45, 0xdf, 0xa3]),
+      });
+      const lastAppend = calls
+        .filter((c) => c.ref === "testSuites:appendEvalTurnTrace")
+        .at(-1);
+      expect(lastAppend?.args.videoBlobId).toBe("vid-store-1");
+    });
+
+    test("upload failure does NOT fail the iteration (best-effort)", async () => {
+      // Load-bearing: video is nice-to-have; iteration persistence is core.
+      uploadVideoBlob.mockRejectedValueOnce(new Error("storage down"));
+      const { client, calls } = makeClient({});
+
+      await expect(
+        finalizeEvalIteration({
+          convexClient: client,
+          iterationId: "iter1",
+          passed: true,
+          toolsCalled: [],
+          usage: usageZero,
+          messages,
+          videoBytes: Buffer.from([0x1a, 0x45, 0xdf, 0xa3]),
+        }),
+      ).resolves.toBeUndefined();
+
+      // The iteration still finalized with the right status...
+      const update = calls.find(
+        (c) => c.ref === "testSuites:updateTestIteration",
+      );
+      expect(update).toBeDefined();
+      expect(update!.args.status).toBe("completed");
+      // ...and no videoBlobId leaked into the persisted turn after the failure.
+      const append = calls.find(
+        (c) => c.ref === "testSuites:appendEvalTurnTrace",
+      );
+      expect(append?.args.videoBlobId).toBeUndefined();
+    });
+
+    test("no upload attempted when videoBytes is empty/absent", async () => {
+      const { client } = makeClient({});
+      await finalizeEvalIteration({
+        convexClient: client,
+        iterationId: "iter1",
+        passed: true,
+        toolsCalled: [],
+        usage: usageZero,
+        messages,
+      });
+      expect(uploadVideoBlob).not.toHaveBeenCalled();
+    });
   });
 });

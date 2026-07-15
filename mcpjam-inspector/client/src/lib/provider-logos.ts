@@ -3,6 +3,7 @@
  * Used across chat, evals, and other components that display model providers
  */
 
+import bedrockLogo from "/bedrock_logo.svg";
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
 import deepseekLogo from "/deepseek_logo.svg";
@@ -32,6 +33,8 @@ export const getProviderLogo = (
   switch (provider) {
     case "anthropic":
       return claudeLogo;
+    case "bedrock":
+      return bedrockLogo;
     case "openai":
       return openaiLogo;
     case "deepseek":
@@ -96,6 +99,8 @@ export const getProviderColor = (provider: string): string => {
   switch (provider) {
     case "anthropic":
       return "text-orange-600 dark:text-orange-400";
+    case "bedrock":
+      return "text-blue-600 dark:text-blue-400";
     case "openai":
       return "text-green-600 dark:text-green-400";
     case "deepseek":

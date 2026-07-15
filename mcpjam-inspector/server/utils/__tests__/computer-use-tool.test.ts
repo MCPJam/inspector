@@ -10,6 +10,7 @@ import {
   type ComputerImplOutput,
 } from "../computer-use-tool";
 import type { McpAppBrowserHarness } from "../mcp-app-browser-harness";
+import { logger } from "../logger";
 
 describe("resolveComputerUseToolVersion", () => {
   it("resolves every mapped model id to its version", () => {
@@ -255,7 +256,7 @@ describe("buildComputerUseTools", () => {
     );
   });
 
-  it("computer.execute returns 'no rendered widget' when none is active", async () => {
+  it("computer.execute returns 'no_rendered_widget' when none is active", async () => {
     const { harness, executeAction } = stubHarness();
     const tools = buildComputerUseTools({
       version: "20250124",
@@ -265,8 +266,80 @@ describe("buildComputerUseTools", () => {
     });
     const exec = (tools.computer as { execute: Function }).execute;
     const impl = (await exec({ action: "screenshot" }, {})) as ComputerImplOutput;
-    expect(impl.note).toBe("no rendered widget");
+    expect(impl.note).toBe("no_rendered_widget");
     expect(executeAction).not.toHaveBeenCalled();
+  });
+
+  it("onAction fires once per real action with the harness result + toolCallId", async () => {
+    const { harness } = stubHarness();
+    const onAction = vi.fn();
+    const tools = buildComputerUseTools({
+      version: "20250124",
+      harness,
+      getActiveToolCallId: () => "tc-active",
+      viewport: { width: 1280, height: 800 },
+      onAction,
+    });
+    const exec = (tools.computer as { execute: Function }).execute;
+    await exec({ action: "left_click", coordinate: [10, 20] }, {});
+
+    expect(onAction).toHaveBeenCalledTimes(1);
+    const [result, context] = onAction.mock.calls[0]!;
+    // The raw harness BrowserActionResult — not the model-facing impl output.
+    expect(result).toMatchObject({
+      screenshotBase64: "iVBORscreenshot",
+      widgetToolCalls: [
+        { name: "reserve", args: { seat: 12 }, ok: true, elapsedMs: 4 },
+      ],
+      elapsedMs: 7,
+    });
+    expect(context).toEqual({ toolCallId: "tc-active" });
+  });
+
+  it("onAction does NOT fire on the no-widget short-circuit", async () => {
+    const { harness, executeAction } = stubHarness();
+    const onAction = vi.fn();
+    const tools = buildComputerUseTools({
+      version: "20250124",
+      harness,
+      getActiveToolCallId: () => null,
+      viewport: { width: 1280, height: 800 },
+      onAction,
+    });
+    const exec = (tools.computer as { execute: Function }).execute;
+    const impl = (await exec({ action: "screenshot" }, {})) as ComputerImplOutput;
+
+    expect(impl.note).toBe("no_rendered_widget");
+    expect(executeAction).not.toHaveBeenCalled();
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  it("a throwing onAction is caught + logged; execute still returns the result", async () => {
+    const { harness } = stubHarness();
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const onAction = vi.fn(() => {
+      throw new Error("emitter boom");
+    });
+    const tools = buildComputerUseTools({
+      version: "20250124",
+      harness,
+      getActiveToolCallId: () => "tc-active",
+      viewport: { width: 1280, height: 800 },
+      onAction,
+    });
+    const exec = (tools.computer as { execute: Function }).execute;
+    const impl = (await exec(
+      { action: "left_click", coordinate: [1, 2] },
+      {},
+    )) as ComputerImplOutput;
+
+    // A buggy emitter must not crash the agent loop.
+    expect(impl.widgetToolCalls).toHaveLength(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[computer-use] onAction callback threw",
+      expect.objectContaining({ error: "emitter boom" }),
+    );
+    warnSpy.mockRestore();
   });
 
   it("finish_widget.execute dismisses the named widget", async () => {
@@ -317,5 +390,137 @@ describe("buildComputerUseTools", () => {
       dismissed: "tc-live",
       requested: "tc-stale",
     });
+  });
+});
+
+describe("buildComputerUseTools — wireFormat (hosted paths, PR 14)", () => {
+  function stubHarness() {
+    const executeAction = vi.fn(
+      async ({ action }: { toolCallId: string; action: unknown }) => ({
+        action,
+        screenshotBase64: "iVBORscreenshot",
+        widgetToolCalls: [],
+        elapsedMs: 7,
+      }),
+    );
+    const dismissWidget = vi.fn(async () => {});
+    return {
+      harness: {
+        executeAction,
+        dismissWidget,
+      } as unknown as McpAppBrowserHarness,
+      executeAction,
+      dismissWidget,
+    };
+  }
+
+  it("emits `computer` as a regular function tool with a JSON-serializable schema", async () => {
+    const { harness } = stubHarness();
+    const tools = buildComputerUseTools({
+      version: "20250124",
+      harness,
+      getActiveToolCallId: () => "tc-1",
+      viewport: { width: 1280, height: 800 },
+      wireFormat: true,
+    });
+
+    const computer = tools.computer as Record<string, unknown>;
+    // Not the provider-defined factory output: a plain function tool whose
+    // schema survives `serializeToolsForConvex` (the provider tool's lazy
+    // schema serializes to an empty object on the hosted wire).
+    expect(computer.type ?? "function").not.toBe("provider-defined");
+    expect(typeof computer.description).toBe("string");
+    const { serializeToolsForConvex } = await import("../mcpjam-tool-helpers");
+    const defs = serializeToolsForConvex(tools as never);
+    const computerDef = defs.find((d) => d.name === "computer");
+    expect(computerDef).toBeDefined();
+    const props = (computerDef!.inputSchema as { properties?: object })
+      .properties;
+    expect(Object.keys(props ?? {})).toEqual(
+      expect.arrayContaining(["action", "coordinate", "text"]),
+    );
+    const actionEnum = (
+      (props as Record<string, { enum?: string[] }>).action ?? {}
+    ).enum;
+    expect(actionEnum).toEqual(expect.arrayContaining(["screenshot", "left_click", "type", "key", "scroll", "wait"]));
+  });
+
+  it("wire `computer` drives the harness and maps output via toModelOutput like the native tool", async () => {
+    const { harness, executeAction } = stubHarness();
+    const tools = buildComputerUseTools({
+      version: "20250124",
+      harness,
+      getActiveToolCallId: () => "tc-9",
+      viewport: { width: 1280, height: 800 },
+      wireFormat: true,
+    });
+
+    const computer = tools.computer as {
+      execute: Function;
+      toModelOutput: Function;
+    };
+    const implOut = await computer.execute(
+      { action: "left_click", coordinate: [10, 20] },
+      {},
+    );
+    expect(executeAction).toHaveBeenCalledWith({
+      toolCallId: "tc-9",
+      action: { action: "left_click", coordinate: [10, 20] },
+    });
+
+    const modelOut = computer.toModelOutput({ output: implOut });
+    expect(modelOut.type).toBe("content");
+    expect(modelOut.value[0]).toMatchObject({
+      type: "image-data",
+      data: "iVBORscreenshot",
+    });
+  });
+
+  it("wire mode still short-circuits with no_rendered_widget when nothing is mounted", async () => {
+    const { harness, executeAction } = stubHarness();
+    const tools = buildComputerUseTools({
+      version: "20250124",
+      harness,
+      getActiveToolCallId: () => null,
+      viewport: { width: 1280, height: 800 },
+      wireFormat: true,
+    });
+
+    const computer = tools.computer as { execute: Function };
+    const out = await computer.execute({ action: "screenshot" }, {});
+    expect(executeAction).not.toHaveBeenCalled();
+    expect(out).toMatchObject({ note: "no_rendered_widget" });
+  });
+
+  it("wire mode fires onAction with the active toolCallId", async () => {
+    const { harness } = stubHarness();
+    const onAction = vi.fn();
+    const tools = buildComputerUseTools({
+      version: "20250124",
+      harness,
+      getActiveToolCallId: () => "tc-act",
+      viewport: { width: 1280, height: 800 },
+      wireFormat: true,
+      onAction,
+    });
+
+    await (tools.computer as { execute: Function }).execute(
+      { action: "screenshot" },
+      {},
+    );
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(onAction.mock.calls[0][1]).toEqual({ toolCallId: "tc-act" });
+  });
+
+  it("default (no wireFormat) keeps the provider-native factory", () => {
+    const { harness } = stubHarness();
+    const tools = buildComputerUseTools({
+      version: "20250124",
+      harness,
+      getActiveToolCallId: () => null,
+      viewport: { width: 1280, height: 800 },
+    });
+    // Provider-defined tools carry the factory id; the wire tool must not.
+    expect((tools.computer as { id?: string }).id).toMatch(/anthropic\./);
   });
 });

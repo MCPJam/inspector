@@ -20,8 +20,15 @@ let balanceState:
     }
   | undefined = undefined;
 let isLoadingState = false;
-let creditTopupsFlagState = true;
-let teamCreditsFlagState = true;
+let evalQuotaState:
+  | {
+      used: number;
+      allowed: number | null;
+      resetsAt: number;
+      windowKind: "day" | "month";
+    }
+  | undefined = undefined;
+let evalQuotaLoadingState = false;
 
 vi.mock("@/hooks/useCreditBalance", () => ({
   useCreditBalance: () => ({
@@ -30,12 +37,16 @@ vi.mock("@/hooks/useCreditBalance", () => ({
   }),
 }));
 
-vi.mock("@/lib/team-credits-flag", () => ({
-  useTeamCreditsUiEnabled: () => teamCreditsFlagState,
-}));
-
-vi.mock("@/lib/credit-topups-flag", () => ({
-  useCreditTopupsUiEnabled: () => creditTopupsFlagState,
+vi.mock("@/hooks/use-eval-iteration-quota", () => ({
+  useEvalIterationQuota: () => ({
+    quota: evalQuotaState,
+    isLoading: evalQuotaLoadingState,
+    isAtLimit: Boolean(
+      evalQuotaState &&
+        evalQuotaState.allowed !== null &&
+        evalQuotaState.used >= evalQuotaState.allowed
+    ),
+  }),
 }));
 
 vi.mock("@/components/billing/CreditTopupDialog", () => ({
@@ -71,16 +82,9 @@ describe("CreditBalanceCard", () => {
       walletLocked: false,
     };
     isLoadingState = false;
-    creditTopupsFlagState = true;
-    teamCreditsFlagState = true;
+    evalQuotaState = undefined;
+    evalQuotaLoadingState = false;
     window.location.hash = "";
-  });
-
-  it("renders nothing when the top-ups UI flag is off", () => {
-    creditTopupsFlagState = false;
-    const { container } = render(<CreditBalanceCard organizationId="org-1" />);
-
-    expect(container).toBeEmptyDOMElement();
   });
 
   it("renders a skeleton state while balance is loading", () => {
@@ -187,6 +191,60 @@ describe("CreditBalanceCard", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders eval iteration usage in the admin usage card", () => {
+    evalQuotaState = {
+      used: 7_580,
+      allowed: 10_000,
+      resetsAt: Date.UTC(2026, 5, 23),
+      windowKind: "month",
+    };
+
+    render(<CreditBalanceCard organizationId="org-1" />);
+
+    const evalRow = screen.getByTestId("usage-eval-iterations");
+    expect(evalRow).toHaveTextContent(/Monthly eval iterations/);
+    // Remaining / allowed — 10,000 allowed minus 7,580 used.
+    expect(evalRow).toHaveTextContent(/2,420 \/ 10,000/);
+    expect(evalRow).not.toHaveTextContent(/Resets/);
+  });
+
+  it("shows eval iteration reset time only from the info tooltip", async () => {
+    const user = userEvent.setup();
+    evalQuotaState = {
+      used: 7_580,
+      allowed: 10_000,
+      resetsAt: Date.UTC(2026, 5, 23),
+      windowKind: "month",
+    };
+
+    render(<CreditBalanceCard organizationId="org-1" />);
+
+    expect(screen.queryByText(/^Resets /)).not.toBeInTheDocument();
+
+    await user.hover(
+      within(screen.getByTestId("usage-eval-iterations")).getByRole("button", {
+        name: /About Monthly eval iterations/,
+      })
+    );
+
+    expect((await screen.findAllByText(/^Resets /)).length).toBeGreaterThan(0);
+  });
+
+  it("hides eval iteration usage for unlimited quotas", () => {
+    evalQuotaState = {
+      used: 0,
+      allowed: null,
+      resetsAt: Date.UTC(2026, 5, 23),
+      windowKind: "month",
+    };
+
+    render(<CreditBalanceCard organizationId="org-1" />);
+
+    expect(
+      screen.queryByTestId("usage-eval-iterations")
+    ).not.toBeInTheDocument();
+  });
+
   it("shows an ask-admin hint instead of the Buy credits button for non-managers", () => {
     render(<CreditBalanceCard organizationId="org-1" />);
 
@@ -234,10 +292,10 @@ describe("CreditBalanceCard", () => {
 
   it("clarifies that credits are organization-scoped", () => {
     render(<CreditBalanceCard />);
-    expect(screen.getByText(/Organization model credits/)).toBeInTheDocument();
+    expect(screen.getByText(/Organization usage/)).toBeInTheDocument();
     expect(
       screen.getByText(
-        /Shared credits are available to everyone in this organization/
+        /Model credits and eval iterations are shared across this organization/
       )
     ).toBeInTheDocument();
   });
@@ -285,24 +343,6 @@ describe("CreditBalanceCard", () => {
       expect(screen.getByTestId("usage-monthly-exhausted")).toHaveTextContent(
         /Monthly credits used/
       );
-    });
-
-    it("keeps the existing daily and top-up UI when only the team flag is off", async () => {
-      const user = userEvent.setup();
-      teamCreditsFlagState = false;
-
-      render(<CreditBalanceCard organizationId="org-1" canManageCredits />);
-
-      expect(screen.queryByTestId("usage-monthly")).not.toBeInTheDocument();
-      expect(screen.getByTestId("usage-daily")).toHaveTextContent(
-        /Free daily credits/
-      );
-      expect(screen.getByTestId("usage-paid")).toHaveTextContent(
-        /1,500 credits/
-      );
-
-      await user.click(screen.getByRole("button", { name: /Buy credits/i }));
-      expect(screen.getByTestId("topup-dialog")).toBeInTheDocument();
     });
   });
 });

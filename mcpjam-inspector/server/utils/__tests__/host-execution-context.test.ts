@@ -27,6 +27,150 @@
 import { describe, expect, it } from "vitest";
 import { resolveExecutionContext } from "../host-execution-context";
 
+describe("resolveExecutionContext — harness (host-only, server-authoritative)", () => {
+  it("reads harness from hostConfig, never from overrides, under override-wins", () => {
+    // The Playground (host-bound direct) path uses override-wins so the owner's
+    // in-session tweaks win — but harness/computer must still come from the host
+    // config, never the body. `overrides` has no harness field, so this also
+    // proves the resolver can't be tricked into sourcing it from the body.
+    const result = resolveExecutionContext({
+      hostConfig: {
+        systemPrompt: "host prompt",
+        harness: "claude-code",
+      },
+      overrides: {
+        systemPrompt: "body prompt",
+        temperature: 0.3,
+      },
+      precedence: "override-wins",
+    });
+    // Body tweak wins for overridable fields...
+    expect(result.systemPrompt).toBe("body prompt");
+    expect(result.temperature).toBe(0.3);
+    // ...but harness is host-only.
+    expect(result.harness).toBe("claude-code");
+  });
+
+  it("yields harness undefined for a non-harness host (emulated path)", () => {
+    const result = resolveExecutionContext({
+      hostConfig: { systemPrompt: "host prompt" },
+      overrides: {},
+      precedence: "override-wins",
+    });
+    expect(result.harness).toBeUndefined();
+  });
+
+  it("ignores an unknown harness value (closed read)", () => {
+    const result = resolveExecutionContext({
+      hostConfig: { harness: "totally-not-a-harness" },
+      overrides: {},
+      precedence: "host-wins",
+    });
+    expect(result.harness).toBeUndefined();
+  });
+
+  it("reads the codex harness (membership via the SDK source of truth)", () => {
+    const result = resolveExecutionContext({
+      hostConfig: { harness: "codex" },
+      overrides: {},
+      precedence: "host-wins",
+    });
+    expect(result.harness).toBe("codex");
+  });
+
+  it("yields harness undefined when hostConfig is null (plain direct chat)", () => {
+    const result = resolveExecutionContext({
+      hostConfig: null,
+      overrides: { systemPrompt: "body" },
+      precedence: "override-wins",
+    });
+    expect(result.harness).toBeUndefined();
+  });
+});
+
+const IMAGE_POLICY_DISABLED = {
+  directContent: { image: false },
+  embeddedResources: { blob: { image: false } },
+  linkedResources: { blob: { image: false } },
+} as const;
+
+const IMAGE_POLICY_ENABLED = {
+  directContent: { image: true },
+  embeddedResources: { blob: { image: true } },
+  linkedResources: { blob: { image: true } },
+} as const;
+
+const RENDER_POLICY_COLLAPSED = {
+  placement: "collapsed",
+  directContent: { image: false },
+  embeddedResources: { blob: { image: true } },
+  linkedResources: { blob: { image: false } },
+} as const;
+
+const RENDER_POLICY_NONE = {
+  placement: "none",
+} as const;
+
+const RENDER_POLICY_INLINE = {
+  placement: "inline",
+} as const;
+
+const RESOLVED_RENDER_POLICY_DEFAULT = {
+  placement: "inline",
+  directContent: { image: true },
+  embeddedResources: { blob: { image: true } },
+  linkedResources: { blob: { image: true } },
+} as const;
+
+const RESOLVED_IMAGE_POLICY_ENABLED = {
+  directContent: {
+    text: true,
+    image: true,
+    audio: false,
+  },
+  embeddedResources: {
+    text: false,
+    blob: {
+      enabled: true,
+      image: true,
+      audio: false,
+      document: false,
+      video: false,
+      otherBinary: false,
+    },
+  },
+  linkedResources: {
+    text: false,
+    blob: {
+      enabled: true,
+      image: true,
+      audio: false,
+      document: false,
+      video: false,
+      otherBinary: false,
+    },
+  },
+} as const;
+
+function expectImagePolicyLeaves(
+  policy: {
+    modelVisibleMcpToolResults: {
+      directContent: { image: boolean };
+      embeddedResources: { blob: { image: boolean } };
+      linkedResources: { blob: { image: boolean } };
+    };
+  },
+  expected: boolean
+) {
+  expect(policy.modelVisibleMcpToolResults.directContent.image).toBe(expected);
+  expect(policy.modelVisibleMcpToolResults.embeddedResources.blob.image).toBe(
+    expected
+  );
+  expect(policy.modelVisibleMcpToolResults.linkedResources.blob.image).toBe(
+    expected
+  );
+}
+
 describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", () => {
   it("returns hostConfig values verbatim when host carries every field", () => {
     const result = resolveExecutionContext({
@@ -36,6 +180,8 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
         requireToolApproval: true,
         respectToolVisibility: false,
         progressiveToolDiscovery: true,
+        modelVisibleMcpToolResults: IMAGE_POLICY_DISABLED,
+        mcpToolResultImageRendering: RENDER_POLICY_COLLAPSED,
         modelId: "claude-haiku-4.5",
         selectedServerIds: ["srv-1", "srv-2"],
       },
@@ -45,6 +191,8 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
         requireToolApproval: false,
         respectToolVisibility: true,
         progressiveToolDiscovery: false,
+        modelVisibleMcpToolResults: IMAGE_POLICY_ENABLED,
+        mcpToolResultImageRendering: RENDER_POLICY_INLINE,
         modelId: "gpt-4-turbo",
         selectedServerIds: ["other-srv"],
       },
@@ -56,6 +204,12 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
     expect(result.requireToolApproval).toBe(true);
     expect(result.respectToolVisibility).toBe(false);
     expect(result.progressiveToolDiscovery).toBe(true);
+    expect(result.modelVisibleMcpToolResults).toEqual(IMAGE_POLICY_DISABLED);
+    expectImagePolicyLeaves(result.hostPolicy, false);
+    expect(result.mcpToolResultImageRendering).toEqual(RENDER_POLICY_COLLAPSED);
+    expect(result.hostPolicy.mcpToolResultImageRendering).toEqual(
+      RENDER_POLICY_COLLAPSED
+    );
     expect(result.modelId).toBe("claude-haiku-4.5");
     expect(result.selectedServerIds).toEqual(["srv-1", "srv-2"]);
   });
@@ -75,12 +229,17 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
       overrides: {
         progressiveToolDiscovery: true,
         respectToolVisibility: false,
+        modelVisibleMcpToolResults: IMAGE_POLICY_DISABLED,
+        mcpToolResultImageRendering: RENDER_POLICY_NONE,
       },
       precedence: "host-wins",
     });
 
     expect(result.progressiveToolDiscovery).toBe(true);
     expect(result.respectToolVisibility).toBe(false);
+    expect(result.modelVisibleMcpToolResults).toEqual(IMAGE_POLICY_DISABLED);
+    expectImagePolicyLeaves(result.hostPolicy, false);
+    expect(result.mcpToolResultImageRendering).toEqual(RENDER_POLICY_NONE);
     expect(result.systemPrompt).toBe("host system prompt");
   });
 
@@ -94,6 +253,8 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
         systemPrompt: "body system prompt",
         temperature: 0.3,
         requireToolApproval: false,
+        modelVisibleMcpToolResults: IMAGE_POLICY_DISABLED,
+        mcpToolResultImageRendering: RENDER_POLICY_COLLAPSED,
         selectedServerIds: ["srv-A"],
       },
       precedence: "host-wins",
@@ -102,6 +263,9 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
     expect(result.systemPrompt).toBe("body system prompt");
     expect(result.temperature).toBe(0.3);
     expect(result.requireToolApproval).toBe(false);
+    expect(result.modelVisibleMcpToolResults).toEqual(IMAGE_POLICY_DISABLED);
+    expectImagePolicyLeaves(result.hostPolicy, false);
+    expect(result.mcpToolResultImageRendering).toEqual(RENDER_POLICY_COLLAPSED);
     expect(result.selectedServerIds).toEqual(["srv-A"]);
   });
 
@@ -191,7 +355,7 @@ describe("resolveExecutionContext — `override-wins` precedence (eval per-case)
           overrideValue: 0.9,
           hostValue: 0.5,
         },
-      ]),
+      ])
     );
   });
 
@@ -335,9 +499,118 @@ describe("resolveExecutionContext — type coercion guards", () => {
 
     expect(result.selectedServerIds).toEqual(["fallback"]);
   });
+
+  it("ignores non-string-array builtInToolIds on hostConfig", () => {
+    const result = resolveExecutionContext({
+      hostConfig: { builtInToolIds: ["web_search", 7] },
+      precedence: "host-wins",
+    });
+
+    expect(result.builtInToolIds).toBeUndefined();
+  });
+});
+
+describe("resolveExecutionContext — builtInToolIds", () => {
+  it("reads builtInToolIds from the hostConfig record", () => {
+    const result = resolveExecutionContext({
+      hostConfig: { builtInToolIds: ["web_search"] },
+      precedence: "host-wins",
+    });
+
+    expect(result.builtInToolIds).toEqual(["web_search"]);
+  });
+
+  it("falls back to the override when the host omits the field", () => {
+    const result = resolveExecutionContext({
+      hostConfig: {},
+      overrides: { builtInToolIds: ["web_search"] },
+      precedence: "host-wins",
+    });
+
+    expect(result.builtInToolIds).toEqual(["web_search"]);
+  });
+
+  it("host wins under host-wins precedence when both define the field", () => {
+    // An explicit empty array on the host record is a real "no built-ins"
+    // opinion — it must beat a body that tries to opt in.
+    const result = resolveExecutionContext({
+      hostConfig: { builtInToolIds: [] },
+      overrides: { builtInToolIds: ["web_search"] },
+      precedence: "host-wins",
+    });
+
+    expect(result.builtInToolIds).toEqual([]);
+  });
+
+  it("returns the override on a null hostConfig (direct chat path)", () => {
+    const result = resolveExecutionContext({
+      hostConfig: null,
+      overrides: { builtInToolIds: ["web_search"] },
+      precedence: "host-wins",
+    });
+
+    expect(result.builtInToolIds).toEqual(["web_search"]);
+  });
+
+  it("is undefined when neither side defines it", () => {
+    const result = resolveExecutionContext({
+      hostConfig: {},
+      precedence: "host-wins",
+    });
+
+    expect(result.builtInToolIds).toBeUndefined();
+  });
+
+  it("does NOT report drift for array fields with equal contents", () => {
+    // Arrays arrive as fresh allocations on every request — drift must
+    // compare values, not references.
+    const result = resolveExecutionContext({
+      hostConfig: {
+        builtInToolIds: ["web_search"],
+        selectedServerIds: ["srv-1"],
+      },
+      overrides: {
+        builtInToolIds: ["web_search"],
+        selectedServerIds: ["srv-1"],
+      },
+      precedence: "host-wins",
+    });
+
+    expect(result.drift).toEqual([]);
+  });
+
+  it("reports drift for array fields with differing contents", () => {
+    const result = resolveExecutionContext({
+      hostConfig: { builtInToolIds: [] },
+      overrides: { builtInToolIds: ["web_search"] },
+      precedence: "host-wins",
+    });
+
+    expect(result.drift).toEqual([
+      {
+        field: "builtInToolIds",
+        overrideValue: ["web_search"],
+        hostValue: [],
+      },
+    ]);
+  });
 });
 
 describe("resolveExecutionContext — hostPolicy passthrough", () => {
+  it("keeps raw model-visible policy unset while runtime policy resolves to defaults", () => {
+    const result = resolveExecutionContext({
+      hostConfig: {
+        hostStyle: "claude",
+      },
+      precedence: "host-wins",
+    });
+
+    expect(result.modelVisibleMcpToolResults).toBeUndefined();
+    expect(result.hostPolicy.modelVisibleMcpToolResults).toEqual(
+      RESOLVED_IMAGE_POLICY_ENABLED
+    );
+  });
+
   it("forwards `extractHostExecutionPolicy`'s shape unchanged", () => {
     // The resolver computes `hostPolicy` via the existing SDK helper so
     // chat/eval can keep using `buildHostIterationMetadata` etc.
@@ -358,6 +631,8 @@ describe("resolveExecutionContext — hostPolicy passthrough", () => {
       requireToolApproval: true,
       respectToolVisibility: false,
       progressiveDiscoveryEnabled: true,
+      modelVisibleMcpToolResults: RESOLVED_IMAGE_POLICY_ENABLED,
+      mcpToolResultImageRendering: RESOLVED_RENDER_POLICY_DEFAULT,
       hostStyle: "claude",
       namedHostId: "host-abc",
     });
@@ -374,8 +649,21 @@ describe("resolveExecutionContext — hostPolicy passthrough", () => {
       requireToolApproval: false,
       respectToolVisibility: undefined,
       progressiveDiscoveryEnabled: false,
+      modelVisibleMcpToolResults: RESOLVED_IMAGE_POLICY_ENABLED,
+      mcpToolResultImageRendering: RESOLVED_RENDER_POLICY_DEFAULT,
       hostStyle: undefined,
       namedHostId: "host-xyz",
     });
+  });
+
+  it("uses override hostStyle for null-hostConfig policy derivation", () => {
+    const result = resolveExecutionContext({
+      hostConfig: null,
+      overrides: { hostStyle: "claude" },
+      precedence: "host-wins",
+    });
+
+    expect(result.hostPolicy.hostStyle).toBe("claude");
+    expectImagePolicyLeaves(result.hostPolicy, true);
   });
 });

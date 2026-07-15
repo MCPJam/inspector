@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { Hammer, History } from "lucide-react";
-import { useFeatureFlagEnabled, usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
 import { usePlaygroundStateContext } from "@/components/ui-playground/hooks/use-playground-state";
 import { PlaygroundLeft } from "@/components/ui-playground/PlaygroundLeft";
+import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
 import { MultiServerToolsPaneInner } from "./panes/MultiServerToolsPane";
 import { usePlaygroundChatHistoryBridge } from "./playground-chat-history-bridge";
 import { cn } from "@/lib/utils";
@@ -17,29 +17,26 @@ type LeftRailTab = "sessions" | "tools";
  * local state (not persisted per view); rail visibility is owned by
  * `PlaygroundTab`.
  */
-export function PlaygroundLeftRail() {
-  const sessionsTabEnabled =
-    useFeatureFlagEnabled("playground-sessions-enabled") === true;
+export function PlaygroundLeftRail({
+  previewedHostId,
+}: {
+  /** Resolved previewed host (from PlaygroundTab) — used to surface a harness
+   *  host's native built-in tools in the Tools list. */
+  previewedHostId?: string | null;
+}) {
   const [activeTab, setActiveTab] = useState<LeftRailTab>("tools");
 
-  useEffect(() => {
-    if (!sessionsTabEnabled && activeTab === "sessions") {
-      setActiveTab("tools");
-    }
-  }, [sessionsTabEnabled, activeTab]);
-
-  const posthog = usePostHog();
   const handleTabClick = useCallback(
     (next: LeftRailTab) => {
       if (next === activeTab) return;
-      posthog?.capture("playground_left_rail_tab_changed", {
-        ...standardEventProps("playground_left_rail"),
+      track("playground_left_rail_tab_changed", {
+        location: "playground_left_rail",
         from: activeTab,
         to: next,
       });
       setActiveTab(next);
     },
-    [activeTab, posthog],
+    [activeTab],
   );
 
   return (
@@ -51,20 +48,18 @@ export function PlaygroundLeftRail() {
           isActive={activeTab === "tools"}
           onClick={() => handleTabClick("tools")}
         />
-        {sessionsTabEnabled ? (
-          <TabButton
-            icon={History}
-            label="Sessions"
-            isActive={activeTab === "sessions"}
-            onClick={() => handleTabClick("sessions")}
-          />
-        ) : null}
+        <TabButton
+          icon={History}
+          label="Sessions"
+          isActive={activeTab === "sessions"}
+          onClick={() => handleTabClick("sessions")}
+        />
       </div>
       <div className="flex-1 min-h-0">
-        {activeTab === "sessions" && sessionsTabEnabled ? (
+        {activeTab === "sessions" ? (
           <SessionsBody />
         ) : (
-          <ToolsBody />
+          <ToolsBody previewedHostId={previewedHostId ?? null} />
         )}
       </div>
     </div>
@@ -115,7 +110,6 @@ function SessionsBody() {
       hostStyle={bridge.hostStyle}
       isAuthenticated={bridge.isAuthenticated}
       isStreaming={bridge.isStreaming}
-      sharedThreadsEnabled={bridge.sharedThreadsEnabled}
       projectId={bridge.projectId}
       enabled={bridge.enabled}
       refreshSignal={bridge.refreshSignal}
@@ -129,8 +123,12 @@ function SessionsBody() {
   );
 }
 
-function ToolsBody() {
+function ToolsBody({ previewedHostId }: { previewedHostId: string | null }) {
   const state = usePlaygroundStateContext();
+  // When the previewed host runs a harness (e.g. Claude Code), surface its
+  // native built-in tools so the panel isn't empty/tool-less. Resolved once
+  // here and fed into BOTH the multi-server pane and the zero-server fallback.
+  const { tools: harnessBuiltinTools } = useHarnessBuiltinTools(previewedHostId);
   // The Playground is multi-server by nature: its active set mirrors the
   // connected servers. Aggregate tools across ALL active servers whenever
   // there's at least one — not only when there's more than one. Using `> 1`
@@ -140,7 +138,10 @@ function ToolsBody() {
   // PlaygroundLeft for its empty/onboarding state.
   if (state.activeServerNames.length >= 1) {
     return (
-      <MultiServerToolsPaneInner activeServerNames={state.activeServerNames} />
+      <MultiServerToolsPaneInner
+        activeServerNames={state.activeServerNames}
+        builtinTools={harnessBuiltinTools}
+      />
     );
   }
 
@@ -166,6 +167,7 @@ function ToolsBody() {
       onDuplicateRequest={state.savedRequestsHook.handleDuplicateRequest}
       onDeleteRequest={state.savedRequestsHook.handleDeleteRequest}
       showLogger={false}
+      builtinTools={harnessBuiltinTools}
     />
   );
 }

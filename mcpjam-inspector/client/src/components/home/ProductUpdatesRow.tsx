@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
-import { ChevronRight, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ProductUpdateHoverCard } from "./ProductUpdateHoverCard";
 import { ProductUpdateExpandedPanel } from "./ProductUpdateExpandedPanel";
@@ -18,16 +18,23 @@ function formatPublishDate(ts: number): string {
 function UpdateRow({
   update,
   isLast,
+  muted = false,
   onSelect,
   onDismiss,
 }: {
   update: ProductUpdateEntry;
   isLast: boolean;
+  muted?: boolean;
   onSelect: (entry: ProductUpdateEntry, sourceRect: DOMRect | null) => void;
-  onDismiss: (slug: string) => void;
+  onDismiss?: (slug: string) => void;
 }) {
   return (
-    <li className={isLast ? "" : "border-b border-border/40"}>
+    <li
+      className={cn(
+        isLast ? "" : "border-b border-border/40",
+        muted && "opacity-60",
+      )}
+    >
       <div className="group flex items-center">
         <div className="min-w-0 flex-1">
           <ProductUpdateHoverCard entry={update} onExpand={onSelect}>
@@ -55,14 +62,16 @@ function UpdateRow({
             </button>
           </ProductUpdateHoverCard>
         </div>
-        <button
-          type="button"
-          onClick={() => onDismiss(update.slug)}
-          aria-label={`Dismiss ${update.title}`}
-          className="mr-2 shrink-0 rounded p-1 text-muted-foreground/50 opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
-        >
-          <X className="size-3" />
-        </button>
+        {onDismiss ? (
+          <button
+            type="button"
+            onClick={() => onDismiss(update.slug)}
+            aria-label={`Dismiss ${update.title}`}
+            className="mr-2 shrink-0 rounded p-1 text-muted-foreground/50 opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
+          >
+            <X className="size-3" />
+          </button>
+        ) : null}
       </div>
     </li>
   );
@@ -85,6 +94,7 @@ export function ProductUpdatesRow() {
     sourceRect: DOMRect | null;
   } | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [clearing, setClearing] = useState(false);
   const initRef = useRef(false);
 
@@ -130,21 +140,100 @@ export function ProductUpdatesRow() {
     }
   }, [dismissUpdate, updates]);
 
-  if (!isAuthenticated) return null;
-  if (updates === undefined) return null;
-
-  const active = updates.filter((update) => !update.dismissed);
-  if (active.length === 0) return null;
-
-  const hiddenCount = Math.max(active.length - PREVIEW_LIMIT, 0);
-  const visible = showAll ? active : active.slice(0, PREVIEW_LIMIT);
-
   const handleSelect = (
     entry: ProductUpdateEntry,
     sourceRect: DOMRect | null,
   ) => {
     setExpanded({ entry, sourceRect });
   };
+
+  if (!isAuthenticated) return null;
+  if (updates === undefined) return null;
+  if (updates.length === 0) return null;
+
+  const active = updates.filter((update) => !update.dismissed);
+  const hasHistory = updates.length > active.length;
+
+  // History view: every published update, newest-first (the query already
+  // returns them ordered desc). Dismissed entries stay listed but muted so
+  // users can re-read anything they cleared. Reachable from the feed header
+  // and the caught-up empty state.
+  if (showHistory) {
+    return (
+      <>
+        <section className="flex min-h-0 flex-col rounded-xl border border-border/60">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/60 px-4 py-2">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowHistory(false)}
+                aria-label="Back to latest updates"
+                className="-ml-1 flex items-center rounded p-0.5 text-muted-foreground transition hover:text-foreground"
+              >
+                <ChevronLeft className="size-4" />
+              </button>
+              <h2 className="text-[13px] font-medium text-foreground">
+                What&apos;s new · History
+              </h2>
+            </div>
+            <span className="text-[11px] text-muted-foreground">
+              {updates.length} update{updates.length === 1 ? "" : "s"}
+            </span>
+          </div>
+
+          <ul className="min-h-0 max-h-72 overflow-y-auto">
+            {updates.map((update, i) => (
+              <UpdateRow
+                key={update.slug}
+                update={update}
+                isLast={i === updates.length - 1}
+                muted={update.dismissed}
+                onSelect={handleSelect}
+                onDismiss={update.dismissed ? undefined : handleDismiss}
+              />
+            ))}
+          </ul>
+        </section>
+
+        <ProductUpdateExpandedPanel
+          entry={expanded?.entry ?? null}
+          sourceRect={expanded?.sourceRect ?? null}
+          onClose={() => setExpanded(null)}
+          onDismiss={handleDismiss}
+        />
+      </>
+    );
+  }
+
+  if (active.length === 0) {
+    return (
+      <section className="flex min-h-0 flex-col rounded-xl border border-border/60">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/60 px-4 py-2">
+          <h2 className="text-[13px] font-medium text-foreground">
+            What&apos;s new
+          </h2>
+        </div>
+        <div className="px-4 py-5 text-center">
+          <p className="text-[13px] text-muted-foreground">
+            You&apos;re all caught up.
+          </p>
+          <p className="mt-1 text-[11px] text-muted-foreground/70">
+            New product updates will show up here.
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowHistory(true)}
+            className="mt-3 text-[11px] font-medium text-muted-foreground transition hover:text-foreground"
+          >
+            View past updates
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  const hiddenCount = Math.max(active.length - PREVIEW_LIMIT, 0);
+  const visible = showAll ? active : active.slice(0, PREVIEW_LIMIT);
 
   return (
     <>
@@ -155,6 +244,20 @@ export function ProductUpdatesRow() {
             <span>
               {active.length} update{active.length === 1 ? "" : "s"}
             </span>
+            {hasHistory ? (
+              <>
+                <span aria-hidden className="text-border">
+                  ·
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowHistory(true)}
+                  className="font-medium transition hover:text-foreground"
+                >
+                  View all
+                </button>
+              </>
+            ) : null}
             <span aria-hidden className="text-border">
               ·
             </span>

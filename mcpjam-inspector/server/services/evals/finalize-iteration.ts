@@ -4,17 +4,141 @@ import type {
   EvalTraceSpan,
   EvalTraceWidgetSnapshot,
   PromptTraceSummary,
+  RunnerBrowserInteractionStep,
+  RunnerWidgetRenderObservation,
 } from "@/shared/eval-trace";
 import { logger } from "../../utils/logger.js";
+import { uploadVideoBlob } from "../../utils/mcp-app-widget-capture.js";
 import type { UsageTotals } from "./types.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
+import { emitBrowserEvalMetrics } from "./browser-eval-metrics.js";
+import {
+  serializeBrowserStepsForBackend,
+  serializeRenderObservationsForBackend,
+  toBrowserStepPayload,
+  toObservationPayload,
+} from "./finalize-iteration-browser-artifacts.js";
 import { buildIterationUsageMetadata } from "./iteration-usage-metadata.js";
+import { buildIterationMetadata } from "./iteration-metadata.js";
+import {
+  buildHostIterationMetadata,
+  type HostExecutionPolicy,
+  type ToolExposureSignals,
+} from "@mcpjam/sdk/host-config/internal";
 import {
   lockEvalSessionAfterUpdate,
   persistEvalTraceFanout,
 } from "./persist-eval-trace.js";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
+
+type ToolCallRecord = { toolName: string; arguments: Record<string, any> };
+
+/**
+ * Builds the `finishParams` object every runner passes to
+ * {@link finalizeIterationWithBrowserArtifacts} (which adds `videoBytes` +
+ * `convexClient` and dispatches to the recorder or `finalizeEvalIteration`).
+ *
+ * PR3 of the runner unification (plan: we-need-robustness-and-jaunty-toast.md):
+ * the four runners built this object inline, identical in shape but with
+ * per-runner variable names. Centralizing it removes the drift risk. The
+ * `error`/`errorDetails` fields are normalized to omit-when-absent (the local
+ * runners' shape); this is cosmetic for persisted output because
+ * `finalizeEvalIteration` forwards both to Convex unconditionally anyway (see
+ * invariant #7 in the plan), so the golden Convex-payload snapshots are
+ * unchanged.
+ */
+export function buildIterationFinishParams(args: {
+  iterationId: string | undefined;
+  passed: boolean;
+  /** `evaluation` drives both `toolsCalled` and `buildIterationMetadata`. */
+  evaluation: { toolsCalled: ToolCallRecord[] } & Record<string, unknown>;
+  usage: UsageTotals;
+  messages: ModelMessage[];
+  systemPrompt?: string;
+  spans?: EvalTraceSpan[];
+  prompts?: PromptTraceSummary[];
+  widgetSnapshots?: EvalTraceWidgetSnapshot[];
+  widgetRenderObservations?: RunnerWidgetRenderObservation[];
+  browserInteractionSteps?: RunnerBrowserInteractionStep[];
+  status: "completed" | "failed";
+  startedAt: number;
+  error?: string;
+  errorDetails?: string;
+  /** Case-level + per-turn predicate results; persisted to metadata.predicates. */
+  predicateResults?: unknown[];
+  /** Fail-fast skipped steps (PR6); persisted to metadata.skippedSteps. */
+  skippedSteps?: unknown[];
+  /**
+   * One verdict row per authored step (`buildStepResultRecords`); persisted to
+   * `metadata.stepResults`. The clean per-step contract the public `/steps` API
+   * projects — `stepId`-keyed status+reason for every kind, where the lossy
+   * `predicates` rows lack `stepId` and interact failures aren't otherwise saved.
+   */
+  stepResults?: unknown[];
+  iterationMetadataBase: Record<string, string | number | boolean>;
+  hostPolicy?: HostExecutionPolicy;
+  toolSignals?: ToolExposureSignals;
+  injectOpenAiCompat?: boolean;
+}): Omit<FinalizeEvalIterationParams, "convexClient" | "videoBytes"> {
+  const {
+    iterationId,
+    passed,
+    evaluation,
+    usage,
+    messages,
+    systemPrompt,
+    spans,
+    prompts,
+    widgetSnapshots,
+    widgetRenderObservations,
+    browserInteractionSteps,
+    status,
+    startedAt,
+    error,
+    errorDetails,
+    predicateResults,
+    skippedSteps,
+    stepResults,
+    iterationMetadataBase,
+    hostPolicy,
+    toolSignals,
+    injectOpenAiCompat,
+  } = args;
+  return {
+    iterationId,
+    passed,
+    toolsCalled: evaluation.toolsCalled,
+    usage,
+    messages,
+    ...(systemPrompt ? { systemPrompt } : {}),
+    ...(spans?.length ? { spans } : {}),
+    ...(prompts?.length ? { prompts } : {}),
+    ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
+    ...(widgetRenderObservations?.length ? { widgetRenderObservations } : {}),
+    ...(browserInteractionSteps?.length ? { browserInteractionSteps } : {}),
+    status,
+    startedAt,
+    ...(error ? { error } : {}),
+    ...(errorDetails ? { errorDetails } : {}),
+    resultSource: "reported" as const,
+    metadata: {
+      ...iterationMetadataBase,
+      ...buildIterationMetadata(evaluation as never),
+      ...(predicateResults?.length ? { predicates: predicateResults } : {}),
+      ...(skippedSteps?.length ? { skippedSteps } : {}),
+      ...(stepResults?.length ? { stepResults } : {}),
+      ...(hostPolicy && toolSignals
+        ? buildHostIterationMetadata(
+            hostPolicy,
+            toolSignals,
+            evaluation.toolsCalled.length,
+            injectOpenAiCompat === true,
+          )
+        : {}),
+    },
+  };
+}
 
 const DEFAULT_ITERATION_STATUS: IterationStatus = "completed";
 
@@ -37,6 +161,22 @@ export type FinalizeEvalIterationParams = {
    * fanout failed before any turn wrote.
    */
   systemPrompt?: string;
+  /**
+   * PR 6b: browser-rendered MCP App eval artifacts collected by the runner
+   * (runner-local shape, screenshots still base64). Serialized ONCE here —
+   * screenshots uploaded, records sanitized — then forwarded to the W2 fanout
+   * and reused on the W1 fallback so neither path re-uploads.
+   */
+  widgetRenderObservations?: RunnerWidgetRenderObservation[];
+  browserInteractionSteps?: RunnerBrowserInteractionStep[];
+  /**
+   * Iteration replay `.webm` bytes from the harness (`browser.collectVideo()`).
+   * Uploaded ONCE here (same Convex-storage path as screenshots) → `videoBlobId`
+   * forwarded to the W2 fanout and the W1 fallback. Best-effort: a failed upload
+   * is logged and dropped — the iteration still finalizes. One video per
+   * iteration, so this is iteration-level, not per-turn.
+   */
+  videoBytes?: Buffer | null;
   status?: IterationStatus;
   startedAt?: number;
   error?: string;
@@ -93,6 +233,9 @@ export async function finalizeEvalIteration(
     prompts,
     widgetSnapshots,
     systemPrompt,
+    widgetRenderObservations,
+    browserInteractionSteps,
+    videoBytes,
     status,
     startedAt,
     error,
@@ -106,16 +249,23 @@ export async function finalizeEvalIteration(
     return;
   }
 
-  // Check if iteration was cancelled before trying to update.
+  // Check if the iteration is already in a terminal stop state before trying
+  // to update. A timed-out iteration whose original LLM/browser work ignores
+  // the abort and completes late must NOT overwrite the `timed_out` row with a
+  // completed/failed result — both `cancelled` and `timed_out` are terminal.
   try {
     const iteration = await convexClient.query(
       "testSuites:getTestIteration" as any,
       { iterationId },
     );
-    if (iteration?.status === "cancelled") {
+    if (
+      iteration?.status === "cancelled" ||
+      iteration?.status === "timed_out"
+    ) {
       logger.debug(
-        "[evals] Skipping update for cancelled iteration:",
+        "[evals] Skipping update for terminal iteration:",
         iterationId,
+        iteration.status,
       );
       return;
     }
@@ -164,6 +314,41 @@ export async function finalizeEvalIteration(
         ? "eval_failed"
         : "eval_completed";
 
+  // PR 13: emit per-iteration browser-eval observability from the runner-local
+  // arrays (covers both the stream + non-stream paths via this shared choke
+  // point). Best-effort + no-op when the iteration didn't touch the harness.
+  emitBrowserEvalMetrics(widgetRenderObservations, browserInteractionSteps);
+
+  // PR 6b: serialize browser artifacts ONCE here (upload screenshots + run
+  // through the convex sanitizer) so the W2 fanout and the W1 fallback share a
+  // single upload pass. Owning this in the shared finalize step is what keeps
+  // recorder + direct quick-run callers from double-uploading.
+  const serializedWidgetRenderObservations =
+    await serializeRenderObservationsForBackend(
+      widgetRenderObservations,
+      convexClient,
+    );
+  const serializedBrowserInteractionSteps =
+    await serializeBrowserStepsForBackend(
+      browserInteractionSteps,
+      convexClient,
+    );
+
+  // Upload the iteration replay video alongside the screenshots, in the same
+  // single-pass choke point. Best-effort: a failed upload is logged + dropped
+  // (videoBlobId stays undefined → no player) and NEVER fails the iteration.
+  let videoBlobId: string | undefined;
+  if (videoBytes && videoBytes.length > 0) {
+    try {
+      videoBlobId = await uploadVideoBlob(convexClient, videoBytes);
+    } catch (err) {
+      logger.warn("[evals] replay video upload failed; finalizing without it", {
+        iterationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   const fanout = await persistEvalTraceFanout({
     convexClient,
     iterationId,
@@ -173,6 +358,9 @@ export async function finalizeEvalIteration(
     prompts,
     widgetSnapshots,
     systemPrompt,
+    widgetRenderObservations: serializedWidgetRenderObservations,
+    browserInteractionSteps: serializedBrowserInteractionSteps,
+    ...(videoBlobId ? { videoBlobId } : {}),
   });
   // Fall back to the W1 single-call path ONLY when the fanout failed
   // before any turn landed. With turns already written, re-sending
@@ -229,6 +417,27 @@ export async function finalizeEvalIteration(
                     sanitizeForConvexTransport(widgetSnapshots),
                 }
               : {}),
+            // PR 6b: browser artifacts already uploaded + sanitized above;
+            // strip `promptIndex` (the backend stamps it from the W1 turn's
+            // promptIndex: 0). All artifacts land under that single fallback
+            // turn — lossy but acceptable, mirroring W1's transcript fallback.
+            ...(serializedWidgetRenderObservations.length
+              ? {
+                  widgetRenderObservations:
+                    serializedWidgetRenderObservations.map(
+                      toObservationPayload,
+                    ),
+                }
+              : {}),
+            ...(serializedBrowserInteractionSteps.length
+              ? {
+                  browserInteractionSteps:
+                    serializedBrowserInteractionSteps.map(toBrowserStepPayload),
+                }
+              : {}),
+            // Iteration replay video already uploaded above; carry the storageId
+            // onto the W1 fallback so the replay survives the fanout-failed path.
+            ...(videoBlobId ? { videoBlobId } : {}),
           }
         : {}),
       error,

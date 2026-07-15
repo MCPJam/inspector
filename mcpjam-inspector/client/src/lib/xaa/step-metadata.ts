@@ -1,8 +1,86 @@
 import type { XAAFlowStep } from "./types";
+import type { IdentityAssertionFormat } from "@/shared/xaa.js";
+
+/**
+ * Phases group the debugger's fine-grained machine steps onto the four
+ * numbered steps of draft-ietf-oauth-identity-assertion-authz-grant, plus a
+ * "Phase 0" for MCP discovery — which the spec does NOT define (it assumes a
+ * pre-configured client). Keeping that distinction visible is the point:
+ * developers should leave this screen knowing which parts are the XAA grant
+ * and which parts are MCP bootstrap.
+ */
+export type XAAPhaseKey =
+  | "bootstrap"
+  | "sso"
+  | "token_exchange"
+  | "jwt_bearer"
+  | "mcp_request";
+
+export interface XAAPhaseInfo {
+  title: string;
+  /** Step number in the ID-JAG draft (1–4); null = not part of the grant. */
+  specStep: number | null;
+  blurb: string;
+}
+
+export const XAA_PHASE_ORDER: XAAPhaseKey[] = [
+  "bootstrap",
+  "sso",
+  "token_exchange",
+  "jwt_bearer",
+  "mcp_request",
+];
+
+// Actor names match the sequence diagram exactly — Agent, IdP, MCP Server,
+// Authorization Server — so a reader new to XAA can map every sentence onto a
+// box in the picture. Jargon (ID token, ID-JAG, access token) is glossed on
+// first use; RFC numbers stay as secondary parentheticals, never the lead.
+export const XAA_PHASES: Record<XAAPhaseKey, XAAPhaseInfo> = {
+  bootstrap: {
+    title: "Find the MCP Server's Authorization Server",
+    specStep: null,
+    blurb:
+      "Setup that runs before XAA proper. The Agent asks the MCP Server which Authorization Server protects it, then looks up where that server hands out tokens. The XAA spec assumes the Agent already knows this, so it's numbered Phase 0 — and skipped entirely when you've pre-configured the Authorization Server. The Authorization Server's issuer found here is reused later so the grant is addressed to the right server. (Uses the standard OAuth discovery specs, RFC 9728 and 8414.)",
+  },
+  // The sso/token_exchange copy is format-NEUTRAL: the identity assertion may
+  // be an OIDC ID token or a SAML assertion (per-server preset), and phase
+  // headers render once regardless of format. Format-specific wording lives
+  // in the per-step SAML overrides below.
+  sso: {
+    title: "Sign in and get an identity assertion",
+    specStep: 1,
+    blurb:
+      "The user logs in at their IdP — the identity provider, i.e. the company login — and the Agent comes away with an identity assertion (an OIDC ID token or a SAML assertion): proof of who the user is. This happens once per session and isn't tied to any MCP server yet. In this debugger MCPJam plays the IdP, so the login is simulated.",
+  },
+  token_exchange: {
+    title: "Exchange the identity assertion for an ID-JAG",
+    specStep: 2,
+    blurb:
+      "The Agent hands the identity assertion back to the IdP and gets an ID-JAG in return — a short-lived grant that means “this user, for this one MCP server.” The Agent tells the IdP which Authorization Server the grant is for (the one found in Phase 0). The identity assertion itself never travels any further. (On the wire this is an RFC 8693 token exchange.)",
+  },
+  jwt_bearer: {
+    title: "Exchange the ID-JAG for an access token",
+    specStep: 3,
+    blurb:
+      "The Agent presents the ID-JAG to the MCP server's Authorization Server. That server checks the grant came from an IdP it trusts, is addressed to itself, and names the right MCP Server — then issues an access token the Agent can actually use. (On the wire this is an RFC 7523 JWT-bearer grant.)",
+  },
+  mcp_request: {
+    title: "Call the MCP Server with the access token",
+    specStep: 4,
+    blurb:
+      "The final step: the Agent calls the MCP Server with the access token — the only credential the MCP Server ever sees. The ID token and ID-JAG stay behind. To the MCP Server this looks like an ordinary authenticated request.",
+  },
+};
+
+export function getXAAPhaseNumber(phase: XAAPhaseKey): number {
+  return XAA_PHASE_ORDER.indexOf(phase);
+}
 
 export interface XAAStepInfo {
   title: string;
   summary: string;
+  /** Phase this step belongs to; undefined only for machine states like idle. */
+  phase?: XAAPhaseKey;
   teachableMoments?: string[];
 }
 
@@ -12,6 +90,10 @@ export const XAA_STEP_ORDER: XAAFlowStep[] = [
   "received_resource_metadata",
   "discover_authz_metadata",
   "received_authz_metadata",
+  "request_client_registration",
+  "received_client_credentials",
+  "fetch_client_metadata_document",
+  "received_client_metadata",
   "user_authentication",
   "received_identity_assertion",
   "token_exchange_request",
@@ -26,111 +108,216 @@ export const XAA_STEP_ORDER: XAAFlowStep[] = [
 export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
   idle: {
     title: "Idle",
-    summary: "The debugger is ready to walk through the XAA enterprise authorization flow.",
+    summary:
+      "Ready to walk the XAA flow step by step. XAA lets the Agent call an MCP Server on the user's behalf without making the user log in again.",
     teachableMoments: [
-      "You need three aligned values before stage 3 works: trusted issuer, audience, and resource.",
+      "For this to work, the Authorization Server has to trust the IdP, and the grant has to name both that Authorization Server and the right MCP Server.",
     ],
   },
   discover_resource_metadata: {
-    title: "Discover Resource Metadata",
-    summary: "Fetch RFC 9728 protected resource metadata from the target MCP server.",
+    title: "Ask the MCP Server Who Guards It",
+    summary:
+      "The Agent asks the MCP Server which Authorization Server protects it. (RFC 9728 protected-resource metadata.)",
+    phase: "bootstrap",
     teachableMoments: [
-      "This tells the client which authorization server should mint access tokens for the MCP server.",
+      "This is how the Agent learns which Authorization Server can issue tokens for the MCP Server.",
     ],
   },
   received_resource_metadata: {
-    title: "Resource Metadata Received",
-    summary: "Capture the MCP server resource identifier and linked authorization server issuer.",
+    title: "MCP Server Names Its Authorization Server",
+    summary:
+      "The MCP Server replies with its resource identifier and the Authorization Server that guards it.",
+    phase: "bootstrap",
     teachableMoments: [
-      "The `resource` claim in the ID-JAG should line up with this metadata.",
+      "Both values get reused later: the grant is addressed to this Authorization Server and tagged for this MCP Server.",
     ],
   },
   discover_authz_metadata: {
-    title: "Discover Authorization Metadata",
-    summary: "Fetch RFC 8414 or OIDC discovery metadata from the authorization server.",
+    title: "Look Up the Authorization Server's Token Endpoint",
+    summary:
+      "The Agent looks up where the Authorization Server hands out tokens. (RFC 8414 / OpenID Connect discovery.)",
+    phase: "bootstrap",
     teachableMoments: [
-      "The ID-JAG `aud` claim should match the authorization server issuer, not the token endpoint URL.",
+      "A common XAA mistake: the grant must be addressed to this server's issuer URL, not its token endpoint.",
     ],
   },
   received_authz_metadata: {
-    title: "Authorization Metadata Received",
-    summary: "Inspect the issuer and token endpoint that will receive the JWT bearer assertion.",
+    title: "Authorization Server Details Received",
+    summary:
+      "The Agent now knows the Authorization Server's issuer and token endpoint — where the ID-JAG gets redeemed in Phase 3.",
+    phase: "bootstrap",
     teachableMoments: [
-      "If discovery fails, the authorization server issuer or well-known metadata is usually misconfigured.",
+      "If discovery fails, the Authorization Server's issuer or its metadata URL is usually misconfigured.",
+    ],
+  },
+  request_client_registration: {
+    title: "Register a Client at the Authorization Server",
+    summary:
+      "Open Dynamic Client Registration: the Agent asks the Authorization Server to create a client for the XAA grant types, without an initial access token. (RFC 7591.)",
+    phase: "bootstrap",
+    teachableMoments: [
+      "The XAA spec assumes the client is already registered — registration is setup, not part of the grant. This step automates that setup when the server allows open registration.",
+      "A 401/403 here means open registration wasn't accepted; the server may still support DCR behind an initial access token.",
+      "The registration created here is real and may persist at the Authorization Server after this session ends.",
+    ],
+  },
+  received_client_credentials: {
+    title: "Client Registered",
+    summary:
+      "The Authorization Server created the client. MCPJam keeps its credentials in memory for this browser session only.",
+    phase: "bootstrap",
+    teachableMoments: [
+      "The minted client_id now flows into the ID-JAG and the token request — the whole rest of the flow runs as this client.",
+      "Whether the server actually enabled the JWT Bearer grant for this client is proven later, at redemption.",
+    ],
+  },
+  fetch_client_metadata_document: {
+    title: "Preflight the Client Metadata Document",
+    summary:
+      "CIMD: the client_id is a URL to MCPJam's hosted metadata document. The debugger fetches and validates it — the Authorization Server does its own fetch later.",
+    phase: "bootstrap",
+    teachableMoments: [
+      "With CIMD there's nothing to register: the Authorization Server learns about the client by fetching the URL the client_id points at.",
+      "This fetch is only the debugger's preflight. Whether the Authorization Server accepts the URL identity is proven at JWT Bearer redemption.",
+      "The Authorization Server must advertise client_id_metadata_document_supported before a client may attempt this flow.",
+    ],
+  },
+  received_client_metadata: {
+    title: "Client Metadata Document Ready",
+    summary:
+      "The hosted document validated: its client_id equals its URL and it declares the XAA grants. The URL is now this run's client_id.",
+    phase: "bootstrap",
+    teachableMoments: [
+      "CIMD without a key-based auth method is a public client — anyone can present this URL. The Authorization Server accepts the identity, it doesn't authenticate it.",
     ],
   },
   user_authentication: {
-    title: "Mock User Authentication",
-    summary: "MCPJam issues a synthetic OIDC ID token for the simulated enterprise user.",
+    title: "Simulate sign-in at MCPJam IdP",
+    summary:
+      "MCPJam simulates the user signing in at its identity provider.",
+    phase: "sso",
     teachableMoments: [
-      "This is stage 1 of the XAA flow: a user identity assertion from the enterprise IdP.",
+      "This login just proves who the user is — it isn't tied to any MCP server yet.",
     ],
   },
   received_identity_assertion: {
-    title: "Identity Assertion Ready",
-    summary: "The debugger stores the synthetic ID token that will be exchanged for an ID-JAG.",
+    title: "ID token issued by MCPJam IdP",
+    summary:
+      "MCPJam's identity provider gives the Agent an ID token.",
+    phase: "sso",
     teachableMoments: [
-      "The ID token is an input to token exchange; it is not sent directly to the target authorization server.",
+      "The ID token is only used to get the next token — it's never sent to the Authorization Server or the MCP Server.",
     ],
   },
   token_exchange_request: {
-    title: "RFC 8693 Token Exchange",
-    summary: "Exchange the synthetic ID token for an ID-JAG, optionally injecting a negative test mode.",
+    title: "Exchange the ID Token for an ID-JAG",
+    summary:
+      "The Agent trades the ID token back to the IdP for an ID-JAG — a grant scoped to one MCP Server. On the happy path this is a standard RFC 8693 form POST to the IdP's /token endpoint; a test mode instead uses MCPJam's mint endpoint to forge a deliberately broken grant.",
+    phase: "token_exchange",
     teachableMoments: [
-      "This is where broken assertions get created for audience, issuer, header, and claim validation tests.",
+      "The Agent tells the IdP which Authorization Server the grant is for — that becomes the grant's audience.",
+      "This is the step where a test mode can forge a broken grant to see how your Authorization Server reacts.",
     ],
   },
   received_id_jag: {
     title: "ID-JAG Issued",
-    summary: "The synthetic issuer returns a signed ID-JAG JWT.",
+    summary: "The IdP returns a signed ID-JAG — the cross-app grant.",
+    phase: "token_exchange",
     teachableMoments: [
-      "A valid ID-JAG includes `iss`, `sub`, `aud`, `resource`, `client_id`, `jti`, `iat`, and `exp`.",
+      "An ID-JAG is a signed token saying who the user is, which Authorization Server it's for, and which MCP Server it unlocks.",
+      "ID-JAG stands for Identity Assertion JWT Authorization Grant — the grant type defined by the XAA spec.",
     ],
   },
   inspect_id_jag: {
-    title: "Inspect ID-JAG",
-    summary: "Decode the header and payload locally before sending the assertion downstream.",
+    title: "Inspect the ID-JAG",
+    summary:
+      "Decode the ID-JAG locally to check its claims before sending it to the Authorization Server.",
+    phase: "token_exchange",
     teachableMoments: [
-      "Use this step to confirm which field a negative test mode is intentionally breaking.",
+      "Check the grant is addressed to the right Authorization Server and names the right MCP Server before sending it.",
     ],
   },
   jwt_bearer_request: {
-    title: "RFC 7523 JWT Bearer Request",
-    summary: "Submit the ID-JAG to the target authorization server token endpoint through the debugger proxy.",
+    title: "Exchange the ID-JAG for an Access Token",
+    summary:
+      "The Agent presents the ID-JAG to the MCP Server's Authorization Server, which validates it and returns an access token. (RFC 7523 JWT-bearer grant.)",
+    phase: "jwt_bearer",
     teachableMoments: [
-      "If this fails, check whether the server trusts the synthetic issuer JWKS and supports the JWT bearer grant.",
+      "The Authorization Server checks the grant came from a trusted IdP, is addressed to itself, and names the right MCP Server before issuing a token.",
+      "If this fails, the Authorization Server probably doesn't trust the IdP's signing keys yet, or doesn't support this grant type.",
     ],
   },
   received_access_token: {
     title: "Access Token Received",
-    summary: "Store the access token returned by the authorization server.",
+    summary:
+      "The Authorization Server accepted the ID-JAG and issued an access token for the MCP Server.",
+    phase: "jwt_bearer",
     teachableMoments: [
-      "A successful response here proves the authorization server accepted the ID-JAG and policy checks passed.",
+      "Getting a token here means the Authorization Server accepted the grant and its checks passed.",
     ],
   },
   authenticated_mcp_request: {
-    title: "Authenticated MCP Request",
-    summary: "Retry an MCP initialize request with the issued access token.",
+    title: "Call the MCP Server with the Token",
+    summary:
+      "The Agent calls the MCP Server with the access token — the only credential the MCP Server ever sees.",
+    phase: "mcp_request",
     teachableMoments: [
-      "This closes the loop: the access token has to work on the real MCP server, not just the token endpoint.",
+      "This proves the token actually works on the MCP Server — not just at the Authorization Server.",
     ],
   },
   complete: {
     title: "Flow Complete",
-    summary: "The debugger completed the synthetic XAA flow end-to-end.",
+    summary:
+      "The MCP Server accepted the access token. The full cross-app flow worked end to end.",
+    phase: "mcp_request",
     teachableMoments: [
-      "Switch negative test modes to probe specific authorization server validation paths.",
+      "Try the test modes to see how your Authorization Server handles broken grants: wrong audience, bad signature, expired, and more.",
     ],
   },
 };
 
-export function getXAAStepInfo(step: XAAFlowStep): XAAStepInfo {
-  return (
-    XAA_STEP_METADATA[step] ?? {
-      title: step,
-      summary: "No additional information available for this step.",
+// SAML overrides for the identity-leg steps (input axis, D6). Titles,
+// summaries, and (where the base copy says "ID token") teachable moments are
+// overridden so a SAML run reads accurately; phase membership is shared. OIDC
+// (the default) renders the base metadata unchanged.
+const XAA_SAML_STEP_OVERRIDES: Partial<
+  Record<XAAFlowStep, Pick<XAAStepInfo, "title" | "summary" | "teachableMoments">>
+> = {
+  user_authentication: {
+    title: "Simulate SAML sign-in at MCPJam IdP",
+    summary:
+      "MCPJam simulates the user signing in at its identity provider and issues a signed SAML assertion. This is a mock — there is no real SAML redirect, AuthnRequest, or ACS round-trip.",
+  },
+  received_identity_assertion: {
+    title: "SAML assertion issued by MCPJam IdP",
+    summary:
+      "MCPJam's identity provider gives the Agent a signed SAML 2.0 assertion.",
+    teachableMoments: [
+      "The SAML assertion is only used to get the next token — it's never sent to the Authorization Server or the MCP Server.",
+    ],
+  },
+  token_exchange_request: {
+    title: "Exchange the SAML Assertion for an ID-JAG",
+    summary:
+      "The Agent trades the SAML assertion back to the IdP for an ID-JAG — a grant scoped to one MCP Server. On the happy path this is a standard RFC 8693 form POST to the IdP's /token endpoint (subject_token_type urn:ietf:params:oauth:token-type:saml2); a test mode instead uses MCPJam's mint endpoint to forge a deliberately broken grant.",
+  },
+};
+
+export function getXAAStepInfo(
+  step: XAAFlowStep,
+  format?: IdentityAssertionFormat
+): XAAStepInfo {
+  const base = XAA_STEP_METADATA[step] ?? {
+    title: step,
+    summary: "No additional information available for this step.",
+  };
+  if (format === "saml") {
+    const override = XAA_SAML_STEP_OVERRIDES[step];
+    if (override) {
+      return { ...base, ...override };
     }
-  );
+  }
+  return base;
 }
 
 export function getXAAStepIndex(step: XAAFlowStep): number {

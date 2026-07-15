@@ -1,6 +1,5 @@
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { usePostHog } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { GitHubStarButton } from "@/components/ui/github-star-button";
 import {
@@ -8,8 +7,8 @@ import {
   ActiveServerSelectorProps,
 } from "@/components/ActiveServerSelector";
 import { AgentSidePanelTrigger } from "@/components/mcpjam-agent/AgentSidePanelTrigger";
-import { GlobalClientBar } from "@/components/clients/GlobalClientBar";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { GlobalHostBar } from "@/components/hosts/GlobalHostBar";
+import { track } from "@/lib/analytics";
 import type { GlobalHostBarProps } from "@/components/Header";
 
 interface AuthUpperAreaProps {
@@ -23,13 +22,12 @@ export function AuthUpperArea({
 }: AuthUpperAreaProps) {
   const { user, signIn, signUp } = useAuth();
   const { isLoading } = useConvexAuth();
-  const posthog = usePostHog();
 
   return (
     <div className="ml-auto flex h-full flex-1 items-center gap-2 no-drag min-w-0">
       {globalHostBarProps ? (
         <div className="flex shrink-0 items-center pr-1">
-          <GlobalClientBar {...globalHostBarProps} />
+          <GlobalHostBar {...globalHostBarProps} />
         </div>
       ) : null}
       {activeServerSelectorProps ? (
@@ -50,11 +48,7 @@ export function AuthUpperArea({
               variant="outline"
               size="sm"
               onClick={() => {
-                posthog.capture("login_button_clicked", {
-                  location: "header",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
-                });
+                track("login_button_clicked", { location: "header" });
                 signIn();
               }}
             >
@@ -63,11 +57,7 @@ export function AuthUpperArea({
             <Button
               size="sm"
               onClick={() => {
-                posthog.capture("sign_up_button_clicked", {
-                  location: "header",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
-                });
+                track("sign_up_button_clicked", { location: "header" });
                 signUp();
               }}
             >

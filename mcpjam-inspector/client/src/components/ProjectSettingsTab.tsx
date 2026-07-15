@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { EditableText } from "./ui/editable-text";
@@ -6,9 +7,9 @@ import { ProjectSlackIntegrationSection } from "./setting/ProjectSlackIntegratio
 import { ProjectMembersFacepile } from "./project/ProjectMembersFacepile";
 import { ProjectShareButton } from "./project/ProjectShareButton";
 import { ProjectIconPicker } from "./project/ProjectEmojiPicker";
-import { ProjectDefaultClientConfigSection } from "./client-config/ProjectDefaultClientConfigSection";
 
 import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,6 +24,160 @@ import {
 import type { Project } from "@/state/app-types";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { useProjectMembers } from "@/hooks/useProjects";
+
+/**
+ * Admin-gated project default for the MCPJam test IdP's simulated identity.
+ * Convex-backed projects only — local project persistence is a no-op for
+ * this field, so the section is hidden there. Saves are atomic: both fields
+ * or neither; an explicit clear sends `xaaTestDefaults: null`.
+ */
+function XaaTestDefaultsSection({
+  projectId,
+  storedIdentity,
+  canManage,
+  onUpdateProject,
+}: {
+  projectId: string;
+  storedIdentity: { subject: string; email: string } | undefined;
+  canManage: boolean;
+  onUpdateProject: (
+    projectId: string,
+    updates: Partial<Project>,
+  ) => Promise<void>;
+}) {
+  const [subject, setSubject] = useState(storedIdentity?.subject ?? "");
+  const [email, setEmail] = useState(storedIdentity?.email ?? "");
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Re-sync the draft when the stored default changes underneath us
+  // (another admin saved, or the active project switched).
+  const storedKey = `${projectId}|${storedIdentity?.subject ?? ""}|${
+    storedIdentity?.email ?? ""
+  }`;
+  useEffect(() => {
+    setSubject(storedIdentity?.subject ?? "");
+    setEmail(storedIdentity?.email ?? "");
+    setValidationError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storedKey]);
+
+  const trimmedSubject = subject.trim();
+  const trimmedEmail = email.trim();
+  const hasStored = Boolean(storedIdentity);
+  const isDirty =
+    trimmedSubject !== (storedIdentity?.subject ?? "") ||
+    trimmedEmail !== (storedIdentity?.email ?? "");
+
+  const handleSave = async () => {
+    const bothSet = trimmedSubject !== "" && trimmedEmail !== "";
+    const bothEmpty = trimmedSubject === "" && trimmedEmail === "";
+    if (!bothSet && !bothEmpty) {
+      setValidationError(
+        "Enter both a subject and an email, or clear both fields.",
+      );
+      return;
+    }
+    setValidationError(null);
+    setIsSaving(true);
+    try {
+      await onUpdateProject(projectId, {
+        xaaTestDefaults: bothSet
+          ? { defaultIdentity: { subject: trimmedSubject, email: trimmedEmail } }
+          : // Explicit clear — the mutation removes the stored default.
+            null,
+      });
+    } catch {
+      // onUpdateProject (handleUpdateProject) already surfaces a toast and
+      // rethrows; swallow here so the `void handleSave()` caller doesn't leave
+      // an unobserved rejection. The edited values stay in the form for retry.
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <h2 className="text-sm font-medium text-muted-foreground">
+        XAA test identity defaults
+      </h2>
+      <div className="space-y-3 px-4 py-3 rounded-md border border-border/40">
+        <div className="flex flex-col gap-1">
+          <span className="text-sm font-medium">
+            Identity provider: MCPJam test IdP
+          </span>
+          <span className="text-xs text-muted-foreground">
+            Used when an authenticated project member connects without a
+            server override.
+          </span>
+          {!hasStored && (
+            <span className="text-xs text-muted-foreground">
+              Falls back to MCPJam&apos;s demo identity.
+            </span>
+          )}
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1">
+            <label
+              htmlFor="xaa-default-subject"
+              className="block text-xs font-medium text-foreground"
+            >
+              Subject (sub)
+            </label>
+            <Input
+              id="xaa-default-subject"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              placeholder="Stable synthetic identifier"
+              disabled={!canManage}
+              spellCheck={false}
+              autoComplete="off"
+              className="h-9"
+            />
+          </div>
+          <div className="space-y-1">
+            <label
+              htmlFor="xaa-default-email"
+              className="block text-xs font-medium text-foreground"
+            >
+              Email
+            </label>
+            <Input
+              id="xaa-default-email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="synthetic.user@example.com"
+              disabled={!canManage}
+              spellCheck={false}
+              autoComplete="off"
+              className="h-9"
+            />
+          </div>
+        </div>
+        {validationError && (
+          <p className="text-xs text-red-500" role="alert">
+            {validationError}
+          </p>
+        )}
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-muted-foreground">
+            {canManage
+              ? "This does not configure enterprise SSO or bring-your-own IdP endpoints."
+              : "Only project admins can change these defaults."}
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => void handleSave()}
+            disabled={!canManage || isSaving || !isDirty}
+          >
+            {isSaving ? "Saving…" : "Save defaults"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface ProjectSettingsTabProps {
   activeProjectId: string;
@@ -168,16 +323,16 @@ export function ProjectSettingsTab({
           />
         </div>
 
-        {/* Default Host Config — seed for new chatboxes, eval suites,
-            and direct chat tabs. Editing it does not change existing
-            chatboxes or suites. */}
-        {isAuthenticated && convexProjectId ? (
-          <ProjectDefaultClientConfigSection
-            convexProjectId={convexProjectId}
-            projectServers={projectServers}
-            canManage={canManageProjectSettings}
+        {/* XAA test identity defaults — Convex-backed projects only (the
+            local-project update path is a no-op for this field). */}
+        {isAuthenticated && convexProjectId && (
+          <XaaTestDefaultsSection
+            projectId={convexProjectId}
+            storedIdentity={project?.xaaTestDefaults?.defaultIdentity}
+            canManage={canManageMembers}
+            onUpdateProject={onUpdateProject}
           />
-        ) : null}
+        )}
 
         {/* Project Servers auto-connect lives on the Servers tab header
             (single toggle next to "Add Server"), not here. */}

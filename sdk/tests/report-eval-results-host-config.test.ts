@@ -3,16 +3,16 @@
  *
  * Behavior under test:
  *  1. Reporter sends `{ hostConfig, hostConfigHash }` in one-shot `/report`
- *     body when capability is advertised and a snapshot source is present.
+ *     body when a snapshot source is present (the v1 ingest surface always
+ *     accepts the pair — the old per-baseUrl capability probe is gone).
  *  2. Reporter sends the wire pair in `/runs/start` body when the chunked
  *     path is taken.
- *  3. Reporter OMITS both fields when capability is absent (404).
- *  4. Reporter OMITS both fields when no snapshot source is available.
- *  5. Reporter OMITS both fields when iteration snapshots are heterogeneous
+ *  3. Reporter OMITS both fields when no snapshot source is available.
+ *  4. Reporter OMITS both fields when iteration snapshots are heterogeneous
  *     (homogeneity gate fires — pass-1 behavior).
- *  6. `/runs/iterations` and `/runs/finalize` bodies NEVER contain the
+ *  5. `/runs/iterations` and `/runs/finalize` bodies NEVER contain the
  *     wire pair (per-run, not per-batch).
- *  7. Hash byte-equivalence: the hash the reporter sends matches what the
+ *  6. Hash byte-equivalence: the hash the reporter sends matches what the
  *     backend would recompute by running
  *     `normalizeSdkEvalHostConfigForWire` + `computeHostConfigHashV2`.
  */
@@ -29,7 +29,6 @@ vi.mock("../src/sentry", () => ({
 
 import { vi } from "vitest";
 import { reportEvalResults } from "../src/report-eval-results";
-import { __resetSdkEvalsCapabilitiesCache } from "../src/sdk-evals-capability";
 import {
   computeHostConfigHashV2,
   normalizeSdkEvalHostConfigForWire,
@@ -51,24 +50,6 @@ function okResponse(body: Record<string, unknown>): any {
     status: 200,
     statusText: "OK",
     json: async () => ({ ok: true, ...body }),
-  };
-}
-
-function notFoundResponse(): any {
-  return {
-    ok: false,
-    status: 404,
-    statusText: "Not Found",
-    json: async () => ({}),
-  };
-}
-
-function capabilityResponse(version: number): any {
-  return {
-    ok: true,
-    status: 200,
-    statusText: "OK",
-    json: async () => ({ capabilities: { evalsHostConfig: version } }),
   };
 }
 
@@ -120,13 +101,10 @@ function findRequestByUrl(
 describe("reportEvalResults — Stage 5 Step 3 wire host-config", () => {
   const originalFetch = global.fetch;
 
-  beforeEach(() => {
-    __resetSdkEvalsCapabilitiesCache();
-  });
+  beforeEach(() => {});
 
   afterEach(() => {
     global.fetch = originalFetch;
-    __resetSdkEvalsCapabilitiesCache();
     sentryMocks.addBreadcrumb.mockClear();
     sentryMocks.captureEvalReportingFailure.mockClear();
     vi.restoreAllMocks();
@@ -135,7 +113,6 @@ describe("reportEvalResults — Stage 5 Step 3 wire host-config", () => {
   it("sends {hostConfig, hostConfigHash} in one-shot /report when capability + explicitHost present", async () => {
     const host = makeHost("alpha");
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (String(url).endsWith("/sdk/v1/info")) return capabilityResponse(1);
       return okResponse({
         suiteId: "suite_1",
         runId: "run_1",
@@ -154,7 +131,10 @@ describe("reportEvalResults — Stage 5 Step 3 wire host-config", () => {
       results: smallResults(),
     });
 
-    const report = findRequestByUrl(fetchMock, "/sdk/v1/evals/report");
+    const report = findRequestByUrl(
+      fetchMock,
+      "/api/v1/projects/default/eval-ingest/report"
+    );
     expect(report).toBeDefined();
     expect(report!.body.hostConfig).toBeDefined();
     expect(typeof report!.body.hostConfigHash).toBe("string");
@@ -176,14 +156,13 @@ describe("reportEvalResults — Stage 5 Step 3 wire host-config", () => {
     const host = makeHost();
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       const u = String(url);
-      if (u.endsWith("/sdk/v1/info")) return capabilityResponse(1);
-      if (u.endsWith("/sdk/v1/evals/runs/start")) {
+      if (u.endsWith("/api/v1/projects/default/eval-ingest/runs/start")) {
         return okResponse({ suiteId: "s", runId: "r" });
       }
-      if (u.endsWith("/sdk/v1/evals/runs/iterations")) {
+      if (u.endsWith("/api/v1/projects/default/eval-ingest/runs/iterations")) {
         return okResponse({ inserted: 1, skipped: 0, total: 1 });
       }
-      if (u.endsWith("/sdk/v1/evals/runs/finalize")) {
+      if (u.endsWith("/api/v1/projects/default/eval-ingest/runs/finalize")) {
         return okResponse({
           suiteId: "s",
           runId: "r",
@@ -205,54 +184,34 @@ describe("reportEvalResults — Stage 5 Step 3 wire host-config", () => {
       ...chunkedConfigOverrides(),
     });
 
-    const start = findRequestByUrl(fetchMock, "/sdk/v1/evals/runs/start");
+    const start = findRequestByUrl(
+      fetchMock,
+      "/api/v1/projects/default/eval-ingest/runs/start"
+    );
     expect(start).toBeDefined();
     expect(start!.body.hostConfig).toBeDefined();
     expect(typeof start!.body.hostConfigHash).toBe("string");
 
     // Critically: iterations + finalize MUST NOT carry the wire pair.
-    const iters = findRequestByUrl(fetchMock, "/sdk/v1/evals/runs/iterations");
+    const iters = findRequestByUrl(
+      fetchMock,
+      "/api/v1/projects/default/eval-ingest/runs/iterations"
+    );
     expect(iters).toBeDefined();
     expect(iters!.body.hostConfig).toBeUndefined();
     expect(iters!.body.hostConfigHash).toBeUndefined();
 
-    const finalize = findRequestByUrl(fetchMock, "/sdk/v1/evals/runs/finalize");
+    const finalize = findRequestByUrl(
+      fetchMock,
+      "/api/v1/projects/default/eval-ingest/runs/finalize"
+    );
     expect(finalize).toBeDefined();
     expect(finalize!.body.hostConfig).toBeUndefined();
     expect(finalize!.body.hostConfigHash).toBeUndefined();
   });
 
-  it("OMITS the wire pair when capability is absent (404 on /sdk/v1/info)", async () => {
-    const host = makeHost();
-    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (String(url).endsWith("/sdk/v1/info")) return notFoundResponse();
-      return okResponse({
-        suiteId: "s",
-        runId: "r",
-        status: "completed",
-        result: "passed",
-        summary: successSummary,
-      });
-    });
-    global.fetch = fetchMock as any;
-
-    await reportEvalResults({
-      apiKey: "k",
-      baseUrl: "https://example.com",
-      suiteName: "S",
-      host,
-      results: smallResults(),
-    });
-
-    const report = findRequestByUrl(fetchMock, "/sdk/v1/evals/report");
-    expect(report).toBeDefined();
-    expect(report!.body.hostConfig).toBeUndefined();
-    expect(report!.body.hostConfigHash).toBeUndefined();
-  });
-
   it("OMITS the wire pair when no snapshot source is available", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (String(url).endsWith("/sdk/v1/info")) return capabilityResponse(1);
       return okResponse({
         suiteId: "s",
         runId: "r",
@@ -271,7 +230,10 @@ describe("reportEvalResults — Stage 5 Step 3 wire host-config", () => {
       results: smallResults(),
     });
 
-    const report = findRequestByUrl(fetchMock, "/sdk/v1/evals/report");
+    const report = findRequestByUrl(
+      fetchMock,
+      "/api/v1/projects/default/eval-ingest/report"
+    );
     expect(report).toBeDefined();
     expect(report!.body.hostConfig).toBeUndefined();
     expect(report!.body.hostConfigHash).toBeUndefined();
@@ -279,7 +241,6 @@ describe("reportEvalResults — Stage 5 Step 3 wire host-config", () => {
 
   it("OMITS the wire pair when per-iteration snapshots are heterogeneous", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (String(url).endsWith("/sdk/v1/info")) return capabilityResponse(1);
       return okResponse({
         suiteId: "s",
         runId: "r",
@@ -310,7 +271,10 @@ describe("reportEvalResults — Stage 5 Step 3 wire host-config", () => {
       results,
     });
 
-    const report = findRequestByUrl(fetchMock, "/sdk/v1/evals/report");
+    const report = findRequestByUrl(
+      fetchMock,
+      "/api/v1/projects/default/eval-ingest/report"
+    );
     expect(report).toBeDefined();
     expect(report!.body.hostConfig).toBeUndefined();
     expect(report!.body.hostConfigHash).toBeUndefined();
@@ -319,7 +283,6 @@ describe("reportEvalResults — Stage 5 Step 3 wire host-config", () => {
   it("uses executor.getHostSnapshot as a fallback when no explicitHost", async () => {
     const host = makeHost("from-executor");
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (String(url).endsWith("/sdk/v1/info")) return capabilityResponse(1);
       return okResponse({
         suiteId: "s",
         runId: "r",
@@ -338,7 +301,10 @@ describe("reportEvalResults — Stage 5 Step 3 wire host-config", () => {
       results: smallResults(),
     });
 
-    const report = findRequestByUrl(fetchMock, "/sdk/v1/evals/report");
+    const report = findRequestByUrl(
+      fetchMock,
+      "/api/v1/projects/default/eval-ingest/report"
+    );
     expect(report).toBeDefined();
     expect(report!.body.hostConfig).toBeDefined();
     const expectedHash = await computeHostConfigHashV2(
@@ -350,7 +316,6 @@ describe("reportEvalResults — Stage 5 Step 3 wire host-config", () => {
   it("fail-safe: a throwing executor.getHostSnapshot does NOT crash the report — wire pair is omitted with a warning", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (String(url).endsWith("/sdk/v1/info")) return capabilityResponse(1);
       return okResponse({
         suiteId: "s",
         runId: "r",
@@ -374,7 +339,10 @@ describe("reportEvalResults — Stage 5 Step 3 wire host-config", () => {
     });
 
     expect(result.runId).toBeDefined();
-    const report = findRequestByUrl(fetchMock, "/sdk/v1/evals/report");
+    const report = findRequestByUrl(
+      fetchMock,
+      "/api/v1/projects/default/eval-ingest/report"
+    );
     expect(report).toBeDefined();
     expect(report!.body.hostConfig).toBeUndefined();
     expect(report!.body.hostConfigHash).toBeUndefined();

@@ -14,12 +14,15 @@ import { PendingCreditTopupsBanner } from "@/components/billing/PendingCreditTop
 import { TopupActionButton } from "@/components/billing/TopupActionButton";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
+import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
+import {
+  formatEvalIterationResetTime,
+  getEvalIterationQuotaLabel,
+} from "@/lib/eval-iteration-quota";
 import {
   formatCreditResetText,
   formatMonthlyResetText,
 } from "@/lib/credit-usage";
-import { useCreditTopupsUiEnabled } from "@/lib/credit-topups-flag";
-import { useTeamCreditsUiEnabled } from "@/lib/team-credits-flag";
 import type { CreditTopupSource } from "@/hooks/useCreditTopup";
 
 /** Pulls the limit-modal redirect flag out of the current URL and clears it
@@ -55,12 +58,13 @@ export function CreditBalanceCard({
   canManageCredits = false,
   chatSessionId,
 }: CreditBalanceCardProps = {}) {
-  const creditTopupsUiEnabled = useCreditTopupsUiEnabled();
-  const teamCreditsUiEnabled = useTeamCreditsUiEnabled();
   const { balance, isLoading } = useCreditBalance({
     organizationId,
-    enabled: creditTopupsUiEnabled,
   });
+  const { quota: evalIterationQuota, isLoading: isEvalIterationQuotaLoading } =
+    useEvalIterationQuota({
+      organizationId,
+    });
   const [isTopupOpen, setIsTopupOpen] = useState(false);
   const [topupSource, setTopupSource] =
     useState<CreditTopupSource>("billing_page");
@@ -74,24 +78,22 @@ export function CreditBalanceCard({
   // reopen the dialog. Source is recorded as `limit_modal` so the funnel can
   // attribute the top-up back to the limit-hit that triggered the redirect.
   useEffect(() => {
-    if (!creditTopupsUiEnabled) return;
     if (consumeTopupFlag()) {
       setArrivedFromLimitModal(true);
     }
-  }, [creditTopupsUiEnabled]);
+  }, []);
 
   // Open the dialog only once we know the user can manage credits. A member
   // who can't top up keeps `arrivedFromLimitModal` true and instead sees the
   // "ask an admin" hint below — not a silent dead-end where the flag was
   // consumed but nothing happened.
   useEffect(() => {
-    if (!creditTopupsUiEnabled) return;
     if (arrivedFromLimitModal && canManageCredits) {
       setTopupSource("limit_modal");
       setIsTopupOpen(true);
       setArrivedFromLimitModal(false);
     }
-  }, [arrivedFromLimitModal, canManageCredits, creditTopupsUiEnabled]);
+  }, [arrivedFromLimitModal, canManageCredits]);
 
   const handleManualTopup = () => {
     setTopupSource("billing_page");
@@ -103,15 +105,18 @@ export function CreditBalanceCard({
   // Team-plan orgs bill against a monthly per-seat allowance instead of the
   // daily free bucket. Paid top-ups are shown separately and spent only after
   // the allowance runs out.
-  const showMonthly =
-    teamCreditsUiEnabled && balance?.billingModel === "monthly_per_seat";
+  const showMonthly = balance?.billingModel === "monthly_per_seat";
   const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
   const monthlyRemaining = balance?.monthlyAllowanceRemaining ?? 0;
   const paidRemaining = balance?.paidCreditsRemaining ?? 0;
   const monthlyExhausted =
     showMonthly && monthlyRemaining <= 0 && paidRemaining <= 0;
-
-  if (!creditTopupsUiEnabled) return null;
+  const showEvalIterationUsage =
+    isEvalIterationQuotaLoading ||
+    (evalIterationQuota !== undefined && evalIterationQuota.allowed !== null);
+  const evalIterationLabel = getEvalIterationQuotaLabel(
+    evalIterationQuota?.windowKind
+  );
 
   return (
     <Card className="border-border/60 py-6 shadow-sm">
@@ -119,13 +124,14 @@ export function CreditBalanceCard({
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-primary">
-              Credit usage
+              Usage
             </p>
             <p className="mt-1 text-sm font-semibold leading-snug">
-              Organization model credits
+              Organization usage
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Shared credits are available to everyone in this organization.
+              Model credits and eval iterations are shared across this
+              organization.
             </p>
           </div>
           {canManageCredits ? (
@@ -209,6 +215,54 @@ export function CreditBalanceCard({
             {formatMonthlyResetText(balance?.monthlyResetAt)}
             {canManageCredits ? " — or top up to keep going." : "."}
           </p>
+        ) : null}
+
+        {showEvalIterationUsage ? (
+          <UsageRow
+            label={evalIterationLabel}
+            tooltip={
+              evalIterationQuota
+                ? `Resets ${formatEvalIterationResetTime(
+                    evalIterationQuota.resetsAt
+                  )}`
+                : undefined
+            }
+            // "remaining / allowed": bar drains as iterations are used —
+            // matches the monthly team credits row.
+            rightText={
+              isEvalIterationQuotaLoading ||
+              !evalIterationQuota ||
+              evalIterationQuota.allowed === null
+                ? null
+                : `${Math.max(
+                    0,
+                    evalIterationQuota.allowed - evalIterationQuota.used
+                  ).toLocaleString()} / ${evalIterationQuota.allowed.toLocaleString()}`
+            }
+            fillPercent={
+              isEvalIterationQuotaLoading ||
+              !evalIterationQuota ||
+              !evalIterationQuota.allowed
+                ? 0
+                : Math.max(
+                    0,
+                    ((evalIterationQuota.allowed - evalIterationQuota.used) /
+                      evalIterationQuota.allowed) *
+                      100
+                  )
+            }
+            ariaLabel={`${evalIterationLabel} remaining`}
+            ariaValueText={
+              evalIterationQuota && evalIterationQuota.allowed !== null
+                ? `${Math.max(
+                    0,
+                    evalIterationQuota.allowed - evalIterationQuota.used
+                  ).toLocaleString()} of ${evalIterationQuota.allowed.toLocaleString()} eval iterations remaining`
+                : undefined
+            }
+            isLoading={isEvalIterationQuotaLoading}
+            testId="usage-eval-iterations"
+          />
         ) : null}
 
         {!isLoading && hasPaidHistory && balance && (

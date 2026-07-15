@@ -15,8 +15,13 @@ node_modules/
 # testing
 /coverage
 
+# playwright
+playwright-report/
+test-results/
+.playwright/
 
-# production  
+
+# production
 /build
 /dist
 cli/build/
@@ -75,3 +80,8 @@ sdk/node_modules/
 sdk/mcp-client-manager/node_modules/
 sdk/mcp-client-manager/dist/
 .idea/
+
+.env.local
+
+# local-only dev artifacts
+.local/
