@@ -114,6 +114,17 @@ vi.mock("ollama-ai-provider-v2", () => ({
   }),
 }));
 
+vi.mock("@ai-sdk/amazon-bedrock", () => ({
+  createAmazonBedrock: vi.fn(() => {
+    const modelFn = vi.fn((modelId: string) => ({
+      provider: "bedrock",
+      modelId,
+      type: "mock-model",
+    }));
+    return modelFn;
+  }),
+}));
+
 // Import mocked modules for assertions
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
@@ -124,6 +135,7 @@ import { createMistral } from "@ai-sdk/mistral";
 import { createXai } from "@ai-sdk/xai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOllama } from "ollama-ai-provider-v2";
+import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 
 describe("model-factory", () => {
   beforeEach(() => {
@@ -154,6 +166,7 @@ describe("model-factory", () => {
         "anthropic",
         "openai",
         "azure",
+        "bedrock",
         "deepseek",
         "google",
         "ollama",
@@ -453,6 +466,35 @@ describe("model-factory", () => {
       });
     });
 
+    describe("bedrock provider", () => {
+      it("should create bedrock model with api key", () => {
+        createModelFromString(
+          "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+          defaultOptions
+        );
+
+        expect(createAmazonBedrock).toHaveBeenCalledWith({
+          apiKey: "test-api-key",
+        });
+      });
+
+      it("should pass custom base URL when provided", () => {
+        const options: CreateModelOptions = {
+          apiKey: "test-api-key",
+          baseUrls: {
+            bedrock: "https://bedrock-runtime.eu-west-1.amazonaws.com",
+          },
+        };
+
+        createModelFromString("bedrock/us.amazon.nova-pro-v1:0", options);
+
+        expect(createAmazonBedrock).toHaveBeenCalledWith({
+          apiKey: "test-api-key",
+          baseURL: "https://bedrock-runtime.eu-west-1.amazonaws.com",
+        });
+      });
+    });
+
     describe("error handling", () => {
       it("should throw for unknown provider", () => {
         expect(() =>
@@ -559,6 +601,32 @@ describe("buildOrgModelFromResolvedConfig", () => {
     });
   });
 
+  it("bedrock: calls createAmazonBedrock with apiKey and baseURL", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "bedrock",
+      apiKey: "bedrock-key",
+      baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+    };
+    buildOrgModelFromResolvedConfig(
+      config,
+      "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    );
+    expect(createAmazonBedrock).toHaveBeenCalledWith({
+      apiKey: "bedrock-key",
+      baseURL: "https://bedrock-runtime.us-east-1.amazonaws.com",
+    });
+  });
+
+  it("bedrock: throws provider_not_configured without baseUrl", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "bedrock",
+      apiKey: "bedrock-key",
+    };
+    expect(() =>
+      buildOrgModelFromResolvedConfig(config, "us.amazon.nova-pro-v1:0")
+    ).toThrow(OrgProviderConfigError);
+  });
+
   it("ollama: normalizes baseUrl to end with /api", () => {
     const config: OrgProviderResolvedConfig = {
       providerKey: "ollama",
@@ -662,6 +730,29 @@ describe("assertOrgModelAllowed", () => {
     expect(() =>
       assertOrgModelAllowed(config, "anything/model")
     ).not.toThrow();
+  });
+
+  it("bedrock: allows model in selectedModels", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "bedrock",
+      selectedModels: ["us.anthropic.claude-sonnet-4-5-20250929-v1:0"],
+    };
+    expect(() =>
+      assertOrgModelAllowed(
+        config,
+        "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+      )
+    ).not.toThrow();
+  });
+
+  it("bedrock: rejects model not in selectedModels", () => {
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "bedrock",
+      selectedModels: ["us.anthropic.claude-sonnet-4-5-20250929-v1:0"],
+    };
+    expect(() =>
+      assertOrgModelAllowed(config, "us.amazon.nova-pro-v1:0")
+    ).toThrow(OrgProviderConfigError);
   });
 
   it("custom: allows model in modelIds (after prefix strip)", () => {

@@ -84,8 +84,6 @@ const agent = new HostRunner({
 });
 ```
 
-If `MCPJAM_API_KEY` is set, attaching the connected `MCPClientManager` also lets MCPJam persist **replay credentials** for authenticated HTTP MCP servers and capture **MCP App widget HTML** (for offline replay in Eval traces — see [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots)).
-
 ## Step 4: Run Prompts
 
 ```typescript
@@ -201,7 +199,9 @@ You can also generate eval code directly from the MCPJam Inspector:
 
 The copied markdown is a ready-to-use prompt that includes your server's capabilities and the full `@mcpjam/sdk` API reference, so the LLM has everything it needs to write your eval tests.
 
-If you have a `MCPJAM_API_KEY` set up, the generated eval code will automatically save results to MCPJam — you can view them in the **Evals** tab of the Inspector. Go to **Settings > Project API Key** in the Inspector to get your key.
+<Tip>
+To save results to the MCPJam Evals dashboard, set `MCPJAM_API_KEY` to an **MCPJam API key (`sk_…`)** from Settings → API keys and add a `mcpjam: { suiteName: "…" }` block to `run()`. The retired project API keys (`mcpjam_…`) no longer work — see [Saving Results](/sdk/concepts/saving-results).
+</Tip>
 
 ## Next Steps
 

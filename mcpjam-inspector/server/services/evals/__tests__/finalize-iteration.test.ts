@@ -8,13 +8,16 @@ import type {
   RunnerWidgetRenderObservation,
 } from "@/shared/eval-trace";
 
-// Mock screenshot upload so the serializers don't hit Convex storage. Tests
-// that pass no browser artifacts never call it (the serializers short-circuit).
-const { uploadScreenshotBlob } = vi.hoisted(() => ({
+// Mock screenshot + video upload so the serializers don't hit Convex storage.
+// Tests that pass no browser artifacts never call them (the serializers /
+// video block short-circuit).
+const { uploadScreenshotBlob, uploadVideoBlob } = vi.hoisted(() => ({
   uploadScreenshotBlob: vi.fn(),
+  uploadVideoBlob: vi.fn(),
 }));
 vi.mock("../../../utils/mcp-app-widget-capture.js", () => ({
   uploadScreenshotBlob,
+  uploadVideoBlob,
 }));
 
 import { finalizeEvalIteration } from "../finalize-iteration.js";
@@ -103,6 +106,22 @@ describe("finalizeEvalIteration", () => {
       messages,
     });
     // Only the pre-check `getTestIteration` query should have happened.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.ref).toBe("testSuites:getTestIteration");
+  });
+
+  test("skips update when the iteration already timed out (keeps it terminal)", async () => {
+    // A timed-out iteration whose original work ignores the abort and finishes
+    // late must NOT overwrite the `timed_out` row with completed/failed.
+    const { client, calls } = makeClient({ iterationStatus: "timed_out" });
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: true,
+      toolsCalled: [],
+      usage: usageZero,
+      messages,
+    });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.ref).toBe("testSuites:getTestIteration");
   });
@@ -547,6 +566,69 @@ describe("finalizeEvalIteration", () => {
       expect("browserInteractionSteps" in update!.args).toBe(false);
       // Still serialized exactly once.
       expect(uploadScreenshotBlob).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("replay video", () => {
+    test("forwards videoBlobId to the persisted turn when upload succeeds", async () => {
+      uploadVideoBlob.mockResolvedValueOnce("vid-store-1");
+      const { client, calls } = makeClient({});
+      await finalizeEvalIteration({
+        convexClient: client,
+        iterationId: "iter1",
+        passed: true,
+        toolsCalled: [],
+        usage: usageZero,
+        messages,
+        videoBytes: Buffer.from([0x1a, 0x45, 0xdf, 0xa3]),
+      });
+      const lastAppend = calls
+        .filter((c) => c.ref === "testSuites:appendEvalTurnTrace")
+        .at(-1);
+      expect(lastAppend?.args.videoBlobId).toBe("vid-store-1");
+    });
+
+    test("upload failure does NOT fail the iteration (best-effort)", async () => {
+      // Load-bearing: video is nice-to-have; iteration persistence is core.
+      uploadVideoBlob.mockRejectedValueOnce(new Error("storage down"));
+      const { client, calls } = makeClient({});
+
+      await expect(
+        finalizeEvalIteration({
+          convexClient: client,
+          iterationId: "iter1",
+          passed: true,
+          toolsCalled: [],
+          usage: usageZero,
+          messages,
+          videoBytes: Buffer.from([0x1a, 0x45, 0xdf, 0xa3]),
+        }),
+      ).resolves.toBeUndefined();
+
+      // The iteration still finalized with the right status...
+      const update = calls.find(
+        (c) => c.ref === "testSuites:updateTestIteration",
+      );
+      expect(update).toBeDefined();
+      expect(update!.args.status).toBe("completed");
+      // ...and no videoBlobId leaked into the persisted turn after the failure.
+      const append = calls.find(
+        (c) => c.ref === "testSuites:appendEvalTurnTrace",
+      );
+      expect(append?.args.videoBlobId).toBeUndefined();
+    });
+
+    test("no upload attempted when videoBytes is empty/absent", async () => {
+      const { client } = makeClient({});
+      await finalizeEvalIteration({
+        convexClient: client,
+        iterationId: "iter1",
+        passed: true,
+        toolsCalled: [],
+        usage: usageZero,
+        messages,
+      });
+      expect(uploadVideoBlob).not.toHaveBeenCalled();
     });
   });
 });

@@ -32,7 +32,7 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   Card,
   CardContent,
@@ -57,6 +57,7 @@ import {
   useOrganizationBilling,
   type BillingInterval,
   type OrganizationBillingStatus,
+  type OrganizationSeatPaymentIntent,
   type OrganizationPlan,
 } from "@/hooks/useOrganizationBilling";
 import {
@@ -66,6 +67,7 @@ import {
 } from "@/lib/billing-entitlements";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import type { OrganizationRouteSection } from "@/lib/app-navigation";
+import { SettingsNav } from "@/components/settings/SettingsNav";
 import { BILLING_GATES, resolveBillingGateState } from "@/lib/billing-gates";
 import {
   getBillingUpsellCtaLabel,
@@ -78,7 +80,6 @@ import { OrganizationCurrentPlanPanel } from "./organization/OrganizationCurrent
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
 import { OrganizationModelsSection } from "./organization/OrganizationModelsSection";
 import { useAppNavigate, buildOrganizationPath } from "@/lib/app-navigation";
-import { useCreditTopupsUiEnabled } from "@/lib/credit-topups-flag";
 
 interface OrganizationsTabProps {
   organizationId?: string;
@@ -193,6 +194,182 @@ function getScheduledBillingChangeCancellationState(
   };
 }
 
+function PendingSeatPaymentNotice({
+  intent,
+  isFinishingSeatPayment,
+  isCompletingSeatPayment,
+  isCancelingSeatPayment,
+  onFinish,
+  onCancel,
+}: {
+  intent: OrganizationSeatPaymentIntent;
+  isFinishingSeatPayment: boolean;
+  isCompletingSeatPayment: boolean;
+  isCancelingSeatPayment: boolean;
+  onFinish: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Alert
+      className="border-primary/20 bg-primary/[0.04]"
+      data-testid="pending-seat-payment-notice"
+    >
+      <CreditCard className="size-4 text-primary" />
+      <AlertTitle>Seat payment required</AlertTitle>
+      <AlertDescription className="space-y-3">
+        <p>
+          Finish payment to add {intent.email}. They will not get access or
+          credits until payment succeeds.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="sm"
+            onClick={onFinish}
+            disabled={isFinishingSeatPayment || isCancelingSeatPayment}
+          >
+            {isFinishingSeatPayment ? (
+              <Loader2 className="mr-2 size-4 animate-spin" />
+            ) : (
+              <CreditCard className="mr-2 size-4" />
+            )}
+            Finish payment
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={onCancel}
+            disabled={isCompletingSeatPayment || isCancelingSeatPayment}
+          >
+            {isCancelingSeatPayment ? (
+              <Loader2 className="mr-2 size-4 animate-spin" />
+            ) : null}
+            Cancel
+          </Button>
+        </div>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+// Shared leave-organization logic used by both the access-restricted screen and
+// the settings danger zone, so removal rules and error handling stay in sync.
+function useLeaveOrganization(organization: Organization) {
+  const appNavigate = useAppNavigate();
+  const { user } = useAuth();
+  const { removeMember } = useOrganizationMutations();
+  const currentUserEmail = user?.email;
+
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+  const [isLeaving, setIsLeaving] = useState(false);
+
+  const handleLeave = async () => {
+    if (!currentUserEmail) return;
+
+    setIsLeaving(true);
+    try {
+      await removeMember({
+        organizationId: organization._id,
+        email: currentUserEmail,
+      });
+      toast.success("You have left the organization");
+      setLeaveConfirmOpen(false);
+      appNavigate("/servers");
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to leave organization");
+    } finally {
+      setIsLeaving(false);
+    }
+  };
+
+  return { leaveConfirmOpen, setLeaveConfirmOpen, isLeaving, handleLeave };
+}
+
+function LeaveOrganizationDialog({
+  organizationName,
+  open,
+  onOpenChange,
+  isLeaving,
+  onConfirm,
+}: {
+  organizationName: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  isLeaving: boolean;
+  onConfirm: () => void;
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Leave Organization?</AlertDialogTitle>
+          <AlertDialogDescription>
+            You will lose access to "{organizationName}". You'll need to be
+            re-invited to rejoin.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={isLeaving}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            // Keep the dialog open while the request is in flight; it closes
+            // on success (via handleLeave) or stays open to surface errors.
+            onClick={(event) => {
+              event.preventDefault();
+              void onConfirm();
+            }}
+            disabled={isLeaving}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          >
+            {isLeaving ? "Leaving..." : "Leave Organization"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function OrganizationAccessRestricted({
+  organization,
+}: {
+  organization: Organization;
+}) {
+  const appNavigate = useAppNavigate();
+  const { leaveConfirmOpen, setLeaveConfirmOpen, isLeaving, handleLeave } =
+    useLeaveOrganization(organization);
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full p-8">
+      <div className="text-center space-y-4 max-w-md">
+        <Building2 className="size-12 text-muted-foreground/50 mx-auto" />
+        <h2 className="text-2xl font-bold">Access restricted</h2>
+        <p className="text-muted-foreground">
+          You don't have permission to view organization settings. Contact an
+          admin or owner for access.
+        </p>
+        <div className="flex flex-col items-center gap-3">
+          <Button onClick={() => appNavigate("/servers")}>Go to Servers</Button>
+          <button
+            type="button"
+            onClick={() => setLeaveConfirmOpen(true)}
+            className="text-sm text-muted-foreground transition-colors hover:text-destructive"
+          >
+            Leave organization
+          </button>
+        </div>
+      </div>
+
+      <LeaveOrganizationDialog
+        organizationName={organization.name}
+        open={leaveConfirmOpen}
+        onOpenChange={setLeaveConfirmOpen}
+        isLeaving={isLeaving}
+        onConfirm={handleLeave}
+      />
+    </div>
+  );
+}
+
 export function OrganizationsTab({
   organizationId,
   section = "overview",
@@ -272,19 +449,7 @@ export function OrganizationsTab({
   const hasAccess = myRole === "owner" || myRole === "admin";
 
   if (!hasAccess) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full p-8">
-        <div className="text-center space-y-4 max-w-md">
-          <Building2 className="size-12 text-muted-foreground/50 mx-auto" />
-          <h2 className="text-2xl font-bold">Access restricted</h2>
-          <p className="text-muted-foreground">
-            You don't have permission to view organization settings. Contact an
-            admin or owner for access.
-          </p>
-          <Button onClick={() => appNavigate("/servers")}>Go to Servers</Button>
-        </div>
-      </div>
-    );
+    return <OrganizationAccessRestricted organization={organization} />;
   }
 
   return (
@@ -375,23 +540,31 @@ function OrganizationPage({
     pendingPlanChangeTarget,
     isOpeningPortal,
     isCancelingScheduledBillingChange,
+    activeSeatPaymentIntent,
+    isFinishingSeatPayment,
+    isCompletingSeatPayment,
+    isCancelingSeatPayment,
+    isHandlingSeatPayment,
     error: billingError,
     startPlanChange,
     openPortal,
     openCancellationPortal,
     openIntervalChangePortal,
     cancelScheduledBillingChange,
-  } = useOrganizationBilling(organization._id, { enabled: isAuthenticated });
+    finishSeatPayment,
+    cancelSeatPayment,
+  } = useOrganizationBilling(organization._id, {
+    enabled: isAuthenticated,
+    includeSeatPaymentIntent: true,
+  });
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
     "billing-entitlements-ui"
   );
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
-  const creditsUiEnabled = useCreditTopupsUiEnabled();
-  const billingSectionEnabled = billingUiEnabled || creditsUiEnabled;
   const activeSection: OrganizationRouteSection =
     section === "models"
       ? "models"
-      : billingSectionEnabled && section === "billing"
+      : section === "billing"
       ? "billing"
       : "overview";
   const memberInviteGate = resolveBillingGateState({
@@ -450,8 +623,8 @@ function OrganizationPage({
   // Delete/Leave state
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
-  const [isLeaving, setIsLeaving] = useState(false);
+  const { leaveConfirmOpen, setLeaveConfirmOpen, isLeaving, handleLeave } =
+    useLeaveOrganization(organization);
   const [
     scheduledBillingChangeConfirmOpen,
     setScheduledBillingChangeConfirmOpen,
@@ -545,18 +718,24 @@ function OrganizationPage({
       );
       return;
     }
+    const email = inviteEmail.trim();
     setIsInviting(true);
     try {
       const result = await addMember({
         organizationId: organization._id,
-        email: inviteEmail.trim(),
+        email,
       });
+      if (result.needsSeatPayment) {
+        setInviteEmail("");
+        await handleFinishSeatPayment(result.seatPaymentIntentId, email);
+        return;
+      }
       if (result.isPending) {
         toast.success(
-          `Invitation sent to ${inviteEmail}. They'll get access once they sign up.`
+          `Invitation sent to ${email}. They'll get access once they sign up.`
         );
       } else {
-        toast.success(`${inviteEmail} added to the organization.`);
+        toast.success(`${email} added to the organization.`);
       }
       setInviteEmail("");
     } catch (error) {
@@ -569,6 +748,39 @@ function OrganizationPage({
       );
     } finally {
       setIsInviting(false);
+    }
+  };
+
+  const handleFinishSeatPayment = async (
+    seatPaymentIntentId?: string,
+    email?: string
+  ) => {
+    try {
+      const result = await finishSeatPayment(seatPaymentIntentId);
+      if (result.status === "paid") {
+        toast.success(
+          `${email ?? activeSeatPaymentIntent?.email ?? "Member"} added to the organization.`
+        );
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Payment was not completed. The member was not added."
+      );
+    }
+  };
+
+  const handleCancelSeatPayment = async () => {
+    try {
+      await cancelSeatPayment();
+      toast.success("Pending seat payment canceled.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to cancel pending seat payment"
+      );
     }
   };
 
@@ -656,25 +868,6 @@ function OrganizationPage({
       toast.error((error as Error).message || "Failed to delete organization");
     } finally {
       setIsDeleting(false);
-    }
-  };
-
-  const handleLeave = async () => {
-    if (!currentUserEmail) return;
-
-    setIsLeaving(true);
-    try {
-      await removeMember({
-        organizationId: organization._id,
-        email: currentUserEmail,
-      });
-      toast.success("You have left the organization");
-      setLeaveConfirmOpen(false);
-      appNavigate("/servers");
-    } catch (error) {
-      toast.error((error as Error).message || "Failed to leave organization");
-    } finally {
-      setIsLeaving(false);
     }
   };
 
@@ -905,9 +1098,25 @@ function OrganizationPage({
     ]
   );
 
+  const pendingSeatPaymentNotice =
+    activeSeatPaymentIntent && billingStatus?.canManageBilling ? (
+      <PendingSeatPaymentNotice
+        intent={activeSeatPaymentIntent}
+        isFinishingSeatPayment={isFinishingSeatPayment}
+        isCompletingSeatPayment={isCompletingSeatPayment}
+        isCancelingSeatPayment={isCancelingSeatPayment}
+        onFinish={() => void handleFinishSeatPayment()}
+        onCancel={() => void handleCancelSeatPayment()}
+      />
+    ) : null;
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-5xl space-y-6 p-4 md:p-5">
+        <SettingsNav
+          active="organization"
+          activeOrganizationId={organization._id}
+        />
         <Card className="overflow-hidden border-border/60">
           <CardContent className="space-y-5 p-5">
             <div className="flex flex-col gap-4 md:flex-row md:items-center">
@@ -998,21 +1207,19 @@ function OrganizationPage({
             >
               Models
             </button>
-            {billingSectionEnabled ? (
-              <button
-                type="button"
-                onClick={() => navigateToSection("billing")}
-                aria-current={activeSection === "billing" ? "page" : undefined}
-                className={cn(
-                  "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
-                  activeSection === "billing"
-                    ? "border-primary text-foreground"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
-                )}
-              >
-                Billing
-              </button>
-            ) : null}
+            <button
+              type="button"
+              onClick={() => navigateToSection("billing")}
+              aria-current={activeSection === "billing" ? "page" : undefined}
+              className={cn(
+                "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
+                activeSection === "billing"
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              )}
+            >
+              Billing
+            </button>
           </nav>
         </Card>
 
@@ -1023,10 +1230,11 @@ function OrganizationPage({
           />
         ) : activeSection === "billing" ? (
           <>
+            {pendingSeatPaymentNotice}
             <OrganizationBillingSection
               organizationId={organization._id}
               showPlanBilling={billingUiEnabled}
-              showCredits={creditsUiEnabled}
+              showCredits
               billingStatus={billingStatus}
               organizationName={organization.name}
               canManageCredits={canEdit || organization.isCreator === true}
@@ -1068,14 +1276,17 @@ function OrganizationPage({
                             billingStatus={billingStatus}
                             planCatalog={planCatalog}
                             isLoadingPlanCatalog={isLoadingPlanCatalog}
-                            onChangeBillingInterval={handleChangeBillingInterval}
+                            onChangeBillingInterval={
+                              handleChangeBillingInterval
+                            }
                             onCancelScheduledBillingChange={
                               scheduledBillingChangeCancellation
                                 ? handleOpenScheduledBillingChangeCancelDialog
                                 : undefined
                             }
                             cancelScheduledBillingChangeLabel={
-                              scheduledBillingChangeCancellation?.ctaLabel ?? null
+                              scheduledBillingChangeCancellation?.ctaLabel ??
+                              null
                             }
                             onManageBilling={handleManageBilling}
                             isOpeningPortal={isOpeningPortal}
@@ -1116,6 +1327,7 @@ function OrganizationPage({
               <CardContent className="space-y-4 pt-0">
                 {canInvite ? (
                   <div className="space-y-3">
+                    {pendingSeatPaymentNotice}
                     <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
                       <Input
                         placeholder="Email address"
@@ -1133,12 +1345,15 @@ function OrganizationPage({
                         disabled={
                           !inviteEmail.trim() ||
                           isInviting ||
+                          isHandlingSeatPayment ||
                           memberInviteGate.isLoading ||
                           memberInviteGate.isDenied
                         }
                       >
                         <UserPlus className="mr-2 size-4" />
-                        {isInviting ? "Inviting..." : "Add member"}
+                        {isInviting || isHandlingSeatPayment
+                          ? "Working..."
+                          : "Add member"}
                       </Button>
                     </div>
 
@@ -1438,8 +1653,8 @@ function OrganizationPage({
                     , after which the organization returns to Free.
                   </span>
                   <span className="block">
-                    Once cancellation is scheduled, you can't change your billing
-                    interval (monthly or annual) until you reactivate.
+                    Once cancellation is scheduled, you can't change your
+                    billing interval (monthly or annual) until you reactivate.
                   </span>
                 </>
               ) : (
@@ -1501,27 +1716,13 @@ function OrganizationPage({
       </AlertDialog>
 
       {/* Leave Confirmation */}
-      <AlertDialog open={leaveConfirmOpen} onOpenChange={setLeaveConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Leave Organization?</AlertDialogTitle>
-            <AlertDialogDescription>
-              You will lose access to "{organization.name}". You'll need to be
-              re-invited to rejoin.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleLeave}
-              disabled={isLeaving}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {isLeaving ? "Leaving..." : "Leave Organization"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <LeaveOrganizationDialog
+        organizationName={organization.name}
+        open={leaveConfirmOpen}
+        onOpenChange={setLeaveConfirmOpen}
+        isLeaving={isLeaving}
+        onConfirm={handleLeave}
+      />
     </div>
   );
 }

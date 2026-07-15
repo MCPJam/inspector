@@ -12,6 +12,14 @@ export type BuiltInToolCatalogEntry = {
   description: string;
   category: string;
   billable: boolean;
+  /**
+   * True for computer-backed capabilities (e.g. `bash`): only attachable to a
+   * host that also carries a personal `computer`. The editor disables the
+   * checkbox until a computer is attached, mirroring the backend write-time
+   * invariant (`ensureHostConfigV2` rejects the id without the resource).
+   * Optional so an older backend that predates the column reads as `false`.
+   */
+  requiresComputer?: boolean;
 };
 
 /**
@@ -27,6 +35,6 @@ export type BuiltInToolCatalogEntry = {
 export function useBuiltInToolCatalog(): BuiltInToolCatalogEntry[] | undefined {
   return useQuery(
     "builtInTools/catalog:listBuiltInTools" as never,
-    {} as never,
+    {} as never
   ) as BuiltInToolCatalogEntry[] | undefined;
 }

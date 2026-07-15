@@ -1,14 +1,28 @@
 import { describe, it, expect } from "vitest";
 import {
+  appendToolCallsForPrompt,
   argumentsMatch,
+  computeSkillAdherence,
+  hasSkillTools,
+  isSkillToolName,
   matchToolCalls,
   resolveCasePredicates,
   resolveCaseSuccessPredicates,
   resolveExtrasCap,
+  SKILL_TOOL_NAMES,
+  summarizeRenderObservations,
+  mergeToolCallsByPromptIndex,
+  widgetCallToToolCall,
+  widgetToolCallsByPromptIndex,
+  widgetToolCallsToToolCalls,
   type ToolCall,
   type Predicate,
   type CasePredicates,
 } from "../eval-matching.js";
+import type {
+  RunnerBrowserInteractionStep,
+  RunnerWidgetRenderObservation,
+} from "../eval-trace.js";
 
 describe("argumentsMatch", () => {
   it("returns true for empty expected args", () => {
@@ -393,5 +407,230 @@ describe("resolveExtrasCap", () => {
     expect(
       resolveExtrasCap({ maxExtraToolCalls: null, allowExtraToolCalls: false }),
     ).toBeNull();
+  });
+});
+
+describe("skill tool identification", () => {
+  it("SKILL_TOOL_NAMES covers both delivery paths", () => {
+    expect(SKILL_TOOL_NAMES).toContain("listSkills"); // cloud discovery
+    expect(SKILL_TOOL_NAMES).toContain("loadSkill"); // both paths
+    expect(SKILL_TOOL_NAMES).toContain("listSkillFiles"); // supporting files
+    expect(SKILL_TOOL_NAMES).toContain("readSkillFile");
+  });
+
+  it("isSkillToolName is exact (no substring / non-skill tools)", () => {
+    expect(isSkillToolName("loadSkill")).toBe(true);
+    expect(isSkillToolName("listSkills")).toBe(true);
+    expect(isSkillToolName("loadSkillFoo")).toBe(false);
+    expect(isSkillToolName("save")).toBe(false);
+    expect(isSkillToolName("bash")).toBe(false);
+  });
+
+  it("hasSkillTools detects any skill tool, across both paths", () => {
+    expect(hasSkillTools(["bash", "save"])).toBe(false);
+    expect(hasSkillTools(["bash", "listSkills"])).toBe(true); // cloud
+    expect(hasSkillTools(["loadSkill"])).toBe(true); // local FS
+    expect(hasSkillTools([])).toBe(false);
+  });
+});
+
+describe("computeSkillAdherence", () => {
+  const load = (name: string) => ({ toolName: "loadSkill", arguments: { name } });
+  const act = (toolName: string) => ({ toolName, arguments: {} });
+
+  it("returns undefined when there are no expected skills", () => {
+    expect(computeSkillAdherence(undefined, [load("pdf")])).toBeUndefined();
+    expect(computeSkillAdherence([], [load("pdf")])).toBeUndefined();
+  });
+
+  it("is adherent when every expected skill loads before the first action", () => {
+    const res = computeSkillAdherence(
+      ["pdf"],
+      [act("listSkills"), load("pdf"), act("save")],
+    );
+    expect(res?.adherent).toBe(true);
+    expect(res?.loadedBeforeFirstAction).toEqual(["pdf"]);
+    expect(res?.loadedSkills).toEqual(["pdf"]);
+  });
+
+  it("is NOT adherent when the skill loads after the first action", () => {
+    const res = computeSkillAdherence(["pdf"], [act("save"), load("pdf")]);
+    expect(res?.adherent).toBe(false);
+    expect(res?.loadedBeforeFirstAction).toEqual([]);
+    // Still recorded as loaded (just too late).
+    expect(res?.loadedSkills).toEqual(["pdf"]);
+  });
+
+  it("is NOT adherent when an expected skill is never loaded", () => {
+    const res = computeSkillAdherence(["pdf", "viz"], [load("pdf"), act("save")]);
+    expect(res?.adherent).toBe(false);
+    expect(res?.loadedBeforeFirstAction).toEqual(["pdf"]);
+  });
+
+  it("treats skill tools as housekeeping (not the first action)", () => {
+    // listSkills + loadSkill before an action → still adherent.
+    const res = computeSkillAdherence(
+      ["pdf"],
+      [act("listSkills"), act("loadSkill" as never), load("pdf"), act("run")],
+    );
+    expect(res?.adherent).toBe(true);
+  });
+});
+
+describe("summarizeRenderObservations", () => {
+  const observation = (
+    over: Partial<RunnerWidgetRenderObservation> = {},
+  ): RunnerWidgetRenderObservation => ({
+    toolCallId: "call-1",
+    toolName: "show_map",
+    serverId: "maps",
+    status: "rendered",
+    elapsedMs: 850,
+    ts: 1700000000000,
+    promptIndex: 0,
+    ...over,
+  });
+
+  it("returns an empty array for absent/empty input", () => {
+    expect(summarizeRenderObservations(undefined)).toEqual([]);
+    expect(summarizeRenderObservations([])).toEqual([]);
+  });
+
+  it("keeps only the predicate-relevant fields and drops the screenshot", () => {
+    const summaries = summarizeRenderObservations([
+      observation({
+        screenshotBase64: "aaaa",
+        blockedRequests: ["https://blocked.example"],
+        resourceUri: "ui://widget",
+        consoleErrors: ["TypeError: boom"],
+      }),
+    ]);
+    expect(summaries).toEqual([
+      {
+        toolCallId: "call-1",
+        toolName: "show_map",
+        serverId: "maps",
+        status: "rendered",
+        elapsedMs: 850,
+        consoleErrors: ["TypeError: boom"],
+      },
+    ]);
+  });
+
+  it("omits consoleErrors when empty so absence stays meaningful", () => {
+    const [summary] = summarizeRenderObservations([
+      observation({ consoleErrors: [] }),
+    ]);
+    expect(summary).not.toHaveProperty("consoleErrors");
+  });
+});
+
+describe("widget tool calls → transcript tool calls", () => {
+  const step = (
+    partial: Partial<RunnerBrowserInteractionStep>,
+  ): RunnerBrowserInteractionStep => ({
+    toolCallId: "tc",
+    stepIndex: 0,
+    promptIndex: 0,
+    action: "left_click",
+    elapsedMs: 1,
+    ts: 0,
+    ...partial,
+  });
+
+  it("widgetCallToToolCall maps name/args and coerces non-object args to {}", () => {
+    expect(
+      widgetCallToToolCall({ name: "checkout", args: { cartId: "c1" } }),
+    ).toEqual({ toolName: "checkout", arguments: { cartId: "c1" } });
+    // A non-object payload (sanitized `unknown`) must not corrupt arg matching.
+    expect(widgetCallToToolCall({ name: "x", args: "oops" })).toEqual({
+      toolName: "x",
+      arguments: {},
+    });
+    expect(widgetCallToToolCall({ name: "y", args: null })).toEqual({
+      toolName: "y",
+      arguments: {},
+    });
+  });
+
+  it("flattens widget calls across steps in order", () => {
+    const calls = widgetToolCallsToToolCalls([
+      step({
+        widgetToolCalls: [
+          { name: "a", args: {}, ok: true, elapsedMs: 1 },
+          { name: "b", args: { k: 1 }, ok: true, elapsedMs: 1 },
+        ],
+      }),
+      step({}), // no widget calls
+      step({ widgetToolCalls: [{ name: "c", args: {}, ok: true, elapsedMs: 1 }] }),
+    ]);
+    expect(calls.map((c) => c.toolName)).toEqual(["a", "b", "c"]);
+  });
+
+  it("groups widget calls by promptIndex (sparse) and merges per turn without losing model calls", () => {
+    const byPrompt = widgetToolCallsByPromptIndex([
+      step({
+        promptIndex: 2,
+        widgetToolCalls: [{ name: "checkout", args: {}, ok: true, elapsedMs: 1 }],
+      }),
+    ]);
+    expect(byPrompt[0]).toBeUndefined();
+    expect(byPrompt[2]).toEqual([{ toolName: "checkout", arguments: {} }]);
+
+    const model: ToolCall[][] = [[{ toolName: "search", arguments: {} }]];
+    const merged = mergeToolCallsByPromptIndex(model, byPrompt);
+    expect(merged[0]).toEqual([{ toolName: "search", arguments: {} }]);
+    expect(merged[2]).toEqual([{ toolName: "checkout", arguments: {} }]);
+  });
+});
+
+describe("appendToolCallsForPrompt", () => {
+  const call = (name: string, args: Record<string, unknown> = {}): ToolCall => ({
+    toolName: name,
+    arguments: args,
+  });
+
+  it("creates the bucket on first write for a fresh turn", () => {
+    const buckets: ToolCall[][] = [];
+    appendToolCallsForPrompt(buckets, 0, [call("search-products")]);
+    expect(buckets[0]).toEqual([call("search-products")]);
+  });
+
+  it("folds a widget follow-up's calls INTO the parent turn's bucket", () => {
+    // Parent authored turn (promptIndex 0) calls search-products; clicking the
+    // cart fires a `ui/message` follow-up that REUSES promptIndex 0 and the
+    // model calls view-cart. Both must land in bucket 0 — never an orphan slot.
+    const buckets: ToolCall[][] = [];
+    appendToolCallsForPrompt(buckets, 0, [call("search-products", { query: "redbull" })]);
+    appendToolCallsForPrompt(buckets, 0, [call("view-cart")]);
+    expect(buckets).toHaveLength(1);
+    expect(buckets[0]).toEqual([
+      call("search-products", { query: "redbull" }),
+      call("view-cart"),
+    ]);
+  });
+
+  it("keeps later authored turns aligned with their promptIndex despite a follow-up", () => {
+    // Drive order: turn0, follow-up(of turn0), turn1. Without index-based
+    // folding the follow-up would push an orphan slot and shift turn1's bucket.
+    const buckets: ToolCall[][] = [];
+    appendToolCallsForPrompt(buckets, 0, [call("t0")]);
+    appendToolCallsForPrompt(buckets, 0, [call("t0-followup")]); // shares ordinal 0
+    appendToolCallsForPrompt(buckets, 1, [call("t1")]);
+    expect(buckets).toHaveLength(2);
+    expect(buckets[0]).toEqual([call("t0"), call("t0-followup")]);
+    expect(buckets[1]).toEqual([call("t1")]);
+  });
+
+  it("preserves an empty-bucket write so the turn index stays occupied", () => {
+    const buckets: ToolCall[][] = [];
+    appendToolCallsForPrompt(buckets, 0, []);
+    expect(buckets[0]).toEqual([]);
+  });
+
+  it("is a no-op for a negative promptIndex (no active turn)", () => {
+    const buckets: ToolCall[][] = [];
+    appendToolCallsForPrompt(buckets, -1, [call("x")]);
+    expect(buckets).toEqual([]);
   });
 });

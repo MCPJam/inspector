@@ -88,7 +88,9 @@ vi.mock("@mcpjam/design-system/dropdown-menu", async () => {
         onOpenChange?.(next);
       };
       return (
-        <Ctx.Provider value={{ open: isOpen, setOpen }}>{children}</Ctx.Provider>
+        <Ctx.Provider value={{ open: isOpen, setOpen }}>
+          {children}
+        </Ctx.Provider>
       );
     },
     DropdownMenuTrigger: ({
@@ -103,7 +105,7 @@ vi.mock("@mcpjam/design-system/dropdown-menu", async () => {
       if (asChild && React.isValidElement(children)) {
         return React.cloneElement(
           children as React.ReactElement<{ onClick?: () => void }>,
-          { onClick: handleClick },
+          { onClick: handleClick }
         );
       }
       return (
@@ -197,11 +199,13 @@ const projects = {
 
 function openMainDropdown() {
   // Trigger button has aria-label "Switch context: …" or "Switch project: …".
-  fireEvent.click(screen.getByRole("button", { name: /^Switch (context|project):/ }));
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Switch (context|project):/ })
+  );
 }
 
-function openChipPopover() {
-  fireEvent.click(screen.getByTestId("org-chip-button"));
+function openOrgSwitchList() {
+  fireEvent.click(screen.getByTestId("switch-org-button"));
 }
 
 describe("SidebarContextSwitcher", () => {
@@ -239,16 +243,15 @@ describe("SidebarContextSwitcher", () => {
       />
     );
     // Closed: menu content is absent.
-    expect(screen.queryByText("Organization")).not.toBeInTheDocument();
     expect(screen.queryByText("Projects")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("org-chip-button")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("org-context-row")).not.toBeInTheDocument();
     // Open: clicking the trigger reveals the menu.
     openMainDropdown();
-    expect(screen.getByText("Organization")).toBeInTheDocument();
-    expect(screen.getByTestId("org-chip-button")).toBeInTheDocument();
+    expect(screen.getByText("Projects")).toBeInTheDocument();
+    expect(screen.getByTestId("org-context-row")).toBeInTheDocument();
     // Close: clicking the trigger again hides it.
     openMainDropdown();
-    expect(screen.queryByText("Organization")).not.toBeInTheDocument();
+    expect(screen.queryByText("Projects")).not.toBeInTheDocument();
   });
 
   it("renders trigger with project name and active org name", () => {
@@ -267,7 +270,7 @@ describe("SidebarContextSwitcher", () => {
     expect(screen.getAllByText("Acme").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("shows the active org in the chip header and projects in the body by default", () => {
+  it("shows projects in the body and the active org as a footer row", () => {
     render(
       <SidebarContextSwitcher
         activeProjectId="p1"
@@ -279,16 +282,18 @@ describe("SidebarContextSwitcher", () => {
       />
     );
     openMainDropdown();
-    // Chip header label
-    expect(screen.getByText("Organization")).toBeInTheDocument();
     // Projects body label
     expect(screen.getByText("Projects")).toBeInTheDocument();
     // Active org's projects rendered in body
     expect(screen.getByText("Sandbox")).toBeInTheDocument();
     // Other orgs' projects not in body by default
     expect(screen.queryByText("Nimbus Project")).not.toBeInTheDocument();
-    // Org popover is closed by default
-    expect(screen.queryByTestId("org-popover")).not.toBeInTheDocument();
+    // Active org name appears in the footer context row
+    expect(
+      within(screen.getByTestId("org-context-row")).getByText("Acme")
+    ).toBeInTheDocument();
+    // The org switch list is collapsed by default
+    expect(screen.queryByTestId("org-switch-list")).not.toBeInTheDocument();
   });
 
   it("shows the active org's credit usage right below the org", () => {
@@ -308,7 +313,7 @@ describe("SidebarContextSwitcher", () => {
     expect(creditUsage).toHaveAttribute("data-variant", "full");
   });
 
-  it("opens the org popover when chip is clicked, listing all organizations", () => {
+  it("expands the org switch list when 'Switch organization' is clicked, listing all organizations", () => {
     render(
       <SidebarContextSwitcher
         activeProjectId="p1"
@@ -320,13 +325,16 @@ describe("SidebarContextSwitcher", () => {
       />
     );
     openMainDropdown();
-    openChipPopover();
-    expect(screen.getByTestId("org-popover")).toBeInTheDocument();
+    openOrgSwitchList();
+    expect(screen.getByTestId("org-switch-list")).toBeInTheDocument();
     expect(screen.getByTestId("org-row-org_a")).toBeInTheDocument();
     expect(screen.getByTestId("org-row-org_b")).toBeInTheDocument();
+    // Clicking the toggle again collapses the list
+    openOrgSwitchList();
+    expect(screen.queryByTestId("org-switch-list")).not.toBeInTheDocument();
   });
 
-  it("clicking an org in the popover commits the switch via onSwitchActiveOrganization (no navigation)", () => {
+  it("clicking an org in the switch list commits the switch via onSwitchActiveOrganization (no navigation)", () => {
     const onSwitchOrganization = vi.fn();
     const onSwitchActiveOrganization = vi.fn();
     render(
@@ -342,16 +350,16 @@ describe("SidebarContextSwitcher", () => {
       />
     );
     openMainDropdown();
-    openChipPopover();
+    openOrgSwitchList();
     fireEvent.click(screen.getByTestId("org-row-org_b"));
     expect(onSwitchActiveOrganization).toHaveBeenCalledWith("org_b");
     // The navigating handler must NOT fire — staying on the current page is the point.
     expect(onSwitchOrganization).not.toHaveBeenCalled();
-    // Popover auto-closes
-    expect(screen.queryByTestId("org-popover")).not.toBeInTheDocument();
+    // The whole menu closes after switching
+    expect(screen.queryByTestId("org-switch-list")).not.toBeInTheDocument();
   });
 
-  it("clicking the already-active org in the popover does not call onSwitchActiveOrganization", () => {
+  it("clicking the already-active org in the switch list does not call onSwitchActiveOrganization", () => {
     const onSwitchActiveOrganization = vi.fn();
     render(
       <SidebarContextSwitcher
@@ -365,12 +373,12 @@ describe("SidebarContextSwitcher", () => {
       />
     );
     openMainDropdown();
-    openChipPopover();
+    openOrgSwitchList();
     fireEvent.click(screen.getByTestId("org-row-org_a"));
     expect(onSwitchActiveOrganization).not.toHaveBeenCalled();
   });
 
-  it("clicking the gear icon in an org popover row navigates via onSwitchOrganization", () => {
+  it("clicking the gear icon in an org switch row navigates via onSwitchOrganization", () => {
     const onSwitchOrganization = vi.fn();
     render(
       <SidebarContextSwitcher
@@ -384,15 +392,36 @@ describe("SidebarContextSwitcher", () => {
       />
     );
     openMainDropdown();
-    openChipPopover();
-    const popover = screen.getByTestId("org-popover");
+    openOrgSwitchList();
+    const list = screen.getByTestId("org-switch-list");
     fireEvent.click(
-      within(popover).getByRole("button", { name: "Open Acme settings" })
+      within(list).getByRole("button", { name: "Open Acme settings" })
     );
     expect(onSwitchOrganization).toHaveBeenCalledWith("org_a", "overview");
   });
 
-  it("renders the gear icon for every org in the popover regardless of role", () => {
+  it("clicking the footer org row gear opens the active org's settings", () => {
+    const onSwitchOrganization = vi.fn();
+    render(
+      <SidebarContextSwitcher
+        activeProjectId="p1"
+        activeOrganizationId="org_a"
+        projects={projects}
+        onSwitchProject={vi.fn()}
+        onCreateProject={vi.fn(async () => "")}
+        onDeleteProject={vi.fn()}
+        onSwitchOrganization={onSwitchOrganization}
+      />
+    );
+    openMainDropdown();
+    const footerRow = screen.getByTestId("org-context-row");
+    fireEvent.click(
+      within(footerRow).getByRole("button", { name: "Open Acme settings" })
+    );
+    expect(onSwitchOrganization).toHaveBeenCalledWith("org_a", "overview");
+  });
+
+  it("renders the gear icon for every org in the switch list regardless of role", () => {
     render(
       <SidebarContextSwitcher
         activeProjectId="p1"
@@ -405,13 +434,13 @@ describe("SidebarContextSwitcher", () => {
       />
     );
     openMainDropdown();
-    openChipPopover();
-    const popover = screen.getByTestId("org-popover");
+    openOrgSwitchList();
+    const list = screen.getByTestId("org-switch-list");
     expect(
-      within(popover).getByRole("button", { name: "Open Acme settings" })
+      within(list).getByRole("button", { name: "Open Acme settings" })
     ).toBeInTheDocument();
     expect(
-      within(popover).getByRole("button", { name: "Open Nimbus settings" })
+      within(list).getByRole("button", { name: "Open Nimbus settings" })
     ).toBeInTheDocument();
   });
 
@@ -626,7 +655,7 @@ describe("SidebarContextSwitcher", () => {
     expect(screen.getByTitle("2 more")).toBeInTheDocument();
   });
 
-  it("clicking the 'New organization' header button opens the create org dialog", () => {
+  it("offers 'New organization' at the bottom of the switch list and opens the create org dialog", () => {
     render(
       <SidebarContextSwitcher
         activeProjectId="p1"
@@ -638,6 +667,11 @@ describe("SidebarContextSwitcher", () => {
       />
     );
     openMainDropdown();
+    // Not visible until the switch list is expanded — it's a rare action.
+    expect(
+      screen.queryByRole("button", { name: "New organization" })
+    ).not.toBeInTheDocument();
+    openOrgSwitchList();
     fireEvent.click(screen.getByRole("button", { name: "New organization" }));
     expect(mockCreateOrgDialog).toHaveBeenCalled();
     const lastCall = mockCreateOrgDialog.mock.calls.at(-1)?.[0] as {
@@ -646,7 +680,7 @@ describe("SidebarContextSwitcher", () => {
     expect(lastCall.open).toBe(true);
   });
 
-  it("disables the 'New organization' button when the user has reached the creation limit", () => {
+  it("omits the 'New organization' button entirely when the user has reached the creation limit", () => {
     mockUseOrganizationQueries.mockReturnValue({
       sortedOrganizations: orgs,
       isLoading: false,
@@ -664,13 +698,10 @@ describe("SidebarContextSwitcher", () => {
       />
     );
     openMainDropdown();
-    const button = screen.getByRole("button", { name: "New organization" });
-    expect(button).toBeDisabled();
-    fireEvent.click(button);
-    const lastCall = mockCreateOrgDialog.mock.calls.at(-1)?.[0] as
-      | { open: boolean }
-      | undefined;
-    expect(lastCall?.open ?? false).toBe(false);
+    openOrgSwitchList();
+    expect(
+      screen.queryByRole("button", { name: "New organization" })
+    ).not.toBeInTheDocument();
   });
 
   it("clicking the 'Add project' header button calls onCreateProject with a unique name", () => {
@@ -794,7 +825,7 @@ describe("SidebarContextSwitcher", () => {
     );
   });
 
-  it("edge case: single org and single project still renders chip and full menu affordances", () => {
+  it("single org: hides the switch affordance and shows org context plus direct create row", () => {
     mockUseOrganizationQueries.mockReturnValue({
       sortedOrganizations: [orgs[0]],
       isLoading: false,
@@ -813,17 +844,76 @@ describe("SidebarContextSwitcher", () => {
     );
     openMainDropdown();
     expect(screen.getAllByText("Inspector").length).toBeGreaterThanOrEqual(1);
-    // Chip is rendered
-    expect(screen.getByTestId("org-chip-button")).toBeInTheDocument();
-    // Open the chip popover; the single org row is visible
-    openChipPopover();
-    expect(screen.getByTestId("org-row-org_a")).toBeInTheDocument();
-    // Section-header affordances are always visible (no popover required)
+    // Nothing to switch to → no switch affordance at all
+    expect(screen.queryByTestId("switch-org-button")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("org-switch-list")).not.toBeInTheDocument();
+    // Org still shown as ambient context in the footer
+    expect(
+      within(screen.getByTestId("org-context-row")).getByText("Acme")
+    ).toBeInTheDocument();
+    // With no owned org, create is offered directly in the footer
     expect(
       screen.getByRole("button", { name: "New organization" })
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Add project" })
     ).toBeInTheDocument();
+  });
+
+  it("single org owned by the user: footer has no switch or create affordances", () => {
+    mockUseOrganizationQueries.mockReturnValue({
+      sortedOrganizations: [orgs[0]],
+      isLoading: false,
+      createdCount: 1,
+      canCreateOrganization: false,
+    });
+    render(
+      <SidebarContextSwitcher
+        activeProjectId="p1"
+        activeOrganizationId="org_a"
+        projects={{ p1: projects.p1 }}
+        onSwitchProject={vi.fn()}
+        onCreateProject={vi.fn(async () => "")}
+        onDeleteProject={vi.fn()}
+      />
+    );
+    openMainDropdown();
+    expect(screen.queryByTestId("switch-org-button")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "New organization" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("guest: footer shows a sign-in row that triggers sign in", () => {
+    const signIn = vi.fn();
+    mockUseAuth.mockReturnValue({ user: null, signIn });
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+    });
+    mockUseOrganizationQueries.mockReturnValue({
+      sortedOrganizations: [],
+      isLoading: false,
+      createdCount: 0,
+      canCreateOrganization: true,
+    });
+    render(
+      <SidebarContextSwitcher
+        activeProjectId="p1"
+        projects={{ p1: { ...projects.p1, organizationId: undefined } }}
+        onSwitchProject={vi.fn()}
+        onCreateProject={vi.fn(async () => "")}
+        onDeleteProject={vi.fn()}
+      />
+    );
+    openMainDropdown();
+    // No org context, switch, or create affordances for guests
+    expect(screen.queryByTestId("org-context-row")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("switch-org-button")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "New organization" })
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("org-sign-in-button"));
+    expect(signIn).toHaveBeenCalled();
   });
 });
