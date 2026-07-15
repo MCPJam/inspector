@@ -131,6 +131,11 @@ as the test identity provider, puts in the ID token. Leave them blank to use
 your signed-in account. Change them to test how your authorization server
 handles a specific user.
 
+A **Run as** person selected in the chip strip above takes precedence over
+these fields. The per-server identity takes precedence over the global
+run-settings default. See [Run as a Test Identity](#run-as-a-test-identity)
+for the full precedence order.
+
 Your authorization server must validate MCPJam's ID-JAG before issuing an
 access token. It may also apply its own policy to decide which users are
 allowed.
