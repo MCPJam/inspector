@@ -9,7 +9,13 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { Switch } from "@mcpjam/design-system/switch";
-import { isKnownProtocolVersion, XAA_MCP_EXTENSION } from "@mcpjam/sdk/browser";
+import {
+  isKnownProtocolVersion,
+  readXaaEnterprisePolicy,
+  withXaaEnterprisePolicy,
+  withoutXaaEnterprisePolicy,
+  XAA_MCP_EXTENSION,
+} from "@mcpjam/sdk/browser";
 import {
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
@@ -63,6 +69,15 @@ type ProtocolDoc = {
    */
   mcpProtocolVersion?: McpProtocolVersion;
   capabilities?: Record<string, unknown>;
+  /**
+   * Host-level MCP profile extensions (`mcpProfile.extensions`) — freeform
+   * JSON deep-sorted into the canonical hash. Carries the enterprise-managed
+   * authorization policy under `com.mcpjam/enterprise-managed-auth` (the
+   * Switch above the editor is its structured control). Distinct from
+   * `capabilities.extensions`, which are the wire `initialize` capability
+   * extensions.
+   */
+  extensions?: Record<string, unknown>;
   connectionDefaults: {
     requestTimeout: number;
     headers?: Record<string, string>;
@@ -117,6 +132,12 @@ function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
     Object.keys(draft.clientCapabilities).length > 0
   ) {
     doc.capabilities = draft.clientCapabilities;
+  }
+
+  // Surface mcpProfile.extensions only when set — absence is semantic (no
+  // extensions key hashes byte-identically to a pre-feature row).
+  if (draft.mcpProfile?.extensions !== undefined) {
+    doc.extensions = draft.mcpProfile.extensions as Record<string, unknown>;
   }
 
   const headers = draft.connectionDefaults.headers ?? {};
@@ -287,6 +308,20 @@ function applyJsonToDraft(
       ? { ...cleanIncoming, [prevAuthKey]: prevHeaders[prevAuthKey] }
       : cleanIncoming;
 
+  // mcpProfile.extensions — PARSED-AUTHORITATIVE now that the editor
+  // surfaces the key: deleting it in the JSON clears the stored extensions
+  // (including the enterprise-auth policy), editing it wins over the
+  // previous value. An explicit `{}` collapses to absent like the other
+  // tri-state fields, so hand-emptying the object doesn't churn the
+  // canonical hash against a pre-feature row.
+  let profileExtensions: Record<string, unknown> | undefined;
+  if (
+    isPlainObject(parsed.extensions) &&
+    Object.keys(parsed.extensions).length > 0
+  ) {
+    profileExtensions = parsed.extensions;
+  }
+
   // Build the new mcpProfile envelope, collapsing to undefined when empty so
   // the canonical hash stays stable with the form-based editor's outputs.
   const nextProfile = patchProfile(prev.mcpProfile, (base) => {
@@ -303,6 +338,7 @@ function applyJsonToDraft(
       ...base,
       initialize: initHasFields ? initialize : undefined,
       mcpProtocolVersion,
+      extensions: profileExtensions,
     };
 
     const allEmpty =
@@ -372,15 +408,29 @@ export function ProtocolTab({
   // Shared with the cross-host comparison matrix via the field schema.
   const fProtocolVersion = hostConfigField("mcpProtocolVersion");
 
-  // Default-advertisement control, not an XAA on/off: the connect surfaces
-  // re-merge the extension whenever a server's effective auth method is
-  // XAA (withXaaExtensionCapability), regardless of this Switch. The copy
-  // below says so — the toggle governs the stored baseline only.
-  const emaAdvertised = hasEmaExtension(draft.clientCapabilities);
-  const setEmaAdvertised = (next: boolean) => {
-    onDraftChange((prev) =>
-      next ? withEmaExtension(prev) : withoutEmaExtension(prev)
-    );
+  // Enterprise-managed authorization POLICY (simulates Claude's org-admin
+  // "authorize once for the whole org"): when on, every HTTP server whose
+  // auth method is Auto resolves to XAA via the host's IdP; explicit
+  // per-server methods override; unregistered servers fail to connect with
+  // a first-class error instead of silently falling back to OAuth. Stored
+  // under mcpProfile.extensions (surfaced in the JSON editor below); the
+  // EMA capability advertisement is DERIVED from the policy at connect
+  // time, no longer independently stored by this Switch.
+  const policyState = readXaaEnterprisePolicy(draft.mcpProfile);
+  const policyOn = policyState.kind === "on";
+  const policyInvalid = policyState.kind === "invalid";
+  const setPolicyOn = (next: boolean) => {
+    onDraftChange((prev) => {
+      const profile = prev.mcpProfile as Record<string, unknown> | undefined;
+      return {
+        ...prev,
+        mcpProfile: (next
+          ? withXaaEnterprisePolicy(profile)
+          : withoutXaaEnterprisePolicy(profile)) as
+          | HostConfigMcpProfileV1
+          | undefined,
+      };
+    });
   };
 
   return (
@@ -415,19 +465,27 @@ export function ProtocolTab({
         <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
           <div className="min-w-0">
             <span className="text-[12px] font-medium">
-              Advertise EMA support by default
+              Enterprise-managed authorization
             </span>
             <p className="text-[11px] leading-snug text-muted-foreground">
-              Adds the enterprise-managed-authorization extension to this
-              host&apos;s initialize capabilities. XAA-configured connections
-              always advertise it regardless of this setting.
+              Route every HTTP server connection through your IdP (XAA) by
+              default. A server&apos;s explicit auth method overrides.
+              Servers without an XAA client registration fail to connect.
+              Applies on the next connect.
             </p>
+            {policyInvalid ? (
+              <p className="text-[11px] leading-snug text-destructive">
+                This host&apos;s stored policy value is unsupported —
+                connections will fail until it is fixed. Toggling on repairs
+                it; toggling off removes it.
+              </p>
+            ) : null}
           </div>
           <Switch
-            checked={emaAdvertised}
-            onCheckedChange={setEmaAdvertised}
+            checked={policyOn}
+            onCheckedChange={setPolicyOn}
             disabled={readOnly}
-            aria-label="Advertise EMA support by default"
+            aria-label="Enterprise-managed authorization"
           />
         </div>
       </div>

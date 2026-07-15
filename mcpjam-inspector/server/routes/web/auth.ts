@@ -10,6 +10,7 @@ import type {
   HttpServerConfig,
   RpcLogger,
   UnauthorizedRefreshHandler,
+  XaaEnterprisePolicy,
 } from "@mcpjam/sdk";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
@@ -20,9 +21,13 @@ import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { setRequestLogContext } from "../../utils/request-logger.js";
 import { logger } from "../../utils/logger.js";
 import {
+  parseXaaPolicyValue,
   resolveEffectiveAuthMethod,
   withXaaExtensionCapability,
+  xaaPolicyFromMcpProfile,
+  xaaPolicyRequiresConfiguration,
 } from "../../utils/effective-auth.js";
+import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import {
   type InternalLogContext,
@@ -825,6 +830,19 @@ export async function createAuthorizedManager(
      * builder throws a 500 rather than connecting tokenless if it's missing.
      */
     xaaIssuer?: string;
+    /**
+     * The host's enterprise-managed authorization policy (validated `on`
+     * value). Read from the BACKEND-PROJECTED host config wherever a
+     * server-side host exists (chatbox turns, host-bound turns, swarm
+     * snapshots, eval host configs) — never trusted from a shareable
+     * request body, because dropping the policy on an unconfigured `auto`
+     * server would downgrade xaa→discover→OAuth. Under the policy every
+     * HTTP `auto` server resolves to XAA (unconfigured ones fail 409
+     * XAA_CONNECTION_NOT_CONFIGURED pre-mint), and the EMA extension is
+     * advertised on every server of the batch. Callers passing this MUST
+     * also pass `xaaIssuer`.
+     */
+    xaaPolicy?: XaaEnterprisePolicy;
   }
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
@@ -881,8 +899,34 @@ export async function createAuthorizedManager(
       // One resolver decides the flow for every dispatch below: canonical
       // authMethod wins ("auto" selects XAA when configured, "discover"
       // otherwise); legacy rows fall back to the boolean pair. Must match
-      // the local resolver's dispatch (hosted/local/swarm parity).
-      const effectiveAuth = resolveEffectiveAuthMethod(auth.serverConfig);
+      // the local resolver's dispatch (hosted/local/swarm parity). The
+      // host's enterprise policy forces `auto` servers to XAA; stdio never
+      // reaches this builder (toHttpConfig strips it).
+      const effectiveAuth = resolveEffectiveAuthMethod(
+        auth.serverConfig,
+        options?.xaaPolicy
+      );
+
+      // Enterprise policy, unconfigured `auto` server: fail first-class
+      // BEFORE any mint/refresh — never silently downgrade to the discover
+      // ladder. "Not configured" (no stored client registration at the
+      // resource authorization server), NOT "not enrolled" — enrollment
+      // verdicts belong to the future issuer-policy evaluator.
+      if (
+        auth.serverConfig.transportType === "http" &&
+        xaaPolicyRequiresConfiguration(auth.serverConfig, options?.xaaPolicy)
+      ) {
+        throw new WebRouteError(
+          409,
+          ErrorCode.XAA_CONNECTION_NOT_CONFIGURED,
+          `Server "${displayServerName}" has no XAA client registration configured. This host requires enterprise-managed authorization — add the server's client registration in its auth settings, or set an explicit auth method to override the host policy.`,
+          {
+            serverId,
+            serverName: serverNamesById?.[serverId] ?? null,
+            reason: "xaa_connection_not_configured",
+          }
+        );
+      }
       const usesOAuthFlow = effectiveAuth === "oauth";
       // "discover" (non-XAA auto) rides the OAuth rails only when a stored
       // token exists; tokenless discover connects unauthenticated instead of
@@ -1087,9 +1131,14 @@ export async function createAuthorizedManager(
       // Spec (MCP enterprise-managed authorization): a client whose access is
       // enterprise-managed MUST advertise the extension in initialize. Merged
       // — never overwriting — into the caller-configured capabilities.
-      const perServerCapabilities = useXaa
-        ? withXaaExtensionCapability(clientCapabilities)
-        : clientCapabilities;
+      // Advertised when the connection actually uses XAA (the backstop) or
+      // whenever the host's enterprise policy is on — declare-support is
+      // host-wide, including on servers whose explicit auth method overrides
+      // the policy.
+      const perServerCapabilities =
+        useXaa || options?.xaaPolicy != null
+          ? withXaaExtensionCapability(clientCapabilities)
+          : clientCapabilities;
 
       return [
         serverId,
@@ -1388,6 +1437,30 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
   const { initializePins, mcpProtocolVersionsByServerId } =
     extractMcpInitializeOptions(raw);
 
+  // Enterprise-managed authorization policy. Chatbox-scoped connections are
+  // share-token-reachable, so the policy is read from the SERVER-side
+  // chatbox host config (fail closed on fetch failure — connecting with an
+  // unknown policy could downgrade an unconfigured auto server onto the
+  // discover/OAuth ladder). All other manual connections are the caller's
+  // own session; the strictly-validated body value is self-tampering only.
+  let xaaPolicy: XaaEnterprisePolicy | undefined;
+  if (chatboxId) {
+    const runtime = await fetchChatboxRuntimeConfig({
+      chatboxId,
+      bearer: bearerToken,
+    });
+    if (!runtime.ok) {
+      throw new WebRouteError(
+        runtime.status >= 500 ? 502 : runtime.status,
+        ErrorCode.INTERNAL_ERROR,
+        `Couldn't load this chatbox's settings, so the connection was stopped to avoid running with the wrong authorization policy. ${runtime.error}`
+      );
+    }
+    xaaPolicy = xaaPolicyFromMcpProfile(runtime.config.mcpProfile);
+  } else {
+    xaaPolicy = parseXaaPolicyValue(raw.xaaPolicy);
+  }
+
   const { manager } = await createAuthorizedManager(
     callerContextFromHono(c),
     bearerToken,
@@ -1405,6 +1478,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       serverNames,
       initializePins,
       mcpProtocolVersionsByServerId,
+      xaaPolicy,
       // Resolve the XAA issuer here (we hold the request `Context`) so the
       // manager builder can mint Cross-App Access tokens for `useXaa` servers.
       xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),

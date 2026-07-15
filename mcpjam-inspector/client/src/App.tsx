@@ -205,6 +205,7 @@ import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import {
   getDefaultClientCapabilities,
   isKnownProtocolVersion,
+  readXaaEnterprisePolicy,
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import {
@@ -2509,6 +2510,14 @@ export default function App() {
       mcpProtocolVersionsByServerId[serverId] = effective;
     }
 
+    // Enterprise-managed authorization policy — sent only when validly ON.
+    // An `invalid` stored value is NOT silently dropped to off: host-bound
+    // turns hit the server-authoritative 409, and interactive connects
+    // fail in buildResolverConnectionDefaults with an actionable message.
+    const xaaPolicyState = readXaaEnterprisePolicy(activeMcpProfile);
+    const xaaPolicy =
+      xaaPolicyState.kind === "on" ? xaaPolicyState.policy : undefined;
+
     return {
       clientInfo,
       supportedProtocolVersions,
@@ -2516,6 +2525,7 @@ export default function App() {
         Object.keys(mcpProtocolVersionsByServerId).length > 0
           ? mcpProtocolVersionsByServerId
           : undefined,
+      xaaPolicy,
     };
   }, [
     activeHost?.serverConnectionOverrides,
@@ -2531,6 +2541,7 @@ export default function App() {
     supportedProtocolVersions: hostedMcpProfilePins.supportedProtocolVersions,
     mcpProtocolVersionsByServerId:
       hostedMcpProfilePins.mcpProtocolVersionsByServerId,
+    xaaPolicy: hostedMcpProfilePins.xaaPolicy,
     clientConfigSyncPending:
       isClientConfigSyncPending || isProjectServerConfigLoading,
     getAccessToken,

@@ -11,8 +11,10 @@ import {
   callerContextFromHono,
   withManager,
 } from "./auth.js";
-import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
+import { HOSTED_MODE, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
+import { xaaPolicyFromMcpProfile } from "../../utils/effective-auth.js";
+import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { captureToolSnapshotForEvalAuthoring } from "../../services/evals/route-helpers.js";
 import {
   createRun,
@@ -116,6 +118,26 @@ chatboxSessions.post("/:chatboxId/generate-personas", async (c) =>
       body.servers
     );
 
+    // Enterprise-managed policy from the server-authoritative chatbox host
+    // config — persona generation connects to the chatbox's servers, so it
+    // enforces the same policy as a real session. Fail closed on fetch
+    // failure: connecting with an unknown policy could downgrade an
+    // unconfigured auto server onto the discover/OAuth ladder.
+    const personaRuntime = await fetchChatboxRuntimeConfig({
+      chatboxId,
+      bearer: bearerToken,
+    });
+    if (!personaRuntime.ok) {
+      throw new WebRouteError(
+        personaRuntime.status >= 500 ? 502 : personaRuntime.status,
+        ErrorCode.INTERNAL_ERROR,
+        `Couldn't load this chatbox's settings, so persona generation was stopped to avoid connecting with the wrong authorization policy. ${personaRuntime.error}`
+      );
+    }
+    const personaXaaPolicy = xaaPolicyFromMcpProfile(
+      personaRuntime.config.mcpProfile
+    );
+
     const result = await withManager(
       createAuthorizedManager(
         callerContextFromHono(c),
@@ -130,6 +152,8 @@ chatboxSessions.post("/:chatboxId/generate-personas", async (c) =>
           chatboxId,
           accessVersion: body.accessVersion,
           serverNames: selectedServerNames,
+          xaaPolicy: personaXaaPolicy,
+          xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
         }
       ),
       async (manager) => {
@@ -264,6 +288,12 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
       runtime.config.mcpToolResultImageRendering;
     const computer = runtime.config.computer;
     const harness = runtime.config.harness;
+    // Enterprise-managed policy from the server-authoritative chatbox host
+    // config (never the body); invalid stored policy fails the run closed.
+    // Issuer resolved eagerly — the setImmediate factory below runs after
+    // the response, when the Context may be finalized.
+    const xaaPolicy = xaaPolicyFromMcpProfile(runtime.config.mcpProfile);
+    const xaaIssuer = resolveXaaIssuer(c, HOSTED_MODE);
     // `runtime.config.accessVersion` is the server-resolved value the
     // chatbox redeem produced (vs the client-supplied `body.accessVersion`,
     // which the generate-sessions dialog never sends). Use the runtime
@@ -318,6 +348,8 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
               // access is authorized against the current version.
               accessVersion,
               serverNames: selectedServerNames,
+              xaaPolicy,
+              xaaIssuer,
             }
           );
           return {

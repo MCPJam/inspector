@@ -4,7 +4,10 @@ import {
   resolveEffectiveAuthMethod,
   withXaaExtensionCapability,
   xaaConfigured,
+  xaaPolicyRequiresConfiguration,
 } from "../effective-auth";
+
+const POLICY = { idp: "mcpjam" } as const;
 
 describe("resolveEffectiveAuthMethod", () => {
   it("passes explicit canonical methods through", () => {
@@ -57,6 +60,68 @@ describe("resolveEffectiveAuthMethod", () => {
     );
     expect(resolveEffectiveAuthMethod({ useOAuth: true })).toBe("oauth");
     expect(resolveEffectiveAuthMethod({})).toBe("none");
+  });
+
+  it("enterprise policy rewrites ONLY the auto branch", () => {
+    // auto + policy → xaa regardless of configuration state.
+    expect(
+      resolveEffectiveAuthMethod({ authMethod: "auto" }, POLICY),
+    ).toBe("xaa");
+    expect(
+      resolveEffectiveAuthMethod(
+        { authMethod: "auto", authServerMode: "mcpjam", clientId: "c1" },
+        POLICY,
+      ),
+    ).toBe("xaa");
+    // Explicit methods are per-server overrides — the policy never touches
+    // them.
+    expect(resolveEffectiveAuthMethod({ authMethod: "oauth" }, POLICY)).toBe(
+      "oauth",
+    );
+    expect(resolveEffectiveAuthMethod({ authMethod: "bearer" }, POLICY)).toBe(
+      "bearer",
+    );
+    expect(resolveEffectiveAuthMethod({ authMethod: "none" }, POLICY)).toBe(
+      "none",
+    );
+    expect(resolveEffectiveAuthMethod({ authMethod: "xaa" }, POLICY)).toBe(
+      "xaa",
+    );
+    // Legacy boolean rows behave as their canonical equivalents (overrides);
+    // pre-`auto` relics resolving "none" by absence stay outside the policy.
+    expect(resolveEffectiveAuthMethod({ useOAuth: true }, POLICY)).toBe(
+      "oauth",
+    );
+    expect(resolveEffectiveAuthMethod({}, POLICY)).toBe("none");
+    // No policy → identical to the one-arg form.
+    expect(resolveEffectiveAuthMethod({ authMethod: "auto" }, undefined)).toBe(
+      "discover",
+    );
+  });
+
+  it("xaaPolicyRequiresConfiguration fires only for policy-forced unconfigured auto servers", () => {
+    expect(
+      xaaPolicyRequiresConfiguration({ authMethod: "auto" }, POLICY),
+    ).toBe(true);
+    // Configured server mints normally.
+    expect(
+      xaaPolicyRequiresConfiguration(
+        { authMethod: "auto", authServerMode: "mcpjam", clientId: "c1" },
+        POLICY,
+      ),
+    ).toBe(false);
+    // No policy → the discover ladder handles it.
+    expect(
+      xaaPolicyRequiresConfiguration({ authMethod: "auto" }, undefined),
+    ).toBe(false);
+    // Explicit xaa keeps its existing mint-failure path.
+    expect(xaaPolicyRequiresConfiguration({ authMethod: "xaa" }, POLICY)).toBe(
+      false,
+    );
+    // Overrides are out of scope for the policy error.
+    expect(
+      xaaPolicyRequiresConfiguration({ authMethod: "oauth" }, POLICY),
+    ).toBe(false);
   });
 
   it("xaaConfigured mirrors the backend derivation rule", () => {

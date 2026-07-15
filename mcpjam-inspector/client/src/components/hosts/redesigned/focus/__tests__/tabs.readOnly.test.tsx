@@ -144,7 +144,7 @@ describe("Client editor tabs — readOnly prop wiring", () => {
     expect(fieldset).not.toBeDisabled();
   });
 
-  it("ProtocolTab readOnly disables the EMA advertise switch", () => {
+  it("ProtocolTab readOnly disables the enterprise-managed authorization switch", () => {
     render(
       <ProtocolTab
         draft={emptyHostConfigInputV2()}
@@ -154,12 +154,12 @@ describe("Client editor tabs — readOnly prop wiring", () => {
       />
     );
     const emaSwitch = screen.getByRole("switch", {
-      name: /advertise ema support by default/i,
+      name: /enterprise-managed authorization/i,
     });
     expect(emaSwitch).toBeDisabled();
   });
 
-  it("ProtocolTab without readOnly leaves the EMA switch enabled", () => {
+  it("ProtocolTab without readOnly leaves the enterprise-managed authorization switch enabled", () => {
     render(
       <ProtocolTab
         draft={emptyHostConfigInputV2()}
@@ -168,7 +168,7 @@ describe("Client editor tabs — readOnly prop wiring", () => {
       />
     );
     const emaSwitch = screen.getByRole("switch", {
-      name: /advertise ema support by default/i,
+      name: /enterprise-managed authorization/i,
     });
     expect(emaSwitch).not.toBeDisabled();
   });
