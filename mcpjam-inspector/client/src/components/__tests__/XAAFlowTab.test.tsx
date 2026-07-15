@@ -164,6 +164,15 @@ const runAllMock = vi.fn();
 let capturedMachineConfig: any = null;
 let machineShouldComplete = true;
 let machineCompletionUpdates: Record<string, unknown> = {};
+// Controllable confidential-CIMD reflector URL fetch. null ⇒ the fetch failed
+// (or hasn't resolved), which must fail the run closed rather than fall back to
+// public CIMD.
+let confidentialCimdUrlResult: string | null = null;
+vi.mock("@/lib/xaa/idp-endpoints", () => ({
+  fetchXaaIdpUrls: vi.fn(async () => null),
+  fetchConfidentialCimdClientUrl: vi.fn(async () => confidentialCimdUrlResult),
+}));
+
 vi.mock("@/lib/xaa/debug-state-machine-adapter", () => ({
   createInspectorXAAStateMachine: (config: any) => {
     capturedMachineConfig = config;
@@ -229,7 +238,49 @@ describe("XAAFlowTab", () => {
     };
     setIdentityMock.mockClear();
     setNegativeTestModeMock.mockClear();
+    confidentialCimdUrlResult = null;
     currentTarget = makeTarget();
+  });
+
+  const CONFIDENTIAL_SERVER = {
+    staging: { registrationMode: "cimd", xaaClientAuth: "private_key_jwt" },
+  } as any;
+
+  it("fails a confidential CIMD run closed when the reflector URL can't load", async () => {
+    const user = userEvent.setup();
+    confidentialCimdUrlResult = null; // fetch fails
+    render(
+      <XAAFlowTab
+        serverConfigs={CONFIDENTIAL_SERVER}
+        selectedServerName="staging"
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+
+    // Blocked: the machine is NOT run, and it was never configured as public
+    // CIMD (no clientIdMetadataUrl) that would omit the client_assertion.
+    expect(runAllMock).not.toHaveBeenCalled();
+    expect(capturedMachineConfig?.clientIdMetadataUrl).toBeUndefined();
+  });
+
+  it("threads the reflector URL into the machine for a confidential CIMD run", async () => {
+    const user = userEvent.setup();
+    const reflectorUrl =
+      "https://app.mcpjam.com/.well-known/oauth/xaa-cimd/AbC123";
+    confidentialCimdUrlResult = reflectorUrl;
+    render(
+      <XAAFlowTab
+        serverConfigs={CONFIDENTIAL_SERVER}
+        selectedServerName="staging"
+      />
+    );
+
+    await waitFor(() =>
+      expect(capturedMachineConfig?.clientIdMetadataUrl).toBe(reflectorUrl)
+    );
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+    expect(runAllMock).toHaveBeenCalled();
   });
 
   it("places the negative-test scorecard behind a vertical resize handle", () => {

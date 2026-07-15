@@ -2239,6 +2239,9 @@ describe("confidential CIMD (private_key_jwt) on the xaa router", () => {
       "http://localhost/api/mcp/xaa/confidential-cimd/client"
     );
     expect(response.status).toBe(200);
+    // The URL encodes the current server key; a cached response could pair a
+    // rotated key's assertion with a stale client_id.
+    expect(response.headers.get("cache-control")).toBe("no-store");
     const { clientIdMetadataUrl } = (await response.json()) as {
       clientIdMetadataUrl: string;
     };

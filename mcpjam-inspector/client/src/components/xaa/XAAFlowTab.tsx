@@ -852,18 +852,40 @@ export function XAAFlowTab({
   const [confidentialCimdUrl, setConfidentialCimdUrl] = useState<
     string | undefined
   >(undefined);
+  const [confidentialCimdStatus, setConfidentialCimdStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
   useEffect(() => {
     if (!wantsConfidentialCimd) {
       setConfidentialCimdUrl(undefined);
+      setConfidentialCimdStatus("idle");
       return;
     }
     const controller = new AbortController();
     setConfidentialCimdUrl(undefined);
+    setConfidentialCimdStatus("loading");
     void fetchConfidentialCimdClientUrl(controller.signal).then((url) => {
-      if (url && !controller.signal.aborted) setConfidentialCimdUrl(url);
+      if (controller.signal.aborted) return;
+      if (url) {
+        setConfidentialCimdUrl(url);
+        setConfidentialCimdStatus("ready");
+      } else {
+        setConfidentialCimdStatus("error");
+      }
     });
     return () => controller.abort();
   }, [wantsConfidentialCimd]);
+
+  // FAIL CLOSED: a confidential run must not silently fall back to public CIMD
+  // (which omits the client_assertion). Block Start/Run all until the reflector
+  // URL has resolved, and surface an actionable error on load/failure.
+  const confidentialCimdBlockReason: string | null = wantsConfidentialCimd
+    ? confidentialCimdStatus === "ready"
+      ? null
+      : confidentialCimdStatus === "error"
+        ? "Confidential CIMD is selected, but the reflector client URL couldn't be loaded. Retry, or switch Client authentication to Public in the server config."
+        : "Preparing the confidential CIMD client identity… try again in a moment."
+    : null;
 
   const xaaStateMachine = useMemo(() => {
     return createInspectorXAAStateMachine({
@@ -941,16 +963,30 @@ export function XAAFlowTab({
       setIsServerModalOpen(true);
       return;
     }
+    if (confidentialCimdBlockReason) {
+      updateFlowState({ error: confidentialCimdBlockReason });
+      return;
+    }
 
     if (flowStateRef.current.currentStep === "idle") {
       fireFlowStarted();
     }
     await xaaStateMachine.proceedToNextStep();
-  }, [isTestable, xaaStateMachine, fireFlowStarted]);
+  }, [
+    isTestable,
+    xaaStateMachine,
+    fireFlowStarted,
+    confidentialCimdBlockReason,
+    updateFlowState,
+  ]);
 
   const handleRunAll = useCallback(async () => {
     if (!isTestable) {
       setIsServerModalOpen(true);
+      return;
+    }
+    if (confidentialCimdBlockReason) {
+      updateFlowState({ error: confidentialCimdBlockReason });
       return;
     }
 
@@ -984,6 +1020,8 @@ export function XAAFlowTab({
     xaaStateMachine,
     fireFlowStarted,
     authServerModeForTelemetry,
+    confidentialCimdBlockReason,
+    updateFlowState,
   ]);
 
   const continueLabel = !isTestable

@@ -1052,6 +1052,10 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       getXaaClientJwks().keys[0],
       confidentialCimdPublicOrigin(c),
     );
+    // no-store: the URL encodes the CURRENT server client key. If the key
+    // rotates, a cached URL would pair a freshly-signed assertion with a stale
+    // client_id and fail verification.
+    c.header("Cache-Control", "no-store");
     return c.json({ clientIdMetadataUrl });
   });
 

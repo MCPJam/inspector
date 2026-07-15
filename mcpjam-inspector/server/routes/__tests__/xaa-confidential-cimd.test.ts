@@ -153,6 +153,19 @@ describe("XAA confidential CIMD reflector route", () => {
     expect(document.client_id).toBe(`https://app.mcpjam.com${path}`);
   });
 
+  it("uses the FIRST hop of a comma-separated forwarded chain", async () => {
+    const jwk = samplePublicJwk();
+    const path = cimdPath(jwk);
+    const response = await buildApp().request(`http://localhost${path}`, {
+      headers: {
+        "x-forwarded-proto": "https, http",
+        "x-forwarded-host": "app.mcpjam.com, internal.lb",
+      },
+    });
+    const document = await response.json();
+    expect(document.client_id).toBe(`https://app.mcpjam.com${path}`);
+  });
+
   it("rejects a malformed key segment with 400", async () => {
     const url = `http://localhost${XAA_CONFIDENTIAL_CIMD_PATH_PREFIX}not-a-valid-jwk`;
     const response = await buildApp().request(url);

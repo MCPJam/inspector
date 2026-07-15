@@ -92,10 +92,18 @@ function isRateLimited(c: Context): boolean {
  */
 export function confidentialCimdPublicOrigin(c: Context): string {
   const url = new URL(c.req.url);
+  // Forwarded headers can carry a comma-separated proxy chain
+  // ("https, http" / "public.example, internal"); the client-facing value is
+  // the FIRST hop. Using the whole string would mint an unusable origin.
+  const firstHop = (header: string | undefined): string | undefined =>
+    header?.split(",")[0]?.trim() || undefined;
   const proto =
-    c.req.header("x-forwarded-proto") ?? url.protocol.replace(/:$/, "");
+    firstHop(c.req.header("x-forwarded-proto")) ??
+    url.protocol.replace(/:$/, "");
   const host =
-    c.req.header("x-forwarded-host") ?? c.req.header("host") ?? url.host;
+    firstHop(c.req.header("x-forwarded-host")) ??
+    c.req.header("host") ??
+    url.host;
   return `${proto}://${host}`;
 }
 
