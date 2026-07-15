@@ -15,7 +15,6 @@ import {
   projectOAuthTraceSnapshot,
   resolveAuthorizationPlan,
   runOAuthStateMachine,
-  selectResourceURL,
 } from "@mcpjam/sdk/browser";
 import type {
   AuthorizationDiscoverySnapshot,
@@ -3252,25 +3251,17 @@ export async function handleOAuthCallback(
     });
     emitTrace(callbackTrace);
     // Resource URL comes from the server's discovery document — treat it as
-    // untrusted input and validate it matches the originally configured server
-    // URL before embedding it in the authorization request.
-    const resource = await selectResourceURL(
-      serverUrl,
-      provider,
-      discoveryState.resourceMetadata
-    );
+    // untrusted input; resolveOAuthResourceUrl rejects invalid/cross-origin
+    // values. Resolving ONCE here keeps the token-exchange wire value, the
+    // stored resourceUrl, and the original authorization request identical.
     const oauthResourceUrl = resolveOAuthResourceUrl({
       serverUrl,
-      configuredResourceUrl:
-        typeof resource === "string"
-          ? resource
-          : resource instanceof URL
-          ? resource.toString()
-          : oauthConfig.resourceUrl,
+      configuredResourceUrl: oauthConfig.resourceUrl,
       resourceMetadata: discoveryState.resourceMetadata as
         | { resource?: unknown }
         | undefined,
     });
+    const resource = oauthResourceUrl;
     startOAuthTraceStep(callbackTrace, "token_request", {
       message: "Exchanging authorization code for OAuth tokens.",
     });
@@ -3498,11 +3489,19 @@ export async function refreshOAuthTokens(
       message: "Authorization server metadata is ready.",
     });
     emitTrace();
-    const resource = await selectResourceURL(
-      serverUrl,
-      provider,
-      discoveryState.resourceMetadata
-    );
+    // RFC 8707: the refresh request must carry the same resource as the
+    // original grant. Replay the stored value from the initial exchange when
+    // present; otherwise resolve through the same shared policy the initial
+    // flow used (selectResourceURL would re-derive — and strictly reject —
+    // values the initial flow legitimately accepted).
+    const resource =
+      oauthConfig.resourceUrl?.trim() ||
+      resolveOAuthResourceUrl({
+        serverUrl,
+        resourceMetadata: discoveryState.resourceMetadata as
+          | { resource?: unknown }
+          | undefined,
+      });
     startOAuthTraceStep(trace, "token_request", {
       message: "Refreshing tokens with the stored refresh token.",
     });

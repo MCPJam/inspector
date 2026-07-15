@@ -75,7 +75,7 @@ type StartAuthorizationOptions = {
   redirectUrl: string | URL;
   scope?: string;
   state?: string;
-  resource?: URL;
+  resource?: URL | string;
 };
 
 type ExchangeAuthorizationOptions = {
@@ -84,14 +84,18 @@ type ExchangeAuthorizationOptions = {
   authorizationCode: string;
   codeVerifier: string;
   redirectUri: string | URL;
-  resource?: URL;
+  // A string is sent verbatim (echoing an advertised identifier exactly);
+  // a URL is serialized via .href.
+  resource?: URL | string;
   addClientAuthentication?: OAuthClientProvider["addClientAuthentication"];
   fetchFn?: FetchFn;
 };
 
 type FetchTokenOptions = {
   metadata?: OAuthMetadata | AuthorizationServerMetadata;
-  resource?: URL;
+  // A string is sent verbatim (echoing an advertised identifier exactly);
+  // a URL is serialized via .href.
+  resource?: URL | string;
   authorizationCode?: string;
   scope?: string;
   fetchFn?: FetchFn;
@@ -408,7 +412,7 @@ async function executeTokenRequest(
     tokenRequestParams: URLSearchParams;
     clientInformation?: OAuthClientInformationMixed;
     addClientAuthentication?: OAuthClientProvider["addClientAuthentication"];
-    resource?: URL;
+    resource?: URL | string;
     fetchFn?: FetchFn;
   },
 ) {
@@ -423,7 +427,10 @@ async function executeTokenRequest(
   });
 
   if (resource) {
-    tokenRequestParams.set("resource", resource.href);
+    tokenRequestParams.set(
+      "resource",
+      typeof resource === "string" ? resource : resource.href,
+    );
   }
 
   if (addClientAuthentication) {
@@ -466,7 +473,7 @@ async function refreshAuthorization(
     metadata?: OAuthMetadata | AuthorizationServerMetadata;
     clientInformation: OAuthClientInformationMixed;
     refreshToken: string;
-    resource?: URL;
+    resource?: URL | string;
     addClientAuthentication?: OAuthClientProvider["addClientAuthentication"];
     fetchFn?: FetchFn;
   },
@@ -960,7 +967,10 @@ export async function startAuthorization(
     authorizationUrl.searchParams.append("prompt", "consent");
   }
   if (resource) {
-    authorizationUrl.searchParams.set("resource", resource.href);
+    authorizationUrl.searchParams.set(
+      "resource",
+      typeof resource === "string" ? resource : resource.href,
+    );
   }
 
   return {
