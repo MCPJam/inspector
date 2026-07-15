@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";

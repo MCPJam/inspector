@@ -19,8 +19,7 @@ import {
 } from "@/hooks/use-ai-provider-keys";
 import { cn } from "@/lib/utils";
 import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import posthog from "posthog-js";
+import { track } from "@/lib/analytics";
 import {
   Tooltip,
   TooltipContent,
@@ -45,7 +44,8 @@ import {
   runEvals,
   type GeneratedEvalTestCase,
 } from "@/lib/apis/evals-api";
-import type { PromptTurn } from "@/shared/prompt-turns";
+import { resolvePromptTurns, type PromptTurn } from "@/shared/steps";
+import { promptTurnsToSteps } from "@/shared/steps";
 import { notifyCaseUpsertPartial } from "./case-upsert-toast";
 
 interface EvalRunnerProps {
@@ -472,10 +472,8 @@ export function EvalRunner({
   };
 
   const handleGenerateTests = async () => {
-    posthog.capture("eval_generate_tests_button_clicked", {
+    track("eval_generate_tests_button_clicked", {
       location: "eval_runner",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       step: currentStep,
     });
 
@@ -519,10 +517,8 @@ export function EvalRunner({
   };
 
   const handleGenerateNegativeTests = async () => {
-    posthog.capture("eval_generate_negative_tests_button_clicked", {
+    track("eval_generate_negative_tests_button_clicked", {
       location: "eval_runner",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       step: currentStep,
     });
 
@@ -649,6 +645,18 @@ export function EvalRunner({
         // Generate a UUID for this test template to group variants
         const testTemplateKey = crypto.randomUUID();
 
+        // The Convex mutation rejects `promptTurns`; describe the case as
+        // unified `steps` derived from the template's turns (or its
+        // query/expectedToolCalls when no explicit turns were authored).
+        const steps = promptTurnsToSteps(
+          resolvePromptTurns({
+            promptTurns: template.promptTurns,
+            query: template.query,
+            expectedToolCalls: template.expectedToolCalls,
+            expectedOutput: template.expectedOutput,
+          }),
+        );
+
         return selectedModels.map((model) => ({
           title: template.title,
           query: template.query,
@@ -659,7 +667,7 @@ export function EvalRunner({
           isNegativeTest: template.isNegativeTest,
           scenario: template.scenario,
           expectedOutput: template.expectedOutput,
-          promptTurns: template.promptTurns,
+          steps,
           testTemplateKey,
         }));
       });
@@ -689,10 +697,8 @@ export function EvalRunner({
       }
 
       // Track suite created
-      posthog.capture("eval_suite_created", {
+      track("eval_suite_created", {
         location: "eval_runner",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         suite_id: result.suiteId,
         num_test_cases: validTestTemplates.length,
         num_models: selectedModels.length,
@@ -928,23 +934,16 @@ export function EvalRunner({
                   variant={nextVariant}
                   onClick={() => {
                     if (currentStep < WIZARD_STEPS.length - 1) {
-                      posthog.capture("eval_setup_next_step_button_clicked", {
+                      track("eval_setup_next_step_button_clicked", {
                         location: "eval_runner",
-                        platform: detectPlatform(),
-                        environment: detectEnvironment(),
                         step: currentStep,
                       });
                       handleNext();
                     } else {
-                      posthog.capture(
-                        "eval_setup_start_eval_run_button_clicked",
-                        {
-                          location: "eval_runner",
-                          platform: detectPlatform(),
-                          environment: detectEnvironment(),
-                          step: currentStep,
-                        },
-                      );
+                      track("eval_setup_start_eval_run_button_clicked", {
+                        location: "eval_runner",
+                        step: currentStep,
+                      });
                       void handleSubmit();
                     }
                   }}
@@ -970,18 +969,14 @@ export function EvalRunner({
             variant={nextVariant}
             onClick={() => {
               if (currentStep < WIZARD_STEPS.length - 1) {
-                posthog.capture("eval_setup_next_step_button_clicked", {
+                track("eval_setup_next_step_button_clicked", {
                   location: "eval_runner",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
                   step: currentStep,
                 });
                 handleNext();
               } else {
-                posthog.capture("eval_setup_start_eval_run_button_clicked", {
+                track("eval_setup_start_eval_run_button_clicked", {
                   location: "eval_runner",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
                   step: currentStep,
                 });
                 void handleSubmit();

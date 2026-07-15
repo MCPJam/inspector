@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render } from "@testing-library/react";
+import { render, fireEvent } from "@testing-library/react";
 
 import { TraceTimeline } from "../internal/trace-timeline/trace-timeline";
 import type { TraceSpan } from "../internal/trace-timeline/eval-trace";
@@ -52,5 +52,55 @@ describe("TraceTimeline (recorded waterfall)", () => {
   it("renders the empty state when there are no recorded spans", () => {
     const { getByText } = render(<TraceTimeline recordedSpans={[]} />);
     getByText(/No timing data recorded/i);
+  });
+
+  it("shows harness metadata (provider/finish) in the detail pane for llm spans", () => {
+    const llmSpans: TraceSpan[] = [
+      {
+        id: "p0-llm",
+        name: "Agent",
+        category: "llm",
+        startMs: 0,
+        endMs: 2420,
+        promptIndex: 0,
+        stepIndex: 0,
+        outputTokens: 50,
+        finishReason: "length",
+        provider: "anthropic",
+      },
+    ];
+    const { getAllByTestId, getByTestId } = render(
+      <TraceTimeline recordedSpans={llmSpans} />,
+    );
+    const labelButtons = getAllByTestId("trace-row-label-button");
+    fireEvent.click(labelButtons[labelButtons.length - 1]);
+    const meta = getByTestId("trace-span-metadata");
+    expect(meta.textContent).toContain("anthropic");
+    expect(meta.textContent).toContain("length");
+  });
+
+  it("shows the JSON-RPC error code on a failed tool span", () => {
+    const spans: TraceSpan[] = [
+      {
+        id: "p0-tool",
+        name: "create_view",
+        category: "tool",
+        startMs: 0,
+        endMs: 96,
+        promptIndex: 0,
+        status: "error",
+        toolCallId: "tc1",
+        toolName: "create_view",
+        mcpErrorCode: -32602,
+      },
+    ];
+    const { getAllByTestId, getByTestId } = render(
+      <TraceTimeline recordedSpans={spans} />,
+    );
+    const labelButtons = getAllByTestId("trace-row-label-button");
+    fireEvent.click(labelButtons[labelButtons.length - 1]);
+    const codeEl = getByTestId("trace-mcp-error-code");
+    expect(codeEl.textContent).toContain("-32602");
+    expect(codeEl.textContent).toContain("Invalid params");
   });
 });

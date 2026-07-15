@@ -21,6 +21,7 @@ import {
   getComputerSandboxInfo,
   isComputersDataPlaneConfigured,
 } from "../computers/control-plane-client.js";
+import type { ExecutionScope } from "../execution-scope.js";
 
 /** Resolution failure carrying an HTTP-ish status for the caller to surface. */
 export class HarnessSandboxResolutionError extends Error {
@@ -43,14 +44,18 @@ export async function resolveHarnessSandbox(args: {
   /** The acting user's bearer (forwarded to the control plane for authz). */
   bearer: string;
   projectId: string;
+  /** Phase 3 scope; forwarded into ensureComputerReady so the reserve call
+   *  re-resolves live access + per-swarm isolation/caps (legacy when absent). */
+  executionScope?: ExecutionScope;
   signal?: AbortSignal;
   /** Overall budget for provision/wake polling (default in control plane). */
   timeoutMs?: number;
 }): Promise<ResolvedHarnessSandbox> {
   if (!isComputersDataPlaneConfigured()) {
     throw new HarnessSandboxResolutionError(
-      "computers data plane is not configured (need CONVEX_HTTP_URL, " +
-        "COMPUTERS_DATA_PLANE_SECRET, and E2B_API_KEY)",
+      "this server is not a computers data plane (deployed servers " +
+        "bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see " +
+        "docs/project-computers.md)",
       503,
     );
   }
@@ -58,6 +63,7 @@ export async function resolveHarnessSandbox(args: {
   const ready = await ensureComputerReady({
     bearer: args.bearer,
     projectId: args.projectId,
+    ...(args.executionScope ? { executionScope: args.executionScope } : {}),
     signal: args.signal,
     timeoutMs: args.timeoutMs,
   });

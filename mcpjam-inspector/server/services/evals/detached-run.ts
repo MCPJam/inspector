@@ -1,14 +1,19 @@
 import { logger } from "../../utils/logger.js";
 import { createConvexClient } from "./route-helpers.js";
 
-const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const TERMINAL_RUN_STATUSES = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "timed_out",
+]);
 
 type DetachableEvalRun = {
   suiteId: string;
   runId: string;
   recorder?: {
     finalize(args: {
-      status: "completed" | "failed" | "cancelled";
+      status: "completed" | "failed" | "cancelled" | "timed_out";
       summary?: {
         total: number;
         passed: number;
@@ -16,6 +21,7 @@ type DetachableEvalRun = {
         passRate: number;
       };
       notes?: string;
+      stopReason?: "user_cancelled" | "run_timeout" | "iteration_timeout";
     }): Promise<void>;
   } | null;
   execute: () => Promise<void>;

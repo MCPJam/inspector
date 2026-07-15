@@ -1,4 +1,11 @@
-import { readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import type { Command } from "commander";
 import {
   createEvalCaseOperation,
@@ -7,11 +14,16 @@ import {
   deleteEvalSuiteOperation,
   generateEvalCasesOperation,
   getEvalCaseOperation,
+  cancelEvalRunOperation,
+  getEvalIterationTraceOperation,
   getEvalRunOperation,
+  getEvalRunStepsOperation,
   getEvalSuiteOperation,
   listEvalCasesOperation,
+  listEvalRunIterationsOperation,
   listEvalSuitesOperation,
   PlatformApiError,
+  runEvalCaseOperation,
   runEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
@@ -20,9 +32,19 @@ import {
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import { JsonInputContext } from "../lib/json-input.js";
-import { usageError, writeResult } from "../lib/output.js";
+import {
+  type RenderedScreenshot,
+  extractRenderedScreenshots,
+  extractIterationVideoUrl,
+  screenshotFilename,
+} from "../lib/eval-screenshots.js";
+import { operationalError, usageError, writeResult } from "../lib/output.js";
 import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
-import { getGlobalOptions } from "../lib/server-config.js";
+import { getGlobalOptions, parsePositiveInteger } from "../lib/server-config.js";
+import {
+  detectInlineImageProtocol,
+  encodeInlineImage,
+} from "../lib/terminal-image.js";
 
 type PlatformOptions = {
   apiKey?: string;
@@ -283,6 +305,76 @@ function buildCaseInput(
   return input;
 }
 
+/** A screenshot entry as emitted in JSON output (and after an optional save). */
+type ScreenshotItem = RenderedScreenshot & { savedTo?: string };
+
+/**
+ * Fetch raw artifact bytes (screenshot PNG or replay `.webm`) for a resolved
+ * URL, bounded by the request timeout. `kind` only shapes the error wording.
+ */
+async function fetchArtifactBytes(
+  url: string,
+  timeoutMs: number,
+  kind = "screenshot"
+): Promise<Uint8Array> {
+  const controller = new AbortController();
+  const handle = setTimeout(() => controller.abort(), timeoutMs);
+  handle.unref?.();
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      throw operationalError(
+        `Failed to download ${kind} (HTTP ${response.status}).`,
+        { url }
+      );
+    }
+    return new Uint8Array(await response.arrayBuffer());
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw operationalError(
+        `Timed out downloading ${kind} after ${timeoutMs}ms.`,
+        { url }
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(handle);
+  }
+}
+
+/** Fetch raw image bytes for a screenshot URL, bounded by the request timeout. */
+function fetchScreenshotBytes(
+  url: string,
+  timeoutMs: number
+): Promise<Uint8Array> {
+  return fetchArtifactBytes(url, timeoutMs, "screenshot");
+}
+
+/**
+ * Resolve where a screenshot should be written for `--out`. A path that is (or
+ * looks like) a directory gets a generated per-render filename; otherwise the
+ * literal path is used — but only when saving a single image, so multiple
+ * renders never overwrite one file.
+ */
+function resolveScreenshotPath(
+  out: string,
+  shot: RenderedScreenshot,
+  index: number,
+  total: number
+): string {
+  const looksLikeDir =
+    out.endsWith("/") || (existsSync(out) && statSync(out).isDirectory());
+  if (looksLikeDir) {
+    return join(out, screenshotFilename(shot, index));
+  }
+  if (total > 1) {
+    throw usageError(
+      "--out must be a directory when the iteration rendered multiple screenshots."
+    );
+  }
+  return out;
+}
+
 export function registerEvalCommands(program: Command): void {
   const evals = program
     .command("eval")
@@ -418,7 +510,354 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
+  addPlatformOptions(
+    evals
+      .command("cancel")
+      .description(
+        "Cancel an in-flight eval run (no-op if already cancelled; errors if it already finished)"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption("--project <id-or-name>", "Project name or ID")
+  ).action(
+    async (
+      options: PlatformOptions & { project: string; run: string },
+      command
+    ) => {
+      await executeOp(
+        cancelEvalRunOperation,
+        { project: options.project, runId: options.run },
+        options,
+        command
+      );
+    }
+  );
+
   const PROJECT_OPT = "Project name or ID (defaults to most recently updated)";
+
+  // ── Eval run iterations + traces ───────────────────────────────────
+  addPlatformOptions(
+    evals
+      .command("iterations")
+      .description(
+        "List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency)"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption(
+        "--project <id-or-name>",
+        "Project the run belongs to (name or ID)"
+      )
+      .option("--cursor <cursor>", "Pagination cursor from a previous response")
+      .option("--limit <n>", "Max iterations per page (1–200)")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project: string;
+        run: string;
+        cursor?: string;
+        limit?: string;
+      },
+      command
+    ) => {
+      const input = validateOpInput(listEvalRunIterationsOperation, {
+        project: options.project,
+        runId: options.run,
+        ...(options.cursor !== undefined ? { cursor: options.cursor } : {}),
+        ...(options.limit !== undefined ? { limit: Number(options.limit) } : {}),
+      });
+      await executeOp(listEvalRunIterationsOperation, input, options, command);
+    }
+  );
+
+  addPlatformOptions(
+    evals
+      .command("trace")
+      .description(
+        "Fetch the full trace for one eval iteration (large: full message history + spans)"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption(
+        "--iteration <id>",
+        "Iteration ID (from `eval iterations`)"
+      )
+      .requiredOption(
+        "--project <id-or-name>",
+        "Project the run belongs to (name or ID)"
+      )
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project: string;
+        run: string;
+        iteration: string;
+      },
+      command
+    ) => {
+      await executeOp(
+        getEvalIterationTraceOperation,
+        {
+          project: options.project,
+          runId: options.run,
+          iterationId: options.iteration,
+        },
+        options,
+        command
+      );
+    }
+  );
+
+  addPlatformOptions(
+    evals
+      .command("steps")
+      .description(
+        "Per-authored-step results for one eval iteration: status (ok/fail/skipped/pending), reason, and evidence (screenshot/video URLs). The fastest way to see WHICH step failed and why."
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption(
+        "--iteration <id>",
+        "Iteration ID (from `eval iterations`)"
+      )
+      .requiredOption(
+        "--project <id-or-name>",
+        "Project the run belongs to (name or ID)"
+      )
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project: string;
+        run: string;
+        iteration: string;
+      },
+      command
+    ) => {
+      await executeOp(
+        getEvalRunStepsOperation,
+        {
+          project: options.project,
+          runId: options.run,
+          iterationId: options.iteration,
+        },
+        options,
+        command
+      );
+    }
+  );
+
+  addPlatformOptions(
+    evals
+      .command("screenshot")
+      .description(
+        "Show the widget screenshot(s) an eval iteration rendered — inline when the terminal supports it, otherwise the image URL"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption(
+        "--iteration <id>",
+        "Iteration ID (from `eval iterations`)"
+      )
+      .requiredOption(
+        "--project <id-or-name>",
+        "Project the run belongs to (name or ID)"
+      )
+      .option(
+        "--out <path>",
+        "Save the PNG(s) to a file or directory instead of rendering inline"
+      )
+      .option("--index <n>", "Show only the Nth screenshot (1-based)")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project: string;
+        run: string;
+        iteration: string;
+        out?: string;
+        index?: string;
+      },
+      command
+    ) => {
+      const globalOptions = getGlobalOptions(command);
+      const index =
+        options.index !== undefined
+          ? parsePositiveInteger(options.index, "--index")
+          : undefined;
+
+      const result = await runPlatformCommand(
+        options,
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          getEvalIterationTraceOperation.execute(
+            {
+              project: options.project,
+              runId: options.run,
+              iterationId: options.iteration,
+            },
+            { client, signal }
+          )
+      );
+
+      let shots = extractRenderedScreenshots(result);
+      if (index !== undefined) {
+        if (index > shots.length) {
+          throw usageError(
+            `--index ${index} is out of range; this iteration rendered ${shots.length} screenshot(s).`
+          );
+        }
+        shots = [shots[index - 1]];
+      }
+
+      const base = {
+        project: result.project,
+        runId: result.runId,
+        iterationId: result.iterationId,
+      };
+      const isJson = globalOptions.format === "json";
+
+      // Save mode: download each PNG to disk regardless of output format.
+      if (options.out !== undefined) {
+        const saved: ScreenshotItem[] = [];
+        for (let i = 0; i < shots.length; i += 1) {
+          const shot = shots[i];
+          const bytes = await fetchScreenshotBytes(
+            shot.screenshotUrl,
+            globalOptions.timeout
+          );
+          const path = resolveScreenshotPath(
+            options.out,
+            shot,
+            i,
+            shots.length
+          );
+          mkdirSync(dirname(path), { recursive: true });
+          writeFileSync(path, bytes);
+          saved.push({ ...shot, savedTo: path });
+        }
+        if (isJson) {
+          writeResult({ ...base, items: saved });
+          return;
+        }
+        if (saved.length === 0) {
+          process.stdout.write(
+            "No rendered widget screenshots for this iteration.\n"
+          );
+          return;
+        }
+        for (const shot of saved) {
+          process.stdout.write(
+            `Saved ${shot.toolName ?? "widget"} → ${shot.savedTo}\n`
+          );
+        }
+        return;
+      }
+
+      // JSON without --out: structured screenshot URLs, no image bytes.
+      if (isJson) {
+        writeResult({ ...base, items: shots });
+        return;
+      }
+
+      // Human: render inline if the terminal supports it, else print the URL.
+      if (shots.length === 0) {
+        process.stdout.write(
+          "No rendered widget screenshots for this iteration.\n"
+        );
+        return;
+      }
+      const protocol = detectInlineImageProtocol();
+      for (const shot of shots) {
+        const caption = `${shot.toolName ?? "widget"} · ${shot.status}`;
+        if (protocol) {
+          const bytes = await fetchScreenshotBytes(
+            shot.screenshotUrl,
+            globalOptions.timeout
+          );
+          process.stdout.write(`${caption}\n`);
+          process.stdout.write(encodeInlineImage(bytes, protocol));
+        } else {
+          process.stdout.write(`${caption}  ${shot.screenshotUrl}\n`);
+        }
+      }
+    }
+  );
+
+  addPlatformOptions(
+    evals
+      .command("video")
+      .description(
+        "Get the Playwright replay video (.webm) an eval iteration recorded — prints the URL, or downloads it with --out"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption(
+        "--iteration <id>",
+        "Iteration ID (from `eval iterations`)"
+      )
+      .requiredOption(
+        "--project <id-or-name>",
+        "Project the run belongs to (name or ID)"
+      )
+      .option("--out <path>", "Download the .webm to this file instead of printing the URL")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project: string;
+        run: string;
+        iteration: string;
+        out?: string;
+      },
+      command
+    ) => {
+      const globalOptions = getGlobalOptions(command);
+      const result = await runPlatformCommand(
+        options,
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          getEvalIterationTraceOperation.execute(
+            {
+              project: options.project,
+              runId: options.run,
+              iterationId: options.iteration,
+            },
+            { client, signal }
+          )
+      );
+
+      const videoUrl = extractIterationVideoUrl(result);
+      const base = {
+        project: result.project,
+        runId: result.runId,
+        iterationId: result.iterationId,
+      };
+      const isJson = globalOptions.format === "json";
+
+      if (!videoUrl) {
+        if (isJson) {
+          writeResult({ ...base, videoUrl: null });
+          return;
+        }
+        process.stdout.write("No replay video for this iteration.\n");
+        return;
+      }
+
+      if (options.out !== undefined) {
+        const bytes = await fetchArtifactBytes(
+          videoUrl,
+          globalOptions.timeout,
+          "video"
+        );
+        mkdirSync(dirname(options.out), { recursive: true });
+        writeFileSync(options.out, bytes);
+        if (isJson) {
+          writeResult({ ...base, videoUrl, savedTo: options.out });
+          return;
+        }
+        process.stdout.write(`Saved replay video → ${options.out}\n`);
+        return;
+      }
+
+      if (isJson) {
+        writeResult({ ...base, videoUrl });
+        return;
+      }
+      process.stdout.write(`${videoUrl}\n`);
+    }
+  );
 
   // ── Suite settings: get / update / delete / schedule ───────────────
   addPlatformOptions(
@@ -577,6 +1016,43 @@ export function registerEvalCommands(program: Command): void {
       await executeOp(
         getEvalCaseOperation,
         { project: options.project, suite: options.suite, case: options.case },
+        options,
+        command
+      );
+    }
+  );
+
+  addPlatformOptions(
+    cases
+      .command("run")
+      .description(
+        "Run a single case as a persisted, fully-queryable run (inspect it with `eval iterations` / `eval steps` like any run)"
+      )
+      .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+      .requiredOption("--case <id-or-title>", "Eval case title or ID")
+      .option("--project <id-or-name>", PROJECT_OPT)
+      .option(
+        "--server <id-or-name...>",
+        "Override the suite's saved servers for this run"
+      )
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        suite: string;
+        case: string;
+        server?: string[];
+      },
+      command
+    ) => {
+      await executeOp(
+        runEvalCaseOperation,
+        {
+          project: options.project,
+          suite: options.suite,
+          case: options.case,
+          ...(options.server?.length ? { servers: options.server } : {}),
+        },
         options,
         command
       );

@@ -624,6 +624,20 @@ describe("buildRedesignedHostCanvas — Project Computers islands", () => {
     expect(computer.backedToolLabels).toEqual([]);
   });
 
+  it("shows the Computer island (but not built-in tools) when a computer is attached and the flag is off", () => {
+    // Harness hosts seed a computer; the island must surface even with the
+    // computers-enabled rollout flag off, mirroring the Computer focus tab.
+    const draft = emptyHostConfigInputV2();
+    draft.computer = { kind: "personal" };
+    const vm = buildVm({ draft }); // computersEnabled omitted
+    expect(vm.nodes.some((n) => n.id === COMPUTER_NODE_ID)).toBe(true);
+    expect(vm.edges.some((e) => e.id === "host-to-computer")).toBe(true);
+    expect(computerData(vm).attached).toBe(true);
+    // Built-in tools island stays flag-gated.
+    expect(vm.nodes.some((n) => n.id === BUILTIN_TOOLS_NODE_ID)).toBe(false);
+    expect(vm.edges.some((e) => e.id === "host-to-builtin-tools")).toBe(false);
+  });
+
   it("maps attached built-in tool ids through the catalog for labels", () => {
     const draft = emptyHostConfigInputV2();
     draft.builtInToolIds = ["web_search", "bash"];
