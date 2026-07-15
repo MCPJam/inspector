@@ -98,6 +98,16 @@ export {
   selectResourceURL,
   startAuthorization,
 } from "./oauth/browser-auth.js";
+export {
+  canonicalizeResourceUrl,
+  evaluateResourceIndicator,
+  resolveResourceIndicatorValue,
+} from "./oauth/resource-policy.js";
+export type {
+  ResourceIndicatorDecision,
+  ResourceIndicatorSource,
+  ResourceIndicatorStatus,
+} from "./oauth/resource-policy.js";
 export type {
   OAuthClientInformation,
   OAuthClientInformationFull,
