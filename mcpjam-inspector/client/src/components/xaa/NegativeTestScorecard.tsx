@@ -173,11 +173,6 @@ export function NegativeTestScorecard({
         input.issuerMode ?? "local",
         input.organizationId ?? "",
         input.issuerKind ?? "org",
-        // Managed-policy context: managed and unmanaged runs go through
-        // different evaluators, and a managed ruling is per person — completed
-        // rows from one mode/person must not survive a switch to the other.
-        input.policyMode ?? "",
-        input.testIdentityId ?? "",
       ].join("|")
     : "";
   useEffect(() => {

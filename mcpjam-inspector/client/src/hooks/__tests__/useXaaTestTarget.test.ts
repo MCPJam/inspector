@@ -2,7 +2,6 @@ import { renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { useXaaTestTarget } from "../useXaaTestTarget";
 import type { ServerWithName } from "@/hooks/use-app-state";
-import type { XaaResourceApp } from "@/lib/xaa/types";
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
@@ -53,7 +52,6 @@ describe("useXaaTestTarget", () => {
       useXaaTestTarget({
         server: httpServer({ xaaAuthzIssuer: "https://auth.example.com" }),
         selectedServerName: "staging-mcp",
-        selectedRegistration: null,
         runSettings,
         selectedPerson: null,
         projectId: "proj_1",
@@ -82,7 +80,6 @@ describe("useXaaTestTarget", () => {
       useXaaTestTarget({
         server: httpServer({ hasClientSecret: true }),
         selectedServerName: "staging-mcp",
-        selectedRegistration: null,
         runSettings,
         selectedPerson: null,
         projectId: "proj_1",
@@ -105,7 +102,6 @@ describe("useXaaTestTarget", () => {
       useXaaTestTarget({
         server: httpServer({ hasClientSecret: true }),
         selectedServerName: "staging-mcp",
-        selectedRegistration: null,
         runSettings,
         selectedPerson: null,
         projectId: "proj_1",
@@ -118,124 +114,6 @@ describe("useXaaTestTarget", () => {
     expect(result.current.serverId).toBeUndefined();
     expect(result.current.secretUnavailable).toBe(true);
     expect(result.current.runInput.clientSecret).toBe("");
-  });
-
-  it("prefers a selected registration over the bar server", () => {
-    remoteServers = [
-      { _id: "srv_1", name: "staging-mcp", projectId: "proj_1" },
-    ];
-    const registration: XaaResourceApp = {
-      id: "app_1",
-      name: "AcmeApp",
-      resourceType: "mcp",
-      resourceUrl: "https://acme.example.com/mcp",
-      authServerMode: "own",
-      issuer: "https://acme-as.example.com",
-      targetClientId: "acme-client",
-      scopes: ["read"],
-      hasSecret: true,
-      createdAt: 0,
-      updatedAt: 0,
-    };
-    const { result } = renderHook(() =>
-      useXaaTestTarget({
-        server: httpServer(),
-        selectedServerName: "staging-mcp",
-        selectedRegistration: registration,
-        runSettings,
-        selectedPerson: null,
-        projectId: "proj_1",
-      }),
-    );
-
-    expect(result.current.targetSource).toBe("registration");
-    expect(result.current.targetKey).toBe("registration:app_1");
-    expect(result.current.runInput.registrationId).toBe("app_1");
-    expect(result.current.usesServerSideSecret).toBe(false);
-    expect(result.current.serverId).toBeUndefined();
-    expect(result.current.barServerId).toBe("srv_1");
-    expect(result.current.barServerProjectId).toBe("proj_1");
-    // No policy mode resolved → no managed context in the run input.
-    expect(result.current.runInput.policyMode).toBeUndefined();
-    expect(result.current.runInput.testIdentityId).toBeUndefined();
-    expect(result.current.runInput.resourceAppId).toBeUndefined();
-  });
-
-  it("fills the managed-policy context on the registration branch only", () => {
-    remoteServers = [];
-    const registration: XaaResourceApp = {
-      id: "app_1",
-      name: "AcmeApp",
-      resourceType: "mcp",
-      resourceUrl: "https://acme.example.com/mcp",
-      authServerMode: "own",
-      issuer: "https://acme-as.example.com",
-      targetClientId: "acme-client",
-      scopes: ["read"],
-      hasSecret: true,
-      createdAt: 0,
-      updatedAt: 0,
-    };
-    const person = {
-      _id: "xperson_1",
-      subject: "alice-001",
-      email: "alice@example.test",
-    };
-
-    const managed = renderHook(() =>
-      useXaaTestTarget({
-        server: undefined,
-        selectedServerName: "none",
-        selectedRegistration: registration,
-        runSettings,
-        selectedPerson: person,
-        projectId: null,
-        policyMode: "managed",
-      }),
-    );
-    expect(managed.result.current.runInput).toMatchObject({
-      policyMode: "managed",
-      resourceAppId: "app_1",
-      testIdentityId: "xperson_1",
-      userId: "alice-001",
-      email: "alice@example.test",
-    });
-
-    // The unmanaged (admin bypass) mode still carries the person id — the
-    // issuer validates identity claims in both modes.
-    const unmanaged = renderHook(() =>
-      useXaaTestTarget({
-        server: undefined,
-        selectedServerName: "none",
-        selectedRegistration: registration,
-        runSettings,
-        selectedPerson: person,
-        projectId: null,
-        policyMode: "unmanaged",
-      }),
-    );
-    expect(unmanaged.result.current.runInput).toMatchObject({
-      policyMode: "unmanaged",
-      resourceAppId: "app_1",
-      testIdentityId: "xperson_1",
-    });
-
-    // A bar-server target ignores the policy mode entirely — managed policy
-    // only exists for org-registered resource apps.
-    const barServer = renderHook(() =>
-      useXaaTestTarget({
-        server: httpServer(),
-        selectedServerName: "staging-mcp",
-        selectedRegistration: null,
-        runSettings,
-        selectedPerson: person,
-        projectId: "proj_1",
-        policyMode: "managed",
-      }),
-    );
-    expect(barServer.result.current.runInput.policyMode).toBeUndefined();
-    expect(barServer.result.current.runInput.resourceAppId).toBeUndefined();
-    expect(barServer.result.current.runInput.testIdentityId).toBeUndefined();
   });
 
   it("marks a STDIO server not testable", () => {
@@ -253,7 +131,6 @@ describe("useXaaTestTarget", () => {
       useXaaTestTarget({
         server: stdio,
         selectedServerName: "local-stdio",
-        selectedRegistration: null,
         runSettings,
         selectedPerson: null,
         projectId: "proj_1",
@@ -270,7 +147,6 @@ describe("useXaaTestTarget", () => {
       useXaaTestTarget({
         server: httpServer({ useOAuth: false }),
         selectedServerName: "staging-mcp",
-        selectedRegistration: null,
         runSettings,
         selectedPerson: null,
         projectId: "proj_1",
@@ -290,7 +166,6 @@ describe("useXaaTestTarget", () => {
           xaaEmail: "server@example.com",
         } as Partial<ServerWithName>),
         selectedServerName: "staging-mcp",
-        selectedRegistration: null,
         runSettings,
         selectedPerson: null,
         projectId: "proj_1",
@@ -311,7 +186,6 @@ describe("useXaaTestTarget", () => {
           xaaEmail: "server@example.com",
         } as Partial<ServerWithName>),
         selectedServerName: "staging-mcp",
-        selectedRegistration: null,
         runSettings,
         selectedPerson: {
           _id: "person_1",
@@ -329,47 +203,12 @@ describe("useXaaTestTarget", () => {
     expect(result.current.targetKey).toBe("bar_server:staging-mcp");
   });
 
-  it("applies the selected person to a registration run too", () => {
-    remoteServers = [];
-    const registration: XaaResourceApp = {
-      id: "app_1",
-      name: "AcmeApp",
-      resourceType: "mcp",
-      resourceUrl: "https://acme.example.com/mcp",
-      authServerMode: "own",
-      issuer: "https://acme-as.example.com",
-      targetClientId: "acme-client",
-      scopes: ["read"],
-      hasSecret: false,
-      createdAt: 0,
-      updatedAt: 0,
-    };
-    const { result } = renderHook(() =>
-      useXaaTestTarget({
-        server: undefined,
-        selectedServerName: "none",
-        selectedRegistration: registration,
-        runSettings,
-        selectedPerson: {
-          _id: "person_1",
-          subject: "amara-002",
-          email: "amara@tables.test",
-        },
-        projectId: "proj_1",
-      }),
-    );
-    expect(result.current.runInput.userId).toBe("amara-002");
-    expect(result.current.runInput.email).toBe("amara@tables.test");
-    expect(result.current.targetKey).toBe("registration:app_1");
-  });
-
   it("returns the none source when nothing is selected", () => {
     remoteServers = [];
     const { result } = renderHook(() =>
       useXaaTestTarget({
         server: undefined,
         selectedServerName: "none",
-        selectedRegistration: null,
         runSettings,
         selectedPerson: null,
         projectId: "proj_1",
@@ -391,7 +230,6 @@ describe("useXaaTestTarget", () => {
       useXaaTestTarget({
         server: httpServer(),
         selectedServerName: "staging-mcp",
-        selectedRegistration: null,
         runSettings,
         selectedPerson: null,
         projectId: "proj_1",
@@ -414,7 +252,6 @@ describe("useXaaTestTarget", () => {
           xaaEmail: "server@example.com",
         } as Partial<ServerWithName>),
         selectedServerName: "staging-mcp",
-        selectedRegistration: null,
         runSettings,
         selectedPerson: null,
         projectId: "proj_1",
@@ -436,7 +273,6 @@ describe("useXaaTestTarget", () => {
           xaaEmail: "server@example.com",
         } as Partial<ServerWithName>),
         selectedServerName: "staging-mcp",
-        selectedRegistration: null,
         runSettings,
         selectedPerson: {
           _id: "person_1",
@@ -462,7 +298,6 @@ describe("useXaaTestTarget", () => {
       useXaaTestTarget({
         server: httpServer(),
         selectedServerName: "staging-mcp",
-        selectedRegistration: null,
         runSettings,
         selectedPerson: null,
         projectId: "proj_1",
@@ -471,37 +306,6 @@ describe("useXaaTestTarget", () => {
     );
     expect(result.current.runInput.userId).toBe("proj-sub-1");
     expect(result.current.runInput.email).toBe("proj@example.com");
-  });
-
-  it("a registration target resolves person > project default > run fallback (no server override)", () => {
-    remoteServers = [];
-    const registration: XaaResourceApp = {
-      id: "app_1",
-      name: "AcmeApp",
-      resourceType: "mcp",
-      resourceUrl: "https://acme.example.com/mcp",
-      authServerMode: "own",
-      issuer: "https://acme-as.example.com",
-      targetClientId: "acme-client",
-      scopes: ["read"],
-      hasSecret: false,
-      createdAt: 0,
-      updatedAt: 0,
-    };
-    const { result } = renderHook(() =>
-      useXaaTestTarget({
-        server: undefined,
-        selectedServerName: "none",
-        selectedRegistration: registration,
-        runSettings,
-        selectedPerson: null,
-        projectId: "proj_1",
-        projectDefault,
-      }),
-    );
-    expect(result.current.runInput.userId).toBe("proj-sub-1");
-    expect(result.current.runInput.email).toBe("proj@example.com");
-    expect(result.current.identityError).toBeUndefined();
   });
 
   it("falls back to run settings when there is no person, override, or project default", () => {
@@ -512,7 +316,6 @@ describe("useXaaTestTarget", () => {
       useXaaTestTarget({
         server: httpServer(),
         selectedServerName: "staging-mcp",
-        selectedRegistration: null,
         runSettings,
         selectedPerson: null,
         projectId: "proj_1",
@@ -534,7 +337,6 @@ describe("useXaaTestTarget", () => {
           // Legacy row: email member missing.
         } as Partial<ServerWithName>),
         selectedServerName: "staging-mcp",
-        selectedRegistration: null,
         runSettings,
         selectedPerson: null,
         projectId: "proj_1",
@@ -560,7 +362,6 @@ describe("useXaaTestTarget", () => {
           xaaSubject: "server-sub",
         } as Partial<ServerWithName>),
         selectedServerName: "staging-mcp",
-        selectedRegistration: null,
         runSettings,
         selectedPerson: {
           _id: "person_1",

@@ -29,11 +29,6 @@ export interface XaaRunSettings {
    * are testIdentities row ids; a stale id (person deleted) resolves to no
    * selection at read time. */
   selectedPersonIdByProject: Record<string, string>;
-  /** Selected ORG test identity per organization — the managed-IdP roster's
-   * mirror of `selectedPersonIdByProject` (same reset/stale semantics). Values
-   * are xaaTestIdentities row ids; a stale id (person archived/suspended)
-   * resolves to no selection at read time. */
-  selectedOrgPersonIdByOrg: Record<string, string>;
 }
 
 export const DEFAULT_XAA_RUN_SETTINGS: XaaRunSettings = {
@@ -42,7 +37,6 @@ export const DEFAULT_XAA_RUN_SETTINGS: XaaRunSettings = {
   negativeTestMode: DEFAULT_NEGATIVE_TEST_MODE,
   issuerMode: "local",
   selectedPersonIdByProject: {},
-  selectedOrgPersonIdByOrg: {},
 };
 
 function sanitizeMode(value: unknown): NegativeTestMode {
@@ -94,9 +88,6 @@ function loadInitialRunSettings(): XaaRunSettings {
         selectedPersonIdByProject: sanitizePersonMap(
           parsed.selectedPersonIdByProject,
         ),
-        selectedOrgPersonIdByOrg: sanitizePersonMap(
-          parsed.selectedOrgPersonIdByOrg,
-        ),
       };
     }
 
@@ -109,7 +100,6 @@ function loadInitialRunSettings(): XaaRunSettings {
         negativeTestMode: sanitizeMode(legacy.negativeTestMode),
         issuerMode: "local",
         selectedPersonIdByProject: {},
-        selectedOrgPersonIdByOrg: {},
       };
       try {
         localStorage.setItem(RUN_SETTINGS_KEY, JSON.stringify(migrated));
@@ -190,25 +180,6 @@ export function useXaaRunSettings() {
     [],
   );
 
-  // Exact mirror of setSelectedPersonId over the org-keyed map: setting null
-  // deletes only that org's key, other orgs' selections are untouched.
-  const setSelectedOrgPersonId = useCallback(
-    (organizationId: string, personId: string | null) => {
-      const key = organizationId.trim();
-      if (!key) return;
-      setSettings((current) => {
-        const map = { ...current.selectedOrgPersonIdByOrg };
-        if (personId && personId.trim().length > 0) {
-          map[key] = personId;
-        } else {
-          delete map[key];
-        }
-        return { ...current, selectedOrgPersonIdByOrg: map };
-      });
-    },
-    [],
-  );
-
   return useMemo(
     () => ({
       userId: settings.userId,
@@ -216,13 +187,11 @@ export function useXaaRunSettings() {
       negativeTestMode: settings.negativeTestMode,
       issuerMode: settings.issuerMode,
       selectedPersonIdByProject: settings.selectedPersonIdByProject,
-      selectedOrgPersonIdByOrg: settings.selectedOrgPersonIdByOrg,
       isDefaultIdentity: isDefaultIdentity(settings),
       setNegativeTestMode,
       setIdentity,
       setIssuerMode,
       setSelectedPersonId,
-      setSelectedOrgPersonId,
     }),
     [
       settings,
@@ -230,7 +199,6 @@ export function useXaaRunSettings() {
       setIdentity,
       setIssuerMode,
       setSelectedPersonId,
-      setSelectedOrgPersonId,
     ],
   );
 }

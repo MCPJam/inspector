@@ -13,27 +13,15 @@ import {
   useXaaPeopleMutations,
   type RemoteXaaPerson,
 } from "@/hooks/useXaaPeople";
-import type { XaaOrgPersonStatus } from "@/lib/xaa/types";
-import { buildXaaSetupPath, useAppNavigate } from "@/lib/app-navigation";
 
 /** Per-person result of the last valid run against the current target,
- * attributed to the STAGE that ruled: the managed test IdP (mint-time policy)
- * or the resource authorization server (jwt-bearer redemption). Deliberately
- * not a boolean: "complete" doesn't prove full access (either stage may
- * downscope), and not every failure is a policy denial. */
+ * as ruled by the resource authorization server (jwt-bearer redemption).
+ * Deliberately not a boolean: "complete" doesn't prove full access (the AS
+ * may downscope), and not every failure is a policy denial. */
 export interface XaaPersonOutcome {
-  status:
-    | "allowed"
-    | "idp_denied"
-    | "idp_downscoped"
-    | "ras_rejected"
-    | "ras_downscoped"
-    | "test_error";
+  status: "allowed" | "ras_rejected" | "ras_downscoped" | "test_error";
   /** Allowlisted OAuth error code (never a raw error string). */
   oauthErrorCode?: string;
-  /** Short value-free policy reason enum from the managed IdP's denial
-   * (e.g. `not_assigned`, `identity_suspended`) — never a raw message. */
-  reasonCode?: string;
   failedStep?: string;
 }
 
@@ -45,28 +33,10 @@ function OutcomeBadge({ outcome }: { outcome: XaaPersonOutcome }) {
           <Check className="size-3" /> Allowed
         </span>
       );
-    case "idp_downscoped":
-      return (
-        <span
-          className="text-[11px] font-medium text-amber-600 dark:text-amber-400"
-          title="Your managed test IdP narrowed the scope at mint time (earliest stage wins — a later RAS narrowing of the already-narrowed grant isn't double-reported)."
-        >
-          IdP downscoped
-        </span>
-      );
     case "ras_downscoped":
       return (
         <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
           Downscoped
-        </span>
-      );
-    case "idp_denied":
-      return (
-        <span
-          className="text-[11px] font-medium text-destructive"
-          title="Your managed test IdP refused to mint the ID-JAG for this person."
-        >
-          IdP denied{outcome.reasonCode ? ` · ${outcome.reasonCode}` : ""}
         </span>
       );
     case "ras_rejected":
@@ -101,10 +71,6 @@ export const EMPTY_PERSON_DRAFT: PersonDraft = {
 
 /**
  * Add/edit form shared by the "+" popover and the per-chip edit popover.
- * Also reused by the org setup center (`/xaa-flow/setup`): `submitOverride`
- * redirects the save to the org-scoped mutations (and hides the built-in
- * project delete — org identities archive via row actions instead). Without
- * the override props, behavior is exactly the project-strip default.
  */
 export function PersonForm({
   initial,
@@ -112,20 +78,13 @@ export function PersonForm({
   projectId,
   onDone,
   onDeleted,
-  submitOverride,
-  subjectLocked,
 }: {
   initial: PersonDraft;
   /** Present = edit; absent = create. */
   personId?: string;
-  /** Unused when `submitOverride` is provided (pass ""). */
   projectId: string;
   onDone: () => void;
   onDeleted?: () => void;
-  /** Replaces the project-scoped save; the built-in delete is hidden. */
-  submitOverride?: (draft: PersonDraft, personId?: string) => Promise<void>;
-  /** Org identities have immutable subjects — lock the field when editing. */
-  subjectLocked?: boolean;
 }) {
   const { create, update, remove } = useXaaPeopleMutations();
   const [draft, setDraft] = useState<PersonDraft>(initial);
@@ -146,9 +105,7 @@ export function PersonForm({
     setBusy(true);
     setError(null);
     try {
-      if (submitOverride) {
-        await submitOverride(draft, personId);
-      } else if (personId) {
+      if (personId) {
         await update({
           testIdentityId: personId,
           name: draft.name,
@@ -220,7 +177,6 @@ export function PersonForm({
           value={draft.subject}
           placeholder="test-user-1"
           className="font-mono"
-          disabled={Boolean(subjectLocked && personId)}
           onChange={(e) => setDraft((d) => ({ ...d, subject: e.target.value }))}
         />
       </div>
@@ -238,7 +194,7 @@ export function PersonForm({
       </div>
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
       <div className="flex items-center justify-between gap-2">
-        {personId && !submitOverride ? (
+        {personId ? (
           <Button
             type="button"
             variant="ghost"
@@ -260,24 +216,10 @@ export function PersonForm({
   );
 }
 
-/** A strip person: the project fixture shape, plus the org roster's status
- * when the strip is in org mode. */
-export type XaaStripPerson = RemoteXaaPerson & {
-  status?: XaaOrgPersonStatus;
-};
-
 /**
  * Slim "Run as" strip under the IdP bar: one chip per synthetic test identity.
  * Selecting a person makes the flow mint assertions for their subject/email;
  * the badge is the last policy decision about them against the current target.
- *
- * Two rosters, one strip:
- * - `mode="project"` (default) — project fixtures with inline add/edit
- *   popovers, exactly the pre-managed-IdP behavior.
- * - `mode="org"` — the org's managed roster. Suspended people are hidden from
- *   selection (the evaluator would deny them at mint anyway), and editing is
- *   admin-governed in the setup center, so the pencil/add affordances
- *   navigate to `/xaa-flow/setup` instead of opening inline forms.
  *
  * Invisible-ish by design: renders nothing when the roster is unavailable
  * (signed out / no project) or still loading, and only a small ghost button
@@ -293,9 +235,8 @@ export function XAAPeopleStrip({
   onSelectPerson,
   disabled,
   outcomeFor,
-  mode = "project",
 }: {
-  people: XaaStripPerson[] | undefined;
+  people: RemoteXaaPerson[] | undefined;
   isLoading: boolean;
   isAvailable: boolean;
   projectId: string | null;
@@ -305,77 +246,46 @@ export function XAAPeopleStrip({
    * assertion minted for the previous person. */
   disabled: boolean;
   outcomeFor: (personId: string) => XaaPersonOutcome | undefined;
-  /** Which roster the strip shows (see the component doc). */
-  mode?: "project" | "org";
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const navigate = useAppNavigate();
-
-  // Org mode: suspended people are hidden from selection entirely — offering
-  // a chip the evaluator is guaranteed to deny would only invite confusion.
-  const visiblePeople =
-    mode === "org"
-      ? people?.filter((p) => p.status !== "suspended")
-      : people;
 
   // If the roster shrinks under an open edit popover, close it.
   useEffect(() => {
-    if (editingId && !visiblePeople?.some((p) => p._id === editingId)) {
+    if (editingId && !people?.some((p) => p._id === editingId)) {
       setEditingId(null);
     }
-  }, [editingId, visiblePeople]);
+  }, [editingId, people]);
 
-  if (
-    !isAvailable ||
-    isLoading ||
-    visiblePeople === undefined ||
-    (mode === "project" && !projectId)
-  ) {
+  if (!isAvailable || isLoading || people === undefined || !projectId) {
     return null;
   }
 
-  const openSetupPeople = () => navigate(buildXaaSetupPath("people"));
-
-  // Org identities are managed (admin-gated) in the setup center — the add
-  // affordance navigates there instead of opening an inline form.
-  const addButton =
-    mode === "org" ? (
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className="h-7 gap-1 px-2 text-xs text-muted-foreground"
-        onClick={openSetupPeople}
-      >
-        <Plus className="size-3.5" />
-        {visiblePeople.length === 0 ? "Run as…" : "Manage people"}
-      </Button>
-    ) : (
-      <Popover open={adding} onOpenChange={setAdding}>
-        <PopoverTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1 px-2 text-xs text-muted-foreground"
-          >
-            <Plus className="size-3.5" />
-            {visiblePeople.length === 0 ? "Run as…" : "Add person"}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent align="start" className="w-80">
-          <PersonForm
-            initial={EMPTY_PERSON_DRAFT}
-            projectId={projectId ?? ""}
-            onDone={() => setAdding(false)}
-          />
-        </PopoverContent>
-      </Popover>
-    );
+  const addButton = (
+    <Popover open={adding} onOpenChange={setAdding}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1 px-2 text-xs text-muted-foreground"
+        >
+          <Plus className="size-3.5" />
+          {people.length === 0 ? "Run as…" : "Add person"}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80">
+        <PersonForm
+          initial={EMPTY_PERSON_DRAFT}
+          projectId={projectId}
+          onDone={() => setAdding(false)}
+        />
+      </PopoverContent>
+    </Popover>
+  );
 
   // Loaded-and-empty: just the ghost button, no bar chrome.
-  if (visiblePeople.length === 0) {
+  if (people.length === 0) {
     return (
       <div className="border-b border-border bg-background px-4 py-1.5">
         {addButton}
@@ -388,7 +298,7 @@ export function XAAPeopleStrip({
       <span className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">
         Run as
       </span>
-      {visiblePeople.map((person) => {
+      {people.map((person) => {
         const selected = person._id === selectedPersonId;
         const outcome = outcomeFor(person._id);
         return (
@@ -412,67 +322,46 @@ export function XAAPeopleStrip({
               <span className="text-xs font-medium">{person.name}</span>
               {outcome ? <OutcomeBadge outcome={outcome} /> : null}
             </button>
-            {mode === "org" ? (
-              <button
-                type="button"
-                aria-label={`Edit ${person.name} in XAA setup`}
-                title="Org people are managed in the setup center"
-                aria-disabled={disabled || undefined}
-                // Same run-in-progress guard as chip switching: suspending or
-                // archiving the running identity in the setup center mid-run
-                // is the same back door the disabled chips close.
-                onClick={() => {
-                  if (disabled) return;
-                  openSetupPeople();
-                }}
-                className={`ml-0.5 rounded p-1 text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover/chip:opacity-100 ${
-                  disabled ? "cursor-not-allowed" : "hover:text-foreground"
-                }`}
-              >
-                <Pencil className="size-3" />
-              </button>
-            ) : (
-              <Popover
-                // Same run-in-progress guard as chip switching: editing or
-                // deleting a person mid-run would mutate/deselect the running
-                // identity through the back door the disabled chips close.
-                open={!disabled && editingId === person._id}
-                onOpenChange={(open) => {
-                  if (disabled) return;
-                  setEditingId(open ? person._id : null);
-                }}
-              >
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    aria-label={`Edit ${person.name}`}
-                    aria-disabled={disabled || undefined}
-                    className={`ml-0.5 rounded p-1 text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover/chip:opacity-100 ${
-                      disabled
-                        ? "cursor-not-allowed"
-                        : "hover:text-foreground"
-                    }`}
-                  >
-                    <Pencil className="size-3" />
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent align="start" className="w-80">
-                  <PersonForm
-                    initial={{
-                      name: person.name,
-                      subject: person.subject,
-                      email: person.email,
-                    }}
-                    personId={person._id}
-                    projectId={projectId ?? ""}
-                    onDone={() => setEditingId(null)}
-                    onDeleted={() => {
-                      if (selected) onSelectPerson(null);
-                    }}
-                  />
-                </PopoverContent>
-              </Popover>
-            )}
+            <Popover
+              // Same run-in-progress guard as chip switching: editing or
+              // deleting a person mid-run would mutate/deselect the running
+              // identity through the back door the disabled chips close.
+              open={!disabled && editingId === person._id}
+              onOpenChange={(open) => {
+                if (disabled) return;
+                setEditingId(open ? person._id : null);
+              }}
+            >
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`Edit ${person.name}`}
+                  aria-disabled={disabled || undefined}
+                  className={`ml-0.5 rounded p-1 text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover/chip:opacity-100 ${
+                    disabled
+                      ? "cursor-not-allowed"
+                      : "hover:text-foreground"
+                  }`}
+                >
+                  <Pencil className="size-3" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-80">
+                <PersonForm
+                  initial={{
+                    name: person.name,
+                    subject: person.subject,
+                    email: person.email,
+                  }}
+                  personId={person._id}
+                  projectId={projectId}
+                  onDone={() => setEditingId(null)}
+                  onDeleted={() => {
+                    if (selected) onSelectPerson(null);
+                  }}
+                />
+              </PopoverContent>
+            </Popover>
           </div>
         );
       })}
