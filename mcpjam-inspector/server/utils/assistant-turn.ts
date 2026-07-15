@@ -24,8 +24,10 @@ import type {
   UIMessageChunk,
 } from "ai";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
+import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import type { ModelDefinition } from "@/shared/types";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import { getCanonicalModelId } from "@/shared/types";
+import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import type {
   ProgressiveToolPlan,
@@ -37,6 +39,9 @@ import {
 } from "./mcpjam-stream-handler.js";
 import type { ChatOrigin, PersistedTurnTrace } from "./chat-ingestion.js";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
+import { getHarnessAdapter } from "./harness/registry.js";
+import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
+import { logger } from "./logger.js";
 
 /**
  * Authentication context for `runAssistantTurn`.
@@ -87,7 +92,7 @@ export interface RunAssistantTurnOptions {
    * the existing `MCPJamHandlerOptions.sourceType` union but kept
    * narrowed to the public values to avoid silent string churn.
    */
-  sourceType: "direct" | "chatbox" | "eval";
+  sourceType: "direct" | "chatbox" | "eval" | "swarm";
   /**
    * Product-surface discriminator forwarded into chat-ingestion. Required
    * so each caller (eval runner, session simulation, MCP route) explicitly
@@ -109,6 +114,8 @@ export interface RunAssistantTurnOptions {
    * approval gate at mcpjam-stream-handler.ts:834–843 fires when set.
    */
   requireToolApproval?: boolean;
+  /** Host/client policy for eligible MCP tool-result content/resources. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
 
   /**
    * Which real agent harness runs this turn. Absent ⇒ MCPJam's emulated engine
@@ -182,6 +189,25 @@ export interface RunAssistantTurnOptions {
   prepareAdvertisedTools?: MCPJamHandlerOptions["prepareAdvertisedTools"];
 
   /**
+   * Harness MCP-proxy plane strategy — how a harness turn's cloud sandbox
+   * reaches THIS inspector's MCP servers. `runHarnessTurn` REQUIRES it whenever
+   * a harness host has selected MCP servers (it throws otherwise). The live-chat
+   * routes set it directly on their handler options; eval/synthetic drive the
+   * harness through this facade, so it must be a pass-through here too. Emulated
+   * turns and harness turns with no MCP servers ignore it.
+   */
+  harnessMcpProxy?: MCPJamHandlerOptions["harnessMcpProxy"];
+
+  /**
+   * Swarm (journey-execution) continuity identity. Forwarded to the harness
+   * turn so a swarm harness session claims/commits the `swarm-chat` owner lane
+   * (keyed on `journeyRunId` + `hostId` + `chatSessionId`) instead of misfiling
+   * under `direct-chat`. Set only by the swarm runner; other callers omit both.
+   */
+  journeyRunId?: MCPJamHandlerOptions["journeyRunId"];
+  hostId?: MCPJamHandlerOptions["hostId"];
+
+  /**
    * Override the Convex endpoint path. Stage 1 keeps this wired so
    * `handleHostedOrgChatModel` (org BYOK delegation chain) keeps
    * working — `runAssistantTurn` is the same engine, and the org BYOK
@@ -222,6 +248,16 @@ export interface RunAssistantTurnResult {
   finishReason?: string;
   /** Set only for `streamSink: "ui"`. */
   response?: Response;
+  /**
+   * §3 harness resume-state commit produced by a successful harness turn (the
+   * 3rd `onConversationComplete` arg). Present only for a continuity-backed
+   * harness turn; the emulated engine and non-continuity harness turns leave it
+   * undefined. A `persistMode: "caller"` consumer (the synthetic/swarm runner)
+   * MUST forward this into its own `persistChatSessionToConvex` call so the
+   * resume-state rides `/ingest-chat` atomically with the transcript — otherwise
+   * the harness lease is never committed/released and the next turn 409s.
+   */
+  harnessSessionCommit?: HarnessSessionCommitPayload;
 }
 
 function extractAssistantMessages(
@@ -306,28 +342,40 @@ function buildHandlerOptions(
   opts: RunAssistantTurnOptions,
   captureTranscript: (
     messages: ModelMessage[],
-    turnTrace: PersistedTurnTrace
+    turnTrace: PersistedTurnTrace,
+    harnessSessionCommit?: HarnessSessionCommitPayload
   ) => void
 ): MCPJamHandlerOptions {
   const wrappedOnConversationComplete: MCPJamHandlerOptions["onConversationComplete"] =
-    async (fullHistory, turnTrace) => {
-      captureTranscript(fullHistory, turnTrace);
+    async (fullHistory, turnTrace, harnessSessionCommit) => {
+      // Capture the harness resume-state commit (3rd arg) alongside the
+      // transcript so a `persistMode: "caller"` consumer can forward it into its
+      // own ingest. Dropping it here (the old behavior) silently stranded the
+      // harness lease for every synthetic/swarm harness turn.
+      captureTranscript(fullHistory, turnTrace, harnessSessionCommit);
       if (
         opts.persistMode === "handler" &&
         typeof opts.onConversationComplete === "function"
       ) {
-        await opts.onConversationComplete(fullHistory, turnTrace);
+        await opts.onConversationComplete(
+          fullHistory,
+          turnTrace,
+          harnessSessionCommit
+        );
       }
     };
 
   const handlerOptions: MCPJamHandlerOptions = {
     messages: opts.messages,
     modelId: String(opts.modelDefinition.id),
+    provider: opts.modelDefinition.provider,
     systemPrompt: opts.systemPrompt,
     tools: opts.tools,
     mcpClientManager: opts.mcpClientManager,
     authHeader: opts.authContext.token,
-    ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+    ...(opts.temperature !== undefined
+      ? { temperature: opts.temperature }
+      : {}),
     ...(opts.chatboxId ? { chatboxId: opts.chatboxId } : {}),
     ...(opts.accessVersion !== undefined
       ? { accessVersion: opts.accessVersion }
@@ -338,8 +386,23 @@ function buildHandlerOptions(
     ...(opts.selectedServerIds
       ? { selectedServers: opts.selectedServerIds }
       : {}),
+    // Carry the harness selector through to the handler — runHarnessTurn reads it
+    // off MCPJamHandlerOptions and now REQUIRES it. Without this, eval/synthetic/
+    // unified harness turns reach runHarnessTurn with harness=undefined (the old
+    // `?? "claude-code"` default silently mis-ran a codex eval as claude-code).
+    ...(opts.harness ? { harness: opts.harness } : {}),
+    // Harness MCP-proxy plane + swarm continuity identity: pass-throughs so an
+    // eval/synthetic harness turn driven through this facade can (a) reach MCP
+    // (runHarnessTurn REQUIRES harnessMcpProxy when servers are selected) and
+    // (b) claim the correct owner lane (`swarm-chat` for swarm).
+    ...(opts.harnessMcpProxy ? { harnessMcpProxy: opts.harnessMcpProxy } : {}),
+    ...(opts.journeyRunId ? { journeyRunId: opts.journeyRunId } : {}),
+    ...(opts.hostId ? { hostId: opts.hostId } : {}),
     ...(opts.requireToolApproval !== undefined
       ? { requireToolApproval: opts.requireToolApproval }
+      : {}),
+    ...(opts.modelVisibleMcpToolResults !== undefined
+      ? { modelVisibleMcpToolResults: opts.modelVisibleMcpToolResults }
       : {}),
     ...(opts.approvalMode !== undefined
       ? { approvalMode: opts.approvalMode }
@@ -351,9 +414,7 @@ function buildHandlerOptions(
     ...(opts.onStreamWriterReady
       ? { onStreamWriterReady: opts.onStreamWriterReady }
       : {}),
-    ...(opts.onLiveTextDelta
-      ? { onLiveTextDelta: opts.onLiveTextDelta }
-      : {}),
+    ...(opts.onLiveTextDelta ? { onLiveTextDelta: opts.onLiveTextDelta } : {}),
     // PR 5b-pre: pass-through chunk-level + step-level callbacks.
     ...(opts.onToolCall ? { onToolCall: opts.onToolCall } : {}),
     ...(opts.onToolResult ? { onToolResult: opts.onToolResult } : {}),
@@ -375,9 +436,7 @@ function buildHandlerOptions(
       ? { heartbeatIntervalMs: opts.heartbeatIntervalMs }
       : {}),
     ...(opts.maxSteps !== undefined ? { maxSteps: opts.maxSteps } : {}),
-    ...(opts.progressivePlan
-      ? { progressivePlan: opts.progressivePlan }
-      : {}),
+    ...(opts.progressivePlan ? { progressivePlan: opts.progressivePlan } : {}),
     ...(opts.discoveryState ? { discoveryState: opts.discoveryState } : {}),
   };
 
@@ -416,13 +475,18 @@ export async function runAssistantTurn(
 ): Promise<RunAssistantTurnResult> {
   let capturedMessages: ModelMessage[] | undefined;
   let capturedTrace: PersistedTurnTrace | undefined;
+  let capturedHarnessCommit: HarnessSessionCommitPayload | undefined;
 
-  const handlerOptions = buildHandlerOptions(opts, (fullHistory, turnTrace) => {
-    capturedMessages = fullHistory;
-    capturedTrace = turnTrace;
-  });
+  const handlerOptions = buildHandlerOptions(
+    opts,
+    (fullHistory, turnTrace, harnessSessionCommit) => {
+      capturedMessages = fullHistory;
+      capturedTrace = turnTrace;
+      capturedHarnessCommit = harnessSessionCommit;
+    }
+  );
 
-  // A host with `harness: "claude-code"` runs the real Claude Code runtime
+  // A host with a `harness` selected (claude-code | codex) runs the real runtime
   // inside its computer; otherwise the emulated engine. Both satisfy the same
   // ChatEngineLoopResult contract, so everything downstream is identical.
   //
@@ -430,15 +494,51 @@ export async function runAssistantTurn(
   // deploy/Convex MCPJam credential path, NOT the caller's org-BYOK provider key
   // (it ignores endpointPath / extraBodyFields). Running a BYOK turn through it
   // would use the wrong credentials and mis-account spend, so for BYOK models we
-  // fall back to the emulated engine (which honors the org-BYOK path). This
-  // mirrors live web chat, where only the MCPJam-free branch forwards harness;
-  // eval/synthetic forward it unconditionally, so this is the authoritative gate.
-  const useHarness =
-    opts.harness === "claude-code" &&
-    isMCPJamProvidedModel(
-      String(opts.modelDefinition.id),
-      opts.modelDefinition.provider,
+  // fall back to the emulated engine (which honors the org-BYOK path).
+  //
+  // The interactive web path fails closed at the chat-v2 preflight when a harness
+  // host's model is ineligible. This gate is the authoritative one for
+  // eval/synthetic (which forward `harness` unconditionally and shouldn't hard-
+  // fail a batch): when a harness was requested but the model isn't eligible, we
+  // SURFACE the fallback (not a silent emulated swap) so it's visible in logs/
+  // traces rather than misread as "observed the real harness".
+  const harnessRequested = !!opts.harness;
+  const harnessModelId = String(opts.modelDefinition.id);
+  // Eligibility is BOTH "MCPJam-provided" AND "the runtime can actually run this
+  // model". The interactive routes check supportsModel in their preflight, but
+  // eval/synthetic don't — without this a codex turn on an MCPJam-provided but
+  // non-Codex model (e.g. anthropic/claude-haiku-4.5) would reach createCodex()
+  // with no native model and silently use Codex's default. Mirror the preflight.
+  const harnessAdapter = harnessRequested
+    ? getHarnessAdapter(opts.harness as string)
+    : undefined;
+  // supportsModel needs the CANONICAL id (bare hosted ids like `gpt-5-nano` →
+  // `openai/gpt-5-nano`); isHostedCatalogModel canonicalizes internally, so a
+  // bare id would otherwise pass eligibility but fail supportsModel and wrongly
+  // fall back to emulated.
+  const canonicalHarnessModelId = getCanonicalModelId(
+    harnessModelId,
+    opts.modelDefinition.provider,
+  );
+  const modelEligible =
+    isHostedCatalogModel(harnessModelId, opts.modelDefinition.provider) &&
+    (harnessAdapter
+      ? harnessAdapter.supportsModel(canonicalHarnessModelId)
+      : true);
+  const useHarness = harnessRequested && modelEligible;
+  if (harnessRequested && !modelEligible) {
+    logger.warn(
+      "[assistant-turn] harness requested but model ineligible (not MCPJam-" +
+        "provided, or unsupported by the runtime) — falling back to the emulated " +
+        "engine (surfaced, not silent)",
+      {
+        harness: opts.harness,
+        modelId: harnessModelId,
+        provider: opts.modelDefinition.provider,
+        sourceType: opts.sourceType,
+      },
     );
+  }
   const engineResult = useHarness
     ? await runHarnessTurn(handlerOptions, opts.streamSink)
     : await runChatEngineLoop(handlerOptions, opts.streamSink);
@@ -454,9 +554,7 @@ export async function runAssistantTurn(
   // stream drains. We prefer the captured snapshot when available
   // (post-onFinish view) and fall back to the engine ref otherwise —
   // never to opts.messages.
-  const messages =
-    capturedMessages ??
-    engineResult.messageHistory;
+  const messages = capturedMessages ?? engineResult.messageHistory;
   const assistantMessages = extractAssistantMessages(messages);
   const toolCalls = extractToolCalls(messages);
   const toolResults = extractToolResults(messages);
@@ -476,6 +574,12 @@ export async function runAssistantTurn(
     ...(turnTrace?.usage ? { usage: turnTrace.usage } : {}),
     ...(turnTrace?.finishReason
       ? { finishReason: turnTrace.finishReason }
+      : {}),
+    // Surface the harness resume-state commit so a caller-persist consumer can
+    // ride it into its own ingest (populated synchronously for streamSink
+    // "none"; for "ui" it lands after the body drains, alongside the transcript).
+    ...(capturedHarnessCommit
+      ? { harnessSessionCommit: capturedHarnessCommit }
       : {}),
   };
 

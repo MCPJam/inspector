@@ -111,4 +111,46 @@ describe("eval-stream-reducer", () => {
       spans: trace.spans,
     });
   });
+
+  it("accumulates per-step status across step_status events", () => {
+    const events: EvalStreamEvent[] = [
+      { type: "step_status", turnIndex: 0, kind: "prompt", status: "running" },
+      { type: "step_status", turnIndex: 0, kind: "prompt", status: "ok" },
+      {
+        type: "step_status",
+        turnIndex: 1,
+        kind: "interact",
+        status: "fail",
+        detail: "widget not mounted",
+      },
+    ];
+    const state = events.reduce(reduceEvalStreamEvent, initialEvalStreamState);
+
+    // Latest status for a (turn,kind) key wins; distinct keys coexist.
+    expect(state.stepStatus["turn-0-prompt"]).toEqual({
+      turnIndex: 0,
+      stepId: undefined,
+      kind: "prompt",
+      status: "ok",
+      detail: undefined,
+    });
+    expect(state.stepStatus["turn-1-interact"]).toEqual({
+      turnIndex: 1,
+      stepId: undefined,
+      kind: "interact",
+      status: "fail",
+      detail: "widget not mounted",
+    });
+  });
+
+  it("keys step_status by stepId when present", () => {
+    const state = reduceEvalStreamEvent(initialEvalStreamState, {
+      type: "step_status",
+      turnIndex: 0,
+      stepId: "step-abc",
+      kind: "assert",
+      status: "ok",
+    });
+    expect(state.stepStatus["step-abc"]?.status).toBe("ok");
+  });
 });

@@ -50,12 +50,81 @@ export function buildDiscoveryCandidates(input: string): string[] {
   return Array.from(new Set(candidates));
 }
 
+const PRM_SUFFIX = "/.well-known/oauth-protected-resource";
+
+/**
+ * Build the ordered list of RFC 9728 protected-resource-metadata (PRM) URLs to
+ * probe for a resource (the MCP server URL). PRM is the document that names the
+ * authorization server(s) protecting the resource — the issuer is NOT the
+ * resource URL itself, so we read it from here rather than guessing.
+ *
+ * RFC 9728 §3.1 inserts the well-known segment between the host and the
+ * resource's path (`https://host/mcp` → `https://host/.well-known/oauth-protected-resource/mcp`);
+ * the path-less root form is the fallback some servers serve at the origin.
+ */
+export function buildResourceMetadataCandidates(input: string): string[] {
+  const url = new URL(input);
+  const origin = url.origin;
+  const root = `${origin}${PRM_SUFFIX}`;
+
+  const path = stripTrailingSlash(url.pathname);
+  if (path && path !== "") {
+    return Array.from(new Set([`${origin}${PRM_SUFFIX}${path}`, root]));
+  }
+
+  return [root];
+}
+
+function isParseableUrl(value: string): boolean {
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read the first usable authorization-server issuer out of an RFC 9728 PRM
+ * document. Skips entries that aren't parseable URLs so a malformed entry
+ * doesn't abort discovery when a later entry is valid. Returns undefined when
+ * the document advertises none (e.g. the fetched URL wasn't actually PRM), so
+ * callers can fall back to another discovery path.
+ */
+export function extractAuthorizationServer(
+  metadata: Record<string, unknown>,
+): string | undefined {
+  const servers = metadata.authorization_servers;
+  if (!Array.isArray(servers)) {
+    return undefined;
+  }
+  for (const entry of servers) {
+    if (typeof entry !== "string") {
+      continue;
+    }
+    const trimmed = entry.trim();
+    if (trimmed && isParseableUrl(trimmed)) {
+      return trimmed;
+    }
+  }
+  return undefined;
+}
+
 export type GrantSupportStatus = "pass" | "warn" | "fail";
 
 export interface IssuerMismatch {
   requested: string;
   advertised: string;
   schemeOnly: boolean;
+  /**
+   * The advertised issuer is a same-origin path-prefix ancestor of the
+   * requested URL (e.g. requested https://env.example.com/resources/res_x,
+   * advertised https://env.example.com). The shape of multi-tenant
+   * authorization servers that scope endpoints under a path while issuing
+   * from the origin root — acceptable only under the per-server
+   * path-scoped-issuer opt-in.
+   */
+  originPrefix: boolean;
 }
 
 export interface DiscoveryVerdict {
@@ -90,6 +159,27 @@ function fullIdentity(value: string): string {
   } catch {
     return stripTrailingSlash(value);
   }
+}
+
+// True when `advertised` is the origin root or a path-prefix ancestor of
+// `requested` on the SAME origin (scheme + host + port). Segment-aware:
+// /resources is an ancestor of /resources/res_x but not of /resources-evil.
+function isOriginPrefix(advertised: string, requested: string): boolean {
+  let adv: URL;
+  let req: URL;
+  try {
+    adv = new URL(advertised);
+    req = new URL(requested);
+  } catch {
+    return false;
+  }
+  if (adv.origin !== req.origin) return false;
+  const advPath = stripTrailingSlash(adv.pathname);
+  const reqPath = stripTrailingSlash(req.pathname);
+  if (advPath === reqPath) return false;
+  return advPath === "" || advPath === "/"
+    ? reqPath.length > 0
+    : reqPath.startsWith(`${advPath}/`);
 }
 
 /**
@@ -142,6 +232,7 @@ export function evaluateDiscovery(
       // Same host/path, different scheme → almost always a proxy that
       // terminates TLS but advertises an http:// issuer.
       schemeOnly: hostAndPath(issuer) === hostAndPath(context.requestedIssuer),
+      originPrefix: isOriginPrefix(issuer, context.requestedIssuer),
     };
   }
 

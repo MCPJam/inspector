@@ -52,6 +52,9 @@ vi.mock("@/lib/config", () => ({
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   buildAvailableModels: vi.fn(() => [baseModel]),
   getDefaultModel: vi.fn(() => baseModel),
+  isMCPJamProvidedModelMenuItem: vi.fn((model: { id: string }) =>
+    String(model.id).includes("/")
+  ),
 }));
 
 vi.mock("@/hooks/use-ai-provider-keys", () => ({

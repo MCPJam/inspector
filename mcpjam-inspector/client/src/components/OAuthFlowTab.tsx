@@ -12,8 +12,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "./ui/resizable";
-import posthog from "posthog-js";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { OAuthProfileModal } from "./oauth/OAuthProfileModal";
 import { type OAuthTestProfile } from "@/lib/oauth/profile";
 import { OAuthFlowLogger } from "./oauth/OAuthFlowLogger";
@@ -29,6 +28,20 @@ export interface OAuthTokensFromFlow {
   expiresIn?: number;
   clientId?: string;
   clientSecret?: string;
+  // AS URL discovered during the debugger flow. Forwarded to the hosted
+  // backend so it can refresh without re-discovering against a resource it
+  // can't reach itself (e.g. localhost).
+  authorizationServerUrl?: string;
+}
+
+declare global {
+  interface Window {
+    __oauthDebuggerE2EFlowState?: {
+      authorizationUrl?: string;
+      currentStep: OAuthFlowStep;
+      state?: string;
+    };
+  }
 }
 
 const deriveServerIdentifier = (profile: OAuthTestProfile): string => {
@@ -180,6 +193,25 @@ export const OAuthFlowTab = ({
   }, [oauthFlowState]);
 
   useEffect(() => {
+    if (
+      !import.meta.env.DEV ||
+      !window.location.pathname.startsWith("/__e2e/oauth-debugger")
+    ) {
+      return;
+    }
+
+    window.__oauthDebuggerE2EFlowState = {
+      authorizationUrl: oauthFlowState.authorizationUrl,
+      currentStep: oauthFlowState.currentStep,
+      state: oauthFlowState.state,
+    };
+  }, [
+    oauthFlowState.authorizationUrl,
+    oauthFlowState.currentStep,
+    oauthFlowState.state,
+  ]);
+
+  useEffect(() => {
     setFocusedStep(null);
   }, [oauthFlowState.currentStep]);
 
@@ -252,15 +284,21 @@ export const OAuthFlowTab = ({
       customScopes: profile.scopes.trim() || undefined,
       customHeaders,
       registrationStrategy,
+      preregisteredClientId: profile.clientId.trim() || undefined,
+      preregisteredClientSecret: profile.clientSecret.trim() || undefined,
+      hasClientSecret: Boolean(activeServer?.hasClientSecret),
     });
   }, [
     hasProfile,
     protocolVersion,
     profile.serverUrl,
     profile.scopes,
+    profile.clientId,
+    profile.clientSecret,
     serverIdentifier,
     customHeaders,
     registrationStrategy,
+    activeServer?.hasClientSecret,
     updateOAuthFlowState,
   ]);
 
@@ -271,10 +309,8 @@ export const OAuthFlowTab = ({
   }, [oauthStateMachine]);
 
   const handleAdvance = useCallback(async () => {
-    posthog.capture("oauth_flow_tab_next_step_button_clicked", {
+    track("oauth_flow_tab_next_step_button_clicked", {
       location: "oauth_flow_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       currentStep: oauthFlowState.currentStep,
       protocolVersion,
       registrationStrategy,
@@ -334,6 +370,7 @@ export const OAuthFlowTab = ({
       expiresIn: oauthFlowState.expiresIn,
       clientId: oauthFlowState.clientId,
       clientSecret: oauthFlowState.clientSecret,
+      authorizationServerUrl: oauthFlowState.authorizationServerUrl,
     }),
     [
       oauthFlowState.accessToken,
@@ -342,6 +379,7 @@ export const OAuthFlowTab = ({
       oauthFlowState.expiresIn,
       oauthFlowState.clientId,
       oauthFlowState.clientSecret,
+      oauthFlowState.authorizationServerUrl,
     ],
   );
 
@@ -509,10 +547,8 @@ export const OAuthFlowTab = ({
   }, [oauthStateMachine, updateOAuthFlowState]);
 
   useEffect(() => {
-    posthog.capture("oauth_flow_tab_viewed", {
+    track("oauth_flow_tab_viewed", {
       location: "oauth_flow_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
   }, []);
 

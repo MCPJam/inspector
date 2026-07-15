@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { errorToastMessage } from "@/test/utils";
 import { toast } from "sonner";
 import { CreateOrganizationDialog } from "../CreateOrganizationDialog";
 
@@ -55,7 +56,10 @@ describe("CreateOrganizationDialog", () => {
       });
     });
     expect(toast.error).toHaveBeenCalledWith(
-      "This organization has reached its project limit (1). Upgrade to create more projects.",
+      errorToastMessage(
+        "This organization has reached its project limit (1). Upgrade to create more projects.",
+      ),
+      { duration: Infinity },
     );
   });
 });

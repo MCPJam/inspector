@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { GitBranch, Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -131,14 +131,33 @@ export function CiEvalsTab({
     organizationId: null,
   });
 
+  // The CI tab is a lens over CI-active suites: SDK-registered ones (even
+  // before their first run) plus any suite CI has actually reported into
+  // (suite.lastSdkRunAt is the durable server-side signal — backfilled, so
+  // mixed suites whose sdk runs fell out of the recent-runs window still
+  // qualify). Playground-only suites live in the Evaluate tab.
   const visibleSuites = useMemo(
-    () => queries.sortedSuites.filter((entry) => !isExploreSuite(entry.suite)),
+    () =>
+      queries.sortedSuites.filter(
+        (entry) =>
+          !isExploreSuite(entry.suite) &&
+          (entry.suite.source === "sdk" ||
+            entry.suite.lastSdkRunAt != null),
+      ),
     [queries.sortedSuites],
   );
   const hasVisibleSuites = visibleSuites.length > 0;
 
+  // Commit rail groups CI runs only — playground runs on mixed suites would
+  // otherwise flood it as "manual" pseudo-commit groups.
   const commitGroups = useMemo(
-    () => groupRunsByCommit(visibleSuites),
+    () =>
+      groupRunsByCommit(
+        visibleSuites.map((entry) => ({
+          ...entry,
+          recentRuns: entry.recentRuns.filter((run) => run.source === "sdk"),
+        })),
+      ),
     [visibleSuites],
   );
 

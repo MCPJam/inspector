@@ -13,18 +13,26 @@ export class WebApiError extends Error {
    * falls back to `describeError(this)` on its own.
    */
   normalized?: NormalizedError;
+  /**
+   * Server-attached structured details from the JSON error body (the
+   * WebRouteError `details` webError forwards — e.g. `oauthRequired` on
+   * tagged 401s). Optional; omitted when the route sends none.
+   */
+  details?: Record<string, unknown>;
 
   constructor(
     status: number,
     code: string | null,
     message: string,
     normalized?: NormalizedError,
+    details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "WebApiError";
     this.status = status;
     this.code = code;
     this.normalized = normalized;
+    this.details = details;
   }
 }
 
@@ -66,7 +74,11 @@ export async function webPost<TRequest, TResponse>(
       errBody && typeof errBody.normalized === "object" && errBody.normalized
         ? (errBody.normalized as NormalizedError)
         : undefined;
-    throw new WebApiError(response.status, code, message, normalized);
+    const details =
+      errBody && typeof errBody.details === "object" && errBody.details
+        ? (errBody.details as Record<string, unknown>)
+        : undefined;
+    throw new WebApiError(response.status, code, message, normalized, details);
   }
 
   return sanitizedPayload as TResponse;

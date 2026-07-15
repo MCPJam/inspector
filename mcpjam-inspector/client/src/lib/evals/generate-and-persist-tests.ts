@@ -6,7 +6,8 @@ import {
   type ServerAttachmentInput,
 } from "@/lib/apis/evals-api";
 import { HOSTED_MODE } from "@/lib/config";
-import type { PromptTurn } from "@/shared/prompt-turns";
+import { resolvePromptTurns, type PromptTurn } from "@/shared/steps";
+import { promptTurnsToSteps, type TestStep } from "@/shared/steps";
 
 export type CreateEvalTestCaseInput = {
   suiteId: string;
@@ -18,8 +19,36 @@ export type CreateEvalTestCaseInput = {
   isNegativeTest: boolean;
   scenario?: string;
   expectedOutput?: string;
-  promptTurns?: PromptTurn[];
+  /**
+   * Authored test steps (the unified `steps` model). The Convex mutation
+   * rejects the legacy `promptTurns`/`caseType`/`probeConfig` fields, so case
+   * authors describe the case as `steps`. Callers that still think in
+   * `query`/`expectedToolCalls`/`promptTurns` shapes are converted to `steps`
+   * via {@link buildStepsForCaseInput} before the mutation runs.
+   */
+  steps?: TestStep[];
 };
+
+/**
+ * Derive the unified `steps` array from a legacy-shaped case input
+ * (query / expectedToolCalls / expectedOutput / optional promptTurns). Used by
+ * the curated-case + generated-case create paths so they speak `steps` to the
+ * Convex mutation instead of the rejected `promptTurns`.
+ */
+export function buildStepsForCaseInput(input: {
+  query?: string;
+  expectedToolCalls?: Array<unknown>;
+  expectedOutput?: string;
+  promptTurns?: PromptTurn[];
+}): TestStep[] {
+  const turns = resolvePromptTurns({
+    promptTurns: input.promptTurns,
+    query: input.query,
+    expectedToolCalls: input.expectedToolCalls,
+    expectedOutput: input.expectedOutput,
+  });
+  return promptTurnsToSteps(turns);
+}
 
 function getLegacyExpectedToolCalls(
   promptTurns: PromptTurn[] | undefined,
@@ -56,7 +85,12 @@ function toCreateTestCaseInput(
     isNegativeTest,
     scenario: test.scenario,
     expectedOutput: test.expectedOutput,
-    promptTurns: test.promptTurns,
+    steps: buildStepsForCaseInput({
+      query: test.query,
+      expectedToolCalls: test.expectedToolCalls,
+      expectedOutput: test.expectedOutput,
+      promptTurns: test.promptTurns,
+    }),
   };
 }
 

@@ -124,34 +124,20 @@ describe("compare-playground-helpers", () => {
     expect(record.metrics.durationMs).toBe(4000);
   });
 
-  it("builds a one-message preview trace from the first non-empty prompt turn", () => {
+  it("builds a one-message preview trace from the first non-empty prompt step", () => {
     expect(
       buildComparePreviewTrace([
-        {
-          id: "turn-1",
-          prompt: "   ",
-          expectedToolCalls: [],
-        },
-        {
-          id: "turn-2",
-          prompt: "Tell me a joke",
-          expectedToolCalls: [],
-        },
+        { id: "turn-1", kind: "prompt", prompt: "   " },
+        { id: "turn-2", kind: "prompt", prompt: "Tell me a joke" },
       ]),
     ).toEqual({
       messages: [{ role: "user", content: "Tell me a joke" }],
     });
   });
 
-  it("returns no preview trace when every prompt turn is empty", () => {
+  it("returns no preview trace when every prompt step is empty", () => {
     expect(
-      buildComparePreviewTrace([
-        {
-          id: "turn-1",
-          prompt: " ",
-          expectedToolCalls: [],
-        },
-      ]),
+      buildComparePreviewTrace([{ id: "turn-1", kind: "prompt", prompt: " " }]),
     ).toBeNull();
   });
 

@@ -3,10 +3,7 @@ import { Hono } from "hono";
 import { mkdtempSync, rmSync } from "fs";
 import os from "os";
 import path from "path";
-import {
-  initXAAIdpKeyPair,
-  resetXAAIdpKeyPairForTests,
-} from "../../../services/xaa-idp-keypair.js";
+import { initXAAIdpKeyPair, resetXAAIdpKeyPairForTests } from "@mcpjam/sdk";
 import { createXaaRouter } from "../xaa.js";
 
 const DISCOVERED_TOKEN_ENDPOINT = "https://discovered-as.example.com/oauth/token";
@@ -149,6 +146,7 @@ describe("server-target /proxy/token", () => {
       serverId: "srv_1",
       projectId: "proj_1",
       bearerToken: "user-token",
+      clientIp: null,
     });
 
     // The token POST went to the server-discovered endpoint, never the
@@ -170,6 +168,85 @@ describe("server-target /proxy/token", () => {
 
     // Discovery used the GET leg; the mock served both.
     expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("resolves the issuer from RFC 9728 protected-resource metadata when none is stored", async () => {
+    // The resource URL is NOT the AS issuer: PRM points at a separate issuer,
+    // and the token endpoint is only discoverable from that issuer's metadata.
+    const resolver = vi.fn(async () => ({
+      clientSecret: "stored-secret",
+      clientId: "stored-client-id",
+      serverUrl: "https://stored-server.example.com/mcp",
+      xaaAuthzIssuer: null,
+    }));
+    const app = buildApp(resolver);
+
+    const getUrls: string[] = [];
+    let tokenUrl = "";
+    const fetchMock = vi.fn(async (url: any, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      const href = String(url);
+      if (method === "GET") {
+        getUrls.push(href);
+        // PRM document: names the protecting authorization server.
+        if (href.includes("oauth-protected-resource")) {
+          return new Response(
+            JSON.stringify({
+              resource: "https://stored-server.example.com/mcp",
+              authorization_servers: ["https://issuer.example.com"],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
+        // AS metadata: only served at the discovered issuer's well-known.
+        if (href.startsWith("https://issuer.example.com/")) {
+          return new Response(
+            JSON.stringify({
+              issuer: "https://issuer.example.com",
+              token_endpoint: DISCOVERED_TOKEN_ENDPOINT,
+              grant_types_supported: [
+                "urn:ietf:params:oauth:grant-type:jwt-bearer",
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
+        return new Response(JSON.stringify({ error: "not_found" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      tokenUrl = href;
+      return new Response(
+        JSON.stringify({ access_token: "tok", token_type: "Bearer" }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.request("/api/web/xaa/proxy/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        serverId: "srv_1",
+        projectId: "proj_1",
+        assertion: "aaa.bbb.ccc",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    // Probed the resource's PRM well-known (path-inserted, RFC 9728 §3.1)...
+    expect(getUrls).toContain(
+      "https://stored-server.example.com/.well-known/oauth-protected-resource/mcp"
+    );
+    // ...then the discovered issuer's AS metadata, and posted there.
+    expect(getUrls.some((u) => u.startsWith("https://issuer.example.com/"))).toBe(
+      true
+    );
+    expect(tokenUrl).toBe(DISCOVERED_TOKEN_ENDPOINT);
   });
 
   it("prefers the stored xaaAuthzIssuer over the server URL for discovery", async () => {
@@ -220,6 +297,203 @@ describe("server-target /proxy/token", () => {
     expect(response.status).toBe(200);
     expect(discoveryUrl).toContain("issuer.example.com");
     expect(discoveryUrl).not.toContain("stored-server.example.com");
+  });
+
+  it("fail-closes with a 409 naming both issuers when the metadata advertises a different issuer", async () => {
+    // The stored issuer and the metadata's advertised issuer diverge — the
+    // secret must never be posted, and the error must carry both values so
+    // the user can fix the config. The status must stay out of the 502/504
+    // family: CDN edges replace those bodies with a branded error page.
+    const resolver = vi.fn(async () => ({
+      clientSecret: "stored-secret",
+      clientId: "stored-client-id",
+      serverUrl: "https://stored-server.example.com",
+      xaaAuthzIssuer: "https://stored-issuer.example.com",
+    }));
+    const app = buildApp(resolver);
+
+    let tokenPosted = false;
+    // stubDiscoveryAndToken serves metadata advertising
+    // https://stored-server.example.com — not the stored issuer above.
+    stubDiscoveryAndToken({
+      onTokenPost: () => {
+        tokenPosted = true;
+      },
+    });
+
+    const response = await app.request("/api/web/xaa/proxy/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        serverId: "srv_1",
+        projectId: "proj_1",
+        assertion: "aaa.bbb.ccc",
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as {
+      code?: string;
+      message?: string;
+      details?: Record<string, unknown>;
+    };
+    expect(body.code).toBe("VALIDATION_ERROR");
+    expect(body.message).toContain("https://stored-issuer.example.com");
+    expect(body.message).toContain("https://stored-server.example.com");
+    expect(body.details).toMatchObject({
+      requestedIssuer: "https://stored-issuer.example.com",
+      advertisedIssuer: "https://stored-server.example.com",
+      schemeOnly: false,
+    });
+    expect(tokenPosted).toBe(false);
+  });
+
+  // A path-scoped AS shape: OAuth endpoints scoped under /resources/res_x
+  // while the metadata advertises the origin root as issuer. Rejected by the
+  // strict check unless the per-server opt-in is stored.
+  function stubPathScopedAs(onTokenPost?: (url: string) => void) {
+    const fetchMock = vi.fn(async (url: any, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET") {
+        return new Response(
+          JSON.stringify({
+            issuer: "https://env.example.com",
+            token_endpoint:
+              "https://env.example.com/resources/res_1/oauth/token",
+            grant_types_supported: [
+              "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      onTokenPost?.(String(url));
+      return new Response(
+        JSON.stringify({ access_token: "tok", token_type: "Bearer" }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  function pathScopedResolver(allow: boolean) {
+    return vi.fn(async () => ({
+      clientSecret: "stored-secret",
+      clientId: "stored-client-id",
+      serverUrl: "https://mcp.example.com/mcp",
+      xaaAuthzIssuer: "https://env.example.com/resources/res_1",
+      xaaAllowPathScopedIssuer: allow,
+    }));
+  }
+
+  it("rejects a path-scoped AS with a 409 naming the opt-in when the server has not opted in", async () => {
+    const app = buildApp(pathScopedResolver(false));
+    let tokenPosted = false;
+    stubPathScopedAs(() => {
+      tokenPosted = true;
+    });
+
+    const response = await app.request("/api/web/xaa/proxy/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        serverId: "srv_1",
+        projectId: "proj_1",
+        assertion: "aaa.bbb.ccc",
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as {
+      message?: string;
+      details?: Record<string, unknown>;
+    };
+    expect(body.details).toMatchObject({ originPrefix: true });
+    expect(body.message).toContain("Path-scoped authorization server");
+    expect(tokenPosted).toBe(false);
+  });
+
+  it("accepts a path-scoped AS under the per-server opt-in and posts to its scoped token endpoint", async () => {
+    const app = buildApp(pathScopedResolver(true));
+    let tokenUrl = "";
+    stubPathScopedAs((url) => {
+      tokenUrl = url;
+    });
+
+    const response = await app.request("/api/web/xaa/proxy/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        serverId: "srv_1",
+        projectId: "proj_1",
+        assertion: "aaa.bbb.ccc",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(tokenUrl).toBe("https://env.example.com/resources/res_1/oauth/token");
+  });
+
+  it("rejects an opted-in path-scoped AS whose token endpoint escapes the issuer origin", async () => {
+    // Opt-in is ON and the issuer prefix matches, but the metadata points
+    // token_endpoint at a different public host — the confidential secret must
+    // NOT be posted off-origin.
+    const app = buildApp(pathScopedResolver(true));
+    let tokenPosted = false;
+    const fetchMock = vi.fn(async (_url: any, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET") {
+        return new Response(
+          JSON.stringify({
+            issuer: "https://env.example.com",
+            // Off-origin token endpoint — an attacker-controlled host.
+            token_endpoint: "https://attacker.example.net/oauth/token",
+            grant_types_supported: [
+              "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      tokenPosted = true;
+      return new Response(
+        JSON.stringify({ access_token: "tok", token_type: "Bearer" }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.request("/api/web/xaa/proxy/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        serverId: "srv_1",
+        projectId: "proj_1",
+        assertion: "aaa.bbb.ccc",
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as {
+      message?: string;
+      details?: Record<string, unknown>;
+    };
+    expect(body.details).toMatchObject({ tokenEndpointOffOrigin: true });
+    expect(body.message).toContain("off-origin");
+    expect(tokenPosted).toBe(false);
   });
 
   it("returns 404 when no authorization server can be discovered", async () => {
@@ -318,6 +592,7 @@ describe("server-target /negative-tests", () => {
       serverId: "srv_1",
       projectId: "proj_1",
       bearerToken: "user-token",
+      clientIp: null,
     });
 
     expect(tokenPosts.length).toBeGreaterThan(0);

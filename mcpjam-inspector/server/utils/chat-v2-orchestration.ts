@@ -17,8 +17,11 @@
 
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type ToolSet } from "ai";
-import { MCPClientManager } from "@mcpjam/sdk";
-import { filterAppOnlyTools } from "@mcpjam/sdk/host-config/internal";
+import { MCPClientManager, type Harness } from "@mcpjam/sdk";
+import {
+  filterAppOnlyTools,
+  type ModelVisibleMcpToolResults,
+} from "@mcpjam/sdk/host-config/internal";
 import {
   isAnthropicCompatibleModel,
   getInvalidAnthropicToolNames,
@@ -28,8 +31,17 @@ import {
   type CustomProviderConfig,
 } from "./chat-helpers.js";
 import { getSkillToolsAndPrompt } from "./skill-tools.js";
+import {
+  getCloudSkillToolsAndPrompt,
+  getPinnedSkillToolsAndPrompt,
+} from "./computers/cloud-skill-tools.js";
+import type { PinnableSkill } from "../../shared/skill-types.js";
 import { logger } from "./logger.js";
 import { isGPT5Model, type ModelDefinition } from "@/shared/types";
+import {
+  UI_TOOL_NAME_REGEX,
+  uiToolCallNeedsApproval,
+} from "@/shared/client-fulfilled-tools";
 import { HOSTED_MODE } from "../config.js";
 import {
   buildToolCatalog,
@@ -62,6 +74,14 @@ export { filterAppOnlyTools };
  * validated against `/^app_[a-z0-9]{8}$/i`).
  */
 export type AppToolEntry = import("@/shared/chat-v2").AppToolSnapshotEntry;
+/**
+ * WebMCP-shaped MCPJam UI tool descriptor as accepted by `prepareChatV2`,
+ * already sanitized by {@link validateUiToolEntries}. Mirrors
+ * `UiToolSnapshotEntry` in `shared/chat-v2.ts`. Unlike app tools there is no
+ * alias indirection: `name` (reserved `ui_` prefix) is the model-facing tool
+ * name, fulfilled client-side by `useChat.onToolCall`.
+ */
+export type UiToolEntry = import("@/shared/chat-v2").UiToolSnapshotEntry;
 export type WidgetModelContextEntry =
   import("@/shared/chat-v2").WidgetModelContextEntry;
 
@@ -76,6 +96,13 @@ const APP_TOOL_MAX_ENTRIES = 64;
 const APP_TOOL_MAX_NAME_CHARS = 128;
 const APP_TOOL_MAX_DESCRIPTION_CHARS = 512;
 const APP_TOOL_MAX_INPUT_SCHEMA_BYTES = 8 * 1024;
+// UI tool caps mirror the client snapshotter at
+// `client/src/lib/webmcp/ui-tools-registry.ts`. The name regex lives in
+// `shared/client-fulfilled-tools.ts` so the no-execute gates in the MCPJam
+// free-model loop can never drift from the validator.
+const UI_TOOL_MAX_ENTRIES = 64;
+const UI_TOOL_MAX_DESCRIPTION_CHARS = 512;
+const UI_TOOL_MAX_INPUT_SCHEMA_BYTES = 8 * 1024;
 const WIDGET_MODEL_CONTEXT_MAX_ENTRIES = 32;
 const WIDGET_MODEL_CONTEXT_MAX_CONTENT_BLOCKS = 32;
 const WIDGET_MODEL_CONTEXT_MAX_JSON_BYTES = 64 * 1024;
@@ -84,6 +111,13 @@ export class AppToolValidationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "AppToolValidationError";
+  }
+}
+
+export class UiToolValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UiToolValidationError";
   }
 }
 
@@ -232,6 +266,100 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
       parentToolCallId,
       rawName,
       description,
+      inputSchema,
+      readOnly: raw.readOnly,
+    });
+  }
+  return out;
+}
+
+/**
+ * Validate and normalize the client-supplied `uiTools` snapshot.
+ *
+ * Returns a cleaned array of {@link UiToolEntry} or throws
+ * {@link UiToolValidationError} — routes turn the throw into a 400.
+ *
+ * Same defensive posture as {@link validateAppToolEntries}: nothing here
+ * trusts the client snapshotter to have enforced the caps. The `ui_` name
+ * regex is a strict subset of the Anthropic tool-name charset, so validated
+ * entries can never trip the provider name gate.
+ */
+export function validateUiToolEntries(input: unknown): UiToolEntry[] {
+  if (input === undefined || input === null) return [];
+  if (!Array.isArray(input)) {
+    throw new UiToolValidationError("uiTools must be an array");
+  }
+  if (input.length > UI_TOOL_MAX_ENTRIES) {
+    throw new UiToolValidationError(
+      `uiTools accepts at most ${UI_TOOL_MAX_ENTRIES} entries, got ${input.length}`
+    );
+  }
+  const out: UiToolEntry[] = [];
+  const seenNames = new Set<string>();
+  for (let i = 0; i < input.length; i++) {
+    const raw = input[i] as Record<string, unknown> | undefined;
+    if (!raw || typeof raw !== "object") {
+      throw new UiToolValidationError(`uiTools[${i}] must be an object`);
+    }
+    const name = raw.name;
+    if (typeof name !== "string" || !UI_TOOL_NAME_REGEX.test(name)) {
+      throw new UiToolValidationError(
+        `uiTools[${i}].name must match ${UI_TOOL_NAME_REGEX}`
+      );
+    }
+    if (seenNames.has(name)) {
+      throw new UiToolValidationError(
+        `uiTools[${i}].name '${name}' is duplicated`
+      );
+    }
+    seenNames.add(name);
+    if (
+      typeof raw.description !== "string" ||
+      raw.description.trim().length === 0
+    ) {
+      throw new UiToolValidationError(
+        `uiTools[${i}].description must be a non-empty string`
+      );
+    }
+    if (raw.description.length > UI_TOOL_MAX_DESCRIPTION_CHARS) {
+      throw new UiToolValidationError(
+        `uiTools[${i}].description exceeds ${UI_TOOL_MAX_DESCRIPTION_CHARS} chars`
+      );
+    }
+    let inputSchema: Record<string, unknown> | undefined;
+    if (raw.inputSchema !== undefined) {
+      if (
+        raw.inputSchema === null ||
+        typeof raw.inputSchema !== "object" ||
+        Array.isArray(raw.inputSchema)
+      ) {
+        throw new UiToolValidationError(
+          `uiTools[${i}].inputSchema must be a JSON object`
+        );
+      }
+      let size = 0;
+      try {
+        size = new TextEncoder().encode(JSON.stringify(raw.inputSchema)).length;
+      } catch {
+        throw new UiToolValidationError(
+          `uiTools[${i}].inputSchema is not JSON-serializable`
+        );
+      }
+      if (size > UI_TOOL_MAX_INPUT_SCHEMA_BYTES) {
+        throw new UiToolValidationError(
+          `uiTools[${i}].inputSchema exceeds ${UI_TOOL_MAX_INPUT_SCHEMA_BYTES} bytes`
+        );
+      }
+      inputSchema = raw.inputSchema as Record<string, unknown>;
+    }
+    if (typeof raw.readOnly !== "boolean") {
+      throw new UiToolValidationError(
+        `uiTools[${i}].readOnly must be a boolean`
+      );
+    }
+    out.push({
+      name,
+      description: raw.description,
       inputSchema,
       readOnly: raw.readOnly,
     });
@@ -414,6 +542,46 @@ export function buildWidgetModelContextSystemPrompt(
   ].join("\n\n");
 }
 
+/**
+ * EVAL analogue of {@link buildWidgetModelContextSystemPrompt}: frame recorded
+ * widget→host tool CALLS (triggered by `Interact` steps) as current app state so
+ * a headless eval model reasons over a widget interaction on its next turn — the
+ * server-side analogue of Playground's browser-only `addToolOutput` +
+ * auto-continue, which can't run in the headless Node runner. Reuses the same
+ * content-block renderer. Per SEP-1865 the tool result's `content` is what's
+ * meant for model context (`structuredContent` is not), so we render `content`
+ * only. Callers pass model-visible calls only (app-only `visibility:["app"]`
+ * calls are UI-only and filtered upstream).
+ */
+export function buildWidgetInteractionContextSystemPrompt(
+  calls: ReadonlyArray<{ toolName: string; result?: unknown }>
+): string {
+  if (calls.length === 0) return "";
+
+  const sections = calls.map((call) => {
+    const result = call.result as
+      | { content?: Array<Record<string, unknown>> }
+      | undefined;
+    const content = result?.content ?? [];
+    const lines = [
+      `The user interacted with the \`${call.toolName}\` MCP App widget, which called the \`${call.toolName}\` tool. It returned:`,
+    ];
+    if (content.length > 0) {
+      lines.push(
+        ...content.map((block) => renderWidgetContextContentBlock(block))
+      );
+    } else {
+      lines.push("(no textual content)");
+    }
+    return lines.join("\n");
+  });
+
+  return [
+    "During this conversation the user performed interactions inside MCP App widgets. Each call below was triggered by a user action and executed against the server; treat the results as current app state for this turn, not as new user requests.",
+    ...sections,
+  ].join("\n\n");
+}
+
 export interface PrepareChatV2Options {
   mcpClientManager: InstanceType<typeof MCPClientManager>;
   selectedServers?: string[];
@@ -428,9 +596,16 @@ export interface PrepareChatV2Options {
    * Cursor template to mirror hosts that don't yet implement visibility.
    */
   respectToolVisibility?: boolean;
+  /** Host/client policy for eligible MCP tool-result content/resources. */
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   customProviders?: CustomProviderConfig[];
   /** Progressive discovery overrides (e.g. tighter thresholds for tests). */
   progressiveToolDiscovery?: ProgressiveDiscoveryOptions;
+  /**
+   * Resolved host harness. Harness runtimes own native tool discovery, so
+   * MCPJam's progressive meta-tools must stay out of their prepared tool set.
+   */
+  harness?: Harness;
   /**
    * Prior conversation messages, used to hydrate progressive discovery
    * state across turns. Without these, `discoveryState.loadedToolIds`
@@ -439,38 +614,128 @@ export interface PrepareChatV2Options {
    */
   priorMessages?: ReadonlyArray<ModelMessage>;
   appTools?: AppToolEntry[];
+  /** WebMCP-shaped MCPJam UI tools (client-fulfilled, like `appTools`). */
+  uiTools?: UiToolEntry[];
   /** Server-side built-in tools (e.g. web_search) with their own execute. */
   builtInTools?: ToolSet;
+  /**
+   * When set, skills are sourced from the caller's **Computer** (E2B sandbox)
+   * instead of the local filesystem — the hosted/`/web` path. Only set by
+   * callers whose host actually has a computer, so "advertise == enforce".
+   * Takes precedence over the local/HOSTED_MODE skill branches.
+   */
+  cloudSkills?: { authHeader: string; projectId: string };
+  /**
+   * Explicit skill source, ABOVE the cloud/HOSTED/local chain. Set ONLY by eval
+   * runners: `pinned` mints frozen in-memory tools over snapshotted content
+   * (zero network in execute), `none` suppresses skills entirely. Chat callers
+   * never set it → the existing precedence is byte-identical. `pinned` tools
+   * bypass approval (pure reads of frozen content under an auto-deny eval run).
+   */
+  skillsSource?:
+    | { kind: "pinned"; skills: PinnableSkill[] }
+    | { kind: "none" };
+}
+
+/**
+ * AI SDK tool entry with no `execute`, on purpose: `streamText` will stream
+ * the tool-call to the client, where `useChat.onToolCall` fulfills it and
+ * supplies the result back via `addToolOutput`.
+ */
+function toNoExecuteAiSdkTool(args: {
+  description: string;
+  inputSchema?: Record<string, unknown>;
+  needsApproval?: boolean;
+}) {
+  return tool({
+    description: args.description,
+    inputSchema: jsonSchema(
+      (args.inputSchema as Parameters<typeof jsonSchema>[0]) ?? {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      }
+    ),
+    ...(args.needsApproval ? { needsApproval: true } : {}),
+    // No execute — client fulfills via onToolCall.
+  });
 }
 
 /**
  * Build no-execute AI SDK tool entries from the client snapshot.
  *
- * No `execute` is set on purpose: `streamText` will stream the tool-call to
- * the client, where `useChat.onToolCall` dispatches into the right iframe
- * via `AppBridge.callTool` and supplies the result back via `addToolOutput`.
- *
  * All app-provided tools are emitted. `readOnly` is preserved in the snapshot
  * for policy/telemetry, but MCPJam does not force approval for app-provided
  * tools here; normal server-tool approval remains scoped to server tools.
+ * (UI tools DO gate on approval now — see `buildUiTools`. Extending the same
+ * treatment to app tools is a deliberate follow-up: `app_<8hex>` aliases need
+ * their own fulfillment UX in the iframe bridge first.)
  */
 export function buildAppTools(appTools: AppToolEntry[] | undefined): ToolSet {
   if (!appTools || appTools.length === 0) return {};
   const out: ToolSet = {};
   for (const t of appTools) {
-    out[t.alias] = tool({
+    out[t.alias] = toNoExecuteAiSdkTool({
       description: `[${t.appName}] ${t.description ?? t.rawName}`,
-      inputSchema: jsonSchema(
-        (t.inputSchema as Parameters<typeof jsonSchema>[0]) ?? {
-          type: "object",
-          properties: {},
-          additionalProperties: false,
-        }
-      ),
-      // No execute — client fulfills via onToolCall.
+      inputSchema: t.inputSchema,
     });
   }
   return out;
+}
+
+/**
+ * Build no-execute AI SDK tool entries for the WebMCP UI tools snapshot.
+ * Same client-fulfilled contract as {@link buildAppTools}.
+ *
+ * When the turn's `requireToolApproval` flag is on, non-readOnly UI tools
+ * get `needsApproval` so the BYOK `streamText` path pauses and emits a
+ * `tool-approval-request` the client renders as the Approve/Deny pill.
+ * NOTE the client resolves an APPROVED `ui_*` call by executing it and
+ * supplying the tool-result directly (never a bare approval response) —
+ * the server cannot execute a no-execute tool, so an approval response
+ * without a result would strand the turn. Denials use the normal approval
+ * response and the existing denial machinery.
+ */
+export function buildUiTools(
+  uiTools: UiToolEntry[] | undefined,
+  opts?: { requireToolApproval?: boolean }
+): ToolSet {
+  if (!uiTools || uiTools.length === 0) return {};
+  const out: ToolSet = {};
+  for (const t of uiTools) {
+    out[t.name] = toNoExecuteAiSdkTool({
+      description: t.description,
+      inputSchema: t.inputSchema,
+      needsApproval: uiToolCallNeedsApproval({
+        readOnly: t.readOnly,
+        requireToolApproval: opts?.requireToolApproval === true,
+      }),
+    });
+  }
+  return out;
+}
+
+/**
+ * System-prompt section advertising the UI tools. Empty when none were
+ * snapshotted, so surfaces without UI tools keep a byte-identical prompt.
+ */
+export function buildUiToolsSystemPrompt(
+  uiTools: UiToolEntry[] | undefined,
+  opts?: { requireToolApproval?: boolean }
+): string {
+  if (!uiTools || uiTools.length === 0) return "";
+  return [
+    "## MCPJam UI tools",
+    "You can drive the MCPJam inspector itself with the `ui_*` tools. Every action happens in the user's open app and is immediately visible to them.",
+    "Prefer `ui_open_playground` before `ui_select_tool` / `ui_execute_tool` / `ui_snapshot_app`. `ui_execute_tool` REALLY runs a tool against the user's connected MCP server — treat it as side-effectful; when the user hasn't clearly asked to run a tool, prefill it with `ui_select_tool` instead.",
+    "`ui_snapshot_app` is read-only and needs the playground open — use it to observe state before mutating it.",
+    "When a `ui_*` tool returns an error, relay the reason instead of retrying blindly.",
+    ...(opts?.requireToolApproval
+      ? [
+          "Mutating `ui_*` actions pause for the user's explicit approval before they run. A denial is final — explain what you wanted to do instead of retrying the call.",
+        ]
+      : []),
+  ].join("\n");
 }
 
 export interface PrepareChatV2Result {
@@ -504,9 +769,14 @@ export async function prepareChatV2(
     temperature,
     requireToolApproval,
     respectToolVisibility,
+    modelVisibleMcpToolResults,
     customProviders,
     appTools,
+    uiTools,
     builtInTools,
+    cloudSkills,
+    skillsSource,
+    harness,
   } = options;
 
   // Drop ids the manager hasn't registered (server disabled/disconnected, or
@@ -517,12 +787,17 @@ export async function prepareChatV2(
   );
 
   const toolOptions =
-    requireToolApproval || respectToolVisibility === false
+    requireToolApproval ||
+    respectToolVisibility === false ||
+    modelVisibleMcpToolResults !== undefined
       ? {
           ...(requireToolApproval
             ? { needsApproval: requireToolApproval }
             : {}),
           ...(respectToolVisibility === false ? { includeAppOnly: true } : {}),
+          ...(modelVisibleMcpToolResults !== undefined
+            ? { modelVisibleMcpToolResults }
+            : {}),
         }
       : undefined;
 
@@ -545,22 +820,51 @@ export async function prepareChatV2(
   if (respectToolVisibility !== false) {
     filterAppOnlyTools(mcpTools, mcpClientManager);
   }
+  // Skills source, in precedence order:
+  //   0. skillsSource set (EVAL RUNNERS ONLY) ⇒ pinned frozen tools or none.
+  //      Above everything; chat callers never set it, so the chain below is
+  //      byte-identical for them. Pinned tools bypass approval (decision 12).
+  //   1. cloudSkills set ⇒ the caller's Computer (E2B sandbox) — hosted path
+  //      with a provisioned computer. Lazy discovery (no upfront wake).
+  //   2. HOSTED_MODE without a computer ⇒ no skills (local FS unavailable).
+  //   3. local ⇒ the inspector's own filesystem.
+  const skillsArePinned = skillsSource?.kind === "pinned";
+  // Decision 11: harness eval turns live-fetch skills, so a pinned set would
+  // falsify the snapshot claim. Harness is stripped from suite configs already;
+  // this throw is belt-and-suspenders at the single point both paths funnel through.
+  if (harness && skillsArePinned) {
+    throw new Error(
+      "Pinned skills are not supported on harness runs (they live-fetch skills).",
+    );
+  }
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
-    HOSTED_MODE
-      ? { tools: {}, systemPromptSection: "" }
-      : await getSkillToolsAndPrompt();
+    skillsSource
+      ? skillsSource.kind === "pinned"
+        ? getPinnedSkillToolsAndPrompt(skillsSource.skills)
+        : { tools: {}, systemPromptSection: "" }
+      : cloudSkills
+        ? getCloudSkillToolsAndPrompt({
+            authHeader: cloudSkills.authHeader,
+            projectId: cloudSkills.projectId,
+          })
+        : HOSTED_MODE
+          ? { tools: {}, systemPromptSection: "" }
+          : await getSkillToolsAndPrompt();
 
-  const finalSkillTools: Record<string, unknown> = requireToolApproval
-    ? Object.fromEntries(
-        Object.entries(skillTools).map(([name, tool]) => [
-          name,
-          {
-            ...(tool && typeof tool === "object" ? tool : {}),
-            needsApproval: true,
-          },
-        ])
-      )
-    : (skillTools as Record<string, unknown>);
+  // Pinned skill tools NEVER require approval (pure reads of frozen content; the
+  // eval run is auto-deny). Otherwise the normal approval wrap applies.
+  const finalSkillTools: Record<string, unknown> =
+    requireToolApproval && !skillsArePinned
+      ? Object.fromEntries(
+          Object.entries(skillTools).map(([name, tool]) => [
+            name,
+            {
+              ...(tool && typeof tool === "object" ? tool : {}),
+              needsApproval: true,
+            },
+          ])
+        )
+      : (skillTools as Record<string, unknown>);
 
   // SEP-1865 App-Provided Tools (Host → App direction). Client supplies
   // the snapshot per chat POST; we register them as no-execute entries so
@@ -569,7 +873,22 @@ export async function prepareChatV2(
   // before skills so an app alias never collides with either (the
   // `app_<8hex>` namespace is opaque and disjoint from both).
   const appToolEntries = buildAppTools(appTools);
+  // WebMCP UI tools — client-fulfilled like app tools, but with curated
+  // `ui_*` names instead of opaque aliases.
+  const uiToolEntries = buildUiTools(uiTools, { requireToolApproval });
   const builtInToolEntries = builtInTools ?? {};
+  // UI tools are host-curated like built-ins, but `ui_` is a guessable
+  // prefix any third-party MCP server could ship — failing closed would let
+  // such a server brick every chat turn for the user. Same policy as
+  // built-ins: the UI tool wins and the MCP twin is dropped with a warn.
+  for (const name of Object.keys(uiToolEntries)) {
+    if (Object.prototype.hasOwnProperty.call(mcpTools, name)) {
+      logger.warn(
+        `[chat-v2] UI tool '${name}' shadows an MCP tool with the same name; using the UI tool`,
+      );
+      delete mcpTools[name];
+    }
+  }
   // Collision policy, per origin:
   //  - MCP tools: the built-in wins and the server tool is dropped with a
   //    warn. Built-ins are the host's explicit catalog choice, and the
@@ -584,16 +903,17 @@ export async function prepareChatV2(
   for (const name of Object.keys(builtInToolEntries)) {
     if (Object.prototype.hasOwnProperty.call(mcpTools, name)) {
       logger.warn(
-        `[chat-v2] built-in tool '${name}' shadows an MCP tool with the same name; using the built-in`,
+        `[chat-v2] built-in tool '${name}' shadows an MCP tool with the same name; using the built-in`
       );
       delete mcpTools[name];
     }
     if (
       Object.prototype.hasOwnProperty.call(appToolEntries, name) ||
+      Object.prototype.hasOwnProperty.call(uiToolEntries, name) ||
       Object.prototype.hasOwnProperty.call(finalSkillTools, name)
     ) {
       throw new Error(
-        `Built-in tool '${name}' collides with an existing app or skill tool.`,
+        `Built-in tool '${name}' collides with an existing app, UI, or skill tool.`,
       );
     }
   }
@@ -602,6 +922,7 @@ export async function prepareChatV2(
   const realTools = {
     ...mcpTools,
     ...appToolEntries,
+    ...uiToolEntries,
     ...finalSkillTools,
     ...builtInToolEntries,
   } as ToolSet;
@@ -610,7 +931,19 @@ export async function prepareChatV2(
   // it does. The catalog is built from real tools only (meta-tools aren't
   // searchable) but the meta-tools are then merged into the final ToolSet so
   // both streamText and the Convex loop see them.
-  const catalog = buildToolCatalog(realTools);
+  //
+  // WebMCP UI tools are exempt from progressive discovery: the catalog is
+  // what gets lazily loaded via `load_mcp_tools`, and both stream paths
+  // treat non-cataloged entries as always-advertised, never-gated
+  // "injected" tools (see direct-chat-turn / mcpjam-stream-handler).
+  // Cataloging them would hide the `ui_*` tools behind a load step while
+  // the system prompt advertises them unconditionally — and a 7-entry
+  // first-party control surface is not what discovery exists to trim.
+  const catalogSource: ToolSet = { ...realTools };
+  for (const name of Object.keys(uiToolEntries)) {
+    delete catalogSource[name];
+  }
+  const catalog = buildToolCatalog(catalogSource);
   const discoveryState = createDiscoveryState();
   // Replay prior `load_mcp_tools` calls into the discovery state before
   // we mint the plan / meta-tools. Without hydration, a multi-turn
@@ -622,16 +955,18 @@ export async function prepareChatV2(
     hydrateDiscoveryStateFromHistory(
       discoveryState,
       options.priorMessages,
-      catalog,
+      catalog
     );
   }
-  const envOverride = parseProgressiveToolsEnv(
-    process.env.MCPJAM_PROGRESSIVE_TOOLS,
-  );
+  const envOverride = harness
+    ? false
+    : parseProgressiveToolsEnv(process.env.MCPJAM_PROGRESSIVE_TOOLS);
   const progressivePlan = decideProgressivePlan({
     catalog,
     modelContextLength: modelDefinition.contextLength,
-    options: options.progressiveToolDiscovery,
+    options: harness
+      ? { ...(options.progressiveToolDiscovery ?? {}), enabled: false }
+      : options.progressiveToolDiscovery,
     envOverride,
   });
 
@@ -673,14 +1008,18 @@ export async function prepareChatV2(
       // tool already claimed the name.
       if (Object.prototype.hasOwnProperty.call(realTools, name)) {
         throw new Error(
-          `MCP tool '${name}' collides with the progressive-discovery meta-tool of the same name. Rename the MCP tool or set MCPJAM_PROGRESSIVE_TOOLS=off.`,
+          `MCP tool '${name}' collides with the progressive-discovery meta-tool of the same name. Rename the MCP tool or set MCPJAM_PROGRESSIVE_TOOLS=off.`
         );
       }
     }
   }
 
   // 3. System prompt concatenation
-  const enhancedSystemPrompt = [systemPrompt, skillsPromptSection]
+  const enhancedSystemPrompt = [
+    systemPrompt,
+    skillsPromptSection,
+    buildUiToolsSystemPrompt(uiTools, { requireToolApproval }),
+  ]
     .filter((section): section is string => Boolean(section?.trim()))
     .map((section) => section.trim())
     .join("\n\n");

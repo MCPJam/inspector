@@ -7,7 +7,7 @@ import {
   resolveEffectiveHostStyle,
   type ChatUiOverride,
 } from "@/lib/client-styles";
-import { HOST_TEMPLATES } from "@/lib/client-templates";
+import { HOST_LOGO_OPTIONS } from "@/lib/host-ui-metadata";
 import { FieldRow, FocusBlock, SegmentedControl } from "./primitives";
 
 interface AppearanceTabProps {
@@ -101,18 +101,18 @@ export function AppearanceTab({ draft, onDraftChange }: AppearanceTabProps) {
           label="Preset"
           control={
             <div className="flex flex-wrap items-center gap-1.5">
-              {HOST_TEMPLATES.map((tpl) => {
-                const active = override?.logoSrc === tpl.logoSrc;
+              {HOST_LOGO_OPTIONS.map((option) => {
+                const active = override?.logoSrc === option.logoSrc;
                 return (
                   <button
-                    key={tpl.id}
+                    key={option.id}
                     type="button"
-                    aria-label={tpl.label}
+                    aria-label={option.id}
                     aria-pressed={active}
-                    title={tpl.label}
+                    title={option.id}
                     onClick={() =>
                       onDraftChange((d) =>
-                        patchChatUiOverride(d, { logoSrc: tpl.logoSrc }),
+                        patchChatUiOverride(d, { logoSrc: option.logoSrc }),
                       )
                     }
                     className={cn(
@@ -123,7 +123,7 @@ export function AppearanceTab({ draft, onDraftChange }: AppearanceTabProps) {
                     )}
                   >
                     <img
-                      src={tpl.logoSrc}
+                      src={option.logoSrc}
                       alt=""
                       className="h-5 w-5 object-contain"
                     />

@@ -265,6 +265,31 @@ describe("mcp-oauth", () => {
     const sessionToken = await import("@/lib/session-token");
     authFetch = sessionToken.authFetch as ReturnType<typeof vi.fn>;
     authFetch.mockReset();
+    authFetch.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = getUrlString(input);
+      if (url.includes("/api/web/oauth/import-tokens")) {
+        return createJsonResponse({
+          success: true,
+          kind: "generic",
+          expiresAt: null,
+        });
+      }
+      return createJsonResponse({});
+    });
+    const contextModule = await import("@/lib/apis/web/context");
+    contextModule.setApiContext({
+      projectId: "proj_default",
+      serverIdsByName: {
+        asana: "srv_asana",
+        linear: "srv_linear",
+        Linear: "srv_linear_upper",
+        example: "srv_example",
+        hosted: "srv_hosted",
+        learn: "srv_learn",
+        "test-server": "srv_test",
+      },
+      getAccessToken: async () => null,
+    });
     mockSelectResourceURL.mockResolvedValue(undefined);
     mockRunOAuthStateMachine.mockImplementation(async (config: any) => {
       const getState = config.getState ?? (() => config.state);
@@ -1476,7 +1501,8 @@ describe("mcp-oauth", () => {
       expect(callbackResult.serverConfig?.requestInit?.headers).toEqual({
         Authorization: "Bearer access-token",
       });
-      expect(getStoredTokens("asana")?.access_token).toBe("access-token");
+      expect(getStoredTokens("asana")).toBeUndefined();
+      expect(localStorage.getItem("mcp-tokens-asana")).toBeNull();
       expect(localStorage.getItem("mcp-discovery-asana")).not.toBeNull();
       expect(localStorage.getItem("mcp-verifier-asana")).toBeNull();
       expect(mockDiscoverOAuthServerInfo).toHaveBeenCalledTimes(2);
@@ -1495,6 +1521,33 @@ describe("mcp-oauth", () => {
       expect(getStoredTokensState("asana")).toEqual({
         tokens: undefined,
         isInvalid: true,
+      });
+    });
+
+    it("ignores malformed stored client information when token data is valid", async () => {
+      const { getStoredTokens, getStoredTokensState } = await import(
+        "../mcp-oauth"
+      );
+
+      localStorage.setItem(
+        "mcp-tokens-asana",
+        JSON.stringify({
+          access_token: "stored-access",
+          refresh_token: "stored-refresh",
+        })
+      );
+      localStorage.setItem("mcp-client-asana", '{"client_id":"broken"');
+
+      expect(getStoredTokens("asana")).toMatchObject({
+        access_token: "stored-access",
+        refresh_token: "stored-refresh",
+      });
+      expect(getStoredTokensState("asana")).toMatchObject({
+        tokens: {
+          access_token: "stored-access",
+          refresh_token: "stored-refresh",
+        },
+        isInvalid: false,
       });
     });
 
@@ -1547,7 +1600,6 @@ describe("mcp-oauth", () => {
 
       expect(callbackResult.success).toBe(true);
       expect(localStorage.getItem("mcp-verifier-asana")).toBeNull();
-      expect(authFetch).toHaveBeenCalledTimes(1);
       expect(authFetch).toHaveBeenCalledWith(
         expect.stringMatching(/\.convex\.site\/registry\/oauth\/token$/),
         expect.objectContaining({
@@ -1639,6 +1691,10 @@ describe("mcp-oauth", () => {
         })
       );
       localStorage.setItem(
+        "mcp-client-asana",
+        JSON.stringify({ client_id: "asana-client-id" })
+      );
+      localStorage.setItem(
         "mcp-tokens-asana",
         JSON.stringify({
           access_token: "old-access-token",
@@ -1651,7 +1707,6 @@ describe("mcp-oauth", () => {
       const refreshResult = await refreshOAuthTokens("asana");
 
       expect(refreshResult.success).toBe(true);
-      expect(authFetch).toHaveBeenCalledTimes(1);
       expect(authFetch).toHaveBeenCalledWith(
         expect.stringMatching(/\.convex\.site\/registry\/oauth\/refresh$/),
         expect.objectContaining({
@@ -2048,6 +2103,10 @@ describe("mcp-oauth", () => {
         JSON.stringify({ registryServerId: "registry-linear" })
       );
       localStorage.setItem(
+        "mcp-client-linear",
+        JSON.stringify({ client_id: "linear-client-id" })
+      );
+      localStorage.setItem(
         "mcp-tokens-linear",
         JSON.stringify({
           access_token: "old-linear-access-token",
@@ -2118,10 +2177,7 @@ describe("mcp-oauth", () => {
         token_type: "Bearer",
       });
 
-      // localStorage still gets the write (still needed for tokens() refresh).
-      expect(localStorage.getItem("mcp-tokens-asana")).toContain(
-        "freshly-issued"
-      );
+      expect(localStorage.getItem("mcp-tokens-asana")).toBeNull();
       expect(importSpy).toHaveBeenCalledTimes(1);
       expect(importSpy.mock.calls[0][0]).toMatchObject({
         projectId: "proj_xyz",
@@ -2248,7 +2304,7 @@ describe("mcp-oauth", () => {
       expect(authFetch).toHaveBeenCalledTimes(2);
     });
 
-    it("falls back to localStorage-only when no binding is provided", async () => {
+    it("fails loudly instead of storing OAuth tokens in localStorage without a binding", async () => {
       vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
       const importApi = await import(
         "@/lib/apis/hosted-oauth-import-tokens-api"
@@ -2262,12 +2318,14 @@ describe("mcp-oauth", () => {
         "client-from-arg"
       );
 
-      await provider.saveTokens({
-        access_token: "no-binding",
-        token_type: "Bearer",
-      });
+      await expect(
+        provider.saveTokens({
+          access_token: "no-binding",
+          token_type: "Bearer",
+        })
+      ).rejects.toThrow("cannot store tokens securely");
 
-      expect(localStorage.getItem("mcp-tokens-asana")).toContain("no-binding");
+      expect(localStorage.getItem("mcp-tokens-asana")).toBeNull();
       expect(importSpy).not.toHaveBeenCalled();
     });
 
