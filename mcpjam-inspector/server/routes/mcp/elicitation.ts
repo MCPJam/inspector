@@ -97,7 +97,7 @@ export function initElicitationCallback(manager: MCPClientManager): void {
 
   // Per MCP Tasks spec (2025-11-25), elicitations related to a task include relatedTaskId
   manager.setElicitationCallback(
-    ({ requestId, message, schema, relatedTaskId }) => {
+    ({ requestId, serverId, message, schema, relatedTaskId }) => {
       return new Promise<ElicitResult>((resolve, reject) => {
         try {
           manager.getPendingElicitations().set(requestId, { resolve, reject });
@@ -109,6 +109,12 @@ export function initElicitationCallback(manager: MCPClientManager): void {
         broadcastElicitation({
           type: "elicitation_request",
           requestId,
+          // Spec: the client MUST make it clear which server is asking. This
+          // matters most in local chat, where several servers are connected at
+          // once and the dialog is otherwise anonymous. The SDK supplies the
+          // id; it is the trusted, immutable anchor (there is no display name
+          // on this path, so the dialog shows the id itself).
+          serverId,
           message,
           schema,
           timestamp: new Date().toISOString(),
