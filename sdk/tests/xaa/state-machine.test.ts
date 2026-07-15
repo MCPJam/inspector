@@ -17,6 +17,58 @@ import {
   type XAAFlowState,
 } from "../../src/xaa/state-machines/types.js";
 
+// One step per Continue click: each request step now takes two
+// proceedToNextStep calls (fire the request, then process the response), so
+// tests drive to a target step instead of assuming a fixed count. Stops early
+// if the flow parks (no step change).
+async function advanceUntil(
+  machine: { proceedToNextStep: () => Promise<void> },
+  readStep: () => XAAFlowState["currentStep"],
+  target: XAAFlowState["currentStep"],
+  cap = 40
+): Promise<void> {
+  for (let i = 0; i < cap && readStep() !== target; i += 1) {
+    const before = readStep();
+    await machine.proceedToNextStep();
+    if (readStep() === before) return;
+  }
+}
+
+const PREREGISTERED_XAA_ARROW_STEPS: XAAFlowState["currentStep"][] = [
+  "discover_resource_metadata",
+  "received_resource_metadata",
+  "discover_authz_metadata",
+  "received_authz_metadata",
+  "user_authentication",
+  "received_identity_assertion",
+  "token_exchange_request",
+  "received_id_jag",
+  "inspect_id_jag",
+  "jwt_bearer_request",
+  "received_access_token",
+  "authenticated_mcp_request",
+  "complete",
+];
+
+async function recordEveryAdvance(
+  machine: { proceedToNextStep: () => Promise<void> },
+  readStep: () => XAAFlowState["currentStep"],
+  target: XAAFlowState["currentStep"],
+  cap = 40
+): Promise<XAAFlowState["currentStep"][]> {
+  const visited: XAAFlowState["currentStep"][] = [];
+  for (let i = 0; i < cap && readStep() !== target; i += 1) {
+    const before = readStep();
+    await machine.proceedToNextStep();
+    const after = readStep();
+    if (after === before) {
+      throw new Error(`XAA flow stopped at ${after} before reaching ${target}`);
+    }
+    visited.push(after);
+  }
+  return visited;
+}
+
 function encodePart(value: Record<string, any>): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
 }
@@ -189,11 +241,14 @@ describe("createXAAStateMachine", () => {
       scope: "read:tools write:tools",
     });
 
-    for (let index = 0; index < 7; index += 1) {
-      await machine.proceedToNextStep();
-    }
+    const visited = await recordEveryAdvance(
+      machine,
+      () => state.currentStep,
+      "complete"
+    );
 
     expect(state.currentStep).toBe("complete");
+    expect(visited).toEqual(PREREGISTERED_XAA_ARROW_STEPS);
     expect(state.accessToken).toBe("access-token");
     expect(state.grantedScope).toBe("read:tools");
     expect(state.identityAssertion).toBe(idToken);
@@ -296,7 +351,11 @@ describe("createXAAStateMachine", () => {
       scope: "read:tools",
     });
 
-    await machine.proceedToNextStep();
+    await advanceUntil(
+      machine,
+      () => state.currentStep,
+      "received_identity_assertion"
+    );
 
     expect(authBodies).toHaveLength(1);
     expect(authBodies[0].userId).toBe("john");
@@ -477,9 +536,7 @@ describe("createXAAStateMachine", () => {
       authzServerIssuer: "https://auth.example.com",
     });
 
-    for (let index = 0; index < 5; index += 1) {
-      await machine.proceedToNextStep();
-    }
+    await advanceUntil(machine, () => state.currentStep, "inspect_id_jag");
 
     expect(state.currentStep).toBe("inspect_id_jag");
     expect(state.idJagDecoded?.issues).toEqual(
@@ -555,7 +612,11 @@ describe("createXAAStateMachine", () => {
       const { machine, executor, getStateSnapshot, idJag } =
         buildExchangeHarness();
 
-      await machine.proceedToNextStep();
+      await advanceUntil(
+        machine,
+        () => getStateSnapshot().currentStep,
+        "received_id_jag"
+      );
 
       const [path, init] = executor.internalRequest.mock.calls[0];
       expect(path).toBe("/token");
@@ -943,6 +1004,7 @@ describe("createXAAStateMachine", () => {
 
       // Inspection lints against the GRANTED scope — the narrowed ID-JAG
       // raises no scope issue (the original request would have).
+      await machine.proceedToNextStep(); // expose the received ID-JAG response
       await machine.proceedToNextStep();
       const inspected = getStateSnapshot();
       expect(inspected.currentStep).toBe("inspect_id_jag");
@@ -987,6 +1049,7 @@ describe("createXAAStateMachine", () => {
         grantedScope: "",
       });
 
+      await machine.proceedToNextStep(); // expose the received ID-JAG response
       await machine.proceedToNextStep(); // inspect (scopeless JAG, no issue)
       await machine.proceedToNextStep(); // jwt-bearer redemption
       const proxyCall = executor.internalRequest.mock.calls.find(
@@ -1382,6 +1445,22 @@ describe("createXAAStateMachine", () => {
       expect(
         externalUrls.some((u) => u.includes("oauth-authorization-server"))
       ).toBe(false);
+      expect(
+        state.infoLogs?.find(
+          (log) => log.id === "xaa-resource-metadata-skipped-request"
+        )
+      ).toBeDefined();
+      expect(
+        state.infoLogs?.find(
+          (log) => log.id === "xaa-authz-metadata-skipped-request"
+        )
+      ).toBeDefined();
+      expect(
+        state.infoLogs?.find((log) => log.id === "xaa-resource-metadata-skipped")
+      ).toBeDefined();
+      expect(
+        state.infoLogs?.find((log) => log.id === "xaa-authz-metadata-skipped")
+      ).toBeDefined();
     });
 
     it("skips resource discovery when the issuer is configured but still discovers the token endpoint", async () => {
@@ -1437,15 +1516,30 @@ describe("createXAAStateMachine", () => {
         authzServerIssuer: "https://auth.example.com",
       });
 
-      // idle -> (skip resource) -> received_resource_metadata
+      // The network probe is skipped, but both visible diagram actions still
+      // consume one Continue click apiece.
+      await machine.proceedToNextStep();
+      expect(state.currentStep).toBe("discover_resource_metadata");
+      expect(
+        state.infoLogs?.find(
+          (log) => log.id === "xaa-resource-metadata-skipped-request"
+        )
+      ).toBeDefined();
       await machine.proceedToNextStep();
       expect(state.currentStep).toBe("received_resource_metadata");
+      expect(
+        state.infoLogs?.find((log) => log.id === "xaa-resource-metadata-skipped")
+      ).toBeDefined();
       expect(
         externalUrls.some((u) => u.includes("oauth-protected-resource"))
       ).toBe(false);
 
-      // received_resource_metadata -> AS discovery (RFC 8414) actually runs
-      await machine.proceedToNextStep();
+      // received_resource_metadata -> AS discovery (RFC 8414): request + process
+      await advanceUntil(
+        machine,
+        () => state.currentStep,
+        "received_authz_metadata"
+      );
       expect(state.currentStep).toBe("received_authz_metadata");
       expect(state.tokenEndpoint).toBe("https://auth.example.com/oauth/token");
       expect(
@@ -1510,7 +1604,11 @@ describe("createXAAStateMachine", () => {
         requestExecutor: executor,
       });
 
-      await machine.proceedToNextStep();
+      await advanceUntil(
+        machine,
+        () => state.currentStep,
+        "received_resource_metadata"
+      );
 
       expect(state.currentStep).toBe("received_resource_metadata");
       expect(state.authzServerIssuer).toBe("https://auth.example.com");
@@ -1611,8 +1709,11 @@ describe("createXAAStateMachine", () => {
         requestExecutor: executor,
         clientSecret: overrides.clientSecret,
       });
-      await machine.proceedToNextStep(); // discover_resource_metadata
-      await machine.proceedToNextStep(); // discover_authz_metadata
+      await advanceUntil(
+        machine,
+        () => state.currentStep,
+        "received_authz_metadata"
+      );
       return state;
     }
 
@@ -2303,6 +2404,19 @@ describe("open dcr registration strategy", () => {
     expect(first.registerCalls()).toHaveLength(1);
 
     const second = createDynamicHarness({ strategy: "dcr", cache });
+    await advanceUntil(
+      second.machine,
+      () => second.getState().currentStep,
+      "received_authz_metadata"
+    );
+
+    // The diagram must know that its next action is the single local reuse
+    // arrow before the user clicks it; otherwise it first shows a registration
+    // request and swaps that arrow out during the click.
+    expect(second.getState().dcrRegistrationReused).toBe(true);
+    await second.machine.proceedToNextStep();
+    expect(second.getState().currentStep).toBe("received_client_credentials");
+
     await second.machine.runAll();
     const state = second.getState();
 
@@ -2371,9 +2485,11 @@ describe("open dcr registration strategy", () => {
     });
     // Behavior, not just the flag: at received_authz_metadata the machine
     // goes straight to IdP authentication — no registration POST is issued.
-    for (let index = 0; index < 3; index += 1) {
-      await harness.machine.proceedToNextStep();
-    }
+    await advanceUntil(
+      harness.machine,
+      () => harness.getState().currentStep,
+      "received_identity_assertion"
+    );
     expect(harness.registerCalls()).toHaveLength(0);
     expect(
       harness.internalCalls.some((call) => call.path === "/authenticate")
@@ -2815,8 +2931,11 @@ describe("createXAAStateMachine discovery guards", () => {
       });
     });
 
-    await machine.proceedToNextStep();
-    await machine.proceedToNextStep();
+    await advanceUntil(
+      machine,
+      () => getState().currentStep,
+      "received_authz_metadata"
+    );
 
     expect(getState().currentStep).toBe("received_authz_metadata");
     expect(getState().authzServerIssuer).toBe(liveIssuer);
@@ -2973,10 +3092,15 @@ describe("createXAAStateMachine SAML axes", () => {
     const { executor } = samlExecutor({ subjectIdFormatParam: true });
     const { machine, getState } = buildSamlMachine(executor);
 
-    await machine.runAll();
+    const visited = await recordEveryAdvance(
+      machine,
+      () => getState().currentStep,
+      "complete"
+    );
 
     const state = getState();
     expect(state.currentStep).toBe("complete");
+    expect(visited).toEqual(PREREGISTERED_XAA_ARROW_STEPS);
     expect(state.identityAssertion).toBe(fakeSamlAssertionB64);
     expect(state.identityAssertionSubject).toEqual({
       issuer: "https://issuer.example/api/web/xaa",
@@ -3115,6 +3239,7 @@ describe("createXAAStateMachine SAML axes", () => {
     });
 
     await machine.proceedToNextStep();
+    await machine.proceedToNextStep();
 
     const authCall = executor.internalRequest.mock.calls[0];
     expect(JSON.parse(String(authCall?.[1]?.body)).assertionFormat).toBe(
@@ -3122,5 +3247,92 @@ describe("createXAAStateMachine SAML axes", () => {
     );
     expect(state.currentStep).toBe("received_identity_assertion");
     expect(state.identityAssertion).toBe("id-token");
+  });
+});
+
+describe("negative-test probe is terminal", () => {
+  it("shows the JWT request and accepted-token response on separate clicks", async () => {
+    let state: XAAFlowState = createInitialXAAFlowState({
+      serverUrl: "https://mcp.example.com",
+      resourceUrl: "https://mcp.example.com",
+      authzServerIssuer: "https://auth.example.com",
+      tokenEndpoint: "https://auth.example.com/token",
+      clientId: "mcpjam-debugger",
+      idJag: "broken-id-jag",
+      currentStep: "inspect_id_jag",
+      negativeTestMode: "unknown_kid",
+    });
+    const externalRequest = vi.fn();
+    const internalRequest = vi.fn(async () => ({
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      body: {
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: {
+          access_token: "illegitimate-token",
+          token_type: "Bearer",
+          expires_in: 300,
+        },
+      },
+      ok: true,
+    }));
+    const machine = createXAAStateMachine({
+      state,
+      getState: () => state,
+      updateState: (updates) => {
+        state = { ...state, ...updates };
+      },
+      serverUrl: "https://mcp.example.com",
+      issuerBaseUrl: "https://issuer.example/api/web/xaa",
+      requestExecutor: { externalRequest, internalRequest },
+      negativeTestMode: "unknown_kid",
+      clientId: "mcpjam-debugger",
+      authzServerIssuer: "https://auth.example.com",
+    });
+
+    await machine.proceedToNextStep();
+    expect(state.currentStep).toBe("jwt_bearer_request");
+    expect(state.negativeProbe).toBeUndefined();
+    expect(state.accessToken).toBe("illegitimate-token");
+
+    await machine.proceedToNextStep();
+    expect(state.currentStep).toBe("received_access_token");
+    expect(state.negativeProbe).toEqual({ outcome: "accepted", status: 200 });
+    expect(
+      state.infoLogs?.find((entry) => entry.id === "xaa-negative-accepted")
+        ?.data
+    ).toEqual({ status: 200, mode: "unknown_kid" });
+    expect(externalRequest).not.toHaveBeenCalled();
+  });
+
+  it("does not advance past an accepted probe into the authenticated MCP call", async () => {
+    // A negative-mode run the authorization server WRONGLY accepts rests at
+    // received_access_token with negativeProbe set. A direct proceedToNextStep
+    // must not carry the illegitimately issued token into the MCP request.
+    let state: XAAFlowState = createInitialXAAFlowState({
+      serverUrl: "https://mcp.example.com",
+      accessToken: "leaked-token",
+      currentStep: "received_access_token",
+      negativeProbe: { outcome: "accepted", status: 200 },
+    });
+    const externalRequest = vi.fn();
+    const machine = createXAAStateMachine({
+      state,
+      getState: () => state,
+      updateState: (updates) => {
+        state = { ...state, ...updates };
+      },
+      serverUrl: "https://mcp.example.com",
+      issuerBaseUrl: "https://issuer.example/api/web/xaa",
+      requestExecutor: { externalRequest, internalRequest: vi.fn() },
+    });
+
+    await machine.proceedToNextStep();
+
+    expect(state.currentStep).toBe("received_access_token");
+    expect(externalRequest).not.toHaveBeenCalled();
   });
 });

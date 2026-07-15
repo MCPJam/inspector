@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   executeLocalServerConnect,
+  parseConnectionDefaults,
   resolveLocalServerForConnect,
   toMCPServerConfig,
 } from "../local-server-resolver.js";
@@ -883,5 +884,201 @@ describe("resolveLocalServerForConnect — backend-resolved XAA identity error",
     // surfaced BEFORE any mint work (and there is no silent fallback to the
     // demo identity or to OAuth).
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("enterprise-managed authorization policy (xaaPolicy)", () => {
+  beforeEach(() => {
+    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
+    }
+    vi.unstubAllGlobals();
+  });
+
+  const fakeContext = { set: () => {}, get: () => undefined } as any;
+  const POLICY = { idp: "mcpjam" } as const;
+
+  describe("parseConnectionDefaults", () => {
+    it("accepts a well-formed policy and omits an absent one", () => {
+      expect(
+        parseConnectionDefaults({ xaaPolicy: { idp: "mcpjam" } })
+      ).toEqual({ xaaPolicy: { idp: "mcpjam" } });
+      expect(parseConnectionDefaults({ timeoutMs: 5 })?.xaaPolicy).toBe(
+        undefined
+      );
+    });
+
+    it("throws 409 on a malformed or unsupported policy — enforcement is never advisory", () => {
+      for (const bad of [
+        { idp: "okta" },
+        { idp: 1 },
+        {},
+        "on",
+        ["mcpjam"],
+        null,
+      ]) {
+        let thrown: any;
+        try {
+          parseConnectionDefaults({ xaaPolicy: bad });
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown, JSON.stringify(bad)).toBeDefined();
+        expect(thrown.status).toBe(409);
+        expect(thrown.details?.reason).toBe("xaa_policy_invalid");
+      }
+    });
+  });
+
+  describe("toMCPServerConfig — host-wide EMA advertisement", () => {
+    const EMA = "io.modelcontextprotocol/enterprise-managed-authorization";
+
+    it("advertises EMA on an explicit-oauth HTTP server when the policy is on", () => {
+      const config: any = toMCPServerConfig(
+        {
+          ...httpHostedOAuthAuth,
+          serverConfig: {
+            ...httpHostedOAuthAuth.serverConfig,
+            authMethod: "oauth" as const,
+          },
+        },
+        { xaaPolicy: POLICY }
+      );
+      expect(config.clientCapabilities.extensions[EMA]).toEqual({});
+    });
+
+    it("advertises EMA on stdio servers under the policy (declare-support is host-wide)", () => {
+      const config: any = toMCPServerConfig(stdioAuth, { xaaPolicy: POLICY });
+      expect(config.clientCapabilities.extensions[EMA]).toEqual({});
+    });
+
+    it("does not advertise EMA on non-XAA servers without the policy", () => {
+      const config: any = toMCPServerConfig(httpHeaderOnlyAuth, {});
+      expect(config.clientCapabilities?.extensions?.[EMA]).toBeUndefined();
+    });
+  });
+
+  describe("resolveLocalServerForConnect — not-configured failure", () => {
+    function authorizeResponse(serverConfig: Record<string, unknown>) {
+      return new Response(
+        JSON.stringify({
+          results: {
+            "srv-1": {
+              ok: true,
+              role: "owner",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig,
+              oauthAccessToken: null,
+            },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    it("throws 409 XAA_CONNECTION_NOT_CONFIGURED for a policy-forced unconfigured auto server, before any mint or refresh", async () => {
+      const fetchMock = vi.fn(async (input: any) => {
+        const url = String(input);
+        if (url.endsWith("/web/authorize-batch-local")) {
+          return authorizeResponse({
+            transportType: "http",
+            url: "https://plain.example.com/mcp",
+            authMethod: "auto",
+          });
+        }
+        throw new Error(`Unexpected fetch ${url}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      let thrown: any;
+      try {
+        await resolveLocalServerForConnect(fakeContext, "b", "proj-1", "srv-1", {
+          serverDisplayName: "Plain",
+          defaults: { xaaPolicy: POLICY },
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown?.status).toBe(409);
+      expect(thrown?.code).toBe("XAA_CONNECTION_NOT_CONFIGURED");
+      expect(thrown?.details?.reason).toBe("xaa_connection_not_configured");
+      expect(thrown?.details?.serverId).toBe("srv-1");
+      // Fails first-class: only the authorize call went out — no discover
+      // refresh, no mint, no secret reveal.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("explicit-oauth server under the policy connects on the OAuth rails (override wins)", async () => {
+      const fetchMock = vi.fn(async (input: any) => {
+        const url = String(input);
+        if (url.endsWith("/web/authorize-batch-local")) {
+          return authorizeResponse({
+            transportType: "http",
+            url: "https://oauth.example.com/mcp",
+            authMethod: "oauth",
+            useOAuth: true,
+          });
+        }
+        if (url.endsWith("/web/oauth/force-refresh")) {
+          return new Response(
+            JSON.stringify({ accessToken: "refreshed-token" }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        throw new Error(`Unexpected fetch ${url}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { config, effectiveAuth }: any = await resolveLocalServerForConnect(
+        fakeContext,
+        "b",
+        "proj-1",
+        "srv-1",
+        { serverDisplayName: "OAuth", defaults: { xaaPolicy: POLICY } }
+      );
+      expect(effectiveAuth).toBe("oauth");
+      expect(config.requestInit.headers.Authorization).toBe(
+        "Bearer refreshed-token"
+      );
+      // Host-wide declare-support rides along even on the override.
+      expect(
+        config.clientCapabilities.extensions[
+          "io.modelcontextprotocol/enterprise-managed-authorization"
+        ]
+      ).toEqual({});
+    });
+
+    it("stdio server under the policy connects unchanged (XAA is HTTP-only)", async () => {
+      const fetchMock = vi.fn(async (input: any) => {
+        const url = String(input);
+        if (url.endsWith("/web/authorize-batch-local")) {
+          return authorizeResponse({
+            transportType: "stdio",
+            command: "node",
+            args: ["server.js"],
+            env: { FOO: "bar" },
+          });
+        }
+        throw new Error(`Unexpected fetch ${url}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { config, effectiveAuth }: any = await resolveLocalServerForConnect(
+        fakeContext,
+        "b",
+        "proj-1",
+        "srv-1",
+        { defaults: { xaaPolicy: POLICY } }
+      );
+      expect(effectiveAuth).toBe("none");
+      expect(config.command).toBe("node");
+    });
   });
 });

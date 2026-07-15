@@ -114,13 +114,47 @@ describe("XAAPeopleStrip", () => {
     expect(props.onSelectPerson).not.toHaveBeenCalled();
   });
 
-  it("blocks the edit popover while disabled — no mid-run edit/delete back door", async () => {
+  it("blocks edit and remove while disabled — no mid-run back door", async () => {
     const user = userEvent.setup();
     renderStrip({ disabled: true });
-    // The pencil is still rendered (discoverable) but opening is inert, so
-    // the running identity can't be mutated or deleted through the form.
+    // Actions stay visible (discoverable) but inert while a run is busy.
     await user.click(screen.getByRole("button", { name: /edit bob tables/i }));
     expect(screen.queryByLabelText(/name/i)).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: /remove bob tables/i }),
+    );
+    expect(removeMock).not.toHaveBeenCalled();
+  });
+
+  it("shows always-visible edit and remove actions on each chip", () => {
+    renderStrip();
+    expect(
+      screen.getByRole("button", { name: /edit bob tables/i }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /remove bob tables/i }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /edit jonah kim/i }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /remove jonah kim/i }),
+    ).toBeVisible();
+  });
+
+  it("removes a person from the chip trash control and clears selection", async () => {
+    const user = userEvent.setup();
+    removeMock.mockResolvedValue({ ok: true });
+    const { props } = renderStrip({ selectedPersonId: bob._id });
+
+    await user.click(
+      screen.getByRole("button", { name: /remove bob tables/i }),
+    );
+
+    await waitFor(() =>
+      expect(removeMock).toHaveBeenCalledWith({ testIdentityId: bob._id }),
+    );
+    expect(props.onSelectPerson).toHaveBeenCalledWith(null);
   });
 
   it("renders outcome badges from outcomeFor", () => {

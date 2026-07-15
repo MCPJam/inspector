@@ -64,6 +64,31 @@ describe("checkHarnessRuntimeAvailable", () => {
     },
   );
 
+  // The harness reaches MCP servers through the signed-proxy route, whose
+  // Convex-minted token carries {projectId, serverId} but no host — so that
+  // route can't resolve or enforce the host's enterprise-managed policy. An
+  // unregistered `auto` server would silently take the discover/OAuth path,
+  // bypassing enforcement. Fail closed here instead.
+  it("rejects a harness turn on an enterprise-managed host (proxy can't carry the policy)", () => {
+    setFullyAvailable();
+    const result = checkHarnessRuntimeAvailable(
+      args({ xaaEnterprisePolicyOn: true }),
+    );
+    expect(result.ok).toBe(false);
+    expect((result as { reason: string }).reason).toContain(
+      "enterprise-managed host",
+    );
+  });
+
+  it("allows a harness turn when the host has no enterprise policy", () => {
+    setFullyAvailable();
+    expect(
+      checkHarnessRuntimeAvailable(args({ xaaEnterprisePolicyOn: false })),
+    ).toEqual({ ok: true });
+    // Absent flag behaves as off (pre-feature callers unchanged).
+    expect(checkHarnessRuntimeAvailable(args())).toEqual({ ok: true });
+  });
+
   it("rejects a model the runtime can't run (non-gpt-5 on Codex)", () => {
     setFullyAvailable();
     // MCPJam-provided but not Codex-mappable ⇒ rejected, not silently defaulted.

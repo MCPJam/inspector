@@ -172,7 +172,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
     ],
   },
   fetch_client_metadata_document: {
-    title: "Preflight the Client Metadata Document",
+    title: "Request Client Metadata Document",
     summary:
       "CIMD: the client_id is a URL to MCPJam's hosted metadata document. The debugger fetches and validates it — the Authorization Server does its own fetch later.",
     phase: "bootstrap",
@@ -183,7 +183,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
     ],
   },
   received_client_metadata: {
-    title: "Client Metadata Document Ready",
+    title: "Client Metadata Document Received",
     summary:
       "The hosted document validated: its client_id equals its URL and it declares the XAA grants. The URL is now this run's client_id.",
     phase: "bootstrap",
@@ -323,4 +323,26 @@ export function getXAAStepInfo(
 export function getXAAStepIndex(step: XAAFlowStep): number {
   const index = XAA_STEP_ORDER.indexOf(step);
   return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+}
+
+// Request step → the received step that presents its response. Presentation
+// pairing only: the machine records each exchange as ONE httpHistory entry
+// tagged with the request step; the logger renders the response half under the
+// paired card. Steps absent here (inspect_id_jag, skips) never split.
+const XAA_RECEIVED_STEP_FOR_REQUEST: Partial<Record<XAAFlowStep, XAAFlowStep>> =
+  {
+    discover_resource_metadata: "received_resource_metadata",
+    discover_authz_metadata: "received_authz_metadata",
+    request_client_registration: "received_client_credentials",
+    fetch_client_metadata_document: "received_client_metadata",
+    user_authentication: "received_identity_assertion",
+    token_exchange_request: "received_id_jag",
+    jwt_bearer_request: "received_access_token",
+    authenticated_mcp_request: "complete",
+  };
+
+export function getXAAReceivedStepForRequest(
+  step: XAAFlowStep
+): XAAFlowStep | undefined {
+  return XAA_RECEIVED_STEP_FOR_REQUEST[step];
 }

@@ -295,6 +295,7 @@ vi.mock("../lib/theme-utils", () => ({
 
 vi.mock("../lib/oauth/mcp-oauth", () => ({
   completeHostedOAuthCallback: mockCompleteHostedOAuthCallback,
+  hasOAuthConfig: vi.fn(() => false),
   handleOAuthCallback: mockHandleOAuthCallback,
   isElectronMcpCallbackState: (state: string | null | undefined) =>
     Boolean(state?.startsWith("electron_mcp:")),
@@ -2913,7 +2914,7 @@ describe("App hosted OAuth callback handling", () => {
         expect.objectContaining({
           activeServerSelectorProps: expect.objectContaining({
             showOnlyOAuthServers: true,
-            autoSelectFilteredServer: false,
+            autoSelectFilteredServer: "when-empty",
           }),
         })
       );
@@ -2967,7 +2968,7 @@ describe("App hosted OAuth callback handling", () => {
         expect.objectContaining({
           activeServerSelectorProps: expect.objectContaining({
             showOnlyOAuthServers: true,
-            autoSelectFilteredServer: false,
+            autoSelectFilteredServer: "when-empty",
           }),
         })
       );

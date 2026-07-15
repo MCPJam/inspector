@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { Check, Pencil, Plus } from "lucide-react";
+import { Check, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
@@ -13,6 +13,7 @@ import {
   useXaaPeopleMutations,
   type RemoteXaaPerson,
 } from "@/hooks/useXaaPeople";
+import { cn } from "@/lib/utils";
 
 /** Per-person result of the last valid run against the current target,
  * as ruled by the resource authorization server (jwt-bearer redemption).
@@ -199,10 +200,11 @@ export function PersonForm({
             type="button"
             variant="ghost"
             size="sm"
-            className="text-destructive hover:text-destructive"
+            className="gap-1.5 text-destructive hover:text-destructive"
             disabled={busy}
             onClick={() => void handleDelete()}
           >
+            <Trash2 className="size-3.5" />
             Delete
           </Button>
         ) : (
@@ -247,8 +249,10 @@ export function XAAPeopleStrip({
   disabled: boolean;
   outcomeFor: (personId: string) => XaaPersonOutcome | undefined;
 }) {
+  const { remove } = useXaaPeopleMutations();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   // If the roster shrinks under an open edit popover, close it.
   useEffect(() => {
@@ -301,67 +305,109 @@ export function XAAPeopleStrip({
       {people.map((person) => {
         const selected = person._id === selectedPersonId;
         const outcome = outcomeFor(person._id);
+        const chipBusy = disabled || removingId === person._id;
         return (
-          <div key={person._id} className="group/chip flex items-center">
+          <div
+            key={person._id}
+            className={cn(
+              "group/chip flex items-center rounded-full border py-1 pl-1 pr-1 transition-colors",
+              selected
+                ? "border-primary/60 bg-primary/5 ring-1 ring-primary/40"
+                : "border-border/60 hover:bg-muted/40",
+              chipBusy && "opacity-60",
+            )}
+          >
             <button
               type="button"
               aria-pressed={selected}
-              aria-disabled={disabled || undefined}
+              aria-disabled={chipBusy || undefined}
               title={`${person.subject} · ${person.email}`}
               onClick={() => {
-                if (disabled) return;
+                if (chipBusy) return;
                 onSelectPerson(selected ? null : person._id);
               }}
-              className={`flex items-center gap-2 rounded-full border py-1 pl-1 pr-3 text-left transition-colors ${
-                selected
-                  ? "border-primary/60 bg-primary/5 ring-1 ring-primary/40"
-                  : "border-border/60 hover:bg-muted/40"
-              } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
+              className={cn(
+                "flex items-center gap-2 rounded-full py-0 pl-0 pr-2 text-left",
+                chipBusy && "cursor-not-allowed",
+              )}
             >
               <CharacterAvatar name={person.name} seed={person._id} size="sm" />
               <span className="text-xs font-medium">{person.name}</span>
               {outcome ? <OutcomeBadge outcome={outcome} /> : null}
             </button>
-            <Popover
-              // Same run-in-progress guard as chip switching: editing or
-              // deleting a person mid-run would mutate/deselect the running
-              // identity through the back door the disabled chips close.
-              open={!disabled && editingId === person._id}
-              onOpenChange={(open) => {
-                if (disabled) return;
-                setEditingId(open ? person._id : null);
-              }}
-            >
-              <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={`Edit ${person.name}`}
-                  aria-disabled={disabled || undefined}
-                  className={`ml-0.5 rounded p-1 text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover/chip:opacity-100 ${
-                    disabled
-                      ? "cursor-not-allowed"
-                      : "hover:text-foreground"
-                  }`}
-                >
-                  <Pencil className="size-3" />
-                </button>
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-80">
-                <PersonForm
-                  initial={{
-                    name: person.name,
-                    subject: person.subject,
-                    email: person.email,
-                  }}
-                  personId={person._id}
-                  projectId={projectId}
-                  onDone={() => setEditingId(null)}
-                  onDeleted={() => {
-                    if (selected) onSelectPerson(null);
-                  }}
-                />
-              </PopoverContent>
-            </Popover>
+            <div className="flex items-center border-l border-border/60 pl-0.5">
+              <Popover
+                // Same run-in-progress guard as chip switching: editing or
+                // deleting a person mid-run would mutate/deselect the running
+                // identity through the back door the disabled chips close.
+                open={!chipBusy && editingId === person._id}
+                onOpenChange={(open) => {
+                  if (chipBusy) return;
+                  setEditingId(open ? person._id : null);
+                }}
+              >
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={`Edit ${person.name}`}
+                    aria-disabled={chipBusy || undefined}
+                    title={`Edit ${person.name}`}
+                    className={cn(
+                      "rounded-full p-1.5 text-muted-foreground transition-colors",
+                      chipBusy
+                        ? "cursor-not-allowed"
+                        : "hover:bg-muted hover:text-foreground",
+                    )}
+                  >
+                    <Pencil className="size-3.5" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-80">
+                  <PersonForm
+                    initial={{
+                      name: person.name,
+                      subject: person.subject,
+                      email: person.email,
+                    }}
+                    personId={person._id}
+                    projectId={projectId}
+                    onDone={() => setEditingId(null)}
+                    onDeleted={() => {
+                      if (selected) onSelectPerson(null);
+                    }}
+                  />
+                </PopoverContent>
+              </Popover>
+              <button
+                type="button"
+                aria-label={`Remove ${person.name}`}
+                aria-disabled={chipBusy || undefined}
+                title={`Remove ${person.name}`}
+                disabled={chipBusy}
+                onClick={() => {
+                  if (chipBusy) return;
+                  setRemovingId(person._id);
+                  void remove({ testIdentityId: person._id })
+                    .then(() => {
+                      if (selected) onSelectPerson(null);
+                      if (editingId === person._id) setEditingId(null);
+                    })
+                    .finally(() => {
+                      setRemovingId((current) =>
+                        current === person._id ? null : current,
+                      );
+                    });
+                }}
+                className={cn(
+                  "rounded-full p-1.5 text-muted-foreground transition-colors",
+                  chipBusy
+                    ? "cursor-not-allowed"
+                    : "hover:bg-destructive/10 hover:text-destructive",
+                )}
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            </div>
           </div>
         );
       })}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getXAAPhaseNumber,
+  getXAAReceivedStepForRequest,
   getXAAStepInfo,
   XAA_PHASE_ORDER,
   XAA_PHASES,
@@ -132,5 +133,27 @@ describe("dynamic registration steps", () => {
       expect(XAA_STEP_ORDER).toContain(step);
       expect(XAA_STEP_METADATA[step].phase).toBe("bootstrap");
     }
+  });
+});
+
+describe("request/response presentation pairs", () => {
+  it.each([
+    ["discover_resource_metadata", "received_resource_metadata"],
+    ["discover_authz_metadata", "received_authz_metadata"],
+    ["request_client_registration", "received_client_credentials"],
+    ["fetch_client_metadata_document", "received_client_metadata"],
+    ["user_authentication", "received_identity_assertion"],
+    ["token_exchange_request", "received_id_jag"],
+    ["jwt_bearer_request", "received_access_token"],
+    ["authenticated_mcp_request", "complete"],
+  ] as const)("pairs %s with %s", (request, response) => {
+    expect(getXAAReceivedStepForRequest(request)).toBe(response);
+  });
+
+  it("leaves local-only actions unpaired", () => {
+    expect(getXAAReceivedStepForRequest("inspect_id_jag")).toBeUndefined();
+    expect(
+      getXAAReceivedStepForRequest("received_client_credentials")
+    ).toBeUndefined();
   });
 });
