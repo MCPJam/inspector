@@ -13,6 +13,7 @@ import {
 } from "../../../services/session-token.js";
 import {
   decodeConfidentialCimdKey,
+  getLocalConfidentialCimdProvider,
   getXaaClientJwks,
   initXAAIdpKeyPair,
   issueMockSamlAssertion,
@@ -2228,10 +2229,43 @@ describe("confidential CIMD (private_key_jwt) on the xaa router", () => {
     const app = new Hono();
     app.route(
       "/api/mcp/xaa",
-      createXaaRouter({ issuerBasePath: "/api/mcp", httpsOnlyProxy: false })
+      createXaaRouter({
+        issuerBasePath: "/api/mcp",
+        httpsOnlyProxy: false,
+        confidentialCimdProvider: getLocalConfidentialCimdProvider(),
+      })
     );
     return app;
   }
+
+  it("does not expose or use a confidential client without an injected provider", async () => {
+    const app = new Hono();
+    app.route(
+      "/api/web/xaa",
+      createXaaRouter({ issuerBasePath: "/api/web", httpsOnlyProxy: true })
+    );
+
+    const capability = await app.request(
+      "https://app.example.com/api/web/xaa/confidential-cimd/client"
+    );
+    expect(capability.status).toBe(404);
+
+    const redemption = await app.request("/api/web/xaa/proxy/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tokenEndpoint: "https://as.example.com/oauth/token",
+        assertion: "the.id.jag",
+        clientId: "https://app.example.com/client.json",
+        tokenEndpointAuthMethod: "private_key_jwt",
+      }),
+    });
+    expect(redemption.status).toBe(400);
+    await expect(redemption.json()).resolves.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("not available"),
+    });
+  });
 
   it("GET /confidential-cimd/client publishes this server's client key", async () => {
     const app = buildApp();

@@ -841,11 +841,11 @@ export function XAAFlowTab({
   }, [organizationId, hostedIssuerKind]);
 
   // Confidential CIMD: when the per-server config asks for private_key_jwt on a
-  // cimd run, fetch the reflector document URL that publishes THIS server's
-  // client public key. The browser can't hold the private key, so it presents
-  // this URL as its client_id and the server signs the client_assertion at
-  // /proxy/token. Public CIMD (the default) leaves clientIdMetadataUrl unset and
-  // the state machine uses the fixed hosted public document.
+  // cimd run, fetch the reflector document URL that publishes the local
+  // provider's client public key. The browser can't hold the private key, so it
+  // presents this URL as its client_id and /proxy/token delegates signing to
+  // the same SDK provider. Public CIMD (the default) leaves
+  // clientIdMetadataUrl unset and uses the fixed hosted public document.
   const wantsConfidentialCimd =
     effectiveStrategy === "cimd" &&
     selectedServer?.xaaClientAuth === "private_key_jwt";

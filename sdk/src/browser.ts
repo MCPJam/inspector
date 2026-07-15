@@ -209,11 +209,15 @@ export {
   SUBJECT_IDENTIFIER_FORMATS,
   DEFAULT_SUBJECT_IDENTIFIER_FORMAT,
   normalizeSubjectIdentifierFormat,
+  XAA_CLIENT_AUTH_METHODS,
+  DEFAULT_XAA_CLIENT_AUTH,
+  normalizeXaaClientAuth,
 } from "./xaa/constants.js";
 export type {
   NegativeTestMode,
   IdentityAssertionFormat,
   SubjectIdentifierFormat,
+  XaaClientAuthMethod,
 } from "./xaa/constants.js";
 // Shared client-registration vocabulary (single source of truth for OAuth
 // flows AND the XAA debugger's Client↔Resource-AS leg).

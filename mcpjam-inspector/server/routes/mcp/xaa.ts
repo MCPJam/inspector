@@ -23,18 +23,16 @@ import {
   issueMockIdToken,
   issueNegativeIdJag,
   verifyXaaJwt,
-  initXaaClientKeyPair,
-  signClientAssertion,
-  getXaaClientJwks,
-  buildConfidentialCimdUrl,
+  buildXaaJwtBearerRequest,
+  getLocalConfidentialCimdProvider,
   ID_JAG_TOKEN_TYPE,
   TOKEN_EXCHANGE_GRANT,
   XAA_ACCESS_TOKEN_TYP,
   XAA_CODE_JWT_TYP,
+  type ConfidentialCimdProvider,
 } from "@mcpjam/sdk";
 import { createHash } from "crypto";
 import {
-  buildJwtBearerRequest,
   getIssuerForRequest,
   resolveServerTarget,
 } from "../../services/xaa-mint.js";
@@ -548,9 +546,8 @@ const proxyTokenSchema = z
     clientSecret: z.string().trim().min(1).optional(),
     // How to authenticate at the token endpoint. Absent = legacy body-post
     // behavior; only the methods the debugger can actually redeem.
-    // `private_key_jwt` is the confidential CIMD method: the server signs a
-    // client_assertion with its own client key (the reflector publishes the
-    // matching public key).
+    // `private_key_jwt` is the confidential CIMD method: an injected provider
+    // signs the client_assertion (the reflector publishes its matching key).
     tokenEndpointAuthMethod: z
       .enum([
         "client_secret_post",
@@ -581,6 +578,10 @@ const proxyTokenSchema = z
 interface CreateXaaRouterOptions {
   issuerBasePath: "/api/mcp" | "/api/web";
   httpsOnlyProxy: boolean;
+  // Optional Node-side credential capability for confidential CIMD. Local
+  // inspector injects the SDK's filesystem-backed provider; hosted deliberately
+  // omits it so the web tier does not become a shared OAuth client/key store.
+  confidentialCimdProvider?: ConfidentialCimdProvider;
   // When behind a TLS-terminating proxy (hosted mode), the issuer scheme must
   // be reconstructed from X-Forwarded-Proto because c.req.url is http://
   // internally. Leave false for local (no proxy) so the header can't be
@@ -681,6 +682,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   const trustForwardedHeaders = options.trustForwardedHeaders ?? false;
   const authorizeOrgIssuer = options.authorizeOrgIssuer;
   const allowedBrowserOrigins = options.allowedBrowserOrigins ?? [];
+  const confidentialCimdProvider = options.confidentialCimdProvider;
 
   if (protectedMiddlewares.length > 0) {
     router.use("/authenticate", ...protectedMiddlewares);
@@ -1039,25 +1041,22 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
 
   router.get("/.well-known/jwks.json", (c) => serveJwks(c));
 
-  // Confidential CIMD: hand the browser the reflector document URL that
-  // publishes THIS server's client public key. The browser can't hold the
-  // private key, so it presents this URL as its client_id and the server signs
-  // the client_assertion at /proxy/token. The origin is derived exactly like
-  // the reflector's echoed client_id (forwarded host/proto) so the two
-  // byte-match, as CIMD requires. Returns only a URL derived from a public key
-  // — nothing secret — so it needs no auth.
-  router.get("/confidential-cimd/client", (c) => {
-    initXaaClientKeyPair();
-    const clientIdMetadataUrl = buildConfidentialCimdUrl(
-      getXaaClientJwks().keys[0],
-      confidentialCimdPublicOrigin(c),
-    );
-    // no-store: the URL encodes the CURRENT server client key. If the key
-    // rotates, a cached URL would pair a freshly-signed assertion with a stale
-    // client_id and fail verification.
-    c.header("Cache-Control", "no-store");
-    return c.json({ clientIdMetadataUrl });
-  });
+  if (confidentialCimdProvider) {
+    // Hand the browser the reflector URL for the injected local client. The
+    // browser holds no key; it presents the URL as client_id and /proxy/token
+    // delegates signing to the same provider. Hosted has no provider, so this
+    // capability route is absent there.
+    router.get("/confidential-cimd/client", (c) => {
+      const clientIdMetadataUrl =
+        confidentialCimdProvider.getClientIdMetadataUrl(
+          confidentialCimdPublicOrigin(c)
+        );
+      // The URL encodes the current provider key. Never pair a cached client_id
+      // with an assertion produced after local key rotation.
+      c.header("Cache-Control", "no-store");
+      return c.json({ clientIdMetadataUrl });
+    });
+  }
 
   // Unscoped hosted /token refuses public token exchange (see handleToken);
   // its doc must not advertise it. Local (no org gate available) serves it.
@@ -1236,7 +1235,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       // RFC 6749 §2.3.1: client_id is REQUIRED for post/basic; a public (none)
       // client and a private_key_jwt client both still need a client_id to
       // identify themselves (private_key_jwt's `iss`/`sub` ARE the client_id).
-      // Reject locally with a 400 rather than letting buildJwtBearerRequest
+      // Reject locally with a 400 rather than letting buildXaaJwtBearerRequest
       // throw into a 500.
       if (
         (authMethod === "client_secret_basic" ||
@@ -1250,34 +1249,29 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           code: "VALIDATION_ERROR",
         });
       }
-
-      // Confidential CIMD: sign the private_key_jwt client assertion SERVER-SIDE
-      // (the browser can't hold the private key). Reuses the exact SDK helpers
-      // the CLI's in-process executor uses — the reflector publishes the
-      // matching public key. `clientId` is the reflector document URL, `aud` is
-      // the token endpoint.
-      let clientAssertion: string | undefined;
-      if (authMethod === "private_key_jwt") {
-        initXaaClientKeyPair();
-        clientAssertion = signClientAssertion({
-          clientId: clientId as string,
-          tokenEndpoint: url,
-        });
+      if (authMethod === "private_key_jwt" && !confidentialCimdProvider) {
+        return toJsonError(
+          "private_key_jwt is not available on this inspector deployment",
+          { status: 400, code: "VALIDATION_ERROR" }
+        );
       }
 
       // Method-aware client auth. The generated Authorization value carries
       // the secret — it is passed only to the outbound proxy call and must
       // never be copied into logs, history, or error payloads. It is merged
       // AFTER extraHeaders so a caller-supplied header can't replace it.
-      const jwtBearerRequest = buildJwtBearerRequest({
-        assertion: parsed.assertion,
-        clientId,
-        clientSecret,
-        scope: parsed.scope,
-        resource: parsed.resource,
-        tokenEndpointAuthMethod: authMethod,
-        clientAssertion,
-      });
+      const jwtBearerRequest = buildXaaJwtBearerRequest(
+        {
+          assertion: parsed.assertion,
+          tokenEndpoint: url,
+          clientId,
+          clientSecret,
+          scope: parsed.scope,
+          resource: parsed.resource,
+          tokenEndpointAuthMethod: authMethod,
+        },
+        confidentialCimdProvider
+      );
 
       const result = await executeOAuthProxy({
         url,
@@ -2204,6 +2198,9 @@ const xaa = createXaaRouter({
   // Local dev allows plain-http loopback targets (e.g. a localhost
   // xaa-mcp-server). The hosted router keeps httpsOnlyProxy: true.
   httpsOnlyProxy: false,
+  // Local-only client identity shared with `mcpjam xaa run`. Hosted omits this
+  // provider and therefore owns no confidential-CIMD private key.
+  confidentialCimdProvider: getLocalConfidentialCimdProvider(),
   // Server-target / registration runs resolve the confidential secret from
   // Convex using the caller's bearer; works locally when the user is signed in.
   resolveRegistrationSecret: (args) => fetchXaaResourceAppSecret(args),

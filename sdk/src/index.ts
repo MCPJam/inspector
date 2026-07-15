@@ -309,7 +309,6 @@ export {
   resetXaaClientKeyPairForTests,
   XAA_CLIENT_KID,
 } from "./xaa/mint/client-keypair.js";
-export { signClientAssertion } from "./xaa/mint/client-assertion.js";
 export type {
   IdJagClientMetadataEvaluation,
   IdJagMetadataEvidence,

@@ -32,6 +32,7 @@ import {
   type XaaClientAuthMethod,
 } from "@/shared/xaa.js";
 import { XAA_STRATEGY_OPTIONS } from "@/lib/registration-strategy";
+import { HOSTED_MODE } from "@/lib/config";
 import { deriveOAuthProfileFromServer } from "../oauth/utils";
 import { XaaCredentialFields } from "../connection/shared/XaaCredentialFields";
 
@@ -69,6 +70,8 @@ interface XAAServerModalProps {
   /** Hosted secret context used to reveal an existing saved client secret. */
   projectId?: string | null;
   hostedServerId?: string | null;
+  /** Whether this inspector process has a Node-side confidential-CIMD provider. */
+  confidentialCimdAvailable?: boolean;
 }
 
 export function XAAServerModal({
@@ -80,6 +83,7 @@ export function XAAServerModal({
   signedInEmail,
   projectId,
   hostedServerId,
+  confidentialCimdAvailable = !HOSTED_MODE,
 }: XAAServerModalProps) {
   const derived = useMemo(() => deriveOAuthProfileFromServer(server), [server]);
   const hasSavedSecret = Boolean(server?.hasClientSecret);
@@ -242,7 +246,7 @@ export function XAAServerModal({
       xaaIdentityAssertionFormat: identityAssertionFormat,
       // CIMD client-auth — sent only for the cimd strategy so switching away
       // preserves the stored value (the save-path `?? existing` merge).
-      ...(registrationStrategy === "cimd"
+      ...(registrationStrategy === "cimd" && confidentialCimdAvailable
         ? { xaaClientAuth: clientAuth }
         : {}),
       // Unified registration mode — written ONLY on explicit user edit (see
@@ -348,7 +352,7 @@ export function XAAServerModal({
                 with a server-held client key (published via the reflector doc)
                 so an authorization server that requires a confidential client
                 accepts the run. Only meaningful for the cimd strategy. */}
-            {registrationStrategy === "cimd" && (
+            {registrationStrategy === "cimd" && confidentialCimdAvailable && (
               <div className="space-y-2">
                 <Label htmlFor="xaa-client-auth">Client authentication</Label>
                 <Select
@@ -361,7 +365,9 @@ export function XAAServerModal({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">Public (no client auth)</SelectItem>
+                    <SelectItem value="none">
+                      Public (no client auth)
+                    </SelectItem>
                     <SelectItem value="private_key_jwt">
                       Confidential (private_key_jwt)
                     </SelectItem>
@@ -369,7 +375,7 @@ export function XAAServerModal({
                 </Select>
                 <p className="text-xs text-muted-foreground">
                   {clientAuth === "private_key_jwt"
-                    ? "MCPJam holds a client key and signs a client_assertion; the client_id is a reflector document publishing the matching public key. Use when the server requires a confidential client."
+                    ? "The local inspector holds a client key and signs a client_assertion; the client_id is a reflector document publishing the matching public key. Use when the server requires a confidential client."
                     : "Presents MCPJam's hosted metadata URL as the client_id with no client authentication (requires advertised CIMD support)."}
                 </p>
               </div>

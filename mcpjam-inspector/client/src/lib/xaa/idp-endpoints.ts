@@ -102,8 +102,9 @@ export function getXaaIdpUrls(
  * Confidential CIMD: ask the server for the reflector document URL that
  * publishes ITS client public key. The browser can't hold the private key, so
  * it presents this URL as its client_id and the server signs the
- * client_assertion at /proxy/token. Returns null on failure (caller falls back
- * to public CIMD). Unscoped: the client key is the server's own, org-independent.
+ * client_assertion at /proxy/token. Local-inspector capability only; hosted
+ * deliberately has no provider/route. Returns null on failure so the caller
+ * can fail closed rather than silently switching to public CIMD.
  */
 export async function fetchConfidentialCimdClientUrl(
   signal?: AbortSignal,

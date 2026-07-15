@@ -339,6 +339,32 @@ describe("XAAServerModal", () => {
     expect(formData.xaaClientAuth).toBe("private_key_jwt");
   });
 
+  it("does not offer confidential CIMD when no credential provider is available", async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderModal({ confidentialCimdAvailable: false });
+
+    await user.type(screen.getByLabelText(/Server Name/), "hosted-mcp");
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://hosted.example.com"
+    );
+    await user.click(screen.getByLabelText("Registration"));
+    await user.click(
+      screen.getByRole("option", { name: /client metadata url/i })
+    );
+
+    expect(
+      screen.queryByLabelText("Client authentication")
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" })
+    );
+    const { formData } = onSave.mock.calls[0][0];
+    expect(formData.registrationMode).toBe("cimd");
+    expect(formData.xaaClientAuth).toBeUndefined();
+  });
+
   it("prefills the persisted registration strategy when editing", async () => {
     const user = userEvent.setup();
     const server = {
