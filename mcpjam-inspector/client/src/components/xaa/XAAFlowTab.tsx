@@ -10,6 +10,7 @@ import {
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { track } from "@/lib/analytics";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -507,6 +508,9 @@ export function XAAFlowTab({
     : undefined;
 
   // ── "Run as" people ──────────────────────────────────────────────────
+  // The people strip rides the same flag as the registration surfaces:
+  // both are unreleased debugger extras, hidden together until launch.
+  const registrationEnabled = useFeatureFlagEnabled("xaa-registration");
   // Managed-capable runs use the ORG roster (the managed test IdP's shared
   // identities, edited in the setup center); everything else keeps the
   // project fixtures — an unregistered/bar-server run is untouched.
@@ -1831,25 +1835,27 @@ export function XAAFlowTab({
         hostedIssuerDisabledReason={hostedIssuerDisabledReason}
         issuerKind={hostedIssuerKind}
       />
-      <XAAPeopleStrip
-        people={people}
-        isLoading={peopleLoading}
-        isAvailable={peopleAvailable}
-        projectId={projectId ?? null}
-        selectedPersonId={selectedPersonId}
-        onSelectPerson={handleSelectPerson}
-        // Disabled while busy AND while a step-through run is paused between
-        // steps — a person change mid-run (switch, edit, delete) would drop
-        // the in-progress state or mutate the running identity.
-        disabled={
-          flowState.isBusy ||
-          isRunningAll ||
-          (flowState.currentStep !== "idle" &&
-            flowState.currentStep !== "complete")
-        }
-        outcomeFor={outcomeForPerson}
-        mode={managedCapable ? "org" : "project"}
-      />
+      {registrationEnabled === true && (
+        <XAAPeopleStrip
+          people={people}
+          isLoading={peopleLoading}
+          isAvailable={peopleAvailable}
+          projectId={projectId ?? null}
+          selectedPersonId={selectedPersonId}
+          onSelectPerson={handleSelectPerson}
+          // Disabled while busy AND while a step-through run is paused between
+          // steps — a person change mid-run (switch, edit, delete) would drop
+          // the in-progress state or mutate the running identity.
+          disabled={
+            flowState.isBusy ||
+            isRunningAll ||
+            (flowState.currentStep !== "idle" &&
+              flowState.currentStep !== "complete")
+          }
+          outcomeFor={outcomeForPerson}
+          mode={managedCapable ? "org" : "project"}
+        />
+      )}
       <XAAResourceAppsSection
         organizationId={organizationId ?? null}
         selectedId={selectedRegistrationId}
