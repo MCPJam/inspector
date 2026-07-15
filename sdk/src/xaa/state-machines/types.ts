@@ -45,7 +45,8 @@ export type { RegistrationStrategy };
 export type XaaTokenEndpointAuthMethod =
   | "client_secret_post"
   | "client_secret_basic"
-  | "none";
+  | "none"
+  | "private_key_jwt";
 
 export type XaaRegistrationWarningCode =
   | "public_client"
@@ -341,6 +342,9 @@ export interface BaseXAAStateMachineConfig {
   /** CIMD: the Client ID Metadata Document URL to present as the client_id.
    * Defaults to the hosted XAA debugger document. Validated, never normalized. */
   clientIdMetadataUrl?: string;
+  /** Local-dev-only opt-in: permit an http:// loopback CIMD document URL and
+   * skip the fetch-time public-host guard for it. Never affects remote URLs. */
+  allowLoopbackClientMetadata?: boolean;
 }
 
 export interface XAAStateMachine {

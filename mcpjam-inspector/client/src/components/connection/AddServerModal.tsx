@@ -449,6 +449,7 @@ export function AddServerModal({
               onXaaSubjectChange={formState.setXaaSubject}
               xaaEmail={formState.xaaEmail}
               onXaaEmailChange={formState.setXaaEmail}
+              autoSelectsXaa={formState.autoSelectsXaa}
               projectDefaultIdentity={projectXaaDefaultIdentity}
             />
           )}

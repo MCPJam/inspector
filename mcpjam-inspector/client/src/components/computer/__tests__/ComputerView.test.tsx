@@ -7,6 +7,7 @@ import type {
 
 const reserve = vi.fn(async () => ({} as never));
 const deleteComputer = vi.fn(async () => ({ deleted: true }));
+const hibernateComputer = vi.fn(async () => ({ hibernated: true }));
 const mintToken = vi.fn(async () => ({ token: "t", expiresAt: 0 } as never));
 let mockStatus: ComputerViewModel | null | undefined;
 let mockUsage: ComputerUsageView | null | undefined;
@@ -19,6 +20,7 @@ vi.mock("@/hooks/useProjectComputer", () => ({
   useComputerUsage: () => mockUsage,
   useReserveComputer: () => reserve,
   useDeleteComputer: () => deleteComputer,
+  useHibernateComputer: () => hibernateComputer,
   useMintTerminalToken: () => mintToken,
   useComputersDataPlaneConfig: () => mockDataPlane,
 }));
@@ -150,6 +152,28 @@ describe("ComputerView", () => {
     await waitFor(() =>
       expect(deleteComputer).toHaveBeenCalledWith({ projectId: "p1" })
     );
+  });
+
+  it("hibernate requires confirmation then calls hibernateComputer", async () => {
+    mockStatus = { computerId: "c1", status: "ready", provider: "e2b" };
+    const { getByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    fireEvent.click(getByText("Hibernate now"));
+    expect(getByText("Hibernate now?")).toBeTruthy();
+    // The confirm button is labelled just "Hibernate".
+    fireEvent.click(getByText("Hibernate", { selector: "button" }));
+    await waitFor(() =>
+      expect(hibernateComputer).toHaveBeenCalledWith({ projectId: "p1" })
+    );
+  });
+
+  it("does not offer Hibernate unless the computer is ready", () => {
+    mockStatus = { computerId: "c1", status: "hibernating", provider: "e2b" };
+    const { queryByText } = render(
+      <ComputerView projectId="p1" isAuthenticated />
+    );
+    expect(queryByText("Hibernate now")).toBeNull();
   });
 
   it("does not offer Delete once the computer is deleted", () => {

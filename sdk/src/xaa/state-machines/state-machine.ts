@@ -8,7 +8,10 @@ import {
   XAA_DEBUG_IDP_CLIENT_ID,
   XAA_DEBUG_CLIENT_ID_METADATA_URL,
 } from "../../oauth/client-identity.js";
-import { validateClientIdMetadataUrl } from "../../oauth/state-machines/shared/client-id-metadata.js";
+import {
+  isLoopbackClientMetadataUrl,
+  validateClientIdMetadataUrl,
+} from "../../oauth/state-machines/shared/client-id-metadata.js";
 import { executeDynamicClientRegistration } from "../../oauth/state-machines/shared/dynamic-client-registration.js";
 import type {
   InfoLogLevel,
@@ -531,6 +534,7 @@ export function createXAAStateMachine(
     dcrCredentialCache,
     dcrCacheTargetKey,
     clientIdMetadataUrl,
+    allowLoopbackClientMetadata,
   } = config;
 
   // registrationId / serverId runs skip AS discovery entirely, so the dynamic
@@ -1415,7 +1419,8 @@ export function createXAAStateMachine(
     let documentUrl: string;
     try {
       documentUrl = validateClientIdMetadataUrl(
-        clientIdMetadataUrl ?? XAA_DEBUG_CLIENT_ID_METADATA_URL
+        clientIdMetadataUrl ?? XAA_DEBUG_CLIENT_ID_METADATA_URL,
+        { allowLoopback: allowLoopbackClientMetadata === true }
       );
     } catch (error) {
       machine.updateState({
@@ -1451,9 +1456,16 @@ export function createXAAStateMachine(
             redirect: "manual",
           },
           // The CIMD document URL is caller-influenced; enforce the private-host
-          // / DNS guard at fetch time (not just any upstream one-shot check) to
-          // close the DNS-rebinding window regardless of the httpsOnly default.
-          { enforcePublicHost: true }
+          // / DNS guard at fetch time to close the DNS-rebinding window. The
+          // local-dev loopback opt-in relaxes it ONLY when the URL actually
+          // being fetched is an http loopback address — a public URL keeps the
+          // guard even with the opt-in set, so the flag can't widen SSRF scope.
+          {
+            enforcePublicHost: !(
+              allowLoopbackClientMetadata === true &&
+              isLoopbackClientMetadataUrl(documentUrl)
+            ),
+          }
         )
       );
     } catch {
@@ -1521,27 +1533,36 @@ export function createXAAStateMachine(
       );
       return;
     }
-    if (evaluation.tokenEndpointAuthMethod !== "none") {
-      const authMethod = evaluation.tokenEndpointAuthMethod ?? "";
+    const docAuthMethod = evaluation.tokenEndpointAuthMethod ?? "none";
+    if (docAuthMethod.startsWith("client_secret")) {
       park(
-        authMethod.startsWith("client_secret")
-          ? "The client metadata document declares a shared-secret auth method, which CIMD draft-02 forbids — the document is malformed."
-          : "The client metadata document declares a key-based auth method this debugger cannot exercise yet (confidential CIMD is a follow-up)."
+        "The client metadata document declares a shared-secret auth method, which CIMD draft-02 forbids — the document is malformed."
       );
       return;
     }
+    if (docAuthMethod !== "none" && docAuthMethod !== "private_key_jwt") {
+      park(
+        `The client metadata document declares an unsupported token_endpoint_auth_method "${docAuthMethod}".`
+      );
+      return;
+    }
+    const confidential = docAuthMethod === "private_key_jwt";
 
     machine.updateState({
       currentStep: "received_client_metadata",
       clientId: documentUrl,
-      tokenEndpointAuthMethod: "none",
-      registrationWarnings: [
-        {
-          code: "public_client",
-          message:
-            "Public-client CIMD (token_endpoint_auth_method \"none\"): interoperability is exercised, but the security posture is NOT recommended — ID-JAG draft-04 §9.1 recommends confidential clients. Anyone can present this URL as their client_id; findings show the RAS accepted the URL identity, not proof of client authentication. Use private_key_jwt (confidential CIMD) for a production posture.",
-        },
-      ],
+      tokenEndpointAuthMethod: confidential ? "private_key_jwt" : "none",
+      // Confidential CIMD is the recommended posture — no warning. Public CIMD
+      // stays warned (interop passes, but the client isn't authenticated).
+      registrationWarnings: confidential
+        ? []
+        : [
+            {
+              code: "public_client",
+              message:
+                "Public-client CIMD (token_endpoint_auth_method \"none\"): interoperability is exercised, but the security posture is NOT recommended — ID-JAG draft-04 §9.1 recommends confidential clients. Anyone can present this URL as their client_id; findings show the RAS accepted the URL identity, not proof of client authentication. Use private_key_jwt (confidential CIMD) for a production posture.",
+            },
+          ],
       error: undefined,
     });
 
@@ -2027,8 +2048,10 @@ export function createXAAStateMachine(
         manualClientSecret = cached.clientSecret;
         manualAuthMethod = cached.tokenEndpointAuthMethod;
       } else if (registrationStrategy === "cimd") {
+        // Public CIMD → "none"; confidential CIMD → "private_key_jwt" (the
+        // executor signs the assertion). Never a shared secret either way.
         manualClientSecret = undefined;
-        manualAuthMethod = "none";
+        manualAuthMethod = state.tokenEndpointAuthMethod ?? "none";
       }
     }
 

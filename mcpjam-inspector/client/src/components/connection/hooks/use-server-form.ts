@@ -139,7 +139,10 @@ export function useServerForm(
   // from the config (hosted/redacted load). The field stays blank but the form
   // knows auth is "bearer" and must not wipe the hidden token on save.
   const [hasStoredBearerToken, setHasStoredBearerToken] = useState(false);
-  const [authType, setAuthType] = useState<ServerFormAuthType>("none");
+  // New servers default to Auto: connect without credentials, upgrade to
+  // OAuth on 401 (or XAA when configured) — the spec's discovery flow.
+  // Existing servers overwrite this from their resolved auth type.
+  const [authType, setAuthType] = useState<ServerFormAuthType>("auto");
   const [useCustomClientId, setUseCustomClientId] = useState(false);
   // Cross-App Access (XAA) fields. Client id / secret / scopes are shared with
   // the OAuth preregistered path; these three are XAA-specific.
@@ -726,6 +729,12 @@ export function useServerForm(
     }
   };
 
+  // Whether Auto selects XAA for this server — mirrors the server-side
+  // xaaConfigured rule (an IdP mode is chosen AND a client id is stored).
+  // Add flows have no existing server, so this is always false there.
+  const autoSelectsXaa =
+    server?.authServerMode != null && Boolean(clientId.trim());
+
   const buildFormData = (buildOptions?: {
     /**
      * Stored headers fetched from the secrets API at save time. Supplying
@@ -839,8 +848,6 @@ export function useServerForm(
     } else if (authType === "xaa") {
       useXaa = true;
     } else if (authType === "auto") {
-      const autoSelectsXaa =
-        server?.authServerMode != null && Boolean(clientId.trim());
       useXaa = autoSelectsXaa;
       useOAuth = !autoSelectsXaa;
     }
@@ -924,7 +931,7 @@ export function useServerForm(
     setXaaIdentityDirty(false);
     setBearerToken("");
     setHasStoredBearerToken(false);
-    setAuthType("none");
+    setAuthType("auto");
     setUseCustomClientId(false);
     setClientIdError(null);
     setClientSecretError(null);
@@ -1044,6 +1051,7 @@ export function useServerForm(
       setAuthDirty(true);
       setAuthType(value);
     },
+    autoSelectsXaa,
     useCustomClientId,
     setUseCustomClientId,
     // XAA-specific fields (client id / secret / scopes are shared above)

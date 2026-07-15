@@ -279,6 +279,7 @@ export function EditServerFormContent({
             onXaaSubjectChange={formState.setXaaSubject}
             xaaEmail={formState.xaaEmail}
             onXaaEmailChange={formState.setXaaEmail}
+            autoSelectsXaa={formState.autoSelectsXaa}
             projectDefaultIdentity={projectXaaDefaultIdentity}
           />
         </div>
