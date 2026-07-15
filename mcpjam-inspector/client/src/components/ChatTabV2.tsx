@@ -25,6 +25,7 @@ import {
   ResizableHandle,
 } from "./ui/resizable";
 import { ElicitationDialog } from "@/components/ElicitationDialog";
+import { ElicitationRequestDialog } from "@/components/elicitation/ElicitationRequestDialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -401,6 +402,9 @@ export function ChatTabV2({
     requireToolApproval,
     setRequireToolApproval,
     addToolApprovalResponse,
+    pendingElicitations,
+    respondToElicitation,
+    elicitationResponding,
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
     directVisibility: pendingDirectVisibility,
@@ -2746,10 +2750,25 @@ export function ChatTabV2({
               </>
             )}
 
+            {/*
+              Two independent sources, deliberately not merged into one queue:
+              the local SSE channel (`/api/mcp/elicitation/*`, local mode only)
+              and the hosted stream data part. They carry different identities
+              (requestId vs rendezvousId) and answer over different transports,
+              so each keeps its own dialog and respond path. Only one can be
+              active in a given mode — `elicitationQueue` never fills in hosted
+              (the SSE effect early-returns), and `pendingElicitations` never
+              fills locally (no bridge is registered).
+            */}
             <ElicitationDialog
               elicitationRequest={activeElicitation}
               onResponse={handleElicitationResponse}
               loading={elicitationLoading}
+            />
+            <ElicitationRequestDialog
+              request={pendingElicitations[0] ?? null}
+              onRespond={respondToElicitation}
+              loading={elicitationResponding}
             />
           </div>
         </ResizablePanel>

@@ -57,6 +57,7 @@ import {
 import { logger } from "../../utils/logger.js";
 import {
   HOSTED_ELICITATION_DATA_PART_TYPE,
+  HOSTED_ELICITATION_VERSION,
   type HostedElicitationEvent,
   type HostedElicitationMode,
 } from "@/shared/hosted-elicitation";
@@ -514,9 +515,6 @@ export function hostDeclaresElicitation(
     !Array.isArray(elicitation)
   );
 }
-
-/** The hosted-elicitation wire contract this server speaks. */
-export const HOSTED_ELICITATION_VERSION = 1;
 
 /**
  * Decide (a) whose client capabilities go on the initialize wire and (b) whether

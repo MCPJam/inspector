@@ -22,6 +22,7 @@ import {
 } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { Braces, Loader2, Trash2 } from "lucide-react";
+import { ElicitationRequestDialog } from "@/components/elicitation/ElicitationRequestDialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -768,6 +769,9 @@ export function PlaygroundMain({
     restoredToolRenderOverrides,
     status,
     authHeaders,
+    pendingElicitations,
+    respondToElicitation,
+    elicitationResponding,
   } = useChatSession({
     selectedServers,
     directVisibility: pendingDirectVisibility,
@@ -4067,6 +4071,15 @@ export function PlaygroundMain({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {/*
+        Playground had no elicitation UI at all — a server that asked for input
+        here would block until the request timed out with no way to answer.
+      */}
+      <ElicitationRequestDialog
+        request={pendingElicitations[0] ?? null}
+        onRespond={respondToElicitation}
+        loading={elicitationResponding}
+      />
     </WidgetSurfaceProvider>
   );
 }
