@@ -74,6 +74,31 @@ describe("ModelCompareCardHeader", () => {
     expect(screen.queryByText(/Claude Haiku/)).not.toBeInTheDocument();
   });
 
+  it("renders inline tabs with pass/fail chrome when comparison metrics are hidden", () => {
+    render(
+      <ModelCompareCardHeader
+        summary={makeSummary({ status: "ready" })}
+        allSummaries={[]}
+        mode="tools"
+        onModeChange={vi.fn()}
+        showTraceTabs
+        showComparisonChrome={false}
+        compactCompareHeader={false}
+        tabsInline
+        showToolsTab
+        result="passed"
+        actionsSlot={<button type="button">Retry</button>}
+      />,
+    );
+
+    expect(screen.getByText("Passed")).toBeInTheDocument();
+    expect(screen.queryByText("Latency")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Tool Calls/i }),
+    ).toBeInTheDocument();
+  });
+
   it("shows comparison chrome when enabled", () => {
     render(
       <ModelCompareCardHeader
@@ -91,7 +116,27 @@ describe("ModelCompareCardHeader", () => {
     expect(screen.getByText("Latency")).toBeInTheDocument();
   });
 
-  it("uses the sidebar-selected styling for active trace tabs", () => {
+  it("uses segment styling for inline preview tabs", () => {
+    render(
+      <ModelCompareCardHeader
+        model={model}
+        summary={idleSummary}
+        allSummaries={[]}
+        mode="chat"
+        onModeChange={vi.fn()}
+        showTraceTabs={true}
+        showComparisonChrome={false}
+        tabsInline
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveClass(
+      "bg-background",
+      "ring-inset",
+    );
+  });
+
+  it("uses the sidebar-selected styling for full-width trace tabs", () => {
     render(
       <ModelCompareCardHeader
         model={model}
@@ -133,6 +178,43 @@ describe("ModelCompareCardHeader", () => {
     expect(screen.queryByText("Tools")).not.toBeInTheDocument();
     expect(screen.getByText("Latency")).toBeInTheDocument();
     expect(screen.getByText("Tokens")).toBeInTheDocument();
+  });
+
+  it("shows an Interactions row in full mode when interactionCount > 0", () => {
+    const withInteractions = makeSummary({ interactionCount: 2 });
+    render(
+      <ModelCompareCardHeader
+        model={model}
+        summary={withInteractions}
+        allSummaries={[withInteractions]}
+        mode="chat"
+        onModeChange={vi.fn()}
+        showTraceTabs={false}
+        showComparisonChrome={true}
+        compactCompareHeader={false}
+      />,
+    );
+
+    expect(screen.getByText("Interactions")).toBeInTheDocument();
+    expect(screen.getByText("2 interactions")).toBeInTheDocument();
+  });
+
+  it("hides the Interactions row when interactionCount is 0 / absent", () => {
+    const noInteractions = makeSummary({ toolCount: 1 });
+    render(
+      <ModelCompareCardHeader
+        model={model}
+        summary={noInteractions}
+        allSummaries={[noInteractions]}
+        mode="chat"
+        onModeChange={vi.fn()}
+        showTraceTabs={false}
+        showComparisonChrome={true}
+        compactCompareHeader={false}
+      />,
+    );
+
+    expect(screen.queryByText("Interactions")).not.toBeInTheDocument();
   });
 
   it("shows running spinners in the latency and tokens rows in compact mode", () => {
@@ -477,7 +559,7 @@ describe("ModelCompareCardHeader", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: /Results/i }),
+      screen.getByRole("button", { name: /Tool Calls/i }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Trace/i })).toBeInTheDocument();

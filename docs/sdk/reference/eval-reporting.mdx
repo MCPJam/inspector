@@ -5,7 +5,7 @@ icon: "book"
 ---
 
 <Warning>
-**Retired.** Project API keys (`mcpjam_…`) have been shut down: the `/sdk/v1/evals/*` ingestion endpoints now return `410 Gone` for every request, keys can no longer be generated, and existing keys no longer authenticate. The APIs documented below still exist in the SDK but their uploads will fail until reporting is re-built on **MCPJam API keys (`sk_…`)** — see [API keys](/reference/api-keys). Evals themselves (`EvalTest`/`EvalSuite` runs and assertions) are unaffected.
+Reporting authenticates with **MCPJam API keys (`sk_…`)** from Settings → API keys and uploads through the [MCPJam public API](/reference/public-api) (`/api/v1/projects/:projectId/eval-ingest/*`). The legacy project API keys (`mcpjam_…`) and their `/sdk/v1/evals/*` endpoints are retired — old SDK versions pointing there receive `410 Gone`. Upgrade `@mcpjam/sdk` to keep uploading.
 </Warning>
 
 The SDK provides APIs to save eval results to MCPJam for visualization in the CI Evals dashboard. Results can be saved automatically via `EvalTest`/`EvalSuite`, or manually using the APIs below.
@@ -14,8 +14,9 @@ The SDK provides APIs to save eval results to MCPJam for visualization in the CI
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `MCPJAM_API_KEY` | Yes | - | Your MCPJam project API key |
-| `MCPJAM_BASE_URL` | No | `https://sdk.mcpjam.com` | MCPJam API base URL override |
+| `MCPJAM_API_KEY` | Yes | - | An MCPJam API key (`sk_…`) from Settings → API keys |
+| `MCPJAM_PROJECT_ID` | No | org's Default project | Project the results are filed under |
+| `MCPJAM_BASE_URL` | No | `https://app.mcpjam.com` | MCPJam API base URL override |
 
 Use `MCPJAM_BASE_URL` only when you need to override the default ingest host, such as internal development against a non-production backend.
 
@@ -345,8 +346,9 @@ type ReportEvalResultsInput = MCPJamReportingConfig & {
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
 | `enabled` | `boolean` | No | Enable/disable reporting (default: `true`) |
-| `apiKey` | `string` | No | MCPJam API key (falls back to `MCPJAM_API_KEY` env var) |
+| `apiKey` | `string` | No | MCPJam API key (`sk_…`; falls back to `MCPJAM_API_KEY` env var) |
 | `baseUrl` | `string` | No | MCPJam API base URL override (useful for internal development or tests) |
+| `project` | `string` | No | Project id results are filed under (falls back to `MCPJAM_PROJECT_ID`, then the org's Default project) |
 | `suiteName` | `string` | No | Suite name for the run |
 | `suiteDescription` | `string` | No | Description of the suite |
 | `serverNames` | `string[]` | No | MCP server names being tested |
@@ -366,10 +368,10 @@ type ReportEvalResultsInput = MCPJamReportingConfig & {
 
 ### Run-level host snapshot
 
-When the inspector backend advertises the `evalsHostConfig` capability at `GET /sdk/v1/info`, the reporter additionally includes a normalized + content-hashed host config alongside the run body:
+When a usable host snapshot is available, the reporter includes a normalized + content-hashed host config alongside the run body (the v1 ingest surface always accepts the pair — the old per-`baseUrl` capability probe is gone):
 
 ```jsonc
-POST /sdk/v1/evals/runs/start
+POST /api/v1/projects/{projectId}/eval-ingest/runs/start
 {
   "suiteName": "...",
   "results": [...],
@@ -386,7 +388,7 @@ POST /sdk/v1/evals/runs/start
 
 **Pass-1 homogeneity gate.** The reporter only sends a run-level `{ hostConfig, hostConfigHash }` when all available iteration snapshots canonicalize to the same hash. Heterogeneous runs (e.g. mutating the bound `Host` between iterations) omit the run-level field — per-iteration wire support is a later stage.
 
-**Fail-safe to "no capability".** The lazy capability probe (`GET /sdk/v1/info`, cached per `baseUrl`) treats any error — network failure, 404, timeout, malformed JSON — as "no capability". The reporter then omits `hostConfig` rather than failing the eval upload. Old backends without the capability are unaffected; the body shape stays the same.
+**Fail-safe omission.** Any error while resolving or canonicalizing the snapshot — malformed `hostSnapshot`, an executor that throws, non-canonicalizable host JSON — logs a warning and omits the wire pair rather than failing the eval upload. The body shape stays the same without it.
 
 **Server-id normalization.** Runtime-manager identifiers (`serverIds`, `optionalServerIds`, `serverConnectionOverrides`) are stripped by `normalizeSdkEvalHostConfigForWire` on both ends so SDK runtime ids like `"everything"` never reach the backend's `validateServerScope` as `Id<'servers'>`. The persisted `hostConfigsV2` row's hash will differ from the wire `hostConfigHash` because suite-resolved Convex server ids are layered on top at storage time — the wire hash is a transport-integrity check, not the storage id.
 

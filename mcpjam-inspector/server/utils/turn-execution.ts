@@ -1,0 +1,281 @@
+/**
+ * `runUnifiedAssistantTurn` — the single front door for executing one assistant
+ * turn. Chat, playground, and the eval runners call this; it dispatches to one
+ * of two existing engines and returns a normalized result.
+ *
+ * Design: ONE public turn API, TWO engine adapters, MULTIPLE sinks. It does NOT
+ * merge the engine internals.
+ *   - `runtime.kind === "hosted"` → `runAssistantTurn` (Convex `/stream`,
+ *     `/stream/org`, harness). The routing endpoint is an EXPLICIT field of the
+ *     runtime discriminator so it can't be hidden behind a bare string.
+ *   - `runtime.kind === "direct"` → `runDirectChatTurn` (in-process AI SDK).
+ *
+ * Boundary (load-bearing): this facade owns ONLY engine dispatch + the
+ * normalized turn result/events. It does NOT own provider/model resolution,
+ * persistence policy, org usage writeback, or cleanup/disconnect lifecycle —
+ * those stay at the route / eval layers that call this.
+ */
+
+import type { ModelMessage, AssistantModelMessage, ToolModelMessage } from "ai";
+import type { createLlmModel } from "./chat-helpers";
+import {
+  runAssistantTurn,
+  type RunAssistantTurnOptions,
+  type RunAssistantTurnResult,
+  type RunAssistantTurnStreamSink,
+} from "./assistant-turn";
+import {
+  runDirectChatTurn,
+  consumeDirectChatTurnHeadless,
+  stampMcpToolOriginProviderOptions,
+  type RunDirectChatTurnOptions,
+} from "./direct-chat-turn";
+
+/** Hosted engine: where/how to execute + auth-adjacent routing, made explicit. */
+export type HostedRuntime = {
+  kind: "hosted";
+  /** "/stream" (MCPJam) | "/stream/org" (org BYOK). Explicit so routing isn't hidden. */
+  endpointPath: string;
+  extraBodyFields?: Record<string, unknown>;
+  extraHeaders?: Record<string, string>;
+  harness?: RunAssistantTurnOptions["harness"];
+};
+
+/** Direct engine: the resolved local model handle. */
+export type DirectRuntime = {
+  kind: "direct";
+  llmModel: ReturnType<typeof createLlmModel>;
+  modelId: string;
+  provider?: string;
+};
+
+export type TurnRuntime = HostedRuntime | DirectRuntime;
+
+/**
+ * Normalized turn result. Superset of `RunAssistantTurnResult` plus an explicit
+ * `newMessages` — THIS turn's response slice — so eval tool-extraction and
+ * per-turn checks never have to re-derive it (and can't get it wrong).
+ */
+export type UnifiedTurnResult = RunAssistantTurnResult & {
+  newMessages: ModelMessage[];
+  /**
+   * True when the turn was cancelled mid-flight (the direct engine's
+   * `headless.aborted`). Callers MUST drop/skip-persist an aborted turn rather
+   * than record partial state as completed. Always `false` on the hosted path
+   * (Convex handles cancellation internally; `runAssistantTurn` exposes no flag).
+   */
+  aborted: boolean;
+};
+
+/** Hosted options = `runAssistantTurn`'s, with routing lifted into `runtime`. */
+export type HostedTurnOptions = {
+  runtime: HostedRuntime;
+} & Omit<
+  RunAssistantTurnOptions,
+  "endpointPath" | "extraHeaders" | "extraBodyFields" | "harness"
+>;
+
+/** Direct options = the shared turn inputs the direct engine needs. */
+export type DirectTurnOptions = {
+  runtime: DirectRuntime;
+  streamSink: RunAssistantTurnStreamSink;
+  /** Input history; `newMessages` are appended onto this for `messages`. */
+  messages: ModelMessage[];
+  /**
+   * Live callbacks forwarded to the direct engine. `onEngineError` matters for
+   * correctness: streamText provider/guardrail failures surface through it (the
+   * engine does NOT throw), and the chat local-org wrapper gates persistence on
+   * it. Forward it so a migrated direct caller can't record a mid-stream engine
+   * failure as a successful turn. (Eval additionally detects this via the error
+   * span in `turnTrace.spans`.) Full cross-runtime callback normalization —
+   * onToolCall/onToolResult mapping for eval SSE — lands with PR 3/PR 5.
+   */
+  onLiveTextDelta?: RunDirectChatTurnOptions["onLiveTextDelta"];
+  onStepFinish?: RunDirectChatTurnOptions["onStepFinish"];
+  onEngineError?: RunDirectChatTurnOptions["onEngineError"];
+  /**
+   * PR 3a: awaited per-tool-result render hook, mapped into the direct
+   * engine's `traceEvents.onToolResultChunk`. The synthetic local-BYOK path
+   * needs it so the browser session context renders an MCP App widget before
+   * the next step decides whether to advertise Computer Use — the same wiring
+   * `runLocalOrgChatTurnHeadless` passed through `traceEvents`. INERT for
+   * callers that don't set it (no `traceEvents` is forwarded then).
+   */
+  onToolResultChunk?: NonNullable<
+    RunDirectChatTurnOptions["traceEvents"]
+  >["onToolResultChunk"];
+  // TODO(PR 3 — local eval migration): local STREAMING eval still depends on the
+  // direct engine's `traceEvents` (`onStepSnapshot`, `onToolResultChunk`) to emit
+  // its SSE. Before PR 3 deletes `stream-adapter.ts`, expose normalized
+  // `onToolCall`/`onToolResult` (+ snapshot) callbacks here and prove byte-shape
+  // parity against `stream-adapter.test.ts`. This facade is NOT yet the full eval
+  // streaming turn API.
+} & Pick<
+  RunDirectChatTurnOptions,
+  | "systemPrompt"
+  | "temperature"
+  | "tools"
+  | "toolChoice"
+  | "abortSignal"
+  | "maxSteps"
+  | "traceStartedAt"
+  | "progressivePlan"
+  | "discoveryState"
+  | "prepareAdvertisedTools"
+  | "experimentalTelemetry"
+>;
+
+export type RunUnifiedAssistantTurnOptions = HostedTurnOptions | DirectTurnOptions;
+
+function isHostedTurn(
+  opts: RunUnifiedAssistantTurnOptions
+): opts is HostedTurnOptions {
+  return opts.runtime.kind === "hosted";
+}
+
+export async function runUnifiedAssistantTurn(
+  opts: RunUnifiedAssistantTurnOptions
+): Promise<UnifiedTurnResult> {
+  if (isHostedTurn(opts)) {
+    const { runtime, ...rest } = opts;
+    const result = await runAssistantTurn({
+      ...rest,
+      endpointPath: runtime.endpointPath,
+      extraHeaders: runtime.extraHeaders,
+      extraBodyFields: runtime.extraBodyFields,
+      harness: runtime.harness,
+    });
+    // For `streamSink: "ui"`, `runAssistantTurn` returns BEFORE the SSE stream
+    // drains — the transcript rolls forward asynchronously, so an eager slice
+    // here would be stale. UI callers consume `response` + `onConversationComplete`
+    // for the final transcript; only the headless ("none") sink has a complete
+    // transcript at return time.
+    const newMessages =
+      opts.streamSink === "none"
+        ? result.messages.slice(opts.messages.length)
+        : [];
+    return {
+      ...result,
+      newMessages,
+      // Scope the convenience views to THIS turn (consistent with the direct
+      // branch + `newMessages`). `runAssistantTurn` computes them over the full
+      // history, which would leak prior turns' tools into a "normalized" result.
+      assistantMessages: extractAssistantMessages(newMessages),
+      toolCalls: extractToolCalls(newMessages),
+      toolResults: extractToolResults(newMessages),
+      aborted: false,
+    };
+  }
+
+  // runtime.kind === "direct"
+  if (opts.streamSink === "ui") {
+    // The direct UI terminal (buildDirectChatTraceCallbacks + toUIMessageStream)
+    // needs the route's SSE writer; it is wired when chat/playground migrate
+    // (PR 5). Eval + hosted use the paths above / streamSink "none".
+    throw new Error(
+      "runUnifiedAssistantTurn: direct runtime with streamSink 'ui' is not " +
+        "wired yet (chat/playground migration, PR 5). Use streamSink 'none'."
+    );
+  }
+
+  const { runtime } = opts;
+  const handle = runDirectChatTurn({
+    llmModel: runtime.llmModel,
+    modelId: runtime.modelId,
+    provider: runtime.provider,
+    messageHistory: opts.messages,
+    systemPrompt: opts.systemPrompt,
+    temperature: opts.temperature,
+    tools: opts.tools,
+    toolChoice: opts.toolChoice,
+    abortSignal: opts.abortSignal,
+    maxSteps: opts.maxSteps,
+    traceStartedAt: opts.traceStartedAt,
+    progressivePlan: opts.progressivePlan,
+    discoveryState: opts.discoveryState,
+    prepareAdvertisedTools: opts.prepareAdvertisedTools,
+    experimentalTelemetry: opts.experimentalTelemetry,
+    onLiveTextDelta: opts.onLiveTextDelta,
+    onStepFinish: opts.onStepFinish,
+    onEngineError: opts.onEngineError,
+    // PR 3a: only forward `traceEvents` when the caller wired a chunk hook, so
+    // callers that don't set it stay byte-identical (no traceEvents object).
+    ...(opts.onToolResultChunk
+      ? { traceEvents: { onToolResultChunk: opts.onToolResultChunk } }
+      : {}),
+  });
+  const headless = await consumeDirectChatTurnHeadless(handle);
+  // Direct's `response.messages` IS this turn's response slice. Stamp the
+  // mcp-tool-origin serverId onto its tool parts — the hosted engine does this
+  // internally, and the local-BYOK persistence path (session viewer replay via
+  // `transcript-to-ui-messages`) relies on it to attribute which server a tool
+  // came from. Normalizes both engines' transcripts to the same shape.
+  const newMessages = stampMcpToolOriginProviderOptions(
+    headless.messages,
+    opts.tools,
+  );
+  const messages = [...opts.messages, ...newMessages];
+  return {
+    messages,
+    newMessages,
+    assistantMessages: extractAssistantMessages(newMessages),
+    toolCalls: extractToolCalls(newMessages),
+    toolResults: extractToolResults(newMessages),
+    turnTrace: headless.turnTrace,
+    usage: headless.turnTrace.usage,
+    finishReason: headless.finishReason ?? undefined,
+    // Surface the cancellation signal (don't throw) so callers keep the existing
+    // "check flag → return cancelled" pattern instead of try/catch.
+    aborted: headless.aborted,
+  };
+}
+
+// Small local extractors mirroring assistant-turn.ts's convenience views (which
+// are module-private there). Operate over THIS turn's new messages.
+function extractAssistantMessages(
+  messages: ModelMessage[]
+): AssistantModelMessage[] {
+  return messages.filter(
+    (m): m is AssistantModelMessage => m?.role === "assistant"
+  );
+}
+
+function extractToolCalls(
+  messages: ModelMessage[]
+): RunAssistantTurnResult["toolCalls"] {
+  const out: RunAssistantTurnResult["toolCalls"] = [];
+  for (const msg of messages) {
+    if (msg?.role !== "assistant") continue;
+    const content = (msg as AssistantModelMessage).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (part.type === "tool-call") {
+        out.push({
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          input: part.input,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+function extractToolResults(
+  messages: ModelMessage[]
+): RunAssistantTurnResult["toolResults"] {
+  const out: RunAssistantTurnResult["toolResults"] = [];
+  for (const msg of messages) {
+    if (msg?.role !== "tool") continue;
+    for (const part of (msg as ToolModelMessage).content) {
+      if (part.type === "tool-result") {
+        out.push({
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          output: part.output,
+        });
+      }
+    }
+  }
+  return out;
+}

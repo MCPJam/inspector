@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import {
-  getPromptTurnBlockReason,
+  getStepsBlockReason,
   TestTemplateEditor,
 } from "../test-template-editor";
+import type { TestStep } from "@/shared/steps";
 
 function renderWithProviders(ui: ReactElement) {
   return render(
@@ -50,45 +51,43 @@ vi.mock("convex/react", () => ({
   useMutation: (_name: unknown) => useMutationMock(),
   useQuery: (name: unknown, args: unknown) => useQueryMock(name, args),
   useAction: () => vi.fn(),
+  useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
 }));
 
-describe("getPromptTurnBlockReason", () => {
+describe("getStepsBlockReason", () => {
   it("returns guidance when a single step has no prompt", () => {
     expect(
-      getPromptTurnBlockReason([
-        { id: "1", prompt: "", expectedToolCalls: [] },
-      ]),
+      getStepsBlockReason([{ id: "1", kind: "prompt", prompt: "" }]),
     ).toBe("Enter a user prompt before run or save.");
   });
 
   it("returns null for a valid no-tool (negative) case with prompt", () => {
     expect(
-      getPromptTurnBlockReason([
-        { id: "1", prompt: "Hello", expectedToolCalls: [] },
-      ]),
+      getStepsBlockReason([{ id: "1", kind: "prompt", prompt: "Hello" }]),
     ).toBeNull();
   });
 
   it("lists steps when multiple prompts are missing", () => {
-    expect(
-      getPromptTurnBlockReason([
-        { id: "1", prompt: "a", expectedToolCalls: [] },
-        { id: "2", prompt: "", expectedToolCalls: [] },
-        { id: "3", prompt: "", expectedToolCalls: [] },
-      ]),
-    ).toBe("Enter a user prompt for step(s) 2, 3.");
+    const steps: TestStep[] = [
+      { id: "1", kind: "prompt", prompt: "a" },
+      { id: "2", kind: "prompt", prompt: "" },
+      { id: "3", kind: "prompt", prompt: "" },
+    ];
+    expect(getStepsBlockReason(steps)).toBe(
+      "Enter a user prompt for step(s) 2, 3.",
+    );
   });
 
-  it("returns tool-fix message when expected tools are incomplete", () => {
-    expect(
-      getPromptTurnBlockReason([
-        {
-          id: "1",
-          prompt: "Hi",
-          expectedToolCalls: [{ toolName: "", arguments: {} }],
-        },
-      ]),
-    ).toBe(
+  it("returns tool-fix message when an expected tool call is incomplete", () => {
+    const steps: TestStep[] = [
+      { id: "1", kind: "prompt", prompt: "Hi" },
+      {
+        id: "2",
+        kind: "assert",
+        assertion: { type: "toolCalledWith", toolName: "", args: { args: {} } },
+      },
+    ];
+    expect(getStepsBlockReason(steps)).toBe(
       "Finish tool names and arguments, or remove incomplete expected tools.",
     );
   });
@@ -183,7 +182,7 @@ describe("TestTemplateEditor prompt validation UI", () => {
     const promptInput = screen.getByPlaceholderText("Enter the user prompt…");
     expect(promptInput).toHaveAttribute("aria-invalid", "true");
 
-    const runButton = screen.getByRole("button", { name: /^Run$/ });
+    const runButton = screen.getByRole("button", { name: /Quick Run/ });
     expect(runButton).toBeDisabled();
   });
 });

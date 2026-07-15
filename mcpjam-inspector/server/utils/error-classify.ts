@@ -20,9 +20,10 @@ export function classifyWidgetError(error: unknown, hint?: string): string {
   return "unknown";
 }
 
-export function classifyTunnelError(error: unknown, hint?: string): string {
-  if (hint === "fetch_ngrok_token_failed") return "fetch_ngrok_token_failed";
-  if (hint === "ngrok_create_failed") return "ngrok_create_failed";
-  if (hint === "convex_record_failed") return "convex_record_failed";
+// Relay-era codes (PostHog continuity break vs. the ngrok-era
+// fetch_ngrok_token_failed / ngrok_create_failed / convex_record_failed).
+export function classifyTunnelError(_error: unknown, hint?: string): string {
+  if (hint === "fetch_relay_grant_failed") return "fetch_relay_grant_failed";
+  if (hint === "relay_connect_failed") return "relay_connect_failed";
   return "unknown";
 }

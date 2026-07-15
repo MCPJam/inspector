@@ -385,6 +385,219 @@ describe("evaluatePredicate — table driven", () => {
       passed: false,
       reasonIncludes: ["unavailable"],
     },
+
+    // ── widgetRendered ────────────────────────────────────────────────
+    {
+      name: "widgetRendered: one rendered observation passes",
+      transcript: transcript({
+        renderObservations: [
+          { toolName: "show_map", status: "rendered", elapsedMs: 850 },
+        ],
+      }),
+      predicate: { type: "widgetRendered" },
+      passed: true,
+    },
+    {
+      name: "widgetRendered: ANY semantics — one rendered among failures passes",
+      transcript: transcript({
+        renderObservations: [
+          { toolName: "show_map", status: "mount_failed", elapsedMs: 200 },
+          { toolName: "show_map", status: "rendered", elapsedMs: 900 },
+        ],
+      }),
+      predicate: { type: "widgetRendered" },
+      passed: true,
+    },
+    {
+      name: "widgetRendered: no observations fails closed",
+      transcript: transcript({}),
+      predicate: { type: "widgetRendered" },
+      passed: false,
+      reasonIncludes: ["no widget render observations recorded"],
+    },
+    {
+      name: "widgetRendered: nothing rendered fails with statuses",
+      transcript: transcript({
+        renderObservations: [
+          { toolName: "show_map", status: "bridge_timeout", elapsedMs: 5000 },
+        ],
+      }),
+      predicate: { type: "widgetRendered" },
+      passed: false,
+      reasonIncludes: ["bridge_timeout"],
+    },
+    {
+      name: "widgetRendered: toolName filter narrows the scope (match passes)",
+      transcript: transcript({
+        renderObservations: [
+          { toolName: "show_chart", status: "render_error", elapsedMs: 100 },
+          { toolName: "show_map", status: "rendered", elapsedMs: 700 },
+        ],
+      }),
+      predicate: { type: "widgetRendered", toolName: "show_map" },
+      passed: true,
+    },
+    {
+      name: "widgetRendered: toolName filter with no matching observations fails closed",
+      transcript: transcript({
+        renderObservations: [
+          { toolName: "show_chart", status: "rendered", elapsedMs: 100 },
+        ],
+      }),
+      predicate: { type: "widgetRendered", toolName: "show_map" },
+      passed: false,
+      reasonIncludes: ['for tool "show_map"'],
+    },
+
+    // ── widgetRenderLatencyUnder ──────────────────────────────────────
+    {
+      name: "widgetRenderLatencyUnder: all rendered under budget passes",
+      transcript: transcript({
+        renderObservations: [
+          { toolName: "show_map", status: "rendered", elapsedMs: 800 },
+          { toolName: "show_chart", status: "rendered", elapsedMs: 1200 },
+        ],
+      }),
+      predicate: { type: "widgetRenderLatencyUnder", ms: 2000 },
+      passed: true,
+      reasonIncludes: ["slowest 1200ms"],
+    },
+    {
+      name: "widgetRenderLatencyUnder: ALL semantics — one slow widget fails",
+      transcript: transcript({
+        renderObservations: [
+          { toolName: "show_map", status: "rendered", elapsedMs: 800 },
+          { toolName: "show_chart", status: "rendered", elapsedMs: 2500 },
+        ],
+      }),
+      predicate: { type: "widgetRenderLatencyUnder", ms: 2000 },
+      passed: false,
+      reasonIncludes: ["2500ms"],
+    },
+    {
+      name: "widgetRenderLatencyUnder: boundary (equal) fails (strict <)",
+      transcript: transcript({
+        renderObservations: [
+          { toolName: "show_map", status: "rendered", elapsedMs: 2000 },
+        ],
+      }),
+      predicate: { type: "widgetRenderLatencyUnder", ms: 2000 },
+      passed: false,
+    },
+    {
+      name: "widgetRenderLatencyUnder: failed renders are excluded from latency math",
+      transcript: transcript({
+        renderObservations: [
+          { toolName: "show_map", status: "bridge_timeout", elapsedMs: 30000 },
+          { toolName: "show_map", status: "rendered", elapsedMs: 500 },
+        ],
+      }),
+      predicate: { type: "widgetRenderLatencyUnder", ms: 2000 },
+      passed: true,
+    },
+    {
+      name: "widgetRenderLatencyUnder: nothing rendered fails closed",
+      transcript: transcript({
+        renderObservations: [
+          { toolName: "show_map", status: "mount_failed", elapsedMs: 300 },
+        ],
+      }),
+      predicate: { type: "widgetRenderLatencyUnder", ms: 2000 },
+      passed: false,
+      reasonIncludes: ["no widget rendered"],
+    },
+    {
+      name: "widgetRenderLatencyUnder: no observations fails closed",
+      transcript: transcript({}),
+      predicate: { type: "widgetRenderLatencyUnder", ms: 2000 },
+      passed: false,
+      reasonIncludes: ["no widget render observations recorded"],
+    },
+    {
+      name: "widgetRenderLatencyUnder: malformed ms (0) is rejected, not a disabled gate",
+      transcript: transcript({
+        renderObservations: [
+          { toolName: "show_map", status: "rendered", elapsedMs: 500 },
+        ],
+      }),
+      predicate: { type: "widgetRenderLatencyUnder", ms: 0 },
+      passed: false,
+      reasonIncludes: ["invalid ms"],
+    },
+
+    // ── widgetNoConsoleErrors ─────────────────────────────────────────
+    {
+      name: "widgetNoConsoleErrors: clean observations pass",
+      transcript: transcript({
+        renderObservations: [
+          { toolName: "show_map", status: "rendered", elapsedMs: 500 },
+          {
+            toolName: "show_chart",
+            status: "rendered",
+            elapsedMs: 700,
+            consoleErrors: [],
+          },
+        ],
+      }),
+      predicate: { type: "widgetNoConsoleErrors" },
+      passed: true,
+    },
+    {
+      name: "widgetNoConsoleErrors: ALL semantics — one erroring widget fails",
+      transcript: transcript({
+        renderObservations: [
+          { toolName: "show_map", status: "rendered", elapsedMs: 500 },
+          {
+            toolName: "show_chart",
+            status: "rendered",
+            elapsedMs: 700,
+            consoleErrors: ["TypeError: x is undefined"],
+          },
+        ],
+      }),
+      predicate: { type: "widgetNoConsoleErrors" },
+      passed: false,
+      reasonIncludes: ["TypeError"],
+    },
+    {
+      name: "widgetNoConsoleErrors: errors on a failed render still fail (scope is all observations)",
+      transcript: transcript({
+        renderObservations: [
+          {
+            toolName: "show_map",
+            status: "render_error",
+            elapsedMs: 300,
+            consoleErrors: ["ReferenceError: boom"],
+          },
+        ],
+      }),
+      predicate: { type: "widgetNoConsoleErrors" },
+      passed: false,
+      reasonIncludes: ["ReferenceError"],
+    },
+    {
+      name: "widgetNoConsoleErrors: no observations fails closed",
+      transcript: transcript({}),
+      predicate: { type: "widgetNoConsoleErrors" },
+      passed: false,
+      reasonIncludes: ["no widget render observations recorded"],
+    },
+    {
+      name: "widgetNoConsoleErrors: toolName filter ignores other widgets' errors",
+      transcript: transcript({
+        renderObservations: [
+          {
+            toolName: "show_chart",
+            status: "rendered",
+            elapsedMs: 700,
+            consoleErrors: ["TypeError: chart broke"],
+          },
+          { toolName: "show_map", status: "rendered", elapsedMs: 500 },
+        ],
+      }),
+      predicate: { type: "widgetNoConsoleErrors", toolName: "show_map" },
+      passed: true,
+    },
   ];
 
   for (const row of rows) {

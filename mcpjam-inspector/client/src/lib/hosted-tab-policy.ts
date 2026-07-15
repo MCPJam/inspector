@@ -13,8 +13,8 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "host-compare",
   "registry",
   "chatboxes",
+  "swarms",
   "playground",
-  "views",
   "client-config",
   "evals",
   "ci-evals",
@@ -24,6 +24,7 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "support",
   "settings",
   "conformance",
+  "compatibility",
   "oauth-flow",
   "xaa-flow",
   "learning",
@@ -34,14 +35,20 @@ export const HOSTED_HASH_ALLOWED_TABS = [
   "profile",
   "organizations",
   "project-settings",
+  // Project Computers are supported in hosted mode (access is enforced
+  // server-side, not by this list). Reached via the Connect tab switcher, not
+  // a standalone sidebar item, so it needs the hash allow-list only — see PR.
+  "computer",
+  // Cloud Skills are a project-membership resource (Convex-backed, usable in
+  // the Playground without a Computer) but gated behind the `skills-enabled`
+  // PostHog flag until QA completes. Kept OUT of the sidebar-allowed list so the
+  // nav item is disabled-by-default; `resolveHostedSkillsNav` (mcp-sidebar)
+  // enables it only when the flag is on, and the route guard (`SkillsRoute`)
+  // redirects direct navigation when the flag is off.
+  "skills",
 ] as const;
 
-export const HOSTED_HASH_BLOCKED_TABS = [
-  "skills",
-  "tasks",
-  "tracing",
-  "auth",
-] as const;
+export const HOSTED_HASH_BLOCKED_TABS = ["tasks", "tracing", "auth"] as const;
 
 const hostedSidebarAllowedSet = new Set<string>(HOSTED_SIDEBAR_ALLOWED_TABS);
 const hostedHashAllowedSet = new Set<string>(HOSTED_HASH_ALLOWED_TABS);

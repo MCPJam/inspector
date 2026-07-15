@@ -7,7 +7,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSettingsSection";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
@@ -33,6 +32,8 @@ interface EditServerFormContentProps {
   onMcpProtocolVersionOverrideChange?: (
     mode: McpProtocolVersion | undefined
   ) => void;
+  /** Project default XAA test identity — shown as override placeholders. */
+  projectXaaDefaultIdentity?: { subject: string; email: string } | null;
 }
 
 export function EditServerFormContent({
@@ -42,32 +43,45 @@ export function EditServerFormContent({
   hostedServerId = null,
   mcpProtocolVersionOverride,
   onMcpProtocolVersionOverrideChange,
+  projectXaaDefaultIdentity = null,
 }: EditServerFormContentProps) {
   const hostedUrlPlaceholder = "https://example.com/mcp";
-  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
   const [revealingEnv, setRevealingEnv] = useState(false);
   const [revealingHeaders, setRevealingHeaders] = useState(false);
+  const [revealingBearer, setRevealingBearer] = useState(false);
   const [envRevealError, setEnvRevealError] = useState<string | null>(null);
   const [headersRevealError, setHeadersRevealError] = useState<string | null>(
     null
   );
+  const [bearerRevealError, setBearerRevealError] = useState<string | null>(
+    null
+  );
 
   const revealSecrets = useCallback(
-    async (kind: "env" | "headers") => {
+    // "bearer" reuses the headers reveal — fetchServerSecrets returns the full
+    // header set, and revealStoredHeaders routes Authorization to the bearer
+    // field while keeping the rest as custom headers.
+    async (kind: "env" | "headers" | "bearer") => {
+      const setRevealing =
+        kind === "env"
+          ? setRevealingEnv
+          : kind === "bearer"
+          ? setRevealingBearer
+          : setRevealingHeaders;
+      const setError =
+        kind === "env"
+          ? setEnvRevealError
+          : kind === "bearer"
+          ? setBearerRevealError
+          : setHeadersRevealError;
+
       if (!projectId || !hostedServerId) {
-        const message = "Server secrets can only be revealed after saving.";
-        if (kind === "env") setEnvRevealError(message);
-        else setHeadersRevealError(message);
+        setError("Server secrets can only be revealed after saving.");
         return;
       }
 
-      if (kind === "env") {
-        setRevealingEnv(true);
-        setEnvRevealError(null);
-      } else {
-        setRevealingHeaders(true);
-        setHeadersRevealError(null);
-      }
+      setRevealing(true);
+      setError(null);
 
       try {
         const result = await fetchServerSecrets({
@@ -80,13 +94,11 @@ export function EditServerFormContent({
           formState.revealStoredHeaders(result.headers);
         }
       } catch {
-        const message =
-          "Couldn't reveal saved secrets. Try again, or re-save this server's env vars/headers.";
-        if (kind === "env") setEnvRevealError(message);
-        else setHeadersRevealError(message);
+        setError(
+          "Couldn't reveal saved secrets. Try again, or re-save this server's env vars/headers."
+        );
       } finally {
-        if (kind === "env") setRevealingEnv(false);
-        else setRevealingHeaders(false);
+        setRevealing(false);
       }
     },
     [formState, hostedServerId, projectId]
@@ -209,11 +221,15 @@ export function EditServerFormContent({
             showAuthSettings={formState.showAuthSettings}
             bearerToken={formState.bearerToken}
             onBearerTokenChange={formState.setBearerToken}
+            hasStoredBearerToken={formState.hasStoredBearerToken}
+            onRevealBearerToken={() => revealSecrets("bearer")}
+            isRevealingBearerToken={revealingBearer}
+            bearerRevealError={bearerRevealError}
             oauthScopesInput={formState.oauthScopesInput}
             onOauthScopesChange={formState.setOauthScopesInput}
             oauthProtocolMode={formState.oauthProtocolMode}
             onOauthProtocolModeChange={formState.setOauthProtocolMode}
-            oauthRegistrationMode={formState.oauthRegistrationMode}
+            registrationMode={formState.registrationMode}
             onOauthRegistrationModeChange={formState.setOauthRegistrationMode}
             useCustomClientId={formState.useCustomClientId}
             onUseCustomClientIdChange={(checked) => {
@@ -253,6 +269,18 @@ export function EditServerFormContent({
             clientSecretError={formState.clientSecretError}
             projectId={projectId}
             hostedServerId={hostedServerId}
+            xaaAuthzIssuer={formState.xaaAuthzIssuer}
+            onXaaAuthzIssuerChange={formState.setXaaAuthzIssuer}
+            xaaAllowPathScopedIssuer={formState.xaaAllowPathScopedIssuer}
+            onXaaAllowPathScopedIssuerChange={
+              formState.setXaaAllowPathScopedIssuer
+            }
+            xaaSubject={formState.xaaSubject}
+            onXaaSubjectChange={formState.setXaaSubject}
+            xaaEmail={formState.xaaEmail}
+            onXaaEmailChange={formState.setXaaEmail}
+            autoSelectsXaa={formState.autoSelectsXaa}
+            projectDefaultIdentity={projectXaaDefaultIdentity}
           />
         </div>
       )}
@@ -298,11 +326,11 @@ export function EditServerFormContent({
         clientCapabilitiesOverrideError={
           formState.clientCapabilitiesOverrideError
         }
-        /* Render the row whenever the flag is on, regardless of whether
-           a setter is wired. When `onMcpProtocolVersionOverrideChange` is
-           absent (no project/server id, or project config still loading), the
-           select disables but remains visible for discoverability. */
-        showMcpProtocolVersionOverride={Boolean(statelessMcpEnabled)}
+        /* Render the row regardless of whether a setter is wired. When
+           `onMcpProtocolVersionOverrideChange` is absent (no project/server
+           id, or project config still loading), the select disables but
+           remains visible for discoverability. */
+        showMcpProtocolVersionOverride
         mcpProtocolVersionOverride={mcpProtocolVersionOverride}
         onMcpProtocolVersionOverrideChange={onMcpProtocolVersionOverrideChange}
         transportKind={formState.type}

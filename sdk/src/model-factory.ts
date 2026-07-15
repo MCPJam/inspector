@@ -6,6 +6,7 @@
  * building models from org-resolved provider configs (local BYOK runtime).
  */
 
+import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createAzure } from "@ai-sdk/azure";
 import { createDeepSeek } from "@ai-sdk/deepseek";
@@ -26,6 +27,12 @@ export interface BaseUrls {
   azure?: string;
   anthropic?: string;
   openai?: string;
+  /**
+   * Amazon Bedrock regional runtime endpoint, e.g.
+   * https://bedrock-runtime.us-east-1.amazonaws.com.
+   * When omitted, the provider derives it from the AWS_REGION env var.
+   */
+  bedrock?: string;
 }
 
 /**
@@ -45,6 +52,7 @@ const BUILT_IN_PROVIDERS: LLMProvider[] = [
   "anthropic",
   "openai",
   "azure",
+  "bedrock",
   "deepseek",
   "google",
   "ollama",
@@ -254,6 +262,16 @@ export function createModelFromString(
         baseURL: baseUrls?.azure,
       });
       return azure(model) as ProviderLanguageModel;
+    }
+
+    case "bedrock": {
+      // Bearer-token (API key) auth. The endpoint comes from baseUrls.bedrock
+      // when set; otherwise the provider derives it from AWS_REGION.
+      const bedrock = createAmazonBedrock({
+        apiKey,
+        ...(baseUrls?.bedrock && { baseURL: baseUrls.bedrock }),
+      });
+      return bedrock(model) as unknown as ProviderLanguageModel;
     }
 
     default: {
@@ -473,6 +491,12 @@ export function buildOrgModelFromResolvedConfig(
       },
     })(m) as unknown as LanguageModel;
   }
+  if (providerKey === "bedrock") {
+    return createAmazonBedrock({
+      apiKey: requireOrgSecret(config, "Amazon Bedrock"),
+      baseURL: requireOrgBaseUrl(config, "Amazon Bedrock"),
+    })(m) as unknown as LanguageModel;
+  }
   if (providerKey === "ollama") {
     const raw = requireOrgBaseUrl(config, "Ollama");
     const normalized = /\/api\/?$/.test(raw)
@@ -504,8 +528,9 @@ export function buildOrgModelFromResolvedConfig(
 
 /**
  * Validate that the requested model is in the org's allowlist for the provider.
- * For OpenRouter this is selectedModels; for custom providers it is modelIds.
- * Built-in providers are pass-through (the upstream provider rejects unknown ids).
+ * For OpenRouter and Amazon Bedrock this is selectedModels; for custom
+ * providers it is modelIds. Built-in providers are pass-through (the upstream
+ * provider rejects unknown ids).
  *
  * Throws OrgProviderConfigError('model_not_allowed', ...) on rejection.
  */
@@ -519,6 +544,17 @@ export function assertOrgModelAllowed(
         throw new OrgProviderConfigError(
           "model_not_allowed",
           `Model ${modelId} is not in this organization's OpenRouter allowlist`
+        );
+      }
+    }
+    return;
+  }
+  if (config.providerKey === "bedrock") {
+    if (config.selectedModels && config.selectedModels.length > 0) {
+      if (!config.selectedModels.includes(modelId)) {
+        throw new OrgProviderConfigError(
+          "model_not_allowed",
+          `Model ${modelId} is not in this organization's Amazon Bedrock allowlist`
         );
       }
     }

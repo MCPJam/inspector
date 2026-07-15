@@ -8,6 +8,7 @@ import { Hono } from "hono";
 const {
   validateGuestTokenMock,
   prepareEvalRunMock,
+  authorEvalSuiteMock,
   createAuthorizedManagerMock,
   convexQueryMock,
   convexActionMock,
@@ -22,6 +23,7 @@ const {
   return {
     validateGuestTokenMock: vi.fn(),
     prepareEvalRunMock: vi.fn(),
+    authorEvalSuiteMock: vi.fn(),
     createAuthorizedManagerMock: vi.fn(),
     convexQueryMock: vi.fn(),
     convexActionMock: vi.fn(),
@@ -56,7 +58,11 @@ vi.mock("../../shared/evals.js", async () => {
   const actual = await vi.importActual<typeof import("../../shared/evals.js")>(
     "../../shared/evals.js"
   );
-  return { ...actual, prepareEvalRun: prepareEvalRunMock };
+  return {
+    ...actual,
+    prepareEvalRun: prepareEvalRunMock,
+    authorEvalSuite: authorEvalSuiteMock,
+  };
 });
 
 vi.mock("../../web/auth.js", async () => {
@@ -180,19 +186,204 @@ describe("v1 write routes", () => {
       expect(prepareEvalRunMock).not.toHaveBeenCalled();
     });
 
+    it("requires serverIds when creating a new suite from inline tests", async () => {
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-runs",
+        {
+          suiteName: "fresh suite",
+          tests: [
+            {
+              title: "echo works",
+              steps: [
+                { id: "s1", kind: "prompt", prompt: "Use the echo tool" },
+              ],
+              runs: 1,
+              model: "anthropic/claude-haiku-4.5",
+              provider: "anthropic",
+            },
+          ],
+        }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(body.message).toContain("serverIds are required");
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    describe("rerun without serverIds", () => {
+      function mockHappyCreate() {
+        const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+        createAuthorizedManagerMock.mockResolvedValue({
+          manager: { disconnectAllServers },
+          oauthServerUrls: {},
+          authenticatedUserId: null,
+        });
+        prepareEvalRunMock.mockResolvedValue({
+          suiteId: "suite_1",
+          runId: "run_1",
+          caseUpsert: { committed: [], failed: [] },
+          recorder: { finalize: vi.fn() },
+          execute: vi.fn().mockResolvedValue(undefined),
+        });
+        return { disconnectAllServers };
+      }
+
+      it("derives the suite's saved server selection and connects it", async () => {
+        const { disconnectAllServers } = mockHappyCreate();
+        convexQueryMock.mockImplementation(async (fn: string) =>
+          fn === "testSuites:getSuiteRunServerSelection"
+            ? {
+                serverIds: ["s_alpha", "s_beta"],
+                serverNames: ["alpha", "beta"],
+                source: "host_config",
+              }
+            : null
+        );
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_1" }
+        );
+
+        expect(res.status).toBe(202);
+        expect(await res.json()).toEqual({
+          runId: "run_1",
+          suiteId: "suite_1",
+          status: "running",
+          caseUpsert: { committed: [], failed: [] },
+          servers: [
+            { id: "s_alpha", name: "alpha" },
+            { id: "s_beta", name: "beta" },
+          ],
+        });
+        expect(convexQueryMock).toHaveBeenCalledWith(
+          "testSuites:getSuiteRunServerSelection",
+          { suiteId: "suite_1" }
+        );
+        // The manager connects the derived set, names included.
+        expect(createAuthorizedManagerMock.mock.calls[0][3]).toEqual([
+          "s_alpha",
+          "s_beta",
+        ]);
+        expect(createAuthorizedManagerMock.mock.calls[0][7]).toEqual({
+          serverNames: ["alpha", "beta"],
+        });
+        expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+          serverIds: ["s_alpha", "s_beta"],
+          serverNames: ["alpha", "beta"],
+          suiteRerun: true,
+        });
+        await vi.waitFor(() =>
+          expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+        );
+      });
+
+      it("fails actionably when the suite has no saved selection", async () => {
+        mockHappyCreate();
+        convexQueryMock.mockResolvedValueOnce({
+          serverIds: [],
+          serverNames: [],
+          source: "none",
+        });
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_1" }
+        );
+
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as {
+          code?: string;
+          message?: string;
+          details?: { reason?: string };
+        };
+        expect(body.code).toBe("VALIDATION_ERROR");
+        expect(body.details?.reason).toBe("NO_SAVED_SERVER_SELECTION");
+        expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+        expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      });
+
+      it("maps a suite the caller cannot see to 404", async () => {
+        mockHappyCreate();
+        convexQueryMock.mockRejectedValueOnce(
+          new Error("Suite not found or unauthorized")
+        );
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_other" }
+        );
+
+        expect(res.status).toBe(404);
+        expect(((await res.json()) as { code?: string }).code).toBe(
+          "NOT_FOUND"
+        );
+      });
+
+      it("maps a null selection read to 404, not a validation error", async () => {
+        mockHappyCreate();
+        convexQueryMock.mockResolvedValueOnce(null);
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_1" }
+        );
+
+        expect(res.status).toBe(404);
+        expect(((await res.json()) as { code?: string }).code).toBe(
+          "NOT_FOUND"
+        );
+      });
+
+      it("degrades to an explicit-serverIds instruction on older backends", async () => {
+        mockHappyCreate();
+        convexQueryMock.mockRejectedValueOnce(
+          new Error(
+            "Could not find public function for 'testSuites:getSuiteRunServerSelection'"
+          )
+        );
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_1" }
+        );
+
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as { code?: string; message?: string };
+        expect(body.code).toBe("VALIDATION_ERROR");
+        expect(body.message).toContain("Pass serverIds explicitly");
+      });
+    });
+
     describe("inline test model validation", () => {
       const inlineTest = (model: string, provider = "anthropic") => ({
         title: "echo works",
-        query: "Use the echo tool to say hi",
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "Use the echo tool to say hi" },
+        ],
         runs: 1,
         model,
         provider,
-        expectedToolCalls: [],
       });
 
       function mockHappyCreate() {
         createAuthorizedManagerMock.mockResolvedValue({
-          manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+          manager: {
+            disconnectAllServers: vi.fn().mockResolvedValue(undefined),
+          },
           oauthServerUrls: {},
           authenticatedUserId: null,
         });
@@ -213,7 +404,11 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteName: "smoke", serverIds: ["s1"], tests: [inlineTest("claude-sonnet-4-6")] }
+          {
+            suiteName: "smoke",
+            serverIds: ["s1"],
+            tests: [inlineTest("claude-sonnet-4-6")],
+          }
         );
         expect(res.status).toBe(400);
         const body = (await res.json()) as {
@@ -306,6 +501,7 @@ describe("v1 write routes", () => {
         suiteId: "suite_1",
         status: "running",
         caseUpsert: { committed: [{ name: "case" }], failed: [] },
+        servers: [{ id: "s1" }],
       });
       // The request resolved while execute was still pending — async run.
       expect(disconnectAllServers).not.toHaveBeenCalled();
@@ -527,11 +723,10 @@ describe("v1 write routes", () => {
           tests: [
             {
               title: "case",
-              query: "do it",
+              steps: [{ id: "s1", kind: "prompt", prompt: "do it" }],
               runs: 1,
               model: "anthropic/claude-haiku-4.5",
               provider: "anthropic",
-              expectedToolCalls: [],
             },
           ],
         }
@@ -539,10 +734,168 @@ describe("v1 write routes", () => {
       expect(res.status).toBe(202);
       expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
         suiteRerun: false,
+        tests: [
+          expect.objectContaining({
+            steps: [{ id: "s1", kind: "prompt", prompt: "do it" }],
+            query: "do it",
+          }),
+        ],
       });
       await vi.waitFor(() =>
         expect(disconnectAllServers).toHaveBeenCalledTimes(1)
       );
+    });
+  });
+
+  describe("POST /eval-suites (author-only)", () => {
+    const VALID_CASE = {
+      title: "echo works",
+      steps: [
+        { id: "s1", kind: "prompt", prompt: "Use the echo tool" },
+        {
+          id: "s2",
+          kind: "assert",
+          assertion: {
+            type: "toolCalledWith",
+            toolName: "echo",
+            args: { args: {} },
+          },
+        },
+      ],
+    };
+
+    it("rejects a body with no cases (400) before any side effect", async () => {
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          model: "anthropic/claude-haiku-4.5",
+          tests: [],
+        }
+      );
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { code?: string }).code).toBe(
+        "VALIDATION_ERROR"
+      );
+      expect(authorEvalSuiteMock).not.toHaveBeenCalled();
+      expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects an unknown model before connecting any server", async () => {
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          model: "anthropic/not-a-real-model",
+          tests: [VALID_CASE],
+        }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(body.message).toContain("Unknown model");
+      expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+      expect(authorEvalSuiteMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects a case with no steps (400)", async () => {
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          model: "anthropic/claude-haiku-4.5",
+          tests: [{ title: "no steps" }],
+        }
+      );
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { code?: string }).code).toBe(
+        "VALIDATION_ERROR"
+      );
+      expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects a case with an empty steps array (400)", async () => {
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          model: "anthropic/claude-haiku-4.5",
+          tests: [{ title: "empty steps", steps: [] }],
+        }
+      );
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { code?: string }).code).toBe(
+        "VALIDATION_ERROR"
+      );
+      expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+      expect(authorEvalSuiteMock).not.toHaveBeenCalled();
+    });
+
+    it("authors the suite and disconnects the manager (no run started)", async () => {
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: {
+          listServers: () => ["s1"],
+          disconnectAllServers,
+        },
+      });
+      authorEvalSuiteMock.mockResolvedValue({
+        suiteId: "suite_new",
+        suiteName: "Fresh suite",
+        caseUpsert: { committed: [{ name: "echo works" }], failed: [] },
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          serverNames: ["Echo"],
+          model: "anthropic/claude-haiku-4.5",
+          tests: [VALID_CASE],
+        }
+      );
+
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as {
+        suiteId?: string;
+        name?: string;
+        servers?: unknown;
+      };
+      expect(body.suiteId).toBe("suite_new");
+      expect(body.name).toBe("Fresh suite");
+
+      // The run engine is never invoked — this is author-only.
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      expect(authorEvalSuiteMock).toHaveBeenCalledTimes(1);
+      const authoredArgs = authorEvalSuiteMock.mock.calls[0][0];
+      expect(authoredArgs.suiteId).toBeNull();
+      expect(authoredArgs.suiteName).toBe("Fresh suite");
+      expect(authoredArgs.resolvedServerIds).toEqual(["s1"]);
+      // The case's `steps` stay on the authored payload and are projected onto
+      // denormalized display fields: prompt -> query, assert -> expected call.
+      expect(authoredArgs.tests[0].steps).toEqual(VALID_CASE.steps);
+      expect(authoredArgs.tests[0].query).toBe("Use the echo tool");
+      expect(authoredArgs.tests[0].expectedToolCalls).toEqual([
+        { toolName: "echo", arguments: {} },
+      ]);
+      expect(authoredArgs.tests[0].runs).toBe(1);
+      expect(authoredArgs.tests[0].provider).toBe("anthropic");
+      expect(disconnectAllServers).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -660,33 +1013,31 @@ describe("v1 write routes", () => {
     });
 
     it("maps iterations onto the page envelope with usage and latency", async () => {
-      convexQueryMock
-        .mockResolvedValueOnce(RUN_DOC)
-        .mockResolvedValueOnce({
-          page: [
-            {
-              _id: "iter_1",
-              testCaseId: "case_1",
-              suiteRunId: "run_1",
-              iterationNumber: 1,
-              status: "completed",
-              result: "passed",
-              startedAt: 100,
-              updatedAt: 5330,
-              tokensUsed: 1342,
-              usage: { inputTokens: 1100, outputTokens: 242 },
-              actualToolCalls: [{ toolName: "echo", arguments: { a: 1 } }],
-              testCaseSnapshot: {
-                title: "case",
-                model: "m",
-                provider: "anthropic",
-                expectedToolCalls: [{ toolName: "echo" }],
-              },
+      convexQueryMock.mockResolvedValueOnce(RUN_DOC).mockResolvedValueOnce({
+        page: [
+          {
+            _id: "iter_1",
+            testCaseId: "case_1",
+            suiteRunId: "run_1",
+            iterationNumber: 1,
+            status: "completed",
+            result: "passed",
+            startedAt: 100,
+            updatedAt: 5330,
+            tokensUsed: 1342,
+            usage: { inputTokens: 1100, outputTokens: 242 },
+            actualToolCalls: [{ toolName: "echo", arguments: { a: 1 } }],
+            testCaseSnapshot: {
+              title: "case",
+              model: "m",
+              provider: "anthropic",
+              expectedToolCalls: [{ toolName: "echo" }],
             },
-          ],
-          isDone: false,
-          continueCursor: "cursor_2",
-        });
+          },
+        ],
+        isDone: false,
+        continueCursor: "cursor_2",
+      });
 
       const res = await request(
         makeApp(),

@@ -21,6 +21,7 @@ function makeCase(id: string, title = `Case ${id}`): EvalCase {
 function makeRun(
   id: string,
   namedHostId?: string,
+  createdAt = Date.now(),
 ): EvalSuiteRun {
   return {
     _id: id,
@@ -34,7 +35,7 @@ function makeRun(
     },
     status: "completed",
     result: "passed",
-    createdAt: Date.now(),
+    createdAt,
     ...(namedHostId ? { namedHostId } : {}),
   } as EvalSuiteRun;
 }
@@ -87,7 +88,10 @@ function makeSuite(
 // Import the hook's computation inline by re-implementing the shape logic here.
 // The real test target is `use-cross-host-data.ts`; this mirrors the logic to
 // avoid requiring a React test renderer for pure data-shaping.
-import { useCrossHostData } from "../use-cross-host-data";
+import {
+  buildCellTrendSeries,
+  useCrossHostData,
+} from "../use-cross-host-data";
 import { renderHook } from "@testing-library/react";
 
 describe("useCrossHostData", () => {
@@ -232,5 +236,110 @@ describe("useCrossHostData", () => {
     // h2 has no iterations — cell should be absent from matrix
     const c1h2 = result.current.matrix.get("c1")?.get("h2");
     expect(c1h2).toBeUndefined();
+  });
+
+  it("does not attach trendSeries when cellTrends is false", () => {
+    const suite = makeSuite([{ namedHostId: "h1", hostName: "Claude" }]);
+    const cases = [makeCase("c1")];
+    const run1 = makeRun("r1", "h1", 1000);
+    const run2 = makeRun("r2", "h1", 2000);
+    const iter1 = makeIteration("i1", {
+      suiteRunId: "r1",
+      testCaseId: "c1",
+      result: "passed",
+    });
+    const iter2 = makeIteration("i2", {
+      suiteRunId: "r2",
+      testCaseId: "c1",
+      result: "passed",
+    });
+    const { result } = renderHook(() =>
+      useCrossHostData(suite, cases, [run1, run2], [iter1, iter2]),
+    );
+    expect(result.current.matrix.get("c1")?.get("h1")?.trendSeries).toBeUndefined();
+  });
+
+  it("attaches chronological trendSeries when cellTrends is true", () => {
+    const suite = makeSuite([{ namedHostId: "h1", hostName: "Claude" }]);
+    const cases = [makeCase("c1")];
+    const run1 = makeRun("r1", "h1", 1000);
+    const run2 = makeRun("r2", "h1", 2000);
+    const iter1 = makeIteration("i1", {
+      suiteRunId: "r1",
+      testCaseId: "c1",
+      result: "passed",
+    });
+    const iter2 = makeIteration("i2", {
+      suiteRunId: "r2",
+      testCaseId: "c1",
+      result: "failed",
+    });
+    const { result } = renderHook(() =>
+      useCrossHostData(suite, cases, [run1, run2], [iter1, iter2], {
+        cellTrends: true,
+      }),
+    );
+    const cell = result.current.matrix.get("c1")?.get("h1");
+    expect(cell?.trendSeries).toHaveLength(2);
+    expect(cell?.trendSeries?.[0].runId).toBe("r1");
+    expect(cell?.trendSeries?.[0].result).toBe("passed");
+    expect(cell?.trendSeries?.[1].runId).toBe("r2");
+    expect(cell?.trendSeries?.[1].result).toBe("failed");
+    // Snapshot still reflects latest run only
+    expect(cell?.passCount).toBe(0);
+    expect(cell?.failCount).toBe(1);
+  });
+
+  it("buildCellTrendSeries supports uneven host histories", () => {
+    const suite = makeSuite([
+      { namedHostId: "h1", hostName: "MCPJam" },
+      { namedHostId: "h2", hostName: "ChatGPT" },
+    ]);
+    const cases = [makeCase("c1")];
+    const runs = [
+      makeRun("r1", "h1", 1000),
+      makeRun("r2", "h1", 2000),
+      makeRun("r3", "h1", 3000),
+      makeRun("r4", "h2", 4000),
+    ];
+    const iterations = [
+      makeIteration("i1", { suiteRunId: "r1", testCaseId: "c1" }),
+      makeIteration("i2", { suiteRunId: "r2", testCaseId: "c1" }),
+      makeIteration("i3", { suiteRunId: "r3", testCaseId: "c1" }),
+      makeIteration("i4", { suiteRunId: "r4", testCaseId: "c1" }),
+    ];
+    const runHostMap = new Map([
+      ["r1", "h1"],
+      ["r2", "h1"],
+      ["r3", "h1"],
+      ["r4", "h2"],
+    ]);
+    const activeRunIds = new Set(runs.map((r) => r._id));
+
+    const h1Series = buildCellTrendSeries(
+      "c1",
+      "h1",
+      runs,
+      iterations,
+      runHostMap,
+      activeRunIds,
+      (id) => id,
+    );
+    const h2Series = buildCellTrendSeries(
+      "c1",
+      "h2",
+      runs,
+      iterations,
+      runHostMap,
+      activeRunIds,
+      (id) => id,
+    );
+
+    expect(h1Series).toHaveLength(3);
+    expect(h2Series).toHaveLength(1);
+    expect(h1Series.map((p) => p.runId)).toEqual(["r1", "r2", "r3"]);
+    expect(h2Series[0].runId).toBe("r4");
+    void suite;
+    void cases;
   });
 });

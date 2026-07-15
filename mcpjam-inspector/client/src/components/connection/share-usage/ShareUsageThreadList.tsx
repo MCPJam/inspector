@@ -1,5 +1,5 @@
 import { formatDistanceToNow } from "date-fns";
-import { AlertTriangle, MessageSquare, Sparkles } from "lucide-react";
+import { AlertTriangle, MessageSquare } from "lucide-react";
 import { useMemo } from "react";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
@@ -13,6 +13,7 @@ import {
   useSharedChatThreadList,
   type SharedChatThread,
 } from "@/hooks/useSharedChatThreads";
+import { SessionReadinessBadge } from "@/components/chatboxes/session-readiness";
 
 interface ShareUsageThreadListProps {
   /** Optional: when `threads` is provided (chatbox Usage panel) these are unused. */
@@ -46,7 +47,7 @@ export function ShareUsageThreadList({
   const legacyThreads = useSharedChatThreadList(
     providedThreads === undefined && sourceType && sourceId
       ? { sourceType, sourceId }
-      : { sourceType: sourceType ?? "chatbox", sourceId: null },
+      : { sourceType: sourceType ?? "chatbox", sourceId: null }
   );
 
   const threads = useMemo(() => {
@@ -56,8 +57,8 @@ export function ShareUsageThreadList({
     const filtered = filterState
       ? raw.filter((t) => threadMatchesFilterState(t, filterState))
       : usageFilter === "all"
-        ? raw
-        : raw.filter((t) => threadMatchesUsageFilter(t, usageFilter));
+      ? raw
+      : raw.filter((t) => threadMatchesUsageFilter(t, usageFilter));
     return [...filtered].sort(compareThreadsForUsageList);
   }, [providedThreads, legacyThreads.threads, filterState, usageFilter]);
 
@@ -148,8 +149,8 @@ function ThreadCard({
             {thread.visitorDisplayName ?? "Anonymous"}
           </span>
           {thread.synthetic === true ? (
-            <Sparkles
-              className="size-3 shrink-0 text-muted-foreground"
+            <span
+              className="size-1.5 shrink-0 rounded-full bg-muted-foreground/40"
               aria-label="Synthetic session"
             />
           ) : null}
@@ -162,7 +163,11 @@ function ThreadCard({
       <div className="mt-1 flex flex-wrap items-center gap-2">
         {rating != null ? (
           <span
-            className={`text-xs font-medium ${rating <= 2 ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}
+            className={`text-xs font-medium ${
+              rating <= 2
+                ? "text-amber-700 dark:text-amber-400"
+                : "text-muted-foreground"
+            }`}
           >
             {rating}/5
           </span>
@@ -170,16 +175,23 @@ function ThreadCard({
           <span className="text-xs text-muted-foreground">No feedback</span>
         )}
         {needsReview ? (
-          <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-300">
+          <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
             <AlertTriangle className="size-3" />
             Needs review
           </span>
         ) : null}
         {thread.themeClusterLabel ? (
-          <span className="inline-flex max-w-[120px] items-center gap-0.5 truncate rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-            <Sparkles className="size-2.5 shrink-0" />
-            <span className="truncate">{thread.themeClusterLabel}</span>
+          <span className="max-w-[120px] truncate text-[10px] text-muted-foreground">
+            {thread.themeClusterLabel}
           </span>
+        ) : null}
+        {thread.synthetic === true && thread.personaLabel ? (
+          <span className="max-w-[140px] truncate text-[10px] text-muted-foreground">
+            {thread.personaLabel}
+          </span>
+        ) : null}
+        {thread.synthetic === true ? (
+          <SessionReadinessBadge readiness={thread.readiness} />
         ) : null}
       </div>
       {thread.firstMessagePreview ? (

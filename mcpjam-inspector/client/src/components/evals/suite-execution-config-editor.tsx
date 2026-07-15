@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, RotateCcw, Save, Settings2 } from "lucide-react";
 import { useMutation, useQuery } from "convex/react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { ClientConfigEditor } from "@/components/client-config/ClientConfigEditor";
 import {

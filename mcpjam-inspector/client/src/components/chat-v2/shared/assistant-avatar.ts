@@ -31,7 +31,11 @@ export function getAssistantAvatarDescriptor({
   if (chatboxHostStyle !== null) {
     const hostLabel = getChatboxHostLabel(chatboxHostStyle);
     return {
-      logoSrc: getChatboxHostLogo(chatboxHostStyle),
+      logoSrc: getChatboxHostLogo(
+        chatboxHostStyle,
+        undefined,
+        themeMode === "dark" ? "dark" : "light"
+      ),
       logoAlt: `${hostLabel} logo`,
       avatarClasses: `chatbox-host-assistant-avatar ${DEFAULT_AVATAR_CLASSES}`,
       ariaLabel: `${hostLabel} assistant`,

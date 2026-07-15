@@ -93,7 +93,9 @@ describe("getXAAErrorGuidance", () => {
         httpEntry: proxyResponse(400, { error: "invalid_grant" }),
       });
       expect(guidance?.title).toContain("rejected the ID-JAG assertion");
-      expect(guidance?.actions.map((a) => a.intent)).toContain("bootstrap");
+      // Issuer registration now lives in the always-visible IdP card, so this
+      // error no longer carries its own recovery action.
+      expect(guidance?.actions.map((a) => a.intent)).not.toContain("bootstrap");
     });
 
     it("falls back to a generic JWT-bearer failure card when the error code is unknown", () => {

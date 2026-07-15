@@ -1,6 +1,11 @@
 import { useQuery } from "convex/react";
+import type {
+  EvalTraceBrowserInteractionStepView,
+  EvalTraceWidgetRenderObservationView,
+} from "@/shared/eval-trace";
+import type { SessionReadiness } from "@/components/chatboxes/session-readiness";
 
-export type SharedChatSourceType = "chatbox";
+export type SharedChatSourceType = "chatbox" | "swarm";
 
 export interface SharedChatThread {
   _id: string;
@@ -48,6 +53,26 @@ export interface SharedChatThread {
   personaId?: string;
   personaLabel?: string;
   synthesisRunId?: string;
+  /**
+   * Phase 1 deterministic readiness. The list query (`listByChatbox`) returns
+   * the compact `status`/`verdict`/`issueCount` signal; the detail query
+   * (`getSession`) returns the full record with denormalized findings.
+   */
+  readiness?: SessionReadiness;
+  /**
+   * Goal-completion judge verdict for SWARM sessions — the compact
+   * denormalized `chatSessions.goalScore` subset (see backend
+   * `convex/swarmJudge.ts`). Absent on non-swarm sessions and before the
+   * first grading; `getSession` spreads the whole doc so this flows through.
+   */
+  goalScore?: {
+    status?: string;
+    score?: number;
+    passed?: boolean;
+    threshold?: number;
+    reason?: string;
+    error?: string;
+  };
 }
 
 /**
@@ -78,7 +103,7 @@ export function useSessionHistoricalHostConfig({
 }) {
   const config = useQuery(
     "chatSessions:getSessionHistoricalHostConfig" as any,
-    sessionId ? ({ sessionId } as any) : "skip",
+    sessionId ? ({ sessionId } as any) : "skip"
   ) as SessionHistoricalHostConfig | null | undefined;
 
   return { config };
@@ -109,10 +134,9 @@ export function useSharedChatThreadList({
     ? ({ chatboxId: sourceId, limit: 50, includeInternal: true } as any)
     : "skip";
 
-  const threads = useQuery(
-    "chatSessions:listByChatbox" as any,
-    queryArgs,
-  ) as SharedChatThread[] | undefined;
+  const threads = useQuery("chatSessions:listByChatbox" as any, queryArgs) as
+    | SharedChatThread[]
+    | undefined;
 
   return { threads };
 }
@@ -120,7 +144,7 @@ export function useSharedChatThreadList({
 export function useSharedChatThread({ threadId }: { threadId: string | null }) {
   const thread = useQuery(
     "chatSessions:getSession" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip",
+    threadId ? ({ sessionId: threadId } as any) : "skip"
   ) as SharedChatThread | null | undefined;
 
   return { thread };
@@ -133,7 +157,7 @@ export function useSharedChatWidgetSnapshots({
 }) {
   const snapshots = useQuery(
     "chatSessions:getWidgetSnapshots" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip",
+    threadId ? ({ sessionId: threadId } as any) : "skip"
   ) as SharedChatWidgetSnapshot[] | undefined;
 
   return { snapshots };
@@ -162,8 +186,32 @@ export function useSharedChatTurnTraces({
 }) {
   const traces = useQuery(
     "chatSessions:getSessionTurnTraces" as any,
-    threadId ? ({ sessionId: threadId } as any) : "skip",
+    threadId ? ({ sessionId: threadId } as any) : "skip"
   ) as SharedChatTurnTrace[] | undefined;
 
   return { traces };
+}
+
+export interface SessionBrowserArtifacts {
+  widgetRenderObservations: EvalTraceWidgetRenderObservationView[];
+  browserInteractionSteps: EvalTraceBrowserInteractionStepView[];
+}
+
+/**
+ * Browser-rendered MCP App artifacts for a session (render observations +
+ * Computer Use steps), written by the synthetic-session runner. Sorted and
+ * screenshot-url-resolved server-side; empty arrays for sessions without
+ * browser artifacts (live visitor sessions, pre-feature synthetic runs).
+ */
+export function useSessionBrowserArtifacts({
+  threadId,
+}: {
+  threadId: string | null;
+}) {
+  const artifacts = useQuery(
+    "chatSessions:getBrowserArtifacts" as any,
+    threadId ? ({ sessionId: threadId } as any) : "skip"
+  ) as SessionBrowserArtifacts | undefined;
+
+  return { artifacts };
 }
