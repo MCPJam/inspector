@@ -64,13 +64,6 @@ export interface ActiveServerSelectorProps {
   includeXaaServers?: boolean;
   showOnlyServersWithViews?: boolean; // Only show servers that have saved views
   autoSelectFilteredServer?: boolean; // Auto-select when current selection is hidden by filters
-  /**
-   * Which server auto-select picks when the current selection isn't in the list.
-   * "recent" (default) = most recently connected; "first" = leftmost as rendered
-   * (insertion order). The OAuth / XAA debuggers use "first" so the leftmost chip
-   * becomes the target — which also hides their "Configure Target" empty state.
-   */
-  autoSelectStrategy?: "recent" | "first";
   serversWithViews?: Set<string>; // Set of server names that have saved views
   hasMessages?: boolean; // Reserved for callers that still compute this
   className?: string;
@@ -128,7 +121,6 @@ export function ActiveServerSelector({
   includeXaaServers = false,
   showOnlyServersWithViews = false,
   autoSelectFilteredServer = true,
-  autoSelectStrategy = "recent",
   serversWithViews,
   className,
 }: ActiveServerSelectorProps) {
@@ -138,6 +130,24 @@ export function ActiveServerSelector({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const hasNoServersWithViews =
     showOnlyServersWithViews && (serversWithViews?.size ?? 0) === 0;
+
+  // Helper function to check if a server uses OAuth
+  const isOAuthServer = (server: ServerWithName): boolean => {
+    const isHttpServer = "url" in server.config;
+    if (!isHttpServer) return false;
+    if (server.useOAuth === false) return false;
+
+    // Check if server is configured for OAuth, has OAuth state, or is mid-flow.
+    return !!(
+      server.useOAuth === true ||
+      server.oauthTokens ||
+      hasOAuthConfig(server.name) ||
+      server.connectionStatus === "oauth-flow"
+    );
+  };
+
+  const isXaaServer = (server: ServerWithName): boolean =>
+    "url" in server.config && server.useXaa === true;
 
   const servers = Object.entries(serverConfigs).filter(([name, server]) => {
     // View-only dismissals from this header (OAuth / XAA debugger x button).
@@ -152,11 +162,8 @@ export function ActiveServerSelector({
     return true;
   });
 
-  // Auto-select first available server if current selection is not in the list.
-  // useLayoutEffect (not useEffect) so the selection is corrected BEFORE paint —
-  // otherwise the debugger tabs flash their "Configure Target" empty state for a
-  // frame while an unselected ("none") state is briefly painted.
-  useLayoutEffect(() => {
+  // Auto-select first available server if current selection is not in the list
+  useEffect(() => {
     if (
       !autoSelectFilteredServer ||
       isMultiSelectEnabled ||
@@ -169,18 +176,13 @@ export function ActiveServerSelector({
     const isCurrentSelectionValid = serverNames.includes(selectedServer);
 
     if (!isCurrentSelectionValid && servers.length > 0) {
-      if (autoSelectStrategy === "first") {
-        // Leftmost as rendered (insertion order) — deterministic target pick.
-        onServerChange(servers[0][0]);
-      } else {
-        // Pick the most recently connected server instead of the first by insertion order
-        const sorted = [...servers].sort(
-          ([, a], [, b]) =>
-            new Date(b.lastConnectionTime).getTime() -
-            new Date(a.lastConnectionTime).getTime(),
-        );
-        onServerChange(sorted[0][0]);
-      }
+      // Pick the most recently connected server instead of the first by insertion order
+      const sorted = [...servers].sort(
+        ([, a], [, b]) =>
+          new Date(b.lastConnectionTime).getTime() -
+          new Date(a.lastConnectionTime).getTime(),
+      );
+      onServerChange(sorted[0][0]);
     } else if (!isCurrentSelectionValid && selectedServer !== "none") {
       // No available servers and selection is stale — clear it
       onServerChange("none");
@@ -192,7 +194,6 @@ export function ActiveServerSelector({
     onServerChange,
     hasNoServersWithViews,
     autoSelectFilteredServer,
-    autoSelectStrategy,
   ]);
 
   const handleServerClick = (name: string) => {
