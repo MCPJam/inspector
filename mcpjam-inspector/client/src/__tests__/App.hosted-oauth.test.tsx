@@ -56,6 +56,7 @@ const {
   mockOrganizationsTab,
   mockPosthogCapture,
   mockPosthogState,
+  mockTrack,
   mockChatboxesTab,
   mockGetGuestBearerToken,
   mockUseAuth,
@@ -76,6 +77,7 @@ const {
     isLoadingRemoteProjects: false,
     areServersHydrated: true,
     projectServers: {},
+    displayServerConfigs: {},
     connectedOrConnectingServerConfigs: {},
     selectedMCPConfig: null,
     handleConnect: vi.fn(),
@@ -128,9 +130,11 @@ const {
     mockOAuthFlowTabState: {
       shouldThrow: false,
       error: new Error("OAuth debugger failed"),
+      lastProps: undefined as unknown,
     },
     mockOrganizationsTab: vi.fn(() => <div />),
     mockPosthogCapture: vi.fn(),
+    mockTrack: vi.fn(),
     mockPosthogState: {
       featureFlags: {
         hasLoadedFlags: true,
@@ -231,6 +235,10 @@ vi.mock("posthog-js/react", () => ({
   }),
   useFeatureFlagEnabled: (...args: unknown[]) =>
     mockUseFeatureFlagEnabled(...args),
+}));
+
+vi.mock("@/lib/analytics", () => ({
+  track: mockTrack,
 }));
 
 vi.mock("sonner", () => ({
@@ -343,9 +351,6 @@ vi.mock("../components/EvalsTab", () => ({
 vi.mock("../components/CiEvalsTab", () => ({
   CiEvalsTab: () => <div data-testid="ci-evals-tab">CI Evals Tab</div>,
 }));
-vi.mock("../components/ViewsTab", () => ({
-  ViewsTab: () => <div />,
-}));
 vi.mock("../components/ChatboxesTab", () => ({
   ChatboxesTab: (props: unknown) => mockChatboxesTab(props),
 }));
@@ -362,7 +367,8 @@ vi.mock("../components/AuthTab", () => ({
   AuthTab: () => <div />,
 }));
 vi.mock("../components/OAuthFlowTab", () => ({
-  OAuthFlowTab: () => {
+  OAuthFlowTab: (props: unknown) => {
+    mockOAuthFlowTabState.lastProps = props;
     if (mockOAuthFlowTabState.shouldThrow) {
       throw mockOAuthFlowTabState.error;
     }
@@ -521,7 +527,9 @@ describe("App hosted OAuth callback handling", () => {
     mockMCPSidebar.mockImplementation(() => <div data-testid="mcp-sidebar" />);
     mockOAuthFlowTabState.shouldThrow = false;
     mockOAuthFlowTabState.error = new Error("OAuth debugger failed");
+    mockOAuthFlowTabState.lastProps = undefined;
     mockPosthogCapture.mockReset();
+    mockTrack.mockReset();
     mockPlaygroundTabMounts.mockReset();
     mockPlaygroundTabProps.mockReset();
     mockCompleteHostedOAuthCallback.mockImplementation(
@@ -621,15 +629,13 @@ describe("App hosted OAuth callback handling", () => {
     expect(
       await screen.findByText("OAuth Debugger crashed")
     ).toBeInTheDocument();
-    expect(mockPosthogCapture).toHaveBeenCalledWith(
+    expect(mockTrack).toHaveBeenCalledWith(
       "oauth_debugger_error_boundary",
       expect.objectContaining({
         message: expect.stringContaining("[redacted]"),
       })
     );
-    expect(JSON.stringify(mockPosthogCapture.mock.calls)).not.toContain(
-      "super-secret"
-    );
+    expect(JSON.stringify(mockTrack.mock.calls)).not.toContain("super-secret");
 
     fireEvent.click(screen.getByRole("button", { name: /copy details/i }));
 
@@ -2779,6 +2785,57 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
+  it("keeps host template deep links in place while auth is loading", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/hosts?template=slack");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = false;
+    mockConvexAuthState.isLoading = true;
+
+    render(<App />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(window.location.pathname).toBe("/hosts");
+    expect(window.location.search).toBe("?template=slack");
+    expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+  });
+
+  it("syncs direct host URLs into the global previewed host selection", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeProjectId: "project_local",
+      projects: {
+        project_local: {
+          id: "project_local",
+          name: "Project",
+          servers: {},
+          sharedProjectId: "project_shared",
+        },
+      },
+    }));
+    localStorage.setItem(
+      "mcp-previewed-host-id",
+      JSON.stringify({ project_shared: "host-claude" })
+    );
+    window.history.replaceState({}, "", "/hosts/host-slack");
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem("mcp-previewed-host-id") ?? "{}"))
+        .toEqual({
+          project_shared: "host-slack",
+        });
+    });
+    expect(screen.getByTestId("hosts-tab")).toBeInTheDocument();
+  });
+
   it("redirects xaa-flow to home when the xaa flag is disabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
@@ -2888,6 +2945,7 @@ describe("App hosted OAuth callback handling", () => {
       },
     };
     appStateMock.projectServers = currentProjectServers;
+    appStateMock.displayServerConfigs = currentProjectServers;
     appStateMock.appState.servers = {
       ...currentProjectServers,
       "other-project-oauth": {
@@ -2921,6 +2979,10 @@ describe("App hosted OAuth callback handling", () => {
     expect(latestProps.activeServerSelectorProps?.serverConfigs).toBe(
       currentProjectServers
     );
+    expect(
+      (mockOAuthFlowTabState.lastProps as { serverConfigs?: unknown })
+        .serverConfigs
+    ).toBe(currentProjectServers);
   });
 
   it("leaves the header server selector unfiltered outside the OAuth Debugger tab", async () => {

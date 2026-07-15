@@ -11,6 +11,8 @@ import {
 } from "@mcpjam/sdk/browser";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
+import { tryResolveProjectServer } from "@/lib/apis/web/context";
+import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 
 type OAuthRegistrationStrategy =
   | RegistrationStrategy2025_03_26
@@ -27,6 +29,22 @@ export interface InspectorOAuthStateMachineConfig {
   serverName: string;
   customScopes?: string;
   customHeaders?: Record<string, string>;
+  /**
+   * Credentials the user configured on the OAuth test profile ("Configure
+   * Server to Test" → Client credentials). Secrets are never written to
+   * localStorage, so they can only reach the state machine through here —
+   * the stored `mcp-client-*` record is a clientId-only fallback. An explicit
+   * secret takes precedence over the Convex-backed fetch below.
+   */
+  preregisteredClientId?: string;
+  preregisteredClientSecret?: string;
+  /**
+   * Whether a client secret is stored in Convex for this server. Since #2758
+   * secrets no longer live in browser storage, so the debugger must fetch the
+   * secret at token-exchange time (mirroring the connect flow's
+   * `MCPOAuthProvider.loadStoredClientSecret`).
+   */
+  hasClientSecret?: boolean;
 }
 
 function normalizeResponseHeaders(
@@ -88,6 +106,7 @@ export function createDebugRequestExecutor(): OAuthRequestExecutor {
           ...request.headers,
         },
         body: serializeProxyBody(request.body, request.headers),
+        ...(request.redirect ? { redirect: request.redirect } : {}),
       }),
     });
 
@@ -141,17 +160,91 @@ export function loadDebugPreregisteredCredentials({
   }
 }
 
+/**
+ * Resolve the Convex-backed client secret for the debugger flow. When the
+ * server has a stored secret, fetch it lazily and memoize the promise so a
+ * single flow (initial exchange + any fallback retry) fetches once. The
+ * secret is only ever held in machine memory — never written to localStorage —
+ * preserving the #2758 "no secrets in browser storage" guarantee. An explicit
+ * profile secret short-circuits this resolver at the call site.
+ */
+function createHostedClientSecretResolver({
+  serverName,
+  hasClientSecret,
+}: Pick<
+  InspectorOAuthStateMachineConfig,
+  "serverName" | "hasClientSecret"
+>): () => Promise<string | undefined> {
+  let pending: Promise<string | undefined> | undefined;
+
+  return () => {
+    if (!hasClientSecret) {
+      return Promise.resolve(undefined);
+    }
+    if (!pending) {
+      const resolved = tryResolveProjectServer(serverName);
+      if (!resolved) {
+        return Promise.resolve(undefined);
+      }
+      pending = fetchOAuthClientSecret({
+        projectId: resolved.projectId,
+        serverId: resolved.serverId,
+      })
+        .then((result) => result.clientSecret)
+        .catch(() => {
+          // Degrade to an unauthenticated token request rather than aborting
+          // the flow; the resulting 401 stays visible in the HTTP history.
+          // Clear the memo so a later retry can re-attempt the fetch.
+          pending = undefined;
+          return undefined;
+        });
+    }
+    return pending;
+  };
+}
+
 export function createInspectorOAuthStateMachine(
   config: InspectorOAuthStateMachineConfig,
 ) {
+  const {
+    preregisteredClientId,
+    preregisteredClientSecret,
+    hasClientSecret,
+    ...machineConfig
+  } = config;
+  const explicitClientSecret = preregisteredClientSecret?.trim() || undefined;
+  const resolveHostedClientSecret = createHostedClientSecretResolver(config);
+
   return createOAuthStateMachine({
-    ...config,
+    ...machineConfig,
+    hasClientSecret: Boolean(explicitClientSecret) || Boolean(hasClientSecret),
     redirectUrl: getDebugRedirectUrl(),
     requestExecutor: createDebugRequestExecutor(),
     scheduleAutoAdvance: (fn, delayMs) => {
       window.setTimeout(fn, delayMs);
     },
-    loadPreregisteredCredentials: loadDebugPreregisteredCredentials,
+    // Profile credentials are authoritative when configured: the stored
+    // `mcp-client-*` record can hold a stale DCR-registered client id, and it
+    // never holds a secret — without the explicit secret the machine resolves
+    // the token auth method as "none" and the exchange 401s (#3029). Pairing
+    // a profile secret with a stored client id would authenticate as the
+    // wrong client, so the stored record is only consulted when the profile
+    // has no credentials at all. The Convex-backed secret, by contrast, may
+    // pair with either id source — it belongs to the synced server record,
+    // mirroring the Connect flow's stored-info + fetched-secret merge.
+    loadPreregisteredCredentials: async (input) => {
+      if (preregisteredClientId || explicitClientSecret) {
+        return {
+          clientId: preregisteredClientId,
+          clientSecret:
+            explicitClientSecret ?? (await resolveHostedClientSecret()),
+        };
+      }
+      return {
+        ...loadDebugPreregisteredCredentials(input),
+        clientSecret: await resolveHostedClientSecret(),
+      };
+    },
     dynamicRegistration: getBrowserDebugDynamicRegistrationMetadata(
       config.protocolVersion,
     ),

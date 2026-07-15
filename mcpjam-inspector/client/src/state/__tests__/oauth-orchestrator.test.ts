@@ -19,6 +19,7 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
 }));
 
 import { ensureAuthorizedForReconnect } from "../oauth-orchestrator";
+import { deserializeServersFromConvex } from "@/lib/project-serialization";
 
 describe("ensureAuthorizedForReconnect", () => {
   const createServer = (
@@ -171,6 +172,77 @@ describe("ensureAuthorizedForReconnect", () => {
     );
     expect(clearOAuthDataMock.mock.invocationCallOrder[0]).toBeLessThan(
       initiateOAuthMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("reconnects with the registration strategy persisted on the Convex catalog entry", async () => {
+    initiateOAuthMock.mockResolvedValue({ success: true });
+
+    // Simulate the real hosted pipeline: the server the reconnect handler
+    // receives is the project-catalog entry deserialized from the flat
+    // Convex servers row — not the in-memory entry from the original save.
+    const [server] = Object.values(
+      deserializeServersFromConvex([
+        {
+          name: "asana",
+          enabled: true,
+          transportType: "http",
+          url: "https://mcp.asana.com/sse",
+          useOAuth: true,
+          oauthScopes: ["default", "profile"],
+          clientId: "prereg-client",
+          oauthProtocolVersion: "2025-06-18",
+          oauthRegistrationStrategy: "preregistered",
+        },
+      ]),
+    );
+
+    await ensureAuthorizedForReconnect(
+      { ...server, oauthTokens: { access_token: "t" } } as ServerWithName,
+      { allowInteractiveOAuthFlow: true },
+    );
+
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: "prereg-client",
+        protocolMode: "2025-06-18",
+        protocolVersion: "2025-06-18",
+        registrationMode: "preregistered",
+        registrationStrategy: "preregistered",
+      }),
+    );
+  });
+
+  it("reconnects with the canonical registrationMode over the legacy concrete strategy", async () => {
+    initiateOAuthMock.mockResolvedValue({ success: true });
+
+    // A row saved by the unified pipeline: canonical "auto" plus the
+    // rollback-compat concrete on the legacy column. Reconnect must run in
+    // "auto" mode (re-resolve from current server metadata) — pinning the
+    // concrete would mean a persisted "auto" never dynamically resolves.
+    const [server] = Object.values(
+      deserializeServersFromConvex([
+        {
+          name: "asana",
+          enabled: true,
+          transportType: "http",
+          url: "https://mcp.asana.com/sse",
+          useOAuth: true,
+          registrationMode: "auto",
+          oauthRegistrationStrategy: "dcr",
+        },
+      ]),
+    );
+
+    await ensureAuthorizedForReconnect(
+      { ...server, oauthTokens: { access_token: "t" } } as ServerWithName,
+      { allowInteractiveOAuthFlow: true },
+    );
+
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        registrationMode: "auto",
+      }),
     );
   });
 

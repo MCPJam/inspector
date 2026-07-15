@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import {
+  DEFAULT_COMPARE_HOST_IDS,
   parseHostsParam,
   reconcileHostCompareSelection,
   resolveInitialHostCompareSelection,
@@ -36,7 +37,7 @@ describe("host-compare-selection", () => {
     ).toEqual(["b", "c"]);
   });
 
-  it("resolveInitialHostCompareSelection falls back to all live hosts", () => {
+  it("resolveInitialHostCompareSelection falls back to all live hosts when the default presets aren't known", () => {
     expect(
       resolveInitialHostCompareSelection({
         projectId: "proj_1",
@@ -57,6 +58,12 @@ describe("host-compare-selection", () => {
     expect(parseHostsParam("")).toBeNull();
     expect(parseHostsParam(null)).toBeNull();
     expect(parseHostsParam(undefined)).toBeNull();
+  });
+
+  it("parseHostsParam maps preset permalink aliases to current catalog ids", () => {
+    expect(parseHostsParam("preset:slackbot,preset:slack-bot")).toEqual([
+      "preset:slack",
+    ]);
   });
 
   it("resolveInitialHostCompareSelection prefers urlSelection over storage", () => {
@@ -97,6 +104,18 @@ describe("host-compare-selection", () => {
     ).toEqual(["a", "preset:claude"]);
   });
 
+  it("resolveInitialHostCompareSelection keeps aliased preset ids from the URL", () => {
+    expect(
+      resolveInitialHostCompareSelection({
+        projectId: "proj_1",
+        liveHostIds: [],
+        knownHostIds: ["preset:slack"],
+        previousSelection: [],
+        urlSelection: parseHostsParam("preset:slackbot"),
+      }),
+    ).toEqual(["preset:slack"]);
+  });
+
   it("resolveInitialHostCompareSelection resolves a preset selection with zero live hosts", () => {
     writeHostCompareSelection("proj_1", ["preset:chatgpt"]);
     expect(
@@ -109,14 +128,41 @@ describe("host-compare-selection", () => {
     ).toEqual(["preset:chatgpt"]);
   });
 
-  it("resolveInitialHostCompareSelection default stays real-hosts-only (presets opt-in)", () => {
+  it("resolveInitialHostCompareSelection falls back to live hosts when default presets are missing", () => {
     expect(
       resolveInitialHostCompareSelection({
         projectId: "proj_1",
         liveHostIds: ["a", "b"],
-        knownHostIds: ["a", "b", "preset:claude", "preset:chatgpt"],
+        knownHostIds: ["a", "b", "preset:codex", "preset:cursor"],
         previousSelection: [],
       }),
     ).toEqual(["a", "b"]);
+  });
+
+  it("resolveInitialHostCompareSelection defaults to ChatGPT + Claude over live hosts on a fresh visit", () => {
+    expect(
+      resolveInitialHostCompareSelection({
+        projectId: "proj_1",
+        liveHostIds: ["a", "b"],
+        knownHostIds: [
+          "a",
+          "b",
+          ...DEFAULT_COMPARE_HOST_IDS,
+          "preset:codex",
+        ],
+        previousSelection: [],
+      }),
+    ).toEqual([...DEFAULT_COMPARE_HOST_IDS]);
+  });
+
+  it("resolveInitialHostCompareSelection defaults to ChatGPT + Claude with zero live hosts", () => {
+    expect(
+      resolveInitialHostCompareSelection({
+        projectId: "proj_1",
+        liveHostIds: [],
+        knownHostIds: [...DEFAULT_COMPARE_HOST_IDS, "preset:codex"],
+        previousSelection: [],
+      }),
+    ).toEqual([...DEFAULT_COMPARE_HOST_IDS]);
   });
 });

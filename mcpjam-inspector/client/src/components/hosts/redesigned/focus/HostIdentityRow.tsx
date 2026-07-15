@@ -1,4 +1,5 @@
 import { Input } from "@mcpjam/design-system/input";
+import type React from "react";
 import { cn } from "@/lib/utils";
 
 export interface HostIdentityRowProps {
@@ -6,6 +7,7 @@ export interface HostIdentityRowProps {
   onHostDisplayNameChange: (next: string) => void;
   hasNameIssue: boolean;
   logoSrc?: string | null;
+  action?: React.ReactNode;
   className?: string;
 }
 
@@ -14,6 +16,7 @@ export function HostIdentityRow({
   onHostDisplayNameChange,
   hasNameIssue,
   logoSrc,
+  action,
   className,
 }: HostIdentityRowProps) {
   return (
@@ -28,13 +31,14 @@ export function HostIdentityRow({
       <Input
         value={hostDisplayName}
         onChange={(event) => onHostDisplayNameChange(event.target.value)}
-        placeholder="Host name"
-        aria-label="Host name"
+        placeholder="Client name"
+        aria-label="Client name"
         className={cn(
           "h-8 min-w-0 flex-1 text-[13px]",
           hasNameIssue && "border-amber-500"
         )}
       />
+      {action ? <div className="shrink-0">{action}</div> : null}
     </div>
   );
 }

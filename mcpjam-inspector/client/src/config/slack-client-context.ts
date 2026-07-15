@@ -1,8 +1,8 @@
 /**
- * Slack host context.
+ * Slackbot host context.
  *
  * `getSlackStyleVariables` lives in the SDK
- * (`@mcpjam/sdk/host-config/templates`) so the Slack host-template seed can
+ * (`@mcpjam/sdk/host-config/templates`) so the Slackbot host-template seed can
  * run in Node; it is re-exported here for the browser host-style registry.
  */
 

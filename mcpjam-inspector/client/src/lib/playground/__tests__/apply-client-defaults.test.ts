@@ -151,7 +151,7 @@ describe("applyHostConfigToPlayground", () => {
     );
   });
 
-  it("leaves the model picker alone when neither the configured id nor the template fallback resolves (BYO host, MCPJam template fallback)", () => {
+  it("leaves the model alone for unknown host styles with no catalog default", () => {
     applyHostConfigToPlayground(
       {
         hostStyle: "some-byo-host-style",
@@ -163,8 +163,6 @@ describe("applyHostConfigToPlayground", () => {
       setters
     );
 
-    // BYO style → seedFromHostTemplate falls through to MCPJam, whose
-    // modelId is empty → resolver returns undefined → no save.
     expect(replaceLeadModelIdSpy).not.toHaveBeenCalled();
   });
 

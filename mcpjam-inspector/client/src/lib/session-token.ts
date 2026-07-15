@@ -20,7 +20,7 @@ import {
 } from "@/lib/apis/web/context";
 import { getConvexSiteUrl } from "@/lib/convex-site-url";
 import { forceRefreshGuestSession } from "@/lib/guest-session";
-import posthog from "posthog-js";
+import { track } from "@/lib/analytics";
 
 // Extend window type for the injected token
 declare global {
@@ -273,7 +273,9 @@ function shouldAttachSessionHeaders(input: RequestInfo | URL): boolean {
 
   const parsed = resolveRequestUrl(input);
   if (parsed) {
-    return isLoopbackHostname(parsed.hostname) && parsed.pathname.startsWith("/api/");
+    return (
+      isLoopbackHostname(parsed.hostname) && parsed.pathname.startsWith("/api/")
+    );
   }
   return typeof input === "string" && input.startsWith("/api/");
 }
@@ -293,6 +295,13 @@ function shouldAttachSessionHeaders(input: RequestInfo | URL): boolean {
 // crosses to a foreign origin.
 const HOSTED_AUTH_PATH_PREFIXES = [
   "/api/web/",
+  // The first-party UI calling its own public harness endpoint
+  // (`/api/v1/harness/:id/builtin-tools`) to list a harness's native tools.
+  // `/api/v1/*` is bearer-gated (bearerAuthMiddleware reads `Authorization`),
+  // and the UI doesn't otherwise call the public API, so this is the only v1
+  // path that needs the user's bearer attached. Scoped to `/harness/` — not all
+  // of `/api/v1/` — so unrelated public-API routes don't get the UI bearer.
+  "/api/v1/harness/",
   // Local resolver path that calls Convex /web/authorize-batch-local.
   "/api/mcp/connect",
   "/api/mcp/servers/reconnect",
@@ -301,6 +310,18 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // equivalents are already covered by the `/api/web/` prefix above).
   "/api/mcp/xaa/proxy/token",
   "/api/mcp/xaa/negative-tests",
+  // Local XAA mint paths for the "use hosted issuer" opt-in: the local
+  // server forwards these to app.mcpjam.com with the caller's bearer.
+  // Attaching via authFetch (rather than injecting the header manually) keeps
+  // the on-401 bearer-refresh-and-retry so a stale/expired hosted token
+  // self-heals instead of stranding the flow until a page refresh. Harmless
+  // in pure-local mode: the local mint ignores the header.
+  "/api/mcp/xaa/authenticate",
+  "/api/mcp/xaa/token-exchange",
+  // The standards-track RFC 8693 grant the debugger drives on the happy path;
+  // needs the bearer for the hosted-issuer forward (harmless locally).
+  // Boundary matching keeps this from also matching /token-exchange.
+  "/api/mcp/xaa/token",
   // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
   "/web/oauth/",
 ];
@@ -467,7 +488,8 @@ export async function authFetch(
   const refreshedGuestToken = await forceRefreshGuestSession();
   if (!refreshedGuestToken) {
     if (surface) {
-      posthog.capture("guest_refresh_failure", {
+      track("guest_refresh_failure", {
+        location: "auth_fetch",
         surface,
         auth_mode: "guest",
         status: "failure",
@@ -478,7 +500,8 @@ export async function authFetch(
   }
 
   if (surface) {
-    posthog.capture("guest_refresh_success", {
+    track("guest_refresh_success", {
+      location: "auth_fetch",
       surface,
       auth_mode: "guest",
       status: "success",
@@ -488,7 +511,7 @@ export async function authFetch(
   const retryInit = buildAuthFetchInit(
     input,
     init,
-    `Bearer ${refreshedGuestToken}`,
+    `Bearer ${refreshedGuestToken}`
   );
   return fetch(input, retryInit);
 }

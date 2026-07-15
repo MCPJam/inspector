@@ -237,25 +237,30 @@ export interface PlatformEvalCaseModel {
   provider?: string;
 }
 
-export interface PlatformEvalCaseTurn {
-  prompt: string;
-  expectedToolCalls: PlatformExpectedToolCall[];
-  expectedOutput?: string;
+/**
+ * One authored test step — the unified test model (mirrors the inspector's
+ * `shared/steps.ts` `TestStep`). Typed permissively at this boundary
+ * (discriminated on `kind`); per-kind detail fields ride along.
+ *
+ * REPLACES the old per-case `kind` / `prompt` / `turns` / `expectedToolCalls`
+ * / `renderCheck` projection (Phase 2.5 clean break).
+ */
+export interface PlatformEvalStep {
+  id: string;
+  kind: "prompt" | "toolCall" | "interact" | "assert";
+  [field: string]: unknown;
 }
 
 /**
- * A single eval test case. `kind: 'render-check'` cases carry `renderCheck`
- * instead of a prompt. Public-model shape; the route maps to the internal case.
+ * A single eval test case. The case body is an ordered `steps` array
+ * (prompt / toolCall / interact / assert). Public-model shape; the route maps
+ * to/from the internal case.
  */
 export interface PlatformEvalCase {
   id: string;
   title: string;
-  kind: "prompt" | "render-check";
-  /** First-turn prompt (← internal query); null for render-check cases. */
-  prompt: string | null;
-  /** Multi-turn sequence, when present. */
-  turns?: PlatformEvalCaseTurn[];
-  expectedToolCalls: PlatformExpectedToolCall[];
+  /** Ordered test steps that define the case. */
+  steps: PlatformEvalStep[];
   expectedOutput?: string;
   /** Iterations to run per eval run (← internal runs). */
   iterations: number;
@@ -265,12 +270,6 @@ export interface PlatformEvalCase {
   models: PlatformEvalCaseModel[];
   matchOptions?: PublicMatchOptions;
   checks?: PublicCheckOverride;
-  renderCheck?: {
-    server: string;
-    tool: string;
-    arguments?: Record<string, unknown>;
-    renderTimeoutMs?: number;
-  };
   createdAt: number | null;
   updatedAt: number | null;
 }
@@ -309,6 +308,60 @@ export interface PlatformHostDeleted {
   deleted: true;
 }
 
+// ── Computer environments ────────────────────────────────────────────────────
+
+export interface PlatformEnvironmentBuild {
+  id: string;
+  status: "queued" | "building" | "ready" | "failed";
+  provider: "e2b" | "stub";
+  e2bBuildId?: string;
+  baseImageDigests: string[];
+  logPreview?: string;
+  error?: string;
+  createdAt: number;
+  startedAt?: number;
+  finishedAt?: number;
+}
+
+/** A project's custom Computer image (Dockerfile + its latest build). The list
+ * and detail routes return the same shape. */
+export interface PlatformEnvironment {
+  id: string;
+  projectId: string;
+  name: string;
+  dockerfile: string;
+  contentHash: string;
+  sharing: "user" | "project";
+  isOwner: boolean;
+  currentBuild: PlatformEnvironmentBuild | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PlatformEnvironmentDeleted {
+  id: string;
+  deleted: true;
+}
+
+/** `POST …/build` is async (202): the build runs in the background — poll the
+ * builds list for status. */
+export interface PlatformEnvironmentBuildStarted {
+  id: string;
+  buildId: string;
+  reused: boolean;
+}
+
+export interface PlatformComputerAttached {
+  environmentId: string;
+  computerId: string;
+  status: string;
+}
+
+export interface PlatformComputerReset {
+  projectId: string;
+  reset: boolean;
+}
+
 /** `200` response of `POST /eval-suites/{id}/cases/generate`. */
 export interface PlatformEvalCasesGenerated {
   /** The backend LLM that authored the cases — NOT the case execution model. */
@@ -337,6 +390,36 @@ export interface PlatformEvalIteration {
   actualToolCalls: Array<Record<string, unknown>>;
   expectedToolCalls: Array<Record<string, unknown>>;
   error: string | null;
+}
+
+/** Public-safe evidence for one eval step (resolved URLs, no blob ids). */
+export interface PlatformEvalStepEvidence {
+  /** Widget→host tool calls the interaction triggered. */
+  toolCalls?: Array<{ name: string; args: unknown; ok: boolean; error?: string }>;
+  /** Resolved screenshot URL for the step's render/interaction. */
+  screenshotUrl?: string;
+  /** Resolved iteration replay `.webm` URL (same on every step of the run). */
+  videoUrl?: string;
+  /** Playback offset of this step within the replay video, when known. */
+  videoOffsetMs?: number;
+  /** "scripted" (authored) vs "computer_use" (model-driven) interaction. */
+  source?: "computer_use" | "scripted";
+  /** Human-readable interaction target (e.g. the button label). */
+  locatorLabel?: string;
+}
+
+/**
+ * One row per authored test step, in author order — the public mirror of the
+ * fail-fast step engine. `status` is the per-step verdict; `evidence` is present
+ * only when the step produced a screenshot / video / widget tool call.
+ */
+export interface PlatformEvalStepResult {
+  stepId: string;
+  stepIndex: number;
+  kind: "prompt" | "toolCall" | "interact" | "assert";
+  status: "ok" | "fail" | "skipped" | "pending";
+  reason: string | null;
+  evidence?: PlatformEvalStepEvidence;
 }
 
 /**

@@ -107,7 +107,11 @@ function buildHandle(configJson: Record<string, unknown>): RuntimeHandle {
 async function findParentMessage(
   handle: RuntimeHandle,
   predicate: (message: CapturedMessage) => boolean,
-  timeoutMs = 1_000,
+  // Generous budget: returns as soon as the message lands (typically <50ms).
+  // The high ceiling only matters under heavy CI contention, where the JSDOM
+  // FileReader onload callback that posts the message can be starved past a
+  // tighter window. Must stay below the per-test vitest timeout set on callers.
+  timeoutMs = 5_000,
 ): Promise<CapturedMessage | undefined> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -276,7 +280,10 @@ describe("compat runtime — F1: Apps SDK only", () => {
       result: { fileId: "file_abc" },
     });
     await expect(uploadPromise).resolves.toEqual({ fileId: "file_abc" });
-  });
+    // Generous per-test timeout: the FileReader onload that posts the upload
+    // message can be starved under concurrent CI load, so allow the poll above
+    // (≤5s) to win over vitest's default 5s cutoff.
+  }, 20_000);
 
   it("window.openai.requestCheckout emits openai/requestCheckout JSON-RPC notification", () => {
     h.completeInitHandshake();

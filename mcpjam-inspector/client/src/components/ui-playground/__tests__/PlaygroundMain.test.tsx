@@ -28,7 +28,11 @@ const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
 const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 
 // Mock lucide-react icons
-vi.mock("lucide-react", () => ({
+vi.mock("lucide-react", async (importOriginal) => ({
+  // Spread the real icon set so a newly-rendered icon (e.g. Columns2) never
+  // breaks the whole suite; the explicit stubs below keep the data-testids the
+  // assertions rely on.
+  ...(await importOriginal<typeof import("lucide-react")>()),
   ArrowDown: () => <span data-testid="icon-arrow-down" />,
   ArrowUp: () => <span data-testid="icon-arrow-up" />,
   Braces: () => <span data-testid="icon-braces" />,
@@ -133,6 +137,7 @@ vi.mock("posthog-js/react", () => ({
   }),
   useFeatureFlagEnabled: () => false,
 }));
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 // Mock PosthogUtils
 vi.mock("@/lib/PosthogUtils", () => ({
@@ -578,6 +583,7 @@ describe("PlaygroundMain", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     capturedChatSessionOptions = null;
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
     mockGetChatHistoryDetail.mockReset();
@@ -1028,6 +1034,43 @@ describe("PlaygroundMain", () => {
           ),
         ).toBe(true);
       });
+    });
+
+    it("passes the previewed host id into multi-model card runtime context", () => {
+      localStorage.setItem(
+        "mcp-previewed-host-id",
+        JSON.stringify({ "project-1": "host-claude-code" }),
+      );
+      mockUseChatSession.availableModels = [
+        {
+          id: "openai/gpt-5-mini",
+          name: "GPT-5 Mini",
+          provider: "openai",
+        },
+        {
+          id: "anthropic/claude-haiku-4.5",
+          name: "Claude Haiku 4.5",
+          provider: "anthropic",
+        },
+      ];
+      mockUseChatSession.selectedModelIds = [
+        "openai/gpt-5-mini",
+        "anthropic/claude-haiku-4.5",
+      ];
+      mockUseChatSession.multiModelEnabled = true;
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          activeProjectId="project-1"
+          enableMultiModelChat={true}
+        />,
+      );
+
+      expect(mockMultiModelPlaygroundCard.mock.calls.length).toBeGreaterThan(0);
+      for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+        expect(props.hostedContext?.hostId).toBe("host-claude-code");
+      }
     });
 
     it("does not stop when Escape was already handled elsewhere", () => {

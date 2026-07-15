@@ -21,6 +21,10 @@ import {
   verifyAuthKitToken,
   AuthKitConfigError,
 } from "../../services/authkit-jwt.js";
+import {
+  resolveApiKeyReadiness,
+  ApiKeyReadinessError,
+} from "../../services/organizations.js";
 
 /**
  * `/api/web/api-keys/*` — WorkOS API Key management.
@@ -87,13 +91,12 @@ function getWorkOSRestKey(): string {
 
 interface SessionContext {
   userId: string;
-  organizationId?: string;
 }
 
 /**
  * Authenticate a key-management request by VERIFYING the WorkOS AuthKit access
  * token (signature, issuer, audience, exp/nbf) and returning only the trusted
- * `sub` / `org_id`.
+ * `sub`.
  *
  * These routes act on the caller's behalf using the server's admin
  * `WORKOS_API_KEY` and write Convex org bindings, so the token MUST be verified
@@ -123,7 +126,7 @@ async function resolveSessionContext(c: any): Promise<SessionContext> {
       "Invalid or expired session token",
     );
   }
-  return { userId: session.sub, organizationId: session.orgId };
+  return { userId: session.sub };
 }
 
 async function callWorkOS(
@@ -186,36 +189,51 @@ function mapWorkOSError(status: number, body: any, fallback: string): never {
 
 /**
  * WorkOS REQUIRES `organization_id` when minting a user API key (422
- * "Validation failed" without it). Org-scoped sessions carry the org in the
- * JWT's `org_id` claim; sessions signed in outside an organization context
- * don't, so fall back to the user's active WorkOS memberships. Which WorkOS
- * org hosts the key doesn't affect authorization — that's enforced by the
- * MCPJam org binding — so the first active membership is fine.
+ * "Validation failed" without it). The dialog already requires the caller to
+ * select the target MCPJam (Convex) organization for the key
+ * (`createSchema.organizationId` below) — that selection, not anything
+ * derived from the session JWT, is what authoritatively determines which
+ * WorkOS org the key gets minted into. Deriving it from the session instead
+ * (a JWT `org_id` claim, or "first active WorkOS membership") gets MORE
+ * ambiguous, not less, once a user can belong to several synced WorkOS orgs —
+ * it doesn't reflect which org the user actually intends to act as.
+ *
+ * So this resolves the WorkOS org id via the backend's readiness check,
+ * keyed on the request's own `organizationId` + the caller's resolved MCPJam
+ * user id. Throws `ApiKeyReadinessError` (403 not-a-member, 404 org-not-found)
+ * or `OrganizationNotReadyError` (sync still in flight) — the POST handler
+ * translates both.
  */
-async function resolveWorkosOrgId(session: SessionContext): Promise<string> {
-  if (session.organizationId) {
-    return session.organizationId;
+class OrganizationNotReadyError extends Error {
+  readonly reason?: string;
+  constructor(message: string, reason?: string) {
+    super(message);
+    this.name = "OrganizationNotReadyError";
+    this.reason = reason;
   }
-  const { status, body } = await callWorkOS(
-    "GET",
-    `/user_management/organization_memberships?user_id=${encodeURIComponent(
-      session.userId,
-    )}&statuses=active`,
+}
+
+async function resolveWorkosOrgId(
+  mcpjamOrganizationId: string,
+  mcpjamUserId: string,
+): Promise<string> {
+  const readiness = await resolveApiKeyReadiness(
+    mcpjamOrganizationId,
+    mcpjamUserId,
   );
-  if (status < 200 || status >= 300) {
-    mapWorkOSError(status, body, "Failed to resolve your organization");
-  }
-  const first = Array.isArray(body?.data) ? body.data[0] : undefined;
-  const orgId =
-    typeof first?.organization_id === "string" ? first.organization_id : null;
-  if (!orgId) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "Your account does not belong to a WorkOS organization, which is required to create API keys",
+  if (!readiness.ready || !readiness.workosOrganizationId) {
+    const messages: Record<string, string> = {
+      org_pending: "This organization is still being set up for API keys — please try again shortly.",
+      org_failed: "This organization couldn't be set up for API keys. Please try again or contact support.",
+      membership_pending: "Your access to this organization is still syncing — please try again shortly.",
+      membership_failed: "Your access to this organization couldn't be synced. Please try again or contact support.",
+    };
+    throw new OrganizationNotReadyError(
+      readiness.reason ? messages[readiness.reason] : "This organization isn't ready to create API keys yet.",
+      readiness.reason,
     );
   }
-  return orgId;
+  return readiness.workosOrganizationId;
 }
 
 /**
@@ -289,9 +307,32 @@ apiKeys.post("/", async (c) =>
       );
     }
 
+    let workosOrgId: string;
+    try {
+      workosOrgId = await resolveWorkosOrgId(organizationId, mcpjamUser._id);
+    } catch (error) {
+      if (error instanceof ApiKeyReadinessError) {
+        const code =
+          error.status === 403
+            ? ErrorCode.FORBIDDEN
+            : error.status === 400
+              ? ErrorCode.VALIDATION_ERROR
+              : ErrorCode.NOT_FOUND;
+        throw new WebRouteError(error.status, code, error.message);
+      }
+      if (error instanceof OrganizationNotReadyError) {
+        throw new WebRouteError(
+          409,
+          ErrorCode.VALIDATION_ERROR,
+          error.message,
+        );
+      }
+      throw error;
+    }
+
     const payload: Record<string, unknown> = {
       name,
-      organization_id: await resolveWorkosOrgId(session),
+      organization_id: workosOrgId,
     };
 
     const { status, body } = await callWorkOS(
@@ -394,28 +435,48 @@ apiKeys.post("/", async (c) =>
 apiKeys.get("/", async (c) =>
   handleRoute(c, async () => {
     const session = await resolveSessionContext(c);
-    const params = new URLSearchParams();
-    if (session.organizationId) {
-      params.set("organization_id", session.organizationId);
+    // Deliberately NOT filtered by `session.organizationId`: a key is now
+    // minted into whichever MCPJam org the caller selected in the dialog
+    // (see POST above), which can differ from the WorkOS org the session
+    // happens to be scoped to. Filtering here caused a minted key to vanish
+    // from this list (and become unrevokeable from the UI) whenever those
+    // two orgs didn't match. WorkOS keys are already user-scoped by this
+    // endpoint; the MCPJam-org boundary is enforced at USE time via the
+    // workosApiKeyBindings lookup in bearer-auth.ts, not at listing time.
+    //
+    // Unscoped-by-org means a user's keys can now span enough pages for
+    // WorkOS to paginate (`list_metadata.after`) — same page-walk pattern
+    // as `userOwnsApiKey` below, so a key on a later page doesn't silently
+    // disappear from Settings the same way the org filter used to hide one.
+    const items: any[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < 10; page++) {
+      const params = new URLSearchParams({ limit: "100" });
+      if (after) {
+        params.set("after", after);
+      }
+      const { status, body } = await callWorkOS(
+        "GET",
+        `/user_management/users/${encodeURIComponent(session.userId)}/api_keys?${params.toString()}`,
+      );
+      if (status < 200 || status >= 300) {
+        mapWorkOSError(status, body, "Failed to list API keys");
+      }
+      // WorkOS returns `{ data: [...] }` or `{ data: [...], list_metadata: ... }`.
+      const pageItems = Array.isArray(body?.data)
+        ? body.data
+        : Array.isArray(body)
+          ? body
+          : [];
+      items.push(...pageItems);
+      after =
+        typeof body?.list_metadata?.after === "string"
+          ? body.list_metadata.after
+          : null;
+      if (!after) {
+        break;
+      }
     }
-    const qs = params.toString();
-    const { status, body } = await callWorkOS(
-      "GET",
-      `/user_management/users/${encodeURIComponent(session.userId)}/api_keys${
-        qs ? `?${qs}` : ""
-      }`,
-    );
-
-    if (status < 200 || status >= 300) {
-      mapWorkOSError(status, body, "Failed to list API keys");
-    }
-
-    // WorkOS returns `{ data: [...] }` or `{ data: [...], list_metadata: ... }`.
-    const items = Array.isArray(body?.data)
-      ? body.data
-      : Array.isArray(body)
-        ? body
-        : [];
     return { items };
   }),
 );

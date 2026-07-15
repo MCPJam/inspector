@@ -42,12 +42,7 @@ import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-c
 import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
-import { usePostHog } from "posthog-js/react";
-import {
-  detectEnvironment,
-  detectPlatform,
-  standardEventProps,
-} from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { CreditTopupDialog } from "@/components/billing/CreditTopupDialog";
 import { TopupGatedErrorBox } from "@/components/billing/TopupGatedErrorBox";
 import { useCreditTopupReturnFlow } from "@/hooks/useCreditTopupReturnFlow";
@@ -99,6 +94,7 @@ import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
+import { gateMcpToolResultImageRenderingByModelVisibility } from "@/lib/client-config-v2";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import { ChatTraceViewModeHeaderBar } from "@/components/evals/trace-view-mode-tabs";
@@ -193,7 +189,17 @@ export function ChatTabV2({
   const appState = useSharedAppState();
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
     useJsonRpcPanelVisibility();
-  const posthog = usePostHog();
+  const effectiveMcpToolResultImageRendering = useMemo(
+    () =>
+      gateMcpToolResultImageRenderingByModelVisibility(
+        executionConfig?.mcpToolResultImageRendering,
+        executionConfig?.modelVisibleMcpToolResults
+      ),
+    [
+      executionConfig?.mcpToolResultImageRendering,
+      executionConfig?.modelVisibleMcpToolResults,
+    ]
+  );
 
   // Local state for ChatTabV2-specific features
   const [input, setInput] = useState("");
@@ -308,6 +314,7 @@ export function ChatTabV2({
       : null
   );
   const hostedChatboxId = hostedContext?.chatboxId;
+  const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
   const effectiveHostedProjectId = hostedContext?.projectId ?? convexProjectId;
   const modelConfigOrganizationId = hostedContext?.projectId
@@ -364,6 +371,7 @@ export function ChatTabV2({
     multiModelEnabled,
     setMultiModelEnabled,
     availableModels,
+    authHeaders,
     isAuthLoading,
     isSessionBootstrapComplete,
     systemPrompt,
@@ -1391,8 +1399,22 @@ export function ChatTabV2({
       setSelectedModelIds([String(selectedModel.id)]);
     }
 
-    startChatWithMessages(evalChatHandoff.messages);
+    const seedApplied = startChatWithMessages(evalChatHandoff.messages);
     appliedEvalChatHandoffIdRef.current = evalChatHandoff.id;
+
+    // A widget in the eval preview fired a `ui/message` follow-up: send it once
+    // the seeded conversation is applied, so the playground replies live just
+    // like chat would. Chained on the hydration promise to avoid sending into
+    // a not-yet-hydrated thread.
+    const pendingUserMessage = evalChatHandoff.pendingUserMessage;
+    if (pendingUserMessage) {
+      void seedApplied.then(() => {
+        sendMessage({
+          text: pendingUserMessage,
+          metadata: outgoingSenderMetadata,
+        });
+      });
+    }
 
     if (typeof handoffExec.systemPrompt === "string") {
       setSystemPrompt(handoffExec.systemPrompt);
@@ -1413,7 +1435,9 @@ export function ChatTabV2({
     evalChatHandoff,
     isSessionBootstrapComplete,
     onEvalChatHandoffConsumed,
+    outgoingSenderMetadata,
     selectedModel,
+    sendMessage,
     setMultiModelEnabled,
     setSelectedModel,
     setSelectedModelIds,
@@ -1468,12 +1492,10 @@ export function ChatTabV2({
 
   // PostHog tracking
   useEffect(() => {
-    posthog.capture("chat_tab_viewed", {
+    track("chat_tab_viewed", {
       location: "chat_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
-  }, [posthog]);
+  }, []);
 
   // Notify parent when messages change
   useEffect(() => {
@@ -1710,10 +1732,13 @@ export function ChatTabV2({
       // would carry an empty message into checkout.
       return;
     }
-    posthog.capture("credit_topup_cta_clicked", { source: "chat_banner" });
+    track("credit_topup_cta_clicked", {
+      location: "chat_tab",
+      source: "chat_banner",
+    });
     setPendingResendMessage(text);
     setIsTopupDialogOpen(true);
-  }, [posthog]);
+  }, []);
 
   const handleTopupDialogOpenChange = useCallback((open: boolean) => {
     setIsTopupDialogOpen(open);
@@ -1745,10 +1770,10 @@ export function ChatTabV2({
     messages: [],
   };
   const handleResetAllChats = useCallback(() => {
-    posthog.capture("chat_cleared", standardEventProps("chat_tab"));
+    track("chat_cleared", { location: "chat_tab" });
     baseResetChat();
     resetMultiModelSessions();
-  }, [baseResetChat, posthog, resetMultiModelSessions]);
+  }, [baseResetChat, resetMultiModelSessions]);
 
   const handleSingleModelChange = useCallback(
     (model: ModelDefinition) => {
@@ -1818,10 +1843,8 @@ export function ChatTabV2({
       request: Omit<BroadcastChatTurnRequest, "id">,
       captureProps?: Record<string, unknown>
     ) => {
-      posthog.capture("send_message", {
+      track("send_message", {
         location: "chat_tab",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         model_id: selectedModel?.id ?? null,
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
@@ -1837,7 +1860,6 @@ export function ChatTabV2({
     },
     [
       isMultiModelMode,
-      posthog,
       resolvedSelectedModels.length,
       selectedModel?.id,
       selectedModel?.name,
@@ -1884,10 +1906,8 @@ export function ChatTabV2({
   }, [error, handleOAuthRequired, onOAuthRequired]);
 
   const handleSignUp = () => {
-    posthog.capture("sign_up_button_clicked", {
+    track("sign_up_button_clicked", {
       location: "chat_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
     signUp();
   };
@@ -1935,10 +1955,8 @@ export function ChatTabV2({
           setMessages((prev) => [...prev, ...skillMessages]);
         }
 
-        posthog.capture("send_message", {
+        track("send_message", {
           location: "chat_tab",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
           model_id: selectedModel?.id ?? null,
           model_name: selectedModel?.name ?? null,
           model_provider: selectedModel?.provider ?? null,
@@ -1965,10 +1983,7 @@ export function ChatTabV2({
   };
 
   const handleStarterPrompt = async (prompt: string) => {
-    posthog.capture(
-      "chat_starter_prompt_clicked",
-      standardEventProps("chat_tab")
-    );
+    track("chat_starter_prompt_clicked", { location: "chat_tab" });
     if (composerDisabled || sendBlocked) {
       setInput(prompt);
       return;
@@ -1985,10 +2000,8 @@ export function ChatTabV2({
       });
       setModelContextQueue([]);
     } else {
-      posthog.capture("send_message", {
+      track("send_message", {
         location: "chat_tab",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         model_id: selectedModel?.id ?? null,
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
@@ -2056,6 +2069,19 @@ export function ChatTabV2({
     onReconnectServer,
     onDisconnectServer,
     onAddServer,
+    voiceInputContext: effectiveHostedProjectId
+      ? {
+          projectId: effectiveHostedProjectId,
+          ...(effectiveHostedSelectedServerIds.length > 0
+            ? { selectedServerIds: effectiveHostedSelectedServerIds }
+            : {}),
+          ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
+          ...(hostedAccessVersion !== undefined
+            ? { accessVersion: hostedAccessVersion }
+            : {}),
+        }
+      : undefined,
+    voiceInputAuthHeaders: authHeaders,
     chatboxAttachableServers:
       chatboxOptionalInventory && chatboxOptionalInventory.length > 0
         ? chatboxOptionalInventory
@@ -2335,11 +2361,14 @@ export function ChatTabV2({
                               executionConfig?.progressiveToolDiscovery,
                             respectToolVisibility:
                               executionConfig?.respectToolVisibility,
+                            modelVisibleMcpToolResults:
+                              executionConfig?.modelVisibleMcpToolResults,
+                            mcpToolResultImageRendering:
+                              effectiveMcpToolResultImageRendering,
                             // Same rationale: forward attached built-in
                             // tools so each per-model card resolves the
                             // same ToolSet the single-model path would.
-                            builtInToolIds:
-                              executionConfig?.builtInToolIds,
+                            builtInToolIds: executionConfig?.builtInToolIds,
                           }}
                           hostedContext={{
                             ...hostedContext,
@@ -2521,6 +2550,9 @@ export function ChatTabV2({
                           toolRenderOverrides={restoredToolRenderOverrides}
                           minimalMode={minimalMode}
                           reasoningDisplayMode={reasoningDisplayMode}
+                          mcpToolResultImageRendering={
+                            effectiveMcpToolResultImageRendering
+                          }
                           renderUserMessageActions={
                             chatSessionId && effectiveHostedProjectId
                               ? (message) => {

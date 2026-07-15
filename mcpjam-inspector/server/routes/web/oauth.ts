@@ -216,6 +216,9 @@ oauthWeb.post("/debug/proxy", async (c) => {
   try {
     const { url, method, body, headers } = await c.req.json();
     proxyUrl = url;
+    // Note: no `redirect` option here — this route is always httpsOnly, and the
+    // SDK proxy forces `redirect: "manual"` under httpsOnly, so passing one
+    // would be dead code. The mcp route (not httpsOnly) is where it applies.
     const result = await executeDebugOAuthProxy({
       url,
       method,

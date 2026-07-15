@@ -33,6 +33,8 @@ const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 // assertion below doesn't flag them). Keep this list tiny and explicit.
 const BODYLESS_WRITES = new Set([
   "post /projects/{projectId}/tunnels/{serverId}/close",
+  // Cancel is addressed entirely by the path runId; the body is empty.
+  "post /projects/{projectId}/eval-runs/{runId}/cancel",
 ]);
 
 // Pre-existing documentation gap: routes that the v1 router serves but that the

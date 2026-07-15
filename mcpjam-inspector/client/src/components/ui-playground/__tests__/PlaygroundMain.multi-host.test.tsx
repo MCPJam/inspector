@@ -33,7 +33,10 @@ vi.mock("framer-motion", async (importOriginal) => {
 
 const mockMultiModelPlaygroundCard = vi.fn();
 
-vi.mock("lucide-react", () => ({
+vi.mock("lucide-react", async (importOriginal) => ({
+  // Spread the real icon set so a newly-rendered icon (e.g. Columns2) never
+  // breaks the whole suite; the explicit stubs below stay as overrides.
+  ...(await importOriginal<typeof import("lucide-react")>()),
   ArrowDown: () => <span />,
   ArrowUp: () => <span />,
   Braces: () => <span />,
@@ -115,6 +118,7 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
   useFeatureFlagEnabled: () => false,
 }));
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 vi.mock("@/lib/PosthogUtils", () => ({
   detectEnvironment: () => "test",
@@ -590,6 +594,11 @@ describe("PlaygroundMain — multi-host render path", () => {
         expect.objectContaining({
           projectId: "default",
           name: "MCPJam",
+          // The seed pins a cheap default model — a modelless host breaks
+          // synthetic/swarm runs (no picker fallback on that path).
+          input: expect.objectContaining({
+            modelId: "anthropic/claude-haiku-4.5",
+          }),
         }),
       );
     });
@@ -668,6 +677,27 @@ describe("PlaygroundMain — multi-host render path", () => {
     for (const servers of serversPerCard.slice(1)) {
       expect(servers).toEqual(serversPerCard[0]);
     }
+  });
+
+  it("passes each host id into the per-column hosted runtime context", () => {
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    const lastByCompareId = new Map<string, any>();
+    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+      lastByCompareId.set(props.compareId, props);
+    }
+
+    expect(lastByCompareId.get("h-A")?.hostedContext?.hostId).toBe("h-A");
+    expect(lastByCompareId.get("h-B")?.hostedContext?.hostId).toBe("h-B");
   });
 
   it("every column shares the global chip state and the lead's model (multi-host varies host only)", () => {

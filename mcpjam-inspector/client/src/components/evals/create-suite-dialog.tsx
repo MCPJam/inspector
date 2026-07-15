@@ -107,11 +107,11 @@ export function CreateSuiteDialog({
     if (name.trim().length === 0) return "Add a suite name first.";
     if (attachmentsRequired && serverAttachmentId === null) {
       return hostAttachments.length === 0
-        ? "Attach a server and at least one host first."
+        ? "Attach a server and at least one client first."
         : "Pick a server group first.";
     }
     if (attachmentsRequired && hostAttachments.length === 0) {
-      return "Attach at least one host first.";
+      return "Attach at least one client first.";
     }
     return null;
   })();
