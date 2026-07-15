@@ -316,10 +316,15 @@ export async function fetchPinnedPublicDocument(
   const timeoutMs =
     opts.timeoutMs && opts.timeoutMs > 0 ? opts.timeoutMs : 5000;
 
-  // Resolve once, validate every candidate, and pin the chosen IP into the
-  // connection. The socket uses exactly this address — no re-resolution — which
-  // is what actually closes the DNS-rebinding window.
-  const pinningLookup: LookupFunction = (hostname, _options, callback) => {
+  // Resolve once, validate every candidate, and pin the validated result into
+  // the connection. The socket uses exactly these addresses — no re-resolution —
+  // which is what actually closes the DNS-rebinding window.
+  //
+  // The callback shape must follow `options.all`: with autoSelectFamily (the
+  // Node ≥20 default) the socket passes `all: true` and expects an ARRAY of
+  // {address, family} entries; answering with a bare string there makes Node
+  // throw ERR_INVALID_IP_ADDRESS ("Invalid IP address: undefined").
+  const pinningLookup: LookupFunction = (hostname, options, callback) => {
     dnsLookupCb(hostname, { all: true, verbatim: true }, (err, addresses) => {
       if (err) return callback(err, "", 0);
       const list = Array.isArray(addresses) ? addresses : [];
@@ -341,6 +346,14 @@ export async function fetchPinnedPublicDocument(
             0,
           );
         }
+      }
+      if (typeof options === "object" && options?.all) {
+        return (
+          callback as unknown as (
+            err: NodeJS.ErrnoException | null,
+            addresses: { address: string; family: number }[],
+          ) => void
+        )(null, list);
       }
       callback(null, list[0].address, list[0].family);
     });
