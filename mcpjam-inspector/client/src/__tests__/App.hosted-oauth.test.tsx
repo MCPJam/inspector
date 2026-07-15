@@ -2914,7 +2914,7 @@ describe("App hosted OAuth callback handling", () => {
         expect.objectContaining({
           activeServerSelectorProps: expect.objectContaining({
             showOnlyOAuthServers: true,
-            autoSelectFilteredServer: true,
+            autoSelectFilteredServer: "when-empty",
           }),
         })
       );
@@ -2968,7 +2968,7 @@ describe("App hosted OAuth callback handling", () => {
         expect.objectContaining({
           activeServerSelectorProps: expect.objectContaining({
             showOnlyOAuthServers: true,
-            autoSelectFilteredServer: true,
+            autoSelectFilteredServer: "when-empty",
           }),
         })
       );

@@ -696,6 +696,74 @@ describe("ActiveServerSelector", () => {
         expect(onServerChange).toHaveBeenCalledWith("visible-oauth");
       });
     });
+
+    it('"when-empty" fills a blank selection with the most recent eligible server', async () => {
+      const onServerChange = vi.fn();
+      const httpConfig = {
+        transportType: "streamableHttp",
+        url: "http://localhost:3000/mcp",
+      } as const;
+      const serverConfigs = {
+        "visible-oauth": createServer({
+          name: "visible-oauth",
+          config: httpConfig,
+          useOAuth: true,
+          lastConnectionTime: new Date("2024-01-03"),
+        }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          selectedServer="none"
+          onServerChange={onServerChange}
+          showOnlyOAuthServers
+          autoSelectFilteredServer="when-empty"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(onServerChange).toHaveBeenCalledWith("visible-oauth");
+      });
+    });
+
+    it('"when-empty" never replaces an existing selection, even one the filter hides', async () => {
+      // The debugger tabs fire live auth requests at their target; a target
+      // the user picked must not be silently swapped for another server.
+      const onServerChange = vi.fn();
+      const httpConfig = {
+        transportType: "streamableHttp",
+        url: "http://localhost:3000/mcp",
+      } as const;
+      const serverConfigs = {
+        "selected-plain-http": createServer({
+          name: "selected-plain-http",
+          config: httpConfig,
+        }),
+        "visible-oauth": createServer({
+          name: "visible-oauth",
+          config: httpConfig,
+          useOAuth: true,
+          lastConnectionTime: new Date("2024-01-03"),
+        }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          selectedServer="selected-plain-http"
+          onServerChange={onServerChange}
+          showOnlyOAuthServers
+          autoSelectFilteredServer="when-empty"
+        />,
+      );
+
+      // Give the auto-select effect a tick to (not) fire.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(onServerChange).not.toHaveBeenCalled();
+    });
   });
 
   describe("reconnect button", () => {

@@ -66,7 +66,13 @@ export interface ActiveServerSelectorProps {
    */
   includeXaaServers?: boolean;
   showOnlyServersWithViews?: boolean; // Only show servers that have saved views
-  autoSelectFilteredServer?: boolean; // Auto-select when current selection is hidden by filters
+  /** Auto-select when the current selection is hidden by filters. `true`
+   * replaces an invalid selection with the most recently connected eligible
+   * server. `"when-empty"` only fills a blank selection ("none") and never
+   * replaces an existing one — the debugger tabs use this so their target
+   * (which live auth requests are fired at) can't change without an explicit
+   * click. */
+  autoSelectFilteredServer?: boolean | "when-empty";
   serversWithViews?: Set<string>; // Set of server names that have saved views
   hasMessages?: boolean; // Reserved for callers that still compute this
   className?: string;
@@ -159,6 +165,16 @@ export function ActiveServerSelector({
 
     const serverNames = servers.map(([name]) => name);
     const isCurrentSelectionValid = serverNames.includes(selectedServer);
+    const hasExplicitSelection =
+      Boolean(selectedServer) && selectedServer !== "none";
+
+    // "when-empty" fills a blank selection but never replaces one the user
+    // already made — an invalid selection stays put (the tab renders its own
+    // "not testable" state) instead of being silently swapped for a server
+    // the user never clicked.
+    if (autoSelectFilteredServer === "when-empty" && hasExplicitSelection) {
+      return;
+    }
 
     if (!isCurrentSelectionValid && servers.length > 0) {
       // Pick the most recently connected server instead of the first by insertion order

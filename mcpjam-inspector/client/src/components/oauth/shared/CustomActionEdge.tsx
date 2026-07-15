@@ -32,11 +32,14 @@ export const CustomActionEdge = memo(
       160,
       Math.min(420, Math.abs(targetX - sourceX) * 0.8)
     );
+    // code_challenge and resource reappear as chips on the very next
+    // authorization_request arrow, so trimming them here just avoids a
+    // duplicate. `method` (code_challenge_method, e.g. S256) has no other
+    // labeled home anywhere in the diagram or logs — keep it.
     const details =
       data.stepId === "generate_pkce_parameters"
         ? data.details?.filter(
-            (detail) =>
-              !["code_challenge", "method", "resource"].includes(detail.label)
+            (detail) => !["code_challenge", "resource"].includes(detail.label)
           )
         : data.details;
 

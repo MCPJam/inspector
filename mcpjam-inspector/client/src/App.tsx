@@ -3373,9 +3373,17 @@ export default function App() {
           // x button; other surfaces omit onHideServer so no x renders.
           hiddenServers: hiddenHeaderServers,
           onHideServer: headerHiddenSurface ? hideHeaderServer : undefined,
-          // If the debugger header already has an eligible target, select it
-          // instead of leaving the canvas in a prompt-less empty state.
-          autoSelectFilteredServer: true,
+          // Debugger tabs: if the header has an eligible target and NOTHING
+          // is selected yet, select it instead of leaving the canvas in a
+          // prompt-less empty state — but never replace an existing
+          // selection, since the debuggers fire live auth requests at their
+          // target and it must not change without an explicit click. Other
+          // tabs keep full auto-select (stale selections get replaced).
+          autoSelectFilteredServer:
+            activeTab === "oauth-flow" ||
+            (activeTab === "xaa-flow" && xaaEnabled === true)
+              ? "when-empty"
+              : true,
           showOnlyServersWithViews: false,
           hasMessages: false,
         }
