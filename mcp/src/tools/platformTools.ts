@@ -10,14 +10,25 @@
  */
 import {
   callServerToolOperation,
+  checkHostCompatibilityOperation,
+  createEvalCaseOperation,
+  createEvalSuiteOperation,
+  deleteEvalCaseOperation,
+  deleteEvalSuiteOperation,
   diagnoseServerOperation,
+  generateEvalCasesOperation,
+  cancelEvalRunOperation,
   getChatboxOperation,
+  getEvalCaseOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
+  getEvalRunStepsOperation,
+  getEvalSuiteOperation,
   getServerPromptOperation,
   isPlatformApiError,
   listChatboxesOperation,
   listChatSessionsOperation,
+  listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
@@ -28,7 +39,11 @@ import {
   listServerToolsOperation,
   PlatformApiClient,
   readServerResourceOperation,
+  runEvalCaseOperation,
   runEvalSuiteOperation,
+  setEvalSuiteScheduleOperation,
+  updateEvalCaseOperation,
+  updateEvalSuiteOperation,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
@@ -54,24 +69,54 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getServerPromptOperation,
   listServerResourcesOperation,
   readServerResourceOperation,
+  checkHostCompatibilityOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
+  runEvalCaseOperation,
   runEvalSuiteOperation,
+  createEvalSuiteOperation,
+  getEvalSuiteOperation,
+  updateEvalSuiteOperation,
+  deleteEvalSuiteOperation,
+  setEvalSuiteScheduleOperation,
+  listEvalCasesOperation,
+  getEvalCaseOperation,
+  createEvalCaseOperation,
+  updateEvalCaseOperation,
+  deleteEvalCaseOperation,
+  generateEvalCasesOperation,
   getEvalRunOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
+  getEvalRunStepsOperation,
+  cancelEvalRunOperation,
   listChatboxesOperation,
   getChatboxOperation,
   listChatSessionsOperation,
 ];
 
 /**
+ * Operations that PERMANENTLY destroy a known resource. They carry an
+ * explicit `destructiveHint: true` (unlike `mayBeDestructive` ops, whose
+ * effects are merely unknowable). Kept here rather than on the SDK operation
+ * so the wire contract stays surface-agnostic.
+ */
+const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set([
+  deleteEvalSuiteOperation.name,
+  deleteEvalCaseOperation.name,
+  // Cancelling a run terminates in-flight work — state-changing, so clients
+  // should be able to confirm before it fires.
+  cancelEvalRunOperation.name,
+]);
+
+/**
  * Catalog operations that render as MCP Apps widgets, mapped to their view
  * in the shared UI bundle. The rest stay plain: list_projects and
  * list_project_servers defer to the richer show_servers widget,
- * run_eval_suite returns a receipt the run widgets supersede, and
- * get_eval_iteration_trace / list_chat_sessions are agent-oriented payloads
- * with no visual form. `show_servers` itself registers in `showServers.ts`.
+ * run_eval_suite / create_eval_suite return receipts the run/suite widgets
+ * supersede, and get_eval_iteration_trace / list_chat_sessions are
+ * agent-oriented payloads with no visual form. `show_servers` itself
+ * registers in `showServers.ts`.
  */
 export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
   Partial<Record<string, PlatformWidgetView>>
@@ -137,6 +182,10 @@ export function operationAnnotations(
   if (operation.readOnly) {
     return { readOnlyHint: true };
   }
+  // Known-destructive deletes: announce it explicitly so clients can confirm.
+  if (DESTRUCTIVE_OPERATION_NAMES.has(operation.name)) {
+    return { readOnlyHint: false, destructiveHint: true, idempotentHint: true };
+  }
   // Operations whose effects are unknowable upstream (call_server_tool runs
   // arbitrary third-party tools) omit destructive/idempotent hints on
   // purpose: per spec, clients must then assume destructive — the honest
@@ -144,8 +193,8 @@ export function operationAnnotations(
   if (operation.mayBeDestructive) {
     return { readOnlyHint: false };
   }
-  // Remaining non-read operations (run_eval_suite) create resources but
-  // never destroy or overwrite them.
+  // Remaining non-read operations (run_eval_suite, create_eval_suite) create
+  // resources but never destroy or overwrite them.
   return { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
 }
 
@@ -155,7 +204,10 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   input: TInput,
   transformPayload?: (payload: TOutput) => object
 ) {
-  const token = agent.bearerToken;
+  // Resolve the bearer: the verified token for an authed session, or a
+  // lazily-minted guest token for an anonymous one. Minting happens here (on
+  // first tool execution), never at connect/list_tools.
+  const token = await agent.getBearerToken();
   if (!token) {
     return toolError("No bearer token on the request.");
   }
@@ -170,8 +222,25 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
     const payload = await operation.execute(input, { client });
     return toolSuccess(transformPayload ? transformPayload(payload) : payload);
   } catch (error) {
-    return toolError(describeOperationError(error));
+    return toolError(
+      describeOperationError(error),
+      errorStructuredContent(error)
+    );
   }
+}
+
+// Carry a machine-readable error code into the widget so it can tell an empty
+// state (NOT_FOUND: no accessible projects, or a selector that matched nothing)
+// apart from a real failure (network, timeout, auth) and render the former
+// calmly instead of with the alarming destructive styling. The model/CLI still
+// see `isError` plus the human-readable text message.
+function errorStructuredContent(
+  error: unknown
+): Record<string, unknown> | undefined {
+  if (isPlatformApiError(error)) {
+    return { error: { code: error.code, message: error.message } };
+  }
+  return undefined;
 }
 
 function describeOperationError(error: unknown): string {
@@ -183,21 +252,39 @@ function describeOperationError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// Cap on the model-visible text rendering. Resource reads, tool schemas,
+// and doctor reports are unbounded upstream; hosts feed `content` into model
+// context, so an uncapped pretty-print can blow a turn's budget. Mirrors the
+// inspector workspace built-ins' MODEL_OUTPUT_CAP philosophy (never fail
+// over size, degrade to a readable prefix). `structuredContent` stays
+// complete — widgets and programmatic consumers read that, not the text.
+const MODEL_TEXT_CAP = 24_000;
+
 function toolSuccess(payload: object) {
+  let text = JSON.stringify(payload, null, 2);
+  if (text.length > MODEL_TEXT_CAP) {
+    text = `${text.slice(0, MODEL_TEXT_CAP)}\n…[truncated ${
+      text.length - MODEL_TEXT_CAP
+    } chars; the complete payload is in structuredContent]`;
+  }
   return {
     content: [
       {
         type: "text" as const,
-        text: JSON.stringify(payload, null, 2),
+        text,
       },
     ],
     structuredContent: payload as Record<string, unknown>,
   };
 }
 
-function toolError(message: string) {
+function toolError(
+  message: string,
+  structuredContent?: Record<string, unknown>
+) {
   return {
     isError: true,
     content: [{ type: "text" as const, text: message }],
+    ...(structuredContent ? { structuredContent } : {}),
   };
 }

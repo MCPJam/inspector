@@ -1,10 +1,11 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import {
-  seedFromHostTemplate,
-  type HostTemplateId,
-} from "@/lib/client-templates";
+  bundledHostCompatCatalog,
+  getCatalogTemplate,
+} from "@mcpjam/sdk/host-compat";
 import { resolveEffectiveClientCapabilities } from "@/lib/effective-client";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
 
 /**
@@ -99,6 +100,7 @@ export function ActiveHostCapsResolverScope({
   // still works for the host axis.
   const appState = useOptionalSharedAppState();
   const servers = appState?.servers ?? null;
+  const catalogState = useHostCatalog();
 
   // Effective host. When the surface has no persisted active host
   // (prefs-only Chat tab, hosted chatbox whose bootstrap doesn't carry
@@ -111,11 +113,12 @@ export function ActiveHostCapsResolverScope({
     if (activeHost?.clientCapabilities) {
       return { clientCapabilities: activeHost.clientCapabilities };
     }
+    const catalog = catalogState.catalog ?? bundledHostCompatCatalog();
     return {
-      clientCapabilities: seedFromHostTemplate(hostStyle as HostTemplateId)
-        .clientCapabilities,
+      clientCapabilities: getCatalogTemplate(catalog, hostStyle)
+        ?.clientCapabilities ?? {},
     };
-  }, [activeHost?.clientCapabilities, hostStyle]);
+  }, [activeHost?.clientCapabilities, catalogState.catalog, hostStyle]);
 
   const resolver = useMemo<ActiveHostCapsResolver>(() => {
     // Per-render memo: repeated `resolveCaps(serverId)` calls for the

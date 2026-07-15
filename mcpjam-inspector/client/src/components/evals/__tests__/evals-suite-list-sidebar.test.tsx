@@ -252,6 +252,43 @@ describe("EvalsSuiteListSidebar", () => {
     ).toBeDisabled();
   });
 
+  it("disables run-all play controls while that suite's latest run is running", () => {
+    const suite = {
+      _id: "s1",
+      createdBy: "u",
+      name: "Beta",
+      description: "",
+      configRevision: "r",
+      environment: { servers: ["srv"] },
+      createdAt: 1,
+      updatedAt: 1,
+      source: "ui" as const,
+      tags: [],
+    };
+
+    render(
+      <EvalsSuiteListSidebar
+        suites={[
+          makeEntry({
+            suite,
+            latestRun: makeRun({
+              status: "running",
+              completedAt: undefined,
+            }),
+          }),
+        ]}
+        selectedSuiteId={null}
+        onSelectSuite={vi.fn()}
+        onCreateSuite={vi.fn()}
+        onRunAll={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Run all cases in Beta" }),
+    ).toBeDisabled();
+  });
+
   it("renders pass/fail score for suites with run data", () => {
     render(
       <EvalsSuiteListSidebar
@@ -282,7 +319,7 @@ describe("EvalsSuiteListSidebar", () => {
 
     const row = screen.getByTestId("suite-row-s1");
     expect(within(row).getByText("4/10")).toBeInTheDocument();
-    expect(within(row).getByText("SDK")).toBeInTheDocument();
+    expect(within(row).getByText("CI")).toBeInTheDocument();
   });
 
   it("filters suites with failures-only toggle", async () => {

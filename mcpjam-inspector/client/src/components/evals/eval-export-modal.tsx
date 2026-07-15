@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import { AlertCircle, Download, Loader2 } from "lucide-react";
 import {
   Dialog,
@@ -37,7 +37,6 @@ import {
   generateAgentBrief,
   mapEvalCasesToAgentBriefExploreCases,
 } from "@/lib/generate-agent-brief";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { getServerUrl } from "@/components/connection/server-card-utils";
 import type { ServerWithName } from "@/state/app-types";
 
@@ -90,7 +89,6 @@ export function EvalExportModal({
   serverEntries,
   projectId,
 }: EvalExportModalProps) {
-  const posthog = usePostHog();
   const [activeTab, setActiveTab] = useState<"sdk" | "prompt">("sdk");
   const [agentPromptState, setAgentPromptState] = useState<AgentPromptState>({
     status: "idle",
@@ -141,21 +139,14 @@ export function EvalExportModal({
       return;
     }
 
-    posthog.capture("eval_export_modal_opened", {
+    track("eval_export_modal_opened", {
+      location: "eval_export_modal",
       scope,
       tab: "sdk_code",
       suite_source: suite.source ?? "ui",
       used_placeholder_fallback: sdkEnvResult.usedPlaceholderFallback,
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
-  }, [
-    open,
-    posthog,
-    scope,
-    sdkEnvResult.usedPlaceholderFallback,
-    suite.source,
-  ]);
+  }, [open, scope, sdkEnvResult.usedPlaceholderFallback, suite.source]);
 
   useEffect(() => {
     if (!open) {
@@ -239,13 +230,12 @@ export function EvalExportModal({
 
   const handleDownload = () => {
     downloadTextFile(downloadFileName, sdkTestFile);
-    posthog.capture("eval_export_modal_downloaded", {
+    track("eval_export_modal_downloaded", {
+      location: "eval_export_modal",
       scope,
       tab: "sdk_code",
       suite_source: suite.source ?? "ui",
       used_placeholder_fallback: sdkEnvResult.usedPlaceholderFallback,
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
   };
 
@@ -254,25 +244,23 @@ export function EvalExportModal({
       return;
     }
     downloadTextFile(agentPromptDownloadFileName, agentPromptState.prompt);
-    posthog.capture("eval_export_modal_downloaded", {
+    track("eval_export_modal_downloaded", {
+      location: "eval_export_modal",
       scope,
       tab: "prompt_for_agent",
       suite_source: suite.source ?? "ui",
       used_placeholder_fallback: sdkEnvResult.usedPlaceholderFallback,
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
   };
 
   const trackCopy = (tab: "sdk_code" | "prompt_for_agent", section: string) => {
-    posthog.capture("eval_export_modal_copied", {
+    track("eval_export_modal_copied", {
+      location: "eval_export_modal",
       scope,
       tab,
       section,
       suite_source: suite.source ?? "ui",
       used_placeholder_fallback: sdkEnvResult.usedPlaceholderFallback,
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
   };
 

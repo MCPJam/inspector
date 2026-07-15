@@ -6,8 +6,10 @@
  * (SSE chunks flow as they happen — nothing is buffered).
  *
  * HAND-MIRRORED CONTRACT: frame shapes, limits, and close codes mirror
- * `tunnel-edge/src/protocol.ts` in the mcpjam-backend repo. Change them
- * only together (and only by bumping the subprotocol).
+ * `tunnel-edge/src/protocol.ts` in the mcpjam-backend repo (the source of
+ * truth). A third copy lives at `cli/src/lib/tunnel/relay-client.ts` in
+ * this repo (the CLI's tunnel host). Change them only together (and only
+ * by bumping the subprotocol).
  *
  * Reconnect policy:
  *  - network drops → backoff 1s→30s with jitter;

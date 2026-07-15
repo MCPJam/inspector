@@ -200,13 +200,6 @@ Join our [Discord community](https://discord.gg/JEnDtz8X6z) where the contributo
 - [𝕏 (Twitter)](https://x.com/mcpjams)
 - [LinkedIn](https://www.linkedin.com/company/mcpjam)
 
-# Shoutouts 📣
-
-Some of our partners and favorite frameworks:
-
-- [Stytch](https://stytch.com). Our favorite MCP OAuth provider.
-- [xMCP](https://xmcp.dev/). The Typescript MCP framework. Ship on Vercel instantly.
-- [Alpic](https://alpic.ai/). Host MCP servers. Try their new [Skybridge framework](https://github.com/alpic-ai/skybridge) for ChatGPT apps!
 
 ---
 

@@ -3,54 +3,16 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
+          "name": "@mcpjam/inspector",
+          "type": "patch"
         },
         {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Add Amazon Bedrock as a model provider. The SDK's `ModelFactory` now resolves Bedrock models via `@ai-sdk/amazon-bedrock`; the inspector's model-picker, org model config, and eval runner all support Bedrock model IDs alongside existing OpenAI/Anthropic entries.",
-      "id": "bedrock-model-provider"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/cli",
+          "name": "@mcpjam/sdk",
           "type": "patch"
         }
       ],
-      "summary": "`mcpjam login` now stores the API base URL it was run against, and cloud commands using the stored login default to that deployment instead of prod. An invalid `--api-url` / `MCPJAM_API_URL` is a hard usage error rather than a silent fallback to prod, and rotated token expiries are computed from the injected clock.",
-      "id": "cli-login-api-url-persistence"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Add `mcpjam login` / `logout` / `whoami`: OAuth Authorization Code + PKCE login to the MCPJam platform via new hosted bridge routes (`/api/cli/auth/config|start|callback`) on the Inspector server. The bridge signs the CLI's loopback redirect into a short-lived HMAC state and never sees tokens; the CLI exchanges the code directly with AuthKit and stores the session at an XDG-aware path with 0600 permissions, refreshing access tokens near expiry. Platform credentials resolve as `--api-key` > `MCPJAM_API_KEY` > stored login; explicit legacy `mcpjam_` keys error, ambient ones warn and fall through. The SDK now exports its loopback authorization session and PKCE helpers (`createInteractiveAuthorizationSession`, `openUrlInBrowser`, `generateRandomString`, `generateCodeChallenge`). The bridge requires `CLI_AUTH_STATE_SECRET` and `CLI_AUTH_PUBLIC_ORIGIN`; without them it answers 501.",
-      "id": "cli-platform-login"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        }
-      ],
-      "summary": "Add `mcpjam projects` commands for hosted MCPJam projects: `projects list`, `projects servers --project <id-or-name>`, and `projects status --project <id-or-name>` (per-server hosted health checks via the shared `show_servers` operation). JSON output is the operation payload verbatim; human output renders tables and a status summary. Auth via `--api-key` / `MCPJAM_API_KEY` / `mcpjam login`.",
-      "id": "cli-projects-commands"
+      "summary": "Restore backend-backed host catalog flows and shared image-support hydration.\n\n- Use the backend host catalog/templates for project host create, update, delete, and detail routes.\n- Hydrate backend image-support facts into concrete host config image fields for SDK fallback catalogs.\n- Export the shared image-support mapping helper for catalog seeding.",
+      "id": "bright-hosts-share-images"
     },
     {
       "releases": [
@@ -59,8 +21,8 @@
           "type": "minor"
         }
       ],
-      "summary": "`computer` is now a pure resource attachment: `{ kind: \"personal\", workdir? }`. The capability a host grants on the machine moved to `builtInToolIds` (e.g. `\"bash\"`), the same list every other built-in tool uses — so future computer-backed tools (`files`, …) compose in one list instead of growing a parallel `toolset` union. The canonicalizer still accepts the legacy `{ toolset: \"bash\" }` input key and drops it, so legacy input hashes identically to the new shape; `null`/absent collapse and eval-wire stripping are unchanged. Hashes of computer-carrying configs change (the `toolset` key leaves the canonical JSON) — acceptable now because no shipped UI writes the field yet.",
-      "id": "computer-resource-capability-split"
+      "summary": "Single-source the client-registration vocabulary shared by the OAuth flows and the XAA debugger: new `RegistrationStrategy` (`preregistered | cimd | dcr`), `RegistrationMode` (`auto | …`), `AuthMethod` (`auto | oauth | xaa | bearer | none`), plus `REGISTRATION_STRATEGIES`, `AUTH_METHODS`, defaults, and `normalizeRegistrationStrategy` / `normalizeRegistrationMode` / `normalizeAuthMethod` (the strategy/mode normalizers accept the legacy `pre_registered` spelling as an alias). The XAA engine now uses these types with the canonical `preregistered` spelling; the never-published `XAA_REGISTRATION_STRATEGIES` / `XaaRegistrationStrategy` / `DEFAULT_XAA_REGISTRATION_STRATEGY` / `normalizeXaaRegistrationStrategy` names are removed. `OAuthRegistrationStrategy` / `OAuthRegistrationMode` are unchanged but deprecated in favor of the shared types.",
+      "id": "unified-registration-vocabulary"
     },
     {
       "releases": [
@@ -69,8 +31,8 @@
           "type": "minor"
         }
       ],
-      "summary": "Add `@mcpjam/sdk/platform`: a runtime-agnostic (Workers/browser/Node) fetch-based client for the MCPJam Platform API (`/api/v1`) plus a curated operation catalog — `list_projects`, `list_project_servers`, and `show_servers` (project resolution, one hosted-doctor call per server, stable `ShowServersPayload`). Errors surface as `PlatformApiError` with the stable v1 wire code, HTTP status, details, and `Retry-After` capture.",
-      "id": "platform-api-client"
+      "summary": "Export the browser-safe XAA/ID-JAG primitives as the single source of truth: `decodeJWTParts`/`DecodedJwtParts` (header+payload+signature, promoted alongside the existing `decodeJWT`) and the negative-test constants (`NEGATIVE_TEST_MODES`, `DEFAULT_NEGATIVE_TEST_MODE`, `XAA_IDP_KID`, `isNegativeTestMode`) — all from both `@mcpjam/sdk` and `@mcpjam/sdk/browser`. (The registration-strategy primitives ship under their unified names — see the unified-registration-vocabulary changeset.) Adds a built-graph guard test that fails if the browser entry ever pulls a Node builtin.",
+      "id": "xaa-browser-primitives-sot"
     },
     {
       "releases": [
@@ -79,8 +41,42 @@
           "type": "patch"
         }
       ],
-      "summary": "`PlatformApiClient` body handling hardened: empty success bodies (204) resolve to `undefined` instead of throwing `INTERNAL_ERROR`; error responses with empty or non-JSON bodies (bare 429s, proxy HTML) now map through the standard error path with `Retry-After` preserved and the code derived from the HTTP status when unambiguous (401/403/404/429). The platform runtime-safety guard now also scans the built `dist/platform` bundle, covering the entire first-party transitive closure (e.g. `SdkError`) rather than only `src/platform`.",
-      "id": "platform-client-body-handling"
+      "summary": "XAA: rank authorization-server candidates by advertised ID-JAG capability during discovery. When a protected resource advertises several authorization servers, the shared engine now prefers, among issuer-matching candidates: (1) one advertising both the RFC 7523 jwt-bearer grant and the ID-JAG grant profile; then (2) one advertising jwt-bearer with the ID-JAG profile omitted (draft-04 SHOULD); otherwise (3) the first issuer-matching candidate, exactly as before. Ranking uses the two specific compatibility checks — never the vendor-influenced `overall` verdict — and is a preference heuristic, never a hard filter (a server may accept the grant without advertising it). Credential binding is preserved: an explicitly configured issuer stays a hard pin, and a confidential (client-secret) run is pinned to the first issuer-matching candidate so its secret is never redirected to a different RAS. Runtime-behavior change only; no API change.",
+      "id": "xaa-capability-ranked-ras"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/cli",
+          "type": "minor"
+        }
+      ],
+      "summary": "Add `mcpjam xaa run`, a headless Cross-App Access (ID-JAG) debugger that mirrors `mcpjam oauth login`. It discovers the target authorization server, self-issues an ID-JAG, redeems it at the AS (RFC 7523 jwt-bearer), and calls the MCP server with the resulting access token — streaming progress to stderr and printing a structured per-step report. Exits non-zero when the flow does not complete (e.g. the AS could not validate a self-issued ID-JAG whose issuer it cannot reach).",
+      "id": "xaa-cli-command"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "minor"
+        }
+      ],
+      "summary": "`mcpjam xaa run` can now select the client-registration strategy: `--registration <preregistered|dcr|cimd>` (plus `--client-metadata-url` for CIMD). Previously the headless XAA flow was hardcoded to pre-registered even though the shared state machine already implemented all three strategies.\n\n- **SDK**: `XaaFlowConfig` gains optional `registrationStrategy` and `clientIdMetadataUrl`, and `clientId` becomes optional. `runXaaFlow` threads the strategy through the existing state machine and shares ONE internal DCR credential cache across the valid/baseline/probe attempts, so a run performs a single dynamic registration and reuses it. `XaaFlowResult` gains a secret-free `registration` diagnostic (`strategy`, `clientId`, `reused`, `warnings`) — the DCR-minted `client_secret` never enters the result, and registration warnings are retained across attempts (a reused DCR client no longer drops the baseline's warnings). The CIMD metadata-document URL is now configurable (`BaseXAAStateMachineConfig.clientIdMetadataUrl`), defaulting to the hosted XAA document and validated without normalization. `runXaaFlow` enforces its own guards (not CLI-only): a dynamic strategy combined with a pinned `tokenEndpoint` is rejected (it would skip the required metadata discovery). The CIMD document fetch is SSRF-hardened by a new connection-pinned fetch (`fetchPinnedPublicDocument`): it resolves the host once, rejects any private/reserved result against a complete RFC 6890 special-use check (IPv4 + IPv6 + IPv4-mapped), and **pins the validated IP into the connection** so there is no second DNS resolution to rebind — closing the DNS-rebinding window a validate-then-fetch check leaves open. The fetch is HTTPS-only, does not follow redirects, caps the body at 5 KB (CIMD draft-02 §8.6), and bounds the whole request+read with a total deadline (not an idle-socket timeout). The address check is a complete RFC 6890 special-use classifier that resolves embedded IPv4 in any IPv6 form (dotted, hex-literal `::ffff:7f00:1`, and deprecated IPv4-compatible), closing mapped-loopback bypasses. Any DCR-minted secret an RAS reflects into an error body is scrubbed from the result, and the CLI strips control characters from a server-provided `client_id` before echoing it. The executor opts into it per request via a new `enforcePublicHost` option on `XAARequestExecutor.externalRequest`; loopback RS/token/MCP calls are unaffected.\n\nSemantics are reported honestly: public-client CIMD is flagged as \"interoperability passed, security posture not recommended\" (ID-JAG draft-04 §9.1 recommends confidential clients), and the CLI warns on stderr that DCR is a RAS diagnostic that simulates the IdP→RAS `client_id` mapping and may leave a registration behind each run (no RFC 7592 cleanup). Confidential CIMD (`private_key_jwt`) and DCR credential cleanup remain follow-ups.\n- **CLI**: `--client-id` is required only for `preregistered`; `--client-id`/`--client-secret`/`--token-endpoint-auth-method` are rejected for `dcr`/`cimd` (the identity and auth method are derived). `--token-endpoint` is rejected for dcr/cimd (it skips the AS-metadata discovery those strategies need); `--authz-server-issuer` stays valid. Registration diagnostics — including the public-client CIMD warning — are surfaced in the result and preserved through output redaction.\n\nDCR works end-to-end against a confidential-client RAS. CIMD here is the public-client variant (`token_endpoint_auth_method: none`); a RAS that requires `private_key_jwt` will reject it, so confidential CIMD remains a follow-up.",
+      "id": "xaa-cli-registration-strategies"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        }
+      ],
+      "summary": "XAA debugger: target-scoped **open DCR** and **CIMD** client-registration strategies, plus the hosted XAA Client ID Metadata Document.\n\n- New per-target registration-strategy control (manual public targets only; pre-registered stays the default and default runs are byte-identical to before): **Open dynamic registration (DCR)** performs an unauthenticated RFC 7591 registration at the discovered `registration_endpoint`, validates the response against the ID-JAG draft-04 client profile (explicit substitutions park; RFC 7591 echo omissions warn), and keeps the minted credentials in a browser-session-only in-memory cache — never in flow state, storage, history, logs, or telemetry. Reset/Run all reuse the session registration; a confirmed \"Register another client\" action (also gating retries after any ambiguous POST) is the only path that registers again. **Client metadata URL (CIMD)** preflights MCPJam's hosted document with manual-redirect handling, requires the AS to advertise `client_id_metadata_document_supported`, and uses the URL as the run's `client_id`; JWT Bearer redemption remains the operational verdict.\n- `/proxy/token` gains `tokenEndpointAuthMethod` (`client_secret_post` | `client_secret_basic` | `none`); `client_secret_basic` builds the RFC 6749 Basic header server-side (form-encoded before Base64) and never echoes it into diagnostics. Legacy callers keep body-post behavior.\n- New public route `GET /.well-known/oauth/xaa-client-metadata.json` on both server entry points: a direct-200 JSON Client ID Metadata Document whose `client_id` is the fixed production URL (`https://app.mcpjam.com/...`), declaring the ID-JAG grant profile with both required grants and `token_endpoint_auth_method: \"none\"`. The login CIMD document on www.mcpjam.com is untouched.\n- The OAuth debug proxy routes and executors thread an optional `redirect: \"follow\" | \"manual\"` through to the SDK proxy (hosted `httpsOnly` still forces manual and cannot be weakened).\n- AS-compatibility preflight now reports the draft-04 ID-JAG grant-profile advertisement (absent = warning, explicit contradiction = fail) and CIMD support (informational; never degrades the overall verdict).",
+      "id": "xaa-dcr-cimd-strategies"
     },
     {
       "releases": [
@@ -89,8 +85,8 @@
           "type": "minor"
         }
       ],
-      "summary": "`@mcpjam/sdk/platform` covers the eval and chatbox surface of the Platform API. `PlatformApiClient` gains `listChatboxes`/`getChatbox`, `createEvalRun`, `getEvalRun`, `listEvalRunIterations`, `getEvalIterationTrace`, and `listEvalSuiteRuns` (with matching wire DTOs). The curated operation catalog grows nine operations — `list_eval_suites`, `list_eval_suite_runs`, `run_eval_suite` (async suite rerun: resolves suites and servers by name or ID, defaults to the project's enabled HTTP servers), `get_eval_run`, `list_eval_run_iterations`, and `get_eval_iteration_trace` (the polling reads require the project the run belongs to, which `run_eval_suite` returns), plus `list_chatboxes`, `get_chatbox`, and `list_chat_sessions` — and every operation now carries a `readOnly` flag, which downstream surfaces map to their own affordances (the MCP worker emits it as the `readOnlyHint` tool annotation).",
-      "id": "platform-eval-chatbox-operations"
+      "summary": "Extract the OAuth debug state machines' duplicated Dynamic Client Registration (RFC 7591) logic into a shared, exported helper, and add the XAA (ID-JAG) client-identity building blocks.\n\nNew exports (browser + node entry points):\n\n- `buildDynamicClientRegistrationRequest` / `executeDynamicClientRegistration` — the DCR request builder and executor previously inlined in all three debug OAuth machines. The executor now redacts credential-bearing fields (`client_secret`, `registration_access_token`, `access_token`, `refresh_token`) from every diagnostic surface (lastResponse, HTTP history, info logs); raw credentials travel only through the returned `credentials`/`clientInfo`. A 2xx response with a null/non-object body is now classified as `invalid_response` and takes the pre-registered-fallback path instead of proceeding with undefined credentials.\n- `getXaaDebugClientMetadata`, `evaluateIdJagClientMetadata`, `ID_JAG_GRANT_PROFILE`, `TOKEN_EXCHANGE_GRANT`, `JWT_BEARER_GRANT`, `XAA_DEBUG_CLIENT_ID_METADATA_URL` — ID-JAG (draft-ietf-oauth-identity-assertion-authz-grant-04) client metadata builder and evidence evaluator for the XAA debugger.\n- `validateClientIdMetadataUrl` — Client Identifier URL validation updated to draft-ietf-oauth-client-id-metadata-document-02: requires a path component, rejects userinfo/fragment/raw dot segments, accepts a query, and returns the original string unchanged (simple string comparison identity; the previous CIMD validator `URL.toString()`-normalized the URL).\n- `OAuthProxyRequest.redirect` / `OAuthHttpRequest.redirect` (`\"follow\" | \"manual\"`) — explicit redirect control for proxy execution. `httpsOnly` still always forces `manual` and cannot be weakened; omission preserves the historical `follow`.\n\nThe three debug OAuth machines keep their orchestration, transitions, fallback behavior, and user-facing error strings; the intentional visible changes are the credential redaction, the truncated-secret info log becoming a `Client Secret Issued: true` boolean, and the invalid-response classification above.",
+      "id": "xaa-dcr-shared-core"
     },
     {
       "releases": [
@@ -99,8 +95,18 @@
           "type": "minor"
         }
       ],
-      "summary": "Add `computer` as a HostConfig v2 dimension. A host config can now declare a personal cloud workstation (the chat `bash` tool + a web terminal) via `computer?: null | { kind: \"personal\"; toolset: \"bash\"; workdir?: string }`. The canonicalizer collapses `null` and an absent value to the same \"no computer\" shape (key omitted), so every existing host config keeps a byte-identical `configHash`; it validates the `kind`/`toolset` literals, rejects unknown keys, and trims `workdir`. The field is stripped from the SDK→backend eval wire config, because a personal computer is mutable per-user state that an eval can't reproduce. Part of Project Computers (plan: mcpjam-backend `docs/project-computers.md`).",
-      "id": "project-computers-host-config"
+      "summary": "Add browser-safe XAA protocol helpers, ahead of the shared state-machine move. `xaa/discovery.ts` exposes purpose-separated candidate builders — `buildProtectedResourceMetadataCandidates` (RFC 9728), `buildAuthorizationServerMetadataCandidates` (RFC 8414/OIDC), `buildIssuerPublicationCandidates` — plus `canonicalizeMcpResource`, preserving the CLI's exact sweep order. `xaa/mcp-init.ts` provides `buildMcpInitializeRequest`, `evaluateMcpInitializeResponse`, and `mcpInitializeExtensionEvidence` (SSE-aware, JSON-RPC id/result validation, enterprise-managed-authorization extension evidence). The CLI's `runXaaFlow` now consumes both, so its contract tests are the golden verification.",
+      "id": "xaa-discovery-mcp-init"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "patch"
+        }
+      ],
+      "summary": "Harden the shared XAA state machine to the CLI's tested behavior (addresses review findings on the freshly-moved engine):\n\n- **Protected-resource metadata (RFC 9728):** reject metadata whose `resource` doesn't match the requested MCP resource, so a compromised/misconfigured well-known can't redirect to another authorization server.\n- **Authorization-server metadata (RFC 8414 §3.3):** require the metadata `issuer` to match the requested issuer before trusting its token endpoint; continue to the next candidate on a mismatch instead of adopting a foreign issuer.\n- **MCP initialize:** advertise the enterprise-managed authorization extension, send the `MCP-Protocol-Version` header, and validate the JSON-RPC/SSE response (a 2xx alone no longer counts as success) via the shared mcp-init helpers, recording extension evidence.\n- **Server-target redemption:** exempt `serverId` runs (which resolve their token endpoint server-side) from the token-endpoint precondition in AS discovery and redemption.\n- **RAS availability:** try every protected-resource `authorization_servers` issuer in order until one yields matching metadata and a token endpoint.\n- **MCP protocol conformance:** require the initialize result to negotiate the requested `2025-11-25` protocol version.\n- **Diagnostic secrecy:** redact identity assertions, ID-JAGs, bearer tokens, client credentials, and authorization headers from history, logs, and errors while retaining the dedicated live values needed to execute and inspect the flow.\n- **CLI convergence:** drive `runXaaFlow` through the shared state machine for both normal attempts and the valid-baseline/negative-probe pair, while retaining Node-only issuer/JWKS verification and the public result contract.",
+      "id": "xaa-engine-alignment"
     },
     {
       "releases": [
@@ -109,47 +115,157 @@
           "type": "minor"
         }
       ],
-      "summary": "SDK eval reporting now works with standard `sk_` API keys via new `/api/v1/eval-ingest` proxy routes on the inspector server. `reportEvalResults` migrated to use the platform API client; the `eval-reporting-types` and `eval-run-reporter` exports are extended to cover the ingest payload. Docs for running evals and saving results are un-retired.",
-      "id": "sdk-eval-reporting-sk-keys"
+      "summary": "Move the XAA flow-core types and AS-compatibility preflight into the SDK (`xaa/state-machines/{types,capability-preflight}.ts`), exported from `@mcpjam/sdk/browser`. This includes the injected `XAARequestExecutor` seam, `XAAFlowState`/`XAAFlowStep`, `BaseXAAStateMachineConfig`, `XAAStateMachine`, DCR credential-cache types, `EMPTY_XAA_FLOW_STATE`/`createInitialXAAFlowState`, and `analyzeAsCompatibility`/`detectVendor`. The inspector's hosted test-bench resource-app types stay client-owned; the client modules become thin re-export shims. Prepares the shared state-machine move.",
+      "id": "xaa-flow-core-types"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Add `createInProcessXaaExecutor` (Node entry) — the CLI's in-process implementation of the XAA `XAARequestExecutor` seam. It services the three MCPJam-owned mint routes in-process using the node mint (`/authenticate` → `issueMockIdToken`, `/token-exchange` → decode assertion + `issueNegativeIdJag`, `/proxy/token` → `buildJwtBearerRequest` + `executeOAuthProxy`, wrapping the upstream `{status, body}`), and routes external AS/MCP requests through the hardened OAuth proxy with the configured timeout and HTTPS/private-target policy. The internal-route switch is exhaustive (404 on an unknown route). This lets the CLI drive the shared browser-safe state machine without a running inspector server; a parity test drives the engine to completion through it.",
+      "id": "xaa-in-process-executor"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Remove the XAA server's duplicated `buildJwtBearerRequest` (and its `formUrlEncode`/`encodeBasicClientAuth` helpers); the server now consumes the single-source implementation from `@mcpjam/sdk`. No behavior change — the debugger's `/proxy/token` endpoint and the connect-page mint use the same builder as the CLI.",
+      "id": "xaa-jwt-bearer-dedup"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Extract the XAA (Cross-App Access / ID-JAG) mock-IdP mint into `@mcpjam/sdk` (node entry only). New exports: the ID-JAG/id-token/access-token/code signer (`issueIdJag`, `issueNegativeIdJag`, `issueMockIdToken`, `issueAuthorizationCode`, `issueAccessToken`, `verifyXaaJwt`), the RS256 keypair/JWKS manager (`initXAAIdpKeyPair`, `getXAAIdpJwks`, `getXAAIssuerUrl`, `setXaaIdpLogger`, …), `buildJwtBearerBody`, and the negative-test constants. Pure `crypto`/`fs`; the inspector server now consumes the mint from the SDK. Enables a headless XAA flow for the CLI.",
+      "id": "xaa-mint-to-sdk"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        }
+      ],
+      "summary": "XAA debugger: the client registration strategy (Pre-registered / CIMD / DCR) is now chosen in the \"Configure Server to Test\" modal and persisted per-server, instead of a session-only band on the flow.\n\n- The modal gains a **Registration** selector (Pre-registered → CIMD → DCR, per MCP authorization guidance) and collapses its Advanced (issuer + simulated identity) section by default, matching the OAuth debugger's layout. Client ID is required only for the pre-registered strategy; DCR mints a client and CIMD addresses it by metadata URL, so both leave it optional.\n- The chosen strategy is saved on the server config (`xaaRegistrationStrategy`) and rehydrated when editing. Non-debugger (Connect-page) saves preserve it rather than erasing it, and unknown persisted values fall back to pre-registered.\n- An explicit DCR/CIMD choice is now honored even when the server has a stored client secret: the run ignores the stored pre-registered credentials and establishes its own dynamic client identity.\n- The on-flow strategy band is removed. DCR's mid-run \"Register another client\" recovery (the only action that clears the duplicate-registration risk gate) remains, shown contextually.\n\nRequires the matching `xaaRegistrationStrategy` column + mutation validators in the backend (deploy first).",
+      "id": "xaa-registration-strategy-in-modal"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Add `runXaaFlow`, a headless Cross-App Access (ID-JAG) flow driver: discovers the target authorization server (RFC 9728/8414), self-issues an ID-JAG with the in-process mock IdP mint, verifies it locally, redeems it at the AS (RFC 7523 jwt-bearer), and calls the MCP server with the resulting access token — reporting each step. Powers the forthcoming `mcpjam xaa` CLI command.",
+      "id": "xaa-run-flow-driver"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "patch"
+        }
+      ],
+      "summary": "Route the CLI `runXaaFlow` redemption through the shared `createInProcessXaaExecutor` `/proxy/token` route — the exact seam the XAA state machine drives — instead of inlining the jwt-bearer request + OAuth proxy call. The CLI and the shared engine now redeem ID-JAGs through one path. The public `runXaaFlow`/`XaaFlowConfig`/`XaaFlowResult` contract is unchanged and all 22 `run-xaa-flow` contract tests pass unchanged (byte-equivalent output). The remaining full state-machine drive (mint + MCP call + discovery through the engine) is a follow-up gated on candidate-order equivalence.",
+      "id": "xaa-runflow-redemption-cutover"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "SAML support for the XAA (Cross-App Access / ID-JAG) debugger, sourced to draft-ietf-oauth-identity-assertion-authz-grant-04. Two independent identity axes, everything additive:\n\n- **Vocabulary (browser-safe):** `IDENTITY_ASSERTION_FORMATS` (`oidc` | `saml`, input axis) and `SUBJECT_IDENTIFIER_FORMATS` (`oauth-sub` | `saml-nameid`, output axis) with defaults and `normalizeIdentityAssertionFormat`/`normalizeSubjectIdentifierFormat`, exported from both the node barrel and `@mcpjam/sdk/browser`. `SAML2_TOKEN_TYPE` (`urn:ietf:params:oauth:token-type:saml2`) joins the token-type constants.\n- **SAML mint + hardened validation (Node-only):** `issueMockSamlAssertion` signs a SAML 2.0 bearer assertion with the xaa-idp-1 RS256 keypair (enveloped signature, exclusive C14N, SHA-256, XML-escaped user values). `verifyMockSamlAssertion` implements a hardened contract: size cap before decode/parse, DTD/entity rejection, exactly-one structural gates, an explicit algorithm allowlist (SHA-1 rejected), pinned-key signature verification with a reference-URI-to-Assertion-ID bind, and claims parsed exclusively from the cryptographically verified `getSignedReferences()` content — never the pre-verification DOM. `decodeSamlAssertionSubjectUnsafe` covers the forgiving mint route with the same size/DTD guards.\n- **`sub_id` (draft §3.2.2):** `IssueIdJagParams.subjectId` mints a `saml-nameid` `sub_id` claim derived from the IdP issuer and the target RAS entity ID — never copied from the subject token's own NameID/audience. The `unknown_sub` and `missing_claims` negative modes now tamper/remove every subject-resolution hint (`sub`, `sub_id.nameid`, `email`) together so SAML-resolving authorization servers can't silently pass a broken probe.\n- **Shared handler cores:** `/authenticate` mints SAML assertions on `assertionFormat: \"saml\"` (OIDC response unchanged), the RFC 8693 grant accepts SAML 2.0 subject tokens with strict verification plus a `subject_id_format` mock-extension param, and the JSON exchange decodes SAML input and mints `sub_id` on request — both axes independently selectable.\n- **Flow engine:** `identityAssertionFormat`/`subjectIdentifierFormat` on the XAA state-machine config and flow state (sticky, reset like `negativeTestMode`), SAML-aware `authenticateUser`/`exchangeIdTokenForIdJag`, new `identityAssertionSubject` state for UI display, and matching `XaaFlowConfig` options threaded through `runXaaFlow` and the in-process executor.\n- **Browser-entry guard:** an esbuild import-graph test asserts the XML/DSig stack (`xml-crypto`, `@xmldom/xmldom`, `xpath`) can never reach `@mcpjam/sdk/browser`.",
+      "id": "xaa-saml-support"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Extract the mock-IdP mint handler logic into pure handler cores (`handleXaaAuthenticate`, `handleXaaJsonTokenExchange`, `handleXaaTokenExchangeGrant` in `xaa/mint/handlers.ts`, node entry only). The cores return `{ status, body }` and own the mint contract; transport concerns (parsing, negative-test-mode resolution, org gating, hosted-issuer forwarding, headers) stay in the adapters.\n\nThis change wires the CLI's in-process executor to the cores; a follow-up change rewires the inspector server routes to the same cores (until then the server keeps its own equivalent handlers). The executor now delegates its `/authenticate`, `/token`, and `/token-exchange` routes to the cores, which aligns it with the server's tested behavior (deliberate parity fixes, not a pure refactor):\n\n- `/authenticate` applies the server's demo-identity defaults (`user-12345` / `demo.user@example.com`) instead of minting an empty-subject ID token, and returns the server's rich body (`{ id_token, token_type, expires_in, user }`) instead of a bare `{ id_token }`.\n- `/token-exchange` returns the server's rich body (`{ id_jag, token_type, issued_token_type, expires_in, negative_test_mode }`) instead of a bare `{ id_jag }`, and its malformed-assertion error messages now match the server's.\n- `/token` (RFC 8693) keeps its already-identical success body but adopts the server's more specific OAuth error descriptions and check order.\n\nThe shared XAA state machine reads only the stable keys (`id_token`, `id_jag`, `access_token`), so existing flows are unaffected.",
+      "id": "xaa-shared-mint-handlers"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "XAA convergence finishing pass (mechanical): collapse the last duplicated flow logic across the engine/CLI boundary and single-source the CLI result projection. The token-endpoint auth-method selector — previously copied byte-for-byte as `selectPreRegisteredTokenAuthMethod` in the engine and `selectTokenEndpointAuthMethod` in `runXaaFlow` — is now one exported `selectTokenEndpointAuthMethod` in `xaa/state-machines/capability-preflight.ts` (re-exported from `@mcpjam/sdk/browser`). A new `deriveCapabilityEvidence` there is the single source for the flat `{idJagProfile, jwtBearerGrant}` advertisement evidence used by `runXaaFlow`'s `authorizationServerCapabilities` projection. `runXaaFlow` also now surfaces its `steps[]` in ID-JAG spec vocabulary (`mint_id_jag`, `redeem_id_jag`) instead of the engine's internal HTTP-step names; the engine's own `XAAFlowStep` names are unchanged. No behavior change to the flow, discovery, redemption, or the public `XaaFlowResult` shape; the 23 golden contract tests pass unchanged and a new test locks the step vocabulary.",
+      "id": "xaa-shared-selector-and-step-vocab"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Move the XAA (ID-JAG) stepwise state machine into the SDK (`xaa/state-machines/state-machine.ts`, exported from `@mcpjam/sdk/browser` as `createXAAStateMachine`), so the inspector and (eventually) the CLI share one engine. Adds `runXaaStateMachine`, a runner that drives the machine to completion or an explicit stop step/predicate. The engine's human-facing `NEGATIVE_TEST_MODE_DETAILS` table moves to the SDK too (single source of truth). The inspector's client state machine becomes a thin re-export shim; all DCR/CIMD/pre-registered/stored-registration flows, manual stepping, history, logs, retry/reset, negative-mode behavior, and hosted issuer modes are preserved (the moved 46-test suite is the golden verification). The browser-purity guard confirms the engine pulls no Node builtin.",
+      "id": "xaa-state-machine-move"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "1.15.0",
-      "changesets": [
-        "bedrock-model-provider",
-        "cli-platform-login",
-        "computer-resource-capability-split",
-        "platform-api-client",
-        "platform-client-body-handling",
-        "platform-eval-chatbox-operations",
-        "project-computers-host-config",
-        "sdk-eval-reporting-sk-keys"
-      ],
-      "newVersion": "1.16.0"
-    },
-    {
       "name": "@mcpjam/inspector",
       "type": "minor",
-      "oldVersion": "2.10.1",
+      "oldVersion": "2.25.0",
       "changesets": [
-        "bedrock-model-provider",
-        "cli-platform-login"
+        "bright-hosts-share-images",
+        "xaa-dcr-cimd-strategies",
+        "xaa-jwt-bearer-dedup",
+        "xaa-registration-strategy-in-modal"
       ],
-      "newVersion": "2.11.0"
+      "newVersion": "2.26.0"
+    },
+    {
+      "name": "@mcpjam/sdk",
+      "type": "minor",
+      "oldVersion": "1.30.0",
+      "changesets": [
+        "bright-hosts-share-images",
+        "unified-registration-vocabulary",
+        "xaa-browser-primitives-sot",
+        "xaa-capability-ranked-ras",
+        "xaa-cli-registration-strategies",
+        "xaa-dcr-shared-core",
+        "xaa-discovery-mcp-init",
+        "xaa-engine-alignment",
+        "xaa-flow-core-types",
+        "xaa-in-process-executor",
+        "xaa-mint-to-sdk",
+        "xaa-run-flow-driver",
+        "xaa-runflow-redemption-cutover",
+        "xaa-saml-support",
+        "xaa-shared-mint-handlers",
+        "xaa-shared-selector-and-step-vocab",
+        "xaa-state-machine-move"
+      ],
+      "newVersion": "1.31.0"
     },
     {
       "name": "@mcpjam/cli",
       "type": "minor",
-      "oldVersion": "3.4.0",
+      "oldVersion": "3.13.0",
       "changesets": [
-        "cli-login-api-url-persistence",
-        "cli-platform-login",
-        "cli-projects-commands"
+        "xaa-cli-command",
+        "xaa-cli-registration-strategies"
       ],
-      "newVersion": "3.5.0"
+      "newVersion": "3.14.0"
     },
     {
       "name": "@mcpjam/mcp",

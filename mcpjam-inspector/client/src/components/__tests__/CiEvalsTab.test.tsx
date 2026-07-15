@@ -179,6 +179,9 @@ function makeSuite(overrides: Partial<EvalSuite> = {}): EvalSuite {
     environment: { servers: [] },
     createdAt: 1,
     updatedAt: 1,
+    // The CI tab only lists CI-active suites; fixtures default to
+    // sdk-created so existing scenarios stay in scope.
+    source: "sdk",
     ...overrides,
   };
 }
@@ -280,6 +283,38 @@ describe("CiEvalsTab first-run NUX", () => {
     mocks.useEvalQueries.mockReturnValue(
       makeQueries({
         sortedSuites: [makeEntry({ latestRun: run, recentRuns: [run] })],
+      }),
+    );
+
+    render(<CiEvalsTab convexProjectId="ws-1" />);
+
+    expect(screen.queryByText("Run your first eval")).not.toBeInTheDocument();
+    expect(screen.getByTestId("suite-iterations-view")).toBeInTheDocument();
+  });
+
+  it("excludes playground-only suites from the CI tab", () => {
+    mocks.useEvalQueries.mockReturnValue(
+      makeQueries({
+        sortedSuites: [makeEntry({ suite: makeSuite({ source: "ui" }) })],
+      }),
+    );
+
+    render(<CiEvalsTab convexProjectId="ws-1" />);
+
+    // The only suite is playground-only, so the CI tab treats the project
+    // as having no CI evals yet.
+    expect(screen.getByText("Run your first eval")).toBeInTheDocument();
+  });
+
+  it("includes ui-created suites that CI has reported into", () => {
+    mocks.route.current = { type: "suite-overview", suiteId: "suite-1" };
+    mocks.useEvalQueries.mockReturnValue(
+      makeQueries({
+        sortedSuites: [
+          makeEntry({
+            suite: makeSuite({ source: "ui", lastSdkRunAt: 123 }),
+          }),
+        ],
       }),
     );
 

@@ -41,6 +41,7 @@ Commands:
   oauth              Run MCP OAuth login, proxy, and conformance flows
   protocol           MCP protocol inspection and conformance checks
   inspector          Start or attach to the local MCPJam Inspector
+  mcp                Run MCPJam as an MCP server over stdio
   telemetry          Inspect and configure anonymous CLI telemetry
 ```
 
@@ -65,6 +66,9 @@ mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
 
 # List tools with full schemas
 mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN --format json
+
+# Run MCPJam itself as a stdio MCP server (for Claude Desktop, Claude Code, Cursor, ...)
+mcpjam mcp
 ```
 
 ## Why

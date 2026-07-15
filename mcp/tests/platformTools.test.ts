@@ -65,6 +65,9 @@ function fakeAgent(
 ): McpJamMcpServer {
   return {
     bearerToken: overrides.bearerToken,
+    // runPlatformOperation resolves the bearer via getBearerToken() (async, so
+    // anonymous sessions can mint lazily). The stub just returns the override.
+    getBearerToken: async () => overrides.bearerToken,
     runtimeEnv: {
       PLATFORM_API_URL:
         overrides.platformApiUrl ?? "https://staging.example.com/api/v1",
@@ -93,8 +96,25 @@ const PLAIN_TOOLS = [
   "get_server_prompt",
   "list_server_resources",
   "read_server_resource",
+  // Host-compat check: agent-oriented per-host verdict payload, no widget view.
+  "check_host_compatibility",
+  "run_eval_case",
   "run_eval_suite",
+  "create_eval_suite",
+  // Eval suite/case editing: agent-oriented payloads, no widget view.
+  "get_eval_suite",
+  "update_eval_suite",
+  "delete_eval_suite",
+  "set_eval_suite_schedule",
+  "list_eval_cases",
+  "get_eval_case",
+  "create_eval_case",
+  "update_eval_case",
+  "delete_eval_case",
+  "generate_eval_cases",
   "get_eval_iteration_trace",
+  "get_eval_run_steps",
+  "cancel_eval_run",
   "list_chat_sessions",
 ];
 
@@ -157,12 +177,27 @@ describe("platform tool registration", () => {
       "get_server_prompt",
       "list_server_resources",
       "read_server_resource",
+      "check_host_compatibility",
       "list_eval_suites",
       "list_eval_suite_runs",
+      "run_eval_case",
       "run_eval_suite",
+      "create_eval_suite",
+      "get_eval_suite",
+      "update_eval_suite",
+      "delete_eval_suite",
+      "set_eval_suite_schedule",
+      "list_eval_cases",
+      "get_eval_case",
+      "create_eval_case",
+      "update_eval_case",
+      "delete_eval_case",
+      "generate_eval_cases",
       "get_eval_run",
       "list_eval_run_iterations",
       "get_eval_iteration_trace",
+      "get_eval_run_steps",
+      "cancel_eval_run",
       "list_chatboxes",
       "get_chatbox",
       "list_chat_sessions",
@@ -201,12 +236,36 @@ describe("platform tool registration", () => {
 
     registerPlatformCatalogTools(registrar, fakeAgent({ bearerToken: "jwt" }));
 
+    const NON_DESTRUCTIVE_WRITES = new Set([
+      "run_eval_case",
+      "run_eval_suite",
+      "create_eval_suite",
+      "update_eval_suite",
+      "set_eval_suite_schedule",
+      "create_eval_case",
+      "update_eval_case",
+      "generate_eval_cases",
+    ]);
+    const DESTRUCTIVE_OPS = new Set([
+      "delete_eval_suite",
+      "delete_eval_case",
+      // Cancelling a run terminates in-flight work, so it announces destructive.
+      "cancel_eval_run",
+    ]);
+
     for (const registration of registrations) {
-      if (registration.name === "run_eval_suite") {
+      if (NON_DESTRUCTIVE_WRITES.has(registration.name)) {
         expect(registration.config.annotations).toEqual({
           readOnlyHint: false,
           destructiveHint: false,
           idempotentHint: false,
+        });
+      } else if (DESTRUCTIVE_OPS.has(registration.name)) {
+        // Known-destructive ops (deletes + cancel) announce it explicitly.
+        expect(registration.config.annotations).toEqual({
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: true,
         });
       } else if (registration.name === "call_server_tool") {
         // Arbitrary third-party tool execution: destructive/idempotent hints
@@ -284,6 +343,44 @@ describe("runPlatformOperation", () => {
     expect(result.content[0]?.text).toContain("bearer token");
   });
 
+  it("caps the model-visible text while keeping structuredContent complete", async () => {
+    const hugeDescription = "x".repeat(60_000);
+    const hugePage = {
+      items: [
+        {
+          id: "project-1",
+          name: "Big Project",
+          description: hugeDescription,
+          icon: null,
+          organizationId: null,
+          visibility: "private",
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json(hugePage))
+    );
+
+    const result = (await runPlatformOperation(
+      fakeAgent({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.isError).toBeUndefined();
+    const text = result.content[0]!.text;
+    expect(text.length).toBeLessThan(25_000);
+    expect(text).toContain("…[truncated");
+    // The complete payload survives for widgets/programmatic consumers.
+    expect(
+      (result.structuredContent as { items: Array<{ description: string }> })
+        .items[0]!.description
+    ).toBe(hugeDescription);
+  });
+
   it("calls the configured platform API with the agent bearer and returns structured content", async () => {
     const fetchMock = vi.fn(async () => Response.json(PROJECTS_PAGE));
     vi.stubGlobal("fetch", fetchMock);
@@ -301,9 +398,7 @@ describe("runPlatformOperation", () => {
     expect(result.structuredContent.items[0]?.id).toBe("project-1");
 
     const [target, init] = fetchMock.mock.calls[0]!;
-    expect(String(target)).toBe(
-      "https://staging.example.com/api/v1/projects"
-    );
+    expect(String(target)).toBe("https://staging.example.com/api/v1/projects");
     expect(
       new Headers((init as RequestInit).headers as HeadersInit).get(
         "authorization"
@@ -315,10 +410,7 @@ describe("runPlatformOperation", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
-        Response.json(
-          { code: "FORBIDDEN", message: "Denied" },
-          { status: 403 }
-        )
+        Response.json({ code: "FORBIDDEN", message: "Denied" }, { status: 403 })
       )
     );
 
@@ -330,5 +422,32 @@ describe("runPlatformOperation", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toBe("FORBIDDEN: Denied");
+  });
+
+  it("carries the error code in structuredContent so the widget can branch", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            code: "NOT_FOUND",
+            message: "No accessible MCPJam projects were found.",
+          },
+          { status: 404 }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeAgent({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.error).toEqual({
+      code: "NOT_FOUND",
+      message: "No accessible MCPJam projects were found.",
+    });
   });
 });

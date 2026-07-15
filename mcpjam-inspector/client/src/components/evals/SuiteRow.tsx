@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
-import { RotateCw } from "lucide-react";
+import { RotateCw, Server } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
@@ -134,8 +134,20 @@ export function SuiteRow({
               hour12: true,
             })}
           </div>
-          <div className="text-xs text-muted-foreground">
-            {serverTags.length > 0 ? serverTags.join(", ") : "No servers"}
+          <div className="mt-1 flex flex-wrap gap-1">
+            {serverTags.length > 0 ? (
+              serverTags.map((tag) => (
+                <span
+                  key={tag}
+                  className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/60 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
+                >
+                  {!tag.startsWith("+") && <Server className="h-2.5 w-2.5 shrink-0" />}
+                  {tag}
+                </span>
+              ))
+            ) : (
+              <span className="text-xs text-muted-foreground/60">No servers</span>
+            )}
           </div>
         </div>
         <div className="text-sm text-muted-foreground">

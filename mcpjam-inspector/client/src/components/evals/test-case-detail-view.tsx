@@ -64,10 +64,14 @@ export function TestCaseDetailView({
       const snapshot = iteration.testCaseSnapshot;
       if (!snapshot) return;
 
-      // Only count completed iterations - exclude pending/cancelled
+      // Only count terminal pass/fail iterations - exclude pending/cancelled.
       const result = computeIterationResult(iteration);
-      if (result !== "passed" && result !== "failed") {
-        return; // Skip pending/cancelled iterations
+      if (
+        result !== "passed" &&
+        result !== "failed" &&
+        result !== "timed_out"
+      ) {
+        return;
       }
 
       const key = `${snapshot.provider}/${snapshot.model}`;
@@ -107,7 +111,9 @@ export function TestCaseDetailView({
   const overallStats = useMemo(() => {
     const results = iterations.map((i) => computeIterationResult(i));
     const passed = results.filter((r) => r === "passed").length;
-    const failed = results.filter((r) => r === "failed").length;
+    const failed = results.filter(
+      (r) => r === "failed" || r === "timed_out",
+    ).length;
     const total = passed + failed;
     const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
 

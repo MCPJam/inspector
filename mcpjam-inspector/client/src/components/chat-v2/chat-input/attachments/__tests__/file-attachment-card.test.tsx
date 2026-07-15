@@ -17,6 +17,9 @@ const mockFormatFileSize = vi.mocked(formatFileSize);
 // Mock lucide-react icons as simple elements
 vi.mock("lucide-react", () => ({
   X: (props: any) => <div data-testid="x-icon" {...props} />,
+  // XIcon is used by the design-system Dialog's built-in close button, which
+  // the image attachment renders for its full-screen viewer.
+  XIcon: (props: any) => <div data-testid="x-icon" {...props} />,
   FileText: (props: any) => <div data-testid="file-text-icon" {...props} />,
   Image: (props: any) => <div data-testid="image-icon" {...props} />,
   FileSpreadsheet: (props: any) => (

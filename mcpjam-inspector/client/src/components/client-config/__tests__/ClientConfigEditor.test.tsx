@@ -102,7 +102,7 @@ describe("ClientConfigEditor server selection invariant", () => {
         owner="connection-only"
       />,
     );
-    expect(screen.queryByText("Host context (JSON)")).toBeNull();
+    expect(screen.queryByText("Client context (JSON)")).toBeNull();
     // Connection defaults / client capabilities still render.
     expect(screen.getByText("Connection headers (JSON)")).toBeInTheDocument();
     expect(screen.getByText("Client capabilities (JSON)")).toBeInTheDocument();
