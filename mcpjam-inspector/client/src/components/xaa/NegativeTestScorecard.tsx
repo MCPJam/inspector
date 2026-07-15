@@ -254,7 +254,8 @@ export function NegativeTestScorecard({
               Negative-test scorecard
             </span>
             <p className="truncate text-xs text-muted-foreground">
-              Test invalid assertions and inspect policy-dependent behavior.
+              Send deliberately broken ID-JAGs and verify your authorization
+              server rejects them.
             </p>
           </div>
           {expanded ? (

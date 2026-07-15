@@ -294,14 +294,13 @@ export function XAAHowItWorksContent() {
             <SectionHeading
               number="4"
               title="Run negative tests"
-              description="The scorecard checks that the authorization server rejects structurally invalid ID-JAGs and reports policy-dependent behavior separately."
+              description="Send deliberately broken ID-JAGs and verify your authorization server rejects them."
             />
             <p className="text-sm leading-6 text-muted-foreground">
-              Run a successful flow first, then select{" "}
-              <strong>Run negative tests</strong>. A strict check passes when
-              the authorization server rejects the broken assertion. The MCP
-              server is not called during these checks. The scorecard reuses the
-              pre-registered or DCR client identity from that flow.
+              Select <strong>Run negative tests</strong>. A strict check passes
+              when the authorization server rejects the broken ID-JAG. The MCP
+              server is not called during these checks. The scorecard uses the
+              configured pre-registered or DCR client identity.
             </p>
             <div className="mt-6 grid gap-x-6 gap-y-3 sm:grid-cols-2">
               {strictNegativeTests.map((test) => (
