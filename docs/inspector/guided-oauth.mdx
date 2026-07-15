@@ -77,9 +77,11 @@ OAuth trace steps also appear as filterable entries in the traffic log. Select *
 
 When you configure a pre-registered OAuth client with a client secret, the secret is stored securely and never exposed in the UI after saving. The client secret field shows the following controls:
 
-- **Reveal** (hosted mode only) — Fetches and temporarily displays the stored secret so you can copy it. The value is hidden again when you close the panel or navigate away.
+- **Reveal** (hosted mode only) — Fetches and displays the stored secret in an editable field. You can copy it or type directly in the field to replace it. Click **Hide** to collapse the field without saving changes.
 - **Clear** — Marks the secret for removal. The secret is deleted from storage when you save. Click **Undo** to cancel before saving.
-- **Replace** — Type a new value into the client secret field to replace the stored secret on the next save. Entering a new value automatically cancels any pending clear.
+- **Replace** — After clicking **Reveal**, type a new value into the revealed field to replace the stored secret on the next save.
+
+When a secret is saved but not yet revealed, the field shows a "A client secret is saved" message in place of an input box. No empty input is shown until you click **Reveal**.
 
 <Note>
 In hosted mode, client secrets are stored in a secure vault and are never written to your browser's local storage. In local mode, the secret is stored in your browser's local storage alongside the rest of your server configuration.
