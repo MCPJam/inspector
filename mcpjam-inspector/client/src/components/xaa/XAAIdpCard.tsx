@@ -1,6 +1,11 @@
-import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Check, Copy, Info, KeyRound } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Check, Copy, Info, KeyRound } from "lucide-react";
 import { Switch } from "@mcpjam/design-system/switch";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
 import { SegmentedControl } from "@/components/ui/json-editor/segmented-control";
@@ -14,6 +19,36 @@ import {
 import type { XaaIssuerMode } from "@/hooks/useXaaRunSettings";
 import type { IdentityAssertionFormat } from "@/shared/xaa.js";
 import { IDENTITY_ASSERTION_FORMAT_HINTS } from "./xaa-server-form";
+
+function IssuerModeHint({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label={label}
+          className="inline-flex shrink-0 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Info className="h-3.5 w-3.5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent
+        side="bottom"
+        align="start"
+        variant="muted"
+        className="max-w-sm text-left text-balance"
+      >
+        {children}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 // A compact click-to-copy chip: shows only the label to keep the bar minimal —
 // the long URL stays hidden (revealed on hover via the native title) and the
@@ -232,6 +267,67 @@ export function XAAIdpCard({
                 />
               </div>
             )}
+            {!HOSTED_MODE && (
+              <div className="flex shrink-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                {onIssuerModeChange && (
+                  <label className="flex items-center gap-2">
+                    <Switch
+                      checked={hostedIssuerOn}
+                      disabled={!canUseHostedIssuer}
+                      onCheckedChange={(checked) =>
+                        onIssuerModeChange(checked ? "hosted" : "local")
+                      }
+                      aria-label="Use hosted issuer"
+                    />
+                    <span className="font-medium text-foreground">
+                      Use hosted issuer (app.mcpjam.com)
+                    </span>
+                  </label>
+                )}
+                {hostedIssuerOn ? (
+                  <IssuerModeHint label="About the hosted issuer">
+                    ID tokens and ID-JAGs are minted by{" "}
+                    <code className="font-mono">app.mcpjam.com</code>, so a
+                    cloud authorization server can discover this issuer and
+                    fetch its JWKS. No tunnel is needed. Token requests and MCP
+                    calls still run from this machine; your authorization server
+                    must be reachable over https.
+                    {issuerKind === "anonymous" && (
+                      <>
+                        {" "}
+                        This session mints under the{" "}
+                        <b>anonymous test issuer</b> (
+                        <code className="font-mono">/g/…</code>): its discovery
+                        document is marked{" "}
+                        <code className="font-mono">
+                          mcpjam:issuer_kind: anonymous-test
+                        </code>{" "}
+                        and an authorization server must explicitly allowlist
+                        it. Assertions prove control of an anonymous session —
+                        this is a testing convenience, not enterprise-managed
+                        authorization. Sign in to mint under a membership-gated
+                        organization issuer.
+                      </>
+                    )}
+                  </IssuerModeHint>
+                ) : (
+                  <IssuerModeHint label="About local issuer URLs">
+                    These are local URLs. Your authorization server can only
+                    fetch them if it can reach this machine. A cloud-hosted Okta
+                    or Auth0 tenant cannot reach{" "}
+                    <code className="font-mono">localhost</code>.
+                    {onIssuerModeChange
+                      ? " Flip on the hosted issuer, or expose MCPJam with a public tunnel (e.g. ngrok)."
+                      : " Expose MCPJam with a public tunnel (e.g. ngrok) first."}
+                  </IssuerModeHint>
+                )}
+                {onIssuerModeChange &&
+                  !canUseHostedIssuer &&
+                  hostedIssuerDisabledReason && (
+                    <span>({hostedIssuerDisabledReason})</span>
+                  )}
+              </div>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -255,79 +351,6 @@ export function XAAIdpCard({
             are unchanged.
           </div>
         )}
-
-      {!HOSTED_MODE && (
-        <div className="mt-3 space-y-2 text-xs text-muted-foreground">
-          {onIssuerModeChange && (
-            <label className="flex items-center gap-2">
-              <Switch
-                checked={hostedIssuerOn}
-                disabled={!canUseHostedIssuer}
-                onCheckedChange={(checked) =>
-                  onIssuerModeChange(checked ? "hosted" : "local")
-                }
-                aria-label="Use hosted issuer"
-              />
-              <span className="font-medium text-foreground">
-                Use hosted issuer (app.mcpjam.com)
-              </span>
-              {issuerKind === "anonymous" && (
-                <span
-                  className="rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-600 dark:text-amber-400"
-                  data-testid="anonymous-issuer-badge"
-                >
-                  Anonymous test issuer
-                </span>
-              )}
-              {!canUseHostedIssuer && hostedIssuerDisabledReason && (
-                <span>({hostedIssuerDisabledReason})</span>
-              )}
-            </label>
-          )}
-          {hostedIssuerOn ? (
-            <div className="flex items-start gap-2">
-              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span>
-                ID tokens and ID-JAGs are minted by{" "}
-                <code className="font-mono">app.mcpjam.com</code>, so a cloud
-                authorization server can discover this issuer and fetch its
-                JWKS. No tunnel is needed. Token requests and MCP calls still
-                run from this machine; your authorization server must be
-                reachable over https.
-                {issuerKind === "anonymous" && (
-                  <>
-                    {" "}
-                    This session mints under the <b>anonymous test issuer</b>{" "}
-                    (<code className="font-mono">/g/…</code>): its discovery
-                    document is marked{" "}
-                    <code className="font-mono">
-                      mcpjam:issuer_kind: anonymous-test
-                    </code>{" "}
-                    and an authorization server must explicitly allowlist it.
-                    Assertions prove control of an anonymous session — this is
-                    a testing convenience, not enterprise-managed
-                    authorization. Sign in to mint under a
-                    membership-gated organization issuer.
-                  </>
-                )}
-              </span>
-            </div>
-          ) : (
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-              <span>
-                These are local URLs. Your authorization server can only fetch
-                them if it can reach this machine. A cloud-hosted Okta or Auth0
-                tenant cannot reach <code className="font-mono">localhost</code>
-                .
-                {onIssuerModeChange
-                  ? " Flip on the hosted issuer above, or expose MCPJam with a public tunnel (e.g. ngrok)."
-                  : " Expose MCPJam with a public tunnel (e.g. ngrok) first."}
-              </span>
-            </div>
-          )}
-        </div>
-      )}
 
       {isOrgScoped &&
         (issuerKind === "anonymous" ? (
