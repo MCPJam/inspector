@@ -188,9 +188,55 @@ describe("XAAFlowLogger run controls", () => {
     await user.click(screen.getByRole("button", { name: "Copy failed" }));
     expect(screen.getByRole("button", { name: "Copied!" })).toBeInTheDocument();
   });
+
+  it("copies only the selected XAA step", async () => {
+    const user = userEvent.setup();
+    copyToClipboard.mockClear();
+    render(
+      <XAAFlowLogger
+        flowState={createInitialXAAFlowState({
+          serverUrl: "https://mcp.example.com",
+          currentStep: "received_resource_metadata",
+          infoLogs: [
+            {
+              id: "resource-metadata",
+              step: "received_resource_metadata",
+              label: "Resource metadata received",
+              data: { authorization_servers: ["https://auth.example.com"] },
+              timestamp: 1,
+              level: "info",
+            },
+            {
+              id: "other-step",
+              step: "jwt_bearer_request",
+              label: "JWT bearer request",
+              data: { method: "POST" },
+              timestamp: 2,
+              level: "info",
+            },
+          ],
+        })}
+        hasProfile
+        actions={{
+          onConfigure: vi.fn(),
+          onReset: vi.fn(),
+          onContinue: vi.fn(),
+          continueLabel: "Continue",
+        }}
+        summary={{ serverUrl: "https://mcp.example.com" }}
+      />
+    );
+
+    await user.click(screen.getAllByRole("button", { name: "Copy step" })[0]);
+
+    expect(copyToClipboard).toHaveBeenCalledTimes(1);
+    const copied = copyToClipboard.mock.calls[0][0];
+    expect(copied).toContain("Resource metadata received");
+    expect(copied).not.toContain("JWT bearer request");
+  });
 });
 
-describe("XAAFlowLogger request/response card split", () => {
+describe("XAAFlowLogger request/response cards", () => {
   const JWT_BEARER_EXCHANGE = {
     step: "jwt_bearer_request" as const,
     timestamp: 1,

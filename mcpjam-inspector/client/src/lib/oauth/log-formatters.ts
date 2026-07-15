@@ -25,6 +25,10 @@ interface StepGroup {
   firstTimestamp: number;
 }
 
+interface StepCopyOptions {
+  step?: OAuthFlowStep;
+}
+
 const formatTimestamp = (timestamp: number) =>
   new Date(timestamp).toLocaleTimeString();
 
@@ -64,7 +68,7 @@ const isSensitiveContainerKey = (key: string) => {
   return (
     SENSITIVE_FIELDS.has(normalized) ||
     /(^|_)(token|secret|password|credential|cookie|auth)(_|$)/.test(
-      normalized,
+      normalized
     ) ||
     /(^|_)api_?key(_|$)/.test(normalized)
   );
@@ -85,7 +89,7 @@ const sensitiveStringFieldPattern = [...SENSITIVE_FIELDS]
 
 const sensitiveStringAssignmentPattern = new RegExp(
   `\\b((?:${sensitiveStringFieldPattern})\\s*["']?\\s*[:=]\\s*["']?)([^"'&\\r\\n,}]+)`,
-  "gi",
+  "gi"
 );
 
 function sanitizeCopyString(value: string): unknown {
@@ -115,20 +119,18 @@ function sanitizeCopyValue(value: unknown): unknown {
     Object.entries(value).map(([key, entryValue]) => [
       key,
       isSensitiveField(key) ? REDACTED : sanitizeCopyValue(entryValue),
-    ]),
+    ])
   );
 }
 
 function sanitizeCopyHeaders(
-  headers: Record<string, string>,
+  headers: Record<string, string>
 ): Record<string, string> {
   return Object.fromEntries(
     Object.entries(headers).map(([key, value]) => [
       key,
-      isSensitiveContainerKey(key)
-        ? REDACTED
-        : stringifyCopyValue(value),
-    ]),
+      isSensitiveContainerKey(key) ? REDACTED : stringifyCopyValue(value),
+    ])
   );
 }
 
@@ -158,7 +160,7 @@ const getErrorStack = (
   error:
     | NonNullable<OAuthFlowState["infoLogs"]>[number]["error"]
     | NonNullable<OAuthFlowState["httpHistory"]>[number]["error"]
-    | undefined,
+    | undefined
 ): string | undefined => {
   if (
     error?.details &&
@@ -210,6 +212,7 @@ const getStatusIcon = (step: OAuthFlowStep, currentStepIndex: number) => {
 export function generateGuideText(
   oauthFlowState: OAuthFlowState,
   groups: StepGroup[],
+  options?: StepCopyOptions
 ): string {
   let text = "=== OAuth Debugger - Guide View ===\n\n";
 
@@ -225,6 +228,8 @@ export function generateGuideText(
   const currentStepIndex = getStepIndex(oauthFlowState.currentStep);
 
   groups.forEach((group, groupIndex) => {
+    if (options?.step && group.step !== options.step) return;
+
     const info = getStepInfo(group.step);
     const stepNumber = groupIndex + 1;
     const statusInfo = getStatusIcon(group.step, currentStepIndex);
@@ -273,9 +278,15 @@ export function generateGuideText(
         const showResponse = view !== "request";
 
         if (view === "response") {
-          text += `[${formatTimestamp(entry.timestamp ?? httpEntry.timestamp)}] Response to: ${httpEntry.request.method} ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
+          text += `[${formatTimestamp(
+            entry.timestamp ?? httpEntry.timestamp
+          )}] Response to: ${httpEntry.request.method} ${sanitizeCopyUrl(
+            httpEntry.request.url
+          )}\n`;
         } else {
-          text += `[${formatTimestamp(httpEntry.timestamp)}] Request: ${httpEntry.request.method} ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
+          text += `[${formatTimestamp(httpEntry.timestamp)}] Request: ${
+            httpEntry.request.method
+          } ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
         }
 
         if (showResponse && httpEntry.duration) {
@@ -283,12 +294,14 @@ export function generateGuideText(
         }
 
         if (showResponse && httpEntry.response?.status) {
-          text += `Status: ${httpEntry.response.status} ${httpEntry.response.statusText || ""}\n`;
+          text += `Status: ${httpEntry.response.status} ${
+            httpEntry.response.statusText || ""
+          }\n`;
         }
 
         if (view === "request" && httpEntry.response) {
           text += `Response: recorded under [${getOAuthReceivedStepForRequest(
-            httpEntry.step,
+            httpEntry.step
           )}]\n`;
         }
 
@@ -302,7 +315,7 @@ export function generateGuideText(
           text += `${JSON.stringify(
             sanitizeCopyHeaders(httpEntry.request.headers),
             null,
-            2,
+            2
           )}\n`;
         }
 
@@ -321,7 +334,7 @@ export function generateGuideText(
           text += `${JSON.stringify(
             sanitizeCopyHeaders(httpEntry.response.headers),
             null,
-            2,
+            2
           )}\n`;
         }
 
@@ -364,19 +377,30 @@ export function generateRawText(
         key: string;
       }
   >,
+  options?: StepCopyOptions
 ): string {
   let text = "=== OAuth Debugger - Raw Logs ===\n\n";
 
-  if (timelineEntries.length === 0) {
+  const entriesToCopy = options?.step
+    ? timelineEntries.filter((entry) =>
+        entry.type === "info"
+          ? entry.log.step === options.step
+          : (entry.step ?? entry.entry.step) === options.step
+      )
+    : timelineEntries;
+
+  if (entriesToCopy.length === 0) {
     text += "No activity yet.\n";
     return text;
   }
 
-  timelineEntries.forEach((entry) => {
+  entriesToCopy.forEach((entry) => {
     if (entry.type === "info") {
       const log = entry.log;
       const level = log.level ?? "info";
-      text += `[${formatTimestamp(log.timestamp)}] [${level.toUpperCase()}] ${log.step}\n`;
+      text += `[${formatTimestamp(log.timestamp)}] [${level.toUpperCase()}] ${
+        log.step
+      }\n`;
       text += `${log.label || "Info"}\n`;
       if (log.data) {
         text += `${stringifyCopyValue(log.data)}\n`;
@@ -400,12 +424,20 @@ export function generateRawText(
         view === "request" && status !== undefined
           ? "request sent"
           : status !== undefined
-          ? `${status}${httpEntry.response?.statusText ? ` ${httpEntry.response?.statusText}` : ""}`
+          ? `${status}${
+              httpEntry.response?.statusText
+                ? ` ${httpEntry.response?.statusText}`
+                : ""
+            }`
           : "pending";
 
-      text += `[${formatTimestamp(entry.timestamp)}] [${httpEntry.request.method}] [${statusLabel}] ${displayStep}\n`;
+      text += `[${formatTimestamp(entry.timestamp)}] [${
+        httpEntry.request.method
+      }] [${statusLabel}] ${displayStep}\n`;
       if (view === "response") {
-        text += `Response to: ${httpEntry.request.method} ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
+        text += `Response to: ${httpEntry.request.method} ${sanitizeCopyUrl(
+          httpEntry.request.url
+        )}\n`;
       } else {
         text += `Request URL: ${sanitizeCopyUrl(httpEntry.request.url)}\n`;
       }
@@ -415,7 +447,8 @@ export function generateRawText(
       }
 
       // Request details
-      if (showRequest &&
+      if (
+        showRequest &&
         httpEntry.request.headers &&
         Object.keys(httpEntry.request.headers).length > 0
       ) {
@@ -423,7 +456,7 @@ export function generateRawText(
         text += `${JSON.stringify(
           sanitizeCopyHeaders(httpEntry.request.headers),
           null,
-          2,
+          2
         )}\n`;
       }
 
@@ -434,7 +467,7 @@ export function generateRawText(
 
       if (view === "request" && httpEntry.response) {
         text += `Response: recorded under [${getOAuthReceivedStepForRequest(
-          httpEntry.step,
+          httpEntry.step
         )}]\n`;
       }
 
@@ -448,7 +481,7 @@ export function generateRawText(
         text += `${JSON.stringify(
           sanitizeCopyHeaders(httpEntry.response.headers),
           null,
-          2,
+          2
         )}\n`;
       }
 

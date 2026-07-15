@@ -169,7 +169,8 @@ const appendError = (
 
 export function generateXAAFlowText(
   flowState: XAAFlowState,
-  summary: XAAFlowCopySummary
+  summary: XAAFlowCopySummary,
+  options?: { step?: XAAFlowStep }
 ): string {
   let text = "=== XAA Debugger - Flow ===\n\n";
   text += `Server URL: ${sanitizeUrl(
@@ -210,11 +211,15 @@ export function generateXAAFlowText(
   };
 
   for (const entry of flowState.infoLogs ?? []) {
-    add(entry.step, { type: "info", timestamp: entry.timestamp, value: entry });
+    if (options?.step && entry.step !== options.step) continue;
+    add(entry.step, {
+      type: "info",
+      timestamp: entry.timestamp,
+      value: entry,
+    });
   }
-  // Same request/response placement as the logger UI: the request prints under
-  // the request step, and a completed response prints under the paired
-  // received step immediately. Failed or unpaired exchanges print whole.
+  // Keep the request under its request step and the response under the paired
+  // received step, matching the guide and sequence diagram.
   for (const item of splitHttpEntriesForDisplay<
     XAAFlowStep,
     XAAHttpHistoryEntry
@@ -222,6 +227,7 @@ export function generateXAAFlowText(
     entries: flowState.httpHistory ?? [],
     pairedReceivedStep: getXAAReceivedStepForRequest,
   })) {
+    if (options?.step && item.step !== options.step) continue;
     add(item.step, {
       type: "http",
       timestamp: item.timestamp,
@@ -230,9 +236,11 @@ export function generateXAAFlowText(
     });
   }
 
-  const steps = Array.from(byStep.keys()).sort(
-    (a, b) => getXAAStepIndex(a) - getXAAStepIndex(b)
-  );
+  const steps = options?.step
+    ? [options.step]
+    : Array.from(byStep.keys()).sort(
+        (a, b) => getXAAStepIndex(a) - getXAAStepIndex(b)
+      );
   if (steps.length === 0) return `${text}No activity yet.\n`;
 
   for (const step of steps) {
@@ -242,7 +250,9 @@ export function generateXAAFlowText(
     text += `${"=".repeat(60)}\n`;
     text += `${stepInfo.summary}\n\n`;
 
-    const entries = byStep.get(step)!.sort((a, b) => a.timestamp - b.timestamp);
+    const entries = (byStep.get(step) ?? []).sort(
+      (a, b) => a.timestamp - b.timestamp
+    );
     for (const entry of entries) {
       if (entry.type === "info") {
         const log = entry.value;

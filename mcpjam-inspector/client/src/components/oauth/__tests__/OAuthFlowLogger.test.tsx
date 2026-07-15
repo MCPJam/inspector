@@ -7,6 +7,9 @@ import {
   type OAuthFlowState,
 } from "@mcpjam/sdk/browser";
 
+const copyToClipboard = vi.hoisted(() => vi.fn(async () => true));
+vi.mock("@/lib/clipboard", () => ({ copyToClipboard }));
+
 // The logger auto-scrolls its guide pane on mount; jsdom has no Element.scrollTo.
 beforeAll(() => {
   Element.prototype.scrollTo = vi.fn();
@@ -124,5 +127,42 @@ describe("OAuthFlowLogger request/response card split", () => {
     // Status appears on the response item, not the request item.
     expect(screen.getAllByText(/401/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("POST").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("copies only the selected step from the Guide view", async () => {
+    const user = userEvent.setup();
+    copyToClipboard.mockClear();
+    renderLogger({
+      currentStep: "received_401_unauthorized",
+      httpHistory: [INITIAL_EXCHANGE],
+    });
+
+    await user.click(screen.getAllByRole("button", { name: "Copy step" })[0]);
+
+    expect(copyToClipboard).toHaveBeenCalledTimes(1);
+    const copied = copyToClipboard.mock.calls[0][0];
+    expect(copied).toContain("Initial MCP Request");
+    expect(copied).not.toContain("401 Unauthorized");
+    expect(screen.getByRole("button", { name: "Copied!" })).toBeInTheDocument();
+  });
+
+  it("copies only the selected step from the Raw view", async () => {
+    const user = userEvent.setup();
+    copyToClipboard.mockClear();
+    renderLogger({
+      currentStep: "received_401_unauthorized",
+      httpHistory: [INITIAL_EXCHANGE],
+    });
+
+    await user.click(screen.getByRole("tab", { name: "Raw" }));
+    await user.click(screen.getAllByRole("button", { name: "Copy step" })[0]);
+
+    expect(copyToClipboard).toHaveBeenCalledTimes(1);
+    const copied = copyToClipboard.mock.calls[0][0];
+    expect(copied).toContain("request_without_token");
+    expect(copied).toContain(
+      "Response: recorded under [received_401_unauthorized]"
+    );
+    expect(copied).not.toContain("401 Unauthorized");
   });
 });

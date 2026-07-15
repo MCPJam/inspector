@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
+  Copy,
   Loader2,
   Pencil,
   Play,
@@ -408,13 +409,18 @@ export function XAAFlowLogger({
   );
   const [copySuccess, setCopySuccess] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
+  const [copiedStep, setCopiedStep] = useState<XAAFlowStep | null>(null);
+  const [copyStepError, setCopyStepError] = useState<XAAFlowStep | null>(null);
   const copyResetTimerRef = useRef<number | null>(null);
+  const copyStepTimerRef = useRef<number | null>(null);
 
   const stepRefs = useRef(new Map<XAAFlowStep, HTMLDivElement | null>());
 
   useEffect(() => {
     setExpandedSteps(new Set([flowState.currentStep]));
   }, [flowState.currentStep]);
+
+  const currentStepIndex = getXAAStepIndex(flowState.currentStep);
 
   // Bring the focused step (e.g. clicked in the run rail or the diagram) into
   // view and open it, so focusing actually navigates to that step's card.
@@ -431,8 +437,6 @@ export function XAAFlowLogger({
       ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [activeStep]);
 
-  const currentStepIndex = getXAAStepIndex(flowState.currentStep);
-
   const groups = useMemo(() => {
     type XAAHttpEntry = NonNullable<XAAFlowState["httpHistory"]>[number];
     const steps = new Map<
@@ -443,9 +447,7 @@ export function XAAFlowLogger({
         /** Raw entries tagged with this step — feeds error guidance and the
          * phase-skip check, which read the unsplit data. */
         httpEntries: NonNullable<XAAFlowState["httpHistory"]>;
-        /** What this card actually renders: each completed exchange's request
-         * half under its request step, the response half under the paired
-         * received step immediately. */
+        /** What this card renders: the request half or paired response half. */
         displayItems: HttpEntryDisplayItem<XAAFlowStep, XAAHttpEntry>[];
       }
     >();
@@ -529,10 +531,37 @@ export function XAAFlowLogger({
     }, 2000);
   };
 
+  const handleCopyStep = async (step: XAAFlowStep) => {
+    setCopyStepError(null);
+    if (copyStepTimerRef.current !== null) {
+      window.clearTimeout(copyStepTimerRef.current);
+      copyStepTimerRef.current = null;
+    }
+
+    const success = await copyToClipboard(
+      generateXAAFlowText(flowState, summary, { step })
+    );
+    if (!success) {
+      setCopiedStep(null);
+      setCopyStepError(step);
+      return;
+    }
+
+    setCopyStepError(null);
+    setCopiedStep(step);
+    copyStepTimerRef.current = window.setTimeout(() => {
+      setCopiedStep(null);
+      copyStepTimerRef.current = null;
+    }, 2000);
+  };
+
   useEffect(() => {
     return () => {
       if (copyResetTimerRef.current !== null) {
         window.clearTimeout(copyResetTimerRef.current);
+      }
+      if (copyStepTimerRef.current !== null) {
+        window.clearTimeout(copyStepTimerRef.current);
       }
     };
   }, []);
@@ -892,8 +921,17 @@ export function XAAFlowLogger({
                     }}
                     className="bg-background border border-border rounded-lg shadow-sm"
                   >
-                    <button
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={expandedSteps.has(group.step)}
                       onClick={() => toggleStep(group.step)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          toggleStep(group.step);
+                        }
+                      }}
                       className="w-full px-4 py-3 flex items-start gap-3 text-left hover:bg-muted/40 rounded-t-lg"
                     >
                       <div className="flex-shrink-0 mt-0.5">
@@ -928,7 +966,24 @@ export function XAAFlowLogger({
                           {stepInfo.summary}
                         </p>
                       </div>
-                    </button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleCopyStep(group.step);
+                        }}
+                        className="h-7 shrink-0 px-2 text-xs"
+                      >
+                        <Copy className="mr-1 h-3 w-3" />
+                        {copyStepError === group.step
+                          ? "Copy failed"
+                          : copiedStep === group.step
+                          ? "Copied!"
+                          : "Copy step"}
+                      </Button>
+                    </div>
 
                     {expandedSteps.has(group.step) && (
                       <div className="border-t bg-muted/20 p-4 space-y-3">

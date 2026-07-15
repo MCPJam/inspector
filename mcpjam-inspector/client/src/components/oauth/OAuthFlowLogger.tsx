@@ -24,11 +24,13 @@ import {
   ChevronRight,
   CheckCircle2,
   Circle,
+  Copy,
   AlertTriangle,
   Pencil,
   RotateCcw,
 } from "lucide-react";
 import { generateGuideText, generateRawText } from "@/lib/oauth/log-formatters";
+import { copyToClipboard } from "@/lib/clipboard";
 import { getOAuthReceivedStepForRequest } from "@/lib/oauth/step-pairing";
 import {
   splitHttpEntriesForDisplay,
@@ -81,6 +83,11 @@ export function OAuthFlowLogger({
   const [deletedInfoLogs] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<"guide" | "raw">("guide");
   const [copySuccess, setCopySuccess] = useState(false);
+  const [copiedStep, setCopiedStep] = useState<OAuthFlowStep | null>(null);
+  const [copyStepError, setCopyStepError] = useState<OAuthFlowStep | null>(
+    null
+  );
+  const copyStepTimerRef = useRef<number | null>(null);
 
   const currentStepIndex = getStepIndex(oauthFlowState.currentStep);
 
@@ -328,6 +335,41 @@ export function OAuthFlowLogger({
       console.error("Failed to copy logs:", err);
     }
   };
+
+  const handleCopyStep = async (step: OAuthFlowStep) => {
+    setCopyStepError(null);
+    if (copyStepTimerRef.current !== null) {
+      window.clearTimeout(copyStepTimerRef.current);
+      copyStepTimerRef.current = null;
+    }
+
+    const text =
+      activeTab === "guide"
+        ? generateGuideText(oauthFlowState, groups, { step })
+        : generateRawText(oauthFlowState, timelineEntries, { step });
+
+    const success = await copyToClipboard(text);
+    if (!success) {
+      setCopiedStep(null);
+      setCopyStepError(step);
+      return;
+    }
+
+    setCopyStepError(null);
+    setCopiedStep(step);
+    copyStepTimerRef.current = window.setTimeout(() => {
+      setCopiedStep(null);
+      copyStepTimerRef.current = null;
+    }, 2000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (copyStepTimerRef.current !== null) {
+        window.clearTimeout(copyStepTimerRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div className="h-full border-l border-border flex flex-col">
@@ -623,8 +665,17 @@ export function OAuthFlowLogger({
                         )}
                       >
                         {/* Step header - clickable */}
-                        <button
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          aria-expanded={isExpanded}
                           onClick={() => toggleStep(group.step)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              toggleStep(group.step);
+                            }
+                          }}
                           className="w-full px-4 py-3 flex items-start gap-3 hover:bg-muted/30 transition-colors rounded-t-lg cursor-pointer"
                         >
                           {/* Status icon */}
@@ -696,6 +747,24 @@ export function OAuthFlowLogger({
                               </Button>
                             )}
 
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleCopyStep(group.step);
+                              }}
+                              className="h-7 px-2 text-xs"
+                            >
+                              <Copy className="h-3 w-3 mr-1" />
+                              {copyStepError === group.step
+                                ? "Copy failed"
+                                : copiedStep === group.step
+                                ? "Copied!"
+                                : "Copy step"}
+                            </Button>
+
                             {/* Expand/collapse chevron */}
                             {isExpanded ? (
                               <ChevronDown className="h-4 w-4 text-muted-foreground" />
@@ -703,7 +772,7 @@ export function OAuthFlowLogger({
                               <ChevronRight className="h-4 w-4 text-muted-foreground" />
                             )}
                           </div>
-                        </button>
+                        </div>
 
                         {/* Collapsible content */}
                         {isExpanded && (
@@ -828,6 +897,20 @@ export function OAuthFlowLogger({
                           >
                             {level}
                           </Badge>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void handleCopyStep(log.step)}
+                            className="ml-auto h-7 px-2 text-xs"
+                          >
+                            <Copy className="h-3 w-3 mr-1" />
+                            {copyStepError === log.step
+                              ? "Copy failed"
+                              : copiedStep === log.step
+                              ? "Copied!"
+                              : "Copy step"}
+                          </Button>
                         </div>
                         <InfoLogEntry
                           label={log.label}
@@ -842,6 +925,7 @@ export function OAuthFlowLogger({
 
                   const httpEntry: HttpHistoryEntry = entry.entry;
                   const view = entry.view;
+                  const displayStep = entry.step ?? httpEntry.step;
                   const status = httpEntry.response?.status;
                   const isExpectedAuthChallenge =
                     httpEntry.step === "request_without_token" &&
@@ -865,7 +949,7 @@ export function OAuthFlowLogger({
                   return (
                     <div key={entry.key} className="space-y-1">
                       <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                        <span className="font-mono">{entry.step}</span>
+                        <span className="font-mono">{displayStep}</span>
                         <span>{formatTimestamp(entry.timestamp)}</span>
                         <Badge
                           variant="outline"
@@ -879,6 +963,20 @@ export function OAuthFlowLogger({
                         >
                           {statusLabel}
                         </Badge>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void handleCopyStep(displayStep)}
+                          className="ml-auto h-7 px-2 text-xs"
+                        >
+                          <Copy className="h-3 w-3 mr-1" />
+                          {copyStepError === displayStep
+                            ? "Copy failed"
+                            : copiedStep === displayStep
+                            ? "Copied!"
+                            : "Copy step"}
+                        </Button>
                       </div>
                       <HTTPHistoryEntry
                         method={httpEntry.request.method}

@@ -221,3 +221,42 @@ describe("buildXAAActions identity assertion format", () => {
     ).toBeUndefined();
   });
 });
+
+describe("buildXAAActions registration strategies", () => {
+  const actionIds = (overrides: Partial<XAAFlowState>) =>
+    buildXAAActions(makeFlowState(overrides)).map((action) => action.id);
+
+  it("omits registration arrows for a preregistered client", () => {
+    const ids = actionIds({ registrationStrategy: "preregistered" });
+    expect(ids).not.toContain("request_client_registration");
+    expect(ids).not.toContain("received_client_credentials");
+    expect(ids).not.toContain("fetch_client_metadata_document");
+    expect(ids).not.toContain("received_client_metadata");
+  });
+
+  it("renders separate request and response arrows for open DCR", () => {
+    const ids = actionIds({
+      registrationStrategy: "dcr",
+      dcrRegistrationReused: false,
+    });
+    const request = ids.indexOf("request_client_registration");
+    expect(request).toBeGreaterThan(-1);
+    expect(ids[request + 1]).toBe("received_client_credentials");
+  });
+
+  it("keeps reused DCR credentials as a standalone local action", () => {
+    const ids = actionIds({
+      registrationStrategy: "dcr",
+      dcrRegistrationReused: true,
+    });
+    expect(ids).not.toContain("request_client_registration");
+    expect(ids).toContain("received_client_credentials");
+  });
+
+  it("renders separate preflight and ready arrows for CIMD", () => {
+    const ids = actionIds({ registrationStrategy: "cimd" });
+    const request = ids.indexOf("fetch_client_metadata_document");
+    expect(request).toBeGreaterThan(-1);
+    expect(ids[request + 1]).toBe("received_client_metadata");
+  });
+});

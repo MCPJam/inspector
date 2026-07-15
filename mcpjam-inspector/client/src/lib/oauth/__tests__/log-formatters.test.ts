@@ -18,8 +18,7 @@ describe("OAuth copy log formatters", () => {
         body: "client_secret=info-client-secret&code=info-code-secret",
         request:
           "clientSecret=camel-client-secret&accessToken=camel-access-secret&authorization=text-auth-secret&cookie=text-cookie-secret&credential=text-credential-secret&setCookie=text-set-cookie-secret",
-        basicAuthorization:
-          "Authorization: Basic dXNlcjpwYXNzd29yZA==",
+        basicAuthorization: "Authorization: Basic dXNlcjpwYXNzd29yZA==",
       },
       error: {
         message: "Bearer info-error-secret",
@@ -166,7 +165,7 @@ describe("OAuth copy log formatters", () => {
     ]);
 
     const requestHeader = guide.indexOf(
-      "Request Tokens with Authorization Code",
+      "Request Tokens with Authorization Code"
     );
     const receivedHeader = guide.indexOf("Tokens Received");
     expect(requestHeader).toBeGreaterThan(-1);
@@ -176,7 +175,7 @@ describe("OAuth copy log formatters", () => {
     const receivedSection = guide.slice(receivedHeader);
     expect(requestSection).toContain("Request Body:");
     expect(requestSection).toContain(
-      "Response: recorded under [received_access_token]",
+      "Response: recorded under [received_access_token]"
     );
     expect(requestSection).not.toContain("Status: 200");
     expect(requestSection).not.toContain("Response Body:");
@@ -185,6 +184,34 @@ describe("OAuth copy log formatters", () => {
     expect(receivedSection).toContain("Duration: 25ms");
     expect(receivedSection).toContain("Response Body:");
     expect(receivedSection).not.toContain("Request Body:");
+  });
+
+  it("keeps the original guide step number when copying one step", () => {
+    const state = { currentStep: "token_request" } as OAuthFlowState;
+    const groups = [
+      {
+        step: "request_without_token" as OAuthFlowStep,
+        entries: [],
+        firstTimestamp: 1,
+      },
+      {
+        step: "received_401_unauthorized" as OAuthFlowStep,
+        entries: [],
+        firstTimestamp: 2,
+      },
+      {
+        step: "token_request" as OAuthFlowStep,
+        entries: [],
+        firstTimestamp: 3,
+      },
+    ];
+
+    const copied = generateGuideText(state, groups, {
+      step: "token_request",
+    });
+
+    expect(copied).toContain("3. Request Tokens with Authorization Code");
+    expect(copied).not.toContain("1. Request Tokens with Authorization Code");
   });
 
   it("prints raw request and response halves under their own steps", () => {
@@ -234,7 +261,7 @@ describe("OAuth copy log formatters", () => {
     expect(raw).toContain("received_401_unauthorized");
     expect(requestText).toContain("Request Body:");
     expect(requestText).toContain(
-      "Response: recorded under [received_401_unauthorized]",
+      "Response: recorded under [received_401_unauthorized]"
     );
     expect(requestText).not.toContain("Response Headers:");
     expect(responseText).toContain("[401 Unauthorized]");

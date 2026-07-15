@@ -3,7 +3,7 @@ import { ServerWithName } from "@/hooks/use-app-state";
 import { cn } from "@/lib/utils";
 import { AddServerModal } from "./connection/AddServerModal";
 import { ServerFormData } from "@/shared/types.js";
-import { Check, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
 import { track } from "@/lib/analytics";
 import { hasOAuthConfig } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
@@ -47,6 +47,14 @@ export interface ActiveServerSelectorProps {
   onReconnect?: (serverName: string) => Promise<void>;
   /** Disconnect a connected server (Playground toggle off = unplug). */
   onDisconnect?: (serverName: string) => void;
+  /**
+   * Hide a server from THIS header only (OAuth / XAA debugger). View-only: the
+   * server config, tokens, and Convex row are untouched — it's dropped from this
+   * tab's chip strip until un-hidden. When provided, each chip renders an "x".
+   */
+  onHideServer?: (serverName: string) => void;
+  /** Server names hidden from this header; filtered out of the rendered list. */
+  hiddenServers?: Set<string>;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
   /**
    * When `showOnlyOAuthServers` is on, also admit Cross-App Access (XAA)
@@ -56,6 +64,13 @@ export interface ActiveServerSelectorProps {
   includeXaaServers?: boolean;
   showOnlyServersWithViews?: boolean; // Only show servers that have saved views
   autoSelectFilteredServer?: boolean; // Auto-select when current selection is hidden by filters
+  /**
+   * Which server auto-select picks when the current selection isn't in the list.
+   * "recent" (default) = most recently connected; "first" = leftmost as rendered
+   * (insertion order). The OAuth / XAA debuggers use "first" so the leftmost chip
+   * becomes the target — which also hides their "Configure Target" empty state.
+   */
+  autoSelectStrategy?: "recent" | "first";
   serversWithViews?: Set<string>; // Set of server names that have saved views
   hasMessages?: boolean; // Reserved for callers that still compute this
   className?: string;
@@ -107,10 +122,13 @@ export function ActiveServerSelector({
   onConnect,
   onAddServerRequested,
   onReconnect,
+  onHideServer,
+  hiddenServers,
   showOnlyOAuthServers = false,
   includeXaaServers = false,
   showOnlyServersWithViews = false,
   autoSelectFilteredServer = true,
+  autoSelectStrategy = "recent",
   serversWithViews,
   className,
 }: ActiveServerSelectorProps) {
@@ -121,25 +139,9 @@ export function ActiveServerSelector({
   const hasNoServersWithViews =
     showOnlyServersWithViews && (serversWithViews?.size ?? 0) === 0;
 
-  // Helper function to check if a server uses OAuth
-  const isOAuthServer = (server: ServerWithName): boolean => {
-    const isHttpServer = "url" in server.config;
-    if (!isHttpServer) return false;
-    if (server.useOAuth === false) return false;
-
-    // Check if server is configured for OAuth, has OAuth state, or is mid-flow.
-    return !!(
-      server.useOAuth === true ||
-      server.oauthTokens ||
-      hasOAuthConfig(server.name) ||
-      server.connectionStatus === "oauth-flow"
-    );
-  };
-
-  const isXaaServer = (server: ServerWithName): boolean =>
-    "url" in server.config && server.useXaa === true;
-
   const servers = Object.entries(serverConfigs).filter(([name, server]) => {
+    // View-only dismissals from this header (OAuth / XAA debugger x button).
+    if (hiddenServers?.has(name)) return false;
     if (
       showOnlyOAuthServers &&
       !isOAuthServer(server) &&
@@ -150,8 +152,11 @@ export function ActiveServerSelector({
     return true;
   });
 
-  // Auto-select first available server if current selection is not in the list
-  useEffect(() => {
+  // Auto-select first available server if current selection is not in the list.
+  // useLayoutEffect (not useEffect) so the selection is corrected BEFORE paint —
+  // otherwise the debugger tabs flash their "Configure Target" empty state for a
+  // frame while an unselected ("none") state is briefly painted.
+  useLayoutEffect(() => {
     if (
       !autoSelectFilteredServer ||
       isMultiSelectEnabled ||
@@ -164,13 +169,18 @@ export function ActiveServerSelector({
     const isCurrentSelectionValid = serverNames.includes(selectedServer);
 
     if (!isCurrentSelectionValid && servers.length > 0) {
-      // Pick the most recently connected server instead of the first by insertion order
-      const sorted = [...servers].sort(
-        ([, a], [, b]) =>
-          new Date(b.lastConnectionTime).getTime() -
-          new Date(a.lastConnectionTime).getTime(),
-      );
-      onServerChange(sorted[0][0]);
+      if (autoSelectStrategy === "first") {
+        // Leftmost as rendered (insertion order) — deterministic target pick.
+        onServerChange(servers[0][0]);
+      } else {
+        // Pick the most recently connected server instead of the first by insertion order
+        const sorted = [...servers].sort(
+          ([, a], [, b]) =>
+            new Date(b.lastConnectionTime).getTime() -
+            new Date(a.lastConnectionTime).getTime(),
+        );
+        onServerChange(sorted[0][0]);
+      }
     } else if (!isCurrentSelectionValid && selectedServer !== "none") {
       // No available servers and selection is stale — clear it
       onServerChange("none");
@@ -182,6 +192,7 @@ export function ActiveServerSelector({
     onServerChange,
     hasNoServersWithViews,
     autoSelectFilteredServer,
+    autoSelectStrategy,
   ]);
 
   const handleServerClick = (name: string) => {
@@ -256,10 +267,12 @@ export function ActiveServerSelector({
               <button
                 key={name}
                 onClick={(e) => {
-                  // Check if click originated from reconnect button
-                  // Using Element to cover SVG elements too
+                  // Ignore clicks from the inline action buttons (reconnect /
+                  // hide). Using Element to cover SVG elements too.
                   if (
-                    (e.target as Element).closest("[data-reconnect-button]")
+                    (e.target as Element).closest(
+                      "[data-reconnect-button],[data-hide-button]",
+                    )
                   ) {
                     return;
                   }
@@ -327,6 +340,30 @@ export function ActiveServerSelector({
                     aria-disabled={isHostedHttpReconnectBlocked}
                   >
                     <RefreshCw className="w-3 h-3" />
+                  </div>
+                )}
+                {onHideServer && (
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    data-hide-button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.nativeEvent.stopImmediatePropagation();
+                      e.preventDefault();
+                      onHideServer(name);
+                    }}
+                    className={cn(
+                      "p-1 rounded-md transition-colors text-muted-foreground",
+                      "hover:bg-destructive/10 hover:text-destructive",
+                      // Right-align the action cluster when there's no
+                      // reconnect button to carry the ml-auto.
+                      onReconnect ? "" : "ml-auto",
+                    )}
+                    title="Hide from this tab"
+                    aria-label={`Hide ${name} from this header`}
+                  >
+                    <X className="w-3 h-3" />
                   </div>
                 )}
               </button>
