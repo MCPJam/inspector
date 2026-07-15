@@ -891,6 +891,10 @@ export async function createAuthorizedManager(
   // time this one rejects. Every purely-synchronous configuration verdict
   // therefore belongs here, so "fails before any side effects" holds for the
   // batch, not just per server.
+  // Resolved once here and reused by PASS 2, so the two passes provably agree
+  // on each server's flow (a re-resolution could drift if the predicate ever
+  // gains an input one pass forgets to thread).
+  const effectiveAuthByServerId = new Map<string, EffectiveAuthMethod>();
   for (const serverId of uniqueServerIds) {
     const auth = batch.results[serverId];
     if (!auth) {
@@ -904,13 +908,19 @@ export async function createAuthorizedManager(
       throw new WebRouteError(auth.status, auth.code as ErrorCode, auth.message);
     }
     const displayServerName = serverNamesById?.[serverId] ?? serverId;
+    const effectiveAuth = resolveEffectiveAuthMethod(
+      auth.serverConfig,
+      options?.xaaPolicy
+    );
+    effectiveAuthByServerId.set(serverId, effectiveAuth);
+    const isHttp = auth.serverConfig.transportType === "http";
 
     // Enterprise policy, unconfigured `auto` server: never silently downgrade
     // to the discover ladder. "Not configured" (no stored client registration
     // at the resource authorization server), NOT "not enrolled" — enrollment
     // verdicts belong to the future issuer-policy evaluator.
     if (
-      auth.serverConfig.transportType === "http" &&
+      isHttp &&
       xaaPolicyRequiresConfiguration(auth.serverConfig, options?.xaaPolicy)
     ) {
       throw new WebRouteError(
@@ -931,17 +941,32 @@ export async function createAuthorizedManager(
     // would mask this actionable 400 behind the caller-contract 500. Gated on
     // the same XAA selection the mint pass uses. No silent fallback to the
     // demo identity, no silent XAA→OAuth fallback.
-    if (
-      auth.serverConfig.transportType === "http" &&
-      resolveEffectiveAuthMethod(auth.serverConfig, options?.xaaPolicy) ===
-        "xaa" &&
-      auth.serverConfig.xaaIdentityError
-    ) {
+    if (isHttp && effectiveAuth === "xaa" && auth.serverConfig.xaaIdentityError) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
         auth.serverConfig.xaaIdentityError,
         { serverId, serverName: displayServerName }
+      );
+    }
+
+    // Explicit-OAuth server with no stored token: also a synchronous verdict,
+    // so it belongs here — leaving it in the concurrent pass let a configured
+    // XAA sibling start minting a real token while this one rejected.
+    if (
+      effectiveAuth === "oauth" &&
+      !(auth.oauthAccessToken ?? oauthTokens?.[serverId])
+    ) {
+      throw new WebRouteError(
+        401,
+        ErrorCode.UNAUTHORIZED,
+        `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
+        {
+          oauthRequired: true,
+          serverId,
+          serverName: serverNamesById?.[serverId] ?? null,
+          serverUrl: auth.serverConfig.url,
+        }
       );
     }
   }
@@ -958,16 +983,14 @@ export async function createAuthorizedManager(
 
       const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
       const displayServerName = serverNamesById?.[serverId] ?? serverId;
-      // One resolver decides the flow for every dispatch below: canonical
-      // authMethod wins ("auto" selects XAA when configured, "discover"
-      // otherwise); legacy rows fall back to the boolean pair. Must match
-      // the local resolver's dispatch (hosted/local/swarm parity). The
-      // host's enterprise policy forces `auto` servers to XAA; stdio never
-      // reaches this builder (toHttpConfig strips it).
-      const effectiveAuth = resolveEffectiveAuthMethod(
-        auth.serverConfig,
-        options?.xaaPolicy
-      );
+      // Resolved in PASS 1 (canonical authMethod wins; "auto" selects XAA
+      // when configured or when the host policy forces it, "discover"
+      // otherwise; legacy rows fall back to the boolean pair). Reused rather
+      // than re-resolved so both passes agree by construction. Must match the
+      // local resolver's dispatch (hosted/local/swarm parity).
+      const effectiveAuth = effectiveAuthByServerId.get(
+        serverId
+      ) as EffectiveAuthMethod;
       const usesOAuthFlow = effectiveAuth === "oauth";
       // "discover" (non-XAA auto) rides the OAuth rails only when a stored
       // token exists; tokenless discover connects unauthenticated instead of
@@ -993,19 +1016,8 @@ export async function createAuthorizedManager(
       if (usesStoredTokenFlow && auth.serverConfig.url) {
         oauthServerUrls[serverId] = auth.serverConfig.url;
       }
-      if (usesOAuthFlow && !oauthToken) {
-        throw new WebRouteError(
-          401,
-          ErrorCode.UNAUTHORIZED,
-          `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
-          {
-            oauthRequired: true,
-            serverId,
-            serverName: serverNamesById?.[serverId] ?? null,
-            serverUrl: auth.serverConfig.url,
-          }
-        );
-      }
+      // (An explicit-OAuth server with no stored token is rejected batch-wide
+      // in PASS 1 — before any sibling can mint.)
 
       // Cross-App Access: mint the resource access token server-side (MCPJam as
       // the test IdP) and inject it through the same `oauthAccessToken` channel

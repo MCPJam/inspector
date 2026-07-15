@@ -16,9 +16,26 @@ vi.mock("@axiomhq/js", () => ({
 
 // Spy on the mint so the test can prove the identity error blocks the mint
 // BEFORE it starts (no ID-JAG issuance, no token-endpoint exchange).
-const { mintXaaAccessTokenMock } = vi.hoisted(() => ({
+const { mintXaaAccessTokenMock, mcpClientManagerMock } = vi.hoisted(() => ({
   mintXaaAccessTokenMock: vi.fn(),
+  mcpClientManagerMock: vi.fn(),
 }));
+
+// Stub the manager (as auth-manager.test.ts does): the real one starts
+// background connects to the fixture URLs, whose rejections land after the
+// test environment tears down — an unhandled rejection that fails the RUN
+// (exit 1) even while every assertion passes.
+vi.mock("@mcpjam/sdk", async () => {
+  const actual = await vi.importActual<typeof import("@mcpjam/sdk")>(
+    "@mcpjam/sdk"
+  );
+  return {
+    ...actual,
+    MCPClientManager: mcpClientManagerMock.mockImplementation(() => ({
+      disconnectAllServers: vi.fn(),
+    })),
+  };
+});
 vi.mock("../../../services/xaa-mint.js", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../../../services/xaa-mint.js")>();
@@ -293,6 +310,50 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         { xaaIssuer: "https://app.mcpjam.com/api/web" },
       ),
     ).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" });
+
+    expect(mintXaaAccessTokenMock).not.toHaveBeenCalled();
+  });
+
+  it("does not mint the CONFIGURED sibling when an explicit-OAuth server has no token", async () => {
+    batchOf({
+      "srv-configured": {
+        ...okBase,
+        serverConfig: {
+          transportType: "http",
+          url: "https://configured.example.com/mcp",
+          authMethod: "auto",
+          authServerMode: "mcpjam",
+          clientId: "client-1",
+        },
+      },
+      // Explicit OAuth, no stored token → 401 oauthRequired.
+      "srv-oauth-untokened": {
+        ...okBase,
+        serverConfig: {
+          transportType: "http",
+          url: "https://oauth.example.com/mcp",
+          authMethod: "oauth",
+          useOAuth: true,
+        },
+      },
+    });
+
+    await expect(
+      createAuthorizedManager(
+        callerContextFromHono(makeContext()),
+        "bearer-token",
+        "ws-1",
+        ["srv-configured", "srv-oauth-untokened"],
+        30_000,
+        undefined,
+        undefined,
+        { xaaIssuer: "https://app.mcpjam.com/api/web" },
+      ),
+    ).rejects.toMatchObject({
+      status: 401,
+      code: "UNAUTHORIZED",
+      details: { oauthRequired: true, serverId: "srv-oauth-untokened" },
+    });
 
     expect(mintXaaAccessTokenMock).not.toHaveBeenCalled();
   });
