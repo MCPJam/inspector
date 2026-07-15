@@ -92,6 +92,12 @@ The hosted app requires all MCP server connections to use **HTTPS**. If your ser
 
 STDIO servers are not available in the hosted version of MCPJam. Use a Streamable HTTP endpoint instead, or switch to the [local inspector](/installation).
 
+### OAuth tokens can't auto-refresh for local authorization servers
+
+In hosted mode, the cloud backend handles token refresh on your behalf. If your MCP server's OAuth authorization server runs on a private address (localhost, a LAN IP, or a `.local`/`.internal` hostname), the cloud cannot reach it to refresh tokens after they expire.
+
+When you connect to such a server, the app shows a warning toast. You can continue using the server until the access token expires, but you'll need to re-run the OAuth flow manually each time. For fully-local setups, use the [local inspector](/installation) instead.
+
 ### No tunneling
 
 Tunneling exposes a local MCP server over HTTPS for remote access. Since the hosted app connects to already-remote servers, tunneling is not applicable.
