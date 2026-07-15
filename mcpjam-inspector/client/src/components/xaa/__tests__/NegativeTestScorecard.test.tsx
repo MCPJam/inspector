@@ -146,6 +146,58 @@ describe("NegativeTestScorecard", () => {
     expect(screen.getByTestId("xaa-negtest-row-expired")).toBeInTheDocument();
   });
 
+  it("resolves session credentials only when the run starts", async () => {
+    runMock.mockResolvedValue({ failures: 0, results: [] });
+    const resolveInput = vi.fn(() => ({
+      ...INPUT,
+      clientId: "dcr-client",
+      clientSecret: "session-only-secret",
+      tokenEndpointAuthMethod: "client_secret_post" as const,
+    }));
+    const user = userEvent.setup();
+
+    render(
+      <NegativeTestScorecard
+        input={{ ...INPUT, clientId: "dcr-client" }}
+        resolveInput={resolveInput}
+        unlocked
+      />
+    );
+
+    expect(resolveInput).not.toHaveBeenCalled();
+    await user.click(
+      screen.getByRole("button", { name: /run negative tests/i })
+    );
+
+    await waitFor(() => expect(runMock).toHaveBeenCalledTimes(1));
+    expect(resolveInput).toHaveBeenCalledTimes(1);
+    expect(runMock).toHaveBeenCalledWith(
+      expect.objectContaining({ clientSecret: "session-only-secret" })
+    );
+  });
+
+  it("shows a credential-resolution error without starting the request", async () => {
+    const user = userEvent.setup();
+    render(
+      <NegativeTestScorecard
+        input={{ ...INPUT, clientId: "dcr-client" }}
+        resolveInput={() => {
+          throw new Error("Dynamic client secret expired");
+        }}
+        unlocked
+      />
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /run negative tests/i })
+    );
+
+    expect(runMock).not.toHaveBeenCalled();
+    expect(await screen.findByTestId("xaa-negtest-error")).toHaveTextContent(
+      "Dynamic client secret expired"
+    );
+  });
+
   it("unlocks via the owner checkbox for the half-built-AS case", async () => {
     runMock.mockResolvedValue({ failures: 0, results: [] });
 
@@ -206,6 +258,52 @@ describe("NegativeTestScorecard", () => {
     await waitFor(() =>
       expect(screen.queryByTestId("xaa-negtest-row-expired")).toBeNull()
     );
+  });
+
+  it("clears results and the owner override when only scope changes", async () => {
+    runMock.mockResolvedValue({
+      failures: 0,
+      results: [
+        {
+          mode: "expired",
+          label: "Expired",
+          expectedFailure: "AS should reject expired",
+          outcome: "rejected",
+          verdict: "pass",
+          status: 400,
+        },
+      ],
+    });
+
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <NegativeTestScorecard
+        input={{ ...INPUT, scope: "mcp.read" }}
+        unlocked={false}
+      />
+    );
+    await user.click(screen.getByRole("checkbox"));
+    await user.click(
+      screen.getByRole("button", { name: /run negative tests/i })
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("xaa-negtest-row-expired")).toBeInTheDocument()
+    );
+
+    rerender(
+      <NegativeTestScorecard
+        input={{ ...INPUT, scope: "mcp.write" }}
+        unlocked={false}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("xaa-negtest-row-expired")).toBeNull();
+      expect(screen.getByRole("checkbox")).not.toBeChecked();
+      expect(
+        screen.getByRole("button", { name: /run negative tests/i })
+      ).toBeDisabled();
+    });
   });
 
   it("clears completed rows when the policy mode or person changes for the same endpoint", async () => {

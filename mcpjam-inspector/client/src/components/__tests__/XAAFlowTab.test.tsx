@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { XAAFlowTab } from "../xaa/XAAFlowTab";
 import type { XaaTestTarget } from "@/hooks/useXaaTestTarget";
+import { buildXaaDcrCredentialCacheKey } from "@/lib/xaa/types";
 
 const captureMock = vi.fn();
 vi.mock("@/lib/analytics", () => ({
@@ -257,25 +258,21 @@ vi.mock("../xaa/registration/XAAResourceAppsSection", () => ({
   ),
 }));
 
+let capturedScorecardProps: any = null;
 let capturedScorecardInput: any = null;
 vi.mock("../xaa/NegativeTestScorecard", () => ({
-  NegativeTestScorecard: ({
-    input,
-    unlocked,
-    unavailableReason,
-  }: {
-    input: { audience?: string } | null;
-    unlocked: boolean;
-    unavailableReason?: string;
-  }) => {
-    capturedScorecardInput = input;
+  NegativeTestScorecard: (props: any) => {
+    capturedScorecardProps = props;
+    capturedScorecardInput = props.input;
     return (
       <div
         data-testid="xaa-scorecard"
-        data-unlocked={String(unlocked)}
-        data-has-input={String(input !== null)}
-        data-audience={input?.audience ?? ""}
-        data-unavailable-reason={unavailableReason ?? ""}
+        data-unlocked={String(props.unlocked)}
+        data-has-input={String(props.input !== null)}
+        data-audience={props.input?.audience ?? ""}
+        data-client-id={props.input?.clientId ?? ""}
+        data-auth-method={props.input?.tokenEndpointAuthMethod ?? ""}
+        data-unavailable-reason={props.unavailableReason ?? ""}
       />
     );
   },
@@ -345,6 +342,7 @@ describe("XAAFlowTab", () => {
     runAllMock.mockClear();
     capturedMachineConfig = null;
     capturedServerModalProps = null;
+    capturedScorecardProps = null;
     machineShouldComplete = true;
     machineCompleteExtras = {};
     machineCompletionUpdates = {};
@@ -510,6 +508,38 @@ describe("XAAFlowTab", () => {
     );
   });
 
+  it("resets a completed flow when its server configuration changes", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />
+    );
+
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
+        "Flow Complete"
+      )
+    );
+
+    currentTarget = makeTarget({
+      runInput: {
+        ...makeTarget().runInput,
+        scope: "new-scope",
+        serverUrl: "https://new.mcp.example.com",
+      },
+    });
+    rerender(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
+
+    await user.click(screen.getByRole("button", { name: /reset flow/i }));
+    expect(screen.getByTestId("logger-continue-label")).toHaveTextContent(
+      "Start"
+    );
+    expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+      "data-unlocked",
+      "false"
+    );
+  });
+
   it("unlocks the scorecard per target — a green run on one leaves another locked", async () => {
     const user = userEvent.setup();
     const { rerender } = render(
@@ -619,7 +649,7 @@ describe("XAAFlowTab", () => {
         serverConfigs={{}}
         selectedServerName="staging"
         organizationId="org_1"
-      />,
+      />
     );
     expect(capturedMachineConfig).toMatchObject({ issuerKind: "org" });
     unmount();
@@ -631,7 +661,7 @@ describe("XAAFlowTab", () => {
         serverConfigs={{}}
         selectedServerName="staging"
         organizationId="org_1"
-      />,
+      />
     );
     expect(capturedMachineConfig).toMatchObject({ issuerKind: "anonymous" });
     authUser = { email: "tester@example.com" };
@@ -787,6 +817,300 @@ describe("XAAFlowTab", () => {
       expect(capturedMachineConfig.dcrCacheTargetKey).toBe(
         currentTarget.targetKey
       );
+    });
+
+    it("keeps the DCR session registration when the same config is saved", async () => {
+      render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />
+      );
+
+      const registrationEndpoint = "https://auth.example.com/register";
+      const cacheKey = buildXaaDcrCredentialCacheKey({
+        targetKey: currentTarget.targetKey,
+        registrationEndpoint,
+      });
+      const credentials = {
+        clientId: "dynamic-client",
+        clientSecret: "session-only-secret",
+        clientSecretExpiresAt: 0,
+        tokenEndpointAuthMethod: "client_secret_basic" as const,
+        registrationEndpoint,
+      };
+      capturedMachineConfig.dcrCredentialCache.set(cacheKey, credentials);
+
+      await act(async () => {
+        await capturedServerModalProps.onSave({
+          formData: { name: "staging" },
+        });
+      });
+
+      expect(capturedMachineConfig.dcrCredentialCache.get(cacheKey)).toEqual(
+        credentials
+      );
+    });
+
+    it("unlocks DCR negative tests with the dynamically registered credentials", async () => {
+      const user = userEvent.setup();
+      render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />
+      );
+
+      const registrationEndpoint = "https://auth.example.com/register";
+      const cacheKey = buildXaaDcrCredentialCacheKey({
+        targetKey: currentTarget.targetKey,
+        registrationEndpoint,
+      });
+      capturedMachineConfig.dcrCredentialCache.set(cacheKey, {
+        clientId: "dynamic-client",
+        clientSecret: "session-only-secret",
+        clientSecretExpiresAt: 0,
+        tokenEndpointAuthMethod: "client_secret_basic",
+        registrationEndpoint,
+      });
+      machineCompletionUpdates = {
+        registrationStrategy: "dcr",
+        clientId: "dynamic-client",
+        tokenEndpoint: "https://auth.example.com/token",
+        tokenEndpointAuthMethod: "client_secret_basic",
+        authzMetadata: {
+          issuer: "https://auth.example.com",
+          registration_endpoint: registrationEndpoint,
+        },
+        resourceMetadata: { resource: "https://staging.mcp.example.com" },
+      };
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+          "data-unlocked",
+          "true"
+        )
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-client-id",
+        "dynamic-client"
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-auth-method",
+        "client_secret_basic"
+      );
+      expect(capturedScorecardProps.input.clientSecret).toBeUndefined();
+      expect(capturedScorecardProps.resolveInput()).toEqual(
+        expect.objectContaining({
+          clientId: "dynamic-client",
+          clientSecret: "session-only-secret",
+          tokenEndpointAuthMethod: "client_secret_basic",
+          issuerKind: "org",
+        })
+      );
+
+      capturedMachineConfig.dcrCredentialCache.set(cacheKey, {
+        clientId: "dynamic-client",
+        clientSecret: "session-only-secret",
+        clientSecretExpiresAt: 0,
+        tokenEndpointAuthMethod: "client_secret_post",
+        registrationEndpoint,
+      });
+      act(() => {
+        capturedMachineConfig.updateState({
+          tokenEndpointAuthMethod: "client_secret_post",
+        });
+      });
+
+      await waitFor(() =>
+        expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+          "data-unlocked",
+          "false"
+        )
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-auth-method",
+        "client_secret_post"
+      );
+    });
+
+    it("preserves the duplicate-registration warning across config edits", async () => {
+      const { rerender } = render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />
+      );
+
+      act(() => {
+        capturedMachineConfig.updateState({
+          registrationStrategy: "dcr",
+          currentStep: "dcr_request",
+          isBusy: false,
+          error: "Registration outcome unknown",
+          dcrRetryMayCreateDuplicate: true,
+        });
+      });
+
+      currentTarget = makeTarget({
+        runInput: {
+          ...makeTarget().runInput,
+          scope: "new-scope",
+        },
+      });
+      rerender(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />
+      );
+
+      await waitFor(() =>
+        expect(
+          capturedMachineConfig.getState().dcrRetryMayCreateDuplicate
+        ).toBe(true)
+      );
+    });
+
+    it("keeps confidential DCR secrets out of the hosted issuer scorecard", async () => {
+      issuerModeState = "hosted";
+      const user = userEvent.setup();
+      render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+          organizationId="org_123"
+        />
+      );
+
+      const registrationEndpoint = "https://auth.example.com/register";
+      const cacheKey = buildXaaDcrCredentialCacheKey({
+        targetKey: currentTarget.targetKey,
+        registrationEndpoint,
+      });
+      capturedMachineConfig.dcrCredentialCache.set(cacheKey, {
+        clientId: "dynamic-client",
+        clientSecret: "session-only-secret",
+        clientSecretExpiresAt: 0,
+        tokenEndpointAuthMethod: "client_secret_post",
+        registrationEndpoint,
+      });
+      machineCompletionUpdates = {
+        registrationStrategy: "dcr",
+        clientId: "dynamic-client",
+        tokenEndpoint: "https://auth.example.com/token",
+        authzMetadata: {
+          issuer: "https://auth.example.com",
+          registration_endpoint: registrationEndpoint,
+        },
+        resourceMetadata: { resource: "https://staging.mcp.example.com" },
+      };
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+          "data-unavailable-reason",
+          expect.stringMatching(/confidential DCR/i)
+        )
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-has-input",
+        "false"
+      );
+      expect(capturedScorecardProps.resolveInput).toBeUndefined();
+    });
+
+    it("keeps CIMD negative tests unavailable", async () => {
+      const user = userEvent.setup();
+      render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("cimd")}
+          selectedServerName="staging"
+        />
+      );
+      const clientId =
+        "https://app.mcpjam.com/.well-known/oauth/xaa-client-metadata.json";
+      machineCompletionUpdates = {
+        registrationStrategy: "cimd",
+        clientId,
+        tokenEndpoint: "https://auth.example.com/token",
+        tokenEndpointAuthMethod: "none",
+        authzMetadata: { issuer: "https://auth.example.com" },
+        resourceMetadata: { resource: "https://staging.mcp.example.com" },
+      };
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+          "data-unavailable-reason",
+          expect.stringMatching(/not supported yet/i)
+        )
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-unlocked",
+        "false"
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-has-input",
+        "false"
+      );
+      expect(capturedScorecardProps.resolveInput).toBeUndefined();
+    });
+
+    it("keeps an expired DCR credential unavailable without registering again", async () => {
+      const user = userEvent.setup();
+      render(
+        <XAAFlowTab
+          serverConfigs={withStrategy("dcr")}
+          selectedServerName="staging"
+        />
+      );
+
+      const registrationEndpoint = "https://auth.example.com/register";
+      const cacheKey = buildXaaDcrCredentialCacheKey({
+        targetKey: currentTarget.targetKey,
+        registrationEndpoint,
+      });
+      capturedMachineConfig.dcrCredentialCache.set(cacheKey, {
+        clientId: "expired-client",
+        clientSecret: "expired-secret",
+        clientSecretExpiresAt: Math.floor(Date.now() / 1000) - 1,
+        tokenEndpointAuthMethod: "client_secret_post",
+        registrationEndpoint,
+      });
+      machineCompletionUpdates = {
+        registrationStrategy: "dcr",
+        clientId: "expired-client",
+        tokenEndpoint: "https://auth.example.com/token",
+        authzMetadata: {
+          issuer: "https://auth.example.com",
+          registration_endpoint: registrationEndpoint,
+        },
+        resourceMetadata: { resource: "https://staging.mcp.example.com" },
+      };
+
+      await user.click(screen.getByRole("button", { name: /run all/i }));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+          "data-unavailable-reason",
+          expect.stringMatching(/expired/i)
+        )
+      );
+      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
+        "data-has-input",
+        "false"
+      );
+      expect(
+        screen
+          .getByTestId("xaa-scorecard")
+          .getAttribute("data-unavailable-reason")
+      ).toMatch(/expired/i);
+      expect(runAllMock).toHaveBeenCalledTimes(1);
     });
 
     it("defaults to preregistered when nothing is persisted", () => {
