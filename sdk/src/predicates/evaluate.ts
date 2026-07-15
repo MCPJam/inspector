@@ -10,10 +10,12 @@
  */
 
 import { argMatch } from "./argMatcher.js";
+import { isTurnScopablePredicateKind } from "./types.js";
 import type {
   IterationTranscript,
   Predicate,
   PredicateResult,
+  RenderObservationSummary,
   TranscriptToolCall,
 } from "./types.js";
 
@@ -96,6 +98,40 @@ function resolveFinalMessage(transcript: IterationTranscript): string {
   return typeof transcript.finalAssistantMessage === "string"
     ? transcript.finalAssistantMessage
     : "";
+}
+
+/**
+ * The render observations a `widget*` predicate evaluates over: all of the
+ * iteration's observations, narrowed to `toolName` when the predicate sets it.
+ * Every `widget*` predicate fails closed on an empty scope — no observations
+ * means the check cannot attest, which must not read as a pass.
+ */
+function renderScope(
+  transcript: IterationTranscript,
+  toolName: string | undefined,
+): RenderObservationSummary[] {
+  const all = transcript.renderObservations ?? [];
+  return toolName === undefined
+    ? all
+    : all.filter((o) => o.toolName === toolName);
+}
+
+/** `"…no render observations recorded for tool \"x\""` / `"…recorded"`. */
+function emptyScopeReason(toolName: string | undefined): string {
+  return toolName === undefined
+    ? "no widget render observations recorded"
+    : `no widget render observations recorded for tool "${toolName}"`;
+}
+
+/** Distinct non-`rendered` statuses, capped, for failure reasons. */
+function describeStatuses(scope: RenderObservationSummary[]): string {
+  const statuses = Array.from(new Set(scope.map((o) => o.status)));
+  const shown = statuses.slice(0, MAX_ITEMS_SHOWN).join(", ");
+  const more =
+    statuses.length > MAX_ITEMS_SHOWN
+      ? `, +${statuses.length - MAX_ITEMS_SHOWN} more`
+      : "";
+  return `${shown}${more}`;
 }
 
 function resolveTotalTokens(transcript: IterationTranscript): number | undefined {
@@ -383,6 +419,94 @@ export function evaluatePredicate(
           );
     }
 
+    case "widgetRendered": {
+      const scope = renderScope(transcript, predicate.toolName);
+      if (scope.length === 0) {
+        return fail(predicate, emptyScopeReason(predicate.toolName));
+      }
+      const rendered = scope.filter((o) => o.status === "rendered");
+      return rendered.length > 0
+        ? pass(
+            predicate,
+            `widget rendered (${rendered.length}/${scope.length} observation(s))`,
+          )
+        : fail(
+            predicate,
+            `no widget rendered across ${scope.length} observation(s); ` +
+              `statuses: ${describeStatuses(scope)}`,
+          );
+    }
+
+    case "widgetRenderLatencyUnder": {
+      // A malformed budget (0, negative, fractional) would otherwise gate
+      // nothing or everything arbitrarily — fail closed like tokenBudgetUnder.
+      if (!Number.isInteger(predicate.ms) || predicate.ms < 1) {
+        return fail(
+          predicate,
+          `invalid ms ${String(predicate.ms)}; expected a positive integer ≥ 1`,
+        );
+      }
+      const scope = renderScope(transcript, predicate.toolName);
+      if (scope.length === 0) {
+        return fail(
+          predicate,
+          `${emptyScopeReason(predicate.toolName)}; cannot verify render latency < ${predicate.ms}ms`,
+        );
+      }
+      const rendered = scope.filter((o) => o.status === "rendered");
+      if (rendered.length === 0) {
+        return fail(
+          predicate,
+          `no widget rendered; cannot verify render latency < ${predicate.ms}ms; ` +
+            `statuses: ${describeStatuses(scope)}`,
+        );
+      }
+      const slowest = Math.max(...rendered.map((o) => o.elapsedMs));
+      return slowest < predicate.ms
+        ? pass(
+            predicate,
+            `all ${rendered.length} rendered widget(s) under ${predicate.ms}ms (slowest ${slowest}ms)`,
+          )
+        : fail(
+            predicate,
+            `widget render took ${slowest}ms, not under ${predicate.ms}ms ` +
+              `(${rendered.filter((o) => o.elapsedMs >= predicate.ms).length}/${rendered.length} rendered widget(s) over budget)`,
+          );
+    }
+
+    case "widgetNoConsoleErrors": {
+      const scope = renderScope(transcript, predicate.toolName);
+      if (scope.length === 0) {
+        return fail(
+          predicate,
+          `${emptyScopeReason(predicate.toolName)}; cannot verify console errors`,
+        );
+      }
+      const offenders = scope.filter(
+        (o) => (o.consoleErrors?.length ?? 0) > 0,
+      );
+      if (offenders.length === 0) {
+        return pass(
+          predicate,
+          `no console errors across ${scope.length} observation(s)`,
+        );
+      }
+      const totalErrors = offenders.reduce(
+        (sum, o) => sum + (o.consoleErrors?.length ?? 0),
+        0,
+      );
+      // Console error text is live-page-controlled data; truncate like tool
+      // error messages.
+      const first = truncate(
+        offenders[0]?.consoleErrors?.[0] ?? "",
+        MAX_ERROR_MSG_CHARS,
+      );
+      return fail(
+        predicate,
+        `${totalErrors} console error(s) across ${offenders.length}/${scope.length} observation(s); first: ${first}`,
+      );
+    }
+
     default: {
       // Exhaustiveness guard: a new Predicate variant must add a case above.
       const exhaustive: never = predicate;
@@ -424,4 +548,45 @@ export function evaluatePredicates(
  */
 export function allPredicatesPassed(results: PredicateResult[]): boolean {
   return results.every((r) => r.passed);
+}
+
+/** One prompt turn's checks plus the turn-scoped transcript to run them on. */
+export interface TurnChecksInput {
+  /** Zero-based index of the turn in the case's `promptTurns`. */
+  promptIndex: number;
+  /** The turn's per-turn checks (already restricted to turn-scopable kinds). */
+  checks: Predicate[] | undefined;
+  /** The turn-scoped transcript (see `buildTurnTranscript`). */
+  transcript: IterationTranscript;
+}
+
+/**
+ * Evaluate per-turn checks across a case's turns, reusing the same
+ * {@link evaluatePredicates} engine against each turn's slice. Every result is
+ * tagged with `scope: { kind: "turn", promptIndex }` so the UI and persisted
+ * metadata can attribute it to the turn. Turns with no checks contribute
+ * nothing. Order is preserved (turn order, then check order within a turn).
+ *
+ * Defense in depth: non-turn-scopable kinds (e.g. `tokenBudgetUnder`) are
+ * dropped here even though the backend rejects them at the write boundary —
+ * the evaluator must never silently treat a case-only check as turn-scoped if
+ * one reaches it directly (a different write path, a test, a future caller).
+ */
+export function evaluateTurnChecks(
+  turns: TurnChecksInput[],
+): PredicateResult[] {
+  const results: PredicateResult[] = [];
+  for (const turn of turns) {
+    if (!turn.checks || turn.checks.length === 0) continue;
+    const turnScopable = turn.checks.filter((check) =>
+      isTurnScopablePredicateKind(check.type),
+    );
+    for (const result of evaluatePredicates(turn.transcript, turnScopable)) {
+      results.push({
+        ...result,
+        scope: { kind: "turn", promptIndex: turn.promptIndex },
+      });
+    }
+  }
+  return results;
 }

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { captureServerEvent } from "../../utils/analytics.js";
 import {
   toolsListSchema,
   toolsExecuteSchema,
@@ -27,6 +28,13 @@ tools.post("/execute", async (c) =>
         "Task-augmented tool execution is not supported in hosted mode",
       );
     }
+
+    // Server twin of the client's `execute_tool` — captured at attempt time
+    // (like the client) so the pair ratio isn't skewed by failures.
+    captureServerEvent(c, "execute_tool_server", {
+      tool_name: body.toolName,
+      server_id: body.serverId,
+    });
 
     try {
       const result = await manager.executeTool(

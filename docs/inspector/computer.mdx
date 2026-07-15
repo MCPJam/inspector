@@ -1,0 +1,72 @@
+---
+title: "Computer"
+description: "A personal cloud Linux workstation for your project — open a terminal, run tools, and give your agents a real bash environment"
+icon: "monitor"
+---
+
+Each project gives every member an opt-in **Computer**: a personal cloud Linux
+workstation with a web terminal and a `bash` tool your agents can call. It boots
+from a base image (Debian + Node + Python) or a custom [environment](#environments)
+you define, sleeps when idle, and wakes on first use.
+
+Open it from the **Computer** tab. The first time you open the terminal, MCPJam
+provisions the machine; after that it resumes in about a second.
+
+## Environments
+
+An environment is a custom Docker image your computer boots from, defined by a
+small Dockerfile (allowlisted base images, `FROM` + `RUN` only). Build it, then
+**Use on computer** to boot from it. Environments can be kept private to you or
+shared with the whole project. Manage them from **Change** on the image strip.
+
+<Note>
+  Environment definitions (their Dockerfiles) live in the project database, not
+  on any one computer's disk — see [Data & persistence](#data-and-persistence).
+</Note>
+
+## Data & persistence
+
+Your computer is **scratch space, not durable storage.** Treat it like a fresh
+dev box you can rebuild at any time — convenient and fast, but not a place to
+keep the only copy of anything.
+
+<Warning>
+  Files persist when your computer sleeps, but they aren't backed up — keep
+  anything important in git or elsewhere.
+</Warning>
+
+### What persists
+
+- **The filesystem.** When your computer sleeps, its entire disk and memory are
+  captured in a pause snapshot and restored on wake, so files you created and
+  tools you installed are still there when you come back.
+
+### What wipes it
+
+Each of these rebuilds the machine from its image and **deletes every file on
+the disk**:
+
+- **Reset** — restores the computer to a clean copy of its current image.
+- **Changing the image** — switching to a different environment (or back to the
+  base image) rebuilds from that image.
+- **Delete** — tears the computer down entirely.
+- **Guest inactivity** — computers owned by signed-out (guest) sessions are
+  deleted when idle instead of paused, so their files don't carry over between
+  sessions. Sign in for a computer that sleeps and resumes with its disk intact.
+
+### What survives independently
+
+These live in the project database (Convex), not on the computer's disk, so they
+are unaffected by reset, image changes, or deletion:
+
+- **Cloud skills** attached to the project.
+- **Environment Dockerfiles** — the definitions of your custom images. Deleting
+  a computer never deletes your environments; you can boot a fresh computer from
+  the same image again.
+
+### The no-backup caveat
+
+There is no backup and no volume behind the computer — the pause snapshot *is*
+the storage. Once the disk is wiped by any of the actions above, its contents
+are gone for good. Anything you want to keep should live in version control, a
+remote, or another durable store.

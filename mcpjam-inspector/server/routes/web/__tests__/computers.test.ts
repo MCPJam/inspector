@@ -83,8 +83,9 @@ function postExec(
 
 function stubLocalDataPlaneEnv() {
   vi.stubEnv("CONVEX_HTTP_URL", CONVEX_URL);
-  vi.stubEnv("COMPUTERS_DATA_PLANE_SECRET", "test-secret");
+  vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-svc-token");
   vi.stubEnv("E2B_API_KEY", "e2b_test");
+  vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "terminal-secret-16+");
 }
 
 beforeEach(() => {

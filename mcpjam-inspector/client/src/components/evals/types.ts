@@ -1,4 +1,5 @@
-import type { PromptTurn, PromptTurnToolCall } from "@/shared/prompt-turns";
+import type { PromptTurn, PromptTurnToolCall } from "@/shared/steps";
+import type { TestStep } from "@/shared/steps";
 import type { EvalTraceBlobV1 } from "@/shared/eval-trace";
 import type { EvalStreamToolCall } from "@/shared/eval-stream-events";
 import type {
@@ -7,6 +8,71 @@ import type {
   CasePredicates,
 } from "@/shared/eval-matching";
 import type { TraceEnvelope, TraceMessage } from "./trace-viewer-adapter";
+import type { EvalStepStatusEntry } from "./eval-stream-reducer";
+
+/**
+ * Host identity an eval run executed against. Hand-mirrored from the Convex
+ * `insightHostSnapshotValidator` (convex/lib/insightHostSnapshot.ts) per the
+ * two-repo layout. Model/config fields are resolved from the run's pinned
+ * `hostConfigId` snapshot, never the live host pointer.
+ */
+export type InsightHostSnapshot = {
+  namedHostId?: string;
+  hostConfigId?: string;
+  name?: string;
+  modelId?: string;
+  hostStyle?: string;
+  temperature?: number;
+  systemPromptExcerpt?: string;
+  serverCount?: number;
+  optionalServerCount?: number;
+  builtInToolIds?: string[];
+  source: "run_snapshot" | "name_only" | "unknown";
+};
+
+/**
+ * Cross-host group quality result. Hand-mirrored from the Convex
+ * `runGroupQualityResultValidator` (convex/lib/runGroupQualityValidators.ts).
+ * One per launch group — compares the suite across its sibling host runs.
+ */
+export type RunGroupQualityResult = {
+  summary: string;
+  generatedAt: number;
+  modelUsed: string;
+  runIds: string[];
+  findings: Array<{
+    title: string;
+    severity: "info" | "warning" | "critical";
+    category:
+      | "host_divergence"
+      | "all_hosts_failed"
+      | "tool_path_divergence"
+      | "efficiency_divergence"
+      | "environment_failure";
+    attribution:
+      | "unknown"
+      | "server_design"
+      | "host_prompt"
+      | "model_behavior"
+      | "test_design"
+      | "environment";
+    confidence: "low" | "medium" | "high";
+    caseKey?: string;
+    caseTitle?: string;
+    affectedHosts: string[];
+    baselineHosts: string[];
+    evidence: string[];
+    recommendation: string;
+  }>;
+  hostSummaries: Array<{
+    hostName: string;
+    runId: string;
+    namedHostId?: string;
+    modelId?: string;
+    verdict: "incomplete" | "weak" | "mixed" | "strong";
+    summary: string;
+  }>;
+};
 
 export type EvalSuiteConfigTest = {
   title: string;
@@ -21,6 +87,13 @@ export type EvalSuiteConfigTest = {
   isNegativeTest?: boolean; // When true, test passes if NO tools are called
   scenario?: string; // Description of why app should NOT trigger (negative tests only)
   expectedOutput?: string; // The output or experience expected from the MCP server
+  /**
+   * Unified authored test steps — the source of truth for execution. Replaces
+   * the legacy `promptTurns`/`caseType`/`probeConfig` fields, which the Convex
+   * mutations now reject. `promptTurns` lingers only as a read-time fallback
+   * while legacy rows are migrated.
+   */
+  steps?: TestStep[];
   promptTurns?: PromptTurn[];
   advancedConfig?: Record<string, unknown>;
   /** Effective validator options for this entry, resolved at run-start. */
@@ -41,11 +114,21 @@ export type EvalSuite = {
       serverName: string;
       projectServerId?: string;
     }>;
+    /**
+     * Reproducible-evals pin: the computer environment each eval iteration
+     * boots a fresh sandbox from. Set via the suite settings env-picker.
+     */
+    computerEnvironmentId?: string;
   };
   createdAt: number;
   updatedAt: number;
   latestRunId?: string;
   source?: "ui" | "sdk";
+  /**
+   * Epoch ms of the newest CI (SDK-ingested) run — the durable server-side
+   * "suite has CI runs" signal (backfilled). The CI tab scopes on this.
+   */
+  lastSdkRunAt?: number;
   runCounter?: number;
   defaultPassCriteria?: {
     minimumPassRate: number;
@@ -59,6 +142,14 @@ export type EvalSuite = {
    * `testIteration.testCaseSnapshot.predicates` at run-precreate time.
    */
   defaultPredicates?: Predicate[];
+  /**
+   * Suite-level floor on per-case iteration count (1–10). When set, every
+   * case in a suite run executes at least this many iterations. Resolved
+   * backend-side into `configSnapshot.tests[].runs` at run-create time, so
+   * the runner reads the already-floored value. A per-run "Iterations"
+   * override still wins; per-case quick runs are unaffected.
+   */
+  minIterations?: number;
   /**
    * Suite-level advisory judge configuration. Authoritative source for
    * judgeModel / threshold / enabled flag — runs snapshot this at
@@ -100,6 +191,13 @@ export type EvalSuite = {
   serverAttachmentId?: string;
   /** Hydrated by the backend resolver when serverAttachmentId is set. */
   serverAttachment?: EvalServerAttachment;
+  /** Synthetic-monitor schedule; absent ⇒ never scheduled. */
+  schedule?: {
+    intervalMinutes: number;
+    enabled: boolean;
+    state: "active" | "paused_quota" | "paused_auth" | "paused_failures";
+    consecutiveFailures?: number;
+  };
 };
 
 export type EvalServerAttachment = {
@@ -129,6 +227,14 @@ export type EvalCase = {
   isNegativeTest?: boolean; // When true, test passes if NO tools are called
   scenario?: string; // Description of why app should NOT trigger (negative tests only)
   expectedOutput?: string; // The output or experience expected from the MCP server
+  /**
+   * Unified authored test steps — the source of truth for execution and the
+   * "is this a render check?" detection (`isModelFree(steps)`). Replaces the
+   * legacy `promptTurns`/`caseType`/`probeConfig`, which the Convex mutations
+   * now reject. The legacy fields linger only as read-time fallbacks while
+   * pre-migration rows are converted.
+   */
+  steps?: TestStep[];
   promptTurns?: PromptTurn[];
   advancedConfig?: Record<string, unknown>;
   /** Case-level validator override; merged on top of suite defaults. */
@@ -145,7 +251,17 @@ export type EvalCase = {
    * threshold (see backend `convex/lib/judgeConfig.ts` for rationale).
    */
   judgeConfigOverride?: EvalJudgeConfigOverride;
+  /** Case kind; absent ⇒ prompt case. */
+  caseType?: import("@/shared/probe-config").TestCaseType;
+  /** Pinned tool call for widget_probe cases. */
+  probeConfig?: import("@/shared/probe-config").ProbeConfig;
   lastMessageRun?: string | null;
+  /**
+   * Epoch ms of the last SDK-ingest write to this case's definition.
+   * Present ⇒ the case is synced from CI and manual edits may be
+   * overwritten by the next CI report.
+   */
+  lastSdkWriteAt?: number;
   _creationTime?: number; // Convex auto field
 };
 
@@ -203,6 +319,13 @@ export type EvalIteration = {
     isNegativeTest?: boolean; // When true, test passes if NO tools are called
     scenario?: string; // Description of why app should NOT trigger (negative tests only)
     expectedOutput?: string; // The output or experience expected from the MCP server
+    /**
+     * Unified authored test steps frozen at run-precreate time. The snapshot
+     * now carries `steps` (not `promptTurns`); run-detail readers convert via
+     * `stepsToPromptTurns(steps)` for legacy turn-shaped display. `promptTurns`
+     * remains only as a read-time fallback for pre-migration iterations.
+     */
+    steps?: TestStep[];
     promptTurns?: PromptTurn[];
     advancedConfig?: Record<string, unknown>;
     /** Effective validator options used for this iteration's pass/fail. */
@@ -216,8 +339,19 @@ export type EvalIteration = {
      * snapshot the iteration was actually evaluated against.
      */
     predicates?: Predicate[];
+    /**
+     * Case kind frozen at run-precreate time. Absent ⇒ prompt case. Probe
+     * iterations carry display-only model/provider sentinels
+     * ('none'/'widget-probe') in this snapshot.
+     */
+    caseType?: import("@/shared/probe-config").TestCaseType;
+    /** Pinned probe call, snapshotted for replay stability. */
+    probeConfig?: import("@/shared/probe-config").ProbeConfig;
   };
   suiteRunId?: string;
+  /** How the iteration was triggered, stamped at creation by the backend.
+   *  Absent on legacy rows → readers fall back to the `suiteRunId` heuristic. */
+  trigger?: "quick" | "suite" | "replay";
   configRevision?: string;
   createdBy: string;
   createdAt: number;
@@ -240,8 +374,14 @@ export type EvalIteration = {
    * `getTestIterationBlob` regardless of which source feeds it.
    */
   preferLegacyBlob?: boolean;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
-  result: "pending" | "passed" | "failed" | "cancelled";
+  status:
+    | "pending"
+    | "running"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "timed_out";
+  result: "pending" | "passed" | "failed" | "cancelled" | "timed_out";
   actualToolCalls: Array<{
     toolName: string;
     arguments: Record<string, any>;
@@ -270,14 +410,26 @@ export type CompareModelOverride = {
 export type EditorMode = "config" | "run";
 
 /** Compare run column trace mode — same values as TraceViewer view modes. */
-export type RunColumnTab = "timeline" | "chat" | "raw" | "tools";
+export type RunColumnTab =
+  | "timeline"
+  | "chat"
+  | "raw"
+  | "tools"
+  | "browser"
+  | "steps";
 
 export type CompareRunRecord = {
   modelValue: string;
   modelLabel: string;
   provider: string;
   model: string;
-  status: "idle" | "running" | "completed" | "failed" | "cancelled";
+  status:
+    | "idle"
+    | "running"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "timed_out";
   /**
    * When `status === "running"` and there is no iteration yet, true if this run
    * replaces a prior completed/failed attempt (user hit Retry or re-ran compare).
@@ -287,7 +439,7 @@ export type CompareRunRecord = {
   error?: string | null;
   startedAt: number | null;
   completedAt: number | null;
-  result: "pending" | "passed" | "failed" | "cancelled" | null;
+  result: "pending" | "passed" | "failed" | "cancelled" | "timed_out" | null;
   metrics: {
     durationMs: number | null;
     toolCallCount: number;
@@ -317,6 +469,12 @@ export type CompareRunRecord = {
     tokensUsed: number;
     toolCallCount: number;
   };
+  /**
+   * Live per-step lifecycle status keyed by `stepStatusKey` (turn granularity
+   * in v1). Populated from `step_status` stream events; drives the left-pane
+   * step-card "ticking" during a quick run.
+   */
+  streamingStepStatus?: Record<string, EvalStepStatusEntry>;
 };
 
 export type EvalSuiteRunSummary = {
@@ -341,6 +499,20 @@ export type EvalSuiteRun = {
         serverName: string;
         projectServerId?: string;
       }>;
+      computerEnvironmentId?: string;
+    };
+    /**
+     * Frozen reproducible-env pin for this run: the exact built image each
+     * iteration's sandbox launched from. Surfaced in run-detail so users can
+     * see which environment a run used (and spot mismatches when comparing).
+     */
+    computerEnvironment?: {
+      environmentId: string;
+      environmentBuildId: string;
+      e2bTemplateId: string;
+      e2bBuildId?: string;
+      baseImageDigests: string[];
+      provider: "e2b" | "stub";
     };
     /**
      * Suite-level judge config snapshotted at run-create. The run-detail
@@ -350,7 +522,13 @@ export type EvalSuiteRun = {
      */
     judgeConfig?: EvalJudgeConfig;
   };
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  status:
+    | "pending"
+    | "running"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "timed_out";
   summary?: EvalSuiteRunSummary;
   passCriteria?: {
     minimumPassRate: number;
@@ -363,8 +541,14 @@ export type EvalSuiteRun = {
    * re-confirming the override.
    */
   judgeConfigOverride?: EvalJudgeRunOverride;
-  result?: "pending" | "passed" | "failed" | "cancelled";
-  source?: "ui" | "sdk";
+  result?: "pending" | "passed" | "failed" | "cancelled" | "timed_out";
+  stoppedAt?: number;
+  stopReason?:
+    | "user_cancelled"
+    | "run_timeout"
+    | "iteration_timeout"
+    | "stale_worker";
+  source?: "ui" | "sdk" | "api" | "schedule";
   replayedFromRunId?: string;
   /** Set when this run was created by the Auto fix suite replay step. */
   traceRepairJobId?: string;
@@ -427,6 +611,12 @@ export type EvalSuiteRun = {
     summary: string;
     generatedAt: number;
     modelUsed: string;
+    /**
+     * Host identity this run executed against. Mirrors the Convex
+     * `insightHostSnapshotValidator`. Optional — legacy runs and
+     * failed/cancelled saves omit it.
+     */
+    host?: InsightHostSnapshot;
     toolInsights: Array<{
       toolName: string;
       rating: "good" | "needs_improvement" | "poor";

@@ -61,6 +61,8 @@ export interface MultiModelStartersEmptyLayoutProps {
   isAuthLoading: boolean;
   /** When false, hides starter chips (e.g. auth upsell active). */
   showStarterPrompts: boolean;
+  /** Themed MCPJam logo, rendered above the starter prompts. */
+  logoSlot?: ReactNode;
   /** Loading spinner, upsell panel, or null — rendered above the starter row. */
   authPrimarySlot: ReactNode;
   onStarterPrompt: (text: string) => void;
@@ -76,6 +78,7 @@ export interface MultiModelStartersEmptyLayoutProps {
 export function MultiModelStartersEmptyLayout({
   isAuthLoading,
   showStarterPrompts,
+  logoSlot,
   authPrimarySlot,
   onStarterPrompt,
   chatInputSlot,
@@ -94,6 +97,7 @@ export function MultiModelStartersEmptyLayout({
           {authPrimarySlot}
           {showStarterPrompts ? (
             <div className="space-y-4">
+              {logoSlot}
               <MultiModelStarterPromptsBlock
                 onStarterPrompt={onStarterPrompt}
                 chipClassName={chipClassName}

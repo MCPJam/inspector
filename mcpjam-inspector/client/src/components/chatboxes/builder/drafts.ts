@@ -1,7 +1,6 @@
 import {
+  hostedModelDefinitionsFromSnapshot,
   isMCPJamProvidedModel,
-  isModelSupported,
-  SUPPORTED_MODELS,
 } from "@/shared/types";
 import type { ChatboxDraftConfig, ChatboxStarterDefinition } from "./types";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
@@ -24,20 +23,18 @@ const WELCOME_BODY_EXCALIDRAW_DEMO = [
   "This chatbox is pre-wired with the Excalidraw MCP server. Ask the assistant to sketch a diagram, walk through an idea visually, or just play with what the tools can do.",
 ].join("\n");
 
-/** Prefer a stable default; the first MCPJam model in SUPPORTED_MODELS is often gpt-oss-120b. */
-const DEFAULT_HOSTED_CHATBOX_MODEL_ID = "openai/gpt-5-mini";
+/** Prefer the hosted model chosen as the general MCPJam default. */
+const DEFAULT_HOSTED_CHATBOX_MODEL_ID = "mistralai/mistral-small-2603";
 
 export function getDefaultHostedModelId(): string {
-  if (
-    isModelSupported(DEFAULT_HOSTED_CHATBOX_MODEL_ID) &&
-    isMCPJamProvidedModel(DEFAULT_HOSTED_CHATBOX_MODEL_ID)
-  ) {
+  if (isMCPJamProvidedModel(DEFAULT_HOSTED_CHATBOX_MODEL_ID)) {
     return DEFAULT_HOSTED_CHATBOX_MODEL_ID;
   }
+  // The configured default fell out of the hosted set — pick any hosted model
+  // from the snapshot rather than shipping an unroutable id.
   return (
-    SUPPORTED_MODELS.find((model) =>
-      isMCPJamProvidedModel(String(model.id)),
-    )?.id?.toString() ?? "openai/gpt-5-mini"
+    hostedModelDefinitionsFromSnapshot()[0]?.id?.toString() ??
+    DEFAULT_HOSTED_CHATBOX_MODEL_ID
   );
 }
 
@@ -45,8 +42,7 @@ export const CHATBOX_STARTERS: ChatboxStarterDefinition[] = [
   {
     id: "excalidraw-demo",
     title: "Excalidraw demo",
-    description:
-      "Try a ready-made chatbox wired to the Excalidraw MCP server.",
+    description: "Try a ready-made chatbox wired to the Excalidraw MCP server.",
     promptHint:
       "Great for sharing a quick demo — ask the assistant to sketch a diagram and watch the tools work.",
     templateTooltip:
@@ -107,12 +103,12 @@ export const CHATBOX_STARTERS: ChatboxStarterDefinition[] = [
 
 /** Primary starter for blank builder draft (first-run “Create New”). */
 export const CHATBOX_BLANK_STARTER = CHATBOX_STARTERS.find(
-  (s) => s.id === "blank",
+  (s) => s.id === "blank"
 )!;
 
 /** Starters shown under “Start from a template” (excludes blank). */
 export const CHATBOX_TEMPLATE_STARTERS = CHATBOX_STARTERS.filter(
-  (s) => s.id !== "blank",
+  (s) => s.id !== "blank"
 );
 
 /**
@@ -142,7 +138,7 @@ export function draftToHostConfigInputV2(
     | "hostCapabilitiesOverride"
     | "chatUiOverride"
     | "mcpProfile"
-  > | null,
+  > | null
 ): HostConfigInputV2 {
   const seed = emptyHostConfigInputV2({
     hostStyle: draft.hostStyle,
@@ -186,7 +182,7 @@ export function draftToHostConfigInputV2(
  * required field this is a no-op.
  */
 export function migrateBuilderDraft(
-  raw: Record<string, unknown> | null | undefined,
+  raw: Record<string, unknown> | null | undefined
 ): ChatboxDraftConfig | null {
   if (!raw || typeof raw !== "object") return null;
   const blank = CHATBOX_BLANK_STARTER.createDraft(getDefaultHostedModelId());
@@ -245,17 +241,17 @@ export function migrateBuilderDraft(
       },
     },
     selectedServerIds: Array.isArray(
-      (raw as { selectedServerIds?: unknown }).selectedServerIds,
+      (raw as { selectedServerIds?: unknown }).selectedServerIds
     )
       ? ((raw as { selectedServerIds: string[] }).selectedServerIds.filter(
-          (id) => typeof id === "string",
+          (id) => typeof id === "string"
         ) as string[])
       : [],
     optionalServerIds: Array.isArray(
-      (raw as { optionalServerIds?: unknown }).optionalServerIds,
+      (raw as { optionalServerIds?: unknown }).optionalServerIds
     )
       ? ((raw as { optionalServerIds: string[] }).optionalServerIds.filter(
-          (id) => typeof id === "string",
+          (id) => typeof id === "string"
         ) as string[])
       : [],
   };
@@ -288,7 +284,7 @@ export function toDraftConfig(chatbox: ChatboxSettings): ChatboxDraftConfig {
  * envelope without `isDirty` having to rebuild the entire draft.
  */
 export function toChatUiFromChatbox(
-  chatbox: ChatboxSettings,
+  chatbox: ChatboxSettings
 ): ChatboxDraftConfig["chatUi"] {
   const welcome = chatbox.chatUi?.surfaces?.welcome;
   const feedback = chatbox.chatUi?.surfaces?.feedback;

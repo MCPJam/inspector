@@ -1,16 +1,35 @@
-import { useCallback, useState } from "react";
-import { toast } from "sonner";
-import { usePostHog } from "posthog-js/react";
+import { Component, useCallback, useState } from "react";
+import { toast } from "@/lib/toast";
+import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
-import { Loader2, RotateCcw, TerminalSquare, Trash2 } from "lucide-react";
+import {
+  Boxes,
+  Info,
+  Loader2,
+  Moon,
+  RotateCcw,
+  TerminalSquare,
+  Trash2,
+} from "lucide-react";
+import {
+  ComputerBillingWarningBanner,
+  ComputerPausedForBillingNotice,
+} from "./ComputerBillingNotices";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   useComputersDataPlaneConfig,
   useComputerStatus,
+  useComputerUsage,
   useDeleteComputer,
+  useHibernateComputer,
   useMintTerminalToken,
   useReserveComputer,
 } from "@/hooks/useProjectComputer";
+import {
+  useEnvironments,
+  useResetComputer,
+} from "@/hooks/useComputerEnvironments";
+import { EnvironmentsDrawer } from "./EnvironmentsDrawer";
 import { toTerminalWsBase } from "@/lib/computer-terminal-connection";
 import {
   getBillingErrorMessage,
@@ -19,6 +38,8 @@ import {
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { ComputerStatusChip } from "./ComputerStatusChip";
 import { ComputerTerminal } from "./ComputerTerminal";
+import { ComputersUnavailableMessage } from "./ComputersUnavailableMessage";
+import { PaneMessage } from "./PaneMessage";
 
 /**
  * The "Computer" tab — manage the project's personal cloud computer (one per
@@ -36,8 +57,8 @@ export function ComputerView({
   const status = useComputerStatus(effectiveProjectId);
   const reserve = useReserveComputer();
   const deleteComputer = useDeleteComputer();
+  const hibernateComputer = useHibernateComputer();
   const mintTerminalToken = useMintTerminalToken();
-  const posthog = usePostHog();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const terminalTheme = themeMode === "dark" ? "dark" : "light";
 
@@ -45,6 +66,25 @@ export function ComputerView({
   const [starting, setStarting] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmingHibernate, setConfirmingHibernate] = useState(false);
+  const [hibernating, setHibernating] = useState(false);
+  const [envDrawerOpen, setEnvDrawerOpen] = useState(false);
+  const [confirmingReset, setConfirmingReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  const resetComputer = useResetComputer();
+  const environments = useEnvironments(effectiveProjectId);
+  const attachedEnvironmentId = status?.environmentId ?? null;
+  const hasCustomImage = attachedEnvironmentId != null;
+  const attachedEnvName = hasCustomImage
+    ? environments?.find((e) => e.environmentId === attachedEnvironmentId)
+        ?.name ?? null
+    : null;
+  // A custom image is attached but its name hasn't resolved yet (list still
+  // loading, or it's not visible to this caller) — don't mislabel it as base.
+  const imageLabel = !hasCustomImage
+    ? "Base image"
+    : attachedEnvName ?? "Custom image";
 
   // Where the terminal lives: this server (local data plane), a deployed
   // data plane (remote URL → cross-origin WS), or nowhere (honest empty
@@ -59,6 +99,11 @@ export function ComputerView({
     dataPlane !== undefined && !dataPlane.localConfigured && !remoteWsBase;
 
   const liveStatus = status === undefined ? undefined : status?.status ?? null;
+  const hibernatedReason = status?.hibernatedReason;
+  // Paused because compute hours ran out and the wallet couldn't cover the
+  // overage (COMP-7) — distinct from an idle sleep the user can just wake.
+  const isBillingPaused =
+    liveStatus === "hibernating" && hibernatedReason === "billing";
   const isReady = liveStatus === "ready";
   // "Gone" = no computer row, or one that's been (or is being) torn down.
   // Nothing to delete and nothing for an open terminal to attach to.
@@ -76,7 +121,8 @@ export function ComputerView({
 
   const openTerminal = useCallback(async () => {
     if (!effectiveProjectId) return;
-    posthog?.capture("computer_terminal_opened", {
+    track("computer_terminal_opened", {
+      location: "computer_view",
       computer_status: liveStatus ?? "none",
     });
     setTerminalOpen(true);
@@ -91,7 +137,7 @@ export function ComputerView({
         if (isComputerStartLimitError(err)) {
           // Daily start cap — the limit dialog carries the conversion CTA
           // (sign-in for guests, top-up for signed-in users).
-          posthog?.capture("computer_start_limit_hit");
+          track("computer_start_limit_hit", { location: "computer_view" });
           useMCPJamLimitDialogStore.getState().notifyLimitHit();
         } else {
           toast.error(
@@ -102,7 +148,7 @@ export function ComputerView({
         setStarting(false);
       }
     }
-  }, [effectiveProjectId, liveStatus, posthog, reserve]);
+  }, [effectiveProjectId, liveStatus, reserve]);
 
   const onDelete = useCallback(async () => {
     if (!effectiveProjectId) return;
@@ -121,6 +167,45 @@ export function ComputerView({
     }
   }, [effectiveProjectId, deleteComputer]);
 
+  const onHibernate = useCallback(async () => {
+    if (!effectiveProjectId) return;
+    setHibernating(true);
+    try {
+      await hibernateComputer({ projectId: effectiveProjectId });
+      setTerminalOpen(false);
+      toast.success("Computer hibernated. It'll wake next time you use it.");
+    } catch (err) {
+      toast.error(
+        getBillingErrorMessage(err, "Could not hibernate the computer.")
+      );
+    } finally {
+      setHibernating(false);
+      setConfirmingHibernate(false);
+    }
+  }, [effectiveProjectId, hibernateComputer]);
+
+  const onReset = useCallback(async () => {
+    if (!effectiveProjectId) return;
+    setResetting(true);
+    try {
+      const res = await resetComputer({ projectId: effectiveProjectId });
+      toast.success(
+        res.reset ? "Resetting your computer to its image…" : "Nothing to reset."
+      );
+    } catch (err) {
+      toast.error(getBillingErrorMessage(err, "Could not reset the computer."));
+    } finally {
+      setResetting(false);
+      setConfirmingReset(false);
+    }
+  }, [effectiveProjectId, resetComputer]);
+
+  // Reset and image changes both rebuild the box, so only offer them when it's
+  // settled (not mid-provision). Attaching is also allowed when there's no
+  // computer yet (the backend provisions-with-pin on first use).
+  const canReset = isReady || liveStatus === "hibernating";
+  const canAttach = liveStatus === null || canReset;
+
   if (!isAuthenticated) {
     return <Empty>Sign in to use a personal computer for this project.</Empty>;
   }
@@ -135,17 +220,13 @@ export function ComputerView({
 
   const renderTerminalPane = () => {
     if (dataPlaneUnavailable) {
-      return (
-        <PaneMessage dashed>
-          <span className="max-w-md text-center">
-            This inspector server isn't set up to run computers: it has no
-            data-plane credentials and no remote data plane to delegate to. Set{" "}
-            <code>COMPUTERS_REMOTE_DATA_PLANE_URL</code> (or the data-plane
-            secrets) in the server environment to enable the terminal and the
-            bash tool.
-          </span>
-        </PaneMessage>
-      );
+      return <ComputersUnavailableMessage />;
+    }
+    // Billing pause is a distinct state: the terminal can't open until credits
+    // land or the allowance resets, so state the reason + remedy instead of an
+    // idle prompt or a spinner that would bounce straight back to sleep.
+    if (isBillingPaused) {
+      return <ComputerPausedForBillingNotice />;
     }
     if (!terminalOpen) {
       return (
@@ -242,7 +323,10 @@ export function ComputerView({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-semibold text-foreground">Computer</h1>
-          <ComputerStatusChip status={liveStatus} />
+          <ComputerStatusChip
+            status={liveStatus}
+            hibernatedReason={hibernatedReason}
+          />
         </div>
         <div className="flex items-center gap-2">
           {!terminalOpen && !dataPlaneUnavailable ? (
@@ -259,10 +343,46 @@ export function ComputerView({
               Open terminal
             </Button>
           ) : null}
+          {isReady ? (
+            confirmingHibernate ? (
+              <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                Hibernate now?
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void onHibernate()}
+                  disabled={hibernating}
+                >
+                  {hibernating ? (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : null}
+                  Hibernate
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setConfirmingHibernate(false)}
+                  disabled={hibernating}
+                >
+                  Cancel
+                </Button>
+              </span>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setConfirmingHibernate(true)}
+                title="Put the computer to sleep now (state is kept; wakes on next use)"
+              >
+                <Moon className="mr-1.5 h-3.5 w-3.5" />
+                Hibernate now
+              </Button>
+            )
+          ) : null}
           {hasComputer ? (
             confirmingDelete ? (
               <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-                Delete this computer?
+                Delete this computer? All files on it will be deleted.
                 <Button
                   size="sm"
                   variant="destructive"
@@ -297,10 +417,106 @@ export function ComputerView({
         </div>
       </div>
 
-      <p className="text-sm text-muted-foreground">
-        A personal Linux workstation for this project — files and installed
-        tools persist between sessions; it sleeps when idle and wakes on use.
-      </p>
+      <div className="flex flex-col gap-1.5">
+        <p className="text-sm text-muted-foreground">
+          A personal Linux workstation for this project. It sleeps automatically
+          after about 30 minutes idle, or shortly after you close the terminal,
+          and wakes on use. Use “Hibernate now” to put it to sleep immediately.
+        </p>
+        <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            Files persist when your computer sleeps, but they aren't backed up —
+            keep anything important in git or elsewhere.
+          </span>
+        </p>
+      </div>
+
+      {/* Degrade like the meter: the shared query throws against a backend that
+          predates it, so hide the banner rather than blank the whole tab. */}
+      <UsageMeterBoundary>
+        <ComputerBillingWarningBanner projectId={projectId} />
+      </UsageMeterBoundary>
+
+      {status !== undefined ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/10 px-3 py-2 text-sm">
+          <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
+            <Boxes className="h-4 w-4 shrink-0" />
+            Image:
+            <span className="truncate font-medium text-foreground">
+              {imageLabel}
+            </span>
+            {hasCustomImage ? null : (
+              <span className="hidden sm:inline">Debian + Node + Python</span>
+            )}
+          </span>
+          <span className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setEnvDrawerOpen(true)}
+            >
+              Change
+            </Button>
+            {hasComputer ? (
+              confirmingReset ? (
+                <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                  Reset to the image? All files on this computer will be
+                  deleted.
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => void onReset()}
+                    disabled={resetting}
+                  >
+                    {resetting ? (
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    ) : null}
+                    Reset
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setConfirmingReset(false)}
+                    disabled={resetting}
+                  >
+                    Cancel
+                  </Button>
+                </span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setConfirmingReset(true)}
+                  disabled={!canReset}
+                  title={
+                    canReset
+                      ? undefined
+                      : "Reset is available once the computer is ready or asleep"
+                  }
+                >
+                  <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                  Reset
+                </Button>
+              )
+            ) : null}
+          </span>
+        </div>
+      ) : null}
+
+      {effectiveProjectId ? (
+        <EnvironmentsDrawer
+          open={envDrawerOpen}
+          onOpenChange={setEnvDrawerOpen}
+          projectId={effectiveProjectId}
+          attachedEnvironmentId={attachedEnvironmentId}
+          canAttach={canAttach}
+        />
+      ) : null}
+
+      <UsageMeterBoundary>
+        <ComputerUsageMeter projectId={projectId} />
+      </UsageMeterBoundary>
 
       {liveStatus === "error" && status?.lastError ? (
         <div className="rounded border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
@@ -313,6 +529,105 @@ export function ComputerView({
   );
 }
 
+/**
+ * Awake-time meter for the project's org: "X of Y free hours this month, then
+ * N credits/hour, sleeping is free". Hidden while loading, when the backend
+ * resolves no meter, or when the deployment isn't metering (`mode: "off"`).
+ */
+function ComputerUsageMeter({ projectId }: { projectId: string }) {
+  const usage = useComputerUsage(projectId);
+  if (!usage || usage.mode === "off") return null;
+
+  const { awakeMs, allowanceMs, creditsPerHour, billedCredits } = usage;
+  const overAllowance = allowanceMs !== null && awakeMs > allowanceMs;
+  // A zero-hour allowance with any usage reads as a full (over) bar, not an
+  // empty one. No such plan exists today, but the meter shouldn't lie if one
+  // ships.
+  const usedPct =
+    allowanceMs === null
+      ? 0
+      : allowanceMs <= 0
+      ? awakeMs > 0
+        ? 100
+        : 0
+      : Math.min(100, (awakeMs / allowanceMs) * 100);
+
+  return (
+    <div
+      data-testid="computer-usage-meter"
+      className="flex flex-col gap-2 rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+        <span>
+          Awake time this month:{" "}
+          <span className="font-medium text-foreground">
+            {formatAwakeDuration(awakeMs)}
+          </span>
+          {allowanceMs !== null ? (
+            <> of {formatAwakeDuration(allowanceMs)} free</>
+          ) : (
+            <> — included with your plan</>
+          )}
+        </span>
+        {allowanceMs !== null ? (
+          <span>
+            {billedCredits > 0 ? (
+              <>
+                <span className="font-medium text-foreground">
+                  {billedCredits} credits
+                </span>{" "}
+                used ·{" "}
+              </>
+            ) : (
+              <>then </>
+            )}
+            {creditsPerHour} credits/hour · sleeping is free
+          </span>
+        ) : null}
+      </div>
+      {allowanceMs !== null ? (
+        <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+          <div
+            data-testid="computer-usage-meter-fill"
+            className={`h-full rounded-full ${
+              overAllowance ? "bg-destructive" : "bg-primary"
+            }`}
+            style={{ width: `${usedPct}%` }}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// Sub-hour spans read as minutes; everything else as hours with one decimal
+// ("4.2 h"), trailing-zero trimmed ("30 h").
+function formatAwakeDuration(ms: number): string {
+  const minutes = ms / 60_000;
+  if (minutes < 60) return `${Math.round(minutes)} min`;
+  return `${Number((minutes / 60).toFixed(1))} h`;
+}
+
+/**
+ * The meter is a progressive enhancement: against a backend that predates
+ * `getComputerUsage`, the Convex query throws during render — swallow it and
+ * show no meter instead of taking down the whole Computer tab.
+ */
+class UsageMeterBoundary extends Component<
+  { children: React.ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
+
 function Empty({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
@@ -321,20 +636,3 @@ function Empty({ children }: { children: React.ReactNode }) {
   );
 }
 
-function PaneMessage({
-  children,
-  dashed = false,
-}: {
-  children: React.ReactNode;
-  dashed?: boolean;
-}) {
-  return (
-    <div
-      className={`flex h-full flex-col items-center justify-center gap-3 rounded-md border text-sm text-muted-foreground ${
-        dashed ? "border-dashed bg-muted/10" : "bg-muted/20"
-      }`}
-    >
-      {children}
-    </div>
-  );
-}

@@ -15,4 +15,22 @@ describe("HostChip", () => {
     expect(img).not.toBeNull();
     expect(img?.getAttribute("src")).toBeTruthy();
   });
+
+  it("renders stacked layout for column headers", () => {
+    render(
+      <HostChip
+        name="MCPJam"
+        hostId="host-1"
+        layout="stack"
+        size="sm"
+      />,
+    );
+    expect(screen.getByText("MCPJam")).toHaveClass("text-[11px]");
+    expect(screen.getByTitle("host-1")).not.toHaveClass("rounded-full");
+  });
+
+  it("shows initials fallback when no logo is available", () => {
+    render(<HostChip name="Custom Host" layout="stack" />);
+    expect(screen.getByText("Cu")).toBeInTheDocument();
+  });
 });

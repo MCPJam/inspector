@@ -15,14 +15,18 @@
  * The Home page is its first consumer; the side-panel bubble across the
  * rest of the UI hits the same endpoint.
  *
+ * Platform worker URL: resolved by environment via `resolvePlatformMcpUrl()`
+ * (local/dev → local `wrangler dev` worker, staging/preview → the staging
+ * worker, prod → the prod worker). `MCPJAM_PLATFORM_MCP_URL` overrides it.
+ *
  * Auth to the platform worker: the worker verifies AuthKit JWTs from the
  * same issuer the inspector authenticates with (prod `login.mcpjam.com`,
  * staging `dynamic-echo-14-staging`), so the caller's bearer is forwarded
  * as the MCP `accessToken`. Local dev tokens come from the dev AuthKit app,
- * which deployed workers don't trust — run the worker locally
- * (`npm run dev:local` in `mcp/`) and set
- * `MCPJAM_PLATFORM_MCP_URL=http://localhost:8787/mcp`, or the agent
- * degrades to docs + web_search via the preflight below.
+ * which only the LOCAL worker (`wrangler dev --env dev`) trusts — `npm run
+ * dev` starts that worker automatically, so the agent talks to it on
+ * `http://localhost:8787/mcp`. If the worker is down the preflight below
+ * degrades the agent to docs + web_search.
  *
  * Differences vs `/api/web/chat-v2`:
  *   - The agent owns its own `MCPClientManager` hardcoded to the two
@@ -34,8 +38,10 @@
  *     backend `selectedServerIds` validation against the project's
  *     `servers` rows. The chat appears in the user's history alongside
  *     other direct sessions; per-surface differentiation is client-side.
- *   - Rejects chatbox / appTools / selectedServerIds fields up front — this
- *     surface owns its tool set.
+ *   - Ignores chatbox / appTools / selectedServerIds fields up front — this
+ *     surface owns its MCP tool set. The one client-supplied tool snapshot it
+ *     DOES accept is `uiTools` (WebMCP UI tools, validated at the boundary):
+ *     the agent panel is the primary surface for driving the inspector UI.
  */
 import { Hono } from "hono";
 import { z } from "zod";
@@ -54,10 +60,15 @@ import type {
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
+import {
+  validateUiToolEntries,
+  UiToolValidationError,
+} from "../../utils/chat-v2-orchestration.js";
 import { WEB_SEARCH_TOOL_NAME } from "../../utils/built-in-tools/exa-web-search.js";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import { injectOpenAICompat } from "../../utils/widget-helpers.js";
 import { logger } from "../../utils/logger.js";
+import { resolvePlatformMcpUrl } from "../../utils/platform-mcp-url.js";
 import { MCPJAM_PLATFORM_SERVER_ID } from "../../../shared/mcpjam-agent-widgets";
 import {
   assertBearerToken,
@@ -73,9 +84,6 @@ import { getClientIp } from "../../utils/client-ip.js";
 const DOCS_SERVER_ID = "mcpjam-docs";
 const DEFAULT_DOCS_URL = "https://docs.mcpjam.com/mcp";
 const PLATFORM_SERVER_ID = MCPJAM_PLATFORM_SERVER_ID;
-// Staging deployments override with https://mcp-staging.mcpjam.com/mcp;
-// local dev with a local `wrangler dev` URL (see header comment).
-const DEFAULT_PLATFORM_URL = "https://mcp.mcpjam.com/mcp";
 
 // Advertise the MCP UI extension so the platform worker registers its
 // widget-backed tools (the worker's session registrar swaps widget vs
@@ -98,7 +106,7 @@ function buildDocsConfig(): HttpServerConfig {
 
 function buildPlatformConfig(bearerToken: string): HttpServerConfig {
   return {
-    url: process.env.MCPJAM_PLATFORM_MCP_URL ?? DEFAULT_PLATFORM_URL,
+    url: resolvePlatformMcpUrl(),
     timeout: 30_000,
     // The caller's own AuthKit bearer — the worker verifies it against the
     // shared issuer and executes platform operations with the caller's
@@ -116,7 +124,8 @@ function buildPlatformConfig(bearerToken: string): HttpServerConfig {
 // `auth.ts` tolerates this via `.passthrough()`; we match that pattern so
 // the AI SDK extras are silently passed through instead of rejected as
 // validation errors. Server-side use of the parsed body still only reads
-// the explicitly-declared fields below — there's no path here that routes
+// the explicitly-declared fields below plus `uiTools` (validated by
+// `validateUiToolEntries` before use) — there's no path here that routes
 // a tampered selectedServerIds / appTools / chatbox field into the
 // streamWebChatTurn call because we don't read them at all.
 const mcpjamAgentSchema = z
@@ -135,6 +144,9 @@ const mcpjamAgentSchema = z
     temperature: z.number().optional(),
     requireToolApproval: z.boolean().optional(),
     respectToolVisibility: z.boolean().optional(),
+    // WebMCP UI tools snapshot. Wide here; `validateUiToolEntries` is the
+    // real boundary (caps, `ui_` name regex, schema size) and 400s on abuse.
+    uiTools: z.array(z.unknown()).optional(),
   })
   .passthrough();
 
@@ -148,6 +160,18 @@ mcpjamAgent.post("/", async (c) => {
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
     rpcCollector = createHostedRpcLogCollector(rawBody);
     const body = parseWithSchema(mcpjamAgentSchema, rawBody);
+
+    // WebMCP UI tools: validate the client snapshot at the boundary, same
+    // treatment as web/chat-v2.
+    let validatedUiTools;
+    try {
+      validatedUiTools = validateUiToolEntries(body.uiTools);
+    } catch (error) {
+      if (error instanceof UiToolValidationError) {
+        return webError(c, 400, ErrorCode.VALIDATION_ERROR, error.message);
+      }
+      throw error;
+    }
 
     manager = new MCPClientManager(
       {
@@ -244,6 +268,7 @@ mcpjamAgent.post("/", async (c) => {
           requireToolApproval: body.requireToolApproval,
           respectToolVisibility: body.respectToolVisibility,
           uiMessages: body.messages,
+          uiTools: validatedUiTools,
           builtInTools,
         },
         persist: {

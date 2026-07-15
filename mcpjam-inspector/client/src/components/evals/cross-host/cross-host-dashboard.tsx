@@ -1,12 +1,27 @@
-import { useEffect, useRef } from "react";
-import { Network } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Network, Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@mcpjam/design-system/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@mcpjam/design-system/dialog";
+import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../types";
 import { evalSurfaceCardClass } from "../eval-surface-chrome";
-import { CrossHostMatrix } from "./cross-host-matrix";
+import { EVAL_DESTRUCTIVE_BUTTON_CLASS } from "../constants";
+import { CrossHostMatrix, type HostVerdictMap } from "./cross-host-matrix";
+import type { CaseRowSort } from "./case-row-metrics";
 import { useCrossHostData, type CellData } from "./use-cross-host-data";
+import {
+  buildJudgeByRunAndCaseKey,
+  buildWorkflowByRunAndCaseKey,
+} from "../goal-completion-presentation";
 
 interface CrossHostDashboardProps {
   suite: EvalSuite;
@@ -20,6 +35,17 @@ interface CrossHostDashboardProps {
   onTestCaseClick?: (testCaseId: string) => void;
   /** Click a matrix cell → drill into that (case, host) iteration. */
   onCellOpen?: (cell: CellData, hostId: string, caseId: string) => void;
+  /** Delete test cases (renders a trash control on each case row). */
+  onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
+  /** Hide "historical" (detached) host columns — see CrossHostMatrix. */
+  hideHistorical?: boolean;
+  /** When true, matrix cells include per-run trend strips. */
+  cellTrends?: boolean;
+  caseRowSort?: CaseRowSort;
+  onCaseRowSortChange?: (sort: CaseRowSort) => void;
+  sortControlInHeader?: boolean;
+  /** Per-host cross-host verdicts (group view only); keyed by namedHostId. */
+  hostVerdicts?: HostVerdictMap;
 }
 
 export function CrossHostDashboard({
@@ -31,9 +57,51 @@ export function CrossHostDashboard({
   expanded = false,
   onTestCaseClick,
   onCellOpen,
+  onDeleteTestCasesBatch,
+  hideHistorical = false,
+  cellTrends = false,
+  caseRowSort,
+  onCaseRowSortChange,
+  sortControlInHeader = false,
+  hostVerdicts,
 }: CrossHostDashboardProps) {
-  const data = useCrossHostData(suite, cases, runs, allIterations);
-  const posthog = usePostHog();
+  const data = useCrossHostData(suite, cases, runs, allIterations, {
+    cellTrends,
+  });
+  // Advisory judge verdicts indexed by run → caseKey, so each cell shows the
+  // verdict from its own run next to the deterministic pass/fail.
+  const judgeByRunAndCaseKey = useMemo(
+    () => buildJudgeByRunAndCaseKey(runs),
+    [runs],
+  );
+  // Server-quality workflow findings, also per (case×host), for the cell drill-down.
+  const workflowByRunAndCaseKey = useMemo(
+    () => buildWorkflowByRunAndCaseKey(runs),
+    [runs],
+  );
+  const [caseToDelete, setCaseToDelete] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
+  const [isDeletingCase, setIsDeletingCase] = useState(false);
+
+  const confirmDeleteCase = async () => {
+    if (!caseToDelete || !onDeleteTestCasesBatch) return;
+    setIsDeletingCase(true);
+    try {
+      await onDeleteTestCasesBatch([caseToDelete.id]);
+      toast.success("Test case deleted");
+      setCaseToDelete(null);
+    } catch (error) {
+      console.error("Failed to delete test case:", error);
+      toast.error("Failed to delete test case");
+    } finally {
+      setIsDeletingCase(false);
+    }
+  };
+  const visibleHostCount = hideHistorical
+    ? data.hostColumns.filter((col) => !col.isHistorical).length
+    : data.hostColumns.length;
   // Fire the viewed event once per suite mount, not per render. The
   // ref-keyed-by-suite-id guard means navigating between suites re-fires;
   // re-renders within the same suite (e.g. when iterations stream in) do
@@ -45,8 +113,8 @@ export function CrossHostDashboard({
     if (lastFiredSuiteId.current === suite._id) return;
     lastFiredSuiteId.current = suite._id;
     try {
-      posthog.capture("evals_cross_host_viewed", {
-        ...standardEventProps("cross_host_dashboard"),
+      track("evals_cross_host_viewed", {
+        location: "cross_host_dashboard",
         suite_id: suite._id,
         host_count: data.hostColumns.length,
         case_count: data.caseRows.length,
@@ -57,7 +125,15 @@ export function CrossHostDashboard({
     } catch {
       // swallow — analytics must not block the dashboard render path
     }
-  }, [suite._id, posthog, data]);
+  }, [suite._id, data]);
+
+  // On the suite landing (hideHistorical), the matrix only adds value with ≥2
+  // clients to compare. With a single client it collapses to a list of cases +
+  // pass/fail — identical to the Cases tab — so render nothing and let the
+  // tabs own per-case status.
+  if (hideHistorical && visibleHostCount < 2) {
+    return null;
+  }
 
   if (!data.hasHostAttachments && !data.hasAnyData) {
     return (
@@ -66,9 +142,9 @@ export function CrossHostDashboard({
           <Network className="size-5 text-muted-foreground" />
         </div>
         <div className="space-y-1">
-          <p className="text-sm font-medium">No host attachments</p>
+          <p className="text-sm font-medium">No client attachments</p>
           <p className="text-xs text-muted-foreground max-w-xs">
-            Attach MCP host applications to this suite to compare results across
+            Attach MCP client applications to this suite to compare results across
             Claude Desktop, Cursor, ChatGPT, and others.
           </p>
         </div>
@@ -78,7 +154,7 @@ export function CrossHostDashboard({
             onClick={onConfigureHosts}
             className="text-xs text-primary hover:underline"
           >
-            Configure host attachments
+            Configure client attachments
           </button>
         )}
       </div>
@@ -92,9 +168,9 @@ export function CrossHostDashboard({
           <Network className="size-5 text-muted-foreground" />
         </div>
         <div className="space-y-1">
-          <p className="text-sm font-medium">No cross-host data yet</p>
+          <p className="text-sm font-medium">No cross-client data yet</p>
           <p className="text-xs text-muted-foreground max-w-xs">
-            Run the suite across its attached hosts to see per-host pass rates,
+            Run the suite across its attached clients to see per-client pass rates,
             latency, and token usage in this matrix.
           </p>
         </div>
@@ -110,18 +186,18 @@ export function CrossHostDashboard({
     >
       {!expanded ? (
         <div>
-          <h3 className="text-sm font-medium">Cross-host comparison</h3>
+          <h3 className="text-sm font-medium">Across clients</h3>
           <p className="text-xs text-muted-foreground">
-            {data.hostColumns.length} host
-            {data.hostColumns.length !== 1 ? "s" : ""} · {data.caseRows.length}{" "}
-            case{data.caseRows.length !== 1 ? "s" : ""}
+            {visibleHostCount} client{visibleHostCount !== 1 ? "s" : ""} ·{" "}
+            {data.caseRows.length} case
+            {data.caseRows.length !== 1 ? "s" : ""}
           </p>
         </div>
       ) : null}
       <div
         className={
           expanded
-            ? "min-h-0 flex-1 overflow-hidden"
+            ? "min-h-0 w-full flex-1 overflow-hidden"
             : cn("overflow-hidden", evalSurfaceCardClass)
         }
       >
@@ -130,8 +206,57 @@ export function CrossHostDashboard({
           expanded={expanded}
           onTestCaseClick={onTestCaseClick}
           onCellOpen={onCellOpen}
+          onDeleteCase={
+            onDeleteTestCasesBatch
+              ? (id, title) => setCaseToDelete({ id, title })
+              : undefined
+          }
+          hideHistorical={hideHistorical}
+          cellTrends={cellTrends}
+          caseRowSort={caseRowSort}
+          onCaseRowSortChange={onCaseRowSortChange}
+          sortControlInHeader={sortControlInHeader}
+          hostVerdicts={hostVerdicts}
+          judgeByRunAndCaseKey={judgeByRunAndCaseKey}
+          workflowByRunAndCaseKey={workflowByRunAndCaseKey}
         />
       </div>
+
+      <Dialog
+        open={caseToDelete != null}
+        onOpenChange={(open) => {
+          if (!open && !isDeletingCase) setCaseToDelete(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-destructive" />
+              Delete test case
+            </DialogTitle>
+            <DialogDescription>
+              Delete “{caseToDelete?.title || "Untitled test case"}”? This cannot
+              be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCaseToDelete(null)}
+              disabled={isDeletingCase}
+            >
+              Cancel
+            </Button>
+            <Button
+              className={EVAL_DESTRUCTIVE_BUTTON_CLASS}
+              onClick={confirmDeleteCase}
+              disabled={isDeletingCase}
+            >
+              {isDeletingCase ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

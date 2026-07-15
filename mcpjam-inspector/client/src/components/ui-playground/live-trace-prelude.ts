@@ -9,14 +9,33 @@ import type {
   LiveChatTraceToolCall,
 } from "@/shared/live-chat-trace";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
+import {
+  mcpCallToolResultToModelOutput,
+  type McpModelVisibleToolResultPolicy,
+} from "@mcpjam/sdk/browser";
 
 export interface PreludeTraceExecution {
   toolCallId: string;
   toolName: string;
   params: Record<string, unknown>;
   result: unknown;
+  modelOutput?: unknown;
   state: "output-available" | "output-error";
   errorText?: string;
+}
+
+export type PreludeTraceOptions = McpModelVisibleToolResultPolicy;
+
+export function hostStyleSupportsModelVisibleMcpToolImages(
+  _hostStyle: string | null | undefined
+): McpModelVisibleToolResultPolicy {
+  return {
+    modelVisibleMcpToolResults: {
+      directContent: { image: true },
+      embeddedResources: { blob: { image: true } },
+      linkedResources: { blob: { image: true } },
+    },
+  };
 }
 
 function toTraceJsonValue(value: unknown): JSONValue {
@@ -31,14 +50,38 @@ function toTraceJsonValue(value: unknown): JSONValue {
   }
 }
 
+function toMcpImageModelOutput(
+  result: unknown,
+  options: PreludeTraceOptions
+): LanguageModelV2ToolResultOutput | undefined {
+  try {
+    return mcpCallToolResultToModelOutput(
+      result as Parameters<typeof mcpCallToolResultToModelOutput>[0],
+      options
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 function toTraceToolResultOutput(
   execution: PreludeTraceExecution,
+  options: PreludeTraceOptions = {}
 ): LanguageModelV2ToolResultOutput {
   if (execution.state === "output-error") {
     return {
       type: "error-text",
       value: execution.errorText ?? "Tool execution failed",
     };
+  }
+
+  if (execution.modelOutput) {
+    return execution.modelOutput as LanguageModelV2ToolResultOutput;
+  }
+
+  const modelOutput = toMcpImageModelOutput(execution.result, options);
+  if (modelOutput) {
+    return modelOutput;
   }
 
   return {
@@ -49,6 +92,7 @@ function toTraceToolResultOutput(
 
 export function buildPreludeTraceEnvelope(
   executions: PreludeTraceExecution[],
+  options: PreludeTraceOptions = {}
 ): LiveChatTraceEnvelope | null {
   if (executions.length === 0) {
     return null;
@@ -77,7 +121,7 @@ export function buildPreludeTraceEnvelope(
       toolName: execution.toolName,
       arguments: execution.params,
     };
-    const toolResultOutput = toTraceToolResultOutput(execution);
+    const toolResultOutput = toTraceToolResultOutput(execution, options);
 
     messages.push({
       role: "user",
@@ -185,7 +229,7 @@ export function buildPreludeTraceEnvelope(
       output: toolResultOutput,
       errorText:
         execution.state === "output-error"
-          ? (execution.errorText ?? "Tool execution failed")
+          ? execution.errorText ?? "Tool execution failed"
           : undefined,
     });
     events.push({

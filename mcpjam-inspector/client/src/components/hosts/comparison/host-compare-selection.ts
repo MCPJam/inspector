@@ -1,4 +1,24 @@
+import { PRESET_HOST_ID_PREFIX } from "./host-compare-presets";
+
 const STORAGE_PREFIX = "host-compare-selected:";
+
+// Shared compare URLs should survive host id cleanups. Keep this scoped to
+// permalink parsing; catalog ids and host creation stay strict.
+const PRESET_HOST_ID_ALIASES: Record<string, string> = {
+  slackbot: "slack",
+  "slack-bot": "slack",
+};
+
+/**
+ * Default compare columns when nothing else (URL param, stored preference,
+ * prior in-memory selection) picks a selection. ChatGPT and Claude give fresh
+ * Host Compare visits a useful baseline immediately instead of an empty
+ * "select a client" state.
+ */
+export const DEFAULT_COMPARE_HOST_IDS: readonly string[] = [
+  `${PRESET_HOST_ID_PREFIX}chatgpt`,
+  `${PRESET_HOST_ID_PREFIX}claude`,
+];
 
 export function readHostCompareSelection(projectId: string): string[] | null {
   if (typeof window === "undefined") return null;
@@ -54,8 +74,17 @@ export function parseHostsParam(raw: string | null | undefined): string[] | null
   const parts = raw
     .split(",")
     .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-  return parts.length > 0 ? parts : null;
+    .filter((s) => s.length > 0)
+    .map(normalizeHostComparePermalinkId);
+  const deduped = [...new Set(parts)];
+  return deduped.length > 0 ? deduped : null;
+}
+
+function normalizeHostComparePermalinkId(hostId: string): string {
+  if (!hostId.startsWith(PRESET_HOST_ID_PREFIX)) return hostId;
+  const presetId = hostId.slice(PRESET_HOST_ID_PREFIX.length);
+  const canonicalId = PRESET_HOST_ID_ALIASES[presetId];
+  return canonicalId ? `${PRESET_HOST_ID_PREFIX}${canonicalId}` : hostId;
 }
 
 export function resolveInitialHostCompareSelection(args: {
@@ -63,23 +92,41 @@ export function resolveInitialHostCompareSelection(args: {
   liveHostIds: ReadonlyArray<string>;
   previousSelection: ReadonlyArray<string>;
   urlSelection?: ReadonlyArray<string> | null;
+  /**
+   * Every id the user is allowed to select — real live hosts plus synthetic
+   * preset host ids. URL / stored / previous selections reconcile against this
+   * superset so a preset column survives a reload. Defaults to `liveHostIds`
+   * when omitted (no presets in play).
+   */
+  knownHostIds?: ReadonlyArray<string>;
 }): string[] {
-  const live = new Set(args.liveHostIds);
-  if (live.size === 0) return [];
+  const known = new Set(args.knownHostIds ?? args.liveHostIds);
 
   if (args.urlSelection && args.urlSelection.length > 0) {
-    const fromUrl = reconcileHostCompareSelection(args.urlSelection, live);
+    const fromUrl = reconcileHostCompareSelection(args.urlSelection, known);
     if (fromUrl.length > 0) return fromUrl;
   }
 
   const stored = readHostCompareSelection(args.projectId);
   if (stored) {
-    const fromStorage = reconcileHostCompareSelection(stored, live);
+    const fromStorage = reconcileHostCompareSelection(stored, known);
     if (fromStorage.length > 0) return fromStorage;
   }
 
-  const fromPrevious = reconcileHostCompareSelection(args.previousSelection, live);
+  const fromPrevious = reconcileHostCompareSelection(
+    args.previousSelection,
+    known,
+  );
   if (fromPrevious.length > 0) return fromPrevious;
+
+  // Fresh visit, nothing stored: default to ChatGPT + Claude rather than
+  // "all live hosts" — falls through to live hosts only if the catalog ever
+  // stops offering those two preset ids.
+  const fromDefaultPresets = reconcileHostCompareSelection(
+    DEFAULT_COMPARE_HOST_IDS,
+    known,
+  );
+  if (fromDefaultPresets.length > 0) return fromDefaultPresets;
 
   return [...args.liveHostIds];
 }
