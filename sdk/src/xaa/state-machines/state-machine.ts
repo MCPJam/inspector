@@ -1063,7 +1063,8 @@ export function createXAAStateMachine(
       ...(registrationStrategy === "dcr"
         ? {
             dcrRegistrationReused: Boolean(
-              cachedDcrCredentials && !dcrSecretExpired(cachedDcrCredentials)
+              cachedDcrCredentials &&
+                !isXaaDcrClientSecretExpired(cachedDcrCredentials)
             ),
           }
         : {}),

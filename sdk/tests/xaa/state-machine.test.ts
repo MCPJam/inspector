@@ -1004,6 +1004,7 @@ describe("createXAAStateMachine", () => {
 
       // Inspection lints against the GRANTED scope — the narrowed ID-JAG
       // raises no scope issue (the original request would have).
+      await machine.proceedToNextStep(); // expose the received ID-JAG response
       await machine.proceedToNextStep();
       const inspected = getStateSnapshot();
       expect(inspected.currentStep).toBe("inspect_id_jag");
@@ -1048,6 +1049,7 @@ describe("createXAAStateMachine", () => {
         grantedScope: "",
       });
 
+      await machine.proceedToNextStep(); // expose the received ID-JAG response
       await machine.proceedToNextStep(); // inspect (scopeless JAG, no issue)
       await machine.proceedToNextStep(); // jwt-bearer redemption
       const proxyCall = executor.internalRequest.mock.calls.find(
@@ -3236,6 +3238,7 @@ describe("createXAAStateMachine SAML axes", () => {
       clientId: "mcpjam-debugger",
     });
 
+    await machine.proceedToNextStep();
     await machine.proceedToNextStep();
 
     const authCall = executor.internalRequest.mock.calls[0];

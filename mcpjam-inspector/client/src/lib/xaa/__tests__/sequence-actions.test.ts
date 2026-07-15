@@ -102,6 +102,7 @@ function makeFlowState(overrides: Partial<XAAFlowState> = {}): XAAFlowState {
     ...createInitialXAAFlowState({
       serverUrl: "https://example.test/mcp",
       email: "demo.user@example.com",
+      currentStep: "complete",
     }),
     ...overrides,
   };
