@@ -262,6 +262,15 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
     // use — and the chatbox runtime never produces it, so there's no
     // route-level gate to add here.
 
+    // Enterprise-managed policy from the server-authoritative chatbox host
+    // config (never the body). Resolved BEFORE createRun so an invalid
+    // stored policy 409s while no run row exists yet — validating after
+    // would strand a created run with no runner to mark it failed. Issuer
+    // resolved eagerly too: the setImmediate factory below runs after the
+    // response, when the Context may be finalized.
+    const xaaPolicy = xaaPolicyFromMcpProfile(runtime.config.mcpProfile);
+    const xaaIssuer = resolveXaaIssuer(c, HOSTED_MODE);
+
     const { runId } = await createRun(
       convexHttpUrl,
       bearerToken,
@@ -288,12 +297,6 @@ chatboxSessions.post("/:chatboxId/simulate-sessions/start", async (c) =>
       runtime.config.mcpToolResultImageRendering;
     const computer = runtime.config.computer;
     const harness = runtime.config.harness;
-    // Enterprise-managed policy from the server-authoritative chatbox host
-    // config (never the body); invalid stored policy fails the run closed.
-    // Issuer resolved eagerly — the setImmediate factory below runs after
-    // the response, when the Context may be finalized.
-    const xaaPolicy = xaaPolicyFromMcpProfile(runtime.config.mcpProfile);
-    const xaaIssuer = resolveXaaIssuer(c, HOSTED_MODE);
     // `runtime.config.accessVersion` is the server-resolved value the
     // chatbox redeem produced (vs the client-supplied `body.accessVersion`,
     // which the generate-sessions dialog never sends). Use the runtime

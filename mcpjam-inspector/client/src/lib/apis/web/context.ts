@@ -399,6 +399,11 @@ export function buildServerRequest(
             apiContext.mcpProtocolVersionsByServerId[serverId],
         }
       : {}),
+    // Single-server flows (tools/resources/prompts, validate) enforce the
+    // same host policy as batch connects — omitting it here would let these
+    // ephemeral connections bypass enterprise-managed auth. Ignored
+    // server-side for chatbox-scoped calls (server-authoritative fetch wins).
+    ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(chatboxId ? { chatboxId } : {}),
     ...(chatboxId && Number.isFinite(accessVersion) ? { accessVersion } : {}),

@@ -421,6 +421,14 @@ describe("web routes — chat-v2 hosted mode", () => {
     );
 
     expect(response.status).toBe(409);
+    const body = (await response.json()) as {
+      code?: string;
+      message?: string;
+      details?: { reason?: string };
+    };
+    expect(body.code).toBe("VALIDATION_ERROR");
+    expect(body.message).toContain("unsupported enterprise-managed");
+    expect(body.details?.reason).toBe("xaa_policy_invalid");
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
@@ -442,6 +450,14 @@ describe("web routes — chat-v2 hosted mode", () => {
     );
 
     expect(response.status).toBe(409);
+    const body = (await response.json()) as {
+      code?: string;
+      message?: string;
+      details?: { reason?: string };
+    };
+    expect(body.code).toBe("VALIDATION_ERROR");
+    expect(body.message).toContain("Unsupported enterprise-managed");
+    expect(body.details?.reason).toBe("xaa_policy_invalid");
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 

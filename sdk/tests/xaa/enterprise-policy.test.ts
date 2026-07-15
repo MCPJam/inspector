@@ -54,6 +54,20 @@ describe("readXaaEnterprisePolicy — three-state contract", () => {
       "invalid"
     );
   });
+
+  it("non-plain objects (Date/Map/class instances) → invalid, never off", () => {
+    // A malformed programmatic profile must fail closed — the loose
+    // typeof-object check would have read these as "no extensions" = off.
+    expect(readXaaEnterprisePolicy(new Date()).kind).toBe("invalid");
+    expect(readXaaEnterprisePolicy(new Map()).kind).toBe("invalid");
+    expect(
+      readXaaEnterprisePolicy({ extensions: new Date() }).kind
+    ).toBe("invalid");
+    // Object.create(null) is still a plain record.
+    expect(readXaaEnterprisePolicy(Object.create(null))).toEqual({
+      kind: "off",
+    });
+  });
 });
 
 describe("withXaaEnterprisePolicy / withoutXaaEnterprisePolicy", () => {
@@ -101,6 +115,25 @@ describe("withXaaEnterprisePolicy / withoutXaaEnterprisePolicy", () => {
     withoutXaaEnterprisePolicy(base);
     withXaaEnterprisePolicy(base);
     expect(base).toEqual(snapshot);
+  });
+
+  it("toggle-off repairs a malformed extensions container", () => {
+    // extensions: null reads as invalid; leaving it in place would make the
+    // host permanently invalid — the toggle is the documented repair path.
+    const off = withoutXaaEnterprisePolicy({
+      profileVersion: 1,
+      extensions: null as unknown as Record<string, unknown>,
+    });
+    expect(off).toBeUndefined();
+    const offKeepingSiblings = withoutXaaEnterprisePolicy({
+      profileVersion: 1,
+      mcpProtocolVersion: "2025-11-25",
+      extensions: ["junk"] as unknown as Record<string, unknown>,
+    });
+    expect(offKeepingSiblings).toEqual({
+      profileVersion: 1,
+      mcpProtocolVersion: "2025-11-25",
+    });
   });
 
   it("keeps a profile with other meaningful fields when the policy is removed", () => {

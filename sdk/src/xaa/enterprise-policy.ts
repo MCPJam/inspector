@@ -43,7 +43,12 @@ export type XaaEnterprisePolicyState =
   | { kind: "invalid"; reason: string };
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+  // Reject Date, Map, Set, class instances, etc. — matches the host-config
+  // canonicalizer's predicate so a malformed programmatic profile reads as
+  // `invalid` (fail-closed), never silently as `off`.
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
 }
 
 /** Read the policy state from a host config's `mcpProfile` value. */
@@ -131,6 +136,11 @@ export function withoutXaaEnterprisePolicy(
     } else {
       delete profile.extensions;
     }
+  } else if (profile.extensions !== undefined) {
+    // A malformed container (null, array, Date, …) reads as `invalid` and
+    // would stay invalid forever if left in place — the toggle is the
+    // documented repair path, so turning off removes it.
+    delete profile.extensions;
   }
   const meaningful = Object.keys(profile).filter(
     (key) => key !== "profileVersion" && profile[key] !== undefined

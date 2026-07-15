@@ -28,6 +28,7 @@ import {
   ServerDetailModal,
   type ServerDetailTab,
 } from "./connection/ServerDetailModal";
+import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 
 import { JsonImportModal } from "./connection/JsonImportModal";
 import { ServerFormData } from "@/shared/types.js";
@@ -1829,6 +1830,13 @@ export function ServersTab({
   );
 
   return (
+    // The previewed host's mcpProfile scopes this tab so the server
+    // add/edit modals' AuthenticationSection can read the host's
+    // enterprise-managed authorization policy via useActiveMcpProfile().
+    // The ServerDetailModal's protocol chip keeps its explicit
+    // hostDefaultMcpProtocolVersion prop (prop wins; see the modal's
+    // resolution comment) — the provider is additive, not a replacement.
+    <ActiveMcpProfileProvider value={previewedHost?.config?.mcpProfile}>
     <div className="h-full flex flex-col">
       {isAuthHydrating ||
       isBillingContextPending ||
@@ -1906,5 +1914,6 @@ export function ServersTab({
           )
         : null}
     </div>
+    </ActiveMcpProfileProvider>
   );
 }
