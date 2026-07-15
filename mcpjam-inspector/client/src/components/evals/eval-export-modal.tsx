@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import { AlertCircle, Download, Loader2 } from "lucide-react";
 import {
   Dialog,
@@ -8,8 +8,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@mcpjam/design-system/tabs";
-import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@mcpjam/design-system/tabs";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@mcpjam/design-system/alert";
 import { Button } from "@mcpjam/design-system/button";
 import type { EvalSuite } from "./types";
 import { CopyableCodeBlock } from "./copyable-code-block";
@@ -28,7 +37,6 @@ import {
   generateAgentBrief,
   mapEvalCasesToAgentBriefExploreCases,
 } from "@/lib/generate-agent-brief";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { getServerUrl } from "@/components/connection/server-card-utils";
 import type { ServerWithName } from "@/state/app-types";
 
@@ -36,6 +44,7 @@ type EvalExportModalProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   scope: "suite" | "test-case";
+  projectId?: string | null;
   suite: Pick<EvalSuite, "name" | "description" | "environment" | "source">;
   cases: EvalExportCaseInput[];
   serverEntries: Record<string, ServerWithName | undefined>;
@@ -78,8 +87,8 @@ export function EvalExportModal({
   suite,
   cases,
   serverEntries,
+  projectId,
 }: EvalExportModalProps) {
-  const posthog = usePostHog();
   const [activeTab, setActiveTab] = useState<"sdk" | "prompt">("sdk");
   const [agentPromptState, setAgentPromptState] = useState<AgentPromptState>({
     status: "idle",
@@ -90,12 +99,12 @@ export function EvalExportModal({
   const serverIds = suite.environment?.servers ?? [];
   const serverConnections = useMemo(
     () => buildServerConnections(serverIds, serverEntries),
-    [serverEntries, serverIds],
+    [serverEntries, serverIds]
   );
   const sdkInstallSnippet = useMemo(() => buildSdkInstallSnippet(), []);
   const sdkEnvResult = useMemo(
-    () => buildSdkEnvSnippet(serverIds, serverEntries),
-    [serverEntries, serverIds],
+    () => buildSdkEnvSnippet(serverIds, serverEntries, projectId),
+    [serverEntries, serverIds, projectId]
   );
   const sdkTestFile = useMemo(
     () =>
@@ -105,7 +114,7 @@ export function EvalExportModal({
         serverConnections,
         usedPlaceholderFallback: sdkEnvResult.usedPlaceholderFallback,
       }),
-    [cases, sdkEnvResult.usedPlaceholderFallback, serverConnections, suite],
+    [cases, sdkEnvResult.usedPlaceholderFallback, serverConnections, suite]
   );
 
   const primaryCase = cases[0];
@@ -115,11 +124,11 @@ export function EvalExportModal({
       : primaryCase?.title || "Untitled test case";
   const downloadFileName = useMemo(
     () => buildSuiteExportFileName(exportLabel, scope),
-    [exportLabel, scope],
+    [exportLabel, scope]
   );
   const agentPromptDownloadFileName = useMemo(
     () => buildAgentPromptExportFileName(exportLabel),
-    [exportLabel],
+    [exportLabel]
   );
   const singleServerId = serverIds.length === 1 ? serverIds[0]! : null;
   const isPromptReady = agentPromptState.status === "ready";
@@ -130,21 +139,14 @@ export function EvalExportModal({
       return;
     }
 
-    posthog.capture("eval_export_modal_opened", {
+    track("eval_export_modal_opened", {
+      location: "eval_export_modal",
       scope,
       tab: "sdk_code",
       suite_source: suite.source ?? "ui",
       used_placeholder_fallback: sdkEnvResult.usedPlaceholderFallback,
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
-  }, [
-    open,
-    posthog,
-    scope,
-    sdkEnvResult.usedPlaceholderFallback,
-    suite.source,
-  ]);
+  }, [open, scope, sdkEnvResult.usedPlaceholderFallback, suite.source]);
 
   useEffect(() => {
     if (!open) {
@@ -228,13 +230,12 @@ export function EvalExportModal({
 
   const handleDownload = () => {
     downloadTextFile(downloadFileName, sdkTestFile);
-    posthog.capture("eval_export_modal_downloaded", {
+    track("eval_export_modal_downloaded", {
+      location: "eval_export_modal",
       scope,
       tab: "sdk_code",
       suite_source: suite.source ?? "ui",
       used_placeholder_fallback: sdkEnvResult.usedPlaceholderFallback,
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
   };
 
@@ -243,25 +244,23 @@ export function EvalExportModal({
       return;
     }
     downloadTextFile(agentPromptDownloadFileName, agentPromptState.prompt);
-    posthog.capture("eval_export_modal_downloaded", {
+    track("eval_export_modal_downloaded", {
+      location: "eval_export_modal",
       scope,
       tab: "prompt_for_agent",
       suite_source: suite.source ?? "ui",
       used_placeholder_fallback: sdkEnvResult.usedPlaceholderFallback,
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
   };
 
   const trackCopy = (tab: "sdk_code" | "prompt_for_agent", section: string) => {
-    posthog.capture("eval_export_modal_copied", {
+    track("eval_export_modal_copied", {
+      location: "eval_export_modal",
       scope,
       tab,
       section,
       suite_source: suite.source ?? "ui",
       used_placeholder_fallback: sdkEnvResult.usedPlaceholderFallback,
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
   };
 
@@ -276,7 +275,9 @@ export function EvalExportModal({
           </DialogTitle>
           <DialogDescription>
             {scope === "suite"
-              ? `${cases.length} case${cases.length === 1 ? "" : "s"} from ${exportLabel}`
+              ? `${cases.length} case${
+                  cases.length === 1 ? "" : "s"
+                } from ${exportLabel}`
               : exportLabel}
           </DialogDescription>
         </DialogHeader>

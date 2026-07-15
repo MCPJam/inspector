@@ -8,8 +8,6 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
-import { useCreditTopupsUiEnabled } from "@/lib/credit-topups-flag";
-import { useTeamCreditsUiEnabled } from "@/lib/team-credits-flag";
 import {
   formatCreditResetText,
   formatMonthlyResetText,
@@ -31,24 +29,16 @@ export function SidebarCreditUsage({
   variant = "strip",
   onClick,
 }: SidebarCreditUsageProps = {}) {
-  const creditTopupsUiEnabled = useCreditTopupsUiEnabled();
-  const teamCreditsUiEnabled = useTeamCreditsUiEnabled();
   const { balance, isLoading, hasWorkOsUser } = useCreditBalance({
     organizationId,
     includeGuests,
-    enabled: creditTopupsUiEnabled,
   });
-
-  if (!creditTopupsUiEnabled) {
-    return null;
-  }
 
   if (!isLoading && !balance) {
     return null;
   }
 
-  const showMonthly =
-    teamCreditsUiEnabled && balance?.billingModel === "monthly_per_seat";
+  const showMonthly = balance?.billingModel === "monthly_per_seat";
   const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
   const monthlyRemaining = balance?.monthlyAllowanceRemaining ?? 0;
   const paidRemaining = balance?.paidCreditsRemaining ?? 0;

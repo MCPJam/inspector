@@ -16,8 +16,8 @@ import {
 } from "@/hooks/useOrganizations";
 import { readStoredActiveOrganizationId } from "@/lib/active-organization-storage";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
+import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 import { useAppNavigate } from "@/lib/app-navigation";
-import { useCreditTopupsUiEnabled } from "@/lib/credit-topups-flag";
 
 export function MCPJamLimitDialog() {
   const isOpen = useMCPJamLimitDialogStore((s) => s.isOpen);
@@ -34,7 +34,6 @@ export function MCPJamLimitDialog() {
   // first by useOrganizationQueries.
   const { sortedOrganizations } = useOrganizationQueries({ isAuthenticated });
   const appNavigate = useAppNavigate();
-  const creditsUiEnabled = useCreditTopupsUiEnabled();
 
   useEffect(() => {
     setAuthStatus(isLoading ? "loading" : user ? "signedIn" : "guest");
@@ -69,7 +68,6 @@ export function MCPJamLimitDialog() {
   const isKnownNonManager = billingOrg
     ? !canManageOrgCredits(billingOrg)
     : false;
-  const canBuyCredits = creditsUiEnabled && !isKnownNonManager;
 
   const handleTopUp = () => {
     const orgId = resolveBillingOrgId();
@@ -85,10 +83,11 @@ export function MCPJamLimitDialog() {
   };
 
   const handleBYOK = () => {
-    const orgId = resolveBillingOrgId();
-    if (!orgId) return;
+    // Don't yank the user to the org settings page — just close the dialog
+    // and pop open the chat model picker on its "Your providers" tab so they
+    // can switch to an own-key model in place. The free models stay grayed.
     close();
-    appNavigate(`/organizations/${orgId}/models`);
+    useModelPickerIntentStore.getState().requestOpenProvidersTab();
   };
 
   // Guest variant — only renders for unauthenticated users.
@@ -131,26 +130,21 @@ export function MCPJamLimitDialog() {
             <DialogHeader>
               <DialogTitle>Your org is out of credits</DialogTitle>
               <DialogDescription data-testid="limit-dialog-description">
-                {creditsUiEnabled && isKnownNonManager
+                {isKnownNonManager
                   ? "Ask your org admin to top up credits."
-                  : canBuyCredits
-                  ? "Top up or bring your own key to allow your org to keep using MCPJam."
-                  : "Bring your own key to keep chatting on MCPJam's models without waiting for your org's credits to reset."}
+                  : "Top up or bring your own key to allow your org to keep using MCPJam."}
               </DialogDescription>
             </DialogHeader>
             {/* Non-managers get no CTAs — just the "ask your org admin" copy.
-                Managers (and the dev billing-off fallback) keep BYOK, plus a
-                Top up button when credit purchase is available. */}
+                Managers keep BYOK plus the Top up button. */}
             {!isKnownNonManager ? (
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={handleBYOK}>
                   Bring your own key
                 </Button>
-                {canBuyCredits ? (
-                  <Button type="button" onClick={handleTopUp}>
-                    Top up
-                  </Button>
-                ) : null}
+                <Button type="button" onClick={handleTopUp}>
+                  Top up
+                </Button>
               </DialogFooter>
             ) : null}
           </DialogContent>

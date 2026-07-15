@@ -13,7 +13,6 @@ export interface UpdateCheckCache {
 
 export interface SkipUpdateCheckOptions {
   env?: NodeJS.ProcessEnv;
-  isStderrTTY?: boolean;
 }
 
 export type StderrLike = {
@@ -180,13 +179,15 @@ export function shouldSkipUpdateCheck(
   options: SkipUpdateCheckOptions = {},
 ): boolean {
   const env = options.env ?? process.env;
-  const isStderrTTY = options.isStderrTTY ?? Boolean(process.stderr.isTTY);
 
+  // Intentionally not gated on stderr being a TTY. The notice is written to
+  // stderr only (never stdout/JSON), so it never corrupts machine-readable
+  // output. AI agents (Claude Code, Cursor, etc.) run the CLI non-interactively
+  // but still surface stderr to the model — a TTY gate would silence the update
+  // signal for every agent. CI and the explicit opt-out env vars cover the
+  // pipelines that genuinely should not be nudged.
   return Boolean(
-    env.CI ||
-      env.NO_UPDATE_NOTIFIER ||
-      env.MCPJAM_NO_UPDATE_CHECK ||
-      !isStderrTTY,
+    env.CI || env.NO_UPDATE_NOTIFIER || env.MCPJAM_NO_UPDATE_CHECK,
   );
 }
 
@@ -252,12 +253,7 @@ export function checkForUpdates(
   try {
     const env = options.env ?? process.env;
 
-    if (
-      shouldSkipUpdateCheck({
-        env,
-        isStderrTTY: options.isStderrTTY,
-      })
-    ) {
+    if (shouldSkipUpdateCheck({ env })) {
       return;
     }
 

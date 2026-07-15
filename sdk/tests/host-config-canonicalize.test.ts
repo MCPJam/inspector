@@ -46,7 +46,7 @@ describe("canonicalizeHostConfigV2 — hash stability", () => {
 
   it("normalizes undefined serverIds to [] (same hash as explicit empty)", async () => {
     expect(await hash(base())).toBe(
-      await hash(base({ serverIds: [], optionalServerIds: [] })),
+      await hash(base({ serverIds: [], optionalServerIds: [] }))
     );
   });
 
@@ -55,35 +55,278 @@ describe("canonicalizeHostConfigV2 — hash stability", () => {
       base({
         serverIds: ["c", "a", "b", "a"] as string[],
         optionalServerIds: ["z", "x", "x"] as string[],
-      }),
+      })
     );
     expect(c.serverIds).toEqual(["a", "b", "c"]);
     expect(c.optionalServerIds).toEqual(["x", "z"]);
   });
 });
 
+describe("canonicalizeHostConfigV2 — builtInToolIds", () => {
+  it("omits builtInToolIds when absent (pre-feature rows stay byte-identical)", () => {
+    const canonical = JSON.parse(
+      JSON.stringify(canonicalizeHostConfigV2(base()))
+    );
+    expect("builtInToolIds" in canonical).toBe(false);
+  });
+
+  it("treats undefined and [] as identical (both omitted, same hash)", async () => {
+    expect(await hash(base())).toBe(await hash(base({ builtInToolIds: [] })));
+    const canonical = JSON.parse(
+      JSON.stringify(canonicalizeHostConfigV2(base({ builtInToolIds: [] })))
+    );
+    expect("builtInToolIds" in canonical).toBe(false);
+  });
+
+  it("a populated set shifts the hash vs absent", async () => {
+    expect(await hash(base())).not.toBe(
+      await hash(base({ builtInToolIds: ["web_search"] }))
+    );
+  });
+
+  it("dedupes and sorts deterministically (order-insensitive)", async () => {
+    const c = canonicalizeHostConfigV2(
+      base({ builtInToolIds: ["web_search", "code_exec", "web_search"] })
+    );
+    expect(c.builtInToolIds).toEqual(["code_exec", "web_search"]);
+    // Order + dupes do not affect the hash.
+    expect(
+      await hash(base({ builtInToolIds: ["web_search", "code_exec"] }))
+    ).toBe(
+      await hash(
+        base({ builtInToolIds: ["code_exec", "web_search", "code_exec"] })
+      )
+    );
+  });
+
+  it("preserves opaque ids verbatim (no trimming — backend rejects malformed)", () => {
+    const c = canonicalizeHostConfigV2(
+      base({ builtInToolIds: ["web_search "] })
+    );
+    expect(c.builtInToolIds).toEqual(["web_search "]);
+  });
+
+  it("rejects a non-array builtInToolIds", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({ builtInToolIds: "web_search" as unknown as string[] })
+      )
+    ).toThrow(/builtInToolIds must be a string\[\]/);
+  });
+
+  it("rejects non-string entries", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({ builtInToolIds: [123 as unknown as string] })
+      )
+    ).toThrow(/builtInToolIds entries must be strings/);
+  });
+
+  it("rejects empty / whitespace-only entries", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(base({ builtInToolIds: [""] }))
+    ).toThrow(/builtInToolIds entries must be non-empty strings/);
+    expect(() =>
+      canonicalizeHostConfigV2(base({ builtInToolIds: ["   "] }))
+    ).toThrow(/builtInToolIds entries must be non-empty strings/);
+  });
+});
+
 describe("canonicalizeHostConfigV2 — undefined vs explicit", () => {
   it("distinguishes hostCapabilitiesOverride undefined from {}", async () => {
     const omitted = canonicalizeHostConfigV2(base());
-    expect("hostCapabilitiesOverride" in JSON.parse(JSON.stringify(omitted))).toBe(
-      false,
-    );
+    expect(
+      "hostCapabilitiesOverride" in JSON.parse(JSON.stringify(omitted))
+    ).toBe(false);
     expect(await hash(base())).not.toBe(
-      await hash(base({ hostCapabilitiesOverride: {} })),
+      await hash(base({ hostCapabilitiesOverride: {} }))
     );
   });
 
   it("distinguishes progressiveToolDiscovery undefined from false", async () => {
     expect(await hash(base())).not.toBe(
-      await hash(base({ progressiveToolDiscovery: false })),
+      await hash(base({ progressiveToolDiscovery: false }))
     );
+  });
+
+  it("distinguishes MCP tool-result policy undefined from explicit values", async () => {
+    const omitted = JSON.parse(
+      JSON.stringify(canonicalizeHostConfigV2(base()))
+    );
+    expect("modelVisibleMcpToolResults" in omitted).toBe(false);
+    expect(await hash(base())).not.toBe(
+      await hash(
+        base({
+          modelVisibleMcpToolResults: {
+            directContent: { image: false },
+          },
+        })
+      )
+    );
+    expect(await hash(base())).not.toBe(
+      await hash(
+        base({
+          modelVisibleMcpToolResults: {
+            directContent: { image: true },
+          },
+        })
+      )
+    );
+  });
+
+  it("distinguishes MCP tool-result image rendering undefined from explicit policies", async () => {
+    const omitted = JSON.parse(
+      JSON.stringify(canonicalizeHostConfigV2(base()))
+    );
+    expect("mcpToolResultImageRendering" in omitted).toBe(false);
+    expect(await hash(base())).not.toBe(
+      await hash(base({ mcpToolResultImageRendering: { placement: "none" } }))
+    );
+    expect(await hash(base())).not.toBe(
+      await hash(
+        base({ mcpToolResultImageRendering: { placement: "collapsed" } })
+      )
+    );
+    expect(await hash(base())).not.toBe(
+      await hash(
+        base({
+          mcpToolResultImageRendering: {
+            placement: "inline",
+            directContent: { image: false },
+          },
+        })
+      )
+    );
+    expect(await hash(base())).not.toBe(
+      await hash(
+        base({
+          mcpToolResultImageRendering: {
+            embeddedResources: { blob: { image: false } },
+          },
+        })
+      )
+    );
+    expect(await hash(base())).not.toBe(
+      await hash(
+        base({
+          mcpToolResultImageRendering: {
+            linkedResources: { blob: { image: false } },
+          },
+        })
+      )
+    );
+  });
+
+  it("rejects unknown MCP tool-result image rendering modes", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          mcpToolResultImageRendering: {
+            placement: "floating" as never,
+          },
+        })
+      )
+    ).toThrow(/placement must be "none", "collapsed", or "inline"/);
+  });
+});
+
+describe("canonicalizeHostConfigV2 — computer", () => {
+  // Resource-only shape; capabilities (e.g. "bash") ride builtInToolIds.
+  const personal = { kind: "personal" } as const;
+  // Original MVP input shape — still accepted, dropped from canonical.
+  const legacy = { kind: "personal", toolset: "bash" } as const;
+
+  it("omits the key entirely when absent (pre-feature byte shape)", () => {
+    const c = canonicalizeHostConfigV2(base());
+    expect("computer" in JSON.parse(JSON.stringify(c))).toBe(false);
+  });
+
+  it("collapses null to absent — cleared hashes identically to never-set", async () => {
+    const cleared = canonicalizeHostConfigV2(base({ computer: null }));
+    expect("computer" in JSON.parse(JSON.stringify(cleared))).toBe(false);
+    expect(await hash(base({ computer: null }))).toBe(await hash(base()));
+  });
+
+  it("hashes a personal computer distinctly from absent", async () => {
+    expect(await hash(base({ computer: personal }))).not.toBe(
+      await hash(base())
+    );
+  });
+
+  it("drops the legacy toolset key — legacy input hashes identically to the new shape", async () => {
+    expect(
+      canonicalizeHostConfigV2(base({ computer: legacy })).computer
+    ).toEqual({ kind: "personal" });
+    expect(await hash(base({ computer: legacy }))).toBe(
+      await hash(base({ computer: personal }))
+    );
+  });
+
+  it("preserves workdir and hashes it distinctly from no-workdir", async () => {
+    const withDir = base({ computer: { ...personal, workdir: "/srv/app" } });
+    expect(canonicalizeHostConfigV2(withDir).computer).toEqual({
+      kind: "personal",
+      workdir: "/srv/app",
+    });
+    expect(await hash(withDir)).not.toBe(
+      await hash(base({ computer: personal }))
+    );
+  });
+
+  it("trims workdir; whitespace-only collapses to absent", async () => {
+    expect(
+      await hash(base({ computer: { ...personal, workdir: "  /srv/app  " } }))
+    ).toBe(
+      await hash(base({ computer: { ...personal, workdir: "/srv/app" } }))
+    );
+    expect(
+      await hash(base({ computer: { ...personal, workdir: "   " } }))
+    ).toBe(await hash(base({ computer: personal })));
+  });
+
+  it("rejects an unknown kind", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({ computer: { kind: "shared", toolset: "bash" } as never })
+      )
+    ).toThrow(/computer\.kind must be "personal"/);
+  });
+
+  it("rejects an unknown legacy toolset value", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({ computer: { kind: "personal", toolset: "zsh" } as never })
+      )
+    ).toThrow(/computer\.toolset must be "bash"/);
+  });
+
+  it("rejects an unknown key (typo defense + hash hygiene)", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({ computer: { ...personal, workDir: "/x" } as never })
+      )
+    ).toThrow(/computer has unknown key "workDir"/);
+  });
+
+  it("rejects a non-string workdir", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({ computer: { ...personal, workdir: 7 } as never })
+      )
+    ).toThrow(/computer\.workdir must be a string/);
+  });
+
+  it("rejects a non-object computer", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(base({ computer: "personal" as never }))
+    ).toThrow(/computer must be a plain object or null/);
   });
 });
 
 describe("canonicalizeHostConfigV2 — validation", () => {
   it("throws on non-finite temperature", () => {
     expect(() => canonicalizeHostConfigV2(base({ temperature: NaN }))).toThrow(
-      /temperature must be finite/,
+      /temperature must be finite/
     );
   });
 
@@ -95,8 +338,8 @@ describe("canonicalizeHostConfigV2 — validation", () => {
             profileVersion: 1,
             apps: { mcpAppsOverrides: { toolCanceled: true } as never },
           },
-        }),
-      ),
+        })
+      )
     ).toThrow(/unknown key "toolCanceled"/);
   });
 
@@ -106,8 +349,8 @@ describe("canonicalizeHostConfigV2 — validation", () => {
         base({
           serverIds: ["a"] as string[],
           serverConnectionOverrides: { b: { requestTimeoutOverride: 1 } },
-        }),
-      ),
+        })
+      )
     ).toThrow(/not in serverIds or optionalServerIds/);
   });
 
@@ -116,17 +359,19 @@ describe("canonicalizeHostConfigV2 — validation", () => {
       canonicalizeHostConfigV2(
         base({
           serverIds: ["a"] as string[],
-          serverConnectionOverrides: { a: { requestTimeoutOverride: Infinity } },
-        }),
-      ),
+          serverConnectionOverrides: {
+            a: { requestTimeoutOverride: Infinity },
+          },
+        })
+      )
     ).toThrow(/requestTimeoutOverride must be finite/);
   });
 
   it("requires mcpProfile.profileVersion === 1", () => {
     expect(() =>
       canonicalizeHostConfigV2(
-        base({ mcpProfile: { profileVersion: 2 } as never }),
-      ),
+        base({ mcpProfile: { profileVersion: 2 } as never })
+      )
     ).toThrow(/profileVersion must be 1/);
   });
 
@@ -138,8 +383,8 @@ describe("canonicalizeHostConfigV2 — validation", () => {
             profileVersion: 1,
             apps: { mcpAppsOverrides: { availableDisplayModes: [] } },
           },
-        }),
-      ),
+        })
+      )
     ).toThrow(/must contain at least one mode/);
   });
 
@@ -152,7 +397,7 @@ describe("canonicalizeHostConfigV2 — validation", () => {
             sandbox: { allowFeatures: { camera: "*", fullscreen: "'self'" } },
           },
         },
-      }),
+      })
     );
     const allowFeatures = c.mcpProfile?.apps?.sandbox?.allowFeatures ?? {};
     expect("camera" in allowFeatures).toBe(false);
@@ -165,8 +410,8 @@ describe("canonicalizeHostConfigV2 — validation", () => {
             profileVersion: 1,
             apps: { sandbox: { allowFeatures: { fullscreen: "*; camera *" } } },
           },
-        }),
-      ),
+        })
+      )
     ).toThrow(/must not contain ';' or ','/);
   });
 });
@@ -176,7 +421,7 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
     const c = canonicalizeHostConfigV2(
       base({
         mcpProfile: { profileVersion: 1, mcpProtocolVersion: "2025-06-18" },
-      }),
+      })
     );
     expect(c.mcpProfile?.initialize?.supportedProtocolVersions).toEqual([
       "2025-06-18",
@@ -187,7 +432,7 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
     const c = canonicalizeHostConfigV2(
       base({
         mcpProfile: { profileVersion: 1, mcpProtocolVersion: "2026-07-28" },
-      }),
+      })
     );
     expect(c.mcpProfile?.initialize).toBeUndefined();
   });
@@ -201,8 +446,8 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
             mcpProtocolVersion: "2025-06-18",
             initialize: { supportedProtocolVersions: ["2025-11-25"] },
           },
-        }),
-      ),
+        })
+      )
     ).toThrow(/ConflictingProtocolVersionPin/);
   });
 });
@@ -216,24 +461,26 @@ describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
       canonicalizeHostConfigV2(
         // The Input type marks it required; cast simulates an upstream bug
         // (writer who let v.any() through with undefined).
-        base({ clientCapabilities: undefined as unknown as Record<string, unknown> }),
-      ),
+        base({
+          clientCapabilities: undefined as unknown as Record<string, unknown>,
+        })
+      )
     ).toThrow(/clientCapabilities is required/);
   });
 
   it("throws when hostContext is missing (fail-fast)", () => {
     expect(() =>
       canonicalizeHostConfigV2(
-        base({ hostContext: undefined as unknown as Record<string, unknown> }),
-      ),
+        base({ hostContext: undefined as unknown as Record<string, unknown> })
+      )
     ).toThrow(/hostContext is required/);
   });
 
   it("throws when clientCapabilities is not a plain object", () => {
     expect(() =>
       canonicalizeHostConfigV2(
-        base({ clientCapabilities: [] as unknown as Record<string, unknown> }),
-      ),
+        base({ clientCapabilities: [] as unknown as Record<string, unknown> })
+      )
     ).toThrow(/clientCapabilities must be a plain object/);
   });
 
@@ -247,15 +494,20 @@ describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
       ["Date", new Date(0)],
       ["Map", new Map()],
       ["Set", new Set()],
-      ["class instance", new (class { x = 1 })()],
+      [
+        "class instance",
+        new (class {
+          x = 1;
+        })(),
+      ],
     ];
     for (const [label, value] of samples) {
       expect(
         () =>
           canonicalizeHostConfigV2(
-            base({ clientCapabilities: value as Record<string, unknown> }),
+            base({ clientCapabilities: value as Record<string, unknown> })
           ),
-        `clientCapabilities = ${label}`,
+        `clientCapabilities = ${label}`
       ).toThrow(/clientCapabilities must be a plain object/);
     }
   });
@@ -264,7 +516,9 @@ describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
     const nullProto = Object.create(null) as Record<string, unknown>;
     nullProto.foo = 1;
     nullProto.bar = { baz: 2 };
-    expect(() => canonicalizeHostConfigV2(base({ clientCapabilities: nullProto }))).not.toThrow();
+    expect(() =>
+      canonicalizeHostConfigV2(base({ clientCapabilities: nullProto }))
+    ).not.toThrow();
     // And hashes identically to the `{}`-literal form — proto difference
     // doesn't leak into canonical JSON.
     const a = base({ clientCapabilities: nullProto });
@@ -280,7 +534,10 @@ describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
       mcpProfile: { profileVersion: 1, apps: { sandbox: {} } },
     });
     const explicitEmpty = base({
-      mcpProfile: { profileVersion: 1, apps: { sandbox: { allowFeatures: {} } } },
+      mcpProfile: {
+        profileVersion: 1,
+        apps: { sandbox: { allowFeatures: {} } },
+      },
     });
     expect(await hash(omitted)).toBe(await hash(explicitEmpty));
   });
@@ -343,5 +600,38 @@ describe("canonicalizeHostConfigV2 — tightening (Stage B)", () => {
       },
     });
     expect(await hash(withOverrides)).not.toBe(await hash(withoutOverrides));
+  });
+});
+
+describe("canonicalizeHostConfigV2 — harness field", () => {
+  it("rejects an unknown harness id (closed-enum guard)", () => {
+    // Untyped (JS) callers must not persist a value the runtime can't honor.
+    // `pi` is a plausible-but-unregistered runtime — not in HARNESS_IDS.
+    expect(() =>
+      canonicalizeHostConfigV2(base({ harness: "pi" as never }))
+    ).toThrow(/harness must be/);
+  });
+
+  it.each(["claude-code", "codex"] as const)(
+    "passes the registered harness %s through to the canonical form",
+    (harness) => {
+      const canonical = canonicalizeHostConfigV2(base({ harness }));
+      expect(canonical.harness).toBe(harness);
+    }
+  );
+
+  it("absent harness drops from canonical JSON and hashes distinctly from when set", async () => {
+    const without = base();
+    const withHarness = base({ harness: "claude-code" });
+    // Absent ⇒ no key in canonical JSON (JSON.stringify drops the undefined
+    // property), so pre-feature rows hash byte-identically.
+    expect(JSON.stringify(canonicalizeHostConfigV2(without))).not.toContain(
+      "harness"
+    );
+    // Setting it writes the key and changes the hash (distinct from emulated).
+    expect(JSON.stringify(canonicalizeHostConfigV2(withHarness))).toContain(
+      '"harness":"claude-code"'
+    );
+    expect(await hash(withHarness)).not.toBe(await hash(without));
   });
 });

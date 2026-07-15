@@ -1,6 +1,6 @@
 import type { Action } from "@/components/oauth/shared/types";
 import type { XAAFlowState } from "./types";
-import { NEGATIVE_TEST_MODE_DETAILS } from "@/shared/xaa.js";
+import { NEGATIVE_TEST_MODE_DETAILS, SAML2_TOKEN_TYPE } from "@/shared/xaa.js";
 
 const XAA_PROTOCOL = "RFC 8693 + RFC 7523";
 
@@ -16,11 +16,90 @@ function safePath(url?: string): string | undefined {
 }
 
 export function buildXAAActions(flowState: XAAFlowState): Action[] {
+  // Input axis (D6): the three identity-leg actions change wording for SAML
+  // runs so the diagram visibly reflects the assertion format. OIDC labels
+  // stay byte-identical to the pre-SAML diagram.
+  const isSaml = flowState.identityAssertionFormat === "saml";
+
+  // Strategy-specific bootstrap exchanges. Included only for the selected
+  // strategy so default (pre-registered) diagrams are unchanged.
+  const registrationActions: Action[] =
+    flowState.registrationStrategy === "dcr"
+      ? flowState.dcrRegistrationReused
+        ? [
+            {
+              id: "received_client_credentials",
+              label: "Reuse session registration",
+              description:
+                "No network exchange: the Agent reuses the client it registered earlier this browser session.",
+              from: "client",
+              to: "client",
+              details: flowState.clientId
+                ? [{ label: "client_id", value: flowState.clientId }]
+                : undefined,
+            },
+          ]
+        : [
+            {
+              id: "request_client_registration",
+              label: "Register client (open DCR)",
+              description:
+                "The Agent registers a client at the Authorization Server without an initial access token. (RFC 7591.)",
+              from: "client",
+              to: "authServer",
+              details: flowState.authzMetadata?.registration_endpoint
+                ? [
+                    {
+                      label: "Endpoint",
+                      value: safePath(
+                        flowState.authzMetadata.registration_endpoint
+                      ),
+                    },
+                  ]
+                : undefined,
+            },
+            {
+              id: "received_client_credentials",
+              label: "Client credentials issued",
+              description:
+                "The Authorization Server created the client; MCPJam holds its credentials for this session only.",
+              from: "authServer",
+              to: "client",
+              details: flowState.clientId
+                ? [{ label: "client_id", value: flowState.clientId }]
+                : undefined,
+            },
+          ]
+      : flowState.registrationStrategy === "cimd"
+        ? [
+            {
+              id: "fetch_client_metadata_document",
+              label: "Preflight hosted client metadata document",
+              description:
+                "Debugger preflight of MCPJam's hosted document — the Authorization Server performs its own fetch; only the later JWT bearer grant tests its acceptance.",
+              from: "client",
+              to: "client",
+              details: flowState.clientId
+                ? [{ label: "client_id (URL)", value: flowState.clientId }]
+                : undefined,
+            },
+            {
+              id: "received_client_metadata",
+              label: "Client metadata ready",
+              description:
+                "The document's client_id equals its URL and declares the XAA grants; the URL is this run's client identity.",
+              from: "client",
+              to: "client",
+              details: [{ label: "Auth method", value: "none (public)" }],
+            },
+          ]
+        : [];
+
   return [
     {
       id: "discover_resource_metadata",
       label: "Fetch resource metadata",
-      description: "Client discovers RFC 9728 metadata from the MCP server.",
+      description: "The Agent asks the MCP Server which Authorization Server protects it.",
       from: "client",
       to: "mcpServer",
       details: flowState.serverUrl
@@ -30,7 +109,7 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
     {
       id: "received_resource_metadata",
       label: "Resource metadata",
-      description: "MCP server returns the resource identifier and auth server issuer.",
+      description: "The MCP Server returns its resource identifier and Authorization Server.",
       from: "mcpServer",
       to: "client",
       details: flowState.resourceUrl
@@ -40,7 +119,7 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
     {
       id: "discover_authz_metadata",
       label: "Fetch auth server metadata",
-      description: "Client discovers the authorization server token endpoint.",
+      description: "The Agent looks up the Authorization Server's token endpoint.",
       from: "client",
       to: "authServer",
       details: flowState.authzServerIssuer
@@ -50,17 +129,20 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
     {
       id: "received_authz_metadata",
       label: "Auth server metadata",
-      description: "Authorization server returns issuer and token endpoint metadata.",
+      description: "The Authorization Server returns its issuer and token endpoint.",
       from: "authServer",
       to: "client",
       details: flowState.tokenEndpoint
         ? [{ label: "Token", value: safePath(flowState.tokenEndpoint) }]
         : undefined,
     },
+    ...registrationActions,
     {
       id: "user_authentication",
-      label: "Mock OIDC login",
-      description: "MCPJam synthetic issuer creates a mock enterprise ID token.",
+      label: isSaml ? "Mock SAML SSO" : "Simulate sign-in at MCPJam IdP",
+      description: isSaml
+        ? "MCPJam signs the user in at the IdP via SP-initiated SAML SSO (mocked)."
+        : "MCPJam simulates the user signing in at its identity provider.",
       from: "client",
       to: "testIdp",
       details: flowState.email
@@ -69,18 +151,38 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
     },
     {
       id: "received_identity_assertion",
-      label: "ID token issued",
-      description: "Synthetic issuer returns the mock identity assertion.",
+      label: isSaml
+        ? "SAML assertion issued"
+        : "ID token issued by MCPJam IdP",
+      description: isSaml
+        ? "MCPJam's identity provider gives the Agent a signed SAML assertion."
+        : "MCPJam's identity provider gives the Agent an ID token.",
       from: "testIdp",
       to: "client",
       details: flowState.identityAssertion
-        ? [{ label: "Type", value: "OIDC ID token" }]
+        ? isSaml
+          ? [
+              { label: "Type", value: "SAML 2.0 assertion (base64)" },
+              // Structured subject metadata from the /authenticate response —
+              // rendered only when actually present, never a placeholder.
+              ...(flowState.identityAssertionSubject
+                ? [
+                    {
+                      label: "NameID",
+                      value: flowState.identityAssertionSubject.nameid,
+                    },
+                  ]
+                : []),
+            ]
+          : [{ label: "Type", value: "OIDC ID token" }]
         : undefined,
     },
     {
       id: "token_exchange_request",
       label: "Token exchange",
-      description: "Client exchanges the ID token for an ID-JAG with a selected test mode.",
+      description: isSaml
+        ? "The Agent trades the SAML assertion to the IdP for an ID-JAG."
+        : "The Agent trades the ID token to the IdP for an ID-JAG.",
       from: "client",
       to: "testIdp",
       details: [
@@ -88,12 +190,17 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
           label: "Mode",
           value: NEGATIVE_TEST_MODE_DETAILS[flowState.negativeTestMode].label,
         },
+        // Draft §4.3: a SAML run presents the assertion under the saml2
+        // subject_token_type. OIDC runs keep the original detail set.
+        ...(isSaml
+          ? [{ label: "subject_token_type", value: SAML2_TOKEN_TYPE }]
+          : []),
       ],
     },
     {
       id: "received_id_jag",
       label: "ID-JAG issued",
-      description: "Synthetic issuer returns a signed ID-JAG JWT.",
+      description: "The IdP returns a signed ID-JAG — the cross-app grant.",
       from: "testIdp",
       to: "client",
       details: flowState.idJag
@@ -103,7 +210,7 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
     {
       id: "inspect_id_jag",
       label: "Inspect assertion",
-      description: "Client decodes the ID-JAG locally before submitting it downstream.",
+      description: "The Agent decodes the ID-JAG locally to check it before redeeming it.",
       from: "client",
       to: "client",
       details: flowState.idJagDecoded?.issues.length
@@ -117,8 +224,8 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
     },
     {
       id: "jwt_bearer_request",
-      label: "JWT bearer grant",
-      description: "Client submits the ID-JAG to the target authorization server.",
+      label: "Request access token using ID-JAG",
+      description: "The Agent redeems the ID-JAG at the Authorization Server for an access token.",
       from: "client",
       to: "authServer",
       details: flowState.tokenEndpoint
@@ -128,7 +235,7 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
     {
       id: "received_access_token",
       label: "Access token",
-      description: "Authorization server returns an access token for the MCP resource.",
+      description: "The Authorization Server returns an access token for the MCP Server.",
       from: "authServer",
       to: "client",
       details: flowState.accessToken
@@ -138,7 +245,7 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
     {
       id: "authenticated_mcp_request",
       label: "Authenticated MCP request",
-      description: "Client retries an MCP initialize request with the issued access token.",
+      description: "The Agent calls the MCP Server with the access token.",
       from: "client",
       to: "mcpServer",
       details: flowState.serverUrl
@@ -148,7 +255,7 @@ export function buildXAAActions(flowState: XAAFlowState): Action[] {
     {
       id: "complete",
       label: "Authenticated response",
-      description: "MCP server accepts the access token and responds to the request.",
+      description: "The MCP Server accepts the access token and responds.",
       from: "mcpServer",
       to: "client",
       details: flowState.accessToken

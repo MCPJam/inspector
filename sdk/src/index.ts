@@ -71,8 +71,21 @@ export type {
 export {
   isChatGPTAppTool,
   isMcpAppTool,
+  MCP_DIRECT_IMAGE_MAX_BYTES,
+  MCP_IMAGE_MAX_MEDIA_PARTS,
+  MCP_IMAGE_MAX_TOTAL_BYTES,
+  MCP_LINKED_RESOURCE_MAX_READS,
+  MCP_PRESERVE_RAW_RESULT_FOR_UI,
+  mcpCallToolResultToModelOutput,
+  mcpCallToolResultToModelOutputWithLinkedResources,
   scrubMetaFromToolResult,
   scrubMetaAndStructuredContentFromToolResult,
+  type McpModelOutputContent,
+  type McpModelOutputContentPart,
+  type McpModelOutputOptions,
+  type McpModelOutputWithLinkedResourcesOptions,
+  type McpModelVisibleToolResultPolicy,
+  type McpLinkedResourceReader,
 } from "./mcp-client-manager/index.js";
 export {
   applyRuntimeClientCapabilities,
@@ -95,6 +108,7 @@ export {
   MCPAuthError,
   isAuthError,
   isMCPAuthError,
+  isUnauthorized401,
 } from "./mcp-client-manager/index.js";
 export type { RetryPolicy } from "./retry.js";
 export {
@@ -194,6 +208,22 @@ export type {
   OAuthRegistrationStrategy,
   ResolvedAuthorizationPlan,
 } from "./oauth/authorization-plan.js";
+// Shared client-registration vocabulary (single source of truth for OAuth
+// flows AND the XAA debugger's Client↔Resource-AS leg).
+export {
+  REGISTRATION_STRATEGIES,
+  DEFAULT_REGISTRATION_STRATEGY,
+  DEFAULT_REGISTRATION_MODE,
+  AUTH_METHODS,
+  normalizeRegistrationStrategy,
+  normalizeRegistrationMode,
+  normalizeAuthMethod,
+} from "./registration.js";
+export type {
+  RegistrationStrategy,
+  RegistrationMode,
+  AuthMethod,
+} from "./registration.js";
 export {
   summarizeStructuredCases,
   renderStructuredRunJson,
@@ -225,6 +255,17 @@ export type {
   OAuthLoginDependencies,
   OAuthLoginResult,
 } from "./oauth-login.js";
+// Loopback authorization-code capture + PKCE primitives, reused by the CLI's
+// platform login (`mcpjam login`) in addition to OAuth conformance runs.
+export {
+  createInteractiveAuthorizationSession,
+  openUrlInBrowser,
+  type InteractiveAuthorizationSession,
+} from "./oauth-conformance/auth-strategies/interactive.js";
+export {
+  generateCodeChallenge,
+  generateRandomString,
+} from "./oauth/state-machines/shared/pkce.js";
 export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
 export type {
   OAuthAuthorizationRequestResult,
@@ -241,6 +282,60 @@ export type {
   OAuthTraceStepSnapshot,
   OAuthTraceStepStatus,
 } from "./oauth/state-machines/trace.js";
+// XAA (ID-JAG) client identity + shared client registration. Exported from
+// the Node entry too: the inspector server hosts the XAA client-metadata
+// document and needs the builder/evaluator server-side.
+export {
+  ID_JAG_GRANT_PROFILE,
+  ID_JAG_TOKEN_TYPE,
+  ID_TOKEN_TOKEN_TYPE,
+  SAML2_TOKEN_TYPE,
+  JWT_BEARER_GRANT,
+  TOKEN_EXCHANGE_GRANT,
+  XAA_DEBUG_IDP_CLIENT_ID,
+  XAA_DEBUG_CLIENT_ID_METADATA_URL,
+  XAA_CONFIDENTIAL_CIMD_ORIGIN,
+  XAA_CONFIDENTIAL_CIMD_PATH_PREFIX,
+  buildConfidentialCimdUrl,
+  decodeConfidentialCimdKey,
+  getConfidentialCimdReflectorMetadata,
+  UNVERIFIED_CONFIDENTIAL_CIMD_CLIENT_NAME,
+  evaluateIdJagClientMetadata,
+  getXaaDebugClientMetadata,
+} from "./oauth/client-identity.js";
+export {
+  initXaaClientKeyPair,
+  getXaaClientJwks,
+  resetXaaClientKeyPairForTests,
+  XAA_CLIENT_KID,
+} from "./xaa/mint/client-keypair.js";
+export type {
+  IdJagClientMetadataEvaluation,
+  IdJagMetadataEvidence,
+} from "./oauth/client-identity.js";
+export {
+  buildDynamicClientRegistrationRequest,
+  executeDynamicClientRegistration,
+} from "./oauth/state-machines/shared/dynamic-client-registration.js";
+export type {
+  DynamicClientRegistrationCredentials,
+  DynamicClientRegistrationOutcome,
+} from "./oauth/state-machines/shared/dynamic-client-registration.js";
+export {
+  validateClientIdMetadataUrl,
+  isLoopbackHost,
+  isLoopbackClientMetadataUrl,
+} from "./oauth/state-machines/shared/client-id-metadata.js";
+export {
+  decodeJWT,
+  decodeJWTParts,
+  formatJWTTimestamp,
+} from "./oauth/state-machines/shared/jwt.js";
+export type { DecodedJwtParts } from "./oauth/state-machines/shared/jwt.js";
+
+// XAA (Cross-App Access / ID-JAG) mock-IdP mint — node-only (crypto/fs).
+// Consumed by the inspector server and the CLI's headless `runXaaFlow`.
+export * from "./xaa/index.js";
 
 // HostExecutor interface (for deterministic testing without concrete HostRunner)
 export type { HostExecutor, PromptOptions } from "./HostExecutor.js";
@@ -544,9 +639,7 @@ export type {
 } from "./operations.js";
 
 // Eval matchers (browser-safe; also exported from `@mcpjam/sdk/matchers`)
-export {
-  evaluateToolCalls,
-} from "./matchers.js";
+export { evaluateToolCalls } from "./matchers.js";
 export type {
   EvalArgumentMismatch,
   EvalMatchOptions,
@@ -578,9 +671,15 @@ export type {
   HostInit,
   HostJson,
   HostMcp,
+  HostComputer,
   HostServerOverride,
   HostConnectionDefaults,
   HostStyleId,
+  Harness,
+  McpToolResultImageRendering,
+  McpToolResultImageRenderingPolicy,
+  McpToolResultImageRenderPlacement,
+  ModelVisibleMcpToolResults,
   ServerId,
   CspDomainSet,
   OpenAiAppsCapabilities,

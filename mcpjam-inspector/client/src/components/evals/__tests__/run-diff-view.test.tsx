@@ -129,7 +129,7 @@ describe("RunDiffView", () => {
 
     expect(await screen.findByText("Find checkout total")).toBeInTheDocument();
     expect(screen.getByText("Regressed")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: /View trace/i })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: /Trace/i })).toHaveLength(2);
     expect(mocks.getRunDiff).toHaveBeenCalledWith({
       baseRunId: "base-run-123",
       compareRunId: "compare-run-456",
@@ -149,7 +149,7 @@ describe("RunDiffView", () => {
 
     const user = userEvent.setup();
     const traceButtons = await screen.findAllByRole("button", {
-      name: /View trace/i,
+      name: /Trace/i,
     });
     await user.click(traceButtons[1]);
 

@@ -13,6 +13,14 @@ import { cn } from "@/lib/utils";
 import type { ModelDefinition } from "@/shared/types";
 import type { EvalIteration, EvalJudgeConfig, EvalSuiteRun } from "./types";
 import type { GoalCompletionRequestArgs } from "./use-goal-completion";
+import {
+  ScoreBadge,
+  caseKeyForGroup,
+  deterministicCasePassed,
+  formatScore,
+  judgeDisagreesWithVerdict,
+} from "./goal-completion-presentation";
+import { groupRunIterationsByTestCase } from "./run-case-groups";
 
 /** Managed default judge model (mirrors GOAL_COMPLETION_MODEL in the backend). */
 const DEFAULT_JUDGE_MODEL = "openai/gpt-5.4-mini";
@@ -38,32 +46,8 @@ export interface GoalCompletionCardProps {
    * (e.g. commit-detail) don't need to thread suite data through.
    */
   currentSuiteJudgeConfig?: EvalJudgeConfig | null;
-}
-
-function formatScore(score: number): string {
-  // Don't route the score through clampThreshold: its NaN→DEFAULT_THRESHOLD
-  // fallback is right for the threshold input but would render a corrupt/NaN
-  // score as "70%" (the pass cutoff). Show a neutral dash instead, and clamp
-  // finite scores into [0,1].
-  if (!Number.isFinite(score)) {
-    return "—";
-  }
-  return `${Math.round(Math.min(1, Math.max(0, score)) * 100)}%`;
-}
-
-function ScoreBadge({ passed }: { passed: boolean }) {
-  return (
-    <span
-      className={cn(
-        "rounded-sm px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide",
-        passed
-          ? "bg-success/50 text-foreground"
-          : "bg-warning/50 text-foreground",
-      )}
-    >
-      {passed ? "meets goal" : "below threshold"}
-    </span>
-  );
+  /** Flush layout inside the run-detail split (no nested card chrome). */
+  embedded?: boolean;
 }
 
 export function GoalCompletionCard({
@@ -77,6 +61,7 @@ export function GoalCompletionCard({
   error,
   onRun,
   currentSuiteJudgeConfig,
+  embedded = false,
 }: GoalCompletionCardProps) {
   const completedRun = run.status === "completed";
 
@@ -178,6 +163,29 @@ export function GoalCompletionCard({
 
   const cases = goalCompletion?.cases ?? [];
   const advisoryPassed = cases.filter((c) => c.passed).length;
+
+  // The rail is a run-level SUMMARY surface, not a per-case dump: the table now
+  // carries every case's score inline. So the only per-case detail worth
+  // surfacing here is where the judge DISAGREES with the deterministic pass/fail
+  // — the actionable cases. Compute the deterministic verdict per case from the
+  // iterations, then keep just the disagreements. (Full per-case reason + rubric
+  // live in the case drill-in.)
+  const disagreements = useMemo(() => {
+    if (cases.length === 0) return [];
+    const deterministicByCaseKey = new Map<string, boolean | null>();
+    for (const group of groupRunIterationsByTestCase(iterations, "test")) {
+      const caseKey = caseKeyForGroup(group);
+      if (caseKey) {
+        deterministicByCaseKey.set(caseKey, deterministicCasePassed(group));
+      }
+    }
+    return cases.filter((c) =>
+      judgeDisagreesWithVerdict(
+        deterministicByCaseKey.get(c.caseKey) ?? null,
+        c.passed,
+      ),
+    );
+  }, [cases, iterations]);
   // Treat an in-flight request (clicked, before the run doc flips to `pending`)
   // as a grading state, so a re-run doesn't keep showing the previous run's
   // stale scores/counts as if they were current.
@@ -196,13 +204,20 @@ export function GoalCompletionCard({
   const runLabel = goalCompletion ? "Re-run judge" : "Run judge";
 
   return (
-    <section className="rounded-lg border border-border bg-card text-card-foreground">
-      <header className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
+    <section
+      className={cn(
+        "flex flex-col text-card-foreground",
+        embedded
+          ? "bg-transparent"
+          : "rounded-lg border border-border bg-card",
+      )}
+    >
+      <header className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-sm font-medium text-foreground">
-            LLM as Judge
+            {embedded ? "Goal judge" : "LLM as Judge"}
           </span>
-          <span className="truncate text-sm text-muted-foreground">
+          <span className="truncate text-xs text-muted-foreground">
             {headerSubtitle}
           </span>
         </div>
@@ -342,50 +357,52 @@ export function GoalCompletionCard({
                 {goalCompletion.summary.trim()}
               </p>
             ) : null}
-            <ul className="divide-y divide-border/40">
-              {cases.map((c) => {
-                const title = titleByCaseKey.get(c.caseKey) ?? c.caseKey;
-                return (
-                  <li
-                    key={c.caseKey}
-                    className="flex items-start gap-3 px-3 py-2.5"
-                  >
-                    <span className="mt-0.5 w-10 shrink-0 text-right text-sm font-semibold tabular-nums">
-                      {formatScore(c.score)}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate text-sm font-medium text-foreground">
-                          {title}
+            {disagreements.length > 0 ? (
+              <>
+                <div className="px-3 pb-1 pt-2.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/80">
+                  Disagrees with pass/fail · {disagreements.length}
+                </div>
+                <ul className="divide-y divide-border/40">
+                  {disagreements.map((c) => {
+                    const title = titleByCaseKey.get(c.caseKey) ?? c.caseKey;
+                    return (
+                      <li
+                        key={c.caseKey}
+                        className="flex items-start gap-3 px-3 py-2.5"
+                      >
+                        <span className="mt-0.5 w-10 shrink-0 text-right text-sm font-semibold tabular-nums">
+                          {formatScore(c.score)}
                         </span>
-                        <ScoreBadge passed={c.passed} />
-                      </div>
-                      {c.reason ? (
-                        <div className="mt-0.5 text-[13px] text-muted-foreground">
-                          {c.reason}
-                        </div>
-                      ) : null}
-                      {c.rubricHits.length > 0 ? (
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {c.rubricHits.map((hit, i) => (
-                            <span
-                              key={`${c.caseKey}-hit-${i}`}
-                              className="rounded-sm bg-muted/60 px-1.5 py-0.5 text-[11px] text-muted-foreground"
-                            >
-                              {hit}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="truncate text-sm font-medium text-foreground">
+                              {title}
                             </span>
-                          ))}
+                            <ScoreBadge passed={c.passed} />
+                          </div>
+                          {c.reason ? (
+                            <div className="mt-0.5 text-[13px] text-muted-foreground">
+                              {c.reason}
+                            </div>
+                          ) : null}
                         </div>
-                      ) : null}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
+            ) : (
+              <p className="px-3 py-2.5 text-[13px] text-muted-foreground">
+                All {cases.length} graded {cases.length === 1 ? "case" : "cases"}{" "}
+                agree with the deterministic pass/fail ({advisoryPassed}/
+                {cases.length} meet goal). Per-case scores are inline on each
+                case.
+              </p>
+            )}
             <p className="px-3 py-2 text-[11px] text-muted-foreground/70">
               Judged by {goalCompletion.modelUsed} · pass when score ≥{" "}
-              {goalCompletion.threshold}. Advisory only — the deterministic
-              tool-call verdict above is the run's pass/fail.
+              {goalCompletion.threshold}. Advisory only — never changes the
+              run&apos;s pass/fail.
             </p>
           </>
         )}

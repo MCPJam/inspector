@@ -9,11 +9,15 @@
  * stored v2 `hostConfigs` row may have a different hash because backend
  * materialization layers suite-resolved Convex `serverIds` back in.
  *
- * The normalizer's only behavior is to STRIP fields that are runtime-manager
- * identifiers, never `Id<'servers'>`:
- *   - `serverIds`
+ * The normalizer's only behavior is to STRIP fields that must not ride the
+ * eval wire:
+ *   - `serverIds`                  (runtime-manager identifiers, never `Id<'servers'>`)
  *   - `optionalServerIds`
  *   - `serverConnectionOverrides`  (server-keyed overrides also use runtime ids)
+ *   - `computer`                   (mutable per-user state — an eval that shells
+ *                                   into a personal computer isn't reproducible;
+ *                                   the backend also rejects it at run start.
+ *                                   See mcpjam-backend docs/project-computers.md)
  *
  * Everything else is preserved verbatim. We do NOT canonicalize, sort, hash,
  * or otherwise reshape — that's the canonicalizer's job. This is a thin,
@@ -33,10 +37,7 @@
  * that the inspector client and the Convex backend can both consume.
  */
 
-import type {
-  HostConfigInputV2,
-  HostConfigMcpProfileV1,
-} from "./types.js";
+import type { HostConfigInputV2, HostConfigMcpProfileV1 } from "./types.js";
 import type { HostJson, HostMcp } from "./public-types.js";
 
 /**
@@ -54,9 +55,7 @@ function isHostConfigInputShape(value: unknown): value is HostConfigInputV2 {
 function isHostJsonShape(value: unknown): value is HostJson {
   if (!value || typeof value !== "object") return false;
   const v = value as { style?: unknown; hostStyle?: unknown };
-  return (
-    typeof v.style === "string" && typeof v.hostStyle !== "string"
-  );
+  return typeof v.style === "string" && typeof v.hostStyle !== "string";
 }
 
 /**
@@ -97,6 +96,12 @@ function hostJsonToStrippedInput(json: HostJson): HostConfigInputV2 {
   if (json.respectToolVisibility !== undefined) {
     input.respectToolVisibility = json.respectToolVisibility;
   }
+  if (json.modelVisibleMcpToolResults !== undefined) {
+    input.modelVisibleMcpToolResults = json.modelVisibleMcpToolResults;
+  }
+  if (json.mcpToolResultImageRendering !== undefined) {
+    input.mcpToolResultImageRendering = json.mcpToolResultImageRendering;
+  }
   if (json.hostCapabilitiesOverride !== undefined) {
     input.hostCapabilitiesOverride = json.hostCapabilitiesOverride;
   }
@@ -107,28 +112,31 @@ function hostJsonToStrippedInput(json: HostJson): HostConfigInputV2 {
     input.mcpProfile = hostMcpToProfile(json.mcp);
   }
   // `servers`, `optionalServers`, `serverOverrides` deliberately dropped —
-  // the wire form must not carry runtime-manager identifiers.
+  // the wire form must not carry runtime-manager identifiers. `computer` is
+  // dropped too: evals never target personal computers.
   return input;
 }
 
 /**
- * Strip runtime-id-bearing fields from a canonical input. Returns a fresh
- * object; never mutates `input`.
+ * Strip the wire-forbidden fields (runtime ids + `computer`) from a canonical
+ * input. Returns a fresh object; never mutates `input`.
  */
 function stripRuntimeIdsFromCanonical(
-  input: HostConfigInputV2,
+  input: HostConfigInputV2
 ): HostConfigInputV2 {
   const {
     // Intentionally destructured out so the rest spread drops them.
     serverIds: _serverIds,
     optionalServerIds: _optionalServerIds,
     serverConnectionOverrides: _serverConnectionOverrides,
+    computer: _computer,
     ...rest
   } = input;
   // Discard the unused locals (silences `no-unused-vars` without disabling).
   void _serverIds;
   void _optionalServerIds;
   void _serverConnectionOverrides;
+  void _computer;
   return { ...rest };
 }
 
@@ -136,8 +144,9 @@ function stripRuntimeIdsFromCanonical(
  * Pass-1 wire normalizer for SDK→backend eval ingestion.
  *
  * Strips runtime-manager identifiers (`serverIds`, `optionalServerIds`,
- * `serverConnectionOverrides`) so the SDK reporter and backend handler hash
- * byte-identical wire shapes. Accepts EITHER a canonical
+ * `serverConnectionOverrides`) and the eval-forbidden `computer` field so the
+ * SDK reporter and backend handler hash byte-identical wire shapes — and so
+ * evals never carry a personal computer. Accepts EITHER a canonical
  * {@link HostConfigInputV2} OR a public {@link HostJson} (`Host.toJSON()`);
  * the public shape is projected to the canonical input shape before stripping.
  *
@@ -147,7 +156,7 @@ function stripRuntimeIdsFromCanonical(
  * @returns a fresh `HostConfigInputV2` with runtime ids stripped
  */
 export function normalizeSdkEvalHostConfigForWire(
-  source: HostConfigInputV2 | HostJson,
+  source: HostConfigInputV2 | HostJson
 ): HostConfigInputV2 {
   if (isHostConfigInputShape(source)) {
     return stripRuntimeIdsFromCanonical(source);

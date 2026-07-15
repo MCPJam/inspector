@@ -165,6 +165,73 @@ describe("mcpjam-stream-handler", () => {
     expect(Object.keys(requestPayload.payload.tools)).toEqual(["search"]);
   });
 
+  it("forces search_mcp_tools on the first progressive-discovery request", async () => {
+    const toolDef = (description: string) => ({
+      description,
+      inputSchema: { type: "object" } as any,
+    });
+    vi.mocked(serializeToolsForConvex).mockReturnValueOnce([
+      { name: "search_mcp_tools", inputSchema: { type: "object" } },
+      { name: "load_mcp_tools", inputSchema: { type: "object" } },
+      { name: "show_squad", inputSchema: { type: "object" } },
+    ]);
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "show squad" }] as any,
+      modelId: "openai/gpt-5-mini",
+      systemPrompt: "You are helpful",
+      tools: {
+        search_mcp_tools: toolDef("Search MCP tools"),
+        load_mcp_tools: toolDef("Load MCP tools"),
+        show_squad: toolDef("Show squad"),
+      },
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      progressivePlan: {
+        enabled: true,
+        reasons: ["test"],
+        policy: {
+          thresholdPct: 0.03,
+          maxToolTokens: 10_000,
+          maxToolCount: 30,
+          searchLimit: 8,
+        },
+        catalog: [
+          {
+            toolId: "sports::show_squad",
+            modelName: "show_squad",
+            serverId: "sports",
+            originalName: "show_squad",
+            description: "Show squad",
+            fields: [],
+            inputSchema: {},
+            tokenEstimate: 10,
+          },
+        ],
+        totalTokenEstimate: 10,
+      } as any,
+      discoveryState: {
+        loadedToolIds: new Set<string>(),
+        newlyLoadedToolIds: new Set<string>(),
+        pendingApprovalToolIds: new Set<string>(),
+      } as any,
+    });
+
+    await lastExecution;
+
+    const fetchBody = JSON.parse(
+      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}",
+    );
+    expect(fetchBody.toolChoice).toEqual({
+      type: "tool",
+      toolName: "search_mcp_tools",
+    });
+    expect(
+      (fetchBody.tools as Array<{ name: string }>).map((t) => t.name),
+    ).toEqual(["search_mcp_tools", "load_mcp_tools"]);
+  });
+
   it("scrubs backend-only approval parts while preserving full history for completion callbacks", async () => {
     const onConversationComplete = vi.fn();
     const messages = [
@@ -1050,6 +1117,324 @@ describe("mcpjam-stream-handler", () => {
     });
   });
 
+  // Browser-rendered MCP App eval PR 14: the hosted eval runner's widget
+  // render hook rides `onToolResult` and must complete BEFORE the next
+  // step's `prepareAdvertisedTools` gate reads the harness mount state.
+  it("awaits an async onToolResult before the next step's prepareAdvertisedTools, and exposes rawResult", async () => {
+    let fetchCall = 0;
+    global.fetch = vi.fn().mockImplementation(async () => {
+      fetchCall += 1;
+      if (fetchCall === 1) {
+        return createSseResponse([
+          {
+            type: "tool-input-available",
+            toolCallId: "call-w1",
+            toolName: "show_widget",
+            input: { city: "lisbon" },
+          },
+          {
+            type: "finish",
+            finishReason: "stop",
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ]);
+      }
+      return createSseResponse([
+        {
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ]);
+    });
+    vi.mocked(hasUnresolvedToolCalls).mockImplementation(
+      (messages) =>
+        messages.some(
+          (message: any) =>
+            message?.role === "assistant" &&
+            Array.isArray(message.content) &&
+            message.content.some((part: any) => part.type === "tool-call")
+        ) && !messages.some((message: any) => message?.role === "tool")
+    );
+    const rawWidgetResult = {
+      content: [{ type: "text", text: "ok" }],
+      structuredContent: { seats: [1, 2, 3] },
+      _meta: { "mcpjam/widget": true },
+    };
+    vi.mocked(executeToolCallsFromMessages).mockImplementation(
+      async (messages: any[]) => {
+        const toolResultMessage = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-w1",
+              toolName: "show_widget",
+              // LLM-facing output is the SCRUBBED view…
+              output: {
+                type: "json",
+                value: { content: [{ type: "text", text: "ok" }] },
+              },
+              // …while `result` carries the raw, unscrubbed payload the
+              // render hook needs.
+              result: rawWidgetResult,
+              serverId: "widget-server",
+            },
+          ],
+        };
+        messages.splice(2, 0, toolResultMessage);
+        return [toolResultMessage] as any;
+      }
+    );
+
+    // Simulates the eval runner's harness state: the render hook "mounts"
+    // the widget only after an async delay; the next step's gate must
+    // observe the mounted state (i.e. the engine awaited the callback).
+    let widgetMounted = false;
+    const seenRawResults: unknown[] = [];
+    const mountStateAtGateCall: Array<{
+      stepIndex: number;
+      mounted: boolean;
+    }> = [];
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "Show me the widget" }] as any,
+      modelId: "anthropic/claude-haiku-4.5",
+      systemPrompt: "You are helpful",
+      tools: {
+        show_widget: {
+          _serverId: "widget-server",
+        },
+      } as any,
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({
+          show_widget: {},
+        }),
+      } as any,
+      prepareAdvertisedTools: ({ stepIndex, defaultToolNames }) => {
+        mountStateAtGateCall.push({ stepIndex, mounted: widgetMounted });
+        return defaultToolNames;
+      },
+      onToolResult: async (event) => {
+        seenRawResults.push(event.rawResult);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        widgetMounted = true;
+      },
+    });
+
+    await lastExecution;
+
+    // The raw (unscrubbed) result reached the callback.
+    expect(seenRawResults).toEqual([rawWidgetResult]);
+    // Step 0's gate ran before any render; step 1's gate ran AFTER the
+    // awaited async callback completed — ordering would break (mounted:
+    // false) if the engine fired the callback without awaiting it.
+    expect(mountStateAtGateCall).toEqual([
+      { stepIndex: 0, mounted: false },
+      { stepIndex: 1, mounted: true },
+    ]);
+  });
+
+  it("emits structuredContent in the UI tool-output chunk for a widget tool (scrubbed model output, raw result)", async () => {
+    // Reproduces the agent's "Missing structured content" bug: the model copy
+    // is scrubbed, but the raw `result` carries structuredContent. The UI chunk
+    // MUST surface structuredContent at the top level for the widget to render.
+    let fetchCall = 0;
+    global.fetch = vi.fn().mockImplementation(async () => {
+      fetchCall += 1;
+      if (fetchCall === 1) {
+        return createSseResponse([
+          {
+            type: "tool-input-available",
+            toolCallId: "call-w1",
+            toolName: "show_servers",
+            input: {},
+          },
+          {
+            type: "finish",
+            finishReason: "stop",
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ]);
+      }
+      return createSseResponse([
+        {
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ]);
+    });
+    vi.mocked(hasUnresolvedToolCalls).mockImplementation(
+      (messages) =>
+        messages.some(
+          (message: any) =>
+            message?.role === "assistant" &&
+            Array.isArray(message.content) &&
+            message.content.some((part: any) => part.type === "tool-call")
+        ) && !messages.some((message: any) => message?.role === "tool")
+    );
+    const structuredContent = {
+      project: { id: "p1", name: "Default" },
+      servers: [{ name: "notion" }],
+      widget: "servers",
+    };
+    const rawResult = {
+      content: [{ type: "text", text: "8 servers" }],
+      structuredContent,
+      _meta: { "mcpjam/widget": true },
+    };
+    vi.mocked(executeToolCallsFromMessages).mockImplementation(
+      async (messages: any[]) => {
+        const toolResultMessage = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-w1",
+              toolName: "show_servers",
+              // model-facing copy is scrubbed (no structuredContent)…
+              output: {
+                type: "json",
+                value: { content: rawResult.content },
+              },
+              // …raw result preserved for UI hydration.
+              result: rawResult,
+              serverId: "widget-server",
+            },
+          ],
+        };
+        messages.splice(2, 0, toolResultMessage);
+        return [toolResultMessage] as any;
+      }
+    );
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "show servers" }] as any,
+      modelId: "anthropic/claude-haiku-4.5",
+      systemPrompt: "You are helpful",
+      tools: { show_servers: { _serverId: "widget-server" } } as any,
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({ show_servers: {} }),
+      } as any,
+    });
+
+    await lastExecution;
+
+    const toolOutputChunk = writtenChunks.find(
+      (chunk) =>
+        chunk?.type === "tool-output-available" &&
+        chunk?.toolCallId === "call-w1"
+    );
+    expect(toolOutputChunk).toBeDefined();
+    expect((toolOutputChunk!.output as any).structuredContent).toEqual(
+      structuredContent
+    );
+  });
+
+  it("emits raw embedded image resources in the UI tool-output chunk when model output is media content", async () => {
+    let fetchCall = 0;
+    global.fetch = vi.fn().mockImplementation(async () => {
+      fetchCall += 1;
+      if (fetchCall === 1) {
+        return createSseResponse([
+          {
+            type: "tool-input-available",
+            toolCallId: "call-image-1",
+            toolName: "qa_return_embedded_image_resource",
+            input: {},
+          },
+          {
+            type: "finish",
+            finishReason: "stop",
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ]);
+      }
+      return createSseResponse([
+        {
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ]);
+    });
+    vi.mocked(hasUnresolvedToolCalls).mockImplementation(
+      (messages) =>
+        messages.some(
+          (message: any) =>
+            message?.role === "assistant" &&
+            Array.isArray(message.content) &&
+            message.content.some((part: any) => part.type === "tool-call")
+        ) && !messages.some((message: any) => message?.role === "tool")
+    );
+    const rawResult = {
+      content: [
+        {
+          type: "resource",
+          resource: {
+            uri: "example://embedded-image.png",
+            blob: "aGVsbG8=",
+            mimeType: "image/png",
+          },
+        },
+      ],
+    };
+    vi.mocked(executeToolCallsFromMessages).mockImplementation(
+      async (messages: any[]) => {
+        const toolResultMessage = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-image-1",
+              toolName: "qa_return_embedded_image_resource",
+              output: {
+                type: "content",
+                value: [
+                  {
+                    type: "media",
+                    data: "aGVsbG8=",
+                    mediaType: "image/png",
+                  },
+                ],
+              },
+              result: rawResult,
+              serverId: "resource-mcp",
+            },
+          ],
+        };
+        messages.splice(2, 0, toolResultMessage);
+        return [toolResultMessage] as any;
+      }
+    );
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "show image" }] as any,
+      modelId: "anthropic/claude-haiku-4.5",
+      systemPrompt: "You are helpful",
+      tools: {
+        qa_return_embedded_image_resource: { _serverId: "resource-mcp" },
+      } as any,
+      mcpClientManager: {
+        getAllToolsMetadata: vi
+          .fn()
+          .mockReturnValue({ qa_return_embedded_image_resource: {} }),
+      } as any,
+    });
+
+    await lastExecution;
+
+    const toolOutputChunk = writtenChunks.find(
+      (chunk) =>
+        chunk?.type === "tool-output-available" &&
+        chunk?.toolCallId === "call-image-1"
+    );
+    expect(toolOutputChunk).toBeDefined();
+    expect((toolOutputChunk!.output as any).content).toEqual(rawResult.content);
+    expect((toolOutputChunk!.output as any).type).not.toBe("content");
+  });
+
   describe("progressive discovery approval semantics", () => {
     // Minimal "plan enabled" — only the `enabled` flag is read on the
     // post-stream unresolved-tool detection + drain paths exercised here.
@@ -1176,6 +1561,214 @@ describe("mcpjam-stream-handler", () => {
       expect(filterToolName("search_mcp_tools")).toBe(true);
       expect(filterToolName("load_mcp_tools")).toBe(true);
       expect(filterToolName("list_servers")).toBe(false);
+    });
+  });
+
+  describe("WebMCP UI tool approval semantics", () => {
+    it("does not emit an approval request for read-only ui_* tools (exempt set)", async () => {
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          {
+            type: "tool-input-available",
+            toolCallId: "call-ui-1",
+            toolName: "ui_snapshot_app",
+            input: {},
+          },
+          {
+            type: "tool-input-available",
+            toolCallId: "call-ui-2",
+            toolName: "ui_navigate",
+            input: { target: "servers" },
+          },
+          { type: "finish", finishReason: "stop" },
+        ])
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "observe then navigate" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        // Both are no-execute client-fulfilled entries.
+        tools: { ui_snapshot_app: {}, ui_navigate: {} } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: true,
+        approvalFreeUiToolNames: new Set(["ui_snapshot_app"]),
+      });
+
+      await lastExecution;
+
+      const approvalRequests = writtenChunks.filter(
+        (chunk: any) => chunk.type === "tool-approval-request"
+      );
+      // Only the MUTATING ui tool pauses for approval; the read-only one
+      // flows straight through to client fulfillment with no pill.
+      expect(approvalRequests).toHaveLength(1);
+      expect(approvalRequests[0]).toMatchObject({ toolCallId: "call-ui-2" });
+    });
+
+    it("read-only ui_* calls skip the approval pause classifier (no drain filter)", async () => {
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+      vi.mocked(executeToolCallsFromMessages).mockResolvedValue([]);
+
+      await handleMCPJamFreeChatModel({
+        messages: [
+          { role: "user", content: "observe" },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call-ui-1",
+                toolName: "ui_snapshot_app",
+                input: {},
+              },
+            ],
+          },
+        ] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: { ui_snapshot_app: {} } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: true,
+        approvalFreeUiToolNames: new Set(["ui_snapshot_app"]),
+      });
+
+      await lastExecution;
+
+      // With the exemption, the step has no unresolved REAL tool call, so
+      // the approval branch (whose executor call carries `filterToolName`)
+      // is skipped — the normal client-fulfilled execution path runs.
+      const calls = vi.mocked(executeToolCallsFromMessages).mock.calls;
+      expect(calls.length).toBeGreaterThan(0);
+      for (const call of calls) {
+        expect((call[1] as any)?.filterToolName).toBeUndefined();
+      }
+    });
+
+    it("a resume turn with a client tool-result + dangling approval-request proceeds to the model", async () => {
+      // Approve-by-fulfillment: the client executed the approved ui_* call
+      // and shipped the tool-result; the approval request stays UNANSWERED.
+      // The loop must treat the step as resolved — call the backend, emit
+      // no fresh approval request, and not pause again.
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          { type: "text-start", id: "t1" },
+          { type: "text-delta", id: "t1", delta: "Done." },
+          { type: "text-end", id: "t1" },
+          { type: "finish", finishReason: "stop" },
+        ])
+      );
+      const onConversationComplete = vi.fn();
+
+      await handleMCPJamFreeChatModel({
+        messages: [
+          { role: "user", content: "navigate please" },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call-ui-1",
+                toolName: "ui_navigate",
+                input: { target: "servers" },
+              },
+              {
+                type: "tool-approval-request",
+                approvalId: "approval-ui-1",
+                toolCallId: "call-ui-1",
+              },
+            ],
+          },
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-ui-1",
+                toolName: "ui_navigate",
+                output: { type: "json", value: { ok: true } },
+              },
+            ],
+          },
+        ] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: { ui_navigate: {} } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: true,
+        onConversationComplete,
+      });
+
+      await lastExecution;
+
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      expect(
+        writtenChunks.filter(
+          (chunk: any) => chunk.type === "tool-approval-request"
+        )
+      ).toHaveLength(0);
+      // Clean completion — the turn persisted.
+      expect(onConversationComplete).toHaveBeenCalledTimes(1);
+    });
+
+    it("handlePendingApprovals skips no-execute tools instead of throwing (stale-client defense)", async () => {
+      // The new client resolves an APPROVED ui_* call by executing it and
+      // shipping the tool-result, never a bare approval response. If a
+      // stale client sends one anyway, the resume path must skip the
+      // no-execute entry (loop re-pauses for fulfillment), not 500.
+      vi.mocked(executeToolCallsFromMessages).mockResolvedValue([]);
+
+      await handleMCPJamFreeChatModel({
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call-ui-1",
+                toolName: "ui_navigate",
+                input: { target: "servers" },
+              },
+              {
+                type: "tool-approval-request",
+                approvalId: "approval-ui-1",
+                toolCallId: "call-ui-1",
+              },
+            ],
+          },
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-approval-response",
+                approvalId: "approval-ui-1",
+                approved: true,
+              },
+            ],
+          },
+        ] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: { ui_navigate: {} } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: true,
+      });
+
+      await lastExecution;
+
+      // The approval-resume executor call must carry the skip flag so a
+      // no-execute entry can never throw `has no execute function`.
+      const calls = vi.mocked(executeToolCallsFromMessages).mock.calls;
+      expect(calls.length).toBeGreaterThan(0);
+      expect((calls[0]?.[1] as any)?.skipNonExecutableTools).toBe(true);
     });
   });
 

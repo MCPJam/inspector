@@ -16,13 +16,19 @@ import {
   type McpProtocolVersion,
 } from "../mcp-client-manager/mcp-protocol-version.js";
 import {
+  HARNESS_IDS,
   HOST_CONFIG_SCHEMA_VERSION_V2,
+  isHarness,
   SEP_1865_PERMISSION_FEATURES,
   type CanonicalHostConfigV2,
   type CspDomainSet,
+  type HostConfigComputer,
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
   type McpAppsCapabilities,
+  type McpToolResultBlobVisibility,
+  type McpToolResultImageRenderingPolicy,
+  type ModelVisibleMcpToolResults,
   type OpenAiAppsCapabilities,
   type ServerId,
 } from "./types.js";
@@ -47,7 +53,7 @@ const OPENAI_APPS_CAPABILITY_KEYS = [
 ] as const satisfies ReadonlyArray<keyof OpenAiAppsCapabilities>;
 
 const OPENAI_APPS_CAPABILITY_KEY_SET: ReadonlySet<string> = new Set(
-  OPENAI_APPS_CAPABILITY_KEYS,
+  OPENAI_APPS_CAPABILITY_KEYS
 );
 
 const OPENAI_APPS_REQUEST_DISPLAY_MODE_VALUES = [
@@ -80,7 +86,7 @@ const MCP_APPS_CAPABILITY_KEYS = [
 ] as const satisfies ReadonlyArray<keyof McpAppsCapabilities>;
 
 const MCP_APPS_CAPABILITY_KEY_SET: ReadonlySet<string> = new Set(
-  MCP_APPS_CAPABILITY_KEYS,
+  MCP_APPS_CAPABILITY_KEYS
 );
 
 const MCP_APPS_DISPLAY_MODE_VALUES = ["inline", "fullscreen", "pip"] as const;
@@ -90,9 +96,8 @@ const MCP_APPS_WIDGET_DISPLAY_MODE_REQUEST_VALUES = [
   "user-initiated-only",
   "decline",
 ] as const;
-
 const MCP_APPS_DISPLAY_MODE_VALUE_SET: ReadonlySet<string> = new Set(
-  MCP_APPS_DISPLAY_MODE_VALUES,
+  MCP_APPS_DISPLAY_MODE_VALUES
 );
 
 function sortStringKeys<T extends Record<string, unknown>>(input: T): T {
@@ -108,7 +113,10 @@ function sortStringKeys<T extends Record<string, unknown>>(input: T): T {
 // Plain-object check defends against arrays/primitives slipping past
 // upstream `v.any()` validators. Returns a deep-sorted copy so nested key
 // order doesn't leak into the hash.
-function requireRecord(value: unknown, fieldName: string): Record<string, unknown> {
+function requireRecord(
+  value: unknown,
+  fieldName: string
+): Record<string, unknown> {
   if (value === undefined) {
     throw new Error(`hostConfigV2: ${fieldName} is required`);
   }
@@ -121,6 +129,231 @@ function requireRecord(value: unknown, fieldName: string): Record<string, unknow
     throw new Error(`hostConfigV2: ${fieldName} must be a plain object`);
   }
   return deepSortStringKeys(value);
+}
+
+const DIRECT_CONTENT_VISIBILITY_KEYS = ["text", "image", "audio"] as const;
+const RESOURCE_VISIBILITY_KEYS = ["text", "blob"] as const;
+const BLOB_VISIBILITY_KEYS = [
+  "enabled",
+  "image",
+  "audio",
+  "document",
+  "video",
+  "otherBinary",
+] as const;
+const MCP_TOOL_RESULT_IMAGE_RENDERING_KEYS = [
+  "placement",
+  "directContent",
+  "embeddedResources",
+  "linkedResources",
+] as const;
+const MCP_TOOL_RESULT_IMAGE_RENDERING_DIRECT_CONTENT_KEYS = ["image"] as const;
+const MCP_TOOL_RESULT_IMAGE_RENDERING_RESOURCE_KEYS = ["blob"] as const;
+const MCP_TOOL_RESULT_IMAGE_RENDERING_BLOB_KEYS = ["image"] as const;
+
+function assertOnlyKnownKeys(
+  value: Record<string, unknown>,
+  allowed: ReadonlySet<string>,
+  fieldName: string
+): void {
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw new Error(`hostConfigV2: ${fieldName}.${key} is not supported`);
+    }
+  }
+}
+
+function readOptionalBoolean(
+  value: Record<string, unknown>,
+  key: string,
+  fieldName: string
+): boolean | undefined {
+  const raw = value[key];
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "boolean") {
+    throw new Error(`hostConfigV2: ${fieldName}.${key} must be a boolean`);
+  }
+  return raw;
+}
+
+function canonicalizeBooleanLeaves<const Keys extends ReadonlyArray<string>>(
+  value: unknown,
+  keys: Keys,
+  fieldName: string
+): { [K in Keys[number]]?: boolean } | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    throw new Error(`hostConfigV2: ${fieldName} must be a plain object`);
+  }
+  const record = value as Record<string, unknown>;
+  assertOnlyKnownKeys(record, new Set(keys), fieldName);
+
+  const out: Record<string, boolean> = {};
+  for (const key of keys) {
+    const bool = readOptionalBoolean(record, key, fieldName);
+    if (bool !== undefined) out[key] = bool;
+  }
+  return Object.keys(out).length > 0
+    ? (out as { [K in Keys[number]]?: boolean })
+    : undefined;
+}
+
+function canonicalizeBlobVisibility(
+  value: unknown,
+  fieldName: string
+): McpToolResultBlobVisibility | undefined {
+  return canonicalizeBooleanLeaves(value, BLOB_VISIBILITY_KEYS, fieldName);
+}
+
+function canonicalizeResourceVisibility(
+  value: unknown,
+  fieldName: string
+):
+  | {
+      text?: boolean;
+      blob?: McpToolResultBlobVisibility;
+    }
+  | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    throw new Error(`hostConfigV2: ${fieldName} must be a plain object`);
+  }
+  const record = value as Record<string, unknown>;
+  assertOnlyKnownKeys(record, new Set(RESOURCE_VISIBILITY_KEYS), fieldName);
+
+  const text = readOptionalBoolean(record, "text", fieldName);
+  const blob = canonicalizeBlobVisibility(record.blob, `${fieldName}.blob`);
+  const out = {
+    ...(text !== undefined ? { text } : {}),
+    ...(blob !== undefined ? { blob } : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function canonicalizeModelVisibleMcpToolResults(
+  value: unknown
+): ModelVisibleMcpToolResults | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    throw new Error(
+      "hostConfigV2: modelVisibleMcpToolResults must be a plain object"
+    );
+  }
+  const record = value as Record<string, unknown>;
+  assertOnlyKnownKeys(
+    record,
+    new Set(["directContent", "embeddedResources", "linkedResources"]),
+    "modelVisibleMcpToolResults"
+  );
+
+  const directContent = canonicalizeBooleanLeaves(
+    record.directContent,
+    DIRECT_CONTENT_VISIBILITY_KEYS,
+    "modelVisibleMcpToolResults.directContent"
+  );
+  const embeddedResources = canonicalizeResourceVisibility(
+    record.embeddedResources,
+    "modelVisibleMcpToolResults.embeddedResources"
+  );
+  const linkedResources = canonicalizeResourceVisibility(
+    record.linkedResources,
+    "modelVisibleMcpToolResults.linkedResources"
+  );
+  const out = {
+    ...(directContent !== undefined ? { directContent } : {}),
+    ...(embeddedResources !== undefined ? { embeddedResources } : {}),
+    ...(linkedResources !== undefined ? { linkedResources } : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function readOptionalMcpToolResultImageRenderPlacement(
+  value: Record<string, unknown>,
+  key: string,
+  fieldName: string
+): "none" | "collapsed" | "inline" | undefined {
+  const raw = value[key];
+  if (raw === undefined) return undefined;
+  if (raw !== "none" && raw !== "collapsed" && raw !== "inline") {
+    throw new Error(
+      `hostConfigV2: ${fieldName}.${key} must be "none", "collapsed", or "inline"`
+    );
+  }
+  return raw;
+}
+
+function canonicalizeImageRenderingResource(
+  value: unknown,
+  fieldName: string
+):
+  | {
+      blob?: {
+        image?: boolean;
+      };
+    }
+  | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    throw new Error(`hostConfigV2: ${fieldName} must be a plain object`);
+  }
+  const record = value as Record<string, unknown>;
+  assertOnlyKnownKeys(
+    record,
+    new Set(MCP_TOOL_RESULT_IMAGE_RENDERING_RESOURCE_KEYS),
+    fieldName
+  );
+  const blob = canonicalizeBooleanLeaves(
+    record.blob,
+    MCP_TOOL_RESULT_IMAGE_RENDERING_BLOB_KEYS,
+    `${fieldName}.blob`
+  );
+  const out = {
+    ...(blob !== undefined ? { blob } : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function canonicalizeMcpToolResultImageRenderingPolicy(
+  value: unknown
+): McpToolResultImageRenderingPolicy | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    throw new Error(
+      "hostConfigV2: mcpToolResultImageRendering must be a plain object"
+    );
+  }
+  const record = value as Record<string, unknown>;
+  assertOnlyKnownKeys(
+    record,
+    new Set(MCP_TOOL_RESULT_IMAGE_RENDERING_KEYS),
+    "mcpToolResultImageRendering"
+  );
+
+  const placement = readOptionalMcpToolResultImageRenderPlacement(
+    record,
+    "placement",
+    "mcpToolResultImageRendering"
+  );
+  const directContent = canonicalizeBooleanLeaves(
+    record.directContent,
+    MCP_TOOL_RESULT_IMAGE_RENDERING_DIRECT_CONTENT_KEYS,
+    "mcpToolResultImageRendering.directContent"
+  );
+  const embeddedResources = canonicalizeImageRenderingResource(
+    record.embeddedResources,
+    "mcpToolResultImageRendering.embeddedResources"
+  );
+  const linkedResources = canonicalizeImageRenderingResource(
+    record.linkedResources,
+    "mcpToolResultImageRendering.linkedResources"
+  );
+  const out = {
+    ...(placement !== undefined ? { placement } : {}),
+    ...(directContent !== undefined ? { directContent } : {}),
+    ...(embeddedResources !== undefined ? { embeddedResources } : {}),
+    ...(linkedResources !== undefined ? { linkedResources } : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 // Deep variant: recursively sorts keys at every object level so nested
@@ -140,8 +373,40 @@ function deepSortStringKeys<T>(input: T): T {
   return input;
 }
 
-function sortUniqueServerIds(ids: Array<ServerId> | undefined): Array<ServerId> {
+function sortUniqueServerIds(
+  ids: Array<ServerId> | undefined
+): Array<ServerId> {
   return Array.from(new Set(ids ?? [])).sort() as Array<ServerId>;
+}
+
+// Canonicalize built-in tool ids as a SET: validate wire shape, dedupe, sort.
+// IDs are OPAQUE to the SDK — there is NO enum/catalog check here (the backend
+// validates existence + org scope against the `builtInTools` table). Order is
+// not semantic, so we dedupe + sort like serverIds. Absent (undefined) OR empty
+// ([]) collapses to `undefined` so the key is dropped from the canonical JSON,
+// keeping every pre-feature row's hash byte-identical (precedent: the
+// allowFeatures / serverConnectionOverrides empty-collapse). Entries are stored
+// verbatim (never trimmed) so a malformed id like "web_search " is preserved
+// and rejected downstream by the catalog scope check rather than silently fixed.
+function canonicalizeBuiltInToolIds(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error("hostConfigV2: builtInToolIds must be a string[]");
+  }
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      throw new Error("hostConfigV2: builtInToolIds entries must be strings");
+    }
+    if (entry.trim() === "") {
+      throw new Error(
+        "hostConfigV2: builtInToolIds entries must be non-empty strings"
+      );
+    }
+    seen.add(entry);
+  }
+  if (seen.size === 0) return undefined;
+  return Array.from(seen).sort();
 }
 
 // Plain-object guard shared by hostCapabilitiesOverride and mcpProfile.
@@ -167,14 +432,14 @@ function canonicalizeCspDomainList(value: unknown): string[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) {
     throw new Error(
-      "hostConfigV2: mcpProfile CSP domain list must be a string[]",
+      "hostConfigV2: mcpProfile CSP domain list must be a string[]"
     );
   }
   const seen = new Set<string>();
   for (const entry of value) {
     if (typeof entry !== "string") {
       throw new Error(
-        "hostConfigV2: mcpProfile CSP domain list entries must be strings",
+        "hostConfigV2: mcpProfile CSP domain list entries must be strings"
       );
     }
     const trimmed = entry.trim();
@@ -188,7 +453,7 @@ function canonicalizeCspDomainSet(value: unknown): CspDomainSet | undefined {
   if (value === undefined) return undefined;
   if (!isPlainObject(value)) {
     throw new Error(
-      "hostConfigV2: mcpProfile CSP restrictTo must be a plain object",
+      "hostConfigV2: mcpProfile CSP restrictTo must be a plain object"
     );
   }
   const out: CspDomainSet = {};
@@ -230,12 +495,12 @@ function canonicalizeCspDomainSet(value: unknown): CspDomainSet | undefined {
 // strings. The 4 spec features are silently dropped — `permissions.allow` is
 // the single source of truth for them.
 function canonicalizeAllowFeatures(
-  value: unknown,
+  value: unknown
 ): Record<string, string> | undefined {
   if (value === undefined) return undefined;
   if (!isPlainObject(value)) {
     throw new Error(
-      "hostConfigV2: mcpProfile.apps.sandbox.allowFeatures must be a plain object",
+      "hostConfigV2: mcpProfile.apps.sandbox.allowFeatures must be a plain object"
     );
   }
   const dropped = new Set<string>(SEP_1865_PERMISSION_FEATURES);
@@ -246,21 +511,21 @@ function canonicalizeAllowFeatures(
     // " camera" slip past `dropped.has(k)` and re-grant a spec feature.
     if (!/^[a-z][a-z0-9-]*$/.test(k)) {
       throw new Error(
-        `hostConfigV2: mcpProfile.apps.sandbox.allowFeatures key "${k}" must be a lowercase kebab-case Permissions Policy token (^[a-z][a-z0-9-]*$)`,
+        `hostConfigV2: mcpProfile.apps.sandbox.allowFeatures key "${k}" must be a lowercase kebab-case Permissions Policy token (^[a-z][a-z0-9-]*$)`
       );
     }
     if (dropped.has(k)) continue;
     const v = (value as Record<string, unknown>)[k];
     if (typeof v !== "string") {
       throw new Error(
-        `hostConfigV2: mcpProfile.apps.sandbox.allowFeatures.${k} must be a string`,
+        `hostConfigV2: mcpProfile.apps.sandbox.allowFeatures.${k} must be a string`
       );
     }
     // Reject Permissions Policy directive separators in values (`;` iframe
     // allow= separator, `,` HTTP header separator) — injection guard.
     if (/[;,]/.test(v)) {
       throw new Error(
-        `hostConfigV2: mcpProfile.apps.sandbox.allowFeatures.${k} must not contain ';' or ',' (Permissions Policy directive separators)`,
+        `hostConfigV2: mcpProfile.apps.sandbox.allowFeatures.${k} must not contain ';' or ',' (Permissions Policy directive separators)`
       );
     }
     out[k] = v;
@@ -276,39 +541,39 @@ function canonicalizeAllowFeatures(
 // source-expression overrides. Rejects `;`/`,` in names and values
 // (CSP directive separators) — injection guard.
 function canonicalizeCspDirectives(
-  value: unknown,
+  value: unknown
 ): Record<string, string[]> | undefined {
   if (value === undefined) return undefined;
   if (!isPlainObject(value)) {
     throw new Error(
-      "hostConfigV2: mcpProfile.apps.sandbox.csp.cspDirectives must be a plain object",
+      "hostConfigV2: mcpProfile.apps.sandbox.csp.cspDirectives must be a plain object"
     );
   }
   const out: Record<string, string[]> = {};
   for (const k of Object.keys(value).sort()) {
     if (!/^[a-z][a-z0-9-]*$/.test(k)) {
       throw new Error(
-        `hostConfigV2: mcpProfile.apps.sandbox.csp.cspDirectives key "${k}" must be a lowercase kebab-case CSP directive name (^[a-z][a-z0-9-]*$)`,
+        `hostConfigV2: mcpProfile.apps.sandbox.csp.cspDirectives key "${k}" must be a lowercase kebab-case CSP directive name (^[a-z][a-z0-9-]*$)`
       );
     }
     const arr = (value as Record<string, unknown>)[k];
     if (!Array.isArray(arr)) {
       throw new Error(
-        `hostConfigV2: mcpProfile.apps.sandbox.csp.cspDirectives.${k} must be a string[]`,
+        `hostConfigV2: mcpProfile.apps.sandbox.csp.cspDirectives.${k} must be a string[]`
       );
     }
     const seen = new Set<string>();
     for (const entry of arr) {
       if (typeof entry !== "string") {
         throw new Error(
-          `hostConfigV2: mcpProfile.apps.sandbox.csp.cspDirectives.${k} entries must be strings`,
+          `hostConfigV2: mcpProfile.apps.sandbox.csp.cspDirectives.${k} entries must be strings`
         );
       }
       const trimmed = entry.trim();
       if (trimmed === "") continue;
       if (/[;,]/.test(trimmed)) {
         throw new Error(
-          `hostConfigV2: mcpProfile.apps.sandbox.csp.cspDirectives.${k} entry "${trimmed}" must not contain ';' or ',' (CSP directive separators — injection guard)`,
+          `hostConfigV2: mcpProfile.apps.sandbox.csp.cspDirectives.${k} entry "${trimmed}" must not contain ';' or ',' (CSP directive separators — injection guard)`
         );
       }
       seen.add(trimmed);
@@ -319,7 +584,7 @@ function canonicalizeCspDirectives(
 }
 
 function canonicalizeMcpProfile(
-  input: HostConfigMcpProfileV1 | undefined,
+  input: HostConfigMcpProfileV1 | undefined
 ): HostConfigMcpProfileV1 | undefined {
   if (input === undefined) return undefined;
   if (!isPlainObject(input)) {
@@ -338,7 +603,9 @@ function canonicalizeMcpProfile(
   if (input.mcpProtocolVersion !== undefined) {
     if (!isKnownProtocolVersion(input.mcpProtocolVersion)) {
       throw new Error(
-        `hostConfigV2: mcpProfile.mcpProtocolVersion must be one of ${MCP_PROTOCOL_VERSIONS.join(", ")} (got "${String(input.mcpProtocolVersion)}")`,
+        `hostConfigV2: mcpProfile.mcpProtocolVersion must be one of ${MCP_PROTOCOL_VERSIONS.join(
+          ", "
+        )} (got "${String(input.mcpProtocolVersion)}")`
       );
     }
     out.mcpProtocolVersion = input.mcpProtocolVersion;
@@ -347,7 +614,7 @@ function canonicalizeMcpProfile(
   if (input.initialize !== undefined) {
     if (!isPlainObject(input.initialize)) {
       throw new Error(
-        "hostConfigV2: mcpProfile.initialize must be a plain object",
+        "hostConfigV2: mcpProfile.initialize must be a plain object"
       );
     }
     const initOut: NonNullable<HostConfigMcpProfileV1["initialize"]> = {};
@@ -356,23 +623,23 @@ function canonicalizeMcpProfile(
       const versions = input.initialize.supportedProtocolVersions;
       if (!Array.isArray(versions)) {
         throw new Error(
-          "hostConfigV2: mcpProfile.initialize.supportedProtocolVersions must be a string[]",
+          "hostConfigV2: mcpProfile.initialize.supportedProtocolVersions must be a string[]"
         );
       }
       if (versions.length === 0) {
         throw new Error(
-          "hostConfigV2: mcpProfile.initialize.supportedProtocolVersions must be a non-empty array when set (omit the field to use SDK defaults)",
+          "hostConfigV2: mcpProfile.initialize.supportedProtocolVersions must be a non-empty array when set (omit the field to use SDK defaults)"
         );
       }
       for (const v of versions) {
         if (typeof v !== "string") {
           throw new Error(
-            "hostConfigV2: mcpProfile.initialize.supportedProtocolVersions entries must be strings",
+            "hostConfigV2: mcpProfile.initialize.supportedProtocolVersions entries must be strings"
           );
         }
         if (v.trim() === "") {
           throw new Error(
-            "hostConfigV2: mcpProfile.initialize.supportedProtocolVersions entries must be non-empty strings",
+            "hostConfigV2: mcpProfile.initialize.supportedProtocolVersions entries must be non-empty strings"
           );
         }
       }
@@ -384,7 +651,7 @@ function canonicalizeMcpProfile(
       const ci = input.initialize.clientInfo;
       if (!isPlainObject(ci)) {
         throw new Error(
-          "hostConfigV2: mcpProfile.initialize.clientInfo must be a plain object",
+          "hostConfigV2: mcpProfile.initialize.clientInfo must be a plain object"
         );
       }
       // Soft validation — name & version required by the MCP lifecycle spec.
@@ -392,12 +659,12 @@ function canonicalizeMcpProfile(
       const version = ci.version;
       if (typeof name !== "string" || name.trim() === "") {
         throw new Error(
-          "hostConfigV2: mcpProfile.initialize.clientInfo.name must be a non-empty string",
+          "hostConfigV2: mcpProfile.initialize.clientInfo.name must be a non-empty string"
         );
       }
       if (typeof version !== "string" || version.trim() === "") {
         throw new Error(
-          "hostConfigV2: mcpProfile.initialize.clientInfo.version must be a non-empty string",
+          "hostConfigV2: mcpProfile.initialize.clientInfo.version must be a non-empty string"
         );
       }
       initOut.clientInfo = deepSortStringKeys(ci);
@@ -427,12 +694,11 @@ function canonicalizeMcpProfile(
     const advertised = out.initialize?.supportedProtocolVersions;
     if (advertised === undefined) {
       const initBase = out.initialize ?? {};
-      const initWithDerived: NonNullable<
-        HostConfigMcpProfileV1["initialize"]
-      > = {
-        ...initBase,
-        supportedProtocolVersions: [out.mcpProtocolVersion],
-      };
+      const initWithDerived: NonNullable<HostConfigMcpProfileV1["initialize"]> =
+        {
+          ...initBase,
+          supportedProtocolVersions: [out.mcpProtocolVersion],
+        };
       const sortedInit: NonNullable<HostConfigMcpProfileV1["initialize"]> = {};
       for (const k of Object.keys(initWithDerived).sort()) {
         (sortedInit as Record<string, unknown>)[k] = (
@@ -442,7 +708,11 @@ function canonicalizeMcpProfile(
       out.initialize = sortedInit;
     } else if (!advertised.includes(out.mcpProtocolVersion)) {
       throw new Error(
-        `hostConfigV2: ConflictingProtocolVersionPin — mcpProtocolVersion "${out.mcpProtocolVersion}" is not in initialize.supportedProtocolVersions [${advertised.join(", ")}]. Either omit one or align them.`,
+        `hostConfigV2: ConflictingProtocolVersionPin — mcpProtocolVersion "${
+          out.mcpProtocolVersion
+        }" is not in initialize.supportedProtocolVersions [${advertised.join(
+          ", "
+        )}]. Either omit one or align them.`
       );
     }
   }
@@ -455,7 +725,7 @@ function canonicalizeMcpProfile(
     if (input.apps.sandbox !== undefined) {
       if (!isPlainObject(input.apps.sandbox)) {
         throw new Error(
-          "hostConfigV2: mcpProfile.apps.sandbox must be a plain object",
+          "hostConfigV2: mcpProfile.apps.sandbox must be a plain object"
         );
       }
       const sandboxIn = input.apps.sandbox;
@@ -466,7 +736,7 @@ function canonicalizeMcpProfile(
       if (sandboxIn.csp !== undefined) {
         if (!isPlainObject(sandboxIn.csp)) {
           throw new Error(
-            "hostConfigV2: mcpProfile.apps.sandbox.csp must be a plain object",
+            "hostConfigV2: mcpProfile.apps.sandbox.csp must be a plain object"
           );
         }
         // Note: there is NO `csp.deny` field. SEP-1865 is allowlist-only —
@@ -486,7 +756,7 @@ function canonicalizeMcpProfile(
             sandboxIn.csp.mode !== "relaxed"
           ) {
             throw new Error(
-              "hostConfigV2: mcpProfile.apps.sandbox.csp.mode must be 'host-default' | 'declared' | 'relaxed'",
+              "hostConfigV2: mcpProfile.apps.sandbox.csp.mode must be 'host-default' | 'declared' | 'relaxed'"
             );
           }
           cspOut.mode = sandboxIn.csp.mode;
@@ -494,7 +764,7 @@ function canonicalizeMcpProfile(
         const restrictTo = canonicalizeCspDomainSet(sandboxIn.csp.restrictTo);
         if (restrictTo !== undefined) cspOut.restrictTo = restrictTo;
         const cspDirectives = canonicalizeCspDirectives(
-          (sandboxIn.csp as { cspDirectives?: unknown }).cspDirectives,
+          (sandboxIn.csp as { cspDirectives?: unknown }).cspDirectives
         );
         if (cspDirectives !== undefined)
           (
@@ -503,7 +773,7 @@ function canonicalizeMcpProfile(
         if (sandboxIn.csp.extensions !== undefined) {
           if (!isPlainObject(sandboxIn.csp.extensions)) {
             throw new Error(
-              "hostConfigV2: mcpProfile.apps.sandbox.csp.extensions must be a plain object",
+              "hostConfigV2: mcpProfile.apps.sandbox.csp.extensions must be a plain object"
             );
           }
           cspOut.extensions = deepSortStringKeys(sandboxIn.csp.extensions);
@@ -521,7 +791,7 @@ function canonicalizeMcpProfile(
       if (sandboxIn.permissions !== undefined) {
         if (!isPlainObject(sandboxIn.permissions)) {
           throw new Error(
-            "hostConfigV2: mcpProfile.apps.sandbox.permissions must be a plain object",
+            "hostConfigV2: mcpProfile.apps.sandbox.permissions must be a plain object"
           );
         }
         const permsIn = sandboxIn.permissions;
@@ -537,7 +807,7 @@ function canonicalizeMcpProfile(
             permsIn.mode !== "custom"
           ) {
             throw new Error(
-              "hostConfigV2: mcpProfile.apps.sandbox.permissions.mode must be 'resource-declared' | 'deny-all' | 'custom'",
+              "hostConfigV2: mcpProfile.apps.sandbox.permissions.mode must be 'resource-declared' | 'deny-all' | 'custom'"
             );
           }
           permsOut.mode = permsIn.mode;
@@ -545,7 +815,7 @@ function canonicalizeMcpProfile(
         if (permsIn.allow !== undefined) {
           if (!isPlainObject(permsIn.allow)) {
             throw new Error(
-              "hostConfigV2: mcpProfile.apps.sandbox.permissions.allow must be a plain object",
+              "hostConfigV2: mcpProfile.apps.sandbox.permissions.allow must be a plain object"
             );
           }
           const allowOut: Record<string, boolean> = {};
@@ -553,7 +823,7 @@ function canonicalizeMcpProfile(
             const v = (permsIn.allow as Record<string, unknown>)[k];
             if (typeof v !== "boolean") {
               throw new Error(
-                `hostConfigV2: mcpProfile.apps.sandbox.permissions.allow.${k} must be a boolean`,
+                `hostConfigV2: mcpProfile.apps.sandbox.permissions.allow.${k} must be a boolean`
               );
             }
             allowOut[k] = v;
@@ -563,7 +833,7 @@ function canonicalizeMcpProfile(
         if (permsIn.extensions !== undefined) {
           if (!isPlainObject(permsIn.extensions)) {
             throw new Error(
-              "hostConfigV2: mcpProfile.apps.sandbox.permissions.extensions must be a plain object",
+              "hostConfigV2: mcpProfile.apps.sandbox.permissions.extensions must be a plain object"
             );
           }
           permsOut.extensions = deepSortStringKeys(permsIn.extensions);
@@ -581,7 +851,7 @@ function canonicalizeMcpProfile(
         (sandboxIn as { sandboxAttrs?: unknown }).sandboxAttrs !== undefined
       ) {
         const sandboxAttrs = canonicalizeCspDomainList(
-          (sandboxIn as { sandboxAttrs?: unknown }).sandboxAttrs,
+          (sandboxIn as { sandboxAttrs?: unknown }).sandboxAttrs
         );
         if (sandboxAttrs !== undefined) {
           (sandboxOut as { sandboxAttrs?: string[] }).sandboxAttrs =
@@ -593,7 +863,7 @@ function canonicalizeMcpProfile(
         (sandboxIn as { allowFeatures?: unknown }).allowFeatures !== undefined
       ) {
         const allowFeatures = canonicalizeAllowFeatures(
-          (sandboxIn as { allowFeatures?: unknown }).allowFeatures,
+          (sandboxIn as { allowFeatures?: unknown }).allowFeatures
         );
         if (allowFeatures !== undefined) {
           (
@@ -615,7 +885,7 @@ function canonicalizeMcpProfile(
     if (input.apps.uiInitialize !== undefined) {
       if (!isPlainObject(input.apps.uiInitialize)) {
         throw new Error(
-          "hostConfigV2: mcpProfile.apps.uiInitialize must be a plain object",
+          "hostConfigV2: mcpProfile.apps.uiInitialize must be a plain object"
         );
       }
       const uiInitOut: NonNullable<
@@ -625,20 +895,20 @@ function canonicalizeMcpProfile(
         const hi = input.apps.uiInitialize.hostInfo;
         if (!isPlainObject(hi)) {
           throw new Error(
-            "hostConfigV2: mcpProfile.apps.uiInitialize.hostInfo must be a plain object",
+            "hostConfigV2: mcpProfile.apps.uiInitialize.hostInfo must be a plain object"
           );
         }
         // Mirror the soft validation applied to initialize.clientInfo.
         const name = (hi as Record<string, unknown>).name;
         if (typeof name !== "string" || name.trim() === "") {
           throw new Error(
-            "hostConfigV2: mcpProfile.apps.uiInitialize.hostInfo.name must be a non-empty string",
+            "hostConfigV2: mcpProfile.apps.uiInitialize.hostInfo.name must be a non-empty string"
           );
         }
         const version = (hi as Record<string, unknown>).version;
         if (typeof version !== "string" || version.trim() === "") {
           throw new Error(
-            "hostConfigV2: mcpProfile.apps.uiInitialize.hostInfo.version must be a non-empty string",
+            "hostConfigV2: mcpProfile.apps.uiInitialize.hostInfo.version must be a non-empty string"
           );
         }
         uiInitOut.hostInfo = deepSortStringKeys(hi);
@@ -660,7 +930,7 @@ function canonicalizeMcpProfile(
         .compatRuntime;
       if (!isPlainObject(compatRuntimeIn)) {
         throw new Error(
-          "hostConfigV2: mcpProfile.apps.compatRuntime must be a plain object",
+          "hostConfigV2: mcpProfile.apps.compatRuntime must be a plain object"
         );
       }
       const compatRuntimeOut: NonNullable<
@@ -671,7 +941,7 @@ function canonicalizeMcpProfile(
       if (openaiApps !== undefined) {
         if (typeof openaiApps !== "boolean") {
           throw new Error(
-            "hostConfigV2: mcpProfile.apps.compatRuntime.openaiApps must be a boolean",
+            "hostConfigV2: mcpProfile.apps.compatRuntime.openaiApps must be a boolean"
           );
         }
         compatRuntimeOut.openaiApps = openaiApps;
@@ -680,14 +950,14 @@ function canonicalizeMcpProfile(
       if (openaiAppsOverridesIn !== undefined) {
         if (!isPlainObject(openaiAppsOverridesIn)) {
           throw new Error(
-            "hostConfigV2: mcpProfile.apps.compatRuntime.openaiAppsOverrides must be a plain object",
+            "hostConfigV2: mcpProfile.apps.compatRuntime.openaiAppsOverrides must be a plain object"
           );
         }
         const overridesOut: OpenAiAppsCapabilities = {};
         for (const [key, value] of Object.entries(openaiAppsOverridesIn)) {
           if (!OPENAI_APPS_CAPABILITY_KEY_SET.has(key)) {
             throw new Error(
-              `hostConfigV2: mcpProfile.apps.compatRuntime.openaiAppsOverrides has unknown key "${key}"`,
+              `hostConfigV2: mcpProfile.apps.compatRuntime.openaiAppsOverrides has unknown key "${key}"`
             );
           }
           if (key === "requestDisplayMode") {
@@ -698,7 +968,7 @@ function canonicalizeMcpProfile(
               ).includes(value)
             ) {
               throw new Error(
-                'hostConfigV2: mcpProfile.apps.compatRuntime.openaiAppsOverrides.requestDisplayMode must be "all" | "fullscreen-only" | "none"',
+                'hostConfigV2: mcpProfile.apps.compatRuntime.openaiAppsOverrides.requestDisplayMode must be "all" | "fullscreen-only" | "none"'
               );
             }
             overridesOut.requestDisplayMode =
@@ -706,7 +976,7 @@ function canonicalizeMcpProfile(
           } else {
             if (typeof value !== "boolean") {
               throw new Error(
-                `hostConfigV2: mcpProfile.apps.compatRuntime.openaiAppsOverrides.${key} must be a boolean`,
+                `hostConfigV2: mcpProfile.apps.compatRuntime.openaiAppsOverrides.${key} must be a boolean`
               );
             }
             (overridesOut as Record<string, unknown>)[key] = value;
@@ -748,25 +1018,25 @@ function canonicalizeMcpProfile(
         .mcpAppsOverrides;
       if (!isPlainObject(mcpAppsOverridesIn)) {
         throw new Error(
-          "hostConfigV2: mcpProfile.apps.mcpAppsOverrides must be a plain object",
+          "hostConfigV2: mcpProfile.apps.mcpAppsOverrides must be a plain object"
         );
       }
       const mcpAppsOverridesOut: McpAppsCapabilities = {};
       for (const [key, value] of Object.entries(mcpAppsOverridesIn)) {
         if (!MCP_APPS_CAPABILITY_KEY_SET.has(key)) {
           throw new Error(
-            `hostConfigV2: mcpProfile.apps.mcpAppsOverrides has unknown key "${key}"`,
+            `hostConfigV2: mcpProfile.apps.mcpAppsOverrides has unknown key "${key}"`
           );
         }
         if (key === "availableDisplayModes") {
           if (!Array.isArray(value)) {
             throw new Error(
-              "hostConfigV2: mcpProfile.apps.mcpAppsOverrides.availableDisplayModes must be an array",
+              "hostConfigV2: mcpProfile.apps.mcpAppsOverrides.availableDisplayModes must be an array"
             );
           }
           if (value.length === 0) {
             throw new Error(
-              "hostConfigV2: mcpProfile.apps.mcpAppsOverrides.availableDisplayModes must contain at least one mode",
+              "hostConfigV2: mcpProfile.apps.mcpAppsOverrides.availableDisplayModes must contain at least one mode"
             );
           }
           const seen = new Set<string>();
@@ -776,14 +1046,14 @@ function canonicalizeMcpProfile(
               !MCP_APPS_DISPLAY_MODE_VALUE_SET.has(entry)
             ) {
               throw new Error(
-                'hostConfigV2: mcpProfile.apps.mcpAppsOverrides.availableDisplayModes entries must be "inline" | "fullscreen" | "pip"',
+                'hostConfigV2: mcpProfile.apps.mcpAppsOverrides.availableDisplayModes entries must be "inline" | "fullscreen" | "pip"'
               );
             }
             seen.add(entry);
           }
           mcpAppsOverridesOut.availableDisplayModes =
             MCP_APPS_DISPLAY_MODE_VALUES.filter((m) =>
-              seen.has(m),
+              seen.has(m)
             ) as McpAppsCapabilities["availableDisplayModes"];
         } else if (key === "widgetDisplayModeRequests") {
           if (
@@ -793,7 +1063,7 @@ function canonicalizeMcpProfile(
             ).includes(value)
           ) {
             throw new Error(
-              'hostConfigV2: mcpProfile.apps.mcpAppsOverrides.widgetDisplayModeRequests must be "accept" | "user-initiated-only" | "decline"',
+              'hostConfigV2: mcpProfile.apps.mcpAppsOverrides.widgetDisplayModeRequests must be "accept" | "user-initiated-only" | "decline"'
             );
           }
           mcpAppsOverridesOut.widgetDisplayModeRequests =
@@ -801,7 +1071,7 @@ function canonicalizeMcpProfile(
         } else {
           if (typeof value !== "boolean") {
             throw new Error(
-              `hostConfigV2: mcpProfile.apps.mcpAppsOverrides.${key} must be a boolean`,
+              `hostConfigV2: mcpProfile.apps.mcpAppsOverrides.${key} must be a boolean`
             );
           }
           (mcpAppsOverridesOut as Record<string, unknown>)[key] = value;
@@ -832,7 +1102,7 @@ function canonicalizeMcpProfile(
   if (input.extensions !== undefined) {
     if (!isPlainObject(input.extensions)) {
       throw new Error(
-        "hostConfigV2: mcpProfile.extensions must be a plain object",
+        "hostConfigV2: mcpProfile.extensions must be a plain object"
       );
     }
     out.extensions = deepSortStringKeys(input.extensions);
@@ -856,7 +1126,7 @@ function canonicalizeMcpProfile(
 function canonicalizeServerConnectionOverrides(
   serverIds: Array<ServerId>,
   optionalServerIds: Array<ServerId>,
-  overrides: HostConfigInputV2["serverConnectionOverrides"],
+  overrides: HostConfigInputV2["serverConnectionOverrides"]
 ): CanonicalHostConfigV2["serverConnectionOverrides"] {
   if (!overrides || Object.keys(overrides).length === 0) return undefined;
   const allowedIds = new Set<string>([...serverIds, ...optionalServerIds]);
@@ -871,7 +1141,7 @@ function canonicalizeServerConnectionOverrides(
   for (const [serverId, entry] of Object.entries(overrides)) {
     if (!allowedIds.has(serverId)) {
       throw new Error(
-        `hostConfigV2: serverConnectionOverrides key "${serverId}" is not in serverIds or optionalServerIds`,
+        `hostConfigV2: serverConnectionOverrides key "${serverId}" is not in serverIds or optionalServerIds`
       );
     }
     if (!entry) continue;
@@ -883,7 +1153,9 @@ function canonicalizeServerConnectionOverrides(
     if (entry.mcpProtocolVersionOverride !== undefined) {
       if (!isKnownProtocolVersion(entry.mcpProtocolVersionOverride)) {
         throw new Error(
-          `hostConfigV2: serverConnectionOverrides["${serverId}"].mcpProtocolVersionOverride must be one of ${MCP_PROTOCOL_VERSIONS.join(", ")} (got "${String(entry.mcpProtocolVersionOverride)}")`,
+          `hostConfigV2: serverConnectionOverrides["${serverId}"].mcpProtocolVersionOverride must be one of ${MCP_PROTOCOL_VERSIONS.join(
+            ", "
+          )} (got "${String(entry.mcpProtocolVersionOverride)}")`
         );
       }
       mcpProtocolVersionOverride = entry.mcpProtocolVersionOverride;
@@ -893,7 +1165,7 @@ function canonicalizeServerConnectionOverrides(
       !Number.isFinite(entry.requestTimeoutOverride)
     ) {
       throw new Error(
-        `hostConfigV2: serverConnectionOverrides["${serverId}"].requestTimeoutOverride must be finite`,
+        `hostConfigV2: serverConnectionOverrides["${serverId}"].requestTimeoutOverride must be finite`
       );
     }
     const hasContent =
@@ -923,19 +1195,68 @@ function canonicalizeServerConnectionOverrides(
   if (Object.keys(result).length === 0) return undefined;
   // Sort outer keys for hash stability.
   return sortStringKeys(
-    result,
+    result
   ) as CanonicalHostConfigV2["serverConnectionOverrides"];
 }
 
+// Allowed keys on `computer`. Explicit construction below (never a spread of
+// user input) keeps stray keys out of the canonical JSON; this set makes the
+// stray key a loud error instead of a silent drop. `toolset` is the legacy
+// MVP capability key: still ACCEPTED on input (validated when present) but
+// never emitted — capabilities moved to `builtInToolIds`, and the canonical
+// `computer` is the resource attachment only.
+const COMPUTER_KEYS = new Set(["kind", "toolset", "workdir"]);
+
+/**
+ * Canonicalize the optional `computer` field. `null` collapses to undefined
+ * ("cleared" hashes identically to "never set"); `workdir` is trimmed, with
+ * empty-after-trim collapsing to absent; legacy `toolset` input is dropped
+ * (so `{ kind, toolset: "bash" }` and `{ kind }` hash identically). Output
+ * keys are built in sorted order (kind, workdir) for hash stability.
+ */
+function canonicalizeComputer(
+  computer: HostConfigInputV2["computer"]
+): HostConfigComputer | undefined {
+  if (computer === undefined || computer === null) return undefined;
+  if (!isPlainObject(computer)) {
+    throw new Error("hostConfigV2: computer must be a plain object or null");
+  }
+  for (const key of Object.keys(computer)) {
+    if (!COMPUTER_KEYS.has(key)) {
+      throw new Error(`hostConfigV2: computer has unknown key "${key}"`);
+    }
+  }
+  if (computer.kind !== "personal") {
+    throw new Error('hostConfigV2: computer.kind must be "personal"');
+  }
+  // Legacy input only: when present it must be the one value that ever
+  // existed, then it's dropped from the canonical form.
+  if (computer.toolset !== undefined && computer.toolset !== "bash") {
+    throw new Error('hostConfigV2: computer.toolset must be "bash"');
+  }
+  let workdir: string | undefined;
+  if (computer.workdir !== undefined) {
+    if (typeof computer.workdir !== "string") {
+      throw new Error("hostConfigV2: computer.workdir must be a string");
+    }
+    const trimmed = computer.workdir.trim();
+    workdir = trimmed === "" ? undefined : trimmed;
+  }
+  return {
+    kind: "personal",
+    ...(workdir !== undefined ? { workdir } : {}),
+  };
+}
+
 export function canonicalizeHostConfigV2(
-  input: HostConfigInputV2,
+  input: HostConfigInputV2
 ): CanonicalHostConfigV2 {
   if (!Number.isFinite(input.temperature)) {
     throw new Error("hostConfigV2: temperature must be finite");
   }
   if (!Number.isFinite(input.connectionDefaults.requestTimeout)) {
     throw new Error(
-      "hostConfigV2: connectionDefaults.requestTimeout must be finite",
+      "hostConfigV2: connectionDefaults.requestTimeout must be finite"
     );
   }
   if (
@@ -945,7 +1266,7 @@ export function canonicalizeHostConfigV2(
       Array.isArray(input.hostCapabilitiesOverride))
   ) {
     throw new Error(
-      "hostConfigV2: hostCapabilitiesOverride must be a plain object",
+      "hostConfigV2: hostCapabilitiesOverride must be a plain object"
     );
   }
   if (
@@ -956,8 +1277,27 @@ export function canonicalizeHostConfigV2(
   ) {
     throw new Error("hostConfigV2: chatUiOverride must be a plain object");
   }
+  // Closed enum: reject unknown harness ids so untyped (JS) callers can't
+  // persist a value the runtime can't honor. Membership is checked against the
+  // portable HARNESS_IDS source of truth (mirrored by the backend). The "harness
+  // requires a computer" rule is enforced at the backend write-path (next to
+  // builtInTools' requiresComputer), not here — the canonicalizer stays a pure
+  // normalizer.
+  if (input.harness !== undefined && !isHarness(input.harness)) {
+    throw new Error(
+      `hostConfigV2: harness must be one of ${HARNESS_IDS.map((h) => `"${h}"`).join(", ")} when set`,
+    );
+  }
   const serverIds = sortUniqueServerIds(input.serverIds);
   const optionalServerIds = sortUniqueServerIds(input.optionalServerIds);
+  const hostContext = requireRecord(input.hostContext, "hostContext");
+  const modelVisibleMcpToolResults = canonicalizeModelVisibleMcpToolResults(
+    input.modelVisibleMcpToolResults
+  );
+  const mcpToolResultImageRendering =
+    canonicalizeMcpToolResultImageRenderingPolicy(
+      input.mcpToolResultImageRendering
+    );
   return {
     schemaVersion: HOST_CONFIG_SCHEMA_VERSION_V2,
     hostStyle: input.hostStyle,
@@ -969,10 +1309,22 @@ export function canonicalizeHostConfigV2(
     // pre-feature row; explicit `false` writes a key and hashes distinctly.
     progressiveToolDiscovery: input.progressiveToolDiscovery,
     respectToolVisibility: input.respectToolVisibility,
+    // Validated pass-through (value checked above). Absent ⇒ emulated;
+    // JSON.stringify drops undefined so pre-feature rows hash byte-identically.
+    harness: input.harness,
+    // Absent/null ⇒ key omitted, hashing byte-identically to pre-feature rows.
+    computer: canonicalizeComputer(input.computer),
     // Normalize undefined → [] and dedupe before sort so canonical/hash output
     // is identical for semantically equivalent server lists.
     serverIds,
     optionalServerIds,
+    // Opaque built-in tool ids. Helper returns undefined for absent/empty, so
+    // JSON.stringify drops the key and pre-feature rows hash byte-identically.
+    builtInToolIds: canonicalizeBuiltInToolIds(input.builtInToolIds),
+    // Preserve undefined-vs-set: absent rows keep their historical hash, while
+    // explicit off/on leaves survive template hostContext reseeds.
+    modelVisibleMcpToolResults,
+    mcpToolResultImageRendering,
     connectionDefaults: {
       headers: sortStringKeys(input.connectionDefaults.headers),
       requestTimeout: input.connectionDefaults.requestTimeout,
@@ -983,8 +1335,11 @@ export function canonicalizeHostConfigV2(
     // Fail-fast on missing: HostConfigInputV2 requires both fields; a
     // `?? {}` fallback hides write-path bugs that would silently dedupe
     // distinct callers' configs into a stray empty-capability row.
-    clientCapabilities: requireRecord(input.clientCapabilities, "clientCapabilities"),
-    hostContext: requireRecord(input.hostContext, "hostContext"),
+    clientCapabilities: requireRecord(
+      input.clientCapabilities,
+      "clientCapabilities"
+    ),
+    hostContext,
     // Preserve undefined (omitted → dedupes with preset) vs {} (explicit empty
     // → hashes distinctly).
     hostCapabilitiesOverride:
@@ -999,7 +1354,7 @@ export function canonicalizeHostConfigV2(
     serverConnectionOverrides: canonicalizeServerConnectionOverrides(
       serverIds,
       optionalServerIds,
-      input.serverConnectionOverrides,
+      input.serverConnectionOverrides
     ),
   };
 }

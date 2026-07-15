@@ -4,6 +4,9 @@ import {
   mergeClientCapabilities,
   normalizeClientCapabilities,
 } from "@mcpjam/sdk/browser";
+// `stableStringifyJson` relocated to the SDK widget-runtime (Phase 3d-ii);
+// imported for internal use and re-exported below so existing import sites stay.
+import { stableStringifyJson } from "@mcpjam/sdk/widget-runtime";
 
 export type ProjectClientConfig = {
   version: 1;
@@ -353,25 +356,10 @@ export function normalizeProjectClientCapabilities(
   );
 }
 
-function canonicalizeJsonValue(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(canonicalizeJsonValue);
-  }
-
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, nestedValue]) => [key, canonicalizeJsonValue(nestedValue)]),
-    );
-  }
-
-  return value;
-}
-
-export function stableStringifyJson(value: unknown): string {
-  return JSON.stringify(canonicalizeJsonValue(value));
-}
+// `stableStringifyJson` (+ its private canonicalizer) relocated to
+// @mcpjam/sdk/widget-runtime (Phase 3d-ii); re-exported for back-compat with
+// `@/lib/client-config` consumers.
+export { stableStringifyJson };
 
 export function projectClientCapabilitiesNeedReconnect(args: {
   desiredCapabilities?: Record<string, unknown>;

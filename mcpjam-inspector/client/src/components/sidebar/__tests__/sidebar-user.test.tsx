@@ -5,13 +5,11 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 const authState = vi.hoisted(() => ({
   signInMock: vi.fn(),
   signOutMock: vi.fn(),
-  user: null as
-    | null
-    | {
-        email: string;
-        firstName?: string;
-        lastName?: string;
-      },
+  user: null as null | {
+    email: string;
+    firstName?: string;
+    lastName?: string;
+  },
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -25,6 +23,15 @@ vi.mock("@workos-inc/authkit-react", () => ({
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isLoading: false, isAuthenticated: false }),
   useQuery: () => null,
+}));
+
+vi.mock("@mcpjam/design-system/popover", () => ({
+  Popover: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  PopoverAnchor: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
+vi.mock("@/components/notifications/NotificationsPanel", () => ({
+  NotificationsPanelContent: () => <div data-testid="notifications-panel" />,
 }));
 
 vi.mock("@/lib/config", () => ({
@@ -56,7 +63,9 @@ vi.mock("@/components/sidebar/sidebar-credit-usage", () => ({
 }));
 
 vi.mock("@mcpjam/design-system/dropdown-menu", () => ({
-  DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenu: ({ children }: { children: ReactNode }) => (
+    <div>{children}</div>
+  ),
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => (
     <>{children}</>
   ),
@@ -108,7 +117,7 @@ describe("SidebarUser", () => {
     const signInButton = screen.getByRole("button", { name: "Sign in" });
     expect(signInButton).toHaveAttribute("aria-label", "Sign in");
     expect(signInButton.className).toContain(
-      "data-[state=open]:bg-sidebar-accent",
+      "data-[state=open]:bg-sidebar-accent"
     );
   });
 
@@ -130,6 +139,21 @@ describe("SidebarUser", () => {
     expect(
       screen.queryByTestId("sidebar-credit-usage")
     ).not.toBeInTheDocument();
+  });
+
+  it("account menu offers Notifications and Support alongside Profile and Settings", () => {
+    authState.user = {
+      email: "owner@example.com",
+      firstName: "Owner",
+      lastName: "Example",
+    };
+
+    render(<SidebarUser />);
+
+    expect(screen.getByText("Profile")).toBeInTheDocument();
+    expect(screen.getByText("Settings")).toBeInTheDocument();
+    expect(screen.getByText("Notifications")).toBeInTheDocument();
+    expect(screen.getByText("Support")).toBeInTheDocument();
   });
 
   it("returns logout to the app origin instead of the callback route", () => {
@@ -167,7 +191,7 @@ describe("SidebarUser", () => {
       });
     });
     expect(onBeforeSignOut.mock.invocationCallOrder[0]).toBeLessThan(
-      authState.signOutMock.mock.invocationCallOrder[0],
+      authState.signOutMock.mock.invocationCallOrder[0]
     );
   });
 

@@ -35,7 +35,11 @@
 
 import {
   extractHostExecutionPolicy,
+  isHarness,
+  type Harness,
   type HostExecutionPolicy,
+  type McpToolResultImageRenderingPolicy,
+  type ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
 
 /**
@@ -66,8 +70,12 @@ export interface ExecutionOverrides {
   requireToolApproval?: boolean;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
+  modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
+  hostStyle?: string;
   modelId?: string;
   selectedServerIds?: string[];
+  builtInToolIds?: string[];
 }
 
 /**
@@ -106,7 +114,20 @@ export interface ResolvedExecutionContext {
   respectToolVisibility: boolean | undefined;
   progressiveToolDiscovery: boolean | undefined;
   modelId: string | undefined;
+  /** Which real agent harness runs the turn (host-level). Absent ⇒ emulated. */
+  harness: Harness | undefined;
   selectedServerIds: string[] | undefined;
+  /**
+   * HostConfig v2 built-in tool ids (e.g. `["web_search"]`). The resolver
+   * only surfaces the resolved id list; turning ids into runnable AI SDK
+   * tools (and deciding whether auth context permits it) is owned by
+   * `built-in-tools/registry.ts` at the call site.
+   */
+  builtInToolIds: string[] | undefined;
+  /** Raw model-visible MCP tool-result policy, before SDK defaults are applied. */
+  modelVisibleMcpToolResults: ModelVisibleMcpToolResults | undefined;
+  /** Human-facing MCP tool-result image rendering policy. */
+  mcpToolResultImageRendering: McpToolResultImageRenderingPolicy | undefined;
   hostPolicy: HostExecutionPolicy;
   drift: ExecutionDriftEntry[];
 }
@@ -117,7 +138,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readString(
   hostConfig: Record<string, unknown>,
-  key: string,
+  key: string
 ): string | undefined {
   const value = hostConfig[key];
   return typeof value === "string" ? value : undefined;
@@ -125,7 +146,7 @@ function readString(
 
 function readNumber(
   hostConfig: Record<string, unknown>,
-  key: string,
+  key: string
 ): number | undefined {
   const value = hostConfig[key];
   return typeof value === "number" ? value : undefined;
@@ -133,7 +154,7 @@ function readNumber(
 
 function readBoolean(
   hostConfig: Record<string, unknown>,
-  key: string,
+  key: string
 ): boolean | undefined {
   const value = hostConfig[key];
   return typeof value === "boolean" ? value : undefined;
@@ -141,12 +162,28 @@ function readBoolean(
 
 function readStringArray(
   hostConfig: Record<string, unknown>,
-  key: string,
+  key: string
 ): string[] | undefined {
   const value = hostConfig[key];
   if (!Array.isArray(value)) return undefined;
   if (!value.every((entry) => typeof entry === "string")) return undefined;
   return value as string[];
+}
+
+function readMcpToolResultImageRendering(
+  hostConfig: Record<string, unknown>
+): McpToolResultImageRenderingPolicy | undefined {
+  const value = hostConfig.mcpToolResultImageRendering;
+  return isRecord(value)
+    ? (value as McpToolResultImageRenderingPolicy)
+    : undefined;
+}
+
+function readModelVisibleMcpToolResults(
+  hostConfig: Record<string, unknown>
+): ModelVisibleMcpToolResults | undefined {
+  const value = hostConfig.modelVisibleMcpToolResults;
+  return isRecord(value) ? (value as ModelVisibleMcpToolResults) : undefined;
 }
 
 /**
@@ -156,13 +193,28 @@ function readStringArray(
  * read so the resolver accepts both shapes.
  */
 function readProgressiveToolDiscovery(
-  hostConfig: Record<string, unknown>,
+  hostConfig: Record<string, unknown>
 ): boolean | undefined {
   const raw = hostConfig.progressiveToolDiscovery;
   if (typeof raw === "boolean") return raw;
   if (isRecord(raw) && raw.enabled === true) return true;
   if (isRecord(raw) && raw.enabled === false) return false;
   return undefined;
+}
+
+/**
+ * Value equality for drift detection. Array fields (`selectedServerIds`,
+ * `builtInToolIds`) arrive as fresh allocations on every request — a
+ * reference compare would report drift for identical contents.
+ */
+function areEqualValues(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((v, i) => v === b[i]);
+  }
+  if (isRecord(a) && isRecord(b)) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+  return Object.is(a, b);
 }
 
 /**
@@ -174,7 +226,7 @@ function pickField<T>(
   field: keyof ExecutionOverrides,
   override: T | undefined,
   host: T | undefined,
-  precedence: ResolverPrecedence,
+  precedence: ResolverPrecedence
 ): { value: T | undefined; drift?: ExecutionDriftEntry } {
   const overrideDefined = override !== undefined;
   const hostDefined = host !== undefined;
@@ -188,16 +240,22 @@ function pickField<T>(
     return { value: override };
   }
   // Both defined — apply precedence + record drift when they differ.
-  const drift =
-    override !== host
-      ? {
-          field,
-          overrideValue: override as unknown,
-          hostValue: host as unknown,
-        }
-      : undefined;
+  const drift = !areEqualValues(override, host)
+    ? {
+        field,
+        overrideValue: override as unknown,
+        hostValue: host as unknown,
+      }
+    : undefined;
   const winner = precedence === "host-wins" ? host : override;
   return drift ? { value: winner, drift } : { value: winner };
+}
+
+/** Read the host-level `harness` selector. Only a REGISTERED harness id is
+ *  surfaced (membership via the SDK's `isHarness`, the persistence-contract
+ *  source of truth); anything else (or absent) ⇒ undefined (emulated). */
+function readHarness(hostConfig: Record<string, unknown>): Harness | undefined {
+  return isHarness(hostConfig.harness) ? hostConfig.harness : undefined;
 }
 
 export function resolveExecutionContext(args: {
@@ -207,12 +265,32 @@ export function resolveExecutionContext(args: {
   namedHostId?: string;
 }): ResolvedExecutionContext {
   const { hostConfig, overrides = {}, precedence, namedHostId } = args;
-  const hostPolicy = extractHostExecutionPolicy(hostConfig, namedHostId);
   const drift: ExecutionDriftEntry[] = [];
 
   // hostConfig === null short-circuit: no host values, return overrides
   // as-is. `requireToolApproval` still has its boolean-default semantic.
   if (!hostConfig) {
+    const policySource =
+      overrides.hostStyle ||
+      overrides.modelVisibleMcpToolResults !== undefined ||
+      overrides.mcpToolResultImageRendering !== undefined
+        ? {
+            ...(overrides.hostStyle ? { hostStyle: overrides.hostStyle } : {}),
+            ...(overrides.modelVisibleMcpToolResults !== undefined
+              ? {
+                  modelVisibleMcpToolResults:
+                    overrides.modelVisibleMcpToolResults,
+                }
+              : {}),
+            ...(overrides.mcpToolResultImageRendering !== undefined
+              ? {
+                  mcpToolResultImageRendering:
+                    overrides.mcpToolResultImageRendering,
+                }
+              : {}),
+          }
+        : null;
+    const hostPolicy = extractHostExecutionPolicy(policySource, namedHostId);
     return {
       systemPrompt: overrides.systemPrompt,
       temperature: overrides.temperature,
@@ -220,7 +298,11 @@ export function resolveExecutionContext(args: {
       respectToolVisibility: overrides.respectToolVisibility,
       progressiveToolDiscovery: overrides.progressiveToolDiscovery,
       modelId: overrides.modelId,
+      harness: undefined,
       selectedServerIds: overrides.selectedServerIds,
+      builtInToolIds: overrides.builtInToolIds,
+      modelVisibleMcpToolResults: overrides.modelVisibleMcpToolResults,
+      mcpToolResultImageRendering: overrides.mcpToolResultImageRendering,
       hostPolicy,
       drift,
     };
@@ -232,15 +314,18 @@ export function resolveExecutionContext(args: {
     requireToolApproval: readBoolean(hostConfig, "requireToolApproval"),
     respectToolVisibility: readBoolean(hostConfig, "respectToolVisibility"),
     progressiveToolDiscovery: readProgressiveToolDiscovery(hostConfig),
+    modelVisibleMcpToolResults: readModelVisibleMcpToolResults(hostConfig),
+    mcpToolResultImageRendering: readMcpToolResultImageRendering(hostConfig),
     modelId: readString(hostConfig, "modelId"),
     selectedServerIds: readStringArray(hostConfig, "selectedServerIds"),
+    builtInToolIds: readStringArray(hostConfig, "builtInToolIds"),
   };
 
   const systemPrompt = pickField(
     "systemPrompt",
     overrides.systemPrompt,
     hostFields.systemPrompt,
-    precedence,
+    precedence
   );
   if (systemPrompt.drift) drift.push(systemPrompt.drift);
 
@@ -248,7 +333,7 @@ export function resolveExecutionContext(args: {
     "temperature",
     overrides.temperature,
     hostFields.temperature,
-    precedence,
+    precedence
   );
   if (temperature.drift) drift.push(temperature.drift);
 
@@ -256,7 +341,7 @@ export function resolveExecutionContext(args: {
     "requireToolApproval",
     overrides.requireToolApproval,
     hostFields.requireToolApproval,
-    precedence,
+    precedence
   );
   if (requireToolApprovalPick.drift) drift.push(requireToolApprovalPick.drift);
 
@@ -264,7 +349,7 @@ export function resolveExecutionContext(args: {
     "respectToolVisibility",
     overrides.respectToolVisibility,
     hostFields.respectToolVisibility,
-    precedence,
+    precedence
   );
   if (respectToolVisibility.drift) drift.push(respectToolVisibility.drift);
 
@@ -272,15 +357,36 @@ export function resolveExecutionContext(args: {
     "progressiveToolDiscovery",
     overrides.progressiveToolDiscovery,
     hostFields.progressiveToolDiscovery,
-    precedence,
+    precedence
   );
-  if (progressiveToolDiscovery.drift) drift.push(progressiveToolDiscovery.drift);
+  if (progressiveToolDiscovery.drift)
+    drift.push(progressiveToolDiscovery.drift);
+
+  const modelVisibleMcpToolResults = pickField(
+    "modelVisibleMcpToolResults",
+    overrides.modelVisibleMcpToolResults,
+    hostFields.modelVisibleMcpToolResults,
+    precedence
+  );
+  if (modelVisibleMcpToolResults.drift) {
+    drift.push(modelVisibleMcpToolResults.drift);
+  }
+
+  const mcpToolResultImageRendering = pickField(
+    "mcpToolResultImageRendering",
+    overrides.mcpToolResultImageRendering,
+    hostFields.mcpToolResultImageRendering,
+    precedence
+  );
+  if (mcpToolResultImageRendering.drift) {
+    drift.push(mcpToolResultImageRendering.drift);
+  }
 
   const modelId = pickField(
     "modelId",
     overrides.modelId,
     hostFields.modelId,
-    precedence,
+    precedence
   );
   if (modelId.drift) drift.push(modelId.drift);
 
@@ -288,9 +394,35 @@ export function resolveExecutionContext(args: {
     "selectedServerIds",
     overrides.selectedServerIds,
     hostFields.selectedServerIds,
-    precedence,
+    precedence
   );
   if (selectedServerIds.drift) drift.push(selectedServerIds.drift);
+
+  const builtInToolIds = pickField(
+    "builtInToolIds",
+    overrides.builtInToolIds,
+    hostFields.builtInToolIds,
+    precedence
+  );
+  if (builtInToolIds.drift) drift.push(builtInToolIds.drift);
+
+  const hostPolicy = extractHostExecutionPolicy(
+    modelVisibleMcpToolResults.value !== undefined ||
+      mcpToolResultImageRendering.value !== undefined
+      ? {
+          ...hostConfig,
+          ...(modelVisibleMcpToolResults.value !== undefined
+            ? { modelVisibleMcpToolResults: modelVisibleMcpToolResults.value }
+            : {}),
+          ...(mcpToolResultImageRendering.value !== undefined
+            ? {
+                mcpToolResultImageRendering: mcpToolResultImageRendering.value,
+              }
+            : {}),
+        }
+      : hostConfig,
+    namedHostId
+  );
 
   return {
     systemPrompt: systemPrompt.value,
@@ -300,7 +432,11 @@ export function resolveExecutionContext(args: {
     respectToolVisibility: respectToolVisibility.value,
     progressiveToolDiscovery: progressiveToolDiscovery.value,
     modelId: modelId.value,
+    harness: readHarness(hostConfig),
     selectedServerIds: selectedServerIds.value,
+    builtInToolIds: builtInToolIds.value,
+    modelVisibleMcpToolResults: modelVisibleMcpToolResults.value,
+    mcpToolResultImageRendering: mcpToolResultImageRendering.value,
     hostPolicy,
     drift,
   };

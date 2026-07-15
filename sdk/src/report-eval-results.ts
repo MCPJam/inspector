@@ -7,7 +7,6 @@ import type {
 import { EvalReportingError } from "./errors.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { addBreadcrumb, captureEvalReportingFailure } from "./sentry.js";
-import { resolveSdkEvalsCapabilities } from "./sdk-evals-capability.js";
 import {
   buildSdkEvalsWireHostConfig,
   type SdkEvalsWireHostConfig,
@@ -21,11 +20,19 @@ const CHUNK_SIZE_LIMIT = 200;
 const ONE_SHOT_RESULT_LIMIT = 200;
 const CHUNK_TARGET_BYTES = 1024 * 1024;
 
-export const DEFAULT_MCPJAM_BASE_URL = "https://sdk.mcpjam.com";
+export const DEFAULT_MCPJAM_BASE_URL = "https://app.mcpjam.com";
+
+/**
+ * Where results land. `default` resolves server-side to the API key org's
+ * Default project; pass a project id (from the dashboard URL or
+ * `GET /api/v1/projects`) to target another project.
+ */
+export const DEFAULT_MCPJAM_PROJECT = "default";
 
 type RuntimeConfig = {
   apiKey: string;
   baseUrl: string;
+  project: string;
   timeoutMs: number;
   retryDelaysMs: number[];
 };
@@ -47,7 +54,11 @@ type AppendIterationsResponse = {
 
 type BackendEnvelope<T> = {
   ok?: boolean;
+  // Legacy ingestion error shape.
   error?: string;
+  // Canonical v1 error envelope.
+  code?: string;
+  message?: string;
 } & T;
 
 type NormalizedReportingError = {
@@ -73,6 +84,26 @@ function resolveBaseUrl(
   );
 }
 
+function resolveProject(
+  input: Pick<ReportEvalResultsInput, "project">
+): string {
+  const project = input.project ?? process.env.MCPJAM_PROJECT_ID;
+  const trimmed = typeof project === "string" ? project.trim() : "";
+  return trimmed || DEFAULT_MCPJAM_PROJECT;
+}
+
+/**
+ * Ingestion endpoints live on the MCPJam public API
+ * (`/api/v1/projects/:projectId/eval-ingest/*`), authenticated with an
+ * MCPJam API key (`sk_…`). They replaced the retired `/sdk/v1/evals/*`
+ * surface, whose `mcpjam_` project keys no longer exist.
+ */
+function ingestPath(config: RuntimeConfig, suffix: string): string {
+  return `/api/v1/projects/${encodeURIComponent(
+    config.project
+  )}/eval-ingest/${suffix}`;
+}
+
 function getResultCount(
   results: ReportEvalResultsInput["results"]
 ): number | undefined {
@@ -86,6 +117,7 @@ function buildFailureContext(
   return {
     apiKey: resolveApiKey(input),
     baseUrl: resolveBaseUrl(input),
+    project: resolveProject(input),
     entrypoint,
     framework: input.framework,
     resultCount: getResultCount(input.results),
@@ -239,10 +271,7 @@ function isBillingLimitReachedError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
   }
-  if (
-    error instanceof EvalReportingError &&
-    error.isBillingLimitReached
-  ) {
+  if (error instanceof EvalReportingError && error.isBillingLimitReached) {
     return true;
   }
   return (
@@ -312,6 +341,7 @@ function createRuntimeConfig(input: ReportEvalResultsInput): RuntimeConfig {
   return {
     apiKey,
     baseUrl: resolveBaseUrl(input),
+    project: resolveProject(input),
     timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
     retryDelaysMs: DEFAULT_RETRY_DELAYS_MS,
   };
@@ -352,7 +382,10 @@ async function requestWithRetry<T>(
 
       if (response.ok) {
         if (responseBody && responseBody.ok === false) {
-          const rawMessage = responseBody.error ?? "Unknown SDK evals error";
+          const rawMessage =
+            responseBody.error ??
+            responseBody.message ??
+            "Unknown SDK evals error";
           const { message, isBillingLimitReached } =
             normalizeReportingErrorMessage(rawMessage);
           throw new EvalReportingError(message, {
@@ -367,6 +400,7 @@ async function requestWithRetry<T>(
 
       const rawMessage =
         responseBody?.error ??
+        responseBody?.message ??
         `Request failed with status ${response.status}: ${response.statusText}`;
       const { message, isBillingLimitReached } =
         normalizeReportingErrorMessage(rawMessage);
@@ -434,7 +468,7 @@ async function startEvalRun(
 ): Promise<StartRunResponse> {
   return await requestWithRetry<StartRunResponse>(
     config,
-    "/sdk/v1/evals/runs/start",
+    ingestPath(config, "runs/start"),
     payload
   );
 }
@@ -448,7 +482,7 @@ async function appendEvalRunIterations(
 ): Promise<AppendIterationsResponse> {
   return await requestWithRetry<AppendIterationsResponse>(
     config,
-    "/sdk/v1/evals/runs/iterations",
+    ingestPath(config, "runs/iterations"),
     payload
   );
 }
@@ -462,7 +496,7 @@ async function finalizeEvalRun(
 ): Promise<ReportEvalResultsOutput> {
   return await requestWithRetry<ReportEvalResultsOutput>(
     config,
-    "/sdk/v1/evals/runs/finalize",
+    ingestPath(config, "runs/finalize"),
     payload
   );
 }
@@ -472,7 +506,7 @@ async function getEvalArtifactUploadUrl(
 ): Promise<string> {
   const response = await requestWithRetry<EvalArtifactUploadUrlResponse>(
     config,
-    "/sdk/v1/evals/artifacts/upload-url",
+    ingestPath(config, "artifacts/upload-url"),
     {}
   );
   if (!response.uploadUrl) {
@@ -645,8 +679,8 @@ function shouldUseOneShotUpload(
  * Cheap check for whether ANY snapshot source could possibly contribute
  * to the run-level wire pair. When false, we skip the capability probe
  * entirely — there's nothing to ship even if the backend supports it,
- * and we don't want a wasted `GET /sdk/v1/info` round-trip for legacy
- * callers that never supply host info.
+ * so callers that never supply host info skip the resolution work
+ * entirely.
  */
 function hasAnyHostSnapshotSource(input: ReportEvalResultsInput): boolean {
   if (input.host) return true;
@@ -658,27 +692,22 @@ function hasAnyHostSnapshotSource(input: ReportEvalResultsInput): boolean {
 }
 
 /**
- * Resolve the per-run wire pair {hostConfig, hostConfigHash} when the
- * backend advertises capability `evalsHostConfig`. Returns `null` when
- * the capability is absent OR no usable snapshot source exists OR
- * iteration snapshots are heterogeneous (pass-1 omit).
+ * Resolve the per-run wire pair {hostConfig, hostConfigHash}. Returns
+ * `null` when no usable snapshot source exists OR iteration snapshots are
+ * heterogeneous (pass-1 omit). The v1 ingest surface has always accepted
+ * the pair, so the old per-baseUrl capability probe is gone.
  *
  * The wire pair is per-RUN: it is injected only into one-shot `/report`
  * and chunked `/runs/start` bodies, never into `/runs/iterations` or
  * `/runs/finalize`.
  */
 async function resolveWireHostConfigForRun(
-  input: ReportEvalResultsInput,
-  config: RuntimeConfig
+  input: ReportEvalResultsInput
 ): Promise<SdkEvalsWireHostConfig | null> {
-  // Skip the probe when we have nothing to ship. This keeps legacy callers
-  // (no host, no executor, no per-iteration snapshot) on the original
-  // single-request flow — important for fetch-mock counts in existing
-  // tests and for avoiding a wasted probe round-trip.
+  // Nothing to ship: keep callers with no host, no executor, and no
+  // per-iteration snapshot on the plain flow (also keeps fetch-mock
+  // counts stable in existing tests).
   if (!hasAnyHostSnapshotSource(input)) return null;
-
-  const capability = await resolveSdkEvalsCapabilities(config.baseUrl);
-  if (capability.evalsHostConfig < 1) return null;
 
   // `input.results` are `EvalResultInput`s; the homogeneity gate treats
   // each as a potential carrier of `hostSnapshot`. Today `EvalResultInput`
@@ -691,8 +720,8 @@ async function resolveWireHostConfigForRun(
   }[];
 
   // Fail-safe: a malformed hostSnapshot, unexpected executor return, or
-  // non-canonicalizable host JSON must NOT fail the whole eval upload.
-  // Match the capability-probe fail-safe pattern — log + omit the wire pair.
+  // non-canonicalizable host JSON must NOT fail the whole eval upload —
+  // log + omit the wire pair.
   try {
     const snapshot = await resolveRunLevelHostSnapshot({
       iterations,
@@ -731,7 +760,7 @@ async function reportEvalResultsInternal(
 
   // Resolved once per `reportEvalResultsInternal` call so both code paths
   // (one-shot and chunked-start) attach the same byte-stable pair.
-  const wireHostConfig = await resolveWireHostConfigForRun(input, config);
+  const wireHostConfig = await resolveWireHostConfigForRun(input);
   const wireHostConfigBody = wireHostConfig
     ? {
         hostConfig: wireHostConfig.hostConfig,
@@ -752,7 +781,7 @@ async function reportEvalResultsInternal(
   ) {
     return await requestWithRetry<ReportEvalResultsOutput>(
       config,
-      "/sdk/v1/evals/report",
+      ingestPath(config, "report"),
       {
         suiteName: input.suiteName,
         suiteDescription: input.suiteDescription,

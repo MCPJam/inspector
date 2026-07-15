@@ -1,6 +1,38 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
+
+// BehaviorTab subscribes to the built-in tools catalog via Convex; stub the
+// hook so tests don't need a ConvexProvider. Empty list keeps the new
+// Built-in tools FocusBlock hidden, which is the right default here.
+vi.mock("@/hooks/useBuiltInToolCatalog", () => ({
+  useBuiltInToolCatalog: () => [],
+}));
+
+// The model picker reuses the Playground ModelSelector fed by the shared
+// app-state + Convex model hooks; stub them so the tab renders without
+// providers.
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({
+    availableModels: [
+      {
+        id: "claude-haiku-4-5",
+        name: "Claude Haiku 4.5",
+        provider: "anthropic",
+      },
+    ],
+  }),
+}));
+vi.mock("posthog-js/react", () => ({
+  usePostHog: () => ({ capture: vi.fn() }),
+  useFeatureFlagEnabled: () => false,
+}));
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: ({ provider }: { provider: string }) => (
+    <span aria-hidden="true">{provider}</span>
+  ),
+}));
+
 import { BehaviorTab } from "../BehaviorTab";
 import { ProtocolTab } from "../ProtocolTab";
 import { AppsExtensionTab } from "../AppsExtensionTab";
@@ -24,10 +56,13 @@ describe("Client editor tabs — readOnly prop wiring", () => {
         onDraftChange={vi.fn()}
         attention={[]}
         readOnly
-      />,
+      />
     );
-    const modelSelect = screen.getByRole("combobox") as HTMLSelectElement;
-    expect(modelSelect).toBeDisabled();
+    // Empty draft modelId renders the picker trigger as "Select model".
+    const modelTrigger = screen.getByRole("button", {
+      name: /select model/i,
+    });
+    expect(modelTrigger).toBeDisabled();
   });
 
   it("BehaviorTab readOnly disables the system-prompt textarea", () => {
@@ -37,22 +72,22 @@ describe("Client editor tabs — readOnly prop wiring", () => {
         onDraftChange={vi.fn()}
         attention={[]}
         readOnly
-      />,
+      />
     );
     const textarea = screen.getByPlaceholderText(
-      "You are a helpful assistant…",
+      "You are a helpful assistant…"
     ) as HTMLTextAreaElement;
     expect(textarea).toHaveAttribute("readonly");
   });
 
-  it("BehaviorTab readOnly disables tool-approval and visibility switches", () => {
+  it("BehaviorTab readOnly disables tool-approval, visibility, and tool-image switches", () => {
     render(
       <BehaviorTab
         draft={emptyHostConfigInputV2()}
         onDraftChange={vi.fn()}
         attention={[]}
         readOnly
-      />,
+      />
     );
     const approval = screen.getByRole("switch", {
       name: /require tool approval/i,
@@ -60,8 +95,12 @@ describe("Client editor tabs — readOnly prop wiring", () => {
     const visibility = screen.getAllByRole("switch", {
       name: /respect tool visibility/i,
     })[0];
+    const toolImages = screen.getByRole("switch", {
+      name: /make tool image content visible to model/i,
+    });
     expect(approval).toBeDisabled();
     expect(visibility).toBeDisabled();
+    expect(toolImages).toBeDisabled();
   });
 
   it("BehaviorTab without readOnly leaves controls enabled (sanity check)", () => {
@@ -70,10 +109,12 @@ describe("Client editor tabs — readOnly prop wiring", () => {
         draft={emptyHostConfigInputV2()}
         onDraftChange={vi.fn()}
         attention={[]}
-      />,
+      />
     );
-    const modelSelect = screen.getByRole("combobox") as HTMLSelectElement;
-    expect(modelSelect).not.toBeDisabled();
+    const modelTrigger = screen.getByRole("button", {
+      name: /select model/i,
+    });
+    expect(modelTrigger).not.toBeDisabled();
   });
 
   it("AppsExtensionTab readOnly wraps the body in a disabled fieldset", () => {
@@ -83,7 +124,7 @@ describe("Client editor tabs — readOnly prop wiring", () => {
         onDraftChange={vi.fn()}
         attention={[]}
         readOnly
-      />,
+      />
     );
     const fieldset = container.querySelector("fieldset");
     expect(fieldset).not.toBeNull();
@@ -96,11 +137,40 @@ describe("Client editor tabs — readOnly prop wiring", () => {
         draft={emptyHostConfigInputV2()}
         onDraftChange={vi.fn()}
         attention={[]}
-      />,
+      />
     );
     const fieldset = container.querySelector("fieldset");
     expect(fieldset).not.toBeNull();
     expect(fieldset).not.toBeDisabled();
+  });
+
+  it("ProtocolTab readOnly disables the EMA advertise switch", () => {
+    render(
+      <ProtocolTab
+        draft={emptyHostConfigInputV2()}
+        onDraftChange={vi.fn()}
+        attention={[]}
+        readOnly
+      />
+    );
+    const emaSwitch = screen.getByRole("switch", {
+      name: /advertise ema support by default/i,
+    });
+    expect(emaSwitch).toBeDisabled();
+  });
+
+  it("ProtocolTab without readOnly leaves the EMA switch enabled", () => {
+    render(
+      <ProtocolTab
+        draft={emptyHostConfigInputV2()}
+        onDraftChange={vi.fn()}
+        attention={[]}
+      />
+    );
+    const emaSwitch = screen.getByRole("switch", {
+      name: /advertise ema support by default/i,
+    });
+    expect(emaSwitch).not.toBeDisabled();
   });
 
   it("ProtocolTab accepts the readOnly prop without throwing", () => {
@@ -116,8 +186,8 @@ describe("Client editor tabs — readOnly prop wiring", () => {
           onDraftChange={vi.fn()}
           attention={[]}
           readOnly
-        />,
-      ),
+        />
+      )
     ).not.toThrow();
   });
 });

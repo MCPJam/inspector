@@ -1,4 +1,3 @@
-import React from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -355,9 +354,7 @@ describe("ChatboxTopicMapPanel", () => {
       />,
     );
 
-    expect(
-      screen.getByText("Updating historical topic map"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Updating clusters")).toBeInTheDocument();
   });
 
   it("lets operators toggle a community chip from the sidebar", async () => {
@@ -421,6 +418,31 @@ describe("ChatboxTopicMapPanel", () => {
       name: /Password resets Reset and account recovery questions/i,
     });
     expect(clusterButton.parentElement).toHaveClass("border-primary/40");
+  });
+
+  it("opens the clicked node's session via onOpenSession", async () => {
+    const user = userEvent.setup();
+    const onOpenSession = vi.fn();
+
+    render(
+      <ChatboxTopicMapPanel
+        chatboxId="chatbox-1"
+        filter={EMPTY_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+        onOpenSession={onOpenSession}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /graph node session-b/i }));
+
+    expect(onOpenSession).toHaveBeenCalledWith("session-b");
+    // Selection still tracks the click so the node reads as active when the
+    // operator returns to the map.
+    expect(
+      screen.getByTestId("force-graph").parentElement,
+    ).toHaveAttribute("data-selected-session", "session-b");
   });
 
   it("clears node selection when the graph background is clicked", async () => {

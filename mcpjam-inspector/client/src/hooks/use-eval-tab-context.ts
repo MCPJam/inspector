@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 import { useSharedAppState } from "@/state/app-state-context";
+import { findProjectByAnyId } from "@/state/app-types";
 import { useProjectMembers } from "@/hooks/useProjects";
-import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
+import { useAvailableModels } from "@/hooks/use-available-models";
 
 export function useEvalTabContext({
   isAuthenticated,
@@ -20,12 +21,14 @@ export function useEvalTabContext({
   const appState = useSharedAppState();
   // Scope to the requested project so model availability follows that project's
   // org rather than whatever happens to be the globally-active project.
+  // Callers pass the Convex/shared project id (App.tsx's convexProjectId),
+  // so resolve across both id spaces. (`useAvailableModels` does the same
+  // internally and falls back to the active project when null.)
   const scopedProjectId = projectId ?? appState.activeProjectId ?? null;
-  const scopedProject = scopedProjectId
-    ? appState.projects?.[scopedProjectId]
-    : undefined;
+  const scopedProject = findProjectByAnyId(appState.projects, scopedProjectId);
+  // Still returned to callers; the models hook re-derives it internally.
   const organizationId = scopedProject?.organizationId ?? null;
-  const { availableModels } = useAvailableEvalModels(organizationId);
+  const { availableModels } = useAvailableModels({ projectId });
   const { members, canManageMembers } = useProjectMembers({
     isAuthenticated,
     projectId,

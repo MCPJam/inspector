@@ -7,8 +7,7 @@ import { useProjectMembers } from "@/hooks/useProjects";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { cn } from "@/lib/utils";
 import { User } from "@workos-inc/authkit-js";
-import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import type { ProjectVisibility } from "@/state/app-types";
 
 interface ProjectMembersFacepileProps {
@@ -36,14 +35,12 @@ export function ProjectMembersFacepile({
   onProjectShared,
 }: ProjectMembersFacepileProps) {
   const { profilePictureUrl } = useProfilePicture();
-  const posthog = usePostHog();
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
 
   const handleFacepileClick = () => {
-    posthog.capture("project_members_facepile_clicked", {
+    track("project_members_facepile_clicked", {
+      location: "project_members_facepile",
       project_name: projectName,
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
     setIsShareDialogOpen(true);
   };
