@@ -334,6 +334,20 @@ export interface MCPClientManagerOptions {
   /** Default retry policy for retryable manager operations */
   retryPolicy?: RetryPolicy;
   /**
+   * Extra time budget (ms) granted to a `tools/call` while an elicitation is
+   * pending for that server. The per-request timeout is a *server* budget: a
+   * tool call blocked on a human must not die at it, but a hung server must.
+   *
+   * When any elicitation handler is installed for a server, `executeTool`
+   * enforces the base timeout with its own watchdog that only accumulates
+   * time while NO elicitation is pending, and separately caps the total time
+   * spent suspended across all elicitations in that call at this value.
+   *
+   * Defaults to {@link DEFAULT_ELICITATION_TIMEOUT_EXTENSION_MS} (10 minutes).
+   * Has no effect on servers without an elicitation handler.
+   */
+  elicitationTimeoutExtensionMs?: number;
+  /**
    * When true, do not connect in the constructor; callers must use connectToServer
    * (e.g. connectReplayManagerServers) to avoid racing eager connects.
    */
@@ -381,6 +395,11 @@ export type ElicitationHandler = (
 ) => Promise<ElicitResult> | ElicitResult;
 
 /**
+ * Elicitation mode (MCP spec 2025-11-25). Absent on the wire ⇒ `"form"`.
+ */
+export type ElicitationMode = "form" | "url";
+
+/**
  * Request passed to global elicitation callback
  */
 export type ElicitationCallbackRequest = {
@@ -389,6 +408,25 @@ export type ElicitationCallbackRequest = {
   schema: unknown;
   /** Task ID if this elicitation is related to a task (MCP Tasks spec 2025-11-25) */
   relatedTaskId?: string;
+  /**
+   * The server that issued this elicitation. Always populated by
+   * `ElicitationManager.applyToClient`; optional so existing callback
+   * implementations keep type-checking.
+   */
+  serverId?: string;
+  /**
+   * Elicitation mode. Absent ⇒ `"form"` (legacy behavior: every
+   * pre-2025-11-25 elicitation is form mode).
+   */
+  mode?: ElicitationMode;
+  /** URL to present to the user. URL mode only. */
+  url?: string;
+  /**
+   * Server-chosen elicitation id, used by the server to correlate a
+   * `notifications/elicitation/complete`. URL mode only. Never treat this
+   * as a trusted key — it is chosen by the server.
+   */
+  elicitationId?: string;
 };
 
 /**

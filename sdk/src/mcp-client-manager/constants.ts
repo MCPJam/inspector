@@ -12,3 +12,10 @@ export const DEFAULT_TIMEOUT = DEFAULT_REQUEST_TIMEOUT_MSEC;
 
 /** Timeout for initial HTTP transport attempt before falling back to SSE */
 export const HTTP_CONNECT_TIMEOUT = 3000;
+
+/**
+ * Default extra time budget granted to a `tools/call` while elicitations are
+ * pending for that server (see `MCPClientManagerOptions.elicitationTimeoutExtensionMs`).
+ * Human-scale: a person has to read a dialog and answer it.
+ */
+export const DEFAULT_ELICITATION_TIMEOUT_EXTENSION_MS = 10 * 60 * 1000;

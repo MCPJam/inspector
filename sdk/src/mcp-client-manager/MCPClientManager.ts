@@ -50,6 +50,7 @@ import type { MCPServerReplayConfig } from "../eval-reporting-types.js";
 
 import {
   DEFAULT_CLIENT_VERSION,
+  DEFAULT_ELICITATION_TIMEOUT_EXTENSION_MS,
   DEFAULT_TIMEOUT,
   HTTP_CONNECT_TIMEOUT,
 } from "./constants.js";
@@ -80,6 +81,8 @@ import {
   type NotificationHandler,
 } from "./notification-handlers.js";
 import { ElicitationManager } from "./elicitation.js";
+import type { DeclaredElicitationCapability } from "./elicitation.js";
+import { createElicitationTimeoutSuspension } from "./elicitation-timeout.js";
 import {
   TaskStatusNotificationMethod,
   listTasks as tasksListTasks,
@@ -248,6 +251,7 @@ export class MCPClientManager {
   private readonly defaultProgressHandler?: ProgressHandler;
   private readonly defaultRetryPolicy: RetryPolicy;
   private readonly lazyConnect: boolean;
+  private readonly elicitationTimeoutExtensionMs: number;
 
   // Progress token counter for uniqueness
   private progressTokenCounter = 0;
@@ -278,6 +282,11 @@ export class MCPClientManager {
     this.defaultProgressHandler = options.progressHandler;
     this.defaultRetryPolicy = normalizeRetryPolicy(options.retryPolicy);
     this.lazyConnect = options.lazyConnect ?? false;
+    this.elicitationTimeoutExtensionMs = Math.max(
+      0,
+      options.elicitationTimeoutExtensionMs ??
+        DEFAULT_ELICITATION_TIMEOUT_EXTENSION_MS
+    );
 
     // Start connecting to all configured servers (unless replay/trace-repair use explicit connect)
     if (!this.lazyConnect) {
@@ -760,7 +769,11 @@ export class MCPClientManager {
         };
       }
 
-      return client.callTool(callParams, mergedOptions);
+      return this.withElicitationTimeoutSuspension(
+        serverId,
+        mergedOptions,
+        (callOptions) => client.callTool(callParams, callOptions)
+      );
     };
 
     return this.runRetriedOperation(
@@ -1030,7 +1043,11 @@ export class MCPClientManager {
     const state = this.liveClientStates.get(serverId);
     const client = state?.client;
     if (client && this.hasNegotiatedElicitation(state)) {
-      this.elicitationManager.applyToClient(serverId, client);
+      this.elicitationManager.applyToClient(
+        serverId,
+        client,
+        this.negotiatedElicitationCapability(state)
+      );
     }
   }
 
@@ -1046,7 +1063,11 @@ export class MCPClientManager {
         this.elicitationManager.getGlobalCallback() &&
         this.hasNegotiatedElicitation(state)
       ) {
-        this.elicitationManager.applyToClient(serverId, client);
+        this.elicitationManager.applyToClient(
+          serverId,
+          client,
+          this.negotiatedElicitationCapability(state)
+        );
       } else {
         this.elicitationManager.removeFromClient(client);
       }
@@ -1060,7 +1081,11 @@ export class MCPClientManager {
     this.elicitationManager.setGlobalCallback(callback);
     for (const [serverId, state] of this.liveClientStates.entries()) {
       if (state.client && this.hasNegotiatedElicitation(state)) {
-        this.elicitationManager.applyToClient(serverId, state.client);
+        this.elicitationManager.applyToClient(
+          serverId,
+          state.client,
+          this.negotiatedElicitationCapability(state)
+        );
       }
     }
   }
@@ -1076,7 +1101,11 @@ export class MCPClientManager {
         this.elicitationManager.getHandler(serverId) &&
         this.hasNegotiatedElicitation(state)
       ) {
-        this.elicitationManager.applyToClient(serverId, state.client);
+        this.elicitationManager.applyToClient(
+          serverId,
+          state.client,
+          this.negotiatedElicitationCapability(state)
+        );
       } else {
         this.elicitationManager.removeFromClient(state.client);
       }
@@ -1343,8 +1372,15 @@ export class MCPClientManager {
       if (this.defaultProgressHandler) {
         applyProgressHandler(serverId, client, this.defaultProgressHandler);
       }
-      if ((clientCapabilities as Record<string, unknown>).elicitation != null) {
-        this.elicitationManager.applyToClient(serverId, client);
+      const declaredElicitation = (
+        clientCapabilities as Record<string, unknown>
+      ).elicitation;
+      if (declaredElicitation != null) {
+        this.elicitationManager.applyToClient(
+          serverId,
+          client,
+          declaredElicitation as DeclaredElicitationCapability
+        );
       }
 
       if (config.onError) {
@@ -1737,7 +1773,11 @@ export class MCPClientManager {
         this.buildCapabilities(serverId, config) as Record<string, unknown>
       ).elicitation;
       if (elicitationCaps != null) {
-        this.elicitationManager.applyToClient(serverId, previewClient);
+        this.elicitationManager.applyToClient(
+          serverId,
+          previewClient,
+          elicitationCaps as DeclaredElicitationCapability
+        );
       }
       if (config.onError) {
         previewClient.onerror = (error) => config.onError?.(error);
@@ -2191,6 +2231,70 @@ export class MCPClientManager {
     return mergedOptions;
   }
 
+  /**
+   * Runs a tool call under an elicitation-aware timeout budget.
+   *
+   * The request timeout is a *server* budget. A tool call blocked because the
+   * server asked the user a question is not hung, so its clock stops while an
+   * elicitation is pending — but a genuinely hung server must still die at the
+   * base timeout, and a human who never answers must not block forever.
+   *
+   * Mechanics (see `elicitation-timeout.ts` for the budget accounting):
+   *  - No elicitation handler for this server ⇒ pure passthrough, no watchdog,
+   *    no behavior change whatsoever.
+   *  - Otherwise the upstream hard timeout is **overridden** to
+   *    `base + extension` to move it out of the way (`withTimeout` only
+   *    *injects* a timeout when unset, so a plain merge would not take), and
+   *    the real budget is enforced locally by the watchdog.
+   *  - The watchdog's signal is composed with the caller's — the AI SDK
+   *    forwards its own `abortSignal` into these request options and it must
+   *    keep working.
+   */
+  private async withElicitationTimeoutSuspension<T>(
+    serverId: string,
+    options: RequestOptions,
+    run: (options: RequestOptions) => Promise<T>
+  ): Promise<T> {
+    if (!this.elicitationManager.hasHandler(serverId)) {
+      return run(options);
+    }
+
+    const baseTimeoutMs =
+      options.timeout ??
+      this.registeredServers.get(serverId)?.timeout ??
+      this.defaultTimeout;
+    const pendingSequenceAtStart = this.elicitationManager.getPendingSequence();
+
+    const suspension = createElicitationTimeoutSuspension({
+      serverId,
+      baseTimeoutMs,
+      extensionMs: this.elicitationTimeoutExtensionMs,
+      callerSignal: options.signal,
+      // Age-bound the check with this call's OWN elicitation budget. Without
+      // it, a handler that never settles (e.g. its `tools/call` was aborted by
+      // this very watchdog, so its `finally` never ran) would pin the server
+      // "pending" for the process lifetime and silently pause the clock of
+      // every later call — unbounded timeouts, with nothing in the logs.
+      // An entry older than this budget would have blown it anyway.
+      hasPending: () =>
+        this.elicitationManager.hasPendingForServer(
+          serverId,
+          this.elicitationTimeoutExtensionMs,
+          pendingSequenceAtStart,
+        ),
+    });
+
+    try {
+      return await run({
+        ...options,
+        timeout: suspension.timeoutMs,
+        signal: suspension.signal,
+      });
+    } finally {
+      suspension.dispose();
+    }
+  }
+
   private buildCapabilities(
     serverId: string,
     config: MCPServerConfig
@@ -2219,10 +2323,23 @@ export class MCPClientManager {
   }
 
   private hasNegotiatedElicitation(state?: LiveClientState): boolean {
+    return this.negotiatedElicitationCapability(state) != null;
+  }
+
+  /**
+   * The `elicitation` client capability actually advertised to this server on
+   * the wire, for `applyToClient` to enforce declared modes against.
+   */
+  private negotiatedElicitationCapability(
+    state?: LiveClientState
+  ): DeclaredElicitationCapability {
     const capabilities = state?.initializedClientCapabilities as
       | Record<string, unknown>
       | undefined;
-    return capabilities?.elicitation != null;
+    const elicitation = capabilities?.elicitation;
+    return elicitation != null
+      ? (elicitation as DeclaredElicitationCapability)
+      : undefined;
   }
 
   private resolveRpcLogger(config: MCPServerConfig): RpcLogger | undefined {

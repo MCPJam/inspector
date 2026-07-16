@@ -34,12 +34,15 @@ export type {
   ElicitationHandler,
   ElicitationCallback,
   ElicitationCallbackRequest,
+  ElicitationMode,
   ElicitResult,
   ProgressHandler,
   ProgressEvent,
   RpcLogger,
   RpcLogEvent,
 } from "./types.js";
+export type { DeclaredElicitationCapability } from "./elicitation.js";
+export { DEFAULT_ELICITATION_TIMEOUT_EXTENSION_MS } from "./constants.js";
 
 // Types - Tool execution
 export type {
