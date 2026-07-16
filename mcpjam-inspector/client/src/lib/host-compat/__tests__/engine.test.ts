@@ -2,10 +2,8 @@ import { describe, expect, it } from "vitest";
 import { evaluateAllHosts } from "../engine";
 import { buildHostCompatProfiles } from "../profiles";
 import { summarizeReports } from "@/components/compat/HostCompatStrip";
-import type {
-  CompatVerdict,
-  HostCompatReport,
-} from "../types";
+import { getCompatDisplayStatus } from "@/components/compat/verdict-meta";
+import type { CompatVerdict, HostCompatReport } from "../types";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 
 // The verdict logic itself (deriveServerRequirements / evaluateHostCompat /
@@ -15,7 +13,7 @@ import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 // reports, plus the `summarizeReports` UI rollup.
 
 const toolsWith = (
-  toolsMetadata: Record<string, Record<string, unknown>>,
+  toolsMetadata: Record<string, Record<string, unknown>>
 ): ListToolsResultWithMetadata =>
   ({
     tools: Object.keys(toolsMetadata).map((name) => ({
@@ -23,7 +21,7 @@ const toolsWith = (
       inputSchema: { type: "object" },
     })),
     toolsMetadata,
-  }) as ListToolsResultWithMetadata;
+  } as ListToolsResultWithMetadata);
 
 const mcpAppsMeta = (extra: Record<string, unknown> = {}) => ({
   ui: { resourceUri: "ui://widget", ...extra },
@@ -31,7 +29,7 @@ const mcpAppsMeta = (extra: Record<string, unknown> = {}) => ({
 
 // Minimal report fixture for the verdict-rollup tests (only `verdict` is read).
 const report = (
-  over: Pick<HostCompatReport, "hostId" | "verdict"> & Partial<HostCompatReport>,
+  over: Pick<HostCompatReport, "hostId" | "verdict"> & Partial<HostCompatReport>
 ): HostCompatReport => ({
   hostLabel: over.hostId.toUpperCase(),
   logoSrc: "",
@@ -47,7 +45,7 @@ const report = (
 describe("buildHostCompatProfiles (client logo join)", () => {
   it("attaches a per-host logoSrc by id", () => {
     const byId = Object.fromEntries(
-      buildHostCompatProfiles().map((p) => [p.id, p]),
+      buildHostCompatProfiles().map((p) => [p.id, p])
     );
     expect(byId.claude?.logoSrc).toBe("/claude_logo.png");
     expect(byId.chatgpt?.logoSrc).toBe("/openai_logo.png");
@@ -69,7 +67,7 @@ describe("buildHostCompatProfiles (client logo join)", () => {
 
   it("carries the SDK facts through (rendersMcpApps, capabilities)", () => {
     const byId = Object.fromEntries(
-      buildHostCompatProfiles().map((p) => [p.id, p]),
+      buildHostCompatProfiles().map((p) => [p.id, p])
     );
     // A rendering host keeps its capability matrix; a CLI host renders no MCP
     // Apps and carries no matrix.
@@ -107,7 +105,7 @@ describe("evaluateAllHosts (client presentation join)", () => {
   it("returns the SDK requirements alongside the joined reports", () => {
     const { requirements, reports } = evaluateAllHosts(
       toolsWith({ w: mcpAppsMeta() }),
-      {},
+      {}
     );
     expect(requirements.hasWidgets).toBe(true);
     expect(reports.length).toBeGreaterThan(0);
@@ -115,18 +113,79 @@ describe("evaluateAllHosts (client presentation join)", () => {
 });
 
 describe("summarizeReports", () => {
-  it("rolls up definite verdicts", () => {
+  it("rolls up visible support and limitation statuses", () => {
     expect(
       summarizeReports([
         report({ hostId: "a", verdict: "works" }),
-        report({ hostId: "b", verdict: "degraded" }),
-      ]),
-    ).toBe("works in 1 · degraded in 1");
+        {
+          ...report({ hostId: "b", verdict: "degraded" }),
+          findings: [
+            {
+              lane: "apps",
+              severity: "degraded",
+              code: "widget_text_fallback",
+              tools: ["widget"],
+              title: "Widget falls back to text",
+              detail: "The host cannot render this widget.",
+              provenance: "vendor-doc",
+            },
+          ],
+        },
+      ])
+    ).toBe("supported in 1 · known limitations in 1");
   });
 
-  it("labels an all-unknown result as unknown, not 'checking…'", () => {
-    expect(summarizeReports([report({ hostId: "a", verdict: "unknown" })])).toBe(
-      "unknown in 1",
-    );
+  it("does not surface unknown as a color or status", () => {
+    expect(
+      summarizeReports([report({ hostId: "a", verdict: "unknown" })])
+    ).toBe("");
+  });
+});
+
+describe("getCompatDisplayStatus", () => {
+  it("marks explicit support green", () => {
+    expect(
+      getCompatDisplayStatus(report({ hostId: "a", verdict: "works" }))
+    ).toBe("green");
+  });
+
+  it("marks an affected limitation orange", () => {
+    expect(
+      getCompatDisplayStatus({
+        ...report({ hostId: "a", verdict: "blocked" }),
+        findings: [
+          {
+            lane: "apps",
+            severity: "blocker",
+            code: "app_only_unrenderable",
+            tools: ["widget"],
+            title: "Widget unavailable",
+            detail: "The host cannot render it.",
+            provenance: "vendor-doc",
+          },
+        ],
+      })
+    ).toBe("orange");
+  });
+
+  it("does not color missing evidence or informational metadata", () => {
+    expect(
+      getCompatDisplayStatus(report({ hostId: "a", verdict: "unknown" }))
+    ).toBe(null);
+    expect(
+      getCompatDisplayStatus({
+        ...report({ hostId: "a", verdict: "unknown" }),
+        findings: [
+          {
+            lane: "server",
+            severity: "info",
+            code: "protocol_version_mismatch",
+            title: "Protocol version differs",
+            detail: "The host may negotiate a shared version.",
+            provenance: "vendor-doc",
+          },
+        ],
+      })
+    ).toBe(null);
   });
 });

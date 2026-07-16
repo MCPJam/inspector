@@ -1,4 +1,42 @@
-import type { CompatVerdict } from "@/lib/host-compat/types";
+import type { CompatVerdict, HostCompatReport } from "@/lib/host-compat/types";
+
+export type CompatDisplayStatus = "green" | "orange" | null;
+
+/**
+ * User-facing status deliberately has only two colors. A green status means
+ * the profile explicitly covers the capabilities this server uses. Orange
+ * means there is a concrete limitation affecting this server. Missing data
+ * and informational metadata do not earn either color.
+ */
+export function getCompatDisplayStatus(
+  report: Pick<HostCompatReport, "verdict" | "findings">
+): CompatDisplayStatus {
+  if (
+    report.findings.some(
+      (finding) =>
+        finding.severity === "blocker" || finding.severity === "degraded"
+    )
+  ) {
+    return "orange";
+  }
+  return report.verdict === "works" ? "green" : null;
+}
+
+export const COMPAT_DISPLAY_META: Record<
+  Exclude<CompatDisplayStatus, null>,
+  { label: string; dot: string; text: string }
+> = {
+  green: {
+    label: "Supported",
+    dot: "bg-emerald-500",
+    text: "text-emerald-600 dark:text-emerald-400",
+  },
+  orange: {
+    label: "Known limitation",
+    dot: "bg-amber-500",
+    text: "text-amber-600 dark:text-amber-400",
+  },
+};
 
 /**
  * Three-way semantic tone (good / bad / neutral) → dot + text colors. Shared
