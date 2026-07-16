@@ -89,9 +89,10 @@ export function splitUrlForDisplay(parsed: URL): {
   host: string;
   rest: string;
 } {
-  const userinfo = parsed.username
-    ? `${parsed.username}${parsed.password ? `:${parsed.password}` : ""}@`
-    : "";
+  const userinfo =
+    parsed.username || parsed.password
+      ? `${parsed.username}${parsed.password ? `:${parsed.password}` : ""}@`
+      : "";
   return {
     origin: `${parsed.protocol}//`,
     userinfo,

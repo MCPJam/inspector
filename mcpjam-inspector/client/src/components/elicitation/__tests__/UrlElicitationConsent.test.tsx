@@ -147,4 +147,15 @@ describe("UrlElicitationConsent", () => {
     expect(screen.getByText("evil.test")).toBeInTheDocument();
     expect(screen.getByText(/disguise the real destination/i)).toBeInTheDocument();
   });
+
+  it("shows password-only userinfo in the full URL", () => {
+    render(
+      <UrlElicitationConsent
+        request={{ ...request, url: "https://:password@evil.test/x" }}
+        onResponse={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(":password@")).toBeInTheDocument();
+    expect(screen.getByText("evil.test")).toBeInTheDocument();
+  });
 });

@@ -96,5 +96,8 @@ describe("splitUrlForDisplay", () => {
     expect(splitUrlForDisplay(new URL("https://u:p@evil.test/x")).userinfo).toBe(
       "u:p@",
     );
+    expect(
+      splitUrlForDisplay(new URL("https://:password@evil.test/x")).userinfo,
+    ).toBe(":password@");
   });
 });
