@@ -17,6 +17,9 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 
 vi.mock("convex/react", () => ({
+  // useChatSession resolves the Convex client to submit elicitation answers
+  // straight to the rendezvous table (the blocked replica isn't addressable).
+  useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
   useConvexAuth: () => ({
     isAuthenticated: true,
     isLoading: false,
@@ -226,6 +229,13 @@ vi.mock("@/components/evals/trace-view-mode-tabs", () => ({
 }));
 
 const mockUseChatSession = {
+  // Elicitation surface (hosted). These suites never elicit, but the shape
+  // must match the hook's contract or the dialog crashes on undefined.
+  pendingElicitations: [],
+  respondToElicitation: vi.fn(),
+  elicitationResponding: false,
+  urlElicitationRequired: [],
+  dismissUrlElicitationRequired: vi.fn(),
   messages: [],
   setMessages: vi.fn(),
   sendMessage: vi.fn(),

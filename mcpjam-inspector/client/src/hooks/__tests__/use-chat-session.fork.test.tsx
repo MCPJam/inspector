@@ -114,6 +114,9 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 
 vi.mock("convex/react", () => ({
+  // useChatSession resolves the Convex client to submit elicitation answers
+  // straight to the rendezvous table (the blocked replica isn't addressable).
+  useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
   useConvexAuth: () => ({
     isAuthenticated: true,
     isLoading: false,

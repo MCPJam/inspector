@@ -17,6 +17,19 @@
  * turn-scoped UI, not conversation history.
  */
 
+/**
+ * Version of the hosted-elicitation wire contract the client speaks, sent on
+ * every chat request as `hostedElicitationVersion`.
+ *
+ * The server honors elicitation only when it sees this AND the host declares
+ * the capability. It exists because catalog hosts (claude-code, cursor,
+ * vscode, …) ALREADY declare `elicitation`: without a handshake, shipping
+ * server support would make every stale browser bundle — which cannot render
+ * the prompt — hang for a full TTL on any server that elicits. Bump only on an
+ * incompatible change to the parts below.
+ */
+export const HOSTED_ELICITATION_VERSION = 1;
+
 /** Elicitation mode per MCP 2025-11-25. Absent on the wire ⇒ `"form"`. */
 export type HostedElicitationMode = "form" | "url";
 
