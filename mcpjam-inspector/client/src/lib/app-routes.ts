@@ -65,8 +65,20 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   { path: "oauth-flow", kind: "screen", surfaceId: "oauth-flow" },
   { path: "xaa-flow", kind: "screen", surfaceId: "xaa-flow" },
   { path: "tracing", kind: "screen", surfaceId: "tracing" },
-  { path: "chat", kind: "screen", surfaceId: "playground" },
-  { path: "chat/*", kind: "screen", surfaceId: "playground" },
+  // `ChatAliasRoute` is a `<Navigate replace>` — it renders nothing of its
+  // own, exactly like `client-config`. `chat` survives as a nav SEGMENT
+  // (normalized to `playground`), which is a separate question from whether
+  // any screen renders here.
+  {
+    path: "chat",
+    kind: "redirect",
+    note: "Legacy alias; redirects to /playground.",
+  },
+  {
+    path: "chat/*",
+    kind: "redirect",
+    note: "Legacy deep link; redirects to /playground so old bookmarks land there rather than the catch-all.",
+  },
   { path: "chatboxes", kind: "screen", surfaceId: "chatboxes" },
   { path: "swarms", kind: "screen", surfaceId: "swarms" },
   { path: "playground", kind: "screen", surfaceId: "playground" },

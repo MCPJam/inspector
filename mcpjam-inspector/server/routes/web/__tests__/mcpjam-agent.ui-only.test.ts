@@ -95,8 +95,15 @@ describe("web routes — mcpjam-agent is UI-only", () => {
     expect(args.prepare.systemPrompt).toContain("screen by screen");
     expect(args.prepare.systemPrompt).toContain("### Connect (servers)");
     expect(args.prepare.systemPrompt).toContain("### Playground (playground)");
-    // Hosted-only route: never map a door the model can't open.
-    expect(args.prepare.systemPrompt).not.toContain("### Tracing");
+  });
+
+  it("maps the screens this deployment actually has", async () => {
+    // The atlas follows HOSTED_MODE (false under test): hosted-blocked
+    // screens are real locally, and hard-coding `hosted: true` handed local
+    // users an incomplete map of their own app. `buildAppAtlas` is unit-
+    // tested for the hosted filter itself.
+    const args = await postAgentTurn();
+    expect(args.prepare.systemPrompt).toContain("### Tracing");
   });
 
   it("keeps the system prompt free of per-request values so the prefix stays cacheable", async () => {

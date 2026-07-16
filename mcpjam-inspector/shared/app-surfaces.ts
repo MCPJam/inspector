@@ -164,7 +164,10 @@ export const APP_SURFACES = [
   {
     id: "playground",
     canonicalPath: "/playground",
-    routePatterns: ["playground", "chat", "chat/*"],
+    routePatterns: ["playground"],
+    // `chat` renders nothing of its own (it redirects here), but it IS still
+    // a tab segment that resolves to this surface — so it stays a valid
+    // `ui_navigate` target. Same split as `client-config` → Connect.
     navSegments: ["playground", "chat"],
     title: "Playground",
     purpose:

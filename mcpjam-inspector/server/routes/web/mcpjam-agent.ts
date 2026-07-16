@@ -64,7 +64,7 @@ import type {
   McpUiResourceCsp,
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps";
-import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
+import { HOSTED_MODE, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
 import {
@@ -125,10 +125,12 @@ const AGENT_IDENTITY_PROMPT = [
   // surface manifests, so a new screen joins the agent's map by existing
   // rather than by someone remembering to describe it here.
   //
-  // `hosted: true` because this route is bearer-authenticated and therefore
-  // only ever serves hosted deployments; the hosted-blocked screens are
-  // doors the model could not open.
-  buildAppAtlas({ hosted: true }),
+  // Follows the deployment's actual mode: hosted-blocked screens (Tracing,
+  // Tasks, Auth) are doors the model can't open in a hosted deployment, but
+  // they're real screens locally. Hard-coding `hosted: true` handed local
+  // users an incomplete map of their own app. Still one value per build, so
+  // the prefix stays cacheable.
+  buildAppAtlas({ hosted: HOSTED_MODE }),
 ].join("\n");
 
 // Advertise the MCP UI extension so the platform worker registers its
