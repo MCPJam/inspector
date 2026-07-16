@@ -77,6 +77,7 @@ import {
   revokeFileAttachmentUrls,
 } from "@/components/chat-v2/chat-input/attachments/file-utils";
 import {
+  progressiveModeToValue,
   useUIPlaygroundStore,
   type DeviceType,
   type DisplayMode,
@@ -593,6 +594,12 @@ export function PlaygroundMain({
   // Device config from store (managed by ClientContextHeader)
   const storeDeviceType = useUIPlaygroundStore((s) => s.deviceType);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
+  const progressiveToolsMode = useUIPlaygroundStore(
+    (s) => s.progressiveToolsMode
+  );
+  const progressiveToolsModeTouched = useUIPlaygroundStore(
+    (s) => s.progressiveToolsModeTouched
+  );
   const hostContext = useHostContextStore((s) => s.draftHostContext);
   const patchHostContext = useHostContextStore((s) => s.patchHostContext);
 
@@ -615,7 +622,6 @@ export function PlaygroundMain({
     }
     return PRESET_DEVICE_CONFIGS[storeDeviceType];
   }, [storeDeviceType, customViewport]);
-
   const appState = useSharedAppState();
   const servers = appState.servers;
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
@@ -712,6 +718,9 @@ export function PlaygroundMain({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
   });
+  const resolvedProgressiveToolDiscovery = progressiveToolsModeTouched
+    ? progressiveModeToValue(progressiveToolsMode)
+    : previewedHost?.config?.progressiveToolDiscovery;
   const effectiveMcpToolResultImageRendering = useMemo(
     () =>
       gateMcpToolResultImageRenderingByModelVisibility(
@@ -803,7 +812,7 @@ export function PlaygroundMain({
     // Source the host-level toggle from the previewed host's resolved
     // DTO so flipping it in the host's Agent → Behavior tab takes
     // effect on the very next send without remounting the playground.
-    progressiveToolDiscovery: previewedHost?.config?.progressiveToolDiscovery,
+    progressiveToolDiscovery: resolvedProgressiveToolDiscovery,
     respectToolVisibility: previewedHost?.config?.respectToolVisibility,
     modelVisibleMcpToolResults:
       previewedHost?.config?.modelVisibleMcpToolResults,
@@ -3590,6 +3599,7 @@ export function PlaygroundMain({
             leadHostInMultiHost={
               isMultiHostMode ? leadHost?.name ?? null : null
             }
+            progressiveToolsSessionId={chatSessionId}
             // The standalone "Compare" host picker moved into the chat-input
             // run pill (see `hostCompare` in `sharedChatInputProps`). Single-host
             // switching still lives in the global `GlobalHostBar`.
@@ -3843,7 +3853,7 @@ export function PlaygroundMain({
                               temperature,
                               requireToolApproval,
                               progressiveToolDiscovery:
-                                previewedHost?.config?.progressiveToolDiscovery,
+                                resolvedProgressiveToolDiscovery,
                               respectToolVisibility:
                                 previewedHost?.config?.respectToolVisibility,
                               modelVisibleMcpToolResults:

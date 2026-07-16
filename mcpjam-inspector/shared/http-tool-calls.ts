@@ -30,6 +30,8 @@ function flattenToolsetsWithServerId(toolsets: Toolsets): ToolsMap {
         flattened[toolName] = {
           ...tool,
           _serverId: serverId,
+          _serverName:
+            typeof tool?._serverName === "string" ? tool._serverName : serverId,
         };
       }
     }

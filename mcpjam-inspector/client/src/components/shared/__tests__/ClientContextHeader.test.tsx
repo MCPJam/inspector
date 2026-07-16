@@ -28,6 +28,11 @@ const {
     setCspMode: vi.fn(),
     mcpAppsCspMode: "widget-declared",
     setMcpAppsCspMode: vi.fn(),
+    progressiveToolsMode: "auto",
+    progressiveToolsModeTouched: false,
+    progressiveToolsStatus: null,
+    setProgressiveToolsMode: vi.fn(),
+    setProgressiveToolsStatus: vi.fn(),
   },
   mockHostContextState: {
     draftHostContext: {
@@ -201,6 +206,9 @@ describe("ClientContextHeader", () => {
     mockPreferencesState.hostStyle = "claude";
     mockUIPlaygroundStore.cspMode = "widget-declared";
     mockUIPlaygroundStore.mcpAppsCspMode = "widget-declared";
+    mockUIPlaygroundStore.progressiveToolsMode = "auto";
+    mockUIPlaygroundStore.progressiveToolsModeTouched = false;
+    mockUIPlaygroundStore.progressiveToolsStatus = null;
     mockHostContextState.draftHostContext = {
       locale: "en-US",
       timeZone: "UTC",
@@ -258,6 +266,16 @@ describe("ClientContextHeader", () => {
     expect(
       screen.queryByTestId("host-style-picker-trigger")
     ).not.toBeInTheDocument();
+  });
+
+  it("updates the session progressive tools override from the header pill", () => {
+    render(<ClientContextHeader activeProjectId="project-1" protocol={null} />);
+
+    fireEvent.click(screen.getByRole("radio", { name: "off" }));
+
+    expect(mockUIPlaygroundStore.setProgressiveToolsMode).toHaveBeenCalledWith(
+      "off"
+    );
   });
 
   it("opens the raw host context dialog when the host context button is clicked", () => {

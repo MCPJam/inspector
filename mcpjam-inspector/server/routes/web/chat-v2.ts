@@ -562,6 +562,7 @@ chatV2.post("/", async (c) => {
         manager,
         prepare: {
           selectedServerIds,
+          selectedServerNames,
           modelDefinition,
           systemPrompt,
           temperature,

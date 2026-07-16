@@ -33,6 +33,7 @@ import type {
   EvalTraceSpanCategory,
 } from "@/shared/eval-trace";
 import { mcpErrorCodeLabel } from "@/shared/eval-trace";
+import { META_TOOL_SERVER_ID } from "@/shared/progressive-tool-discovery";
 import { MemoizedMarkdown } from "@/components/chat-v2/thread/memomized-markdown";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
@@ -1309,7 +1310,11 @@ function deriveSpanLabel(
 
   if (span.category === "tool") {
     const name = (span.toolName ?? span.name).trim() || "tool";
-    const title = `Tool · ${name}`;
+    const isDiscoveryTool = span.serverId === META_TOOL_SERVER_ID;
+    const title = `${isDiscoveryTool ? "Discovery" : "Tool"} · ${name}`;
+    const serverHint = isDiscoveryTool
+      ? (span.serverName ?? "MCPJam")
+      : span.serverName;
     const toolSub = toolSubtitleFromTranscript(transcriptMessages, span);
     // Skip trivial subtitles like "{}" for empty tool inputs
     const isTrivialSub = !toolSub || toolSub === "{}" || toolSub === "None";
@@ -1339,12 +1344,14 @@ function deriveSpanLabel(
         title,
         subtitle: modelHint
           ? `${modelHint} · step ${span.stepIndex + 1}`
-          : `step ${span.stepIndex + 1}`,
+          : serverHint
+            ? `${serverHint} · step ${span.stepIndex + 1}`
+            : `step ${span.stepIndex + 1}`,
       };
     }
     return {
       title,
-      subtitle: modelHint,
+      subtitle: modelHint ?? serverHint,
     };
   }
 

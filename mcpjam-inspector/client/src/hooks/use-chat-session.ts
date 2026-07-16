@@ -84,6 +84,10 @@ import {
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import {
+  useUIPlaygroundStore,
+  type ProgressiveToolsStatus,
+} from "@/stores/ui-playground-store";
+import {
   preserveHydratedMessageIds,
   transcriptToUIMessages,
 } from "@/lib/transcript-to-ui-messages";
@@ -1151,6 +1155,42 @@ function isAuthDeniedError(error: unknown): boolean {
   return /\b(401|403)\b|unauthorized|forbidden/i.test(withStatus.message);
 }
 
+function readProgressiveToolsStatus(
+  messages: UIMessage[],
+  sessionId: string
+): ProgressiveToolsStatus | null {
+  const latestMessage = messages[messages.length - 1];
+  if (latestMessage?.role !== "assistant" || !latestMessage.metadata) {
+    return null;
+  }
+
+  const metadata = latestMessage.metadata as {
+    progressiveToolDiscovery?: unknown;
+  };
+  const status = metadata.progressiveToolDiscovery;
+  if (!status || typeof status !== "object") return null;
+
+  const record = status as Record<string, unknown>;
+  if (
+    typeof record.enabled !== "boolean" ||
+    !Array.isArray(record.reasons) ||
+    typeof record.toolCount !== "number" ||
+    typeof record.serverCount !== "number"
+  ) {
+    return null;
+  }
+
+  return {
+    sessionId,
+    enabled: record.enabled,
+    reasons: record.reasons.filter(
+      (reason): reason is string => typeof reason === "string"
+    ),
+    toolCount: record.toolCount,
+    serverCount: record.serverCount,
+  };
+}
+
 export function useChatSession(
   options: UseChatSessionOptions
 ): UseChatSessionReturn {
@@ -1171,6 +1211,9 @@ export function useChatSession(
   // becomes undefined during host bootstrap, in which case fields fall back to
   // hook defaults rather than retaining the prior host's value.
   const isExecutionConfigControlled = "executionConfig" in options;
+  const setProgressiveToolsStatus = useUIPlaygroundStore(
+    (state) => state.setProgressiveToolsStatus
+  );
   const hostedProjectId = hostedContext?.projectId;
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedEnsureServerIds = hostedContext?.ensureServerIds;
@@ -2490,6 +2533,7 @@ export function useChatSession(
     clearPendingSessionHydration();
     resumedModelVisibleMcpToolResultsRef.current = undefined;
     resumedMcpToolResultImageRenderingRef.current = undefined;
+    setProgressiveToolsStatus(null);
     setChatSessionId(generateId());
     setMessages([]);
     setPersistedSnapshotToolCallIds([]);
@@ -2501,6 +2545,7 @@ export function useChatSession(
   }, [
     clearPendingSessionHydration,
     setMessages,
+    setProgressiveToolsStatus,
     syncResumedVersion,
     syncRestoredToolRenderOverrides,
   ]);
@@ -2904,6 +2949,12 @@ export function useChatSession(
 
     previousSelectedServersRef.current = currentNames;
   }, [selectedServers]);
+
+  useEffect(() => {
+    setProgressiveToolsStatus(
+      readProgressiveToolsStatus(messages, chatSessionId)
+    );
+  }, [chatSessionId, messages, setProgressiveToolsStatus]);
 
   // Token usage calculation
   const tokenUsage = useMemo<TokenUsage>(() => {

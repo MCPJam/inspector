@@ -465,7 +465,10 @@ export async function runHarnessTurn(
   // shows in the [harness][timing] phase log.
   let traceBaseMs = turnStartedAt;
   let stepStartedAt = turnStartedAt;
-  const toolSetForTrace: Record<string, { _serverId?: string }> = {};
+  const toolSetForTrace: Record<
+    string,
+    { _serverId?: string; _serverName?: string }
+  > = {};
   // The shared per-turn ritual (turn_start / onStepFinish / turn_finish /
   // PersistedTurnTrace / abort). Constructed at STREAM start once `traceBaseMs`
   // is finalized; read by `onFinishEngine` (a sibling closure) for the trace.

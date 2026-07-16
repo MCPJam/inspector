@@ -6,6 +6,10 @@ import { Maximize2, Settings2 } from "lucide-react";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@mcpjam/design-system/toggle-group";
+import {
   PRESET_DEVICE_CONFIGS,
   LOCALE_OPTIONS,
   TIMEZONE_OPTIONS,
@@ -15,6 +19,7 @@ import type {
   CustomViewport,
   CspMode,
   DeviceType,
+  ProgressiveToolsMode,
   PresetDeviceType,
 } from "@/stores/ui-playground-store";
 
@@ -250,6 +255,42 @@ export function CspPickerBody({
           </span>
         </button>
       ))}
+    </div>
+  );
+}
+
+export function ProgressiveToolsPickerBody({
+  mode,
+  setMode,
+  onSelectMode,
+}: {
+  mode: ProgressiveToolsMode;
+  setMode: (mode: ProgressiveToolsMode) => void;
+  onSelectMode?: () => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <ToggleGroup
+        type="single"
+        value={mode}
+        onValueChange={(value) => {
+          if (!value) return;
+          setMode(value as ProgressiveToolsMode);
+          onSelectMode?.();
+        }}
+        className="grid grid-cols-3 gap-1"
+      >
+        {(["auto", "on", "off"] as const).map((value) => (
+          <ToggleGroupItem
+            key={value}
+            value={value}
+            size="sm"
+            className="h-7 px-2 text-xs capitalize"
+          >
+            {value}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
     </div>
   );
 }

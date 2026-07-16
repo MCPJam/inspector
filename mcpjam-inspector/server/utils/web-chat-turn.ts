@@ -154,6 +154,7 @@ export interface WebChatTurnPersistContext {
  */
 export interface WebChatTurnPrepareInputs {
   selectedServerIds: string[];
+  selectedServerNames?: string[];
   modelDefinition: ModelDefinition;
   systemPrompt?: string;
   temperature?: number;
@@ -261,6 +262,7 @@ export async function streamWebChatTurn(
     prepared = await prepareChatV2({
       mcpClientManager: manager,
       selectedServers: prepare.selectedServerIds,
+      selectedServerNames: prepare.selectedServerNames,
       modelDefinition: prepare.modelDefinition,
       systemPrompt: prepare.systemPrompt,
       temperature: prepare.temperature,

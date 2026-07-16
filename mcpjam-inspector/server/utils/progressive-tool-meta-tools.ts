@@ -13,6 +13,8 @@ import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import {
   META_TOOL_LOAD,
+  META_TOOL_SERVER_ID,
+  META_TOOL_SERVER_NAME,
   META_TOOL_SEARCH,
   formatToolSearchMatch,
   searchToolCatalog,
@@ -63,7 +65,12 @@ export interface SearchMcpToolsResult {
 }
 
 export interface LoadMcpToolsResult {
-  loaded: { toolId: string; name: string; serverId: string | null }[];
+  loaded: {
+    toolId: string;
+    name: string;
+    serverId: string | null;
+    serverName: string | null;
+  }[];
   notFound: string[];
 }
 
@@ -119,6 +126,10 @@ export function createProgressiveMetaTools(
       };
     },
   });
+  Object.assign(result[META_TOOL_SEARCH] as object, {
+    _serverId: META_TOOL_SERVER_ID,
+    _serverName: META_TOOL_SERVER_NAME,
+  });
   result[META_TOOL_LOAD] = tool({
     description: LOAD_DESCRIPTION,
     inputSchema: loadSchema,
@@ -141,10 +152,15 @@ export function createProgressiveMetaTools(
           toolId: entry.toolId,
           name: entry.modelName,
           serverId: entry.serverId,
+          serverName: entry.serverName,
         });
       }
       return { loaded, notFound };
     },
+  });
+  Object.assign(result[META_TOOL_LOAD] as object, {
+    _serverId: META_TOOL_SERVER_ID,
+    _serverName: META_TOOL_SERVER_NAME,
   });
   return result;
 }

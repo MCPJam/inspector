@@ -38,6 +38,11 @@ import { useAvailableModels } from "@/hooks/use-available-models";
 import { FieldRow, FocusBlock } from "./primitives";
 import { fieldsWithIssues } from "./useHostDraftValidation";
 import type { HostAttentionIssue } from "../types";
+import {
+  progressiveModeToValue,
+  progressiveValueToMode,
+  type ProgressiveToolsMode,
+} from "@/stores/ui-playground-store";
 
 // Tri-state UI ↔ persisted value. The backend treats `undefined` as
 // "auto" (orchestrator may still enable progressive mode above the
@@ -46,21 +51,9 @@ import type { HostAttentionIssue } from "../types";
 // actually fires. The three buttons map 1:1 to the three persisted
 // states; "Auto" preserves `undefined` so the backend dedupe hash
 // stays distinct from an explicit on/off override.
-type ProgressiveTriState = "auto" | "on" | "off";
-function progressiveValueToTri(
-  value: boolean | undefined
-): ProgressiveTriState {
-  if (value === true) return "on";
-  if (value === false) return "off";
-  return "auto";
-}
-function triToProgressiveValue(
-  value: ProgressiveTriState
-): boolean | undefined {
-  if (value === "on") return true;
-  if (value === "off") return false;
-  return undefined;
-}
+type ProgressiveTriState = ProgressiveToolsMode;
+const progressiveValueToTri = progressiveValueToMode;
+const triToProgressiveValue = progressiveModeToValue;
 
 function InfoHoverLabel({
   label,

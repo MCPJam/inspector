@@ -24,6 +24,8 @@ export const META_TOOL_NAMES: readonly string[] = [
   META_TOOL_SEARCH,
   META_TOOL_LOAD,
 ] as const;
+export const META_TOOL_SERVER_ID = "mcpjam:discovery";
+export const META_TOOL_SERVER_NAME = "MCPJam";
 
 export interface ToolCatalogFieldSummary {
   name: string;
@@ -39,6 +41,8 @@ export interface ToolCatalogEntry {
   modelName: string;
   /** Underlying server/source identifier, or null for skill/local tools. */
   serverId: string | null;
+  /** Human-readable MCP server/source name when known. */
+  serverName: string | null;
   /** Original MCP tool name (before any inspector-side rename). */
   originalName: string;
   description?: string;
@@ -172,6 +176,7 @@ type AnyTool = {
   parameters?: unknown;
   inputSchema?: unknown;
   _serverId?: unknown;
+  _serverName?: unknown;
   _meta?: unknown;
   // Some MCP-adapter tools stash the original MCP name when the AI SDK name
   // was sanitized for provider naming rules.
@@ -242,6 +247,19 @@ function readServerId(tool: AnyTool): string | null {
   return null;
 }
 
+function readServerName(tool: AnyTool): string | null {
+  if (typeof tool._serverName === "string" && tool._serverName.length > 0) {
+    return tool._serverName;
+  }
+  if (tool._meta && typeof tool._meta === "object") {
+    const meta = tool._meta as Record<string, unknown>;
+    if (typeof meta._serverName === "string" && meta._serverName.length > 0) {
+      return meta._serverName;
+    }
+  }
+  return null;
+}
+
 function readOriginalName(tool: AnyTool, modelName: string): string {
   if (typeof tool._originalName === "string" && tool._originalName.length > 0) {
     return tool._originalName;
@@ -260,6 +278,7 @@ export function buildToolCatalog(tools: ToolSet): ToolCatalogEntry[] {
     if (META_TOOL_NAMES.includes(modelName)) continue;
     const tool = raw as AnyTool;
     const serverId = readServerId(tool);
+    const serverName = readServerName(tool) ?? serverId;
     const originalName = readOriginalName(tool, modelName);
     const inputSchema = readJsonSchema(tool.parameters ?? tool.inputSchema);
     const description =
@@ -277,6 +296,7 @@ export function buildToolCatalog(tools: ToolSet): ToolCatalogEntry[] {
       toolId,
       modelName,
       serverId,
+      serverName,
       originalName,
       description,
       fields,
@@ -483,6 +503,7 @@ export interface ToolSearchMatch {
   toolId: string;
   name: string;
   serverId: string | null;
+  serverName: string | null;
   description?: string;
   fields: { name: string; type: string; required: boolean }[];
 }
@@ -492,6 +513,7 @@ export function formatToolSearchMatch(entry: ToolCatalogEntry): ToolSearchMatch 
     toolId: entry.toolId,
     name: entry.modelName,
     serverId: entry.serverId,
+    serverName: entry.serverName,
     description: entry.description,
     fields: entry.fields.map((f) => ({
       name: f.name,
