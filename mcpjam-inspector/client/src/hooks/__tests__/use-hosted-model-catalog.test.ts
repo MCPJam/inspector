@@ -150,7 +150,7 @@ describe("useHostedModelCatalog", () => {
     ).not.toHaveProperty("Authorization");
   });
 
-  it("re-attempts the fetch after an offline fallback (no stale pin)", async () => {
+  it("re-attempts the fetch on remount after an offline fallback (no stale pin)", async () => {
     // First load offline → fallback, module-cached.
     vi.stubGlobal(
       "fetch",
@@ -158,16 +158,18 @@ describe("useHostedModelCatalog", () => {
         throw new Error("offline");
       })
     );
-    const { result, rerender } = renderHook(() => useHostedModelCatalog());
-    await waitFor(() => expect(result.current.status).toBe("fallback"));
+    const first = renderHook(() => useHostedModelCatalog());
+    await waitFor(() => expect(first.result.current.status).toBe("fallback"));
+    first.unmount();
 
-    // Now online: a `fallback` cache must NOT pin — the hook re-fetches.
+    // Now online: a `fallback` cache must NOT pin — a fresh mount re-fetches
+    // (only a `live` cache short-circuits the fetch).
     stubFetchJson({ ok: true, data: [catalogDto("newvendor/model-x", true)] });
-    rerender();
+    const second = renderHook(() => useHostedModelCatalog());
 
-    await waitFor(() => expect(result.current.status).toBe("live"));
+    await waitFor(() => expect(second.result.current.status).toBe("live"));
     expect(
-      result.current.hostedCatalog.some(
+      second.result.current.hostedCatalog.some(
         (m) => String(m.id) === "newvendor/model-x"
       )
     ).toBe(true);
