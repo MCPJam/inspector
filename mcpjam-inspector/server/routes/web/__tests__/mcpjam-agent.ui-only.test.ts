@@ -112,6 +112,17 @@ describe("web routes — mcpjam-agent is UI-only", () => {
       process.env.MCPJAM_AGENT_PLATFORM_TOOLS = "1";
     });
 
+    it("drops the UI-only identity prompt so the rollback isn't self-contradictory", async () => {
+      // "The ui_* tools are your only way to act" is false once the platform
+      // tools are back. Shipping both would leave the model with opposite
+      // instructions in the one configuration meant to behave exactly like
+      // the old one.
+      const args = await postAgentTurn();
+      expect(args.prepare.systemPrompt).not.toContain("MCPJam in-app assistant");
+      expect(args.prepare.systemPrompt).not.toContain("no other way to act");
+      expect(args.prepare.systemPrompt).toContain("Workspace context");
+    });
+
     it("restores the platform server, its selection, AND its workspace prompt", async () => {
       // A rollback that restored the tools but not their `project` guidance
       // would leave the worker defaulting to the caller's most-recently-updated

@@ -287,9 +287,15 @@ mcpjamAgent.post("/", async (c) => {
               "explicitly asks about a different project.",
           ].join("\n")
         : undefined;
+      // The identity prompt says the `ui_*` tools are the only way to act.
+      // Under the kill-switch that becomes false — the platform tools are
+      // back — and shipping both sections would hand the model directly
+      // contradictory instructions, in the one configuration whose entire
+      // job is to behave exactly like the old one. A rollback that leaves
+      // the new prompt in place is not a rollback.
       const effectiveSystemPrompt = [
         body.systemPrompt,
-        AGENT_IDENTITY_PROMPT,
+        platformToolsEnabled ? undefined : AGENT_IDENTITY_PROMPT,
         ambientContextPrompt,
       ]
         .filter((section): section is string => Boolean(section?.trim()))
