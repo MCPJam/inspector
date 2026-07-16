@@ -870,6 +870,7 @@ export async function createAuthorizedManager(
      * also pass `xaaIssuer`.
      */
     xaaPolicy?: XaaEnterprisePolicy;
+    /**
      * Global elicitation callback for INTERACTIVE, streaming surfaces.
      *
      * Registration is what makes elicitation work at all: `buildCapabilities`
