@@ -7,6 +7,7 @@ import {
   type McpProtocolVersion,
 } from "@mcpjam/sdk";
 import type {
+  ElicitationCallback,
   HttpServerConfig,
   RpcLogger,
   UnauthorizedRefreshHandler,
@@ -200,6 +201,23 @@ export const hostedChatSchema = z
     selectedServerIds: z.array(z.string().min(1)),
     selectedServerNames: z.array(z.string().min(1)).optional(),
     clientCapabilities: clientCapabilitiesSchema.optional(),
+    /**
+     * Client's hosted-elicitation protocol version. Absent ⇒ the client cannot
+     * render an elicitation prompt, so the server must not register the
+     * callback (and therefore must not advertise the capability).
+     *
+     * This handshake exists because catalog hosts ALREADY declare
+     * `elicitation`: without it, deploying server support would make every
+     * stale browser bundle hang for a full TTL on any server that elicits.
+     * Bump only if the wire contract changes incompatibly.
+     *
+     * Accepts ANY non-negative integer, not `literal(1)`: a newer client
+     * advertising v2 against this older server must degrade to
+     * elicitation-disabled, not 400 the entire chat request. The exact-version
+     * check lives in `resolveElicitationGate`, which is what actually decides
+     * whether to honor it.
+     */
+    hostedElicitationVersion: z.number().int().nonnegative().optional(),
     chatSessionId: z.string().min(1).optional(),
     surface: z.enum(["preview", "share_link"]).optional(),
     oauthTokens: z.record(z.string(), z.string()).optional(),
@@ -216,7 +234,7 @@ export function buildSingleServerOAuthTokens(serverId: string, token?: string) {
   return token ? { [serverId]: token } : undefined;
 }
 
-function buildServerNamesById(
+export function buildServerNamesById(
   serverIds: string[],
   serverNames?: readonly string[]
 ): Record<string, string> | undefined {
@@ -852,6 +870,29 @@ export async function createAuthorizedManager(
      * also pass `xaaIssuer`.
      */
     xaaPolicy?: XaaEnterprisePolicy;
+    /**
+     * Global elicitation callback for INTERACTIVE, streaming surfaces.
+     *
+     * Registration is what makes elicitation work at all: `buildCapabilities`
+     * strips a host-declared `elicitation` capability unless a handler is
+     * already registered at connect time, so passing this is simultaneously
+     * "advertise it" and "honor it" — they cannot drift apart.
+     *
+     * MUST be registered here, not by the caller: the manager constructor kicks
+     * off connects in a microtask, so a caller registering after
+     * `await createAuthorizedManager(...)` loses the race and the capability is
+     * silently stripped. Registering synchronously below always wins.
+     *
+     * Non-interactive surfaces (swarm, evals, chatbox persona/simulation,
+     * tools/execute) deliberately omit this: they have no human to answer, so
+     * servers should fail fast rather than block on a prompt nobody sees.
+     */
+    elicitationCallback?: ElicitationCallback;
+    /**
+     * Total suspended-time budget per tool call while an elicitation is pending
+     * (SDK-side watchdog). Only meaningful alongside `elicitationCallback`.
+     */
+    elicitationTimeoutExtensionMs?: number;
   }
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
@@ -1199,7 +1240,17 @@ export async function createAuthorizedManager(
     defaultTimeout: timeoutMs,
     rpcLogger: options?.rpcLogger,
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+    ...(options?.elicitationTimeoutExtensionMs !== undefined
+      ? { elicitationTimeoutExtensionMs: options.elicitationTimeoutExtensionMs }
+      : {}),
   });
+  // SYNCHRONOUS, before any `await` — the constructor above queued its connects
+  // as microtasks, and `buildCapabilities` (which decides whether `elicitation`
+  // survives onto the initialize wire) runs inside them. Registering here always
+  // wins that race; registering after an await never does.
+  if (options?.elicitationCallback) {
+    manager.setElicitationCallback(options.elicitationCallback);
+  }
   return {
     manager,
     oauthServerUrls,

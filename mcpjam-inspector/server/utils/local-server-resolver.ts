@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import type { MCPClientManager, MCPServerConfig } from "@mcpjam/sdk";
+import { narrowElicitationToLocalSupport } from "../routes/mcp/elicitation.js";
 import {
   describeError,
   isKnownProtocolVersion,
@@ -464,12 +465,17 @@ export function toMCPServerConfig(
   // never overwriting — into whatever capabilities the caller configured.
   // Advertised when the connection actually uses XAA (the backstop) or
   // whenever the host's enterprise policy is on (host-wide declare-support).
-  const clientCapabilities =
+  const xaaMerged =
     options?.xaaPolicy != null ||
     (serverConfig.transportType === "http" &&
       resolveEffectiveAuthMethod(serverConfig, options?.xaaPolicy) === "xaa")
       ? withXaaExtensionCapability(baseClientCapabilities)
       : baseClientCapabilities;
+  // Advertise = enforce: the local elicitation bridge is form-only, so a config
+  // declaring `elicitation.url` (the host toggle can write it) must not put url
+  // on the wire — the SDK would accept the request and the bridge would drop
+  // the URL, leaving the user a form they cannot complete.
+  const clientCapabilities = narrowElicitationToLocalSupport(xaaMerged);
 
   if (serverConfig.transportType === "stdio") {
     const stdio: any = {

@@ -5,7 +5,16 @@ import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
 import { isMCPAuthError } from "@mcpjam/sdk";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
-import { HOSTED_MODE, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
+import {
+  ELICITATION_TIMEOUT_EXTENSION_MS,
+  HOSTED_MODE,
+  WEB_STREAM_TIMEOUT_MS,
+} from "../../config.js";
+import {
+  HostedElicitationBridge,
+  resolveElicitationGate,
+} from "./hosted-elicitation.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
   validateAppToolEntries,
   AppToolValidationError,
@@ -20,6 +29,7 @@ import { captureServerEvent } from "../../utils/analytics.js";
 import {
   hostedChatSchema,
   createAuthorizedManager,
+  buildServerNamesById,
   callerContextFromHono,
   assertBearerToken,
   readJsonBody,
@@ -409,6 +419,33 @@ chatV2.post("/", async (c) => {
       hasProjectId: Boolean(hostedBody.projectId),
     });
 
+    // Registering the callback is what makes the SDK advertise `elicitation`,
+    // so "who declares it" and "may we honor it" are one decision — see
+    // `resolveElicitationGate` for why chatbox turns must not read the body.
+    const {
+      effectiveClientCapabilities,
+      enabled: elicitationEnabled,
+    } = resolveElicitationGate({
+      isChatboxSession,
+      hostClientCapabilities: hostRuntimeConfig?.clientCapabilities,
+      bodyClientCapabilities: hostedBody.clientCapabilities,
+      clientVersion: hostedBody.hostedElicitationVersion,
+    });
+
+    const elicitationBridge = elicitationEnabled
+      ? new HostedElicitationBridge({
+          // NOT the raw Authorization header: for WorkOS API-key callers that
+          // is an `sk_…` key Convex cannot verify. This resolves the delegated
+          // JWT for those callers and passes JWTs through untouched.
+          convexBearer: await getConvexBearerForRequest(c),
+          projectId: hostedBody.projectId,
+          chatSessionId: hostedBody.chatSessionId,
+          serverNamesById:
+            buildServerNamesById(selectedServerIds, selectedServerNames) ?? {},
+          abortSignal: c.req.raw.signal as AbortSignal | undefined,
+        })
+      : undefined;
+
     // Membership chat (no share/chatbox token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
     // accessScope is only set when a token is in play (shared chat / chatbox)
@@ -424,7 +461,9 @@ chatV2.post("/", async (c) => {
       selectedServerIds,
       WEB_STREAM_TIMEOUT_MS,
       hostedBody.oauthTokens,
-      hostedBody.clientCapabilities,
+      // Chatbox: advertise the HOST's capabilities, not the body's, so the
+      // wire matches what we're prepared to honor.
+      effectiveClientCapabilities,
       {
         ...(isChatboxSession ? { accessScope: "chat_v2" } : {}),
         chatboxId,
@@ -438,6 +477,12 @@ chatV2.post("/", async (c) => {
         // per-server configured) — without it the builder 500s rather than
         // connecting tokenless.
         xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+        ...(elicitationBridge
+          ? {
+              elicitationCallback: elicitationBridge.callback,
+              elicitationTimeoutExtensionMs: ELICITATION_TIMEOUT_EXTENSION_MS,
+            }
+          : {}),
       },
     );
     oauthServerUrls = urls;
@@ -601,10 +646,15 @@ chatV2.post("/", async (c) => {
           clientIp: getClientIp(c),
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
           rpcCollector,
+          elicitationBridge,
           c,
         },
       });
     } catch (error) {
+      // The bridge can hold rows created before the throw (e.g. an elicitation
+      // during a tool call that then failed); withdraw them so no answerable
+      // prompt outlives the turn.
+      await elicitationBridge?.dispose();
       await manager.disconnectAllServers();
       throw error;
     }

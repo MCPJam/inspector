@@ -2453,7 +2453,7 @@ async function processOneStep(
         modelVisibleMcpToolResults,
         readLinkedResource: readLinkedMcpResourceWithManager(mcpClientManager),
         ...(abortSignal ? { abortSignal } : {}),
-      });
+        });
       const toolsEndAbs = Date.now();
 
       const newToolCallIds = new Set<string>();

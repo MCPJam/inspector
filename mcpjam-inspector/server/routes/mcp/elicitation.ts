@@ -34,6 +34,62 @@ const registeredManagers = new WeakSet<MCPClientManager>();
  * Without this, tasks/result calls might fail with "Method not found" if
  * no one has hit the elicitation routes yet.
  */
+/**
+ * Elicitation modes the LOCAL bridge can actually complete.
+ *
+ * This SSE flow is form-only: it broadcasts `{requestId, message, schema}` and
+ * resolves with form content. URL mode needs the URL to reach a consent dialog
+ * and returns no content — neither of which this pipeline carries. (Hosted
+ * chat has its own bridge, `routes/web/hosted-elicitation.ts`, which does both.)
+ */
+const LOCAL_SUPPORTED_ELICITATION_MODES = ["form"] as const;
+
+/**
+ * Drop elicitation modes the local bridge can't complete before they reach the
+ * wire.
+ *
+ * Advertising `url` here would be a lie with teeth: the SDK would accept a
+ * conforming url-mode request, this bridge would drop the `url`, and the user
+ * would get a form with nothing to fill in and no way to finish the
+ * interaction. Not advertising it means the SDK rejects such requests with
+ * `-32602` and the server can fall back — which is the honest outcome until the
+ * local pipeline carries URL mode end to end.
+ *
+ * Only prunes; a config that never mentioned elicitation is returned untouched
+ * so this can sit on the shared local path without inventing capabilities.
+ */
+export function narrowElicitationToLocalSupport(
+  capabilities: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  const elicitation = capabilities?.elicitation;
+  if (
+    !capabilities ||
+    typeof elicitation !== "object" ||
+    elicitation === null ||
+    Array.isArray(elicitation)
+  ) {
+    return capabilities;
+  }
+
+  const declared = elicitation as Record<string, unknown>;
+  // Bare `{}` is form-only per the spec's back-compat rule — already safe, and
+  // rewriting it would churn configs for no behavior change.
+  if (Object.keys(declared).length === 0) return capabilities;
+
+  const narrowed: Record<string, unknown> = {};
+  for (const mode of LOCAL_SUPPORTED_ELICITATION_MODES) {
+    if (declared[mode] !== undefined) narrowed[mode] = declared[mode];
+  }
+  // Everything was unsupported (e.g. `{url:{}}`): declaring `elicitation: {}`
+  // would silently mean "form", which the caller never asked for. Drop the
+  // capability entirely instead.
+  if (Object.keys(narrowed).length === 0) {
+    const { elicitation: _dropped, ...rest } = capabilities;
+    return rest;
+  }
+  return { ...capabilities, elicitation: narrowed };
+}
+
 export function initElicitationCallback(manager: MCPClientManager): void {
   // Use WeakSet to track registration per manager instance
   // This handles hot reload scenarios where a new manager is created
@@ -41,7 +97,7 @@ export function initElicitationCallback(manager: MCPClientManager): void {
 
   // Per MCP Tasks spec (2025-11-25), elicitations related to a task include relatedTaskId
   manager.setElicitationCallback(
-    ({ requestId, message, schema, relatedTaskId }) => {
+    ({ requestId, serverId, message, schema, relatedTaskId }) => {
       return new Promise<ElicitResult>((resolve, reject) => {
         try {
           manager.getPendingElicitations().set(requestId, { resolve, reject });
@@ -53,6 +109,12 @@ export function initElicitationCallback(manager: MCPClientManager): void {
         broadcastElicitation({
           type: "elicitation_request",
           requestId,
+          // Spec: the client MUST make it clear which server is asking. This
+          // matters most in local chat, where several servers are connected at
+          // once and the dialog is otherwise anonymous. The SDK supplies the
+          // id; it is the trusted, immutable anchor (there is no display name
+          // on this path, so the dialog shows the id itself).
+          serverId,
           message,
           schema,
           timestamp: new Date().toISOString(),
