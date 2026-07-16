@@ -3,6 +3,7 @@ import {
   UI_CONTEXT_CLOSE,
   UI_CONTEXT_MAX_CHARS,
   UI_CONTEXT_OPEN,
+  UI_CONTEXT_PREAMBLE,
   isRenderedUiContextText,
   parseUiContextPayload,
   renderUiContextText,
@@ -59,6 +60,9 @@ describe("renderUiContextText", () => {
     expect(text.endsWith(UI_CONTEXT_CLOSE)).toBe(true);
     expect(text).toContain("playground (/playground)");
     expect(text).toContain("everything");
+    // Every earlier turn's block is still in history; without the timestamp
+    // the model can't tell which "right now" is current.
+    expect(text).toContain("Observed at: 2026-07-15T12:00:00.000Z");
   });
 
   it("says so explicitly when nothing is selected", () => {
@@ -99,5 +103,32 @@ describe("isRenderedUiContextText", () => {
     expect(isRenderedUiContextText("open the playground")).toBe(false);
     expect(isRenderedUiContextText(undefined)).toBe(false);
     expect(isRenderedUiContextText(42)).toBe(false);
+  });
+
+  it("does NOT match user text that WRAPS itself in both markers", () => {
+    // Users of an MCP debugging tool paste and quote markers. Matching on
+    // markers alone deleted their message from stored history — this is the
+    // case that made marker-only matching unsafe.
+    expect(
+      isRenderedUiContextText(
+        `${UI_CONTEXT_OPEN}\nwhat does this mean?\n${UI_CONTEXT_CLOSE}`,
+      ),
+    ).toBe(false);
+    // Right preamble, but a free-text body rather than our `- Key: value`.
+    expect(
+      isRenderedUiContextText(
+        `${UI_CONTEXT_OPEN}\n${UI_CONTEXT_PREAMBLE}\nnope\n${UI_CONTEXT_CLOSE}`,
+      ),
+    ).toBe(false);
+    // Well-formed body, but not our preamble.
+    expect(
+      isRenderedUiContextText(
+        `${UI_CONTEXT_OPEN}\nsomething else entirely:\n- Screen: x (/x)\n${UI_CONTEXT_CLOSE}`,
+      ),
+    ).toBe(false);
+    // Markers only, no body at all.
+    expect(
+      isRenderedUiContextText(`${UI_CONTEXT_OPEN}\n${UI_CONTEXT_CLOSE}`),
+    ).toBe(false);
   });
 });

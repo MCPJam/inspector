@@ -35,6 +35,15 @@ export const UI_CONTEXT_PART_TYPE = "data-ui-context";
 export const UI_CONTEXT_OPEN = "[mcpjam-ui-context]";
 export const UI_CONTEXT_CLOSE = "[/mcpjam-ui-context]";
 
+/**
+ * First line inside the envelope. Part of the canonical shape
+ * `isRenderedUiContextText` checks, so the renderer and the matcher must
+ * read the same constant — if they drift, persistence stops stripping and
+ * old blocks resurface as the user's own text.
+ */
+export const UI_CONTEXT_PREAMBLE =
+  "The user's screen right now (they may have navigated it themselves since your last turn):";
+
 /** Hard cap on the rendered block. Orientation, not a state dump. */
 export const UI_CONTEXT_MAX_CHARS = 2048;
 
@@ -95,7 +104,7 @@ export function renderUiContextText(value: unknown): string | null {
   if (!payload) return null;
   const lines = [
     UI_CONTEXT_OPEN,
-    "The user's screen right now (they may have navigated it themselves since your last turn):",
+    UI_CONTEXT_PREAMBLE,
     `- Screen: ${payload.activeTab} (${payload.path})`,
   ];
   if (payload.selectedServers?.length) {
@@ -103,6 +112,10 @@ export function renderUiContextText(value: unknown): string | null {
   } else if (payload.selectedServers) {
     lines.push("- Selected servers: none");
   }
+  // Every earlier turn's block is still in history, so without this the
+  // model sees several equally-confident descriptions of "right now" and no
+  // way to tell which one is current.
+  lines.push(`- Observed at: ${payload.timestamp}`);
   lines.push(UI_CONTEXT_CLOSE);
   const text = lines.join("\n");
   return text.length > UI_CONTEXT_MAX_CHARS
@@ -113,15 +126,26 @@ export function renderUiContextText(value: unknown): string | null {
 /**
  * Whether a text part is one WE rendered.
  *
- * Whole-string match on both markers, deliberately: persistence strips these
- * from stored history, and a substring match would let
- * "how do I use [mcpjam-ui-context]?" delete part of a user's own message.
- * An exact match can only be produced by `renderUiContextText`.
+ * This decides what persistence DELETES from the user's own history, so it
+ * validates the canonical shape rather than just the markers. Matching on
+ * markers alone would delete a message from anyone who pasted or quoted them
+ * — "[mcpjam-ui-context] what is this? [/mcpjam-ui-context]" is a perfectly
+ * reasonable thing for a user of an MCP debugging tool to type, and it is
+ * their content, not ours.
+ *
+ * The canonical shape is: open marker, our exact preamble, a `- Key: value`
+ * body, close marker. A user would have to reproduce all of it verbatim to
+ * lose their text — at which point it is indistinguishable from ours anyway.
  */
 export function isRenderedUiContextText(text: unknown): boolean {
-  return (
-    typeof text === "string" &&
-    text.startsWith(UI_CONTEXT_OPEN) &&
-    text.trimEnd().endsWith(UI_CONTEXT_CLOSE)
-  );
+  if (typeof text !== "string") return false;
+  const trimmed = text.trimEnd();
+  if (!trimmed.startsWith(UI_CONTEXT_OPEN)) return false;
+  if (!trimmed.endsWith(UI_CONTEXT_CLOSE)) return false;
+  const lines = trimmed.split("\n");
+  // open + preamble + at least one field + close
+  if (lines.length < 4) return false;
+  if (lines[1] !== UI_CONTEXT_PREAMBLE) return false;
+  const body = lines.slice(2, -1);
+  return body.length > 0 && body.every((line) => /^- [^:]+: /.test(line));
 }
