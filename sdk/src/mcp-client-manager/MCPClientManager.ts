@@ -2263,6 +2263,7 @@ export class MCPClientManager {
       options.timeout ??
       this.registeredServers.get(serverId)?.timeout ??
       this.defaultTimeout;
+    const pendingSequenceAtStart = this.elicitationManager.getPendingSequence();
 
     const suspension = createElicitationTimeoutSuspension({
       serverId,
@@ -2278,7 +2279,8 @@ export class MCPClientManager {
       hasPending: () =>
         this.elicitationManager.hasPendingForServer(
           serverId,
-          this.elicitationTimeoutExtensionMs
+          this.elicitationTimeoutExtensionMs,
+          pendingSequenceAtStart,
         ),
     });
 

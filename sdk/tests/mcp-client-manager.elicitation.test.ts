@@ -853,6 +853,46 @@ describe("executeTool elicitation-aware timeout", () => {
     await caught;
   });
 
+  it("does not spin the watchdog while a zero-extension call is active", async () => {
+    const hasPending = jest.fn(() => false);
+    const suspension = createElicitationTimeoutSuspension({
+      serverId: SERVER,
+      baseTimeoutMs: 10_000,
+      extensionMs: 0,
+      intervalMs: 1_000,
+      hasPending,
+    });
+
+    // One initial sample chooses the cadence. A zero suspended budget must not
+    // turn the inactive path into a 1ms poll loop.
+    expect(hasPending).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(999);
+    expect(hasPending).toHaveBeenCalledTimes(1);
+
+    suspension.dispose();
+  });
+
+  it("aborts when an elicitation starts with a zero extension budget", async () => {
+    let pending = false;
+    const suspension = createElicitationTimeoutSuspension({
+      serverId: SERVER,
+      baseTimeoutMs: 10_000,
+      extensionMs: 0,
+      intervalMs: 1_000,
+      hasPending: () => pending,
+    });
+
+    pending = true;
+    await jest.advanceTimersByTimeAsync(1_000);
+
+    expect(suspension.signal.aborted).toBe(true);
+    expect((suspension.signal.reason as SdkError).data).toMatchObject({
+      reason: "elicitation-budget",
+      timeout: 0,
+    });
+    suspension.dispose();
+  });
+
   it("disposes the watchdog once the call settles", async () => {
     const manager = buildManager({ elicitationTimeoutExtensionMs: 600_000 });
     manager.setElicitationCallback(() => ({ action: "cancel" } as any));
@@ -890,7 +930,7 @@ describe("ElicitationManager pending accounting", () => {
     // elicitation callback is still awaiting, so the callback's `finally` never
     // runs. With a bare counter the server stayed "pending" forever and EVERY
     // later call had its clock paused — unbounded timeouts, silently.
-    vi.useFakeTimers();
+    jest.useFakeTimers();
     try {
       const mgr = new ElicitationManager();
       const begin = (mgr as any).beginPending.bind(mgr);
@@ -898,14 +938,34 @@ describe("ElicitationManager pending accounting", () => {
 
       expect(mgr.hasPendingForServer("srv", 60_000)).toBe(true);
 
-      vi.advanceTimersByTime(60_001);
+      jest.advanceTimersByTime(60_001);
       // Older than the asking call's whole budget — that call would have
       // aborted on its own budget anyway, so it cannot keep pausing others.
       expect(mgr.hasPendingForServer("srv", 60_000)).toBe(false);
-      // Unbounded callers still see it (back-compat for non-timeout callers).
-      expect(mgr.hasPendingForServer("srv")).toBe(true);
+      // Expired entries are reclaimed, not merely ignored.
+      expect((mgr as any).pendingElicitationEntries.size).toBe(0);
     } finally {
-      vi.useRealTimers();
+      jest.useRealTimers();
+    }
+  });
+
+  it("observes a new pending handler even with a zero age budget", () => {
+    jest.useFakeTimers();
+    try {
+      const mgr = new ElicitationManager();
+      const begin = (mgr as any).beginPending.bind(mgr);
+      const sequenceAtCallStart = mgr.getPendingSequence();
+      begin("srv");
+
+      jest.advanceTimersByTime(1);
+      expect(mgr.hasPendingForServer("srv", 0, sequenceAtCallStart)).toBe(true);
+
+      // A later call snapshots after the stuck handler and may reclaim it.
+      const laterSequence = mgr.getPendingSequence();
+      expect(mgr.hasPendingForServer("srv", 0, laterSequence)).toBe(false);
+      expect((mgr as any).pendingElicitationEntries.size).toBe(0);
+    } finally {
+      jest.useRealTimers();
     }
   });
 

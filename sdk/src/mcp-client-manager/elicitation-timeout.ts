@@ -171,16 +171,17 @@ export function createElicitationTimeoutSuspension(
    * itself — 120s budgets still sample at 1s (0.8% slop), while a 100ms budget
    * samples at 100ms and fires on time.
    */
-  const nextDelay = (): number => {
+  const nextDelay = (pending: boolean): number => {
     const remainingActive = Math.max(0, baseTimeoutMs - activeMs);
+    if (!pending) {
+      // The suspended budget is irrelevant until an elicitation actually
+      // starts. Including it here made extension=0 spin a normal tool call at
+      // 1ms, and tiny extensions caused similarly aggressive polling even
+      // while all time belonged to the server.
+      return Math.max(1, Math.min(intervalMs, remainingActive));
+    }
+
     const remainingSuspended = Math.max(0, extensionMs - suspendedMs);
-    // Bound by BOTH budgets, always — including `remainingActive` while an
-    // elicitation is pending. That looks redundant (the active clock is paused)
-    // but it is what bounds how late we notice the elicitation *ending*: a
-    // 100ms budget that samples every 1s during a 5-minute wait would overshoot
-    // by up to 1s the moment the user answers. Sampling at 100ms throughout
-    // costs nothing measurable and keeps the budget honest on both sides of the
-    // transition.
     return Math.max(
       1,
       Math.min(intervalMs, remainingActive, remainingSuspended)
@@ -192,7 +193,8 @@ export function createElicitationTimeoutSuspension(
     const elapsed = Math.max(0, now - lastSampleAt);
     lastSampleAt = now;
 
-    if (hasPending()) {
+    const pending = hasPending();
+    if (pending) {
       suspendedMs += elapsed;
       if (suspendedMs >= extensionMs) {
         abortWith(
@@ -217,16 +219,16 @@ export function createElicitationTimeoutSuspension(
     }
 
     if (disposed) return;
-    schedule();
+    schedule(pending);
   };
 
-  function schedule() {
-    timer = setTimeout(tick, nextDelay());
+  function schedule(pending: boolean) {
+    timer = setTimeout(tick, nextDelay(pending));
     // Never hold the event loop open on this watchdog.
     (timer as unknown as { unref?: () => void }).unref?.();
   }
 
-  schedule();
+  schedule(hasPending());
   const composed = composeAbortSignals(
     callerSignal ? [callerSignal, watchdog.signal] : [watchdog.signal]
   );
