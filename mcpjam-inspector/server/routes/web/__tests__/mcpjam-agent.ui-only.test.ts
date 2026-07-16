@@ -90,6 +90,15 @@ describe("web routes — mcpjam-agent is UI-only", () => {
     expect(args.prepare.systemPrompt).toContain("`ui_*` tools");
   });
 
+  it("ships the app atlas so the model knows what screens exist", async () => {
+    const args = await postAgentTurn();
+    expect(args.prepare.systemPrompt).toContain("screen by screen");
+    expect(args.prepare.systemPrompt).toContain("### Connect (servers)");
+    expect(args.prepare.systemPrompt).toContain("### Playground (playground)");
+    // Hosted-only route: never map a door the model can't open.
+    expect(args.prepare.systemPrompt).not.toContain("### Tracing");
+  });
+
   it("keeps the system prompt free of per-request values so the prefix stays cacheable", async () => {
     // Anything volatile here (projectId, route, timestamp) would invalidate
     // the cached prefix for the WHOLE conversation on every turn. Per-turn UI
