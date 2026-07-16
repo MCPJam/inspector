@@ -616,6 +616,116 @@ const response = await generateText({
 
 ---
 
+## Elicitation
+
+MCP servers can ask the user for additional input mid-tool-call via the [elicitation spec (2025-11-25)](https://spec.modelcontextprotocol.io/specification/2025-11-25/client/elicitation/). The SDK supports two ways to handle these requests.
+
+### setElicitationCallback()
+
+Registers a global callback invoked for every elicitation request across all connected servers.
+
+```typescript
+setElicitationCallback(callback: ElicitationCallback | undefined): void
+```
+
+The callback receives an `ElicitationCallbackRequest` and must return an `ElicitResult`.
+
+#### ElicitationCallbackRequest
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `requestId` | `string` | SDK-generated request identifier. |
+| `message` | `string` | Human-readable prompt from the server. |
+| `schema` | `unknown` | JSON Schema for the expected response. Form mode only (`requestedSchema` takes precedence over the legacy `schema` alias). |
+| `serverId` | `string` | The server that issued this elicitation. |
+| `mode` | `ElicitationMode` | `"form"` or `"url"`. Absent on the wire defaults to `"form"` (all pre-2025-11-25 elicitations are form mode). |
+| `url` | `string` | URL to present to the user. URL mode only. |
+| `elicitationId` | `string` | Server-chosen id used to correlate a `notifications/elicitation/complete`. URL mode only. Do not treat this as a trusted key — it is chosen by the server. |
+| `relatedTaskId` | `string` | Task ID if this elicitation is related to an MCP task (MCP Tasks spec 2025-11-25). |
+
+#### ElicitationMode
+
+```typescript
+type ElicitationMode = "form" | "url";
+```
+
+#### Example
+
+```typescript
+import { MCPClientManager } from "@mcpjam/sdk";
+import type { ElicitationCallbackRequest, ElicitResult } from "@mcpjam/sdk";
+
+const manager = new MCPClientManager({
+  myServer: { command: "node", args: ["./server.js"] },
+});
+
+manager.setElicitationCallback(async (request: ElicitationCallbackRequest): Promise<ElicitResult> => {
+  const { serverId, mode, message } = request;
+
+  if (mode === "url" && request.url) {
+    // Open the URL for the user to complete (e.g. OAuth consent)
+    console.log(`[${serverId}] Open this URL: ${request.url}`);
+    // Signal the server to proceed once the user has finished
+    return { action: "accept" };
+  }
+
+  // Form mode: collect structured input from the user
+  console.log(`[${serverId}] ${message}`);
+  const userInput = await promptUser(request.schema);
+  return { action: "accept", content: userInput };
+});
+```
+
+### setElicitationHandler()
+
+Registers a server-specific handler that takes precedence over the global callback for that server.
+
+```typescript
+setElicitationHandler(serverId: string, handler: ElicitationHandler | undefined): void
+```
+
+### Elicitation-aware tool timeouts
+
+When an elicitation handler or callback is registered for a server, `executeTool` automatically pauses the base timeout while a human is responding. Two budgets are enforced:
+
+- **Active time** — accumulates only while no elicitation is pending. Exhausting it at the base timeout means the server is genuinely hung.
+- **Suspended time** — accumulates only while an elicitation is pending, cumulative across all elicitations in the call. Exhausting it at `elicitationTimeoutExtensionMs` (default 10 minutes) means the human never finished.
+
+A hung server with no elicitation still dies at the base timeout, exactly as before. Servers without an elicitation handler are a pure passthrough — no behavior change.
+
+Timeout errors from the watchdog are `SdkError` / `RequestTimeout` and are never retried.
+
+```typescript
+import { MCPClientManager, DEFAULT_ELICITATION_TIMEOUT_EXTENSION_MS } from "@mcpjam/sdk";
+
+// Extend the human-response budget to 20 minutes
+const manager = new MCPClientManager(
+  { myServer: { command: "node", args: ["./server.js"] } },
+  { elicitationTimeoutExtensionMs: 20 * 60 * 1000 }
+);
+```
+
+### Declared mode enforcement
+
+When a server sends an `elicitation/create` request, the SDK validates that the requested mode (`"form"` or `"url"`) was declared in the client's `elicitation` capability during `initialize`. Undeclared modes are rejected with JSON-RPC `-32602` (InvalidParams) before the callback is invoked.
+
+Pass the declared capability via `clientCapabilities` in the server config:
+
+```typescript
+const manager = new MCPClientManager({
+  myServer: {
+    url: "https://mcp.example.com/mcp",
+    clientCapabilities: {
+      elicitation: { form: {}, url: {} }, // advertise both modes
+    },
+  },
+});
+```
+
+A bare `{}` or omitted `elicitation` key allows form mode only (legacy default). `{ form: {}, url: {} }` allows both.
+
+---
+
 ## Complete Example
 
 ```typescript
