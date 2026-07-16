@@ -43,6 +43,25 @@ The XAA Flow header shows three URLs:
 
 Configure your authorization server with the values it requests. The **Issuer URL** identifies MCPJam's test identity provider, the **OpenID Config** URL provides discovery metadata, and the **JWKS URL** provides the public signing keys.
 
+### Identity assertion format
+
+The header also shows an **Identity assertion** toggle that lets you choose the format MCPJam uses when minting the identity assertion for a run:
+
+| Option | What MCPJam mints |
+| ------ | ----------------- |
+| **OIDC** | An OIDC ID token (default). |
+| **SAML** | A signed SAML 2.0 assertion. The ID-JAG carries a `saml-nameid` subject identifier. |
+
+Selecting a format saves it as the per-server preset immediately — the same setting you can also change in **Configure Server to Test**. The two surfaces always agree: changing one updates the other.
+
+When SAML is active, a note appears below the header explaining that the discovery and JWKS URLs above are unchanged. The ID-JAG is still a JWT minted under this issuer in both formats; only the identity assertion inside it changes shape.
+
+The toggle is unavailable in these situations:
+
+- **Registered app target** — runs against a registered app always use the OIDC ID token; the per-server preset does not apply.
+- **Run in progress** — wait for the current run to finish before switching.
+- **No server configured** — configure a server to test first.
+
 If MCPJam is running locally and your authorization server is hosted in the
 cloud, turn on **Use hosted issuer** in the XAA Flow header. A cloud server
 cannot reach a local Issuer URL.
@@ -63,11 +82,15 @@ The hosted issuer is available to both signed-in users and guest (not-signed-in)
 | **Signed in** | `/o/<orgId>` | Membership-gated. Only org members can mint assertions under it. |
 | **Guest** | `/g/<personalOrgId>` | **Anonymous test issuer.** Its discovery document is marked `mcpjam:issuer_kind: anonymous-test`. Your authorization server must explicitly allowlist this issuer. Assertions prove control of an anonymous session — this is a testing convenience, not enterprise-managed authorization. Sign in to use the membership-gated issuer instead. |
 
-When a guest session is active, the hosted-issuer toggle shows an **Anonymous test issuer** badge as a reminder of this distinction.
+When a guest session is active, hover the info icon next to the hosted-issuer toggle to see a reminder of this distinction.
 
 ## Add Your MCP Server
 
-In the XAA Flow tab, select **Configure Server to Test**.
+In the XAA Flow tab, click **Configure Server to Test** to open the server modal prefilled with the currently selected server, or click **Add** in the logger toolbar to open a blank form and save a new target without changing the current selection.
+
+<Note>
+The header **Add Server** button also opens a blank form so you can add a new target without affecting the server currently selected in the debugger.
+</Note>
 
 ### Server Configuration
 
@@ -93,9 +116,17 @@ authorization server:
 
 - **Pre-registered client:** Register MCPJam in your authorization server first,
   then enter the client ID and optional client secret it gives you.
-- **Client metadata URL (CIMD):** MCPJam uses its hosted client metadata URL as
-  the client ID, so no client credentials are required. Your authorization
-  server must advertise CIMD support.
+- **Client metadata URL (CIMD):** MCPJam uses a client metadata URL as the
+  client ID. Your authorization server must advertise CIMD support. When running
+  the local inspector, a **Client authentication** control appears with two
+  options:
+  - **Public (no client auth):** MCPJam presents its hosted metadata URL as the
+    client ID with no client authentication. This is the default.
+  - **Confidential (private_key_jwt):** The local inspector holds a client key
+    and signs a `client_assertion`. The `client_id` is a reflector document
+    publishing the matching public key. Use this when your authorization server
+    requires a confidential client. The private key never leaves the local
+    inspector process.
 - **Open dynamic registration (DCR):** MCPJam registers a client during the
   test, so no client credentials are required beforehand. Your authorization
   server must provide an open registration endpoint; protected registration

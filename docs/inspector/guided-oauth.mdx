@@ -24,8 +24,14 @@ The OAuth Debugger provides comprehensive tooling for testing OAuth implementati
 - **Full Registration Methods** - Support for client pre-registration, Dynamic Client Registration (DCR), and Client ID Metadata Documents (CIMD)
 - **Network Inspection** - View all HTTP requests and responses with headers and body content
 - **Educational Context** - Built-in teachable moments and tips for common OAuth issues
-- **Sequence Diagram** - Visual representation of the OAuth flow synchronized with your progress
+- **Sequence Diagram** - Visual representation of the OAuth flow synchronized with your progress, showing the exact resource value the flow sends
 - **Export Capabilities** - Copy logs in guide or raw format for debugging and documentation
+
+### Resource indicator warnings
+
+When the server's Protected Resource Metadata (PRM) advertises a `resource` identifier that does not fully satisfy RFC 9728 — for example, a same-origin resource on a different path than the transport endpoint — the debugger logs a warning at the `received_resource_metadata` step and continues the flow. The warning includes the advertised value, the server URL, and whether strict MCP clients (such as Quick OAuth or the official MCP SDK) will refuse to connect.
+
+The debugger intentionally proceeds rather than failing so you can observe real server behavior. Use the [OAuth Conformance](/cli/oauth-conformance) tool if you need strict RFC 9728 validation.
 
 ## Inline OAuth tracing
 
@@ -48,12 +54,16 @@ Use the inline trace for a quick diagnosis of real connection attempts, and swit
 To begin debugging OAuth flows:
 
 1. **Navigate to the OAuth Debugger** - Click the OAuth Flow tab in MCPJam Inspector
-2. **Configure a Target Server** - Click **Configure Target** to open the OAuth Profile Modal
+2. **Configure a Target Server** - Click **Configure** to open the OAuth Profile Modal prefilled with the currently selected server, or click **Add** to open a blank form and save a new target without changing the current one
 3. **Enter Server Details** - Provide your server's base URL and select your protocol version
 4. **Choose Registration Method** - Select CIMD, DCR, or pre-registered based on your implementation
 5. **Start Testing** - Click **Continue** to begin the OAuth flow
 
 The debugger will guide you through each step of the OAuth handshake, providing real-time feedback and educational context.
+
+<Note>
+The header **Add Server** button also opens a blank form so you can add a new target without affecting the server currently selected in the debugger.
+</Note>
 
 ## OAuth trace in server overview
 

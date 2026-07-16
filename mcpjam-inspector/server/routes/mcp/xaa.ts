@@ -33,7 +33,6 @@ import {
 } from "@mcpjam/sdk";
 import { createHash } from "crypto";
 import {
-  buildJwtBearerRequest,
   getIssuerForRequest,
   resolveServerTarget,
 } from "../../services/xaa-mint.js";
@@ -403,18 +402,12 @@ const healthCheckSchema = z.object({
   url: z.string().trim().min(1),
 });
 
+// `private_key_jwt` is confidential CIMD: an injected provider signs the
+// client_assertion (the reflector publishes its matching key). Both /proxy/token
+// and the negative-test scorecard redeem through buildXaaJwtBearerRequest, which
+// delegates that signing to the provider, so both accept the same methods. Each
+// route still rejects `private_key_jwt` when no provider is configured.
 const tokenEndpointAuthMethodSchema = z.enum([
-  "client_secret_post",
-  "client_secret_basic",
-  "none",
-]);
-
-// /proxy/token additionally supports confidential CIMD (`private_key_jwt`): an
-// injected provider signs the client_assertion (the reflector publishes its
-// matching key). Kept SEPARATE from the shared schema above so the negative-
-// tests path (which redeems via the low-level buildJwtBearerRequest, with no
-// signer) never accepts it.
-const proxyTokenAuthMethodSchema = z.enum([
   "client_secret_post",
   "client_secret_basic",
   "none",
@@ -424,10 +417,9 @@ const proxyTokenAuthMethodSchema = z.enum([
 type TokenEndpointAuthMethod = z.infer<typeof tokenEndpointAuthMethodSchema>;
 
 function tokenEndpointAuthValidationError(input: {
-  // Accepts `private_key_jwt` too (the /proxy/token superset): the checks below
-  // already treat it correctly — it needs a client_id (its iss/sub) and no
-  // secret.
-  tokenEndpointAuthMethod?: TokenEndpointAuthMethod | "private_key_jwt";
+  // `private_key_jwt` is handled correctly by the checks below — it needs a
+  // client_id (its iss/sub) and no secret.
+  tokenEndpointAuthMethod?: TokenEndpointAuthMethod;
   clientId?: string;
   clientSecret?: string;
 }): string | undefined {
@@ -450,9 +442,9 @@ const negativeTestsSchema = z
     audience: z.string().trim().min(1),
     resource: z.string().trim().min(1),
     subject: z.string().trim().min(1).optional(),
-    // The subject's email. Optional and currently unused by the local mint;
-    // kept for forward compatibility with callers that send the full
-    // identity pair.
+    // The subject's email, minted into the ID-JAG next to `subject`. Optional,
+    // but a hosted run needs the full identity pair: its evaluator matches both
+    // claims exactly and denies the rest outright.
     email: z.string().trim().min(1).optional(),
     clientId: z.string().trim().min(1).optional(),
     scope: z.string().trim().min(1).optional(),
@@ -462,8 +454,13 @@ const negativeTestsSchema = z
     headers: z.record(z.string(), z.string()).optional(),
     serverId: z.string().trim().min(1).optional(),
     projectId: z.string().trim().min(1).optional(),
+    // Hosted split: a local inspector asks the hosted issuer to MINT the 11
+    // broken assertions only (right `iss`, hosted's key) and return the tokens,
+    // then redeems each locally so a confidential client's secret / CIMD key
+    // never leaves the machine. Mint-only skips target resolution and firing.
+    mintOnly: z.boolean().optional(),
   })
-  .refine((data) => data.serverId || data.tokenEndpoint, {
+  .refine((data) => data.mintOnly || data.serverId || data.tokenEndpoint, {
     message: "tokenEndpoint or serverId is required",
   });
 
@@ -481,6 +478,16 @@ type NegativeCaseOutcome = {
   detail?: string;
   // What the broken assertion changed vs. a valid one, for the scorecard diff.
   diff?: NegativeTestDiff;
+};
+
+// A minted broken assertion plus the header/payload the diff is built from.
+// The transport shape of the hosted mint-only response, and the per-case value
+// of a mintOverride map. header/payload are plain records so a value decoded
+// from the wire and one straight off the local signer are interchangeable.
+type MintedNegativeCase = {
+  token: string;
+  header: Record<string, unknown>;
+  payload: Record<string, unknown>;
 };
 
 // The 11 scorecard modes (everything except the happy-path "valid").
@@ -520,12 +527,16 @@ function buildNegativeDiff(
         sent: show(payload.aud),
         expected: expected.audience,
       };
-    case "expired":
-      return {
-        field: "exp",
-        sent: `${new Date(Number(payload.exp) * 1000).toISOString()} (past)`,
-        expected: "a time in the future",
-      };
+    case "expired": {
+      // `exp` can now arrive over the wire (the hosted mint response), so a
+      // missing/garbage value must degrade to a label rather than throw on
+      // `new Date(NaN)` — a throw would drop this case to an "error" verdict.
+      const expSeconds = Number(payload.exp);
+      const sent = Number.isFinite(expSeconds)
+        ? `${new Date(expSeconds * 1000).toISOString()} (past)`
+        : "a time in the past";
+      return { field: "exp", sent, expected: "a time in the future" };
+    }
     case "missing_claims":
       return {
         field: "sub, jti",
@@ -586,9 +597,8 @@ const proxyTokenSchema = z
     clientId: z.string().trim().min(1).optional(),
     clientSecret: z.string().trim().min(1).optional(),
     // How to authenticate at the token endpoint. Absent = legacy body-post
-    // behavior; only the methods the debugger can actually redeem. The proxy
-    // superset adds `private_key_jwt` (confidential CIMD).
-    tokenEndpointAuthMethod: proxyTokenAuthMethodSchema.optional(),
+    // behavior; only the methods the debugger can actually redeem.
+    tokenEndpointAuthMethod: tokenEndpointAuthMethodSchema.optional(),
     scope: z.string().trim().min(1).optional(),
     resource: z.string().trim().min(1).optional(),
     headers: z.record(z.string(), z.string()).optional(),
@@ -729,7 +739,8 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   const forwardToHostedIssuer = async (
     c: Context,
     path: "/authenticate" | "/token-exchange" | "/negative-tests",
-    body: Record<string, unknown>
+    body: Record<string, unknown>,
+    opts?: { mintOnly?: boolean }
   ): Promise<Response> => {
     const origin = options.forwardHostedIssuer!.origin;
     const authHeader = c.req.header("authorization");
@@ -737,13 +748,6 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       return toJsonError(
         "Minting through the hosted issuer requires signing in",
         { status: 401, code: "UNAUTHORIZED" }
-      );
-    }
-
-    if (path === "/negative-tests" && typeof body.clientSecret === "string") {
-      return toJsonError(
-        "Confidential DCR negative tests are unavailable with the hosted issuer",
-        { status: 400, code: "VALIDATION_ERROR" }
       );
     }
 
@@ -776,13 +780,31 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         ? `/g/${organizationId}`
         : `/o/${organizationId}`;
 
+    // Mint-only (the confidential split): hosted signs the broken assertions
+    // and returns them; the redemption stays local. Strip everything the
+    // redemption owns before it leaves the machine — above all the client
+    // secret, which must never reach hosted; the endpoint/headers/serverId are
+    // redemption-side too and hosted has no use for them.
+    let outboundBody: Record<string, unknown> = forwardBody;
+    if (opts?.mintOnly) {
+      const {
+        clientSecret: _clientSecret,
+        tokenEndpoint: _tokenEndpoint,
+        headers: _headers,
+        serverId: _serverId,
+        projectId: _projectId,
+        ...mintBody
+      } = forwardBody;
+      outboundBody = { ...mintBody, mintOnly: true };
+    }
+
     return relayToHostedIssuer(`${origin}/api/web/xaa${scopedSegment}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: authHeader,
       },
-      body: JSON.stringify(forwardBody),
+      body: JSON.stringify(outboundBody),
     });
   };
 
@@ -882,6 +904,84 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       return null;
     }
     return forwardToHostedIssuer(c, path, body as Record<string, unknown>);
+  };
+
+  // Confidential hosted split: ask the hosted issuer to MINT the 11 broken
+  // assertions (mint-only, no secret sent) and hand them back as a
+  // mode→assertion map plus the canonical issuer, for local redemption. Any
+  // hosted failure is surfaced verbatim as a Response.
+  const mintNegativeViaHosted = async (
+    c: Context,
+    body: Record<string, unknown>
+  ): Promise<
+    | { mints: Map<NegativeTestMode, MintedNegativeCase>; issuer: string }
+    | Response
+  > => {
+    const relayed = await forwardToHostedIssuer(c, "/negative-tests", body, {
+      mintOnly: true,
+    });
+    if (!relayed.ok) return relayed;
+
+    let payload: unknown;
+    try {
+      payload = await relayed.json();
+    } catch {
+      return toJsonError(
+        "The hosted issuer returned a malformed mint response",
+        { status: 502, code: "SERVER_UNREACHABLE" }
+      );
+    }
+
+    const rawMints = (payload as { mints?: unknown })?.mints;
+    const issuer = (payload as { issuer?: unknown })?.issuer;
+    if (!Array.isArray(rawMints) || typeof issuer !== "string") {
+      return toJsonError("The hosted issuer returned no minted assertions", {
+        status: 502,
+        code: "SERVER_UNREACHABLE",
+      });
+    }
+
+    const mints = new Map<NegativeTestMode, MintedNegativeCase>();
+    for (const entry of rawMints) {
+      // Membership in NEGATIVE_CASE_MODES, not isNegativeTestMode: the latter
+      // also accepts "valid", which would let a skewed response substitute a
+      // valid assertion for a required negative one and still satisfy the
+      // count check below.
+      if (
+        entry &&
+        typeof entry === "object" &&
+        NEGATIVE_CASE_MODES.includes(
+          (entry as { mode?: unknown }).mode as NegativeTestMode
+        ) &&
+        typeof (entry as { token?: unknown }).token === "string"
+      ) {
+        const e = entry as {
+          mode: NegativeTestMode;
+          token: string;
+          header?: Record<string, unknown>;
+          payload?: Record<string, unknown>;
+        };
+        mints.set(e.mode, {
+          token: e.token,
+          header: e.header ?? {},
+          payload: e.payload ?? {},
+        });
+      }
+    }
+    // Every required case must be present — checked by membership, not count,
+    // so a response that swaps one negative mode for a duplicate or an
+    // unexpected one can't satisfy the guard. Failing the whole run here is
+    // clearer than letting a short map surface as scattered per-case errors.
+    const missing = NEGATIVE_CASE_MODES.filter((mode) => !mints.has(mode));
+    if (missing.length > 0) {
+      return toJsonError(
+        `The hosted issuer did not mint every scorecard case (missing: ${missing.join(
+          ", "
+        )})`,
+        { status: 502, code: "SERVER_UNREACHABLE" }
+      );
+    }
+    return { mints, issuer };
   };
 
   // Hosted-issuer forward for the standards-track /token endpoint. The RFC
@@ -1430,7 +1530,16 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   // Negative-test scorecard: fire each deliberately-broken ID-JAG mode at the
   // user's authorization server and report whether the server correctly
   // rejected it (pass) or wrongly issued a token (fail — a real finding).
-  const handleNegativeTests = async (c: Context, issuer: string) => {
+  //
+  // `mintOverride` (the hosted split) supplies each case's assertion from the
+  // hosted issuer instead of minting locally, so the token carries a
+  // discoverable `iss` while the confidential secret / CIMD key stays here for
+  // the redemption. Absent → mint locally, as an ordinary local-issuer run.
+  const handleNegativeTests = async (
+    c: Context,
+    issuer: string,
+    mintOverride?: Map<NegativeTestMode, MintedNegativeCase>
+  ) => {
     let parsed;
     try {
       parsed = parseRequest(negativeTestsSchema, await c.req.json());
@@ -1441,6 +1550,48 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           : "Invalid negative-tests request",
         { status: 400, code: "VALIDATION_ERROR" }
       );
+    }
+
+    // Mint-only (the hosted half of the split): sign all 11 broken assertions
+    // with this issuer's key and return them, without resolving a target or
+    // firing. Every mode is a deliberate mutation of an otherwise-valid
+    // assertion, so these tokens are not usable credentials — strictly less
+    // than the valid ID-JAGs any authed caller can already mint via
+    // /token-exchange.
+    if (parsed.mintOnly) {
+      const subject = parsed.subject || "user-12345";
+      const resolvedClientId = parsed.clientId || "mcpjam-debugger";
+      const mints: Array<{ mode: NegativeTestMode } & MintedNegativeCase> = [];
+      for (const mode of NEGATIVE_CASE_MODES) {
+        try {
+          const issued = issueNegativeIdJag(
+            {
+              issuer,
+              subject,
+              email: parsed.email,
+              audience: parsed.audience,
+              resource: parsed.resource,
+              clientId: resolvedClientId,
+              scope: parsed.scope,
+            },
+            mode
+          );
+          mints.push({
+            mode,
+            token: issued.token,
+            header: issued.header,
+            payload: issued.payload,
+          });
+        } catch (error) {
+          return toJsonError(
+            error instanceof Error ? error.message : "Failed to mint ID-JAG",
+            { status: 500, code: "MINT_FAILED" }
+          );
+        }
+      }
+      // `issuer` travels back so the local redeemer's diff shows the real
+      // (hosted) expected `iss` for the wrong_issuer case, not its own.
+      return c.json({ mints, issuer });
     }
 
     // Resolve the authorization-server target. Registration-backed runs
@@ -1503,6 +1654,15 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         code: "VALIDATION_ERROR",
       });
     }
+    if (
+      tokenEndpointAuthMethod === "private_key_jwt" &&
+      !confidentialCimdProvider
+    ) {
+      return toJsonError(
+        "private_key_jwt is not available on this inspector deployment",
+        { status: 400, code: "VALIDATION_ERROR" }
+      );
+    }
 
     // Validate the outbound URL once (every case hits the same endpoint) and
     // enforce the per-host daily cap.
@@ -1544,19 +1704,43 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       let token: string;
       let diff: NegativeTestDiff | undefined;
       try {
-        const issued = issueNegativeIdJag(
-          {
-            issuer,
-            subject,
-            audience: parsed.audience,
-            resource: parsed.resource,
-            clientId: resolvedClientId,
-            scope: effectiveScope,
-          },
-          mode
-        );
-        token = issued.token;
-        diff = buildNegativeDiff(mode, issued.header, issued.payload, {
+        // Hosted split: the assertion was already signed by the hosted issuer;
+        // reuse it (and its header/payload) rather than minting a second one
+        // here under the local `iss`. Local runs mint inline.
+        //
+        // Minted alongside `subject`: a hosted evaluator matches BOTH claims
+        // exactly, so omitting the email gets every case denied on identity
+        // before the intended mutation is ever evaluated — the whole scorecard
+        // would read green without testing anything. The mutation modes rely on
+        // it too (missing_claims drops it, unknown_sub rewrites it).
+        let minted: MintedNegativeCase;
+        if (mintOverride) {
+          const fromHosted = mintOverride.get(mode);
+          // No silent local fallback: a mode the hosted issuer didn't return
+          // would otherwise be minted under the local `iss` and get rejected
+          // for issuer mismatch — a false "pass". Fail the case instead.
+          if (!fromHosted) {
+            throw new Error(
+              "The hosted issuer did not return an assertion for this case"
+            );
+          }
+          minted = fromHosted;
+        } else {
+          minted = issueNegativeIdJag(
+            {
+              issuer,
+              subject,
+              email: parsed.email,
+              audience: parsed.audience,
+              resource: parsed.resource,
+              clientId: resolvedClientId,
+              scope: effectiveScope,
+            },
+            mode
+          );
+        }
+        token = minted.token;
+        diff = buildNegativeDiff(mode, minted.header, minted.payload, {
           audience: parsed.audience,
           resource: parsed.resource,
           clientId: resolvedClientId,
@@ -1576,14 +1760,39 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         };
       }
 
-      const jwtBearerRequest = buildJwtBearerRequest({
-        assertion: token,
-        clientId,
-        clientSecret,
-        scope: effectiveScope,
-        resource: parsed.resource,
-        tokenEndpointAuthMethod,
-      });
+      // Signs a fresh client_assertion per case for confidential CIMD
+      // (private_key_jwt); a no-op for the other methods. `aud` is the
+      // unnormalized endpoint — the same string the positive flow signs over,
+      // so an AS that compares it strictly can't reject a case for the wrong
+      // reason and make a broken assertion look correctly refused.
+      let jwtBearerRequest: ReturnType<typeof buildXaaJwtBearerRequest>;
+      try {
+        jwtBearerRequest = buildXaaJwtBearerRequest(
+          {
+            assertion: token,
+            tokenEndpoint,
+            clientId,
+            clientSecret,
+            scope: effectiveScope,
+            resource: parsed.resource,
+            tokenEndpointAuthMethod,
+          },
+          confidentialCimdProvider
+        );
+      } catch (error) {
+        return {
+          mode,
+          label: details.label,
+          expectedFailure: details.expectedFailure,
+          outcome: "error",
+          verdict: "unknown",
+          diff,
+          detail:
+            error instanceof Error
+              ? error.message
+              : "Failed to build the token request",
+        };
+      }
 
       try {
         const response = await fetch(validated.toString(), {
@@ -1665,9 +1874,35 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   // endpoint, so a local mint would carry the local `iss` and a strict AS
   // would reject every case for issuer mismatch — a scorecard that "passes"
   // without testing anything.
+  //
+  // Three paths on a hosted-issuer run:
+  //   - public / pre-registered: hosted mints AND fires (no local secret
+  //     needed) — full relay, unchanged.
+  //   - confidential (a client secret, or private_key_jwt CIMD): hosted mints
+  //     only, we redeem locally, so the secret / CIMD signing key never leaves
+  //     the machine.
+  //   - not hosted: mint and fire locally.
   router.post("/negative-tests", async (c) => {
-    const forwarded = await maybeForwardHostedIssuer(c, "/negative-tests");
-    if (forwarded) return forwarded;
+    const body = await c.req.json().catch(() => null);
+    const isHosted =
+      Boolean(options.forwardHostedIssuer) &&
+      body &&
+      typeof body === "object" &&
+      (body as Record<string, unknown>).issuerMode === "hosted";
+
+    if (isHosted) {
+      const b = body as Record<string, unknown>;
+      const isConfidential =
+        typeof b.clientSecret === "string" ||
+        b.tokenEndpointAuthMethod === "private_key_jwt";
+      if (isConfidential) {
+        const minted = await mintNegativeViaHosted(c, b);
+        if (minted instanceof Response) return minted;
+        return handleNegativeTests(c, minted.issuer, minted.mints);
+      }
+      return forwardToHostedIssuer(c, "/negative-tests", b);
+    }
+
     return handleNegativeTests(c, unscopedIssuer(c));
   });
 
