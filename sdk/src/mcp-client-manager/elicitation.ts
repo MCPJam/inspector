@@ -97,11 +97,27 @@ export class ElicitationManager {
     }
   >();
   /**
-   * In-flight elicitation handler invocations per server. Drives
+   * In-flight elicitation handler invocations. Drives
    * {@link hasPendingForServer}, which the elicitation-aware tool timeout uses
    * to decide whether the clock is running.
+   *
+   * Entries, not a bare count, for two reasons a counter cannot express:
+   *
+   * - **A handler that never settles must not poison the server forever.** The
+   *   tool watchdog can abort a `tools/call` while its elicitation callback is
+   *   still awaiting; that callback's `finally` never runs, so a count would sit
+   *   at 1 permanently and every LATER call on that server would have its clock
+   *   paused — silently unbounded timeouts. `startedAt` lets us ignore an entry
+   *   older than the asking call's own budget.
+   * - **A late completion must not decrement a NEW connection.** Reconnect
+   *   reuses the serverId, and a counter is anonymous: the old handler's
+   *   decrement landed on the new connection's tally and could zero out a
+   *   genuinely pending elicitation. A token only ever removes its own entry.
    */
-  private pendingCountByServer = new Map<string, number>();
+  private pendingElicitationEntries = new Map<
+    symbol,
+    { serverId: string; startedAt: number }
+  >();
 
   /**
    * Sets a server-specific elicitation handler.
@@ -172,24 +188,31 @@ export class ElicitationManager {
    *
    * @param serverId - The server ID
    */
-  hasPendingForServer(serverId: string): boolean {
-    return (this.pendingCountByServer.get(serverId) ?? 0) > 0;
-  }
-
-  private beginPending(serverId: string): void {
-    this.pendingCountByServer.set(
-      serverId,
-      (this.pendingCountByServer.get(serverId) ?? 0) + 1
-    );
-  }
-
-  private endPending(serverId: string): void {
-    const next = (this.pendingCountByServer.get(serverId) ?? 0) - 1;
-    if (next > 0) {
-      this.pendingCountByServer.set(serverId, next);
-    } else {
-      this.pendingCountByServer.delete(serverId);
+  hasPendingForServer(serverId: string, maxAgeMs?: number): boolean {
+    const now = Date.now();
+    for (const entry of this.pendingElicitationEntries.values()) {
+      if (entry.serverId !== serverId) continue;
+      // Older than the asking call's entire elicitation budget: that call would
+      // have aborted on its own budget by now, so this entry cannot honestly
+      // keep pausing anyone's clock. Bounds a stuck handler's blast radius to
+      // one budget window instead of the process lifetime.
+      if (maxAgeMs !== undefined && now - entry.startedAt > maxAgeMs) continue;
+      return true;
     }
+    return false;
+  }
+
+  private beginPending(serverId: string): symbol {
+    const token = Symbol("elicitation-pending");
+    this.pendingElicitationEntries.set(token, {
+      serverId,
+      startedAt: Date.now(),
+    });
+    return token;
+  }
+
+  private endPending(token: symbol): void {
+    this.pendingElicitationEntries.delete(token);
   }
 
   /**
@@ -263,13 +286,13 @@ export class ElicitationManager {
           declaredCapability
         );
 
-        this.beginPending(serverId);
+        const pendingToken = this.beginPending(serverId);
         try {
           return await serverSpecific(
             params ?? ({} as Parameters<ElicitationHandler>[0])
           );
         } finally {
-          this.endPending(serverId);
+          this.endPending(pendingToken);
         }
       });
       return;
@@ -293,7 +316,7 @@ export class ElicitationManager {
         const relatedTask = meta?.["io.modelcontextprotocol/related-task"];
         const relatedTaskId = relatedTask?.taskId as string | undefined;
 
-        this.beginPending(serverId);
+        const pendingToken = this.beginPending(serverId);
         try {
           return await this.globalCallback!({
             requestId: reqId,
@@ -312,7 +335,7 @@ export class ElicitationManager {
             relatedTaskId,
           });
         } finally {
-          this.endPending(serverId);
+          this.endPending(pendingToken);
         }
       });
     }
@@ -334,9 +357,13 @@ export class ElicitationManager {
    */
   clearServer(serverId: string): void {
     this.handlers.delete(serverId);
-    // Drop any pending count: the server is gone, so a handler invocation that
-    // never settles must not pin `hasPendingForServer` true forever. A late
-    // `endPending` from an in-flight handler is harmless (floors at delete).
-    this.pendingCountByServer.delete(serverId);
+    // Drop this server's in-flight entries: it's gone, so a handler that never
+    // settles must not pin `hasPendingForServer` true forever.
+    for (const [token, entry] of this.pendingElicitationEntries) {
+      if (entry.serverId === serverId) this.pendingElicitationEntries.delete(token);
+    }
+    // A handler still in flight from the OLD connection can't corrupt a
+    // reconnected one carrying the same id: its `endPending` removes only its
+    // own token, which this purge already dropped.
   }
 }

@@ -882,3 +882,76 @@ describe("executeTool elicitation-aware timeout", () => {
     expect(jest.getTimerCount()).toBe(before);
   });
 });
+
+
+describe("ElicitationManager pending accounting", () => {
+  it("stops counting a handler that never settles, past the age bound", () => {
+    // The poison: the tool watchdog can abort a `tools/call` while its
+    // elicitation callback is still awaiting, so the callback's `finally` never
+    // runs. With a bare counter the server stayed "pending" forever and EVERY
+    // later call had its clock paused — unbounded timeouts, silently.
+    vi.useFakeTimers();
+    try {
+      const mgr = new ElicitationManager();
+      const begin = (mgr as any).beginPending.bind(mgr);
+      begin("srv");
+
+      expect(mgr.hasPendingForServer("srv", 60_000)).toBe(true);
+
+      vi.advanceTimersByTime(60_001);
+      // Older than the asking call's whole budget — that call would have
+      // aborted on its own budget anyway, so it cannot keep pausing others.
+      expect(mgr.hasPendingForServer("srv", 60_000)).toBe(false);
+      // Unbounded callers still see it (back-compat for non-timeout callers).
+      expect(mgr.hasPendingForServer("srv")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a late completion from an old connection cannot clear a new one", () => {
+    // Reconnect reuses the serverId. With an anonymous counter the old
+    // handler's decrement landed on the NEW connection's tally and could zero
+    // out a genuinely pending elicitation. A token removes only its own entry.
+    const mgr = new ElicitationManager();
+    const begin = (mgr as any).beginPending.bind(mgr);
+    const end = (mgr as any).endPending.bind(mgr);
+
+    const staleToken = begin("srv");
+    mgr.clearServer("srv"); // disconnect
+
+    const freshToken = begin("srv"); // reconnect, same id
+    expect(mgr.hasPendingForServer("srv")).toBe(true);
+
+    end(staleToken); // old handler finally settles
+    expect(mgr.hasPendingForServer("srv")).toBe(true);
+
+    end(freshToken);
+    expect(mgr.hasPendingForServer("srv")).toBe(false);
+  });
+
+  it("clearServer drops in-flight entries for that server only", () => {
+    const mgr = new ElicitationManager();
+    const begin = (mgr as any).beginPending.bind(mgr);
+    begin("srv-a");
+    begin("srv-b");
+
+    mgr.clearServer("srv-a");
+
+    expect(mgr.hasPendingForServer("srv-a")).toBe(false);
+    expect(mgr.hasPendingForServer("srv-b")).toBe(true);
+  });
+
+  it("counts concurrent elicitations independently", () => {
+    const mgr = new ElicitationManager();
+    const begin = (mgr as any).beginPending.bind(mgr);
+    const end = (mgr as any).endPending.bind(mgr);
+
+    const a = begin("srv");
+    const b = begin("srv");
+    end(a);
+    expect(mgr.hasPendingForServer("srv")).toBe(true);
+    end(b);
+    expect(mgr.hasPendingForServer("srv")).toBe(false);
+  });
+});

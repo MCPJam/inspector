@@ -2269,7 +2269,17 @@ export class MCPClientManager {
       baseTimeoutMs,
       extensionMs: this.elicitationTimeoutExtensionMs,
       callerSignal: options.signal,
-      hasPending: () => this.elicitationManager.hasPendingForServer(serverId),
+      // Age-bound the check with this call's OWN elicitation budget. Without
+      // it, a handler that never settles (e.g. its `tools/call` was aborted by
+      // this very watchdog, so its `finally` never ran) would pin the server
+      // "pending" for the process lifetime and silently pause the clock of
+      // every later call — unbounded timeouts, with nothing in the logs.
+      // An entry older than this budget would have blown it anyway.
+      hasPending: () =>
+        this.elicitationManager.hasPendingForServer(
+          serverId,
+          this.elicitationTimeoutExtensionMs
+        ),
     });
 
     try {
