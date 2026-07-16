@@ -36,6 +36,7 @@ import {
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { RedesignedHostCanvas } from "./canvas/RedesignedHostCanvas";
+import { HostCanvasSelector } from "./HostCanvasSelector";
 import { parseHostVerifyTabParam } from "../host-verify-deep-link";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
 import { HostFocusPanel } from "./focus/HostFocusPanel";
@@ -544,7 +545,7 @@ export function HostBuilderViewRedesigned({
               defaultSize={focusState.open ? 55 : 100}
               minSize={30}
             >
-              <div className="h-full min-h-0 pr-2">
+              <div className="relative h-full min-h-0 pr-2">
                 <ReactFlowProvider>
                   <RedesignedHostCanvas
                     viewModel={viewModel}
@@ -557,6 +558,17 @@ export function HostBuilderViewRedesigned({
                     shellStyle={canvasShellStyle}
                   />
                 </ReactFlowProvider>
+                {/* Client selector pinned over the canvas (fixed position —
+                    it does not pan/zoom with the flow). The header's
+                    GlobalHostBar hides itself while this canvas is open. */}
+                <div className="pointer-events-none absolute inset-x-0 top-5 z-20 flex justify-center pr-2">
+                  <div className="pointer-events-auto">
+                    <HostCanvasSelector
+                      projectId={projectId}
+                      activeHostId={hostId}
+                    />
+                  </div>
+                </div>
               </div>
             </ResizablePanel>
             {focusState.open ? (
