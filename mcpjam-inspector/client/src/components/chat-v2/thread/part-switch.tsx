@@ -32,6 +32,7 @@ import {
   isToolPart,
 } from "./thread-helpers";
 import { useSharedAppState } from "@/state/app-state-context";
+import { UI_CONTEXT_PART_TYPE } from "@/shared/ui-context";
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
 import { useChatboxHostStyle } from "@/contexts/chatbox-client-style-context";
 import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
@@ -644,6 +645,14 @@ export function PartSwitch({
         {...approvalProps}
       />
     );
+  }
+
+  // Orientation context the agent surfaces attach to each user message. It
+  // is addressed to the model, not the reader — the user already knows what
+  // screen they're on, and `isDataPart` below would render it as a JSON blob
+  // in the middle of their own message.
+  if (part.type === UI_CONTEXT_PART_TYPE) {
+    return null;
   }
 
   if (isDataPart(part)) {

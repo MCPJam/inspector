@@ -10,6 +10,10 @@ import {
   readMcpToolOriginServerId,
   stripMcpToolOriginMetadata,
 } from "@/shared/mcp-tool-origin-metadata";
+import {
+  UI_CONTEXT_PART_TYPE,
+  renderUiContextText,
+} from "@/shared/ui-context";
 
 export type McpToolResultModelOutputOptions =
   McpModelVisibleToolResultPolicy & {
@@ -379,12 +383,35 @@ export async function mapMcpImageToolOutputs(
   return mappedMessages;
 }
 
+/**
+ * Turn MCPJam's own data parts into model-visible content.
+ *
+ * `convertToModelMessages` SILENTLY DROPS every data part unless this is
+ * supplied — the part reaches the server, validates, and then vanishes on
+ * the way to the model with no error anywhere. Any new `data-*` part MCPJam
+ * ships has to be handled here or it does nothing at all.
+ *
+ * Returning `undefined` ignores the part, which is the right outcome for an
+ * unknown or malformed one: orientation is a nice-to-have, and a bad block
+ * must not fail a turn the user is waiting on.
+ */
+function convertMcpjamDataPart(part: {
+  type: string;
+  data?: unknown;
+}): { type: "text"; text: string } | undefined {
+  if (part.type !== UI_CONTEXT_PART_TYPE) return undefined;
+  const text = renderUiContextText(part.data);
+  return text ? { type: "text", text } : undefined;
+}
+
 export async function convertToMcpjamModelMessages(
   messages: Parameters<typeof convertToModelMessages>[0],
   options: McpToolResultModelOutputOptions = {}
 ): Promise<ModelMessage[]> {
   return mapMcpImageToolOutputs(
-    (await convertToModelMessages(messages)) as ModelMessage[],
+    (await convertToModelMessages(messages, {
+      convertDataPart: convertMcpjamDataPart as never,
+    })) as ModelMessage[],
     options
   );
 }

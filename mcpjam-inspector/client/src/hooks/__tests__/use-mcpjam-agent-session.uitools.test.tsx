@@ -106,6 +106,7 @@ import {
 } from "@/lib/webmcp/ui-tools-registry";
 import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
 import { transcriptToUIMessages } from "@/lib/transcript-to-ui-messages";
+import { UI_CONTEXT_PART_TYPE } from "@/shared/ui-context";
 
 const SESSION_ID = "agent-session-1";
 
@@ -401,5 +402,57 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
     });
 
     expect(mockState.addToolOutput).not.toHaveBeenCalled();
+  });
+
+  describe("per-turn UI context", () => {
+    it("attaches an orientation part ahead of the user's text", async () => {
+      const { result } = render();
+      await waitFor(() => expect(mockState.lastChatInit).not.toBeNull());
+
+      result.current.submit("open the playground");
+
+      expect(mockState.sendMessage).toHaveBeenCalledTimes(1);
+      const payload = mockState.sendMessage.mock.calls[0][0];
+      expect(payload.parts).toEqual([
+        {
+          type: UI_CONTEXT_PART_TYPE,
+          data: expect.objectContaining({
+            path: expect.any(String),
+            activeTab: expect.any(String),
+            timestamp: expect.any(String),
+          }),
+        },
+        { type: "text", text: "open the playground" },
+      ]);
+    });
+
+    it("rebuilds the context per turn rather than reusing the first one", async () => {
+      // The user navigates between turns; stale orientation is worse than
+      // none, because the model states it with confidence.
+      const { result } = render();
+      await waitFor(() => expect(mockState.lastChatInit).not.toBeNull());
+
+      window.history.pushState({}, "", "/servers");
+      result.current.submit("first");
+      window.history.pushState({}, "", "/playground");
+      result.current.submit("second");
+
+      const first = mockState.sendMessage.mock.calls[0][0].parts[0].data;
+      const second = mockState.sendMessage.mock.calls[1][0].parts[0].data;
+      expect(first.activeTab).toBe("servers");
+      expect(second.activeTab).toBe("playground");
+    });
+
+    it("still trims the user's text", async () => {
+      const { result } = render();
+      await waitFor(() => expect(mockState.lastChatInit).not.toBeNull());
+
+      result.current.submit("  padded  ");
+
+      expect(mockState.sendMessage.mock.calls[0][0].parts[1]).toEqual({
+        type: "text",
+        text: "padded",
+      });
+    });
   });
 });

@@ -72,6 +72,7 @@ import {
   classifyUiToolApprovals,
   type UiToolApprovalClassification,
 } from "@/shared/client-fulfilled-tools";
+import { isRenderedUiContextText } from "@/shared/ui-context";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
 import type { HostedElicitationBridge } from "./../routes/web/hosted-elicitation.js";
 import { bridgeHarnessRpcLogsToCollector } from "./../routes/web/hosted-rpc-logs.js";
@@ -209,6 +210,42 @@ export interface StreamWebChatTurnArgs {
   prepare: WebChatTurnPrepareInputs;
   persist: WebChatTurnPersistContext;
   runtime: WebChatTurnRuntime;
+}
+
+/**
+ * Drop rendered UI-context blocks from history on its way to storage.
+ *
+ * Persistence stores CONVERTED ModelMessages, not UI messages — by then the
+ * data part is already the text block the model read. Left in, it would come
+ * back on reload as visible text the user appears to have typed, and the
+ * client re-attaches fresh context to the next turn anyway.
+ *
+ * Only exact, whole text parts produced by `renderUiContextText` are
+ * removed, and only from USER messages. Never a substring replace: a user who
+ * types the marker into chat keeps their message intact.
+ */
+export function stripUiContextModelParts(
+  messages: ModelMessage[],
+): ModelMessage[] {
+  let changed = false;
+  const out = messages.map((message) => {
+    if (message?.role !== "user" || !Array.isArray(message.content)) {
+      return message;
+    }
+    const content = message.content.filter(
+      (part) =>
+        !(
+          part &&
+          typeof part === "object" &&
+          (part as { type?: unknown }).type === "text" &&
+          isRenderedUiContextText((part as { text?: unknown }).text)
+        ),
+    );
+    if (content.length === message.content.length) return message;
+    changed = true;
+    return { ...message, content } as ModelMessage;
+  });
+  return changed ? out : messages;
 }
 
 /**
@@ -439,7 +476,7 @@ export async function streamWebChatTurn(
         accessVersion: persist.accessVersion,
         authHeader: runtime.authHeader,
         sessionMessages: stampSenderUserIdsOnSessionMessages(
-          fullHistory,
+          stripUiContextModelParts(fullHistory),
           persist.originalMessages as unknown[],
           { authenticatedUserId: persist.authenticatedUserId },
         ),

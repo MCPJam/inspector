@@ -17,6 +17,7 @@ import { useChat, type UIMessage } from "@ai-sdk/react";
 import { generateId } from "ai";
 import { getOrCreateAgentChat } from "@/lib/mcpjam-agent/agent-chat-instances";
 import { fulfillOrphanedDeferredUiToolCalls } from "@/lib/webmcp/ui-tool-approval";
+import { buildUiContextPart } from "@/lib/webmcp/ui-context-snapshot";
 import {
   loadAgentRequireToolApproval,
   saveAgentRequireToolApproval,
@@ -351,7 +352,14 @@ export function useMcpjamAgentSession(
         model_id: config.model?.id ?? null,
         provider: config.model?.provider ?? null,
       });
-      void sendMessage({ text: trimmed });
+      // Orientation rides ON the message, not in the system prompt: the
+      // prompt is the cacheable prefix, and a value that changes per turn
+      // would invalidate the whole conversation's cache every request.
+      // Appending is free. Built here, at send time, so it reflects wherever
+      // the user has navigated themselves since the last turn.
+      void sendMessage({
+        parts: [buildUiContextPart(), { type: "text", text: trimmed }],
+      });
     },
     [chatSessionId, config, providedSessionId, sendMessage, surface]
   );
