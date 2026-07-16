@@ -116,8 +116,9 @@ export class ElicitationManager {
    */
   private pendingElicitationEntries = new Map<
     symbol,
-    { serverId: string; startedAt: number }
+    { serverId: string; startedAt: number; sequence: number }
   >();
+  private pendingSequence = 0;
 
   /**
    * Sets a server-specific elicitation handler.
@@ -188,18 +189,44 @@ export class ElicitationManager {
    *
    * @param serverId - The server ID
    */
-  hasPendingForServer(serverId: string, maxAgeMs?: number): boolean {
+  hasPendingForServer(
+    serverId: string,
+    maxAgeMs?: number,
+    startedAfterSequence?: number,
+  ): boolean {
     const now = Date.now();
-    for (const entry of this.pendingElicitationEntries.values()) {
+    let pending = false;
+    for (const [token, entry] of this.pendingElicitationEntries) {
       if (entry.serverId !== serverId) continue;
+      // An entry created after this tool call took its snapshot belongs to work
+      // that started during the call. It must be observed at least once even
+      // when maxAgeMs=0; otherwise the first watchdog tick classifies it as
+      // stale and silently grants a base-timeout wait instead of a zero budget.
+      if (
+        startedAfterSequence !== undefined &&
+        entry.sequence > startedAfterSequence
+      ) {
+        pending = true;
+        continue;
+      }
       // Older than the asking call's entire elicitation budget: that call would
       // have aborted on its own budget by now, so this entry cannot honestly
       // keep pausing anyone's clock. Bounds a stuck handler's blast radius to
-      // one budget window instead of the process lifetime.
-      if (maxAgeMs !== undefined && now - entry.startedAt > maxAgeMs) continue;
-      return true;
+      // one budget window instead of the process lifetime. Remove it as well as
+      // ignoring it so repeated never-settling callbacks cannot grow this map
+      // without bound.
+      if (maxAgeMs !== undefined && now - entry.startedAt > maxAgeMs) {
+        this.pendingElicitationEntries.delete(token);
+        continue;
+      }
+      pending = true;
     }
-    return false;
+    return pending;
+  }
+
+  /** Snapshot used to distinguish this call's future elicitations from stale ones. */
+  getPendingSequence(): number {
+    return this.pendingSequence;
   }
 
   private beginPending(serverId: string): symbol {
@@ -207,6 +234,7 @@ export class ElicitationManager {
     this.pendingElicitationEntries.set(token, {
       serverId,
       startedAt: Date.now(),
+      sequence: ++this.pendingSequence,
     });
     return token;
   }
