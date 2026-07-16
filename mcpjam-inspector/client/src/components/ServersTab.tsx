@@ -32,6 +32,13 @@ import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context"
 
 import { JsonImportModal } from "./connection/JsonImportModal";
 import { ServerFormData } from "@/shared/types.js";
+import {
+  createInspectorCommandClientError,
+  registerInspectorCommandHandler,
+} from "@/lib/inspector-command-handlers";
+import type { OpenServerFormInspectorCommand } from "@/shared/inspector-command.js";
+import { serverDraftToFormData } from "@/lib/webmcp/server-draft-adapter";
+import { waitForUiCommit } from "@/lib/wait-for-ui-commit";
 import { useAppReady, useAppReadyMessage } from "@/hooks/use-app-ready";
 import { MCPIcon } from "./ui/mcp-icon";
 import {
@@ -852,6 +859,11 @@ export function ServersTab({
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
     useJsonRpcPanelVisibility();
   const [isAddingServer, setIsAddingServer] = useState(false);
+  // Prefill for an agent-opened Add-server form (`ui_open_server_form`).
+  // Undefined for a hand-opened form, which starts empty as before.
+  const [prefilledServerDraft, setPrefilledServerDraft] = useState<
+    Partial<ServerFormData> | undefined
+  >(undefined);
   const [isImportingJson, setIsImportingJson] = useState(false);
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -1409,6 +1421,58 @@ export function ServersTab({
     setIsActionMenuOpen(false);
   };
 
+  // `openServerForm` lives HERE, not in App.tsx, because the modal's open
+  // state and the billing gate are this component's own — an agent opening
+  // the form has to go through the same door the Add button does.
+  //
+  // Registered while Connect is mounted; `ui_open_server_form` navigates
+  // here first and the bus's late-registration wait covers the gap.
+  useEffect(() => {
+    const unregister = registerInspectorCommandHandler(
+      "openServerForm",
+      async (rawCommand) => {
+        const command = rawCommand as OpenServerFormInspectorCommand;
+
+        // Same gate as the visible button: a command may not do what a
+        // disabled action can't.
+        if (serverCreationGate.isDenied) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            serverCreationGate.denialMessage ??
+              "Upgrade required to add more servers"
+          );
+        }
+
+        const draft = command.payload?.draft;
+        if (draft) {
+          // Prefill only what the adapter accepts, so a form opened by chat
+          // and a form filled by hand can't disagree about defaults.
+          const result = serverDraftToFormData({
+            name: draft.name ?? "untitled",
+            ...draft,
+          });
+          if (!result.ok) {
+            throw createInspectorCommandClientError(
+              "invalid_request",
+              result.error
+            );
+          }
+          setPrefilledServerDraft(
+            draft.name ? result.formData : { ...result.formData, name: "" }
+          );
+        } else {
+          setPrefilledServerDraft(undefined);
+        }
+
+        setIsAddingServer(true);
+        setIsActionMenuOpen(false);
+        await waitForUiCommit();
+        return { opened: true };
+      }
+    );
+    return unregister;
+  }, [serverCreationGate.isDenied, serverCreationGate.denialMessage]);
+
   const handleImportJsonClick = () => {
     if (serverCreationGate.isDenied) {
       toast.error(
@@ -1854,8 +1918,10 @@ export function ServersTab({
       {/* Add Server Modal */}
       <AddServerModal
         isOpen={isAddingServer}
+        initialData={prefilledServerDraft}
         onClose={() => {
           setIsAddingServer(false);
+          setPrefilledServerDraft(undefined);
         }}
         onSubmit={(formData) => {
           track("connecting_server", {

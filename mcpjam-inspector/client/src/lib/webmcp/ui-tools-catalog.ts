@@ -107,6 +107,84 @@ async function ensurePlaygroundOpen(
   return null;
 }
 
+/**
+ * The Connect screen owns `openServerForm` (the Add-server modal's open
+ * state and the billing gate are its own), so that command only exists
+ * while `/servers` is mounted. Navigate first; the bus's 2s
+ * late-registration wait bridges the mount.
+ */
+async function ensureConnectOpen(
+  commandType: InspectorCommandType,
+): Promise<UiToolResult | null> {
+  if (hasInspectorCommandHandler(commandType)) return null;
+  const navigated = await navigateAction("servers");
+  if (!navigated.ok) {
+    return errorResult(`Could not open the Connect screen: ${navigated.error}`);
+  }
+  return null;
+}
+
+/** Shared JSON Schema for an agent-authored server draft. */
+const SERVER_DRAFT_SCHEMA = {
+  type: "object",
+  properties: {
+    name: {
+      type: "string",
+      description: "Name for the server, e.g. 'Excalidraw'.",
+    },
+    transport: {
+      type: "string",
+      enum: ["http", "stdio"],
+      description: "Defaults to 'http'.",
+    },
+    url: {
+      type: "string",
+      description: "HTTP servers only. Hosted deployments require https.",
+    },
+    command: {
+      type: "string",
+      description: "STDIO servers only: the executable, with no arguments.",
+    },
+    args: {
+      type: "array",
+      items: { type: "string" },
+      description: "STDIO servers only: arguments, one per entry.",
+    },
+    env: {
+      type: "object",
+      description: "STDIO servers only: environment variables.",
+    },
+    headers: {
+      type: "object",
+      description: "HTTP servers only: request headers.",
+    },
+  },
+  required: ["name"],
+  additionalProperties: false,
+} as const;
+
+function readServerDraft(args: Record<string, unknown>) {
+  return {
+    name: asOptionalString(args.name) ?? "",
+    ...(asOptionalString(args.transport)
+      ? { transport: asOptionalString(args.transport) as "http" | "stdio" }
+      : {}),
+    ...(asOptionalString(args.url) ? { url: asOptionalString(args.url) } : {}),
+    ...(asOptionalString(args.command)
+      ? { command: asOptionalString(args.command) }
+      : {}),
+    ...(Array.isArray(args.args)
+      ? { args: (args.args as unknown[]).map((a) => String(a)) }
+      : {}),
+    ...(args.env && typeof args.env === "object"
+      ? { env: args.env as Record<string, string> }
+      : {}),
+    ...(args.headers && typeof args.headers === "object"
+      ? { headers: args.headers as Record<string, string> }
+      : {}),
+  };
+}
+
 const DEVICE_TYPES: InspectorAppDeviceType[] = [
   "fill",
   "mobile",
@@ -419,6 +497,156 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         const response = await dispatchInspectorCommand({
           type: "snapshotApp",
           payload: surface ? { surface: surface as never } : {},
+        });
+        return fromActionResult(commandResponseToActionResult(response));
+      },
+    },
+
+    // --- Connect screen -------------------------------------------------
+    {
+      name: "ui_open_server_form",
+      description:
+        "Open the Add-server form on the Connect screen, optionally prefilled, and leave it for the user to review and submit. Use this when the user should make the final call — or when they haven't given you everything a server needs. To add a server outright, use ui_add_server.",
+      inputSchema: SERVER_DRAFT_SCHEMA,
+      readOnly: false,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      mayNavigate: true,
+      execute: async (args) => {
+        const notOpen = await ensureConnectOpen("openServerForm");
+        if (notOpen) return notOpen;
+        const draft = readServerDraft(args);
+        const response = await dispatchInspectorCommand({
+          type: "openServerForm",
+          payload: { draft: draft.name ? draft : { ...draft, name: "" } },
+        });
+        return fromActionResult(commandResponseToActionResult(response));
+      },
+    },
+    {
+      name: "ui_add_server",
+      description:
+        "Add an MCP server to the current project and save it, without connecting. The user sees it appear on the Connect screen. Connect it afterwards with ui_connect_server. Fails if a server with that name already exists.",
+      inputSchema: SERVER_DRAFT_SCHEMA,
+      readOnly: false,
+      // Additive: it creates a new server and refuses to overwrite one.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+      mayNavigate: true,
+      execute: async (args) => {
+        const draft = readServerDraft(args);
+        if (!draft.name) return errorResult("Missing required 'name' string.");
+        const response = await dispatchInspectorCommand({
+          type: "addServer",
+          payload: { draft },
+        });
+        return fromActionResult(commandResponseToActionResult(response));
+      },
+    },
+    {
+      name: "ui_connect_server",
+      description:
+        "Connect a saved MCP server, and report what happened. Use it for a server that is disconnected or failed. If the server needs the user to authorize it, this reports 'authorization_required' rather than authorizing on their behalf — relay that and let them click Authorize.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          serverName: { type: "string", description: "Server to connect." },
+        },
+        required: ["serverName"],
+        additionalProperties: false,
+      },
+      readOnly: false,
+      // Non-destructive, but it opens a session to an external server.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+      mayNavigate: true,
+      execute: async (args) => {
+        const serverName = asOptionalString(args.serverName);
+        if (!serverName) {
+          return errorResult("Missing required 'serverName' string.");
+        }
+        const response = await dispatchInspectorCommand({
+          type: "connectServer",
+          payload: { serverName },
+        });
+        return fromActionResult(commandResponseToActionResult(response));
+      },
+    },
+    {
+      name: "ui_disconnect_server",
+      description:
+        "Disconnect a connected MCP server, leaving its configuration in place. Reconnect it later with ui_connect_server.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          serverName: { type: "string", description: "Server to disconnect." },
+        },
+        required: ["serverName"],
+        additionalProperties: false,
+      },
+      readOnly: false,
+      // Reversible by construction: the config survives, only the session ends.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+      mayNavigate: true,
+      execute: async (args) => {
+        const serverName = asOptionalString(args.serverName);
+        if (!serverName) {
+          return errorResult("Missing required 'serverName' string.");
+        }
+        const response = await dispatchInspectorCommand({
+          type: "disconnectServer",
+          payload: { serverName },
+        });
+        return fromActionResult(commandResponseToActionResult(response));
+      },
+    },
+    {
+      name: "ui_remove_server",
+      description:
+        "Delete an MCP server from the current project, including its saved configuration. This cannot be undone from chat — the user would have to add the server again.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          serverName: { type: "string", description: "Server to remove." },
+        },
+        required: ["serverName"],
+        additionalProperties: false,
+      },
+      readOnly: false,
+      // The one destructive Connect tool: it deletes configuration the user
+      // may not be able to reconstruct. Confirms even with approvals off.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+      mayNavigate: true,
+      execute: async (args) => {
+        const serverName = asOptionalString(args.serverName);
+        if (!serverName) {
+          return errorResult("Missing required 'serverName' string.");
+        }
+        const response = await dispatchInspectorCommand({
+          type: "removeServer",
+          payload: { serverName },
         });
         return fromActionResult(commandResponseToActionResult(response));
       },

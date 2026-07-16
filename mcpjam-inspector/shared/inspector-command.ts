@@ -34,7 +34,12 @@ export type InspectorCommandType =
   | "selectTool"
   | "executeTool"
   | "renderToolResult"
-  | "snapshotApp";
+  | "snapshotApp"
+  | "openServerForm"
+  | "addServer"
+  | "connectServer"
+  | "disconnectServer"
+  | "removeServer";
 
 export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "navigate",
@@ -45,6 +50,11 @@ export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "executeTool",
   "renderToolResult",
   "snapshotApp",
+  "openServerForm",
+  "addServer",
+  "connectServer",
+  "disconnectServer",
+  "removeServer",
 ] as const satisfies readonly InspectorCommandType[];
 
 export interface InspectorCommandError {
@@ -137,6 +147,70 @@ export interface SnapshotAppInspectorCommand {
   timeoutMs?: number;
 }
 
+/**
+ * Connect-screen server config an agent can author.
+ *
+ * A deliberate subset of the form's `ServerFormData`, not a passthrough:
+ * every field here is something a user could say out loud. Credentials,
+ * OAuth client secrets, and XAA identity config are absent on purpose —
+ * those belong to the human at the form, not to a chat transcript.
+ *
+ * `args` is a list rather than part of `command` because the form's parser
+ * splits on whitespace with no quote handling: `npx -y pkg --flag "a b"`
+ * would split wrong. Taking them pre-separated sidesteps that entirely.
+ */
+export interface InspectorServerDraft {
+  name: string;
+  /** Defaults to "http", matching the form's own default for a new server. */
+  transport?: "http" | "stdio";
+  /** HTTP only. Hosted deployments require https. */
+  url?: string;
+  /** STDIO only: the executable, with no arguments in it. */
+  command?: string;
+  /** STDIO only. */
+  args?: string[];
+  /** STDIO only. */
+  env?: Record<string, string>;
+  /** HTTP only. */
+  headers?: Record<string, string>;
+}
+
+export interface OpenServerFormInspectorCommand {
+  id: string;
+  type: "openServerForm";
+  /** Optional prefill for the Add-server form. */
+  payload: { draft?: Partial<InspectorServerDraft> };
+  timeoutMs?: number;
+}
+
+export interface AddServerInspectorCommand {
+  id: string;
+  type: "addServer";
+  payload: { draft: InspectorServerDraft; connect?: boolean };
+  timeoutMs?: number;
+}
+
+export interface ConnectServerInspectorCommand {
+  id: string;
+  type: "connectServer";
+  payload: { serverName: string };
+  timeoutMs?: number;
+}
+
+export interface DisconnectServerInspectorCommand {
+  id: string;
+  type: "disconnectServer";
+  payload: { serverName: string };
+  timeoutMs?: number;
+}
+
+export interface RemoveServerInspectorCommand {
+  id: string;
+  type: "removeServer";
+  payload: { serverName: string };
+  timeoutMs?: number;
+}
+
 export type InspectorCommand =
   | NavigateInspectorCommand
   | SelectServerInspectorCommand
@@ -145,7 +219,12 @@ export type InspectorCommand =
   | SelectToolInspectorCommand
   | ExecuteToolInspectorCommand
   | RenderToolResultInspectorCommand
-  | SnapshotAppInspectorCommand;
+  | SnapshotAppInspectorCommand
+  | OpenServerFormInspectorCommand
+  | AddServerInspectorCommand
+  | ConnectServerInspectorCommand
+  | DisconnectServerInspectorCommand
+  | RemoveServerInspectorCommand;
 
 export interface InspectorCommandSuccessResponse {
   id: string;

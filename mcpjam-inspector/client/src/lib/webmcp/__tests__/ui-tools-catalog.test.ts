@@ -42,9 +42,14 @@ describe("buildUiToolsCatalog", () => {
   it("every tool satisfies the wire contract (name regex, description cap)", () => {
     const catalog = buildUiToolsCatalog();
     expect(catalog.map((t) => t.name).sort()).toEqual([
+      "ui_add_server",
+      "ui_connect_server",
+      "ui_disconnect_server",
       "ui_execute_tool",
       "ui_navigate",
       "ui_open_playground",
+      "ui_open_server_form",
+      "ui_remove_server",
       "ui_select_server",
       "ui_select_tool",
       "ui_set_app_context",
@@ -74,22 +79,111 @@ describe("buildUiToolsCatalog", () => {
     }
   });
 
-  it("gates exactly ui_execute_tool as destructive", () => {
-    // It runs an arbitrary third-party MCP tool, so it confirms even with the
-    // approval toggle off. Everything else is additive: the user watches it
-    // happen in their own app, and a confirmation buys nothing.
+  it("gates exactly the irreversible tools as destructive", () => {
+    // These confirm even with the approval toggle off. Everything else is
+    // additive or reversible: the user watches it happen in their own app,
+    // and a confirmation buys nothing.
+    //   - ui_execute_tool runs an arbitrary third-party MCP tool.
+    //   - ui_remove_server deletes configuration chat can't reconstruct.
     const destructive = buildUiToolsCatalog()
       .filter((t) => t.annotations?.destructiveHint === true)
-      .map((t) => t.name);
-    expect(destructive).toEqual(["ui_execute_tool"]);
+      .map((t) => t.name)
+      .sort();
+    expect(destructive).toEqual(["ui_execute_tool", "ui_remove_server"]);
   });
 
-  it("marks only ui_execute_tool as open-world", () => {
-    // The one tool whose effects escape the browser.
+  it("marks exactly the tools whose effects escape the browser as open-world", () => {
     const openWorld = buildUiToolsCatalog()
       .filter((t) => t.annotations?.openWorldHint === true)
-      .map((t) => t.name);
-    expect(openWorld).toEqual(["ui_execute_tool"]);
+      .map((t) => t.name)
+      .sort();
+    expect(openWorld).toEqual([
+      "ui_connect_server",
+      "ui_disconnect_server",
+      "ui_execute_tool",
+    ]);
+  });
+
+  it("ui_add_server is additive, not destructive", () => {
+    // It refuses to overwrite an existing server (the handler rejects a
+    // duplicate name), which is what keeps it non-destructive.
+    const addServer = getTool("ui_add_server");
+    expect(addServer.annotations?.destructiveHint).toBe(false);
+    expect(addServer.description).toContain("already exists");
+  });
+
+  it("ui_add_server dispatches a draft without connecting", async () => {
+    await getTool("ui_add_server").execute({
+      name: "Excalidraw",
+      url: "https://example.com/mcp",
+    });
+    expect(dispatchedCommands()[0]).toMatchObject({
+      type: "addServer",
+      payload: { draft: { name: "Excalidraw", url: "https://example.com/mcp" } },
+    });
+    // Adding never connects: connecting is a separate, visible step that can
+    // report authorization_required.
+    expect(dispatchedCommands().some((c) => c.type === "connectServer")).toBe(
+      false,
+    );
+  });
+
+  it("ui_add_server requires a name", async () => {
+    const result = await getTool("ui_add_server").execute({});
+    expect(result.isError).toBe(true);
+    expect(executeInspectorCommandMock).not.toHaveBeenCalled();
+  });
+
+  it("ui_add_server passes stdio args through as a list", async () => {
+    // Pre-separated, because the form's parser splits on whitespace with no
+    // quote handling.
+    await getTool("ui_add_server").execute({
+      name: "local",
+      transport: "stdio",
+      command: "npx",
+      args: ["-y", "pkg", "--flag", "a b"],
+    });
+    expect(dispatchedCommands()[0]).toMatchObject({
+      payload: { draft: { args: ["-y", "pkg", "--flag", "a b"] } },
+    });
+  });
+
+  it("ui_open_server_form navigates to Connect first when its handler is absent", async () => {
+    // The command only exists while Connect is mounted — its modal state and
+    // billing gate are that screen's own.
+    hasInspectorCommandHandlerMock.mockReturnValue(false);
+    await getTool("ui_open_server_form").execute({ name: "X" });
+    expect(dispatchedCommands()[0]).toMatchObject({
+      type: "navigate",
+      payload: { target: "/servers" },
+    });
+    expect(dispatchedCommands()[1]).toMatchObject({ type: "openServerForm" });
+  });
+
+  it("connect/disconnect/remove require a server name and dispatch it", async () => {
+    for (const [tool, type] of [
+      ["ui_connect_server", "connectServer"],
+      ["ui_disconnect_server", "disconnectServer"],
+      ["ui_remove_server", "removeServer"],
+    ] as const) {
+      vi.clearAllMocks();
+      hasInspectorCommandHandlerMock.mockReturnValue(true);
+      executeInspectorCommandMock.mockResolvedValue({
+        id: "c",
+        status: "success",
+        result: { ok: true },
+      });
+
+      const missing = await getTool(tool).execute({});
+      expect(missing.isError, tool).toBe(true);
+      expect(executeInspectorCommandMock).not.toHaveBeenCalled();
+
+      await getTool(tool).execute({ serverName: "everything" });
+      expect(dispatchedCommands()[0], tool).toMatchObject({
+        type,
+        payload: { serverName: "everything" },
+      });
+    }
   });
 
   it("flags only ui_execute_tool's output as untrusted for native agents", () => {
