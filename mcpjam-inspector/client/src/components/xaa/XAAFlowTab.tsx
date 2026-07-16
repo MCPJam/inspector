@@ -565,10 +565,14 @@ export function XAAFlowTab({
     flowState.registrationStrategy === "preregistered"
       ? runInput.clientId
       : flowState.clientId ?? "";
+  // Every dynamic strategy establishes its own auth method (DCR from the
+  // registration response, CIMD from the document it validated), and the
+  // method is part of what a run proved. Pre-registered keeps it out: its
+  // method comes from saved config, already covered by flowConfigurationKey.
   const scorecardTokenEndpointAuthMethod =
-    flowState.registrationStrategy === "dcr"
-      ? flowState.tokenEndpointAuthMethod ?? ""
-      : "";
+    flowState.registrationStrategy === "preregistered"
+      ? ""
+      : flowState.tokenEndpointAuthMethod ?? "";
   // A positive run unlocks only the exact issuer, client identity, auth
   // method, and saved configuration that it exercised.
   const runGateKey = [
@@ -761,16 +765,12 @@ export function XAAFlowTab({
         // The strategy the completed run actually used (state-authoritative).
         registration_strategy: flowStateRef.current.registrationStrategy,
       });
-      // This PR enables dynamic scorecards for DCR only. Keep CIMD locked
-      // until its client-auth behavior is implemented and reviewed separately.
-      if (flowStateRef.current.registrationStrategy !== "cimd") {
-        setPositiveRunTargets((current) => {
-          if (current.has(runGateKey)) return current;
-          const next = new Set(current);
-          next.add(runGateKey);
-          return next;
-        });
-      }
+      setPositiveRunTargets((current) => {
+        if (current.has(runGateKey)) return current;
+        const next = new Set(current);
+        next.add(runGateKey);
+        return next;
+      });
     }
   }, [flowState.currentStep, authServerModeForTelemetry, runGateKey]);
 
@@ -877,10 +877,43 @@ export function XAAFlowTab({
     const resource =
       flowState.resourceMetadata?.resource || runInput.serverUrl || "";
 
+    // CIMD: the client_id IS the metadata document URL, and there are no
+    // issued credentials to cache or expire. Both the URL and the auth method
+    // are read from flow state, which the CIMD step sets from the document it
+    // actually fetched and validated (`none` for public, `private_key_jwt` for
+    // confidential). Using the run's own values — rather than re-deriving from
+    // the server config — keeps the scorecard testing the identity the
+    // positive run established, and can't silently drop the client_assertion
+    // a confidential client owes (which would get every case refused for the
+    // wrong reason and scored as a pass).
     if (flowState.registrationStrategy === "cimd") {
+      if (!flowState.tokenEndpoint || !flowState.clientId) {
+        return {
+          input: null,
+          unavailableReason:
+            "Run the flow first so the client identity and token endpoint are known.",
+        };
+      }
+      // Confidential CIMD runs on the hosted issuer too: the server mints the
+      // broken assertions on hosted (correct `iss`) and redeems them locally,
+      // so the CIMD signing key never leaves the machine. No local-only guard.
+      if (!audience || !resource) return { input: null };
+
       return {
-        input: null,
-        unavailableReason: "CIMD negative tests are not supported yet.",
+        input: {
+          tokenEndpoint: flowState.tokenEndpoint,
+          audience,
+          resource,
+          subject: runInput.userId || undefined,
+          // Sent alongside `subject`: a hosted-issuer run's evaluator matches
+          // both claims exactly, and a managed scorecard missing the email is
+          // denied outright — which would refuse every case and score the run
+          // all-green without testing anything.
+          email: runInput.email || undefined,
+          clientId: flowState.clientId,
+          tokenEndpointAuthMethod: flowState.tokenEndpointAuthMethod,
+          scope: runInput.scope || undefined,
+        },
       };
     }
 
@@ -919,13 +952,8 @@ export function XAAFlowTab({
             "This session's dynamic client secret has expired. Register another client to run negative tests.",
         };
       }
-      if (hostedIssuerOptIn && credentials.clientSecret) {
-        return {
-          input: null,
-          unavailableReason:
-            "Negative tests for confidential DCR clients are unavailable when using the hosted issuer.",
-        };
-      }
+      // Confidential DCR runs on the hosted issuer too: hosted mints, the local
+      // server redeems, so the DCR secret never leaves the machine.
       if (!audience || !resource) return { input: null };
 
       const input: NegativeTestsInput = {
@@ -933,6 +961,10 @@ export function XAAFlowTab({
         audience,
         resource,
         subject: runInput.userId || undefined,
+        // Needed once this can reach the hosted issuer: its evaluator matches
+        // subject AND email exactly, so an absent email denies every case on
+        // identity and the run reads all-green without testing anything.
+        email: runInput.email || undefined,
         clientId: flowState.clientId,
         tokenEndpointAuthMethod: credentials.tokenEndpointAuthMethod,
         scope: runInput.scope || undefined,
@@ -1017,14 +1049,7 @@ export function XAAFlowTab({
         scope: runInput.scope || undefined,
       },
     };
-  }, [
-    flowState,
-    runInput,
-    target,
-    targetKey,
-    runsDynamicRegistration,
-    hostedIssuerOptIn,
-  ]);
+  }, [flowState, runInput, target, targetKey, runsDynamicRegistration]);
 
   // ── Single target-reset owner ──────────────────────────────────────
   // One effect keyed on the target and all run-defining configuration rebuilds
