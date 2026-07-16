@@ -345,7 +345,9 @@ describe("initialFormValues", () => {
       blank: "",
       age: "36",
       subscribed: true,
-      off: false,
+      // Optional, no schema default → UNANSWERED, not `false`. `false` would be
+      // an answer the user never gave; see "unanswered vs answered" below.
+      off: undefined,
       color: "g",
       tags: ["y"],
       blob: JSON.stringify({ a: 1 }, null, 2),
@@ -542,5 +544,81 @@ describe("__proto__ field names", () => {
 
   it("initialFormValues returns a null-prototype map", () => {
     expect(Object.getPrototypeOf(initialFormValues([]))).toBeNull();
+  });
+});
+
+
+describe("unanswered vs answered", () => {
+  const boolSchema = (required: boolean) => ({
+    type: "object",
+    properties: { subscribe: { type: "boolean", title: "Subscribe" } },
+    ...(required ? { required: ["subscribe"] } : {}),
+  });
+
+  it("omits an optional boolean the user never touched", () => {
+    // Every boolean used to initialize to `false` and always serialize, so an
+    // untouched optional checkbox told the server "no" — an answer the user
+    // never gave. Absent and false are different claims.
+    const fields = parseElicitationSchema(boolSchema(false));
+    const values = initialFormValues(fields);
+
+    expect(values.subscribe).toBeUndefined();
+    expect(buildElicitationContent(fields, values)).toEqual({});
+  });
+
+  it("sends false once the user actually answers false", () => {
+    // Toggling on then off is a real answer and must reach the server.
+    const fields = parseElicitationSchema(boolSchema(false));
+    const values = { ...initialFormValues(fields), subscribe: false };
+
+    expect(buildElicitationContent(fields, values)).toEqual({ subscribe: false });
+  });
+
+  it("still sends a required boolean, and honors a schema default", () => {
+    // Required means the server wants a value; unchecked is a legitimate one.
+    const requiredFields = parseElicitationSchema(boolSchema(true));
+    expect(
+      buildElicitationContent(requiredFields, initialFormValues(requiredFields)),
+    ).toEqual({ subscribe: false });
+
+    const defaulted = parseElicitationSchema({
+      type: "object",
+      properties: { subscribe: { type: "boolean", default: true } },
+    });
+    expect(
+      buildElicitationContent(defaulted, initialFormValues(defaulted)),
+    ).toEqual({ subscribe: true });
+  });
+
+  const multiSchema = (required: boolean) => ({
+    type: "object",
+    properties: {
+      colors: {
+        type: "array",
+        minItems: 2,
+        items: { type: "string", enum: ["red", "green", "blue"] },
+      },
+    },
+    ...(required ? { required: ["colors"] } : {}),
+  });
+
+  it("lets an optional multi-select stay empty despite minItems", () => {
+    // minItems constrains an ANSWER, not the choice not to answer. Enforcing it
+    // on an empty optional field made submit unreachable for a value we would
+    // never have sent anyway.
+    const [field] = parseElicitationSchema(multiSchema(false));
+    expect(validateField(field, [])).toBeNull();
+    expect(validateField(field, undefined)).toBeNull();
+  });
+
+  it("still enforces minItems once an optional multi-select is answered", () => {
+    const [field] = parseElicitationSchema(multiSchema(false));
+    expect(validateField(field, ["red"])).toBe("Select at least 2 options");
+    expect(validateField(field, ["red", "blue"])).toBeNull();
+  });
+
+  it("still requires a required multi-select", () => {
+    const [field] = parseElicitationSchema(multiSchema(true));
+    expect(validateField(field, [])).toBe("colors is required");
   });
 });

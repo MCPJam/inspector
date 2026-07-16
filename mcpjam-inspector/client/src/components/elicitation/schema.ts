@@ -312,6 +312,13 @@ export function validateField(
     if (field.required && selected.length === 0) {
       return `${label} is required`;
     }
+    // Leaving an OPTIONAL multi-select empty is a valid non-answer, and
+    // `buildElicitationContent` omits it. Enforcing minItems here made that
+    // unreachable: the form refused to submit a field it would never send,
+    // with no way to satisfy the rule short of answering.
+    if (!field.required && selected.length === 0) {
+      return null;
+    }
     if (field.minItems !== undefined && selected.length < field.minItems) {
       return `Select at least ${field.minItems} option${
         field.minItems === 1 ? "" : "s"
@@ -447,6 +454,9 @@ export function buildElicitationContent(
 
     switch (field.kind) {
       case "boolean":
+        // Untouched optional checkbox → omit. Sending `false` would answer a
+        // question the user never saw fit to answer.
+        if (value === undefined) break;
         content[field.name] = Boolean(value);
         break;
 
@@ -514,7 +524,13 @@ function defaultValueFor(field: ElicitationField): unknown {
 
   switch (field.kind) {
     case "boolean":
-      return hasDefault ? Boolean(field.default) : false;
+      if (hasDefault) return Boolean(field.default);
+      // `undefined` = UNANSWERED, distinct from an answered `false`. A required
+      // checkbox still starts unchecked-but-answered (false is a real answer to
+      // "do you consent?"); an optional one the user never touched must not
+      // fabricate one. Toggling on then off yields a real `false`, which does
+      // get sent.
+      return field.required ? false : undefined;
     case "multi-enum": {
       const allowed = new Set(field.options?.map((o) => o.value) ?? []);
       return toStringArray(field.default).filter((v) => allowed.has(v));

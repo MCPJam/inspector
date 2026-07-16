@@ -505,4 +505,53 @@ describe("ElicitationDialog", () => {
 
     expect(screen.getByLabelText(/Branch/i)).toHaveValue("");
   });
+
+  it("renders a __proto__ field without crashing", () => {
+    // `errors` started as `{}`, so errors["__proto__"] resolved to
+    // Object.prototype — truthy — and the dialog handed that object to React to
+    // render as the error message. JSON.parse is how a real schema arrives and
+    // is the only way to get a genuine own `__proto__` key.
+    const schema = JSON.parse(
+      '{"type":"object","properties":{"__proto__":{"type":"string","title":"Proto"}},"required":["__proto__"]}',
+    );
+
+    expect(() =>
+      render(
+        <ElicitationDialog
+          elicitationRequest={{
+            requestId: "req-proto",
+            message: "Fill it in",
+            timestamp: new Date().toISOString(),
+            schema,
+          }}
+          onResponse={vi.fn()}
+        />,
+      ),
+    ).not.toThrow();
+
+    expect(screen.getByLabelText(/Proto/i)).toBeInTheDocument();
+  });
+
+  it("blocks submit on a __proto__ field's validation error instead of crashing", () => {
+    const schema = JSON.parse(
+      '{"type":"object","properties":{"__proto__":{"type":"string","title":"Proto"}},"required":["__proto__"]}',
+    );
+    const onResponse = vi.fn();
+    render(
+      <ElicitationDialog
+        elicitationRequest={{
+          requestId: "req-proto-2",
+          message: "Fill it in",
+          timestamp: new Date().toISOString(),
+          schema,
+        }}
+        onResponse={onResponse}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /accept/i }));
+    // Required and empty → blocked, and the error renders as a string.
+    expect(onResponse).not.toHaveBeenCalled();
+    expect(screen.getByText(/is required/i)).toBeInTheDocument();
+  });
 });
