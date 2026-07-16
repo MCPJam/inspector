@@ -44,32 +44,6 @@ import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { filterReportsByFeatureFlags } from "@/lib/host-compat/feature-visibility";
 import type { ToolsDataStatus } from "@/lib/host-compat/use-host-compat";
 
-const PROVENANCE_LABEL: Record<CompatProvenance, string> = {
-  observed: "Observed from a live run",
-  "vendor-doc": "Verified from vendor docs",
-  probe: "Probe-captured from a real client",
-  assumed: "Best-effort preset — unverified",
-};
-
-const VERIFIED_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
-  timeZone: "UTC",
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-});
-
-function formatVerifiedDate(verifiedAt: number | undefined): string | null {
-  if (verifiedAt === undefined || !Number.isFinite(verifiedAt)) return null;
-  return VERIFIED_DATE_FORMATTER.format(new Date(verifiedAt));
-}
-
-function provenanceTooltip(report: HostCompatReport): string {
-  const date = formatVerifiedDate(report.verifiedAt);
-  if (!date) return PROVENANCE_LABEL[report.provenance];
-  const prefix =
-    report.provenance === "assumed" ? "Last reviewed" : "Last verified";
-  return `${PROVENANCE_LABEL[report.provenance]} | ${prefix} ${date}`;
-}
 const FINDING_ICON: Record<
   CompatFinding["severity"],
   { Icon: typeof Info; className: string }
@@ -134,7 +108,7 @@ export function HostCompatContent({
       widgetScan.status === "idle" ||
       widgetScan.status === "loading")
       ? "analyzing"
-    : server.connectionStatus === "connected" &&
+      : server.connectionStatus === "connected" &&
         (resolvedToolsLoadStatus === "failed" || widgetScan.status === "failed")
       ? "failed"
       : "ready";

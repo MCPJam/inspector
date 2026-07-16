@@ -31,6 +31,8 @@ export type WidgetCapabilityNeed =
 export type WidgetUsage = Partial<Record<WidgetCapabilityNeed, string[]>> & {
   /** Exact keys declared in `_meta.ui.permissions` across scanned widgets. */
   sandboxPermissionNames?: string[];
+  /** Each permission name mapped to the tools whose widgets requested it. */
+  sandboxPermissionTools?: Record<string, string[]>;
 };
 
 const SOURCE_PATTERNS: ReadonlyArray<{

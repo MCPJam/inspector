@@ -63,14 +63,19 @@ export function useWidgetUsageState(
 
     scanWidgetUsage(toolsData, (uri) =>
       readResource(serverName, uri).then(normalizeWidgetResourceReadResult)
-    ).then((result) => {
-      if (cancelled) return;
-      setState(
-        result === undefined
-          ? { status: "failed", usage: undefined }
-          : { status: "ready", usage: result }
-      );
-    });
+    )
+      .then((result) => {
+        if (cancelled) return;
+        setState(
+          result === undefined
+            ? { status: "failed", usage: undefined }
+            : { status: "ready", usage: result }
+        );
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setState({ status: "failed", usage: undefined });
+      });
 
     return () => {
       cancelled = true;

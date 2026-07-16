@@ -138,7 +138,7 @@ describe("summarizeReports", () => {
   it("does not surface unknown as a color or status", () => {
     expect(
       summarizeReports([report({ hostId: "a", verdict: "unknown" })])
-    ).toBe("");
+    ).toBe("no result available");
   });
 });
 

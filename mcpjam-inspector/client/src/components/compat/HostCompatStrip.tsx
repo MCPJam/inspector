@@ -40,7 +40,7 @@ export function summarizeReports(reports: HostCompatReport[]): string {
   if (counts.unverified > 0) {
     parts.push(`not verified in ${counts.unverified}`);
   }
-  return parts.join(" · ");
+  return parts.length > 0 ? parts.join(" · ") : "no result available";
 }
 
 /**
@@ -78,9 +78,9 @@ export function HostCompatStripView({
         type="button"
         onClick={onOpenDetails}
         disabled={!onOpenDetails}
-        aria-label={`Host compatibility for ${serverName}: ${summarizeReports(
-          reports
-        )}`}
+        aria-label={`Host compatibility for ${serverName}: ${
+          analysisLabel ?? summarizeReports(reports)
+        }`}
         className="inline-flex max-w-full flex-nowrap items-center rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 transition-colors hover:bg-accent/60 cursor-pointer disabled:cursor-default"
       >
         {analysisLabel ? (

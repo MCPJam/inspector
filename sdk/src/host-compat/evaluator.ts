@@ -209,10 +209,10 @@ function laneVerdict(
   const verdict: CompatVerdict = hasBlocker
     ? "blocked"
     : hasDegraded
-      ? "degraded"
-      : unknown
-        ? "unknown"
-        : "works";
+    ? "degraded"
+    : unknown
+    ? "unknown"
+    : "works";
   return {
     verdict,
     provenance: weakestProvenance(laneFindings, baseProvenance),
@@ -239,8 +239,8 @@ export function evaluateHostCompat(
       profile.rendersMcpApps && !profile.rendersOpenAiApps
         ? "Declare an MCP Apps template (`_meta.ui.resourceUri`) alongside the OpenAI one."
         : !profile.rendersMcpApps && profile.rendersOpenAiApps
-          ? "Declare an OpenAI Apps template (`openai/outputTemplate`) alongside the MCP Apps one."
-          : undefined; // host renders neither (CLI) — nothing to declare.
+        ? "Declare an OpenAI Apps template (`openai/outputTemplate`) alongside the MCP Apps one."
+        : undefined; // host renders neither (CLI) — nothing to declare.
 
     // App-only widgets have no text fallback: unrenderable = unusable tool.
     const blockedAppOnly = unrenderable.filter((name) =>
@@ -257,8 +257,14 @@ export function evaluateHostCompat(
         severity: "blocker",
         code: "app_only_unrenderable",
         tools: blockedAppOnly,
-        title: `${count === 1 ? "Interactive tool" : `${count} interactive tools`} unavailable`,
-        detail: `${formatToolNames(blockedAppOnly)} only ${count === 1 ? "works" : "work"} inside a widget. ${profile.label} does not render ${count === 1 ? "it" : "them"}.`,
+        title: `${
+          count === 1 ? "Interactive tool" : `${count} interactive tools`
+        } unavailable`,
+        detail: `${formatToolNames(blockedAppOnly)} only ${
+          count === 1 ? "works" : "work"
+        } inside a widget. ${profile.label} does not render ${
+          count === 1 ? "it" : "them"
+        }.`,
         remediation,
         provenance: profile.provenance,
       });
@@ -270,8 +276,14 @@ export function evaluateHostCompat(
         severity: "degraded",
         code: "widget_text_fallback",
         tools: degradedFallback,
-        title: `${count === 1 ? "Interactive view" : `${count} interactive views`} unavailable`,
-        detail: `${formatToolNames(degradedFallback)} provide${count === 1 ? "s" : ""} an interactive view. ${profile.label} shows the plain-text result instead.`,
+        title: `${
+          count === 1 ? "Interactive view" : `${count} interactive views`
+        } unavailable`,
+        detail: `${formatToolNames(degradedFallback)} provide${
+          count === 1 ? "s" : ""
+        } an interactive view. ${
+          profile.label
+        } shows the plain-text result instead.`,
         remediation,
         provenance: profile.provenance,
       });
@@ -281,7 +293,6 @@ export function evaluateHostCompat(
     //    a capability (from the L1 scan) the host lacks.
     if (profile.capabilities && requirements.widgetUsage) {
       for (const check of CAPABILITY_CHECKS) {
-        const tools = requirements.widgetUsage[check.key];
         const permissionNames =
           check.key === "sandboxPermissions"
             ? requirements.widgetUsage.sandboxPermissionNames
@@ -298,6 +309,21 @@ export function evaluateHostCompat(
         const unsupported = hasExactSandboxResult
           ? (unsupportedPermissions?.length ?? 0) > 0
           : profile.capabilities[check.key] !== true;
+        const tools =
+          check.key === "sandboxPermissions" &&
+          unsupportedPermissions !== undefined &&
+          requirements.widgetUsage.sandboxPermissionTools
+            ? Array.from(
+                new Set(
+                  unsupportedPermissions.flatMap(
+                    (permission) =>
+                      requirements.widgetUsage?.sandboxPermissionTools?.[
+                        permission
+                      ] ?? []
+                  )
+                )
+              )
+            : requirements.widgetUsage[check.key];
         if (tools && tools.length > 0 && unsupported) {
           const explicitlyUnsupported =
             hasExactSandboxResult || profile.capabilities[check.key] === false;
@@ -309,12 +335,18 @@ export function evaluateHostCompat(
               ? {
                   title:
                     unsupportedPermissions.length === 1
-                      ? `${sandboxPermissionLabel(unsupportedPermissions[0])} unavailable`
+                      ? `${sandboxPermissionLabel(
+                          unsupportedPermissions[0]
+                        )} unavailable`
                       : "Widget sandbox permissions unsupported",
                   detail:
                     unsupportedPermissions.length === 1
-                      ? `This widget requests ${sandboxPermissionSentenceLabel(unsupportedPermissions[0])}. ${profile.label} does not support it.`
-                      : `This widget requests ${joinPermissionLabels(unsupportedPermissions)}. ${profile.label} does not support them.`,
+                      ? `This widget requests ${sandboxPermissionSentenceLabel(
+                          unsupportedPermissions[0]
+                        )}. ${profile.label} does not support it.`
+                      : `This widget requests ${joinPermissionLabels(
+                          unsupportedPermissions
+                        )}. ${profile.label} does not support them.`,
                 }
               : undefined;
           findings.push({
@@ -327,7 +359,9 @@ export function evaluateHostCompat(
             tools: [...tools],
             title:
               sandboxPermissionCopy?.title ??
-              `${check.subject} ${supportLabel === "unsupported" ? "unavailable" : "not confirmed"}`,
+              `${check.subject} ${
+                supportLabel === "unsupported" ? "unavailable" : "not confirmed"
+              }`,
             detail:
               sandboxPermissionCopy?.detail ??
               (supportLabel === "unsupported"
@@ -356,12 +390,16 @@ export function evaluateHostCompat(
       severity: "info",
       code: "protocol_version_mismatch",
       title: "Protocol version differs",
-      detail: `This server uses MCP \`${serverVersion}\`. ${profile.label} supports ${hostVersions
+      detail: `This server uses MCP \`${serverVersion}\`. ${
+        profile.label
+      } supports ${hostVersions
         .map((v) => `\`${v}\``)
         .join(
           ", "
         )}. The connection works only if both support a shared version.`,
-      remediation: `Check that the server supports ${hostVersions.length === 1 ? "this version" : "one of these versions"}.`,
+      remediation: `Check that the server supports ${
+        hostVersions.length === 1 ? "this version" : "one of these versions"
+      }.`,
       provenance: profile.provenance,
     });
   }

@@ -281,6 +281,29 @@ describe("evaluateHostCompat", () => {
     expect(finding?.detail).not.toContain("`clipboardWrite`");
   });
 
+  it("reports only the tool whose widget requested an unsupported permission", () => {
+    const finding = evaluateHostCompat(
+      reqs({
+        widgets: {
+          mcpAppsOnly: ["clipboard_view", "camera_view"],
+          openaiAppsOnly: [],
+          dual: [],
+        },
+        hasWidgets: true,
+        widgetUsage: {
+          sandboxPermissions: ["clipboard_view", "camera_view"],
+          sandboxPermissionNames: ["clipboardWrite", "camera"],
+          sandboxPermissionTools: {
+            clipboardWrite: ["clipboard_view"],
+            camera: ["camera_view"],
+          },
+        },
+      }),
+      profile({ sandboxPermissionAllow: { clipboardWrite: true } })
+    ).findings.find((f) => f.code === "capability_unsupported");
+    expect(finding?.tools).toEqual(["camera_view"]);
+  });
+
   it("reads Unknown (not Works) when a widget server hasn't been scanned", () => {
     const report = evaluateHostCompat(
       reqs({
