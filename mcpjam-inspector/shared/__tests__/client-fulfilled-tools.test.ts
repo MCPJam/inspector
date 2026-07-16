@@ -122,6 +122,34 @@ describe("client-fulfilled tool names", () => {
       ).toBe(true);
     });
 
+    it("fails CLOSED on a contradictory read-only + destructive entry", () => {
+      // The validator rejects `readOnlyHint` disagreeing with `readOnly`, but
+      // nothing stops "read-only AND destructive". Resolving that in favor of
+      // "don't ask" is the one reading that can silently delete something, so
+      // destructive wins.
+      for (const requireToolApproval of [true, false]) {
+        expect(
+          uiToolCallNeedsApproval({
+            readOnly: true,
+            annotations: { readOnlyHint: true, destructiveHint: true },
+            requireToolApproval,
+          }),
+        ).toBe(true);
+      }
+    });
+
+    it("does not gate a read-only tool whose annotations omit readOnlyHint", () => {
+      // Partial annotations must not lose the legacy signal — otherwise a
+      // snapshot gets gated for no reason in strict mode.
+      expect(
+        uiToolCallNeedsApproval({
+          readOnly: true,
+          annotations: { destructiveHint: false },
+          requireToolApproval: true,
+        }),
+      ).toBe(false);
+    });
+
     it("ignores non-approval hints", () => {
       expect(
         uiToolCallNeedsApproval({

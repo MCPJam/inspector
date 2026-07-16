@@ -2933,8 +2933,16 @@ export async function runChatEngineLoop(
 
       startHeartbeat();
 
-      // Process any pending approval responses from a previous request
-      if (requireToolApproval) {
+      // Process any pending approval responses from a previous request.
+      //
+      // The UI classification has to be honored here too, not just at the
+      // emit gate. With the flag off, a destructive `ui_*` call now pauses
+      // for approval — and DENYING it sends an approval response back (the
+      // approve path ships a tool-result instead). Gating this on
+      // `requireToolApproval` alone would leave that denial unprocessed and
+      // the tool call unresolved: the turn would hang forever, which is the
+      // exact failure the two-sided predicate exists to prevent.
+      if (requireToolApproval || (uiToolApprovals?.requiredNames.size ?? 0) > 0) {
         const handled = await handlePendingApprovals(
           safeWriter,
           messageHistory,

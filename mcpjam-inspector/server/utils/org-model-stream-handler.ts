@@ -323,7 +323,18 @@ function hasUnsupportedLocalApprovalGate(
   requireToolApproval: boolean | undefined
 ): boolean {
   if (!requireToolApproval) return false;
-  return Object.keys(tools).some((name) => !isClientFulfilledToolName(name));
+  return Object.entries(tools).some(([name, tool]) => {
+    if (!isClientFulfilledToolName(name)) return true;
+    // Name is necessary but NOT sufficient. A real MCP server tool called
+    // `ui_foo` matches the namespace regex while still having an `execute`,
+    // and exempting it on the name alone would let it run here without the
+    // approval support this guard exists to demand. Same reason the client
+    // dispatches on registry membership rather than the `ui_` prefix: the
+    // property that matters is "the browser fulfills this", and only the
+    // missing `execute` actually proves it.
+    return typeof (tool as { execute?: unknown } | undefined)?.execute ===
+      "function";
+  });
 }
 
 export function handleLocalOrgChatModel(

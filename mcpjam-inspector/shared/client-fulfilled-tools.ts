@@ -95,7 +95,16 @@ export function uiToolCallNeedsApproval(opts: {
   if (!annotations) {
     return requireToolApproval && !opts.readOnly;
   }
-  if (annotations.readOnlyHint === true) return false;
+  // Destructive wins over everything, including a contradictory
+  // `readOnlyHint: true`. The validator rejects `readOnlyHint` disagreeing
+  // with `readOnly`, but nothing stops "read-only AND destructive" — and
+  // resolving that contradiction in favor of "don't ask" is the one reading
+  // that can silently delete something.
+  if (annotations.destructiveHint === true) return true;
+  // Read-only never gates. Honor BOTH signals: a partial annotation object
+  // (e.g. `{destructiveHint: false}`) leaves `readOnlyHint` undefined, and
+  // ignoring the legacy flag there would gate a snapshot for no reason.
+  if (opts.readOnly || annotations.readOnlyHint === true) return false;
   if (requireToolApproval) return true;
   // Protocol default: absent destructiveHint means destructive.
   return annotations.destructiveHint !== false;

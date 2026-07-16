@@ -1846,6 +1846,73 @@ describe("mcpjam-stream-handler", () => {
       expect(onConversationComplete).toHaveBeenCalledTimes(1);
     });
 
+    it("processes a DENIAL of a destructive ui_* tool when the approval flag is OFF", async () => {
+      // The stranding case. Approving a ui_* call is resolved by the browser
+      // shipping a tool-result, but DENYING it sends an approval response
+      // back here. If pending-approval handling stayed gated on
+      // `requireToolApproval`, that denial would never be processed with the
+      // flag off — the tool call stays unresolved and the turn hangs forever.
+      vi.mocked(executeToolCallsFromMessages).mockResolvedValue([]);
+
+      await handleMCPJamFreeChatModel({
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call-ui-exec",
+                toolName: "ui_execute_tool",
+                input: {},
+              },
+              {
+                type: "tool-approval-request",
+                approvalId: "approval-ui-exec",
+                toolCallId: "call-ui-exec",
+              },
+            ],
+          },
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-approval-response",
+                approvalId: "approval-ui-exec",
+                approved: false,
+              },
+            ],
+          },
+        ] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: { ui_execute_tool: {} } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: false,
+        uiToolApprovals: classifyUiToolApprovals(
+          [
+            {
+              name: "ui_execute_tool",
+              readOnly: false,
+              annotations: { readOnlyHint: false, destructiveHint: true },
+            },
+          ],
+          false
+        ),
+      });
+
+      await lastExecution;
+
+      // The denial was processed and reached the client, so the tool call is
+      // resolved and the turn can finish instead of hanging.
+      expect(
+        writtenChunks.filter(
+          (chunk: any) => chunk.type === "tool-output-denied"
+        )
+      ).toMatchObject([{ toolCallId: "call-ui-exec" }]);
+    });
+
     it("handlePendingApprovals skips no-execute tools instead of throwing (stale-client defense)", async () => {
       // The new client resolves an APPROVED ui_* call by executing it and
       // shipping the tool-result, never a bare approval response. If a
