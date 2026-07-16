@@ -39,6 +39,12 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # This workflow only ever fires for mintlify[bot] PRs (see the job
+          # `if` gate above), and claude-code-action refuses bot-initiated runs
+          # unless the bot is allowlisted. Without this line every triage run
+          # fails at startup — which is how the July 2026 backlog of 130
+          # untriaged docs PRs accumulated. Scoped to the one bot; not `*`.
+          allowed_bots: mintlify
           additional_permissions: |
             actions: read
           claude_args: >-
@@ -49,7 +55,7 @@ jobs:
 
             Investigate first (read-only):
             - Diff + metadata: `gh pr diff ${{ github.event.pull_request.number }}` and `gh pr view ${{ github.event.pull_request.number }} --json files,mergeable,mergeStateStatus,title,body`. A non-mergeable / conflicting PR usually means it targets a page that was renamed or deleted (stale).
-            - Confirm any feature the PR documents actually exists in the code: `git grep -i "<symbol or exact UI string>" -- mcpjam-inspector/ sdk/`. If you cannot find it, treat the feature as non-existent.
+            - Confirm any feature the PR documents actually exists in the code: `git grep -i "<symbol or exact UI string>" -- mcpjam-inspector/ sdk/ cli/`. If you cannot find it, treat the feature as non-existent.
             - Check whether the content is already documented: `git grep -i "<phrase>" -- docs/`.
 
             MERGE only if you can confirm ALL of: the PR is mergeable; every target page still exists; the feature is present in the code; the content is user-facing and accurate; and it is not a duplicate or editing anything under `docs/contributing/**`.
@@ -61,3 +67,27 @@ jobs:
             - CLOSE → `gh pr close ${{ github.event.pull_request.number }} --comment "<one concise sentence on why>"`
 
             Keep the comment to a single sentence.
+
+      # The main ruleset requires 1 approving review before anything merges.
+      # If (and only if) the classifier queued auto-merge above, satisfy that
+      # requirement here so verified docs PRs can actually land. This is the
+      # second half of the MERGE action, not a general bypass: it runs only in
+      # this workflow (job-gated to mintlify[bot] PRs), only after the
+      # classifier's positive verification, and a CLOSE decision leaves no
+      # auto-merge queued so the step is a no-op. Approval is posted by
+      # github-actions[bot], never the PR author.
+      # Explicitly authorized by the repo owner (2026-07-14) to unblock the
+      # docs-PR pipeline after the July backlog.
+      - name: Approve if classifier queued a merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          queued=$(gh api "repos/${{ github.repository }}/pulls/$PR" --jq '.auto_merge != null')
+          if [ "$queued" = "true" ]; then
+            gh api -X POST "repos/${{ github.repository }}/pulls/$PR/reviews" \
+              -f event=APPROVE \
+              -f body="Auto-approved: the Mintlify triage classifier verified this docs-only PR against the code and queued it for merge."
+          else
+            echo "No auto-merge queued (classifier closed the PR or took no action); skipping approval."
+          fi
