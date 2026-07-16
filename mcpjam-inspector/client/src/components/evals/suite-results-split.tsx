@@ -267,7 +267,7 @@ function RunGroupItem({
       <button
         type="button"
         onClick={onSelect}
-        title={`${group.label} · ${rate ?? "—"}% · ${group.hostCount} host${group.hostCount > 1 ? "s" : ""} · ${formatRelativeTime(group.timestamp)}`}
+        title={`${group.label} · ${rate ?? "—"}% · ${group.hostCount} client${group.hostCount > 1 ? "s" : ""} · ${formatRelativeTime(group.timestamp)}`}
         className={cn(
           "flex h-9 w-9 items-center justify-center rounded-md transition-colors",
           active ? "bg-primary/10 ring-1 ring-primary/40" : "hover:bg-muted",
@@ -319,7 +319,7 @@ function RunGroupItem({
           </div>
           <div className="mt-1 flex items-center gap-2">
             <span className="text-[11px] text-muted-foreground">
-              {group.hostCount} host{group.hostCount > 1 ? "s" : ""}
+              {group.hostCount} client{group.hostCount > 1 ? "s" : ""}
             </span>
             {delta != null && delta !== 0 ? (
               <span

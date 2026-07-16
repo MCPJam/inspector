@@ -727,7 +727,7 @@ export function ServerDetailModal({
                 aria-label="Client compatibility"
                 className={tabTriggerClass}
               >
-                Hosts
+                Clients
               </TabsTrigger>
               {showHistory && (
                 <TabsTrigger value="history" className={tabTriggerClass}>

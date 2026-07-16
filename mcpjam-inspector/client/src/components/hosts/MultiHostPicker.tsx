@@ -294,7 +294,7 @@ export function MultiHostPicker({
             </p>
           ) : (
             <p className="text-xs font-light text-muted-foreground">
-              Run multiple hosts side by side
+              Run multiple clients side by side
             </p>
           )}
         </TooltipContent>
@@ -369,7 +369,7 @@ export function MultiHostPicker({
                 !isSelected && selectedLimitReached;
               const isDisabled = isLimitedOut;
               const disabledReason = isLimitedOut
-                ? `You can compare up to ${maxSelectedHosts} hosts at once`
+                ? `You can compare up to ${maxSelectedHosts} clients at once`
                 : undefined;
 
               const row = (

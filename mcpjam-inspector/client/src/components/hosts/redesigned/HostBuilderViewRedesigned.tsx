@@ -361,7 +361,7 @@ export function HostBuilderViewRedesigned({
       // The freshly persisted config id arrives via the Convex
       // subscription on the next tick; don't include it in this toast
       // because `host?.config?.id` is still the *previous* saved config here.
-      toast.success("Host saved");
+      toast.success("Client saved");
       // Telemetry is best-effort: a posthog throw must not bubble into the
       // shared catch and surface "Failed to save host" after the config
       // has already been persisted.
@@ -377,7 +377,7 @@ export function HostBuilderViewRedesigned({
         // swallow — analytics must not block the success path
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to save host");
+      toast.error(err instanceof Error ? err.message : "Failed to save client");
     } finally {
       setIsSaving(false);
     }
@@ -481,7 +481,7 @@ export function HostBuilderViewRedesigned({
                   ) : (
                     <Save className="size-4" />
                   )}
-                  {isDirty ? "Save host" : "Saved"}
+                  {isDirty ? "Save client" : "Saved"}
                 </Button>
               </span>
             </TooltipTrigger>

@@ -203,7 +203,7 @@ export function SuiteOverviewClientBar({
         <div className="space-y-0.5">
           <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-0.5">
             <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Hosts
+              Clients
             </span>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -217,7 +217,7 @@ export function SuiteOverviewClientBar({
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-[240px]">
                 <p className="text-xs leading-snug">
-                  Hosts are the configurations this suite evaluates.
+                  Clients are the configurations this suite evaluates.
                   Attach one or more to compare how each handles the
                   same scenarios.
                 </p>
@@ -226,7 +226,7 @@ export function SuiteOverviewClientBar({
           </div>
           {projectHosts.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-muted-foreground">
-              No hosts in this project yet — add one below.
+              No clients in this project yet — add one below.
             </p>
           ) : null}
           {projectHosts.map((host) => {
@@ -267,7 +267,7 @@ export function SuiteOverviewClientBar({
                   {isLastAttached ? (
                     <TooltipContent side="right">
                       <p className="text-xs">
-                        Attach another host first
+                        Attach another client first
                       </p>
                     </TooltipContent>
                   ) : null}
@@ -376,7 +376,7 @@ export function SuiteOverviewClientBar({
               clientPicker
             ) : attachments.length === 0 ? (
               <span className="shrink-0 text-[13px] font-normal text-muted-foreground">
-                No hosts attached
+                No clients attached
               </span>
             ) : (
               attachments.map((attachment) => {
