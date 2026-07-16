@@ -943,10 +943,16 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
 
     const mints = new Map<NegativeTestMode, MintedNegativeCase>();
     for (const entry of rawMints) {
+      // Membership in NEGATIVE_CASE_MODES, not isNegativeTestMode: the latter
+      // also accepts "valid", which would let a skewed response substitute a
+      // valid assertion for a required negative one and still satisfy the
+      // count check below.
       if (
         entry &&
         typeof entry === "object" &&
-        isNegativeTestMode((entry as { mode?: unknown }).mode) &&
+        NEGATIVE_CASE_MODES.includes(
+          (entry as { mode?: unknown }).mode as NegativeTestMode
+        ) &&
         typeof (entry as { token?: unknown }).token === "string"
       ) {
         const e = entry as {
@@ -962,11 +968,16 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         });
       }
     }
-    // Every case must be present. Failing the whole run here is clearer than
-    // letting a short map surface as scattered per-case errors downstream.
-    if (mints.size !== NEGATIVE_CASE_MODES.length) {
+    // Every required case must be present — checked by membership, not count,
+    // so a response that swaps one negative mode for a duplicate or an
+    // unexpected one can't satisfy the guard. Failing the whole run here is
+    // clearer than letting a short map surface as scattered per-case errors.
+    const missing = NEGATIVE_CASE_MODES.filter((mode) => !mints.has(mode));
+    if (missing.length > 0) {
       return toJsonError(
-        "The hosted issuer did not mint every scorecard case",
+        `The hosted issuer did not mint every scorecard case (missing: ${missing.join(
+          ", "
+        )})`,
         { status: 502, code: "SERVER_UNREACHABLE" }
       );
     }

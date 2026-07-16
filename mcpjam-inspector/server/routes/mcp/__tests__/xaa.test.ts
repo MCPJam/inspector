@@ -697,6 +697,13 @@ describe("POST /negative-tests", () => {
         String(claims.email).endsWith("@unknown.invalid")
       )
     ).toBe(true);
+
+    // The identity is a PAIR — a regression that dropped or mis-set `sub`
+    // would be denied on identity just the same, scoring 11 false passes.
+    const subjects = assertions.map((claims) => claims.sub);
+    expect(subjects.filter((s) => s === "user-42").length).toBeGreaterThan(0);
+    expect(subjects.some((s) => s === "unknown-user-00000")).toBe(true);
+    expect(subjects.some((s) => s === undefined)).toBe(true);
   });
 
   // Public CIMD: the client_id is the metadata document URL and there is no
@@ -975,10 +982,13 @@ describe("hosted-issuer forwarding on the local router", () => {
   }
 
   // Routes the hosted mint call vs the local AS redeems. Captures the mint
-  // request body and every redeem form for assertion.
+  // request body, and each redeem's DESTINATION as well as its form — the
+  // destination matters: an assertion (or the DCR secret) posted to the wrong
+  // endpoint must fail the test, not pass it.
+  type Redeem = { url: string; form: URLSearchParams };
   function splitFetchMock(captured: {
     mintBody?: Record<string, unknown>;
-    redeems: URLSearchParams[];
+    redeems: Redeem[];
   }) {
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
@@ -986,7 +996,10 @@ describe("hosted-issuer forwarding on the local router", () => {
         captured.mintBody = JSON.parse(String(init?.body));
         return hostedMintResponse();
       }
-      captured.redeems.push(new URLSearchParams(String(init?.body)));
+      captured.redeems.push({
+        url,
+        form: new URLSearchParams(String(init?.body)),
+      });
       return new Response(JSON.stringify({ error: "invalid_grant" }), {
         status: 400,
         headers: { "content-type": "application/json" },
@@ -998,9 +1011,10 @@ describe("hosted-issuer forwarding on the local router", () => {
   // mints (mint-only, no secret in the body); the local server redeems the 11
   // assertions at the user's AS, attaching the secret there.
   it("splits confidential DCR — mints on hosted without the secret, redeems locally with it", async () => {
-    const captured = { redeems: [] as URLSearchParams[] } as {
+    const TOKEN_ENDPOINT = "https://auth.example.com/oauth/token";
+    const captured = { redeems: [] as Redeem[] } as {
       mintBody?: Record<string, unknown>;
-      redeems: URLSearchParams[];
+      redeems: Redeem[];
     };
     vi.stubGlobal("fetch", splitFetchMock(captured));
 
@@ -1013,7 +1027,7 @@ describe("hosted-issuer forwarding on the local router", () => {
       body: JSON.stringify({
         audience: "https://auth.example.com",
         resource: "https://mcp.example.com",
-        tokenEndpoint: "https://auth.example.com/oauth/token",
+        tokenEndpoint: TOKEN_ENDPOINT,
         clientId: "dynamic-client",
         clientSecret: "session-secret",
         tokenEndpointAuthMethod: "client_secret_post",
@@ -1033,9 +1047,11 @@ describe("hosted-issuer forwarding on the local router", () => {
     expect(captured.mintBody?.clientSecret).toBeUndefined();
     expect(captured.mintBody?.tokenEndpoint).toBeUndefined();
 
-    // Redeems: 11, local, each carrying the secret and a hosted-minted token.
+    // Redeems: 11, each to the REQUESTED endpoint (never elsewhere — the
+    // secret rides along), carrying a hosted-minted token.
     expect(captured.redeems).toHaveLength(11);
-    for (const form of captured.redeems) {
+    for (const { url, form } of captured.redeems) {
+      expect(url).toBe(TOKEN_ENDPOINT);
       expect(form.get("client_secret")).toBe("session-secret");
       expect(String(form.get("assertion"))).toMatch(/^hosted\./);
     }
@@ -1044,9 +1060,10 @@ describe("hosted-issuer forwarding on the local router", () => {
   // Confidential CIMD on hosted: same split. Hosted mints; the local provider
   // signs the private_key_jwt client_assertion at redeem time.
   it("splits confidential CIMD — mints on hosted, signs the assertion locally", async () => {
-    const captured = { redeems: [] as URLSearchParams[] } as {
+    const TOKEN_ENDPOINT = "https://auth.example.com/oauth/token";
+    const captured = { redeems: [] as Redeem[] } as {
       mintBody?: Record<string, unknown>;
-      redeems: URLSearchParams[];
+      redeems: Redeem[];
     };
     vi.stubGlobal("fetch", splitFetchMock(captured));
 
@@ -1071,7 +1088,7 @@ describe("hosted-issuer forwarding on the local router", () => {
       body: JSON.stringify({
         audience: "https://auth.example.com",
         resource: "https://mcp.example.com",
-        tokenEndpoint: "https://auth.example.com/oauth/token",
+        tokenEndpoint: TOKEN_ENDPOINT,
         clientId,
         tokenEndpointAuthMethod: "private_key_jwt",
         issuerMode: "hosted",
@@ -1091,14 +1108,30 @@ describe("hosted-issuer forwarding on the local router", () => {
     expect(captured.mintBody?.tokenEndpoint).toBeUndefined();
 
     expect(captured.redeems).toHaveLength(11);
-    for (const form of captured.redeems) {
+    const clientAssertions = new Set<string>();
+    for (const { url, form } of captured.redeems) {
+      expect(url).toBe(TOKEN_ENDPOINT);
       expect(form.get("client_assertion_type")).toBe(
         "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
       );
       expect(form.get("client_id")).toBe(clientId);
       expect(form.has("client_secret")).toBe(false);
+      // The ID-JAG came from hosted...
       expect(String(form.get("assertion"))).toMatch(/^hosted\./);
+
+      // ...but the client_assertion was signed HERE, by the local provider.
+      // Inspect it rather than trusting the type: a missing, malformed, or
+      // reused JWT is exactly the regression this split could introduce.
+      const clientAssertion = form.get("client_assertion") as string;
+      expect(clientAssertion.split(".")).toHaveLength(3);
+      const claims = decodeJwtPayload(clientAssertion);
+      expect(claims.iss).toBe(clientId);
+      expect(claims.sub).toBe(clientId);
+      expect(claims.aud).toBe(TOKEN_ENDPOINT);
+      clientAssertions.add(clientAssertion);
     }
+    // One fresh signature per case, not a single one reused across all 11.
+    expect(clientAssertions.size).toBe(11);
   });
 
   // A malformed / short hosted mint response fails the whole run rather than
@@ -1146,6 +1179,60 @@ describe("hosted-issuer forwarding on the local router", () => {
     expect(response.status).toBe(502);
     await expect(response.json()).resolves.toMatchObject({
       message: expect.stringContaining("every scorecard case"),
+    });
+  });
+
+  // Counting isn't enough: "valid" is a real mode name, so a skewed response
+  // could hit 11 entries while dropping a required negative case. Completeness
+  // is checked by membership, so this must still fail rather than quietly
+  // redeem 10 broken cases plus one valid one.
+  it("fails the run when the hosted issuer swaps a negative case for 'valid'", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === HOSTED_MINT_URL) {
+          return jsonResponse({
+            issuer: HOSTED_SCOPED_ISSUER,
+            // 11 entries, but "valid" stands in for the dropped "expired".
+            mints: [
+              { mode: "valid", token: "hosted.valid", header: {}, payload: {} },
+              ...SCORECARD_MODES.filter((mode) => mode !== "expired").map(
+                (mode) => ({
+                  mode,
+                  token: `hosted.${mode}`,
+                  header: {},
+                  payload: { exp: 1000 },
+                })
+              ),
+            ],
+          });
+        }
+        throw new Error("redeem should never run when minting is incomplete");
+      })
+    );
+
+    const response = await buildApp().request("/api/mcp/xaa/negative-tests", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer workos-token",
+      },
+      body: JSON.stringify({
+        audience: "https://auth.example.com",
+        resource: "https://mcp.example.com",
+        tokenEndpoint: "https://auth.example.com/oauth/token",
+        clientId: "dynamic-client",
+        clientSecret: "session-secret",
+        tokenEndpointAuthMethod: "client_secret_post",
+        issuerMode: "hosted",
+        organizationId: "org_123",
+      }),
+    });
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({
+      message: expect.stringContaining("expired"),
     });
   });
 
