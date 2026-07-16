@@ -384,7 +384,7 @@ export function ClientSelector({
               <>
                 <div className="flex cursor-default items-center justify-between gap-2 border-b px-2.5 py-2">
                   <span className="text-xs text-muted-foreground">
-                    Multiple hosts
+                    Multiple clients
                   </span>
                   <Switch
                     checked={multiHostEnabled}
@@ -540,7 +540,7 @@ export function ClientSelector({
                       </div>
                     </TooltipTrigger>
                     <TooltipContent side="right">
-                      You can compare up to {maxSelectedHosts} hosts at once
+                      You can compare up to {maxSelectedHosts} clients at once
                     </TooltipContent>
                   </Tooltip>
                 ) : (
@@ -573,7 +573,7 @@ export function ClientSelector({
                         <button
                           key={host.id}
                           type="button"
-                          aria-label={`Add ${catalogHost.label} host`}
+                          aria-label={`Add ${catalogHost.label} client`}
                           title={`Add ${catalogHost.label}`}
                           data-testid={`client-quick-add-${host.id}`}
                           onClick={() => openCreateWithTemplate(host.id)}

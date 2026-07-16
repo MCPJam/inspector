@@ -71,8 +71,8 @@ export function ClientAttachmentsEditor({
       <div className="space-y-2">
         {value.length === 0 ? (
           <div className="rounded-lg border border-dashed px-4 py-5 text-sm text-muted-foreground">
-            No hosts attached. Attach one or more hosts to fan runs out across
-            them.
+            No clients attached. Attach one or more clients to fan runs out
+            across them.
           </div>
         ) : (
           value.map((attachment, index) => (

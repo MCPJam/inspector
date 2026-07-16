@@ -32,17 +32,17 @@ const SUPPORT_FILTERS: ReadonlyArray<{
   {
     value: "missing",
     label: "Missing",
-    title: "Capabilities not supported by at least one host",
+    title: "Capabilities not supported by at least one client",
   },
   {
     value: "partial",
     label: "Partial",
-    title: "Capabilities that are partial / Auto for at least one host",
+    title: "Capabilities that are partial / Auto for at least one client",
   },
   {
     value: "supported",
     label: "Full",
-    title: "Capabilities supported by every host",
+    title: "Capabilities supported by every client",
   },
 ];
 

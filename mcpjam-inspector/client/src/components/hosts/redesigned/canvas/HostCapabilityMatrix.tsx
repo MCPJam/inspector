@@ -472,7 +472,7 @@ function ViewIframeInjectedGlobals({
                 mcpAppsBridge.overrideCount
               } sparse ${
                 mcpAppsBridge.overrideCount === 1 ? "override" : "overrides"
-              } on top of the host preset (e.g. Copilot's M365-published subset). Click to view the matrix.`
+              } on top of the client preset (e.g. Copilot's M365-published subset). Click to view the matrix.`
             : "SEP-1865 app.* spec bridge — primary MCP Apps protocol surface, always present. Click to view the per-dimension matrix."
         }
       >

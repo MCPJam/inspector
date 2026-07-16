@@ -640,10 +640,10 @@ export function SuiteIterationsView({
         hostAttachments: attachments,
       });
       toast.success(
-        attachments.length === 0 ? "Hosts cleared" : "Hosts updated"
+        attachments.length === 0 ? "Clients cleared" : "Clients updated"
       );
     } catch (error) {
-      toast.error(getBillingErrorMessage(error, "Failed to update hosts"));
+      toast.error(getBillingErrorMessage(error, "Failed to update clients"));
       console.error("Failed to update host attachments:", error);
       throw error;
     }
