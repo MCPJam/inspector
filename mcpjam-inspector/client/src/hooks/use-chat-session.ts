@@ -44,7 +44,7 @@ import {
   fulfillOrphanedDeferredUiToolCalls,
 } from "@/lib/webmcp/ui-tool-approval";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth } from "convex/react";
+import { useConvex, useConvexAuth } from "convex/react";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
 import {
   ProviderTokens,
@@ -119,6 +119,14 @@ import {
   pickTranscriptForLiveTracePreview,
 } from "@/shared/live-chat-trace-preview";
 import { isHostedRpcLogDataPart } from "@/shared/hosted-rpc-log";
+import {
+  HOSTED_ELICITATION_VERSION,
+  isHostedElicitationDataPart,
+  type HostedElicitationAction,
+  type HostedElicitationRequestEvent,
+  type HostedElicitationUrlRequiredEvent,
+} from "@/shared/hosted-elicitation";
+import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
   isHarnessSessionDataPart,
   isHarnessResetDataPart,
@@ -300,6 +308,24 @@ export interface TokenUsage {
 }
 
 export interface UseChatSessionReturn {
+  /**
+   * Elicitation requests whose tool call is blocked on this user right now.
+   * Turn-scoped: they arrive as transient stream parts and are dropped when the
+   * stream ends, because the server has already resolved them to `cancel` by
+   * then. FIFO — surfaces render `[0]`.
+   */
+  pendingElicitations: HostedElicitationRequestEvent[];
+  /** Submit accept/decline/cancel. Resolves once the answer is durable. */
+  respondToElicitation: (answer: {
+    rendezvousId: string;
+    action: HostedElicitationAction;
+    content?: Record<string, unknown>;
+  }) => Promise<void>;
+  elicitationResponding: boolean;
+  /** -32042 notices — display-only, anchored to the failed tool call. */
+  urlElicitationRequired: HostedElicitationUrlRequiredEvent[];
+  dismissUrlElicitationRequired: (toolCallId?: string) => void;
+
   // Chat state
   messages: UIMessage[];
   setMessages: React.Dispatch<React.SetStateAction<UIMessage[]>>;
@@ -1181,6 +1207,9 @@ export function useChatSession(
     onResetRef.current = onReset;
   }, [onReset]);
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  // Elicitation answers go straight to Convex — the blocked replica isn't
+  // addressable from here (see `elicitation-api.ts`).
+  const convexClient = useConvex();
   const {
     hasToken,
     getToken,
@@ -1212,6 +1241,19 @@ export function useChatSession(
     useState<Record<string, ToolRenderOverride>>({});
   const [liveTraceState, setLiveTraceState] =
     useState<LiveTraceAccumulatorState>(() => createEmptyLiveTraceState());
+  /**
+   * Elicitations whose tool call is blocked on this user right now. Turn-scoped
+   * by nature — the request arrives as a transient stream part and the blocked
+   * call dies with the stream, so there is nothing to persist or rehydrate.
+   */
+  const [pendingElicitations, setPendingElicitations] = useState<
+    HostedElicitationRequestEvent[]
+  >([]);
+  const [elicitationResponding, setElicitationResponding] = useState(false);
+  /** -32042 notices: display-only, anchored to the tool call that failed. */
+  const [urlElicitationRequired, setUrlElicitationRequired] = useState<
+    HostedElicitationUrlRequiredEvent[]
+  >([]);
   const resumedVersionRef = useRef<number | null>(null);
   const restoredToolRenderOverridesRef = useRef<
     Record<string, ToolRenderOverride>
@@ -1344,7 +1386,27 @@ export function useChatSession(
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
       if (!isTraceEventDataPart(part)) {
-        if (isHostedRpcLogDataPart(part)) {
+        if (isHostedElicitationDataPart(part)) {
+          const event = part.data;
+          if (event.kind === "request") {
+            // Dedupe on rendezvousId: a re-delivered part must not stack a
+            // second dialog for the same blocked tool call.
+            setPendingElicitations((queue) =>
+              queue.some((e) => e.rendezvousId === event.rendezvousId)
+                ? queue
+                : [...queue, event],
+            );
+          } else if (event.kind === "resolved") {
+            // The server reached a terminal state on its own (TTL expiry, or
+            // an answer that landed elsewhere) — close the dialog rather than
+            // leave the user submitting into a dead rendezvous.
+            setPendingElicitations((queue) =>
+              queue.filter((e) => e.rendezvousId !== event.rendezvousId),
+            );
+          } else if (event.kind === "url_required") {
+            setUrlElicitationRequired((current) => [...current, event]);
+          }
+        } else if (isHostedRpcLogDataPart(part)) {
           ingestHostedRpcLogs([part.data]);
         } else if (isHarnessSessionDataPart(part)) {
           // Cache the harness workdir so the Playground Shell can open a
@@ -1656,6 +1718,12 @@ export function useChatSession(
         selectedServerIds: resolvedServerIds,
         selectedServerNames: resolvedServerNames,
         chatSessionId,
+        // Handshake: tells the server this bundle can render an elicitation
+        // prompt. Catalog hosts already declare the capability, so without
+        // this a stale bundle would leave the turn blocked for a full TTL on
+        // any server that elicits. The server only registers its callback —
+        // and therefore only advertises `elicitation` — when it sees this.
+        hostedElicitationVersion: HOSTED_ELICITATION_VERSION,
         ...(isHostedDirectChat ? { directVisibility } : {}),
         // Host-bound direct preview: forward the saved host id so the server
         // re-resolves the host's authoritative runtime config (harness/computer
@@ -2425,6 +2493,8 @@ export function useChatSession(
     setChatSessionId(generateId());
     setMessages([]);
     setPersistedSnapshotToolCallIds([]);
+    setPendingElicitations([]);
+    setUrlElicitationRequired([]);
     syncResumedVersion(null);
     syncRestoredToolRenderOverrides({});
     onResetRef.current?.("reset");
@@ -2893,6 +2963,54 @@ export function useChatSession(
         selectedServers.length > 0 &&
         hostedSelectedServerIds.length !== selectedServers.length));
   const isStreaming = status === "streaming" || status === "submitted";
+
+  // The blocked tool call cannot outlive the stream: when it ends (finished,
+  // stopped, or errored) the server has already resolved every outstanding
+  // elicitation to `cancel`, so any dialog still open is answering into a dead
+  // rendezvous. Drop them instead of letting the user submit into the void.
+  useEffect(() => {
+    if (isStreaming) return;
+    setPendingElicitations((queue) => (queue.length > 0 ? [] : queue));
+  }, [isStreaming]);
+
+  const respondToElicitation = useCallback(
+    async (answer: {
+      rendezvousId: string;
+      action: HostedElicitationAction;
+      content?: Record<string, unknown>;
+    }) => {
+      setElicitationResponding(true);
+      try {
+        const result = await respondToChatElicitation(convexClient, answer);
+        // Close on a losing race too (already expired / answered elsewhere):
+        // the row is terminal either way, so keeping the dialog open would
+        // only invite a second doomed submit.
+        setPendingElicitations((queue) =>
+          queue.filter((e) => e.rendezvousId !== answer.rendezvousId),
+        );
+        if (!result.ok) {
+          toast.info(
+            result.reason === "expired"
+              ? "That request timed out, so it was cancelled."
+              : "That request was already resolved.",
+          );
+        }
+      } catch (error) {
+        console.warn("[elicitation] respond failed", error);
+        toast.error("Couldn't send your response. The request will time out.");
+      } finally {
+        setElicitationResponding(false);
+      }
+    },
+    [convexClient],
+  );
+
+  const dismissUrlElicitationRequired = useCallback((toolCallId?: string) => {
+    setUrlElicitationRequired((current) =>
+      current.filter((e) => e.toolCallId !== toolCallId),
+    );
+  }, []);
+
   const submitBlocked =
     disableForAuthentication ||
     isAuthLoading ||
@@ -2967,6 +3085,13 @@ export function useChatSession(
     hasTraceSnapshot,
     hasLiveTimelineContent,
     traceViewsSupported,
+
+    // Elicitation (hosted): a server is blocking a tool call on this user.
+    pendingElicitations,
+    respondToElicitation,
+    elicitationResponding,
+    urlElicitationRequired,
+    dismissUrlElicitationRequired,
 
     // Computed state
     isStreaming,

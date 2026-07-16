@@ -67,7 +67,9 @@ import {
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
+import { readUrlElicitations } from "@/shared/http-tool-calls";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
+import type { HostedElicitationBridge } from "./../routes/web/hosted-elicitation.js";
 import { bridgeHarnessRpcLogsToCollector } from "./../routes/web/hosted-rpc-logs.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getClientIp } from "./client-ip.js";
@@ -187,6 +189,13 @@ export interface WebChatTurnRuntime {
   abortSignal: AbortSignal | undefined;
   /** Hosted RPC log collector — attached to the stream writer. Optional. */
   rpcCollector?: RpcCollector;
+  /**
+   * Hosted elicitation bridge — attached to the stream writer alongside the
+   * RPC collector, and disposed on stream completion. Present only for
+   * interactive turns whose host declares the elicitation capability AND whose
+   * client speaks the hosted-elicitation handshake; see `chat-v2.ts`.
+   */
+  elicitationBridge?: HostedElicitationBridge;
   /** Hono context (needed for getClientIp fallback / future hooks). */
   c: Context;
 }
@@ -278,13 +287,59 @@ export async function streamWebChatTurn(
   }
 
   const {
-    allTools,
+    allTools: preparedTools,
     enhancedSystemPrompt,
     resolvedTemperature,
     scrubMessages,
     progressivePlan,
     discoveryState,
   } = prepared;
+
+  /**
+   * Surface `-32042 URLElicitationRequiredError` from ANY engine.
+   *
+   * Wrapped here, on the tool set, rather than in the engines: `prepareChatV2`
+   * builds this set once and all three consumers share it (MCPJam-free,
+   * org-BYOK local, org-BYOK hosted). The org branches run `runDirectChatTurn`,
+   * where the AI SDK owns the tool loop and never touches the shared
+   * `executeToolCallsFromMessages` catch — so an engine-level hook compiled
+   * fine and silently never fired for BYOK users, who advertise and handle
+   * elicitation like everyone else.
+   *
+   * Rethrows always: this only observes. The engines' own error handling still
+   * produces the tool result the model sees.
+   */
+  const allTools = runtime.elicitationBridge
+    ? (Object.fromEntries(
+        Object.entries(preparedTools as Record<string, any>).map(
+          ([name, tool]) => {
+            if (typeof tool?.execute !== "function") return [name, tool];
+            const execute = tool.execute.bind(tool);
+            return [
+              name,
+              {
+                ...tool,
+                execute: async (input: unknown, options: any) => {
+                  try {
+                    return await execute(input, options);
+                  } catch (error) {
+                    const elicitations = readUrlElicitations(error);
+                    if (elicitations) {
+                      runtime.elicitationBridge?.emitUrlRequired({
+                        serverId: (tool as any)._serverId ?? "unknown",
+                        toolCallId: options?.toolCallId,
+                        elicitations,
+                      });
+                    }
+                    throw error;
+                  }
+                },
+              },
+            ];
+          }
+        )
+      ) as typeof preparedTools)
+    : preparedTools;
 
   const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
     prepare.widgetModelContext ?? [],
@@ -298,6 +353,11 @@ export async function streamWebChatTurn(
 
   const hostedChatSessionId = persist.chatSessionId;
   const cleanupStream = async () => {
+    // Withdraw pending elicitation rows BEFORE dropping the connections: once
+    // the stream is gone nobody can answer, and an abandoned row would stay
+    // answerable until its TTL. Disposal is best-effort and must never block
+    // the disconnect, so failures are swallowed inside the bridge.
+    await runtime.elicitationBridge?.dispose();
     await manager.disconnectAllServers();
   };
 
@@ -470,8 +530,10 @@ export async function streamWebChatTurn(
         requireToolApproval: persist.requireToolApproval,
         onConversationComplete,
         onStreamComplete: cleanupStream,
-        onStreamWriterReady: (writer) =>
-          runtime.rpcCollector?.attachStreamWriter(writer),
+        onStreamWriterReady: (writer) => {
+          runtime.rpcCollector?.attachStreamWriter(writer);
+          runtime.elicitationBridge?.attachStreamWriter(writer);
+        },
         abortSignal: runtime.abortSignal,
       });
     }
@@ -500,8 +562,10 @@ export async function streamWebChatTurn(
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       onConversationComplete,
       onStreamComplete: cleanupStream,
-      onStreamWriterReady: (writer) =>
-        runtime.rpcCollector?.attachStreamWriter(writer),
+      onStreamWriterReady: (writer) => {
+        runtime.rpcCollector?.attachStreamWriter(writer);
+        runtime.elicitationBridge?.attachStreamWriter(writer);
+      },
       abortSignal: runtime.abortSignal,
     });
   }
@@ -574,6 +638,11 @@ export async function streamWebChatTurn(
     },
     onStreamWriterReady: (writer) => {
       runtime.rpcCollector?.attachStreamWriter(writer);
+      // NOTE: for HARNESS hosts this writer exists but elicitation still won't
+      // fire — harness MCP traffic goes through separate /api/web/harness-mcp
+      // requests, not this turn's manager, so the callback is never invoked.
+      // Attaching is harmless and keeps the three sites uniform.
+      runtime.elicitationBridge?.attachStreamWriter(writer);
       if (persist.harness && runtime.rpcCollector && !stopHarnessRpcLogBridge) {
         stopHarnessRpcLogBridge = bridgeHarnessRpcLogsToCollector(
           persist.selectedServerIds,

@@ -23,6 +23,10 @@ import {
 import type { CSSProperties, ReactNode } from "react";
 import { Braces, Loader2, Trash2 } from "lucide-react";
 import {
+  ElicitationRequestDialog,
+  UrlElicitationRequiredDialog,
+} from "@/components/elicitation/ElicitationRequestDialog";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -768,6 +772,11 @@ export function PlaygroundMain({
     restoredToolRenderOverrides,
     status,
     authHeaders,
+    pendingElicitations,
+    respondToElicitation,
+    elicitationResponding,
+    urlElicitationRequired,
+    dismissUrlElicitationRequired,
   } = useChatSession({
     selectedServers,
     directVisibility: pendingDirectVisibility,
@@ -4067,6 +4076,21 @@ export function PlaygroundMain({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {/*
+        Playground had no elicitation UI at all — a server that asked for input
+        here would block until the request timed out with no way to answer.
+      */}
+      <ElicitationRequestDialog
+        key={pendingElicitations[0]?.rendezvousId ?? "none"}
+        request={pendingElicitations[0] ?? null}
+        onRespond={respondToElicitation}
+        loading={elicitationResponding}
+      />
+      <UrlElicitationRequiredDialog
+        key={urlElicitationRequired[0]?.toolCallId ?? "no-url-required"}
+        event={urlElicitationRequired[0] ?? null}
+        onDismiss={dismissUrlElicitationRequired}
+      />
     </WidgetSurfaceProvider>
   );
 }

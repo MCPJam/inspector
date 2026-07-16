@@ -210,6 +210,9 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 
 vi.mock("convex/react", () => ({
+  // useChatSession resolves the Convex client to submit elicitation answers
+  // straight to the rendezvous table (the blocked replica isn't addressable).
+  useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
   useConvexAuth: () => mockState.convexAuth,
   // useChatSession reads the credit balance (to lock free models at 0
   // credits); no balance in these tests → outOfCredits resolves false.
@@ -323,6 +326,26 @@ describe("useChatSession hosted mode", () => {
     vi.mocked(generateId).mockReset();
     vi.mocked(generateId).mockReturnValue("chat-session-id");
     useTrafficLogStore.getState().clear();
+  });
+
+  it("announces the hosted-elicitation handshake", async () => {
+    // The server registers its elicitation callback (and therefore advertises
+    // the capability) ONLY when it sees this. Catalog hosts already declare
+    // elicitation, so a client that doesn't announce would be left hanging on a
+    // prompt it can't render — this field is the rollout gate.
+    renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      })
+    );
+
+    expect(lastTransportOptions.body()).toMatchObject({
+      hostedElicitationVersion: 1,
+    });
   });
 
   it("includes chatSessionId in the hosted transport body", async () => {

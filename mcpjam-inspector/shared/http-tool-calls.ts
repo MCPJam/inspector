@@ -173,6 +173,44 @@ type ExecuteToolCallOptionsBase = {
   }) => Promise<unknown>;
 };
 
+/**
+ * MCP `URLElicitationRequiredError` (-32042).
+ *
+ * Detected STRUCTURALLY, never via `instanceof`: the error may cross package
+ * copies (the inspector and the SDK can resolve different upstream client
+ * instances), which makes prototype identity unreliable. The shape is the
+ * contract.
+ */
+export const URL_ELICITATION_REQUIRED_CODE = -32042;
+
+export function readUrlElicitations(
+  error: unknown,
+): Array<{ url: string; elicitationId: string; message?: string }> | null {
+  if (!error || typeof error !== "object") return null;
+  const candidate = error as { code?: unknown; data?: unknown };
+  if (candidate.code !== URL_ELICITATION_REQUIRED_CODE) return null;
+
+  const data = candidate.data as { elicitations?: unknown } | undefined;
+  if (!data || !Array.isArray(data.elicitations)) return null;
+
+  const parsed = data.elicitations.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const item = entry as Record<string, unknown>;
+    if (typeof item.url !== "string" || typeof item.elicitationId !== "string") {
+      return [];
+    }
+    return [
+      {
+        url: item.url,
+        elicitationId: item.elicitationId,
+        ...(typeof item.message === "string" ? { message: item.message } : {}),
+      },
+    ];
+  });
+
+  return parsed.length > 0 ? parsed : null;
+}
+
 type ExecuteToolCallOptions = ExecuteToolCallOptionsBase &
   (
     | { tools: ToolsMap }
@@ -483,9 +521,22 @@ export async function executeToolCallsFromMessages(
           if (isAbortError(error)) {
             throw error;
           }
+          // -32042: the server wants an out-of-band interaction first. Surface
+          // the URLs structurally to the UI and give the model an actionable
+          // retry hint instead of a raw protocol error it can't interpret.
+          // Surfacing the URL to the UI is the tool wrapper's job (see
+          // `web-chat-turn`), which sits on the shared tool set and therefore
+          // fires for every engine. Here we only reshape the model-visible
+          // result so it gets an actionable retry hint instead of a raw
+          // protocol error.
+          const urlElicitations = readUrlElicitations(error);
           const errorOutput: ToolResultPart = {
             type: "error-text",
-            value: error instanceof Error ? error.message : String(error),
+            value: urlElicitations
+              ? "This tool needs the user to complete an interaction at a URL first. The user has been shown the link and may complete it out of band. Retry this tool once they confirm they're done."
+              : error instanceof Error
+                ? error.message
+                : String(error),
           } as any;
           const errorToolResultMessage: ModelMessage = {
             role: "tool" as const,

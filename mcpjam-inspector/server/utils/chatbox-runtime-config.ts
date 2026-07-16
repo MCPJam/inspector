@@ -31,6 +31,14 @@ export type ChatboxRuntimeConfig = RuntimeExecutionFields & {
   // Optional for compatibility with backends that predate SEP-1865
   // visibility filtering on runtime-config.
   respectToolVisibility?: boolean;
+  // Client capabilities from the chatbox's pinned HostConfigV2 — the
+  // HOST-AUTHORITATIVE copy. The request body also carries clientCapabilities,
+  // but a share-link visitor controls that body; trusting it would let anyone
+  // turn on capabilities (e.g. elicitation) the published host has off. Use
+  // this for any capability decision on a chatbox turn. Optional so a backend
+  // predating the field returns omitted → capability treated as absent
+  // (fail-closed).
+  clientCapabilities?: Record<string, unknown>;
   hostStyle: string;
   // Host-level opt-in for progressive MCP tool discovery, mirrored from
   // the chatbox's pinned HostConfigV2. Optional so a backend older than

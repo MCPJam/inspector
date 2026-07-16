@@ -257,6 +257,7 @@ supported way to persist live tokens.
 |-----------------|-------------|-----|
 | `request_without_token` returned 200 | Server allows anonymous access or missing `WWW-Authenticate` | Return 401 with `WWW-Authenticate: Bearer resource_metadata="..."` |
 | `request_resource_metadata` 404 | `/.well-known/oauth-protected-resource` missing or wrong Content-Type | Ensure the endpoint exists and returns `application/json` |
+| `received_resource_metadata` — resource validation failed | Protected Resource Metadata is missing its required `resource` field, uses a non-HTTPS URL, or advertises a resource on a different origin than the server URL | Ensure your PRM document includes a `resource` field that is an HTTPS URL on the same origin as the MCP server (RFC 9728 §2) |
 | `received_resource_metadata` — AS URL mismatch | `authorization_servers` points to a URL without AS metadata | Verify the AS URL has `/.well-known/oauth-authorization-server` |
 | `request_client_registration` 400 | DCR endpoint rejected the registration metadata | Check required fields; use SDK `dynamicRegistration` overrides for custom metadata |
 | `received_authorization_code` — HTML login page | Auth server requires interactive login but you used `--auth-mode headless` | Switch to `--auth-mode interactive` |
