@@ -132,7 +132,7 @@ describe("summarizeReports", () => {
           ],
         },
       ])
-    ).toBe("supported in 1 · known limitations in 1");
+    ).toBe("supported in 1 · unsupported in 1");
   });
 
   it("does not surface unknown as a color or status", () => {
@@ -168,7 +168,27 @@ describe("getCompatDisplayStatus", () => {
     ).toBe("orange");
   });
 
-  it("does not color missing evidence or informational metadata", () => {
+  it("keeps explicit unsupported capability wording", () => {
+    expect(
+      getCompatDisplayStatus({
+        ...report({ hostId: "goose", verdict: "degraded" }),
+        findings: [
+          {
+            lane: "apps",
+            severity: "degraded",
+            code: "capability_unsupported",
+            capability: "serverTools",
+            tools: ["create_view"],
+            title: "Interactive widget tool calls unsupported",
+            detail: "The Goose profile marks tools/call as unsupported.",
+            provenance: "probe",
+          },
+        ],
+      })
+    ).toBe("orange");
+  });
+
+  it("does not color missing evidence or cosmetic informational findings", () => {
     expect(
       getCompatDisplayStatus(report({ hostId: "a", verdict: "unknown" }))
     ).toBe(null);
@@ -186,6 +206,23 @@ describe("getCompatDisplayStatus", () => {
           },
         ],
       })
-    ).toBe(null);
+    ).toBe("orange");
+    expect(
+      getCompatDisplayStatus({
+        ...report({ hostId: "a", verdict: "works" }),
+        findings: [
+          {
+            lane: "apps",
+            severity: "info",
+            code: "capability_unsupported",
+            capability: "logging",
+            tools: ["widget"],
+            title: "Widget logging not verified",
+            detail: "Logging is cosmetic.",
+            provenance: "probe",
+          },
+        ],
+      })
+    ).toBe("green");
   });
 });

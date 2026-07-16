@@ -1,3 +1,4 @@
+import { Loader2 } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -9,6 +10,7 @@ import type { HostCompatReport } from "@/lib/host-compat/types";
 import type { HostThemeMode } from "@/lib/client-styles";
 import {
   COMPAT_DISPLAY_META,
+  getCompatDisplayLabel,
   getCompatDisplayStatus,
 } from "@/components/compat/verdict-meta";
 
@@ -17,14 +19,27 @@ export function summarizeReports(reports: HostCompatReport[]): string {
   const counts = reports.reduce(
     (acc, report) => {
       const status = getCompatDisplayStatus(report);
-      if (status) acc[status] += 1;
+      if (status === "green") {
+        acc.green += 1;
+      } else if (status === "orange") {
+        if (report.verdict === "degraded" || report.verdict === "blocked") {
+          acc.unsupported += 1;
+        } else {
+          acc.unverified += 1;
+        }
+      }
       return acc;
     },
-    { green: 0, orange: 0 }
+    { green: 0, orange: 0, unsupported: 0, unverified: 0 }
   );
   const parts: string[] = [];
   if (counts.green > 0) parts.push(`supported in ${counts.green}`);
-  if (counts.orange > 0) parts.push(`known limitations in ${counts.orange}`);
+  if (counts.unsupported > 0) {
+    parts.push(`unsupported in ${counts.unsupported}`);
+  }
+  if (counts.unverified > 0) {
+    parts.push(`not verified in ${counts.unverified}`);
+  }
   return parts.join(" · ");
 }
 
@@ -38,12 +53,21 @@ export function HostCompatStripView({
   reports,
   onOpenDetails,
   themeMode = "light",
+  analysisStatus = "ready",
 }: {
   serverName: string;
   reports: HostCompatReport[];
   onOpenDetails?: () => void;
   themeMode?: HostThemeMode;
+  analysisStatus?: "analyzing" | "ready" | "failed";
 }) {
+  const analysisLabel =
+    analysisStatus === "analyzing"
+      ? "Checking compatibility…"
+      : analysisStatus === "failed"
+      ? "Compatibility checks unavailable"
+      : null;
+
   return (
     <div
       data-server-card-context-menu-exempt
@@ -59,50 +83,61 @@ export function HostCompatStripView({
         )}`}
         className="inline-flex max-w-full flex-nowrap items-center rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 transition-colors hover:bg-accent/60 cursor-pointer disabled:cursor-default"
       >
-        <div className="flex shrink-0 items-center gap-1">
-          {reports.map((report) => {
-            const status = getCompatDisplayStatus(report);
-            const meta = status ? COMPAT_DISPLAY_META[status] : null;
-            return (
-              <Tooltip key={report.hostId}>
-                <TooltipTrigger asChild>
-                  <span className="relative inline-flex h-4 w-4 items-center justify-center">
-                    <img
-                      src={report.logoSrcByTheme?.[themeMode] ?? report.logoSrc}
-                      alt={report.hostLabel}
-                      className="h-3.5 w-3.5 rounded-[3px] object-contain"
-                    />
-                    {meta ? (
-                      <span
-                        className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background ${meta.dot}`}
+        {analysisLabel ? (
+          <span className="inline-flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+            {analysisStatus === "analyzing" ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : null}
+            {analysisLabel}
+          </span>
+        ) : (
+          <div className="flex shrink-0 items-center gap-1">
+            {reports.map((report) => {
+              const status = getCompatDisplayStatus(report);
+              const meta = status ? COMPAT_DISPLAY_META[status] : null;
+              return (
+                <Tooltip key={report.hostId}>
+                  <TooltipTrigger asChild>
+                    <span className="relative inline-flex h-4 w-4 items-center justify-center">
+                      <img
+                        src={
+                          report.logoSrcByTheme?.[themeMode] ?? report.logoSrc
+                        }
+                        alt={report.hostLabel}
+                        className="h-3.5 w-3.5 rounded-[3px] object-contain"
                       />
+                      {meta ? (
+                        <span
+                          className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background ${meta.dot}`}
+                        />
+                      ) : null}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="top"
+                    sideOffset={4}
+                    variant="muted"
+                    className="max-w-56 px-2.5 text-left [text-wrap:normal]"
+                  >
+                    <span className="font-medium">
+                      {report.hostLabel}
+                      {meta ? `: ${getCompatDisplayLabel(report)}` : ""}
+                    </span>
+                    {report.findings[0] ? (
+                      <>
+                        {": "}
+                        {report.findings[0].title}
+                        {report.findings.length > 1
+                          ? ` (+${report.findings.length - 1} more)`
+                          : ""}
+                      </>
                     ) : null}
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent
-                  side="top"
-                  sideOffset={4}
-                  variant="muted"
-                  className="max-w-56 px-2.5 text-left [text-wrap:normal]"
-                >
-                  <span className="font-medium">
-                    {report.hostLabel}
-                    {meta ? `: ${meta.label}` : ""}
-                  </span>
-                  {report.findings[0] ? (
-                    <>
-                      {" — "}
-                      {report.findings[0].title}
-                      {report.findings.length > 1
-                        ? ` (+${report.findings.length - 1} more)`
-                        : ""}
-                    </>
-                  ) : null}
-                </TooltipContent>
-              </Tooltip>
-            );
-          })}
-        </div>
+                  </TooltipContent>
+                </Tooltip>
+              );
+            })}
+          </div>
+        )}
       </button>
     </div>
   );
@@ -121,12 +156,13 @@ export function HostCompatStrip({
   server: ServerWithName;
   onOpenDetails?: () => void;
 }) {
-  const { reports } = useHostCompatReports(server);
+  const { reports, analysisStatus } = useHostCompatReports(server);
   return (
     <HostCompatStripView
       serverName={server.name}
       reports={reports}
       onOpenDetails={onOpenDetails}
+      analysisStatus={analysisStatus}
     />
   );
 }

@@ -36,6 +36,30 @@ describe("scanWidgetUsage", () => {
     expect(usage).toEqual({ message: ["chart"] });
   });
 
+  it("preserves the exact sandbox permission names from widget metadata", async () => {
+    const tools: HostCompatToolsInput = {
+      tools: [widgetTool("create_view", "ui://widget")],
+    };
+    const usage = await scanWidgetUsage(tools, async () => ({
+      contents: [
+        {
+          text: "<div />",
+          _meta: {
+            ui: {
+              permissions: {
+                clipboardWrite: {},
+              },
+            },
+          },
+        },
+      ],
+    }));
+    expect(usage).toEqual({
+      sandboxPermissions: ["create_view"],
+      sandboxPermissionNames: ["clipboardWrite"],
+    });
+  });
+
   it("scans an OpenAI-only widget (openai/outputTemplate, no ui.resourceUri)", async () => {
     const tools: HostCompatToolsInput = {
       tools: [{ name: "card", _meta: { "openai/outputTemplate": "ui://card" } }],

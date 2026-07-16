@@ -16,10 +16,11 @@ import type { ServerWithName } from "@/state/app-types";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 import { evaluateAllHosts } from "@/lib/host-compat/engine";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
-import { useWidgetUsage } from "@/lib/host-compat/use-widget-usage";
+import { useWidgetUsageState } from "@/lib/host-compat/use-widget-usage";
 import { ConformanceGate } from "@/components/compat/ConformanceGate";
 import {
   COMPAT_DISPLAY_META,
+  getCompatDisplayLabel,
   getCompatDisplayStatus,
 } from "@/components/compat/verdict-meta";
 import {
@@ -41,6 +42,7 @@ import { cloneHostTemplateInput } from "@/lib/client-config-v2";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { filterReportsByFeatureFlags } from "@/lib/host-compat/feature-visibility";
+import type { ToolsDataStatus } from "@/lib/host-compat/use-host-compat";
 
 const PROVENANCE_LABEL: Record<CompatProvenance, string> = {
   observed: "Observed from a live run",
@@ -93,6 +95,7 @@ const LANE_LABEL: Record<CompatLane, string> = {
 export function HostCompatContent({
   server,
   toolsData,
+  toolsLoadStatus,
   projectId,
   serverId,
   onClose,
@@ -100,6 +103,7 @@ export function HostCompatContent({
 }: {
   server: ServerWithName;
   toolsData?: ListToolsResultWithMetadata | null;
+  toolsLoadStatus?: ToolsDataStatus;
   /**
    * Analytics surface this report is rendered on — keeps the host-creation
    * funnel honest (the standalone page must not tag its views/CTAs as modal).
@@ -115,7 +119,26 @@ export function HostCompatContent({
   /** Close the detail modal before we navigate to the playground. */
   onClose?: () => void;
 }) {
-  const widgetUsage = useWidgetUsage(server.name, toolsData);
+  const widgetScan = useWidgetUsageState(server.name, toolsData);
+  const widgetUsage = widgetScan.usage;
+  const resolvedToolsLoadStatus =
+    toolsLoadStatus ??
+    (toolsData
+      ? "ready"
+      : server.connectionStatus === "connected"
+      ? "loading"
+      : "idle");
+  const analysisStatus =
+    server.connectionStatus === "connected" &&
+    (resolvedToolsLoadStatus === "loading" ||
+      widgetScan.status === "idle" ||
+      widgetScan.status === "loading")
+      ? "analyzing"
+    : server.connectionStatus === "connected" &&
+        (resolvedToolsLoadStatus === "failed" || widgetScan.status === "failed")
+      ? "failed"
+      : "ready";
+  const analysisReady = analysisStatus === "ready";
   const protocolVersion = server.initializationInfo?.protocolVersion;
   // Live catalog in the deps: verdicts render from the bundled catalog first,
   // then recompute when the live fetch lands.
@@ -242,20 +265,33 @@ export function HostCompatContent({
     <div className="pb-4">
       <ConformanceGate server={server} />
 
-      <p className="pb-1 text-[11px] text-muted-foreground">
-        Static checks from connect-time data · best-effort client profiles
-        {requirements.unknownDimensions.length > 0
-          ? ` · incomplete (${requirements.unknownDimensions.join(", ")})`
-          : ""}
-      </p>
+      {analysisStatus === "analyzing" ? (
+        <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Checking server compatibility…
+        </div>
+      ) : analysisStatus === "failed" ? (
+        <p className="mb-2 text-[11px] text-muted-foreground">
+          Couldn’t complete compatibility checks. Host status is unavailable.
+        </p>
+      ) : (
+        <p className="pb-1 text-[11px] text-muted-foreground">
+          Compatibility checks based on this server’s tools and widgets.
+        </p>
+      )}
 
       <div className="divide-y divide-border/50">
         {visibleReports.map((report) => {
-          const displayStatus = getCompatDisplayStatus(report);
-          const displayMeta = displayStatus
-            ? COMPAT_DISPLAY_META[displayStatus]
+          const displayStatus = analysisReady
+            ? getCompatDisplayStatus(report)
             : null;
-          const hasFindings = report.findings.length > 0;
+          const displayMeta = displayStatus
+            ? {
+                ...COMPAT_DISPLAY_META[displayStatus],
+                label: getCompatDisplayLabel(report) ?? "",
+              }
+            : null;
+          const hasFindings = analysisReady && report.findings.length > 0;
           const isOpen = expandedHostId === report.hostId;
           const summary = hasFindings
             ? `${report.findings[0].title}${
@@ -380,6 +416,12 @@ export function HostCompatContent({
                       verdict: report.lanes[lane].verdict,
                       findings: laneFindings,
                     });
+                    const laneLabel = laneStatus
+                      ? getCompatDisplayLabel({
+                          verdict: report.lanes[lane].verdict,
+                          findings: laneFindings,
+                        })
+                      : null;
                     return (
                       <div key={lane}>
                         <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -389,6 +431,7 @@ export function HostCompatContent({
                             />
                           ) : null}
                           {LANE_LABEL[lane]}
+                          {laneLabel ? ` · ${laneLabel}` : ""}
                         </div>
                         <ul className="space-y-1.5">
                           {laneFindings.map((finding, index) => {
@@ -403,7 +446,7 @@ export function HostCompatContent({
                                     {finding.title}
                                   </span>
                                   <span className="text-muted-foreground">
-                                    {" — "}
+                                    {": "}
                                     {finding.detail}
                                   </span>
                                   {finding.remediation && (

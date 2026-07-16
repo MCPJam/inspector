@@ -11,6 +11,7 @@ import { useHostCompatReports } from "@/lib/host-compat/use-host-compat";
 import type { HostCompatReport } from "@/lib/host-compat/types";
 import {
   COMPAT_DISPLAY_META,
+  getCompatDisplayLabel,
   getCompatDisplayStatus,
 } from "@/components/compat/verdict-meta";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -70,7 +71,7 @@ function MatrixRow({
   onReports: (name: string, reports: HostCompatReport[]) => void;
   onRemove: (name: string) => void;
 }) {
-  const { reports } = useHostCompatReports(server);
+  const { reports, analysisStatus } = useHostCompatReports(server);
 
   const byHost = useMemo(() => {
     const m = new Map<string, HostCompatReport>();
@@ -118,7 +119,10 @@ function MatrixRow({
       </td>
       {hosts.map((h) => {
         const report = byHost.get(h.id);
-        const status = report ? getCompatDisplayStatus(report) : null;
+        const status =
+          analysisStatus === "ready" && report
+            ? getCompatDisplayStatus(report)
+            : null;
         const meta = status ? COMPAT_DISPLAY_META[status] : null;
         return (
           <td key={h.id} className="px-2 py-2 text-center">
@@ -127,11 +131,11 @@ function MatrixRow({
                 <TooltipTrigger asChild>
                   <span
                     className={`inline-block h-2 w-2 rounded-full ${meta.dot}`}
-                    aria-label={`${meta.label} on ${h.label}`}
+                    aria-label={`${getCompatDisplayLabel(report!) ?? ""} on ${h.label}`}
                   />
                 </TooltipTrigger>
                 <TooltipContent side="top" variant="muted">
-                  {h.label}: {meta.label}
+                  {h.label}: {getCompatDisplayLabel(report!) ?? ""}
                 </TooltipContent>
               </Tooltip>
             ) : null}

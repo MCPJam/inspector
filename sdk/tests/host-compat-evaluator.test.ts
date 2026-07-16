@@ -12,7 +12,7 @@ import {
 import type { McpAppsCapabilities } from "../src/host-config/types";
 
 const toolsWith = (
-  toolsMetadata: Record<string, Record<string, unknown>>,
+  toolsMetadata: Record<string, Record<string, unknown>>
 ): HostCompatToolsInput => ({
   tools: Object.keys(toolsMetadata).map((name) => ({ name })),
   toolsMetadata,
@@ -66,13 +66,13 @@ const reqs = (over: Partial<ServerRequirements> = {}): ServerRequirements => ({
 describe("detectHostCompatBridgeFromMeta", () => {
   it("classifies by _meta bridge declarations", () => {
     expect(detectHostCompatBridgeFromMeta(mcpAppsMeta())).toBe(
-      HostCompatBridge.MCP_APPS,
+      HostCompatBridge.MCP_APPS
     );
     expect(detectHostCompatBridgeFromMeta(openaiMeta)).toBe(
-      HostCompatBridge.OPENAI_SDK,
+      HostCompatBridge.OPENAI_SDK
     );
     expect(
-      detectHostCompatBridgeFromMeta({ ...mcpAppsMeta(), ...openaiMeta }),
+      detectHostCompatBridgeFromMeta({ ...mcpAppsMeta(), ...openaiMeta })
     ).toBe(HostCompatBridge.OPENAI_SDK_AND_MCP_APPS);
     expect(detectHostCompatBridgeFromMeta({})).toBeNull();
   });
@@ -80,10 +80,10 @@ describe("detectHostCompatBridgeFromMeta", () => {
   it("requires a real template string (not just truthy metadata)", () => {
     // Malformed metadata must not classify as a widget.
     expect(
-      detectHostCompatBridgeFromMeta({ "openai/outputTemplate": {} }),
+      detectHostCompatBridgeFromMeta({ "openai/outputTemplate": {} })
     ).toBeNull();
     expect(
-      detectHostCompatBridgeFromMeta({ "openai/outputTemplate": "" }),
+      detectHostCompatBridgeFromMeta({ "openai/outputTemplate": "" })
     ).toBeNull();
   });
 });
@@ -103,7 +103,7 @@ describe("deriveServerRequirements", () => {
         dualTool: { ...mcpAppsMeta(), ...openaiMeta },
         plainTool: {},
         appOnlyTool: mcpAppsMeta({ visibility: ["app"] }),
-      }),
+      })
     );
     expect(r.widgets.mcpAppsOnly).toEqual(["mcpTool", "appOnlyTool"]);
     expect(r.widgets.openaiAppsOnly).toEqual(["openaiTool"]);
@@ -114,7 +114,7 @@ describe("deriveServerRequirements", () => {
 
   it("treats a model+app tool as not app-only", () => {
     const r = deriveServerRequirements(
-      toolsWith({ t: mcpAppsMeta({ visibility: ["model", "app"] }) }),
+      toolsWith({ t: mcpAppsMeta({ visibility: ["model", "app"] }) })
     );
     expect(r.appOnlyWidgets).toEqual([]);
   });
@@ -128,7 +128,7 @@ describe("deriveServerRequirements", () => {
         appOnly: mcpAppsMeta({ visibility: ["app"] }),
         emptyVis: mcpAppsMeta({ visibility: [] }),
         multiVis: mcpAppsMeta({ visibility: ["app", "extra"] }),
-      }),
+      })
     );
     expect(r.appOnlyWidgets).toEqual(["appOnly"]);
   });
@@ -137,14 +137,14 @@ describe("deriveServerRequirements", () => {
     expect(
       deriveServerRequirements(
         toolsWith({ w: mcpAppsMeta() }),
-        undefined,
-      ).unknownDimensions.some((d) => /widget capabilities/.test(d)),
+        undefined
+      ).unknownDimensions.some((d) => /widget capabilities/.test(d))
     ).toBe(true);
     expect(
       deriveServerRequirements(
         toolsWith({ w: mcpAppsMeta() }),
-        {},
-      ).unknownDimensions.some((d) => /widget capabilities/.test(d)),
+        {}
+      ).unknownDimensions.some((d) => /widget capabilities/.test(d))
     ).toBe(false);
   });
 });
@@ -158,11 +158,18 @@ describe("evaluateHostCompat", () => {
 
   it("degrades a widget to text on a host that renders no widgets", () => {
     const report = evaluateHostCompat(
-      reqs({ widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] }, hasWidgets: true }),
-      profile({ rendersMcpApps: false, rendersOpenAiApps: false, capabilities: undefined }),
+      reqs({
+        widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] },
+        hasWidgets: true,
+      }),
+      profile({
+        rendersMcpApps: false,
+        rendersOpenAiApps: false,
+        capabilities: undefined,
+      })
     );
     expect(report.verdict).toBe("degraded");
-    expect(report.findings[0].title).toMatch(/fall back to text/);
+    expect(report.findings[0].title).toBe("Interactive view unavailable");
   });
 
   it("blocks an app-only widget that can't render (no text fallback)", () => {
@@ -172,10 +179,14 @@ describe("evaluateHostCompat", () => {
         appOnlyWidgets: ["w"],
         hasWidgets: true,
       }),
-      profile({ rendersMcpApps: false, rendersOpenAiApps: false, capabilities: undefined }),
+      profile({
+        rendersMcpApps: false,
+        rendersOpenAiApps: false,
+        capabilities: undefined,
+      })
     );
     expect(report.verdict).toBe("blocked");
-    expect(report.findings[0].title).toMatch(/app-only/);
+    expect(report.findings[0].title).toBe("Interactive tool unavailable");
   });
 
   it("fires a server-specific capability finding when a scanned widget uses an unsupported API", () => {
@@ -185,12 +196,89 @@ describe("evaluateHostCompat", () => {
         hasWidgets: true,
         widgetUsage: { message: ["w"] },
       }),
-      profile({ capabilities: { ...FULL_CAPS, message: false } }),
+      profile({ capabilities: { ...FULL_CAPS, message: false } })
     );
     expect(report.verdict).toBe("degraded");
     expect(
-      report.findings.find((f) => /ui\/message/.test(f.detail))?.detail,
-    ).toMatch(/`w`/);
+      report.findings.find((f) => f.code === "capability_unsupported")?.detail
+    ).toBe(
+      "This widget sends follow-up messages. TestHost does not support them."
+    );
+    expect(
+      report.findings.find((f) => f.code === "capability_unsupported")?.title
+    ).toBe("Follow-up messages unavailable");
+    expect(
+      report.findings.find((f) => f.code === "capability_unsupported")?.detail
+    ).toBe(
+      "This widget sends follow-up messages. TestHost does not support them."
+    );
+  });
+
+  it("includes exact sandbox permissions in an unsupported capability finding", () => {
+    const finding = evaluateHostCompat(
+      reqs({
+        widgets: {
+          mcpAppsOnly: ["create_view"],
+          openaiAppsOnly: [],
+          dual: [],
+        },
+        hasWidgets: true,
+        widgetUsage: {
+          sandboxPermissions: ["create_view"],
+          sandboxPermissionNames: ["clipboardWrite"],
+        },
+      }),
+      profile({ capabilities: { ...FULL_CAPS, sandboxPermissions: false } })
+    ).findings.find((f) => f.code === "capability_unsupported");
+    expect(finding?.title).toBe("Clipboard access unavailable");
+    expect(finding?.detail).toBe(
+      "This widget requests clipboard access. TestHost does not support it."
+    );
+  });
+
+  it("does not flag sandbox permissions the host explicitly allows", () => {
+    const report = evaluateHostCompat(
+      reqs({
+        widgets: {
+          mcpAppsOnly: ["create_view"],
+          openaiAppsOnly: [],
+          dual: [],
+        },
+        hasWidgets: true,
+        widgetUsage: {
+          sandboxPermissions: ["create_view"],
+          sandboxPermissionNames: ["clipboardWrite"],
+        },
+      }),
+      profile({ sandboxPermissionAllow: { clipboardWrite: true } })
+    );
+    expect(
+      report.findings.some((f) => f.code === "capability_unsupported")
+    ).toBe(false);
+    expect(report.verdict).toBe("works");
+  });
+
+  it("flags only the requested sandbox permissions missing from the allowlist", () => {
+    const finding = evaluateHostCompat(
+      reqs({
+        widgets: {
+          mcpAppsOnly: ["create_view"],
+          openaiAppsOnly: [],
+          dual: [],
+        },
+        hasWidgets: true,
+        widgetUsage: {
+          sandboxPermissions: ["create_view"],
+          sandboxPermissionNames: ["clipboardWrite", "camera"],
+        },
+      }),
+      profile({ sandboxPermissionAllow: { clipboardWrite: true } })
+    ).findings.find((f) => f.code === "capability_unsupported");
+    expect(finding?.title).toBe("Camera access unavailable");
+    expect(finding?.detail).toBe(
+      "This widget requests camera access. TestHost does not support it."
+    );
+    expect(finding?.detail).not.toContain("`clipboardWrite`");
   });
 
   it("reads Unknown (not Works) when a widget server hasn't been scanned", () => {
@@ -200,7 +288,7 @@ describe("evaluateHostCompat", () => {
         hasWidgets: true,
         unknownDimensions: ["widget capabilities (widget HTML not analyzed)"],
       }),
-      profile({ capabilities: { ...FULL_CAPS, message: false } }),
+      profile({ capabilities: { ...FULL_CAPS, message: false } })
     );
     expect(report.verdict).toBe("unknown");
     expect(report.findings).toEqual([]);
@@ -209,7 +297,7 @@ describe("evaluateHostCompat", () => {
   it("surfaces a protocol-version difference as an info finding + unknown verdict", () => {
     const report = evaluateHostCompat(
       reqs({ connectionFacts: { protocolVersion: "2099-01-01" } }),
-      profile({ supportedProtocolVersions: ["2025-11-25"] }),
+      profile({ supportedProtocolVersions: ["2025-11-25"] })
     );
     const f = report.findings.find((x) => x.lane === "server");
     expect(f?.severity).toBe("info");
@@ -220,7 +308,7 @@ describe("evaluateHostCompat", () => {
   it("stays works on a protocol-version match", () => {
     const report = evaluateHostCompat(
       reqs({ connectionFacts: { protocolVersion: "2025-11-25" } }),
-      profile({ supportedProtocolVersions: ["2025-06-18", "2025-11-25"] }),
+      profile({ supportedProtocolVersions: ["2025-06-18", "2025-11-25"] })
     );
     expect(report.verdict).toBe("works");
   });
@@ -246,7 +334,7 @@ describe("semantic finding contract (code / tools / capability)", () => {
         appOnlyWidgets: ["w"],
         hasWidgets: true,
       }),
-      headless(),
+      headless()
     ).findings[0];
     expect(f.code).toBe("app_only_unrenderable");
     if (f.code === "app_only_unrenderable") expect(f.tools).toEqual(["w"]);
@@ -258,7 +346,7 @@ describe("semantic finding contract (code / tools / capability)", () => {
         widgets: { mcpAppsOnly: ["w"], openaiAppsOnly: [], dual: [] },
         hasWidgets: true,
       }),
-      headless(),
+      headless()
     ).findings[0];
     expect(f.code).toBe("widget_text_fallback");
     if (f.code === "widget_text_fallback") expect(f.tools).toEqual(["w"]);
@@ -271,7 +359,7 @@ describe("semantic finding contract (code / tools / capability)", () => {
         hasWidgets: true,
         widgetUsage: { message: ["w"] },
       }),
-      profile({ capabilities: { ...FULL_CAPS, message: false } }),
+      profile({ capabilities: { ...FULL_CAPS, message: false } })
     ).findings.find((x) => x.code === "capability_unsupported");
     expect(f).toBeDefined();
     if (f?.code === "capability_unsupported") {
@@ -288,7 +376,7 @@ describe("semantic finding contract (code / tools / capability)", () => {
         hasWidgets: true,
         widgetUsage: usage,
       }),
-      profile({ capabilities: { ...FULL_CAPS, message: false } }),
+      profile({ capabilities: { ...FULL_CAPS, message: false } })
     ).findings.find((x) => x.code === "capability_unsupported");
     // A surface sorting/mutating finding.tools must not touch widgetUsage.
     if (f?.code === "capability_unsupported") {
@@ -301,7 +389,7 @@ describe("semantic finding contract (code / tools / capability)", () => {
   it("tags a protocol-version mismatch", () => {
     const f = evaluateHostCompat(
       reqs({ connectionFacts: { protocolVersion: "2099-01-01" } }),
-      profile({ supportedProtocolVersions: ["2025-11-25"] }),
+      profile({ supportedProtocolVersions: ["2025-11-25"] })
     ).findings.find((x) => x.lane === "server");
     expect(f?.code).toBe("protocol_version_mismatch");
   });
@@ -321,12 +409,12 @@ describe("evaluateAllHosts", () => {
           capabilities: undefined,
         }),
       ],
-      { widgetUsage: {} }, // conclusive clean scan
+      { widgetUsage: {} } // conclusive clean scan
     );
     expect(requirements.hasWidgets).toBe(true);
     expect(reports.find((r) => r.hostId === "renders")?.verdict).toBe("works");
     expect(reports.find((r) => r.hostId === "headless")?.verdict).toBe(
-      "degraded",
+      "degraded"
     );
   });
 
@@ -345,7 +433,7 @@ describe("evaluateAllHosts", () => {
 
     const complete = evaluateAllHosts(tools, profiles, { widgetUsage: {} });
     expect(complete.reports.find((r) => r.hostId === "renders")?.verdict).toBe(
-      "works",
+      "works"
     );
 
     const { requirements, reports } = evaluateAllHosts(tools, profiles, {
@@ -357,10 +445,10 @@ describe("evaluateAllHosts", () => {
     expect(renders?.lanes.apps.verdict).toBe("unknown");
     // A negative verdict stands — truncation can't make it pass.
     expect(reports.find((r) => r.hostId === "headless")?.verdict).toBe(
-      "degraded",
+      "degraded"
     );
-    expect(requirements.unknownDimensions.some((d) => /truncated/.test(d))).toBe(
-      true,
-    );
+    expect(
+      requirements.unknownDimensions.some((d) => /truncated/.test(d))
+    ).toBe(true);
   });
 });

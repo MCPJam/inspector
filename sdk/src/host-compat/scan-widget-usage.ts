@@ -1,6 +1,7 @@
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 import {
   scanWidgetMeta,
+  scanWidgetPermissionNames,
   scanWidgetSource,
   type WidgetCapabilityNeed,
   type WidgetUsage,
@@ -76,6 +77,12 @@ export async function scanWidgetUsage(
   const add = (need: WidgetCapabilityNeed, tools: string[]) => {
     acc[need] = Array.from(new Set([...(acc[need] ?? []), ...tools]));
   };
+  const addPermissionNames = (names: Set<string>) => {
+    if (names.size === 0) return;
+    acc.sandboxPermissionNames = Array.from(
+      new Set([...(acc.sandboxPermissionNames ?? []), ...names]),
+    ).sort();
+  };
 
   // A widget is "analyzed" only if its read RESOLVED WITH CONTENT — a resolved
   // read that returned nothing was not scanned, so it must not count as clean.
@@ -89,6 +96,7 @@ export async function scanWidgetUsage(
           ...scanWidgetSource(htmlFromContent(content)),
           ...scanWidgetMeta(content._meta),
         ]);
+        addPermissionNames(scanWidgetPermissionNames(content._meta));
         for (const need of needs) add(need, toolNames);
         return true;
       } catch {
