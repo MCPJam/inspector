@@ -60,8 +60,8 @@ export function HostCompatPage({
           Compatibility
         </h1>
         <p className="text-xs text-muted-foreground">
-          Whether your servers work on each host — spec conformance first, then
-          per-host apps &amp; server gaps.
+          Whether your servers work on each client — spec conformance first, then
+          per-client apps &amp; server gaps.
         </p>
       </div>
 

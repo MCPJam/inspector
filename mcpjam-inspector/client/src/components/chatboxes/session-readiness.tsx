@@ -187,7 +187,7 @@ function explainReadinessIssues(
     fallbacks.push({
       code: "high_latency",
       severity: "warning",
-      message: `Host response latency was ${formatLatency(latency)} across turns.`,
+      message: `Client response latency was ${formatLatency(latency)} across turns.`,
     });
   }
 

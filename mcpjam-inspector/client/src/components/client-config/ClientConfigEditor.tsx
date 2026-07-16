@@ -1326,7 +1326,7 @@ function McpProfileSandboxAttrsEditor({
         <Label className="text-xs">sandboxAttrs (inspector-only)</Label>
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">
-            Model host sandbox tokens
+            Model client sandbox tokens
           </span>
           <Switch
             checked={isEnabled}
@@ -1543,7 +1543,7 @@ function McpProfileAllowFeaturesEditor({
         <Label className="text-xs">allowFeatures (inspector-only)</Label>
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">
-            Model host allow features
+            Model client allow features
           </span>
           <Switch
             checked={isEnabled}

@@ -169,7 +169,7 @@ describe("SuiteInsightsCollapsible scope adaptivity", () => {
     );
     const text = copySpy.mock.calls[0][0] as string;
     expect(text).toContain("Model behavior");
-    expect(text).toContain("Affected host(s): Copilot");
+    expect(text).toContain("Affected client(s): Copilot");
     expect(text).toContain("Strengthen the add_to_cart tool description.");
   });
 
