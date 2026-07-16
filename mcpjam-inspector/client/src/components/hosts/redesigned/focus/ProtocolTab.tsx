@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { Switch } from "@mcpjam/design-system/switch";
+import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
   isKnownProtocolVersion,
   readXaaEnterprisePolicy,
@@ -95,7 +96,7 @@ function findAuthorizationKey(
   return Object.keys(headers).find((k) => k.toLowerCase() === "authorization");
 }
 
-function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
+export function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
   const doc: ProtocolDoc = {
     connectionDefaults: {
       requestTimeout: draft.connectionDefaults.requestTimeout,
@@ -217,6 +218,88 @@ export function withoutEmaExtension(
   return { ...prev, clientCapabilities: nextCaps };
 }
 
+/**
+ * Read the elicitation slice of the stored clientCapabilities.
+ *
+ * Deliberately LENIENT on `enabled`: the wire shape is freeform per MCP, and
+ * the host catalog ships BOTH a bare `elicitation: {}` (claude-code, cursor,
+ * vscode…) and `elicitation: { form: {} }` (goose, codex) — see
+ * `sdk/src/host-compat/catalog.generated.ts`. Any plain object means the host
+ * advertises elicitation, so the switch must read `{}` as ON rather than
+ * demanding our own canonical shape.
+ *
+ * `url` is the narrow mode probe: only a plain `elicitation.url` object counts
+ * (a bare `{}` is form-only). The SDK enforces the same reading when it
+ * rejects undeclared modes.
+ *
+ * Note this is a TOP-LEVEL capability key, unlike the EMA extension above
+ * which lives under `clientCapabilities.extensions` — the SDK reads and strips
+ * `clientCapabilities.elicitation` directly (`buildCapabilities` in
+ * `MCPClientManager.ts`).
+ */
+export function elicitationCapabilityState(
+  capabilities: Record<string, unknown> | undefined
+): { enabled: boolean; url: boolean } {
+  const elicitation = capabilities?.elicitation;
+  if (!isPlainObject(elicitation)) return { enabled: false, url: false };
+  return { enabled: true, url: isPlainObject(elicitation.url) };
+}
+
+/**
+ * Advertise the elicitation capability, with or without URL mode.
+ *
+ * Writes `{ form: {} }` or `{ form: {}, url: {} }`, but merges over any
+ * pre-existing elicitation object rather than replacing it: unknown sibling
+ * sub-keys and a hand-edited `form`/`url` payload survive the toggle, same
+ * `?? {}` preservation semantics as `withEmaExtension`. `url` is re-guarded
+ * with `isPlainObject` so the value we write always reads back as ON through
+ * `elicitationCapabilityState` — a junk `url: "yes"` left in place would make
+ * the checkbox ignore its own click.
+ *
+ * Never mutates `prev`: both the capabilities record and the elicitation
+ * object are copied before assignment.
+ */
+export function withElicitation(
+  prev: HostConfigInputV2,
+  options: { url: boolean }
+): HostConfigInputV2 {
+  const nextCaps: Record<string, unknown> = {
+    ...(prev.clientCapabilities ?? {}),
+  };
+  const existing: Record<string, unknown> = isPlainObject(nextCaps.elicitation)
+    ? nextCaps.elicitation
+    : {};
+  const nextElicitation: Record<string, unknown> = { ...existing };
+  nextElicitation.form = existing.form ?? {};
+  if (options.url) {
+    nextElicitation.url = isPlainObject(existing.url) ? existing.url : {};
+  } else {
+    delete nextElicitation.url;
+  }
+  nextCaps.elicitation = nextElicitation;
+  return { ...prev, clientCapabilities: nextCaps };
+}
+
+/**
+ * Stop advertising elicitation. Touches ONLY the top-level `elicitation` key —
+ * every sibling capability is preserved and `clientCapabilities` itself always
+ * stays an object, because the canonicalizer throws on undefined.
+ *
+ * No mistral inert-marker guard here, unlike `withoutEmaExtension`: that guard
+ * exists to RESTORE the `extensions: {}` marker that the EMA helper itself had
+ * just deleted when the container went empty. This helper never touches
+ * `extensions`, so mistral's marker survives untouched; synthesizing one here
+ * would invent a key the toggle has no business writing and would break the
+ * byte-exact on→off round-trip back to `{}`.
+ */
+export function withoutElicitation(prev: HostConfigInputV2): HostConfigInputV2 {
+  const nextCaps: Record<string, unknown> = {
+    ...(prev.clientCapabilities ?? {}),
+  };
+  delete nextCaps.elicitation;
+  return { ...prev, clientCapabilities: nextCaps };
+}
+
 function patchProfile(
   prev: HostConfigMcpProfileV1 | undefined,
   patch: (base: HostConfigMcpProfileV1) => HostConfigMcpProfileV1 | undefined
@@ -224,7 +307,7 @@ function patchProfile(
   return patch(prev ?? { profileVersion: 1 });
 }
 
-function applyJsonToDraft(
+export function applyJsonToDraft(
   parsed: unknown,
   prev: HostConfigInputV2
 ): HostConfigInputV2 | null {
@@ -444,6 +527,20 @@ export function ProtocolTab({
     });
   };
 
+  // Derived per render from the draft rather than mirrored into state: catalog
+  // rows already ship an elicitation shape, and seeding local state from it
+  // would write our canonical shape back on mount and churn the config hash
+  // before the user ever touched the switch.
+  const elicitation = elicitationCapabilityState(draft.clientCapabilities);
+  const setElicitationEnabled = (next: boolean) => {
+    onDraftChange((prev) =>
+      next ? withElicitation(prev, { url: false }) : withoutElicitation(prev)
+    );
+  };
+  const setElicitationUrlMode = (next: boolean) => {
+    onDraftChange((prev) => withElicitation(prev, { url: next }));
+  };
+
   return (
     <div className="flex h-full min-h-[480px] flex-col gap-3">
       <div className="rounded-[10px] border border-border bg-background px-3.5 py-2.5">
@@ -501,6 +598,43 @@ export function ProtocolTab({
           />
         </div>
         )}
+        <div className="mt-2.5 border-t border-border/50 pt-2.5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <span className="text-[12px] font-medium">Elicitation</span>
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Advertises the elicitation client capability. When enabled,
+                hosted chat pauses tool calls to collect your input.
+              </p>
+            </div>
+            <Switch
+              checked={elicitation.enabled}
+              onCheckedChange={setElicitationEnabled}
+              disabled={readOnly}
+              aria-label="Elicitation"
+            />
+          </div>
+          {elicitation.enabled ? (
+            <div className="mt-2.5 flex items-start gap-2 pl-4">
+              <Checkbox
+                id="elicitation-url-mode"
+                className="mt-0.5"
+                checked={elicitation.url}
+                onCheckedChange={(checked) =>
+                  setElicitationUrlMode(checked === true)
+                }
+                disabled={readOnly}
+              />
+              <label
+                htmlFor="elicitation-url-mode"
+                className="text-[11px] leading-snug text-muted-foreground"
+              >
+                URL mode — allow servers to ask you to open a URL (you always
+                review it first).
+              </label>
+            </div>
+          ) : null}
+        </div>
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
         <JsonEditor
