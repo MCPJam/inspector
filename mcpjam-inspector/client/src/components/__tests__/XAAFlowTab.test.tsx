@@ -951,7 +951,11 @@ describe("XAAFlowTab", () => {
       );
     });
 
-    it("keeps confidential DCR secrets out of the hosted issuer scorecard", async () => {
+    // Confidential DCR now runs on the hosted issuer: the server mints on
+    // hosted and redeems locally, so the client builds a normal input (secret
+    // supplied at click time via resolveInput) and the secret-never-reaches-
+    // hosted guarantee is enforced server-side, not by blocking here.
+    it("allows confidential DCR on the hosted issuer, supplying the secret at click time", async () => {
       issuerModeState = "hosted";
       const user = userEvent.setup();
       render(
@@ -989,15 +993,17 @@ describe("XAAFlowTab", () => {
 
       await waitFor(() =>
         expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
-          "data-unavailable-reason",
-          expect.stringMatching(/confidential DCR/i)
+          "data-unlocked",
+          "true"
         )
       );
-      expect(screen.getByTestId("xaa-scorecard")).toHaveAttribute(
-        "data-has-input",
-        "false"
-      );
-      expect(capturedScorecardProps.resolveInput).toBeUndefined();
+      const scorecard = screen.getByTestId("xaa-scorecard");
+      expect(scorecard).toHaveAttribute("data-has-input", "true");
+      expect(scorecard).toHaveAttribute("data-unavailable-reason", "");
+      // The base input never carries the secret; resolveInput adds it fresh.
+      expect(capturedScorecardInput.clientSecret).toBeUndefined();
+      const resolved = capturedScorecardProps.resolveInput();
+      expect(resolved.clientSecret).toBe("session-only-secret");
     });
 
     // The CIMD client identity is the metadata document URL the run resolved,

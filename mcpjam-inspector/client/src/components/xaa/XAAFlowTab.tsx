@@ -894,20 +894,9 @@ export function XAAFlowTab({
             "Run the flow first so the client identity and token endpoint are known.",
         };
       }
-      // Mirrors the confidential-DCR rule below: the confidential-CIMD signing
-      // key exists only on the local inspector, so a hosted-issuer run (which
-      // forwards the whole run server-to-server) could never sign the
-      // client_assertion. Say so here rather than letting the forward 400.
-      if (
-        hostedIssuerOptIn &&
-        flowState.tokenEndpointAuthMethod === "private_key_jwt"
-      ) {
-        return {
-          input: null,
-          unavailableReason:
-            "Negative tests for confidential CIMD clients are unavailable when using the hosted issuer.",
-        };
-      }
+      // Confidential CIMD runs on the hosted issuer too: the server mints the
+      // broken assertions on hosted (correct `iss`) and redeems them locally,
+      // so the CIMD signing key never leaves the machine. No local-only guard.
       if (!audience || !resource) return { input: null };
 
       return {
@@ -963,13 +952,8 @@ export function XAAFlowTab({
             "This session's dynamic client secret has expired. Register another client to run negative tests.",
         };
       }
-      if (hostedIssuerOptIn && credentials.clientSecret) {
-        return {
-          input: null,
-          unavailableReason:
-            "Negative tests for confidential DCR clients are unavailable when using the hosted issuer.",
-        };
-      }
+      // Confidential DCR runs on the hosted issuer too: hosted mints, the local
+      // server redeems, so the DCR secret never leaves the machine.
       if (!audience || !resource) return { input: null };
 
       const input: NegativeTestsInput = {
@@ -977,6 +961,10 @@ export function XAAFlowTab({
         audience,
         resource,
         subject: runInput.userId || undefined,
+        // Needed once this can reach the hosted issuer: its evaluator matches
+        // subject AND email exactly, so an absent email denies every case on
+        // identity and the run reads all-green without testing anything.
+        email: runInput.email || undefined,
         clientId: flowState.clientId,
         tokenEndpointAuthMethod: credentials.tokenEndpointAuthMethod,
         scope: runInput.scope || undefined,
@@ -1061,14 +1049,7 @@ export function XAAFlowTab({
         scope: runInput.scope || undefined,
       },
     };
-  }, [
-    flowState,
-    runInput,
-    target,
-    targetKey,
-    runsDynamicRegistration,
-    hostedIssuerOptIn,
-  ]);
+  }, [flowState, runInput, target, targetKey, runsDynamicRegistration]);
 
   // ── Single target-reset owner ──────────────────────────────────────
   // One effect keyed on the target and all run-defining configuration rebuilds
