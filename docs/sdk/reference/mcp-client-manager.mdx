@@ -15,7 +15,7 @@ import { MCPClientManager } from "@mcpjam/sdk";
 ## Constructor
 
 ```typescript
-new MCPClientManager(servers: ServerConfig)
+new MCPClientManager(servers: ServerConfig, options?: MCPClientManagerOptions)
 ```
 
 ### Parameters
@@ -23,6 +23,16 @@ new MCPClientManager(servers: ServerConfig)
 <ParamField path="servers" type="Record<string, StdioServerConfig | HttpServerConfig>" required>
   A map of server IDs to their configurations.
 </ParamField>
+
+<ParamField path="options" type="MCPClientManagerOptions">
+  Optional manager-level settings.
+</ParamField>
+
+### MCPClientManagerOptions
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `elicitationTimeoutExtensionMs` | `number` | `600000` (10 min) | Extra time budget (ms) granted to a `tools/call` while an elicitation is pending for that server. The per-request timeout is a server budget — a tool call blocked on a human must not die at it, but a genuinely hung server must. When an elicitation handler is installed for a server, `executeTool` enforces the base timeout with a watchdog that only accumulates time while no elicitation is pending, and separately caps the total time spent suspended across all elicitations in that call at this value. Has no effect on servers without an elicitation handler. |
 
 ### Server Configuration Types
 
