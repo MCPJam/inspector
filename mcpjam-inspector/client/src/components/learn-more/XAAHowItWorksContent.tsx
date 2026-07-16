@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { CheckCircle2, HelpCircle, Play } from "lucide-react";
 
-const xaaVideoUrl = "https://www.youtube.com/embed/3ym_V4Pm5Qc";
+const xaaVideoUrl =
+  "https://outstanding-fennec-304.convex.cloud/api/storage/b3a2592b-ab5f-42df-ad2c-db4fa2f39172";
 
 const registrationMethods = [
   {
@@ -103,11 +104,13 @@ function XAAVideoThumbnail() {
   if (playing) {
     return (
       <div className="relative aspect-video overflow-hidden rounded-lg border bg-black shadow-sm">
-        <iframe
-          src={`${xaaVideoUrl}?autoplay=1`}
-          className="h-full w-full"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowFullScreen
+        <video
+          src={xaaVideoUrl}
+          className="h-full w-full object-cover"
+          autoPlay
+          controls
+          playsInline
+          preload="metadata"
           title="Cross-App Access video"
         />
       </div>
