@@ -247,21 +247,42 @@ describe("buildUiToolsCatalog", () => {
     expect(getTool("ui_execute_tool").description).toContain("REALLY runs");
   });
 
-  it("ui_snapshot_app dispatches a playground snapshot when the playground is open", async () => {
+  it("ui_snapshot_app asks for the whole app by default", async () => {
     await getTool("ui_snapshot_app").execute({});
+    expect(dispatchedCommands()[0]).toMatchObject({
+      type: "snapshotApp",
+      payload: {},
+    });
+    // No hardcoded surface: the app-level handler decides what's readable.
+    expect((dispatchedCommands()[0] as any).payload.surface).toBeUndefined();
+  });
+
+  it("ui_snapshot_app forwards an explicit surface", async () => {
+    await getTool("ui_snapshot_app").execute({ surface: "playground" });
     expect(dispatchedCommands()[0]).toMatchObject({
       type: "snapshotApp",
       payload: { surface: "playground" },
     });
   });
 
-  it("ui_snapshot_app errors without mutating UI state when the playground is closed (honors readOnly)", async () => {
-    // readOnly tools must not auto-open the playground; with the handler
-    // absent, snapshot returns an error and dispatches nothing.
+  it("ui_snapshot_app works with the playground closed (no gate, no auto-open)", async () => {
+    // It reads whatever IS open. It must still never mount a surface to
+    // observe it — that's what keeps `readOnlyHint` (and its approval
+    // exemption) honest.
     hasInspectorCommandHandlerMock.mockReturnValue(false);
+    executeInspectorCommandMock.mockResolvedValue({
+      id: "c1",
+      status: "success",
+      result: { activeTab: "servers", surfaces: {} },
+    });
+
     const result = await getTool("ui_snapshot_app").execute({});
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("ui_open_playground");
-    expect(executeInspectorCommandMock).not.toHaveBeenCalled();
+
+    expect(result.isError).toBeFalsy();
+    expect(dispatchedCommands()[0]).toMatchObject({ type: "snapshotApp" });
+    // Never an open/navigate command.
+    expect(
+      dispatchedCommands().some((c) => c.type === "openPlayground"),
+    ).toBe(false);
   });
 });

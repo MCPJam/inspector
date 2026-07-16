@@ -1,3 +1,5 @@
+import type { AppSurfaceId } from "./app-surfaces";
+
 /**
  * Device-emulation targets addressable via commands. `"fill"` is the
  * playground store's DEFAULT (fit the panel) — included so an agent can
@@ -122,7 +124,16 @@ export interface RenderToolResultInspectorCommand {
 export interface SnapshotAppInspectorCommand {
   id: string;
   type: "snapshotApp";
-  payload: { surface?: "playground" };
+  /**
+   * `surface` narrows the snapshot to one screen; omitted means the whole
+   * app (app-level state plus every mounted surface's provider).
+   *
+   * Typed as `AppSurfaceId`, but handlers cast the raw command rather than
+   * parse it, so the TYPE is not a runtime check — the handler validates
+   * with `isAppSurfaceId` and rejects anything else as `invalid_request`.
+   * An arbitrary string must never reach the provider registry as a lookup.
+   */
+  payload: { surface?: AppSurfaceId };
   timeoutMs?: number;
 }
 

@@ -263,7 +263,13 @@ import type {
   NavigateInspectorCommand,
   OpenPlaygroundInspectorCommand,
   SelectServerInspectorCommand,
+  SnapshotAppInspectorCommand,
 } from "@/shared/inspector-command.js";
+import { isAppSurfaceId } from "@/shared/app-surfaces";
+import {
+  readAllSurfaceSnapshots,
+  readSurfaceSnapshot,
+} from "@/lib/webmcp/surface-snapshot-registry";
 
 const OCCUPATION_GATE_ROLLOUT_MS = Date.parse("2026-04-29T00:00:00.000Z");
 // Accounts created on/after this ship date are treated as "new" for the
@@ -2737,12 +2743,71 @@ export default function App() {
       }
     );
 
+    // The ONE `snapshotApp` handler. Surfaces contribute via the provider
+    // registry rather than registering their own handler here: the bus
+    // dispatches newest-first and returns the first success, so a second
+    // handler would shadow this one whenever its surface happened to be
+    // mounted — a whole-app snapshot would silently become a one-screen one.
+    //
+    // Always registered, so `ui_snapshot_app` works from anywhere. It stays
+    // read-only: it never mounts a surface to observe it, which is what
+    // makes its `readOnlyHint` (and its approval exemption) honest.
+    const unregisterSnapshotApp = registerInspectorCommandHandler(
+      "snapshotApp",
+      async (rawCommand) => {
+        const command = rawCommand as SnapshotAppInspectorCommand;
+        const requested = command.payload?.surface;
+
+        // Handlers cast rather than parse, so the type is no guarantee here.
+        if (requested !== undefined && !isAppSurfaceId(requested)) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            `Unknown surface "${String(requested)}". Omit it to snapshot the whole app.`
+          );
+        }
+
+        if (requested) {
+          const result = await readSurfaceSnapshot(requested);
+          if (!result.ok) {
+            throw createInspectorCommandClientError(
+              "unsupported_in_mode",
+              `${result.error} That screen is not open — navigate to it first, or omit "surface" for app-level state.`
+            );
+          }
+          return { surface: requested, [requested]: result.data };
+        }
+
+        const pathname = window.location.pathname;
+        const selectedServers = appState.selectedMultipleServers?.length
+          ? appState.selectedMultipleServers
+          : selectedServerRef.current
+            ? [selectedServerRef.current]
+            : [];
+        return {
+          path: pathname,
+          activeTab: pathnameToActiveTab(pathname),
+          selectedServers,
+          servers: Object.entries(projectServersRef.current).map(
+            ([name, server]) => ({
+              name,
+              connectionStatus:
+                (server as { connectionStatus?: string })?.connectionStatus ??
+                "unknown",
+            })
+          ),
+          surfaces: await readAllSurfaceSnapshots(),
+        };
+      }
+    );
+
     return () => {
       unregisterNavigate();
       unregisterSelectServer();
       unregisterOpenPlayground();
+      unregisterSnapshotApp();
     };
   }, [
+    appState.selectedMultipleServers,
     getInspectorServerState,
     setSelectedServer,
     setSelectedMCPConfigs,

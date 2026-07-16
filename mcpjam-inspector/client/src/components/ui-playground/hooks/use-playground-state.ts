@@ -54,6 +54,7 @@ import {
   createInspectorCommandClientError,
   registerInspectorCommandHandler,
 } from "@/lib/inspector-command-handlers";
+import { registerSurfaceSnapshotProvider } from "@/lib/webmcp/surface-snapshot-registry";
 import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import {
   getApiContextRevision,
@@ -64,7 +65,6 @@ import type {
   RenderToolResultInspectorCommand,
   SelectToolInspectorCommand,
   SetAppContextInspectorCommand,
-  SnapshotAppInspectorCommand,
 } from "@/shared/inspector-command.js";
 import { useSavedRequests, useServerKey, useToolExecution } from "./index";
 import { PANEL_SIZES } from "../constants";
@@ -761,22 +761,14 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       }
     );
 
-    const unregisterSnapshotApp = registerInspectorCommandHandler(
-      "snapshotApp",
-      async (rawCommand) => {
-        const command = rawCommand as SnapshotAppInspectorCommand;
-        if (
-          command.payload.surface &&
-          command.payload.surface !== "playground"
-        ) {
-          throw createInspectorCommandClientError(
-            "unsupported_in_mode",
-            `Playground cannot snapshot ${command.payload.surface}.`
-          );
-        }
-
-        return buildPlaygroundSnapshot();
-      }
+    // A PROVIDER, not a `snapshotApp` command handler. The bus dispatches
+    // handlers newest-first and returns the first success, so a handler here
+    // would shadow the app-level one whenever the Playground is mounted —
+    // and a whole-app snapshot would silently degrade to a playground-only
+    // one. The single handler lives in App.tsx and reads this registry.
+    const unregisterSnapshotApp = registerSurfaceSnapshotProvider(
+      "playground",
+      () => buildPlaygroundSnapshot()
     );
 
     return () => {
