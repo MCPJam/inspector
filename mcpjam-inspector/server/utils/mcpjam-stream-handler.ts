@@ -467,21 +467,6 @@ export interface MCPJamHandlerOptions {
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
-  /**
-   * Fires when an MCP tool call fails with `-32042 URLElicitationRequiredError`
-   * (MCP 2025-11-25). Interactive surfaces use it to show the URL for consent;
-   * the tool result already carries a retry hint for the model. Display-only —
-   * nothing is owed back to the server on this path.
-   */
-  onUrlElicitationRequired?: (info: {
-    serverId?: string;
-    toolCallId: string;
-    elicitations: Array<{
-      url: string;
-      elicitationId: string;
-      message?: string;
-    }>;
-  }) => void;
   onLiveTextDelta?: (delta: string) => void;
   /**
    * Engine consolidation PR 5b-pre — fires from the chunk-processing
@@ -651,8 +636,6 @@ interface StepContext {
   onEngineError?: (event: MCPJamEngineErrorEvent) => void;
   // Browser-rendered MCP App eval PR 2: per-step advertised-tool narrowing.
   prepareAdvertisedTools?: MCPJamHandlerOptions["prepareAdvertisedTools"];
-  // -32042 URLElicitationRequiredError surfacing (MCP 2025-11-25).
-  onUrlElicitationRequired?: MCPJamHandlerOptions["onUrlElicitationRequired"];
   abortSignal?: AbortSignal;
 }
 
@@ -1637,10 +1620,6 @@ async function handlePendingApprovals(
   // emits `tool-input-available` UI chunks — `onToolCall` must fire
   // here too so PR 5b's wiring doesn't see orphan `tool_result`.
   onToolCall?: (event: MCPJamToolCallEvent) => void,
-  // An APPROVED tool can hit -32042 just like an unapproved one (approval and
-  // third-party authorization are orthogonal), so this path needs the hook too
-  // or the consent UI would silently not appear for approval-gated hosts.
-  onUrlElicitationRequired?: MCPJamHandlerOptions["onUrlElicitationRequired"],
 ): Promise<boolean> {
   // Build approvalId → toolCallId map, toolCallId → toolName map,
   // and toolCallId → assistant message index map from assistant messages
@@ -1871,7 +1850,6 @@ async function handlePendingApprovals(
       // fulfillment) instead of throwing and 500ing the whole turn.
       skipNonExecutableTools: true,
       ...(abortSignal ? { abortSignal } : {}),
-      ...(onUrlElicitationRequired ? { onUrlElicitationRequired } : {}),
     });
 
     await emitToolResults(
@@ -1928,8 +1906,6 @@ async function processOneStep(
     onEngineError,
     // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
     prepareAdvertisedTools,
-    // -32042 surfacing (MCP 2025-11-25).
-    onUrlElicitationRequired,
   } = ctx;
 
   // Pick the active tool subset for this step. In non-progressive mode
@@ -2477,8 +2453,7 @@ async function processOneStep(
         modelVisibleMcpToolResults,
         readLinkedResource: readLinkedMcpResourceWithManager(mcpClientManager),
         ...(abortSignal ? { abortSignal } : {}),
-        ...(onUrlElicitationRequired ? { onUrlElicitationRequired } : {}),
-      });
+        });
       const toolsEndAbs = Date.now();
 
       const newToolCallIds = new Set<string>();
@@ -2756,8 +2731,6 @@ export async function runChatEngineLoop(
     onEngineError,
     // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
     prepareAdvertisedTools,
-    // -32042 URLElicitationRequiredError surfacing (MCP 2025-11-25).
-    onUrlElicitationRequired,
     abortSignal,
     heartbeatIntervalMs,
     maxSteps,
@@ -2962,7 +2935,6 @@ export async function runChatEngineLoop(
           modelVisibleMcpToolResults,
           onToolResult,
           onToolCall,
-          onUrlElicitationRequired,
         );
         if (handled) {
           // Approvals were processed — if there are still unresolved tool
@@ -3016,8 +2988,6 @@ export async function runChatEngineLoop(
           onEngineError,
           // Browser-rendered MCP App eval PR 2: advertised-tool narrowing.
           prepareAdvertisedTools,
-          // -32042 surfacing (MCP 2025-11-25).
-          onUrlElicitationRequired,
           abortSignal,
         });
 

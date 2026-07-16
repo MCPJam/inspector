@@ -496,4 +496,39 @@ describe("HostedElicitationBridge", () => {
     // No JSON-RPC response is owed on the error path.
     expect(mutation).not.toHaveBeenCalled();
   });
+
+  it("emitUrlRequired is engine-agnostic: it only needs the writer", async () => {
+    // Guards the BYOK fix. The org branches run `runDirectChatTurn`, where the
+    // AI SDK owns the tool loop and never reaches the shared executor's catch —
+    // so the old engine-level hook compiled and silently never fired for BYOK
+    // users. Emission now hangs off the tool set every engine shares, so the
+    // bridge needs nothing engine-specific to surface a -32042.
+    stubFetch({});
+    const { writer, events } = makeWriter();
+    const bridge = makeBridge();
+    bridge.attachStreamWriter(writer);
+
+    bridge.emitUrlRequired({
+      serverId: "srv-1",
+      toolCallId: "byok-call",
+      elicitations: [
+        { url: "https://example.com/connect", elicitationId: "e1" },
+      ],
+    });
+
+    expect(events()).toContainEqual(
+      expect.objectContaining({ kind: "url_required", toolCallId: "byok-call" }),
+    );
+  });
+
+  it("drops a url_required with no elicitations rather than emit an empty notice", async () => {
+    stubFetch({});
+    const { writer, events } = makeWriter();
+    const bridge = makeBridge();
+    bridge.attachStreamWriter(writer);
+
+    bridge.emitUrlRequired({ serverId: "srv-1", elicitations: [] });
+
+    expect(events()).toHaveLength(0);
+  });
 });

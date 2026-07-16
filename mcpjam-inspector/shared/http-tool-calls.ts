@@ -171,25 +171,6 @@ type ExecuteToolCallOptionsBase = {
     uri: string;
     options?: { abortSignal?: AbortSignal };
   }) => Promise<unknown>;
-  /**
-   * Called when a tool call fails with `-32042 URLElicitationRequiredError`
-   * (MCP 2025-11-25): the server needs an out-of-band interaction (an OAuth
-   * connect, a payment, …) completed before it can serve this request.
-   *
-   * Display-only — the call already failed, so there is no JSON-RPC response
-   * owed and nothing to wait on. The hook lets an interactive surface show the
-   * URL(s) for consent; the tool is retried afterwards (by the model, from the
-   * hint in the error-text result, or manually by the user).
-   */
-  onUrlElicitationRequired?: (info: {
-    serverId?: string;
-    toolCallId: string;
-    elicitations: Array<{
-      url: string;
-      elicitationId: string;
-      message?: string;
-    }>;
-  }) => void;
 };
 
 /**
@@ -200,9 +181,9 @@ type ExecuteToolCallOptionsBase = {
  * instances), which makes prototype identity unreliable. The shape is the
  * contract.
  */
-const URL_ELICITATION_REQUIRED_CODE = -32042;
+export const URL_ELICITATION_REQUIRED_CODE = -32042;
 
-function readUrlElicitations(
+export function readUrlElicitations(
   error: unknown,
 ): Array<{ url: string; elicitationId: string; message?: string }> | null {
   if (!error || typeof error !== "object") return null;
@@ -543,16 +524,12 @@ export async function executeToolCallsFromMessages(
           // -32042: the server wants an out-of-band interaction first. Surface
           // the URLs structurally to the UI and give the model an actionable
           // retry hint instead of a raw protocol error it can't interpret.
+          // Surfacing the URL to the UI is the tool wrapper's job (see
+          // `web-chat-turn`), which sits on the shared tool set and therefore
+          // fires for every engine. Here we only reshape the model-visible
+          // result so it gets an actionable retry hint instead of a raw
+          // protocol error.
           const urlElicitations = readUrlElicitations(error);
-          if (urlElicitations) {
-            options.onUrlElicitationRequired?.({
-              // Recomputed, not captured: the `serverId` binding lives inside
-              // the try block and isn't in scope here.
-              serverId: extractServerId(content.toolName),
-              toolCallId: content.toolCallId,
-              elicitations: urlElicitations,
-            });
-          }
           const errorOutput: ToolResultPart = {
             type: "error-text",
             value: urlElicitations
