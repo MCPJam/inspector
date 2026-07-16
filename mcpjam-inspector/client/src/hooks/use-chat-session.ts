@@ -54,6 +54,7 @@ import { useCustomProviders } from "@/hooks/use-custom-providers";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
 import {
   getDefaultModel,
+  isMCPJamProvidedModelMenuItem,
   type OrgVisibleConfig,
 } from "@/components/chat-v2/shared/model-helpers";
 import {
@@ -65,7 +66,6 @@ import { useOutOfCredits } from "@/hooks/useCreditBalance";
 import {
   isBedrockModelId,
   isMCPJamGuestAllowedModel,
-  isMCPJamProvidedModel,
 } from "@/shared/types";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
@@ -188,7 +188,7 @@ function isOrgManagedModel(
   orgConfig: OrgVisibleConfig | undefined,
   model: ModelDefinition
 ): boolean {
-  if (isMCPJamProvidedModel(String(model.id))) return false;
+  if (isMCPJamProvidedModelMenuItem(model)) return false;
   const providerKey = getOrgProviderKeyForModel(model);
   if (!providerKey) return false;
   const provider = orgConfig?.providers.find(
@@ -1557,9 +1557,7 @@ export function useChatSession(
   );
 
   const isMcpJamModel = useMemo(() => {
-    return selectedModel?.id
-      ? isMCPJamProvidedModel(String(selectedModel.id))
-      : false;
+    return selectedModel ? isMCPJamProvidedModelMenuItem(selectedModel) : false;
   }, [selectedModel]);
   const selectedModelUsesOrgRuntime = useMemo(
     () => isOrgManagedModel(hostedOrgModelConfig, selectedModel),
@@ -2816,7 +2814,7 @@ export function useChatSession(
 
       const shouldCountTokens = selectedModel?.id && selectedModel?.provider;
       const modelIdForTokens = shouldCountTokens
-        ? isMCPJamProvidedModel(String(selectedModel.id))
+        ? isMCPJamProvidedModelMenuItem(selectedModel)
           ? String(selectedModel.id)
           : `${selectedModel.provider}/${selectedModel.id}`
         : undefined;
@@ -2869,7 +2867,7 @@ export function useChatSession(
 
       setSystemPromptTokenCountLoading(true);
       try {
-        const modelId = isMCPJamProvidedModel(String(selectedModel.id))
+        const modelId = isMCPJamProvidedModelMenuItem(selectedModel)
           ? String(selectedModel.id)
           : `${selectedModel.provider}/${selectedModel.id}`;
         const count = await countTextTokens(systemPrompt, modelId);
@@ -2942,7 +2940,13 @@ export function useChatSession(
     ? true
     : selectedModelUsesOrgRuntime ||
       (isMcpJamModel &&
-        !isMCPJamGuestAllowedModel(String(selectedModel?.id ?? "")));
+        // Prefer the live catalog's guestAllowed flag (always true now that
+        // guests are un-gated); fall back to the static snapshot for
+        // offline/cold-start classification.
+        !(
+          selectedModel?.guestAllowed ??
+          isMCPJamGuestAllowedModel(String(selectedModel?.id ?? ""))
+        ));
   const isAuthReady =
     !requiresAuthForChat || guestMode || (isAuthenticated && !!authHeaders);
   // Guest users don't need WorkOS auth — authFetch handles guest bearer tokens

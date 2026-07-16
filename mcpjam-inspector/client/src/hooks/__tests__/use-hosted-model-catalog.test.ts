@@ -1,19 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
-const authState = vi.hoisted(() => ({ isAuthenticated: true }));
-const mockGetAccessToken = vi.hoisted(() => vi.fn());
-
-vi.mock("convex/react", () => ({
-  useConvexAuth: () => ({
-    isAuthenticated: authState.isAuthenticated,
-    isLoading: false,
-  }),
-}));
-
-vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => ({ getAccessToken: mockGetAccessToken }),
-}));
+// The catalog route (`/api/mcp/models`) is a PUBLIC proxy now — the hook no
+// longer reads WorkOS/Convex auth, so no auth mocks are needed.
 
 import {
   providerFromCanonicalId,
@@ -60,9 +49,6 @@ function stubFetchJson(body: unknown, ok = true, status = 200) {
 
 beforeEach(() => {
   resetHostedModelCatalogForTests();
-  authState.isAuthenticated = true;
-  mockGetAccessToken.mockReset();
-  mockGetAccessToken.mockResolvedValue("token-123");
   window.localStorage.clear();
 });
 
@@ -143,34 +129,47 @@ describe("useHostedModelCatalog", () => {
     );
   });
 
-  it("skips the auth-gated fetch for guests and serves the fallback (never empty)", async () => {
-    authState.isAuthenticated = false;
-    const fetchSpy = vi.fn();
-    vi.stubGlobal("fetch", fetchSpy);
+  it("fetches the live catalog for guests too (public route, never empty)", async () => {
+    // No auth: the public route is still fetched and upgrades to live.
+    stubFetchJson({ ok: true, data: [catalogDto("newvendor/model-x", true)] });
 
     const { result } = renderHook(() => useHostedModelCatalog());
 
-    await waitFor(() => expect(result.current.status).toBe("fallback"));
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(result.current.hostedCatalog.length).toBeGreaterThan(0);
+    await waitFor(() => expect(result.current.status).toBe("live"));
+    expect(
+      result.current.hostedCatalog.some(
+        (m) => String(m.id) === "newvendor/model-x"
+      )
+    ).toBe(true);
+    // No Authorization header is sent to the public proxy.
+    const [, init] = vi.mocked(fetch).mock.calls[0] ?? [];
+    expect(
+      (init as RequestInit | undefined)?.headers as
+        | Record<string, string>
+        | undefined
+    ).not.toHaveProperty("Authorization");
   });
 
-  it("refetches the live catalog when a guest signs in (no stale fallback pin)", async () => {
-    // Guest first: resolves to the static fallback and caches it module-wide.
-    authState.isAuthenticated = false;
-    stubFetchJson({ ok: true, data: [catalogDto("newvendor/model-x", false)] });
-
+  it("re-attempts the fetch after an offline fallback (no stale pin)", async () => {
+    // First load offline → fallback, module-cached.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("offline");
+      })
+    );
     const { result, rerender } = renderHook(() => useHostedModelCatalog());
     await waitFor(() => expect(result.current.status).toBe("fallback"));
 
-    // Sign in: the guest fallback must NOT pin — the hook fetches the now
-    // reachable auth-gated catalog and upgrades to live.
-    authState.isAuthenticated = true;
+    // Now online: a `fallback` cache must NOT pin — the hook re-fetches.
+    stubFetchJson({ ok: true, data: [catalogDto("newvendor/model-x", true)] });
     rerender();
 
     await waitFor(() => expect(result.current.status).toBe("live"));
     expect(
-      result.current.hostedCatalog.some((m) => String(m.id) === "newvendor/model-x")
+      result.current.hostedCatalog.some(
+        (m) => String(m.id) === "newvendor/model-x"
+      )
     ).toBe(true);
   });
 });

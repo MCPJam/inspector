@@ -1,6 +1,7 @@
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { isMCPJamProvidedModel, type ModelDefinition } from "@/shared/types";
+import { type ModelDefinition } from "@/shared/types";
+import { isMCPJamProvidedModelMenuItem } from "@/components/chat-v2/shared/model-helpers";
 import type { ProviderTokens } from "@/hooks/use-ai-provider-keys";
 
 interface ModelStepProps {
@@ -61,12 +62,12 @@ export function ModelStep({
         {availableModels
           .filter((model) =>
             modelTab === "mcpjam"
-              ? isMCPJamProvidedModel(model.id)
-              : !isMCPJamProvidedModel(model.id),
+              ? isMCPJamProvidedModelMenuItem(model)
+              : !isMCPJamProvidedModelMenuItem(model),
           )
           .map((model) => {
             const isSelected = selectedModels.some((m) => m.id === model.id);
-            const isJam = isMCPJamProvidedModel(model.id);
+            const isJam = isMCPJamProvidedModelMenuItem(model);
             const needsApiKey =
               !isJam &&
               !hasProviderToken(model.provider as keyof ProviderTokens);

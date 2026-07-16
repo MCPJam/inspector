@@ -1,10 +1,13 @@
 // AUTO-GENERATED — do not edit by hand.
 //
-// The canonical ids of every MCPJam-hosted model, emitted by the backend
-// generator (mcpjam-backend scripts/generate-model-catalog.ts). This snapshot
-// permanently seeds the server billing catalog cache and the client picker
-// fallback, so a cold start during a backend-catalog outage still classifies
-// hosted models as source:"mcpjam" instead of silently mis-billing as BYOK.
+// The canonical ids of every MCPJam-hosted model, emitted by
+// scripts/generate-hosted-model-ids.mjs from the backend's public catalog
+// (`GET /v1/models`). This snapshot is the offline/cold-start FLOOR for the
+// server billing catalog cache and the client picker fallback, so a cold
+// start during a backend-catalog outage still classifies hosted models as
+// source:"mcpjam" instead of silently mis-billing as BYOK. The live catalog
+// fetch is authoritative at runtime; regenerate this after a backend deploy
+// widens the catalog.
 
 export const HOSTED_MODEL_IDS = [
   "amazon/nova-2-lite",
