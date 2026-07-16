@@ -392,6 +392,20 @@ describe("ElicitationDialog", () => {
       expect(baseElement.textContent).toContain("is requesting information");
     });
 
+    it("falls back to the serverId when the name is blank", () => {
+      const { baseElement } = render(
+        <ElicitationDialog
+          elicitationRequest={request({
+            serverId: "srv_abc123",
+            serverName: "   ",
+          })}
+          onResponse={onResponse}
+        />
+      );
+      expect(screen.getAllByText("srv_abc123")).toHaveLength(1);
+      expect(baseElement.textContent).toContain("is requesting information");
+    });
+
     it("uses the generic header when the caller supplies no identity", () => {
       const { baseElement } = render(
         <ElicitationDialog

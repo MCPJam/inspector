@@ -13,6 +13,8 @@
  * hosted/chat dialogs later).
  */
 
+import { RE2JS } from "re2js";
+
 export type ElicitationFieldKind =
   | "string"
   | "number"
@@ -65,27 +67,8 @@ const FORMATS: readonly ElicitationFieldFormat[] = [
   "date-time",
 ];
 
-/**
- * We deliberately DO NOT execute a server-supplied `pattern`.
- *
- * `pattern` comes from the MCP server and `RegExp.test` runs unbounded on the
- * UI thread with a backtracking engine, so a hostile (or merely careless)
- * pattern freezes the tab. There is no safe subset to allow: an earlier cut
- * tried rejecting "nested quantifier" shapes like `(a+)+`, and it was trivially
- * bypassed — `a?a?a?…aaa` carries none of those markers and still took ~150ms
- * at 50 characters, doubling per extra character. Bounding input doesn't help
- * either, since `maxLength` is server-supplied too.
- *
- * Heuristics here are a losing game; the real fix is a non-backtracking engine
- * (RE2/`node-re2`), which is a dependency decision beyond this change.
- *
- * Skipping is the safe failure: the MCP server re-validates its own schema, so
- * an unmatched value round-trips and is rejected there instead of being caught
- * early. The pattern is still shown to the user as a hint (see `patternHint`),
- * so they aren't flying blind. Freezing the renderer is NOT a safe failure.
- */
+/** Patterns are shown verbatim and validated with RE2's linear-time engine. */
 export function patternHint(field: ElicitationField): string | undefined {
-  // Displayed verbatim as text — never compiled, never executed.
   return field.pattern ? `Must match: ${field.pattern}` : undefined;
 }
 
@@ -391,9 +374,20 @@ function validateString(
       field.maxLength === 1 ? "" : "s"
     }`;
   }
-  // `pattern` is intentionally NOT enforced here — see the note above
-  // `patternHint`. Running a server-chosen regex on the UI thread lets any
-  // connected server hang the tab; the server rejects a bad value anyway.
+  if (field.pattern) {
+    try {
+      // RE2JS uses a non-backtracking DFA, so server-controlled patterns cannot
+      // freeze the renderer. `test` intentionally mirrors RegExp.test's
+      // unanchored semantics; schemas that need a full match include ^...$.
+      if (!RE2JS.compile(field.pattern).test(str)) {
+        return `${label} does not match the required pattern`;
+      }
+    } catch {
+      // RE2 deliberately rejects backreferences/lookarounds and malformed
+      // syntax. Do not silently accept content we could not validate.
+      return `${label} uses a pattern this client cannot safely validate`;
+    }
+  }
   switch (field.format) {
     case "email":
       return EMAIL_RE.test(str)

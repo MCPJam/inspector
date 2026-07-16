@@ -399,7 +399,7 @@ function RequestingServer({
   elicitationRequest: DialogElicitation | null;
 }) {
   const { serverId, serverName } = elicitationRequest ?? {};
-  const displayName = serverName ?? serverId;
+  const displayName = serverName?.trim() || serverId;
 
   if (!displayName) return <>Elicitation Request</>;
 

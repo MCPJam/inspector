@@ -179,6 +179,7 @@
     "posthog-js": "^1.310.0",
     "posthog-node": "^5.9.2",
     "radix-ui": "^1.4.2",
+    "re2js": "^2.8.6",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-force-graph-2d": "^1.29.1",

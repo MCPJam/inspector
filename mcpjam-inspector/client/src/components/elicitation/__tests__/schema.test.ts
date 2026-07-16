@@ -253,14 +253,14 @@ describe("validateField", () => {
     expect(validateField(f, "abc")).toBeNull();
   });
 
-  it("does not enforce pattern client-side at all", () => {
-    // Deliberate: running a server-chosen regex on the UI thread is a hang
-    // vector with no safe subset (see the note on `patternHint`). A mismatched
-    // value round-trips and the MCP server rejects it; the user still sees the
-    // pattern as a hint. An un-compilable pattern is likewise a non-event.
-    expect(validateField(field({ pattern: "^ab" }), "xy")).toBeNull();
+  it("enforces patterns with a non-backtracking engine", () => {
+    expect(validateField(field({ pattern: "^ab" }), "xy")).toBe(
+      "f does not match the required pattern",
+    );
     expect(validateField(field({ pattern: "^ab" }), "abc")).toBeNull();
-    expect(validateField(field({ pattern: "([" }), "anything")).toBeNull();
+    expect(validateField(field({ pattern: "([" }), "anything")).toBe(
+      "f uses a pattern this client cannot safely validate",
+    );
   });
 
   it("enforces formats", () => {
@@ -472,11 +472,11 @@ describe("buildElicitationContent", () => {
 
 
 describe("pattern handling", () => {
-  it("never executes a server-supplied pattern, however catastrophic", () => {
+  it("validates a catastrophic backtracking pattern in bounded time", () => {
     // An earlier cut tried to allow "safe-looking" patterns. It was bypassable:
     // `a?a?a?...aaa` has no nested-quantifier markers and still took ~150ms at
-    // 50 chars, doubling per character. There is no safe subset — so we simply
-    // don't run them. This test is a clock, not a shape assertion.
+    // 50 chars, doubling per character in JavaScript's RegExp engine. RE2's DFA
+    // remains linear. This test is a clock as well as a result assertion.
     const evil = "^" + "a?".repeat(60) + "a".repeat(60) + "$";
     const field = {
       name: "x",
@@ -489,10 +489,9 @@ describe("pattern handling", () => {
     const result = validateField(field, "a".repeat(55) + "X");
     const elapsed = Date.now() - started;
 
-    // Would be seconds if we compiled and ran it.
+    // Would be seconds in a backtracking engine.
     expect(elapsed).toBeLessThan(50);
-    // And it must not fabricate a failure either — the server validates.
-    expect(result).toBeNull();
+    expect(result).toBe("x does not match the required pattern");
   });
 
   it("surfaces the pattern to the user as a hint instead", () => {
