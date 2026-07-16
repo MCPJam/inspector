@@ -112,9 +112,17 @@ authorization server:
 
 - **Pre-registered client:** Register MCPJam in your authorization server first,
   then enter the client ID and optional client secret it gives you.
-- **Client metadata URL (CIMD):** MCPJam uses its hosted client metadata URL as
-  the client ID, so no client credentials are required. Your authorization
-  server must advertise CIMD support.
+- **Client metadata URL (CIMD):** MCPJam uses a client metadata URL as the
+  client ID. Your authorization server must advertise CIMD support. When running
+  the local inspector, a **Client authentication** control appears with two
+  options:
+  - **Public (no client auth):** MCPJam presents its hosted metadata URL as the
+    client ID with no client authentication. This is the default.
+  - **Confidential (private_key_jwt):** The local inspector holds a client key
+    and signs a `client_assertion`. The `client_id` is a reflector document
+    publishing the matching public key. Use this when your authorization server
+    requires a confidential client. The private key never leaves the local
+    inspector process.
 - **Open dynamic registration (DCR):** MCPJam registers a client during the
   test, so no client credentials are required beforehand. Your authorization
   server must provide an open registration endpoint; protected registration
