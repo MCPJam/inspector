@@ -140,6 +140,12 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         additionalProperties: false,
       },
       readOnly: false,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       mayNavigate: true,
       execute: async (args) => {
         const target = asOptionalString(args.target);
@@ -160,6 +166,12 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         additionalProperties: false,
       },
       readOnly: false,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       execute: async (args) => {
         const serverName = asOptionalString(args.serverName);
         if (!serverName) {
@@ -183,6 +195,12 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         additionalProperties: false,
       },
       readOnly: false,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       mayNavigate: true,
       execute: async (args) =>
         fromActionResult(
@@ -210,6 +228,14 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         additionalProperties: false,
       },
       readOnly: false,
+      // Prefills a form the user still has to run: mutates UI state, but
+      // nothing about it is destructive and it never leaves the browser.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       // Auto-opens the playground when its handler isn't mounted — from a
       // non-playground route that is a navigation.
       mayNavigate: true,
@@ -254,6 +280,17 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         additionalProperties: false,
       },
       readOnly: false,
+      // The only UI tool with effects outside the browser: it runs an
+      // arbitrary third-party MCP tool whose own destructiveness is unknown
+      // here. `destructiveHint: true` is what makes it confirm even in the
+      // default (non-strict) approval mode — the pessimistic read is the
+      // correct one until per-call target-annotation pass-through exists.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
       // Auto-opens the playground when its handler isn't mounted — from a
       // non-playground route that is a navigation.
       mayNavigate: true,
@@ -304,6 +341,12 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         additionalProperties: false,
       },
       readOnly: false,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       // Auto-opens the playground when its handler isn't mounted — from a
       // non-playground route that is a navigation.
       mayNavigate: true,
@@ -347,6 +390,15 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         additionalProperties: false,
       },
       readOnly: true,
+      // The only read-only tool in the catalog: never gates, in either
+      // approval mode. That exemption is only sound because `execute` below
+      // refuses rather than auto-opening the playground.
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       execute: async () => {
         // Honor readOnly: a snapshot must never navigate or mount the
         // playground. Unlike the mutating tools, it does NOT auto-open via

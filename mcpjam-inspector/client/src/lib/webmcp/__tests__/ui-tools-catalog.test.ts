@@ -59,6 +59,39 @@ describe("buildUiToolsCatalog", () => {
     expect(getTool("ui_snapshot_app").readOnly).toBe(true);
   });
 
+  it("every tool annotates readOnly/destructive/openWorld explicitly", () => {
+    // An absent `destructiveHint` reads as DESTRUCTIVE, so an unannotated
+    // tool would gate on every call rather than execute silently — safe, but
+    // wrong. Curated entries state their policy instead of inheriting it.
+    for (const tool of buildUiToolsCatalog()) {
+      const annotations = tool.annotations;
+      expect(annotations, `${tool.name} must annotate`).toBeDefined();
+      expect(typeof annotations?.readOnlyHint).toBe("boolean");
+      expect(typeof annotations?.destructiveHint).toBe("boolean");
+      expect(typeof annotations?.openWorldHint).toBe("boolean");
+      // The wire carries both; the validator 400s if they disagree.
+      expect(annotations?.readOnlyHint).toBe(tool.readOnly);
+    }
+  });
+
+  it("gates exactly ui_execute_tool as destructive", () => {
+    // It runs an arbitrary third-party MCP tool, so it confirms even with the
+    // approval toggle off. Everything else is additive: the user watches it
+    // happen in their own app, and a confirmation buys nothing.
+    const destructive = buildUiToolsCatalog()
+      .filter((t) => t.annotations?.destructiveHint === true)
+      .map((t) => t.name);
+    expect(destructive).toEqual(["ui_execute_tool"]);
+  });
+
+  it("marks only ui_execute_tool as open-world", () => {
+    // The one tool whose effects escape the browser.
+    const openWorld = buildUiToolsCatalog()
+      .filter((t) => t.annotations?.openWorldHint === true)
+      .map((t) => t.name);
+    expect(openWorld).toEqual(["ui_execute_tool"]);
+  });
+
   it("ui_navigate dispatches valid targets and errors on missing/unknown ones", async () => {
     const navigate = getTool("ui_navigate");
 

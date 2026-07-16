@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyUiToolApprovals,
   isAppToolAlias,
   isClientFulfilledToolName,
   isUiToolName,
@@ -36,7 +37,7 @@ describe("client-fulfilled tool names", () => {
     expect(isClientFulfilledToolName("ui-navigate")).toBe(false);
   });
 
-  it("uiToolCallNeedsApproval gates mutating tools only when the flag is on", () => {
+  it("uiToolCallNeedsApproval gates mutating tools only when the flag is on (legacy, no annotations)", () => {
     // The truth table both the server gate and the client defer read.
     expect(
       uiToolCallNeedsApproval({ readOnly: false, requireToolApproval: true })
@@ -50,5 +51,167 @@ describe("client-fulfilled tool names", () => {
     expect(
       uiToolCallNeedsApproval({ readOnly: true, requireToolApproval: false })
     ).toBe(false);
+  });
+
+  describe("uiToolCallNeedsApproval with MCP annotations", () => {
+    const additive = { readOnlyHint: false, destructiveHint: false };
+    const destructive = { readOnlyHint: false, destructiveHint: true };
+    const readOnly = { readOnlyHint: true, destructiveHint: false };
+
+    it("gates destructive tools even when the flag is OFF", () => {
+      // The whole point of the annotation work: `requireToolApproval` is off
+      // by default, and a destructive action must still confirm.
+      expect(
+        uiToolCallNeedsApproval({
+          readOnly: false,
+          annotations: destructive,
+          requireToolApproval: false,
+        })
+      ).toBe(true);
+    });
+
+    it("does not gate additive tools when the flag is OFF", () => {
+      expect(
+        uiToolCallNeedsApproval({
+          readOnly: false,
+          annotations: additive,
+          requireToolApproval: false,
+        })
+      ).toBe(false);
+    });
+
+    it("gates every mutating tool when the flag is ON", () => {
+      for (const annotations of [additive, destructive]) {
+        expect(
+          uiToolCallNeedsApproval({
+            readOnly: false,
+            annotations,
+            requireToolApproval: true,
+          })
+        ).toBe(true);
+      }
+    });
+
+    it("never gates read-only tools, in either mode", () => {
+      for (const requireToolApproval of [true, false]) {
+        expect(
+          uiToolCallNeedsApproval({
+            readOnly: true,
+            annotations: readOnly,
+            requireToolApproval,
+          })
+        ).toBe(false);
+      }
+    });
+
+    it("treats an absent destructiveHint as destructive (protocol default)", () => {
+      // A tool added without annotating destructiveHint must fail SAFE.
+      expect(
+        uiToolCallNeedsApproval({
+          readOnly: false,
+          annotations: { readOnlyHint: false },
+          requireToolApproval: false,
+        })
+      ).toBe(true);
+      expect(
+        uiToolCallNeedsApproval({
+          readOnly: false,
+          annotations: {},
+          requireToolApproval: false,
+        })
+      ).toBe(true);
+    });
+
+    it("ignores non-approval hints", () => {
+      expect(
+        uiToolCallNeedsApproval({
+          readOnly: false,
+          annotations: {
+            ...additive,
+            idempotentHint: false,
+            openWorldHint: true,
+          },
+          requireToolApproval: false,
+        })
+      ).toBe(false);
+    });
+  });
+
+  describe("classifyUiToolApprovals", () => {
+    const entries = [
+      {
+        name: "ui_snapshot_app",
+        readOnly: true,
+        annotations: { readOnlyHint: true, destructiveHint: false },
+      },
+      {
+        name: "ui_navigate",
+        readOnly: false,
+        annotations: { readOnlyHint: false, destructiveHint: false },
+      },
+      {
+        name: "ui_execute_tool",
+        readOnly: false,
+        annotations: { readOnlyHint: false, destructiveHint: true },
+      },
+    ];
+
+    it("splits destructive from free in default mode", () => {
+      const { requiredNames, freeNames } = classifyUiToolApprovals(
+        entries,
+        false
+      );
+      expect([...requiredNames]).toEqual(["ui_execute_tool"]);
+      expect([...freeNames].sort()).toEqual(["ui_navigate", "ui_snapshot_app"]);
+    });
+
+    it("moves every mutating tool to required in strict mode, keeping read-only free", () => {
+      const { requiredNames, freeNames } = classifyUiToolApprovals(
+        entries,
+        true
+      );
+      expect([...requiredNames].sort()).toEqual([
+        "ui_execute_tool",
+        "ui_navigate",
+      ]);
+      // Strict mode still must not pause a snapshot — this is why the engine
+      // needs `freeNames` and not just "absent from requiredNames".
+      expect([...freeNames]).toEqual(["ui_snapshot_app"]);
+    });
+
+    it("places every entry in exactly one set", () => {
+      for (const strict of [true, false]) {
+        const { requiredNames, freeNames } = classifyUiToolApprovals(
+          entries,
+          strict
+        );
+        expect(requiredNames.size + freeNames.size).toBe(entries.length);
+        for (const name of requiredNames) {
+          expect(freeNames.has(name)).toBe(false);
+        }
+      }
+    });
+
+    it("handles an absent snapshot", () => {
+      const { requiredNames, freeNames } = classifyUiToolApprovals(
+        undefined,
+        false
+      );
+      expect(requiredNames.size).toBe(0);
+      expect(freeNames.size).toBe(0);
+    });
+
+    it("classifies legacy entries (no annotations) by the flag alone", () => {
+      const legacy = [
+        { name: "ui_navigate", readOnly: false },
+        { name: "ui_snapshot_app", readOnly: true },
+      ];
+      expect([...classifyUiToolApprovals(legacy, false).requiredNames]).toEqual(
+        []
+      );
+      expect([...classifyUiToolApprovals(legacy, true).requiredNames]).toEqual([
+        "ui_navigate",
+      ]);
+    });
   });
 });

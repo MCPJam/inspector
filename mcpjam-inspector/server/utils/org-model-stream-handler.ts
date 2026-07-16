@@ -37,6 +37,10 @@ import {
   OrgProviderConfigError,
   type OrgProviderResolvedConfig,
 } from "@mcpjam/sdk/model-factory";
+import {
+  isClientFulfilledToolName,
+  type UiToolApprovalClassification,
+} from "@/shared/client-fulfilled-tools";
 import type { PersistedTurnTrace } from "./chat-ingestion";
 import { handleMCPJamFreeChatModel } from "./mcpjam-stream-handler.js";
 import { logger } from "./logger.js";
@@ -79,8 +83,8 @@ export interface OrgModelHandlerOptions {
   selectedServers?: string[];
   serverIds?: string[];
   requireToolApproval?: boolean;
-  /** Read-only ui_* names exempt from the approval gate (see MCPJam loop). */
-  approvalFreeUiToolNames?: ReadonlySet<string>;
+  /** Per-tool ui_* approval policy (see `classifyUiToolApprovals`). */
+  uiToolApprovals?: UiToolApprovalClassification;
   /** Host/client policy for eligible MCP tool-result content/resources. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /**
@@ -297,6 +301,31 @@ export interface OrgLocalModelHandlerOptions {
   synthesisRunId?: string;
 }
 
+/**
+ * Whether this local-runtime turn hits the approval gap the handler cannot
+ * serve, and must fail loudly instead.
+ *
+ * The gap is SERVER-EXECUTED tools: approving one resumes the turn by running
+ * it here, and that resume path has never been supported (or tested) on the
+ * local org runtime.
+ *
+ * Client-fulfilled tools (`ui_*`, `app_*`) don't need it. Their approval is
+ * emitted natively by `streamText` from the per-tool `needsApproval` that
+ * `buildUiTools` set, and an approval is resolved by the BROWSER executing the
+ * tool and supplying the result via `addToolOutput` — the engine only has to
+ * accept a history that already contains the output. That is the same path
+ * route 4 (personal BYOK) drives through this very engine today, so refusing
+ * it here would break the UI-only agent surface for local-runtime orgs while
+ * protecting nothing.
+ */
+function hasUnsupportedLocalApprovalGate(
+  tools: ToolSet,
+  requireToolApproval: boolean | undefined
+): boolean {
+  if (!requireToolApproval) return false;
+  return Object.keys(tools).some((name) => !isClientFulfilledToolName(name));
+}
+
 export function handleLocalOrgChatModel(
   options: OrgLocalModelHandlerOptions
 ): Response {
@@ -314,7 +343,7 @@ export function handleLocalOrgChatModel(
     onLiveTextDelta,
   } = options;
 
-  if (requireToolApproval && Object.keys(tools).length > 0) {
+  if (hasUnsupportedLocalApprovalGate(tools, requireToolApproval)) {
     const stream = createUIMessageStream({
       onError: (error) => formatLocalStreamError(error),
       onFinish: async () => {
@@ -606,7 +635,7 @@ export async function runLocalOrgChatTurnHeadless(
   const { provider, modelId, messages, systemPrompt, temperature, tools } =
     options;
 
-  if (options.requireToolApproval && Object.keys(tools).length > 0) {
+  if (hasUnsupportedLocalApprovalGate(tools, options.requireToolApproval)) {
     throw new Error(
       "Tool approval is not supported for local-runtime org providers yet. Disable tool approval or switch this provider to cloud runtime."
     );
@@ -804,7 +833,7 @@ export async function handleHostedOrgChatModel(
     mcpClientManager: options.mcpClientManager,
     selectedServers: options.selectedServers,
     requireToolApproval: options.requireToolApproval,
-    approvalFreeUiToolNames: options.approvalFreeUiToolNames,
+    uiToolApprovals: options.uiToolApprovals,
     modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
     ...(options.approvalMode !== undefined
       ? { approvalMode: options.approvalMode }

@@ -85,7 +85,10 @@ export function mirrorUiToolToNative(
           properties: {},
           additionalProperties: false,
         },
-        annotations: { readOnlyHint: def.readOnly },
+        // MCP `ToolAnnotations`, forwarded as-is. `readOnlyHint` falls back to
+        // the legacy flag for a definition that predates annotations; the
+        // registry rejects a definition where the two disagree.
+        annotations: { readOnlyHint: def.readOnly, ...def.annotations },
         execute: async (args: unknown) => {
           const input =
             args && typeof args === "object"

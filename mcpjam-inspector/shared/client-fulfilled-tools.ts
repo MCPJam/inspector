@@ -44,21 +44,101 @@ export function isClientFulfilledToolName(name: string): boolean {
 }
 
 /**
+ * MCP tool annotations, as defined by the protocol's `ToolAnnotations`.
+ *
+ * Only the hints MCPJam's first-party `ui_*` catalog sets are modelled. The
+ * protocol's defaults are deliberately pessimistic — an absent
+ * `destructiveHint` means "assume destructive" — which is what makes an
+ * unannotated future tool fail safe rather than execute silently.
+ *
+ * TRUST BOUNDARY: annotations are hints, and the MCP spec requires clients to
+ * treat them as untrusted unless the server is verified. This type — and the
+ * approval policy below — apply ONLY to MCPJam's own curated `ui_*` catalog
+ * and its server-validated snapshot. Never derive approval policy from a
+ * third-party MCP server's annotations.
+ */
+export interface UiToolAnnotations {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+}
+
+/**
  * Whether a UI tool call must pause for the user's approval this turn.
  *
  * Single source of truth for BOTH sides of the approval handshake: the
- * server (per-tool `needsApproval` in `buildUiTools`, and the free-model
- * loop's approval gate) and the client (the executor's defer-before-execute
- * gate). They must agree because the client decides "defer" when the
- * tool-call chunk arrives — BEFORE the server's approval-request chunk
- * reaches it.
+ * server (per-tool `needsApproval` in `buildUiTools`, and every engine's
+ * approval gate via `classifyUiToolApprovals`) and the client (the
+ * executor's defer-before-execute gate). They must agree because the client
+ * decides "defer" when the tool-call chunk arrives — BEFORE the server's
+ * approval-request chunk reaches it. If they disagree, turns strand.
  *
- * Read-only tools (`ui_snapshot_app`) never gate: they observe, so pausing
- * them buys no safety and costs a click.
+ * Two modes, keyed off the turn's `requireToolApproval` flag:
+ *   - strict (flag on)  — every mutating UI tool gates.
+ *   - default (flag off) — only DESTRUCTIVE UI tools gate. Actions the user
+ *     watches happen in their own app don't need a confirmation click; the
+ *     ones they can't undo by looking at the screen do.
+ *
+ * Read-only tools (`ui_snapshot_app`) never gate in either mode: they
+ * observe, so pausing them buys no safety and costs a click.
+ *
+ * Entries WITHOUT `annotations` keep the legacy `readOnly`-only semantics —
+ * an old client's snapshot must not suddenly start gating differently.
  */
 export function uiToolCallNeedsApproval(opts: {
   readOnly: boolean;
+  annotations?: UiToolAnnotations;
   requireToolApproval: boolean;
 }): boolean {
-  return opts.requireToolApproval && !opts.readOnly;
+  const { annotations, requireToolApproval } = opts;
+  if (!annotations) {
+    return requireToolApproval && !opts.readOnly;
+  }
+  if (annotations.readOnlyHint === true) return false;
+  if (requireToolApproval) return true;
+  // Protocol default: absent destructiveHint means destructive.
+  return annotations.destructiveHint !== false;
+}
+
+/**
+ * Per-turn approval classification for the UI tools a turn advertised.
+ *
+ * Every validated entry lands in exactly one set, so an engine can answer
+ * "does this UI tool call need approval?" without re-deriving policy — and
+ * without the `requireToolApproval && …` shape that silently drops
+ * destructive gating when the flag is off (the flag is off by default).
+ *
+ * `freeNames` is NOT redundant with "not in requiredNames": engines must
+ * distinguish a UI tool that is deliberately approval-free from a name they
+ * don't know about (a real MCP tool), which still follows the flag.
+ */
+export interface UiToolApprovalClassification {
+  requiredNames: ReadonlySet<string>;
+  freeNames: ReadonlySet<string>;
+}
+
+export function classifyUiToolApprovals(
+  entries:
+    | ReadonlyArray<{
+        name: string;
+        readOnly: boolean;
+        annotations?: UiToolAnnotations;
+      }>
+    | undefined,
+  requireToolApproval: boolean,
+): UiToolApprovalClassification {
+  const requiredNames = new Set<string>();
+  const freeNames = new Set<string>();
+  for (const entry of entries ?? []) {
+    const target = uiToolCallNeedsApproval({
+      readOnly: entry.readOnly,
+      annotations: entry.annotations,
+      requireToolApproval,
+    })
+      ? requiredNames
+      : freeNames;
+    target.add(entry.name);
+  }
+  return { requiredNames, freeNames };
 }

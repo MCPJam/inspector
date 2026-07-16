@@ -819,6 +819,73 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
     );
   });
 
+  describe("annotations", () => {
+    it("passes a valid annotations object through", () => {
+      const annotations = {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      };
+      const [entry] = validateUiToolEntries([
+        { ...validTool, name: "ui_execute_tool", annotations },
+      ]);
+      expect(entry.annotations).toEqual(annotations);
+    });
+
+    it("omits annotations when the client sent none (legacy client)", () => {
+      const [entry] = validateUiToolEntries([validTool]);
+      expect(entry.annotations).toBeUndefined();
+    });
+
+    it("rejects a non-object annotations value", () => {
+      for (const annotations of [null, "readOnly", 1, []]) {
+        expect(() =>
+          validateUiToolEntries([{ ...validTool, annotations }]),
+        ).toThrow(/annotations must be an object/);
+      }
+    });
+
+    it("rejects non-boolean hint values", () => {
+      expect(() =>
+        validateUiToolEntries([
+          { ...validTool, annotations: { destructiveHint: "yes" } },
+        ]),
+      ).toThrow(/annotations.destructiveHint must be a boolean/);
+    });
+
+    it("rejects unknown hint keys rather than silently dropping them", () => {
+      // A typo'd hint must not pass as "absent" — for destructiveHint that
+      // would flip the entry from destructive to additive.
+      expect(() =>
+        validateUiToolEntries([
+          { ...validTool, annotations: { destructiveHnit: true } },
+        ]),
+      ).toThrow(/unknown key 'destructiveHnit'/);
+    });
+
+    it("rejects a readOnlyHint that contradicts readOnly", () => {
+      expect(() =>
+        validateUiToolEntries([
+          { ...validTool, readOnly: true, annotations: { readOnlyHint: false } },
+        ]),
+      ).toThrow(/readOnlyHint must equal readOnly/);
+      expect(() =>
+        validateUiToolEntries([
+          { ...validTool, readOnly: false, annotations: { readOnlyHint: true } },
+        ]),
+      ).toThrow(/readOnlyHint must equal readOnly/);
+    });
+
+    it("accepts an agreeing readOnlyHint", () => {
+      expect(() =>
+        validateUiToolEntries([
+          { ...validTool, readOnly: false, annotations: { readOnlyHint: false } },
+        ]),
+      ).not.toThrow();
+    });
+  });
+
   it("rejects names outside the reserved ui_ shape", () => {
     for (const name of [
       "navigate",
@@ -1078,13 +1145,19 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
     ).toBeFalsy();
   });
 
-  it("adds the approval sentence to the UI prompt section iff the flag is on", () => {
+  it("describes the approval policy that actually applies in each mode", () => {
+    // Both modes gate something, so both get a sentence — the prompt must not
+    // promise "every mutating action pauses" in the default mode, where only
+    // destructive ones do.
     const withFlag = buildUiToolsSystemPrompt(uiTools, {
       requireToolApproval: true,
     });
-    expect(withFlag).toContain("approval");
+    expect(withFlag).toContain("Every mutating `ui_*` action pauses");
     expect(withFlag).toContain("denial is final");
+
     const withoutFlag = buildUiToolsSystemPrompt(uiTools);
-    expect(withoutFlag).not.toContain("denial is final");
+    expect(withoutFlag).toContain("Destructive `ui_*` actions pause");
+    expect(withoutFlag).toContain("other actions apply immediately");
+    expect(withoutFlag).not.toContain("Every mutating `ui_*` action pauses");
   });
 });

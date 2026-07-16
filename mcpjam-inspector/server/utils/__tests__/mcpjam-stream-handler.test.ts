@@ -3,6 +3,7 @@ import {
   executeToolCallsFromMessages,
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
+import { classifyUiToolApprovals } from "@/shared/client-fulfilled-tools";
 import { handleMCPJamFreeChatModel } from "../mcpjam-stream-handler";
 import { serializeToolsForConvex } from "../mcpjam-tool-helpers";
 import { createHostedRpcLogCollector } from "../../routes/web/hosted-rpc-logs.js";
@@ -1594,7 +1595,21 @@ describe("mcpjam-stream-handler", () => {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: true,
-        approvalFreeUiToolNames: new Set(["ui_snapshot_app"]),
+        uiToolApprovals: classifyUiToolApprovals(
+          [
+            {
+              name: "ui_snapshot_app",
+              readOnly: true,
+              annotations: { readOnlyHint: true, destructiveHint: false },
+            },
+            {
+              name: "ui_navigate",
+              readOnly: false,
+              annotations: { readOnlyHint: false, destructiveHint: false },
+            },
+          ],
+          true
+        ),
       });
 
       await lastExecution;
@@ -1606,6 +1621,110 @@ describe("mcpjam-stream-handler", () => {
       // flows straight through to client fulfillment with no pill.
       expect(approvalRequests).toHaveLength(1);
       expect(approvalRequests[0]).toMatchObject({ toolCallId: "call-ui-2" });
+    });
+
+    it("emits an approval request for a DESTRUCTIVE ui_* tool when the approval flag is OFF", async () => {
+      // The regression this classification exists to prevent: the gate used to
+      // read `requireToolApproval && !isApprovalFree(name)`, so with the flag
+      // off — the default on every agent surface — a destructive
+      // client-fulfilled call got no pill, and the client's orphaned-defer
+      // fallback then executed it unconfirmed.
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          {
+            type: "tool-input-available",
+            toolCallId: "call-ui-exec",
+            toolName: "ui_execute_tool",
+            input: { toolName: "delete_everything" },
+          },
+          {
+            type: "tool-input-available",
+            toolCallId: "call-ui-nav",
+            toolName: "ui_navigate",
+            input: { target: "servers" },
+          },
+          { type: "finish", finishReason: "stop" },
+        ])
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "run it" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: { ui_execute_tool: {}, ui_navigate: {} } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: false,
+        uiToolApprovals: classifyUiToolApprovals(
+          [
+            {
+              name: "ui_execute_tool",
+              readOnly: false,
+              annotations: { readOnlyHint: false, destructiveHint: true },
+            },
+            {
+              name: "ui_navigate",
+              readOnly: false,
+              annotations: { readOnlyHint: false, destructiveHint: false },
+            },
+          ],
+          false
+        ),
+      });
+
+      await lastExecution;
+
+      const approvalRequests = writtenChunks.filter(
+        (chunk: any) => chunk.type === "tool-approval-request"
+      );
+      expect(approvalRequests).toHaveLength(1);
+      expect(approvalRequests[0]).toMatchObject({ toolCallId: "call-ui-exec" });
+    });
+
+    it("does not emit approval requests for real MCP tools when the flag is OFF", async () => {
+      // The UI classification must not leak into real-tool policy: unknown
+      // names still follow `requireToolApproval`.
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          {
+            type: "tool-input-available",
+            toolCallId: "call-real",
+            toolName: "some_mcp_tool",
+            input: {},
+          },
+          { type: "finish", finishReason: "stop" },
+        ])
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "go" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: { some_mcp_tool: {} } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: false,
+        uiToolApprovals: classifyUiToolApprovals(
+          [
+            {
+              name: "ui_execute_tool",
+              readOnly: false,
+              annotations: { readOnlyHint: false, destructiveHint: true },
+            },
+          ],
+          false
+        ),
+      });
+
+      await lastExecution;
+
+      expect(
+        writtenChunks.filter(
+          (chunk: any) => chunk.type === "tool-approval-request"
+        )
+      ).toHaveLength(0);
     });
 
     it("read-only ui_* calls skip the approval pause classifier (no drain filter)", async () => {
@@ -1634,14 +1753,24 @@ describe("mcpjam-stream-handler", () => {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: true,
-        approvalFreeUiToolNames: new Set(["ui_snapshot_app"]),
+        uiToolApprovals: classifyUiToolApprovals(
+          [
+            {
+              name: "ui_snapshot_app",
+              readOnly: true,
+              annotations: { readOnlyHint: true, destructiveHint: false },
+            },
+          ],
+          true
+        ),
       });
 
       await lastExecution;
 
-      // With the exemption, the step has no unresolved REAL tool call, so
-      // the approval branch (whose executor call carries `filterToolName`)
-      // is skipped — the normal client-fulfilled execution path runs.
+      // With the exemption, the step has no unresolved approval-required tool
+      // call, so the approval branch (whose executor call carries
+      // `filterToolName`) is skipped — the normal client-fulfilled execution
+      // path runs.
       const calls = vi.mocked(executeToolCallsFromMessages).mock.calls;
       expect(calls.length).toBeGreaterThan(0);
       for (const call of calls) {
