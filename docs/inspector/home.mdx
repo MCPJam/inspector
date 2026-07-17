@@ -82,16 +82,16 @@ The MCPJam Agent is a persistent chat panel that lets you ask questions about do
 
 ### What the agent can do
 
-The agent has access to your workspace data and can answer questions or take actions across several areas:
+The agent acts by driving the inspector UI directly — every action it takes is visible on your screen as it happens. It uses the documentation and web search to answer knowledge questions, and navigates or operates the app on your behalf through UI actions.
 
-| Area | Example prompts |
-|------|----------------|
-| **Projects** | "List my projects", "What projects do I have?" |
-| **MCP servers** | "List servers in my project", "Diagnose my weather server", "What tools does my server expose?" |
-| **Eval suites** | "List my eval suites", "Run my addition eval suite", "Show me the results of my last eval run" |
-| **Chatboxes** | "List my chatboxes", "Show me chatbox details", "List chat sessions" |
+| Capability | What it does |
+|------------|-------------|
+| **Navigate** | Opens tabs, pages, and panels in the inspector |
+| **Playground** | Opens the playground, selects tools, and prefills or runs tool calls |
+| **App snapshot** | Reads the current state of the UI to observe before acting |
+| **Documentation & web search** | Answers questions about MCPJam features and MCP concepts |
 
-Operations that connect to one of your saved MCP servers (such as calling a tool or reading a resource) respect your project's **Require tool approval** setting. Pure platform reads — listing projects, eval suites, chatboxes, and sessions — never require approval.
+Actions that mutate the UI (such as running a tool call) pause for your explicit approval before they run when the **Tool approval** toggle is on. Destructive actions — those that can't be undone by looking at the screen — always pause for approval regardless of the toggle setting.
 
 ### Using the panel
 
@@ -102,7 +102,12 @@ Operations that connect to one of your saved MCP servers (such as calling a tool
 
 ### Tool approval
 
-The composer footer includes a **Tool approval** toggle (shield icon). When enabled, the agent pauses before each tool call and shows an Approve / Deny pill so you can review the action before it runs. Denying a call is final — the agent will not retry it automatically. The preference is saved to your browser's local storage and shared across the Home takeover and the side panel.
+The composer footer includes a **Tool approval** toggle (shield icon).
+
+- **Toggle off (default)** — Additive UI actions apply immediately. Destructive actions (those that can't be undone by looking at the screen) still pause for approval.
+- **Toggle on (strict)** — Every mutating UI action pauses before it runs.
+
+When the agent pauses, an **Approve / Deny** pill appears in the chat. Denying a call is final — the agent will not retry it automatically. The preference is saved to your browser's local storage and shared across the Home takeover and the side panel.
 
 ### Widget rendering
 
