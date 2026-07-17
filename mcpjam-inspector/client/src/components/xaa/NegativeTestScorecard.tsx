@@ -315,7 +315,7 @@ export function NegativeTestScorecard({
                       aria-label="I own this auth server and want to run before a passing flow"
                     />
                     <span>
-                      I&apos;m building this auth server — let me run the tests
+                      I&apos;m building this auth server, let me run the tests
                       before a passing happy-path run. Use this only for a
                       server you own and are developing.
                     </span>
