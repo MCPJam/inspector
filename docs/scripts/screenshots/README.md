@@ -10,6 +10,9 @@ screenshots referenced from the MCPJam docs (`docs/images/...`).
   supports, how to reach the captured state, and its final alt text.
 - `capture.mjs`: the CLI that reads the manifest and drives the capture.
 - `README.md`: this file.
+- `terminal.html`: HTML template for CLI output renders.
+- `check-srcs.mjs`: cross-checks docs image references against files and manifest.
+- `fixtures/reservation-server.mjs`: runnable MCP app fixture from the first-mcp-app guide, HTTP and stdio modes.
 
 ## Manifest schema
 
@@ -41,6 +44,7 @@ of failing, so the manifest stays usable while those ids are still pending.
 ```sh
 node docs/scripts/screenshots/capture.mjs [--only <id>] [--kind ui|terminal] [--tier A|B|C] [--list] [--validate]
 node docs/scripts/screenshots/capture.mjs --login
+node docs/scripts/screenshots/capture.mjs --compress
 ```
 
 - `--only <id>`: run a single entry by id.
@@ -51,6 +55,9 @@ node docs/scripts/screenshots/capture.mjs --login
 - `--validate`: check the manifest for structural problems (see below) and
   exit 0 with `manifest OK (N entries)`, or exit 1 with a per-entry error
   list.
+- `--compress`: scan every manifest output PNG on disk, re-encode any over 500 KB
+  with sharp (keeping the result only if smaller), and print a size table of all
+  PNGs.
 - `--login`: the one manual step in this harness. Opens a real, headed
   Chromium window against `BASE_URL` (default `https://app.mcpjam.com`) and
   waits for a person to log in. Press Enter in the terminal once you're
