@@ -1281,6 +1281,45 @@ describe("useServerForm", () => {
     expect(result.current.preregisteredOauthBlocksSubmit).toBe(false);
   });
 
+  describe("validateClientSecret", () => {
+    it("allows an empty client secret (public/PKCE client)", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientSecret("")).toBeNull();
+    });
+
+    it("rejects a whitespace-only client secret", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientSecret("   ")).toBe(
+        "Client Secret cannot be only whitespace",
+      );
+    });
+
+    it("allows a single-character client secret", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientSecret("a")).toBeNull();
+    });
+
+    it("allows the reported repro value ('banana', 6 characters)", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientSecret("banana")).toBeNull();
+    });
+
+    it("still allows client secrets 8+ characters long", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(
+        result.current.validateClientSecret("a-long-enough-secret"),
+      ).toBeNull();
+    });
+
+    it("does not affect validateClientId's own minimum-length rule", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientId("ab")).toBe(
+        "Client ID must be at least 3 characters",
+      );
+      expect(result.current.validateClientId("abc")).toBeNull();
+    });
+  });
+
   it("represents a stored client secret without exposing the value", async () => {
     const server = {
       name: "Stored secret server",
