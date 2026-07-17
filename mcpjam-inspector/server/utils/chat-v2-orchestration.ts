@@ -788,10 +788,29 @@ export function buildUiToolsSystemPrompt(
     "Prefer `ui_open_playground` before `ui_select_tool` / `ui_execute_tool` / `ui_snapshot_app`. `ui_execute_tool` REALLY runs a tool against the user's connected MCP server — treat it as side-effectful; when the user hasn't clearly asked to run a tool, prefill it with `ui_select_tool` instead.",
     "`ui_snapshot_app` is read-only and needs the playground open — use it to observe state before mutating it.",
     "When a `ui_*` tool returns an error, relay the reason instead of retrying blindly.",
-    opts?.requireToolApproval
-      ? "Every mutating `ui_*` action pauses for the user's explicit approval before it runs. A denial is final — explain what you wanted to do instead of retrying the call."
-      : "Destructive `ui_*` actions pause for the user's explicit approval before they run; other actions apply immediately. A denial is final — explain what you wanted to do instead of retrying the call.",
+    approvalGuidance(uiTools, opts?.requireToolApproval === true),
   ].join("\n");
+}
+
+/**
+ * The approval sentence, told honestly for the snapshot that was actually
+ * sent. The destructive-pauses promise only holds when EVERY entry is
+ * annotation-aware — a legacy client sends bare `readOnly`, whose predicate
+ * with the flag off is `requireToolApproval && !readOnly`, i.e. nothing
+ * pauses. Promising a destructive gate there advertises a safety net that
+ * isn't there.
+ */
+function approvalGuidance(
+  uiTools: UiToolEntry[],
+  requireToolApproval: boolean
+): string {
+  if (requireToolApproval) {
+    return "Every mutating `ui_*` action pauses for the user's explicit approval before it runs. A denial is final — explain what you wanted to do instead of retrying the call.";
+  }
+  const annotationAware = uiTools.every((t) => t.annotations !== undefined);
+  return annotationAware
+    ? "Destructive `ui_*` actions pause for the user's explicit approval before they run; other actions apply immediately. A denial is final — explain what you wanted to do instead of retrying the call."
+    : "Every `ui_*` action applies immediately, so be deliberate about mutating ones — describe what you're about to do when it isn't obviously what the user asked for.";
 }
 
 export interface PrepareChatV2Result {

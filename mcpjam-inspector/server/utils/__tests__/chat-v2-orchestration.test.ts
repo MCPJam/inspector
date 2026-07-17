@@ -877,10 +877,21 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
       ).toThrow(/readOnlyHint must equal readOnly/);
     });
 
-    it("accepts an agreeing readOnlyHint", () => {
+    it("accepts an agreeing readOnlyHint (both directions)", () => {
       expect(() =>
         validateUiToolEntries([
           { ...validTool, readOnly: false, annotations: { readOnlyHint: false } },
+        ]),
+      ).not.toThrow();
+      // Symmetric case: a read-only tool agreeing it's read-only.
+      expect(() =>
+        validateUiToolEntries([
+          {
+            ...validTool,
+            name: "ui_snapshot_app",
+            readOnly: true,
+            annotations: { readOnlyHint: true },
+          },
         ]),
       ).not.toThrow();
     });
@@ -1145,19 +1156,38 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
     ).toBeFalsy();
   });
 
-  it("describes the approval policy that actually applies in each mode", () => {
-    // Both modes gate something, so both get a sentence — the prompt must not
-    // promise "every mutating action pauses" in the default mode, where only
-    // destructive ones do.
-    const withFlag = buildUiToolsSystemPrompt(uiTools, {
-      requireToolApproval: true,
-    });
-    expect(withFlag).toContain("Every mutating `ui_*` action pauses");
-    expect(withFlag).toContain("denial is final");
+  it("promises a destructive gate in default mode ONLY when the snapshot is annotation-aware", () => {
+    const annotated: UiToolEntry[] = [
+      {
+        name: "ui_navigate",
+        description: "Navigate",
+        readOnly: false,
+        annotations: { readOnlyHint: false, destructiveHint: false },
+      },
+      {
+        name: "ui_execute_tool",
+        description: "Run a tool",
+        readOnly: false,
+        annotations: { readOnlyHint: false, destructiveHint: true },
+      },
+    ];
 
-    const withoutFlag = buildUiToolsSystemPrompt(uiTools);
-    expect(withoutFlag).toContain("Destructive `ui_*` actions pause");
-    expect(withoutFlag).toContain("other actions apply immediately");
-    expect(withoutFlag).not.toContain("Every mutating `ui_*` action pauses");
+    // Strict mode: every mutating tool pauses, regardless of annotations.
+    expect(
+      buildUiToolsSystemPrompt(annotated, { requireToolApproval: true }),
+    ).toContain("Every mutating `ui_*` action pauses");
+
+    // Default mode, annotation-aware: the destructive-gate promise holds.
+    const annotatedDefault = buildUiToolsSystemPrompt(annotated);
+    expect(annotatedDefault).toContain("Destructive `ui_*` actions pause");
+    expect(annotatedDefault).toContain("other actions apply immediately");
+
+    // Default mode, LEGACY snapshot (the fixture has no annotations): the
+    // predicate is `requireToolApproval && !readOnly`, so with the flag off
+    // NOTHING pauses. The prompt must not promise a destructive gate that
+    // isn't enforced.
+    const legacyDefault = buildUiToolsSystemPrompt(uiTools);
+    expect(legacyDefault).not.toContain("Destructive `ui_*` actions pause");
+    expect(legacyDefault).toContain("applies immediately");
   });
 });

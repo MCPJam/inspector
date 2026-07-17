@@ -143,7 +143,11 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
-        idempotentHint: true,
+        // NOT idempotent: a normal navigation pushes a browser-history entry
+        // even when the destination is unchanged, so repeated calls DO have
+        // an additional effect. Advertising idempotent would invite a native
+        // agent to retry freely and pile up history.
+        idempotentHint: false,
         openWorldHint: false,
       },
       mayNavigate: true,
@@ -291,6 +295,11 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: true,
       },
+      // Its result comes from a third-party MCP server — externally sourced,
+      // so a browser-native agent should treat it as untrusted. `openWorldHint`
+      // (MCP) doesn't convey that to a WebMCP agent; `untrustedContentHint`
+      // (WebMCP) does. Native mirror only.
+      nativeUntrustedContentHint: true,
       // Auto-opens the playground when its handler isn't mounted — from a
       // non-playground route that is a navigation.
       mayNavigate: true,

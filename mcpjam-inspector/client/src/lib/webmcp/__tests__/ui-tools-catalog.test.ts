@@ -92,6 +92,20 @@ describe("buildUiToolsCatalog", () => {
     expect(openWorld).toEqual(["ui_execute_tool"]);
   });
 
+  it("flags only ui_execute_tool's output as untrusted for native agents", () => {
+    // Its result comes from a third-party MCP server. `openWorldHint` (MCP)
+    // doesn't convey that to a WebMCP agent; `nativeUntrustedContentHint`
+    // (projected to WebMCP's untrustedContentHint) does.
+    const untrusted = buildUiToolsCatalog()
+      .filter((t) => t.nativeUntrustedContentHint === true)
+      .map((t) => t.name);
+    expect(untrusted).toEqual(["ui_execute_tool"]);
+  });
+
+  it("does not advertise ui_navigate as idempotent (navigation adds history)", () => {
+    expect(getTool("ui_navigate").annotations?.idempotentHint).toBe(false);
+  });
+
   it("ui_navigate dispatches valid targets and errors on missing/unknown ones", async () => {
     const navigate = getTool("ui_navigate");
 

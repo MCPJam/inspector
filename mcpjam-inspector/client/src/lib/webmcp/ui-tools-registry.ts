@@ -55,6 +55,16 @@ export interface UiToolDefinition {
    */
   annotations?: UiToolAnnotations;
   /**
+   * WebMCP's `untrustedContentHint` for the NATIVE mirror only. WebMCP has
+   * its own signal for "this tool's output is externally sourced and should
+   * be treated as untrusted"; MCP's `openWorldHint` is a different thing, so
+   * a native agent won't infer it. Set true for a tool whose result comes
+   * from a third party (e.g. `ui_execute_tool` runs an arbitrary MCP server).
+   * Client-only: it is NOT a valid MCP annotation, so the server validator
+   * would reject it — `snapshotForChatBody` never ships it.
+   */
+  nativeUntrustedContentHint?: boolean;
+  /**
    * Executing this tool can change the SPA route (directly, or via the
    * auto-open-playground fallback). Route-bound chat surfaces use this to
    * hand the conversation off to the always-mounted side panel BEFORE the
