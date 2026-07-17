@@ -224,7 +224,7 @@
       "kind": "terminal",
       "page": "cli/server-inspection.mdx",
       "command": "mcpjam",
-      "args": ["server", "doctor", "--command", "npx", "--args", "-y @modelcontextprotocol/server-everything"],
+      "args": ["server", "doctor", "--command", "npx", "--args", "-y", "@modelcontextprotocol/server-everything"],
       "output": "docs/images/cli/cli-server-doctor.png",
       "alt": "Terminal output of mcpjam server doctor running against the everything server."
     },
@@ -233,7 +233,7 @@
       "kind": "terminal",
       "page": "cli/tools-resources-prompts.mdx",
       "command": "mcpjam",
-      "args": ["tools", "list", "--command", "npx", "--args", "-y @modelcontextprotocol/server-everything"],
+      "args": ["tools", "list", "--command", "npx", "--args", "-y", "@modelcontextprotocol/server-everything"],
       "output": "docs/images/cli/cli-tools-list.png",
       "alt": "Terminal output of mcpjam tools list running against the everything server."
     },
@@ -242,7 +242,7 @@
       "kind": "terminal",
       "page": "cli/apps-conformance.mdx",
       "command": "mcpjam",
-      "args": ["apps", "conformance", "--command", "npx", "--args", "-y @modelcontextprotocol/server-everything"],
+      "args": ["apps", "conformance", "--command", "npx", "--args", "-y", "@modelcontextprotocol/server-everything"],
       "output": "docs/images/cli/cli-apps-conformance.png",
       "alt": "Terminal output of mcpjam apps conformance running against the everything server."
     },
