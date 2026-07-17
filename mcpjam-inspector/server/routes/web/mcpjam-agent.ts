@@ -64,7 +64,7 @@ import type {
   McpUiResourceCsp,
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps";
-import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
+import { HOSTED_MODE, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
 import {
@@ -77,6 +77,7 @@ import { injectOpenAICompat } from "../../utils/widget-helpers.js";
 import { logger } from "../../utils/logger.js";
 import { resolvePlatformMcpUrl } from "../../utils/platform-mcp-url.js";
 import { MCPJAM_PLATFORM_SERVER_ID } from "../../../shared/mcpjam-agent-widgets";
+import { buildAppAtlas } from "../../../shared/app-surfaces";
 import {
   assertBearerToken,
   readJsonBody,
@@ -119,6 +120,17 @@ const AGENT_IDENTITY_PROMPT = [
   "You are embedded in the MCPJam inspector, sitting next to the user's own screen. You act by DRIVING THAT UI with the `ui_*` tools: every action you take lands in the app the user is looking at, and they watch it happen.",
   "Prefer navigating and showing over describing. If the user asks where something is or how to do it, take them there instead of narrating the click path.",
   "Use the documentation and web search tools to answer knowledge questions; use the `ui_*` tools to actually do things. You have no other way to act — when something isn't reachable through a `ui_*` tool, say so plainly rather than inventing a tool or claiming you did it.",
+  "",
+  // The atlas: what screens exist and what they're for. Derived from the
+  // surface manifests, so a new screen joins the agent's map by existing
+  // rather than by someone remembering to describe it here.
+  //
+  // Follows the deployment's actual mode: hosted-blocked screens (Tracing,
+  // Tasks, Auth) are doors the model can't open in a hosted deployment, but
+  // they're real screens locally. Hard-coding `hosted: true` handed local
+  // users an incomplete map of their own app. Still one value per build, so
+  // the prefix stays cacheable.
+  buildAppAtlas({ hosted: HOSTED_MODE }),
 ].join("\n");
 
 // Advertise the MCP UI extension so the platform worker registers its

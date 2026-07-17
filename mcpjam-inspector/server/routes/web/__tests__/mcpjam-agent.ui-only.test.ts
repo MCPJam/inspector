@@ -90,6 +90,22 @@ describe("web routes — mcpjam-agent is UI-only", () => {
     expect(args.prepare.systemPrompt).toContain("`ui_*` tools");
   });
 
+  it("ships the app atlas so the model knows what screens exist", async () => {
+    const args = await postAgentTurn();
+    expect(args.prepare.systemPrompt).toContain("screen by screen");
+    expect(args.prepare.systemPrompt).toContain("### Connect (servers)");
+    expect(args.prepare.systemPrompt).toContain("### Playground (playground)");
+  });
+
+  it("maps the screens this deployment actually has", async () => {
+    // The atlas follows HOSTED_MODE (false under test): hosted-blocked
+    // screens are real locally, and hard-coding `hosted: true` handed local
+    // users an incomplete map of their own app. `buildAppAtlas` is unit-
+    // tested for the hosted filter itself.
+    const args = await postAgentTurn();
+    expect(args.prepare.systemPrompt).toContain("### Tracing");
+  });
+
   it("keeps the system prompt free of per-request values so the prefix stays cacheable", async () => {
     // Anything volatile here (projectId, route, timestamp) would invalidate
     // the cached prefix for the WHOLE conversation on every turn. Per-turn UI
