@@ -161,12 +161,17 @@ function toolCallNeedsApproval(
   name: string,
   progressivePlan: ProgressiveToolPlan | undefined,
   uiToolApprovals: UiToolApprovalClassification | undefined,
-  requireToolApproval: boolean
+  // `boolean | undefined`, not `boolean`: the callers thread through an
+  // optional `requireToolApproval`, and this file is server-side (not covered
+  // by the client typecheck), so a bare `boolean` param let `undefined` flow
+  // in and `return requireToolApproval` hand back `undefined` for a real
+  // tool. Coerce so the return is always a real boolean.
+  requireToolApproval: boolean | undefined
 ): boolean {
   if (uiToolApprovals?.requiredNames.has(name)) return true;
   if (uiToolApprovals?.freeNames.has(name)) return false;
   if (isApprovalFreeMetaToolName(name, progressivePlan)) return false;
-  return requireToolApproval;
+  return requireToolApproval === true;
 }
 import { logger } from "./logger";
 import {
