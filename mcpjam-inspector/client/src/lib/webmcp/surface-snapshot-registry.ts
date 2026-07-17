@@ -121,11 +121,23 @@ export async function readSurfaceSnapshot(
 export async function readAllSurfaceSnapshots(): Promise<
   Record<string, unknown>
 > {
+  // Concurrently: serial reads make one hanging surface cost every later
+  // surface the full timeout, so N stalled providers would take N×2s while
+  // a chat stream waits. Each read is already isolated and individually
+  // timed out. Output is still assembled in sorted id order, so the same app
+  // state serializes the same way twice regardless of who resolves first.
+  const surfaceIds = listSurfaceSnapshotProviderIds();
+  const results = await Promise.all(
+    surfaceIds.map(async (surfaceId) => {
+      const result = await readSurfaceSnapshot(surfaceId);
+      return [
+        surfaceId,
+        result.ok ? result.data : { error: result.error },
+      ] as const;
+    }),
+  );
   const out: Record<string, unknown> = {};
-  for (const surfaceId of listSurfaceSnapshotProviderIds()) {
-    const result = await readSurfaceSnapshot(surfaceId);
-    out[surfaceId] = result.ok ? result.data : { error: result.error };
-  }
+  for (const [surfaceId, data] of results) out[surfaceId] = data;
   return out;
 }
 

@@ -14,37 +14,53 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { APP_SURFACES, listAppSurfaces } from "@/shared/app-surfaces";
 
-/** surfaceId → module expected to call `registerSurfaceSnapshotProvider`. */
-const PROVIDER_MODULES: Record<string, string> = {
-  playground: "client/src/components/ui-playground/hooks/use-playground-state.ts",
-};
-
 const repoRoot = join(__dirname, "../../../..");
+const HOOK_MODULE =
+  "client/src/components/ui-playground/hooks/use-playground-state.ts";
+/**
+ * surfaceId → the ROUTE module that opts this instance in by passing
+ * `snapshotSurfaceId`. Registration is opt-in per caller (the hook backs both
+ * the Playground screen and the Evals Record panel's embedded chat), so the
+ * screen that claims the id is what matters, not the hook.
+ */
+const OPT_IN_MODULES: Record<string, string> = {
+  playground: "client/src/components/playground/PlaygroundTab.tsx",
+};
 
 describe("surfaces that claim a snapshot provider register one", () => {
   const flagged = listAppSurfaces().filter((s) => s.hasSnapshotProvider);
 
-  it("every flagged surface has a known provider module", () => {
+  it("every flagged surface has a known opt-in module", () => {
     for (const surface of flagged) {
       expect(
-        PROVIDER_MODULES[surface.id],
-        `${surface.id} claims hasSnapshotProvider but no provider module is mapped here`,
+        OPT_IN_MODULES[surface.id],
+        `${surface.id} claims hasSnapshotProvider but no opt-in module is mapped here`,
       ).toBeDefined();
     }
   });
 
-  it("every mapped module registers its provider under the surface id", () => {
-    for (const [surfaceId, modulePath] of Object.entries(PROVIDER_MODULES)) {
+  it("the hook registers under the opt-in id, never a hard-coded one", () => {
+    // The bug this guards against: registering unconditionally under a
+    // literal "playground" would let the Evals panel's embedded chat shadow
+    // the real screen.
+    const source = readFileSync(join(repoRoot, HOOK_MODULE), "utf-8");
+    expect(source).toContain("registerSurfaceSnapshotProvider(snapshotSurfaceId");
+    expect(source).not.toContain(
+      'registerSurfaceSnapshotProvider(\n      "playground"',
+    );
+  });
+
+  it("every opt-in module passes its surface id to the hook", () => {
+    for (const [surfaceId, modulePath] of Object.entries(OPT_IN_MODULES)) {
       const source = readFileSync(join(repoRoot, modulePath), "utf-8");
-      expect(source, modulePath).toContain("registerSurfaceSnapshotProvider");
-      expect(source, `${modulePath} must register as "${surfaceId}"`).toContain(
-        `registerSurfaceSnapshotProvider(\n      "${surfaceId}"`,
+      expect(source, `${modulePath} must opt in as "${surfaceId}"`).toContain(
+        `snapshotSurfaceId: "${surfaceId}"`,
       );
     }
   });
 
-  it("no provider module is mapped for a surface that does not claim one", () => {
-    for (const surfaceId of Object.keys(PROVIDER_MODULES)) {
+  it("no opt-in module is mapped for a surface that does not claim one", () => {
+    for (const surfaceId of Object.keys(OPT_IN_MODULES)) {
       const surface = APP_SURFACES.find((s) => s.id === surfaceId);
       expect(surface, `unknown surface "${surfaceId}"`).toBeDefined();
       expect(
@@ -54,14 +70,13 @@ describe("surfaces that claim a snapshot provider register one", () => {
     }
   });
 
-  it("surfaces registering their own snapshotApp handler would shadow the app-level one", () => {
+  it("the hook does not register its own snapshotApp handler (would shadow App.tsx's)", () => {
     // The bus dispatches newest-first and returns the first success, so a
     // second `snapshotApp` handler silently wins whenever its surface is
     // mounted — and a whole-app snapshot degrades to one screen.
-    const source = readFileSync(
-      join(repoRoot, PROVIDER_MODULES.playground),
-      "utf-8",
+    const source = readFileSync(join(repoRoot, HOOK_MODULE), "utf-8");
+    expect(source).not.toContain(
+      'registerInspectorCommandHandler(\n      "snapshotApp"',
     );
-    expect(source).not.toContain('registerInspectorCommandHandler(\n      "snapshotApp"');
   });
 });

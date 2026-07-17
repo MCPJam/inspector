@@ -134,4 +134,19 @@ describe("readAllSurfaceSnapshots", () => {
   it("is empty when nothing is mounted", async () => {
     expect(await readAllSurfaceSnapshots()).toEqual({});
   });
+
+  it("reads providers concurrently, so one slow surface doesn't delay the rest", async () => {
+    // Serial reads would cost N×timeout with N hanging surfaces while a chat
+    // stream waits. Two providers that each resolve on a timer must finish in
+    // ~one delay, not two.
+    vi.useFakeTimers();
+    const slow = (ms: number, value: unknown) => () =>
+      new Promise((resolve) => setTimeout(() => resolve(value), ms));
+    registerSurfaceSnapshotProvider("playground", slow(1000, { p: 1 }));
+    registerSurfaceSnapshotProvider("evals", slow(1000, { e: 1 }));
+
+    const pending = readAllSurfaceSnapshots();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await pending).toEqual({ playground: { p: 1 }, evals: { e: 1 } });
+  });
 });

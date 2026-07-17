@@ -55,6 +55,7 @@ import {
   registerInspectorCommandHandler,
 } from "@/lib/inspector-command-handlers";
 import { registerSurfaceSnapshotProvider } from "@/lib/webmcp/surface-snapshot-registry";
+import type { AppSurfaceId } from "@/shared/app-surfaces";
 import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import {
   getApiContextRevision,
@@ -83,6 +84,16 @@ type ExecutionInjectionWaiter = {
 };
 
 export interface UsePlaygroundStateOptions {
+  /**
+   * Surface id to publish this instance's snapshot under, for
+   * `ui_snapshot_app`. OPT-IN, and deliberately not defaulted: this hook has
+   * more than one caller (the Playground route, and the Evals Record panel's
+   * embedded chat). Registering unconditionally would make whichever mounted
+   * last own the `playground` id, so an agent asking for the Playground could
+   * silently be shown an eval case's chat instead. Only the surface that IS
+   * the screen passes this.
+   */
+  snapshotSurfaceId?: AppSurfaceId;
   activeProjectId?: string | null;
   serverConfig?: MCPServerConfig;
   serverName?: string;
@@ -154,6 +165,7 @@ export function selectConnectedActiveServerNames(input: {
 
 export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   const {
+    snapshotSurfaceId,
     serverConfig,
     serverName,
     servers = {},
@@ -766,19 +778,25 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     // would shadow the app-level one whenever the Playground is mounted —
     // and a whole-app snapshot would silently degrade to a playground-only
     // one. The single handler lives in App.tsx and reads this registry.
-    const unregisterSnapshotApp = registerSurfaceSnapshotProvider(
-      "playground",
-      () => buildPlaygroundSnapshot()
-    );
+    //
+    // Opt-in per caller: this hook also backs the Evals Record panel's
+    // embedded chat, and registering unconditionally would let whichever
+    // instance mounted last own the `playground` id.
+    const unregisterSnapshotApp = snapshotSurfaceId
+      ? registerSurfaceSnapshotProvider(snapshotSurfaceId, () =>
+          buildPlaygroundSnapshot()
+        )
+      : undefined;
 
     return () => {
       unregisterSelectTool();
       unregisterExecuteTool();
       unregisterRenderToolResult();
       unregisterSetAppContext();
-      unregisterSnapshotApp();
+      unregisterSnapshotApp?.();
     };
   }, [
+    snapshotSurfaceId,
     buildPlaygroundSnapshot,
     executeTool,
     injectToolResult,
