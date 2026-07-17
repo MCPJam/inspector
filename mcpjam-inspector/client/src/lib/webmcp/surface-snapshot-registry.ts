@@ -26,9 +26,17 @@ export const MAX_SURFACE_SNAPSHOT_CHARS = 8 * 1024;
 /** How long one provider may take before the rest go on without it. */
 export const SURFACE_SNAPSHOT_TIMEOUT_MS = 2_000;
 
+/**
+ * `no_provider` — the surface isn't mounted (navigate to it first).
+ * `failed`      — its provider threw, timed out, or produced junk.
+ * The caller maps these to DIFFERENT command-error codes; collapsing them
+ * (as the first cut did) mislabels a crashed provider as "screen not open".
+ */
+export type SurfaceSnapshotFailure = "no_provider" | "failed";
+
 export type SurfaceSnapshotResult =
   | { ok: true; data: unknown }
-  | { ok: false; error: string };
+  | { ok: false; reason: SurfaceSnapshotFailure; error: string };
 
 /**
  * Register the snapshot provider for a mounted surface.
@@ -58,17 +66,57 @@ export function listSurfaceSnapshotProviderIds(): string[] {
   return [...providers.keys()].sort();
 }
 
+/** Thrown by the budgeted replacer once serialization exceeds the cap. */
+const SNAPSHOT_TOO_LARGE = Symbol("snapshot-too-large");
+
+/**
+ * Serialize with a hard work budget.
+ *
+ * The size cap only protects if it bounds the WORK, not just the result: a
+ * provider returning a 100 MB object resolves its promise instantly (it just
+ * hands back a reference), and the async timeout has already settled by the
+ * time we serialize — so a plain `JSON.stringify` then blocks the main
+ * thread for the full 100 MB regardless. A replacer that tallies cumulative
+ * length and throws once it crosses the budget makes `JSON.stringify` abort
+ * early instead of building the whole string.
+ *
+ * The budget is a small multiple of the char cap: enough headroom to capture
+ * a slightly-oversized snapshot for the truncation preview, but still O(cap)
+ * rather than O(result).
+ */
+const SNAPSHOT_WORK_BUDGET = MAX_SURFACE_SNAPSHOT_CHARS * 2;
+
+function budgetedStringify(data: unknown): string | undefined {
+  let spent = 0;
+  return JSON.stringify(data, (_key, value) => {
+    if (typeof value === "string") {
+      spent += value.length;
+    } else if (typeof value === "number" || typeof value === "boolean") {
+      spent += 8;
+    }
+    if (spent > SNAPSHOT_WORK_BUDGET) {
+      throw SNAPSHOT_TOO_LARGE;
+    }
+    return value;
+  });
+}
+
 function clampSnapshot(data: unknown): unknown {
   let serialized: string | undefined;
   try {
-    serialized = JSON.stringify(data);
-  } catch {
+    serialized = budgetedStringify(data);
+  } catch (error) {
+    if (error === SNAPSHOT_TOO_LARGE) {
+      return {
+        truncated: true,
+        note: `Snapshot exceeded the ${MAX_SURFACE_SNAPSHOT_CHARS}-char budget and was dropped to protect the main thread.`,
+      };
+    }
     return { error: "snapshot is not JSON-serializable" };
   }
   // `JSON.stringify` returns `undefined` (the value, not a string) for
   // `undefined` and for functions — a provider that returns nothing hits
-  // this. Reading `.length` off it would throw, taking down the whole-app
-  // snapshot, so normalize to a benign empty result.
+  // this. Reading `.length` off it would throw, so normalize to empty.
   if (serialized === undefined) return { empty: true };
   if (serialized.length <= MAX_SURFACE_SNAPSHOT_CHARS) return data;
   return {
@@ -90,7 +138,11 @@ export async function readSurfaceSnapshot(
 ): Promise<SurfaceSnapshotResult> {
   const provider = providers.get(surfaceId);
   if (!provider) {
-    return { ok: false, error: `No snapshot provider for "${surfaceId}".` };
+    return {
+      ok: false,
+      reason: "no_provider",
+      error: `No snapshot provider for "${surfaceId}".`,
+    };
   }
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -112,6 +164,7 @@ export async function readSurfaceSnapshot(
   } catch (error) {
     return {
       ok: false,
+      reason: "failed",
       error: error instanceof Error ? error.message : String(error),
     };
   } finally {

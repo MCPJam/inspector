@@ -2756,32 +2756,52 @@ export default function App() {
       "snapshotApp",
       async (rawCommand) => {
         const command = rawCommand as SnapshotAppInspectorCommand;
+        const hasSurfaceKey =
+          command.payload != null && "surface" in command.payload;
         const requested = command.payload?.surface;
 
-        // Handlers cast rather than parse, so the type is no guarantee here.
-        if (requested !== undefined && !isAppSurfaceId(requested)) {
+        // Handlers cast rather than parse, so the type is no guarantee. An
+        // absent `surface` means whole-app; a PRESENT surface that isn't a
+        // real id (empty string, junk) is an error, not a silent fall-through
+        // to whole-app.
+        if (hasSurfaceKey && !isAppSurfaceId(requested)) {
           throw createInspectorCommandClientError(
             "invalid_request",
-            `Unknown surface "${String(requested)}". Omit it to snapshot the whole app.`
+            `Invalid surface ${JSON.stringify(requested)}. Omit it to snapshot the whole app, or pass a known screen id.`
           );
         }
 
         if (requested) {
           const result = await readSurfaceSnapshot(requested);
           if (!result.ok) {
+            // A missing provider means the screen isn't open (recoverable by
+            // navigating); a provider that threw or timed out is a genuine
+            // execution failure. Same error string, different code — the
+            // agent reacts differently to each.
+            if (result.reason === "no_provider") {
+              throw createInspectorCommandClientError(
+                "unsupported_in_mode",
+                `${result.error} That screen is not open — navigate to it first, or omit "surface" for app-level state.`
+              );
+            }
             throw createInspectorCommandClientError(
-              "unsupported_in_mode",
-              `${result.error} That screen is not open — navigate to it first, or omit "surface" for app-level state.`
+              "execution_failed",
+              result.error
             );
           }
           return { surface: requested, [requested]: result.data };
         }
 
         const pathname = window.location.pathname;
+        // "none" is the no-selection sentinel — don't report it as a server.
+        const focused =
+          selectedServerRef.current && selectedServerRef.current !== "none"
+            ? selectedServerRef.current
+            : undefined;
         const selectedServers = appState.selectedMultipleServers?.length
           ? appState.selectedMultipleServers
-          : selectedServerRef.current
-            ? [selectedServerRef.current]
+          : focused
+            ? [focused]
             : [];
         return {
           path: pathname,

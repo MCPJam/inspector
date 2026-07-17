@@ -52,20 +52,24 @@ describe("registerSurfaceSnapshotProvider", () => {
 });
 
 describe("readSurfaceSnapshot", () => {
-  it("errors for an unregistered surface", async () => {
+  it("errors with reason 'no_provider' for an unregistered surface", async () => {
+    // Distinct from a failed provider: this one is recoverable by navigating
+    // to the screen, so the caller maps it to a different command error.
     const result = await readSurfaceSnapshot("evals");
     expect(result).toEqual({
       ok: false,
+      reason: "no_provider",
       error: 'No snapshot provider for "evals".',
     });
   });
 
-  it("isolates a throwing provider", async () => {
+  it("isolates a throwing provider with reason 'failed'", async () => {
     registerSurfaceSnapshotProvider("playground", () => {
       throw new Error("store exploded");
     });
     expect(await readSurfaceSnapshot("playground")).toEqual({
       ok: false,
+      reason: "failed",
       error: "store exploded",
     });
   });
@@ -95,6 +99,30 @@ describe("readSurfaceSnapshot", () => {
     const result = await readSurfaceSnapshot("playground");
     expect(result.ok).toBe(true);
     expect((result as { data: any }).data.truncated).toBe(true);
+  });
+
+  it("bounds serialization WORK, not just output — a huge result aborts early", async () => {
+    // The size cap only protects if `JSON.stringify` stops early: a provider
+    // returning a massive object resolves instantly, and the async timeout is
+    // already settled by the time we serialize. The budgeted replacer must
+    // throw well before materializing the whole string. Prove it by counting
+    // how many nodes the replacer visits before giving up.
+    let visited = 0;
+    const huge = {
+      big: Array.from({ length: 1_000_000 }, (_, i) => {
+        // A getter so we can observe how far serialization actually walks.
+        return { get v() {
+          visited++;
+          return "x".repeat(64);
+        } };
+      }),
+    };
+    registerSurfaceSnapshotProvider("playground", () => huge);
+    const result = await readSurfaceSnapshot("playground");
+    expect(result.ok).toBe(true);
+    expect((result as { data: any }).data.truncated).toBe(true);
+    // Should have aborted after ~budget/64 nodes, nowhere near all 1,000,000.
+    expect(visited).toBeLessThan(10_000);
   });
 
   it("does not throw when a provider returns undefined", async () => {
