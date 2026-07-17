@@ -57,6 +57,12 @@ describe("mapModelIdToTokenizerBackend", () => {
         "openai/gpt-5-mini"
       );
     });
+
+    it("maps canonical hosted OpenAI IDs", () => {
+      expect(mapModelIdToTokenizerBackend("openai/gpt-5-mini")).toBe(
+        "openai/gpt-5-mini"
+      );
+    });
   });
 
   describe("DeepSeek models", () => {
@@ -87,6 +93,12 @@ describe("mapModelIdToTokenizerBackend", () => {
     it("maps gemini-2.5-flash correctly", () => {
       expect(mapModelIdToTokenizerBackend("gemini-2.5-flash")).toBe(
         "google/gemini-2.5-flash"
+      );
+    });
+
+    it("maps canonical hosted Gemini IDs", () => {
+      expect(mapModelIdToTokenizerBackend("google/gemini-2.5-pro")).toBe(
+        "google/gemini-2.5-pro"
       );
     });
   });

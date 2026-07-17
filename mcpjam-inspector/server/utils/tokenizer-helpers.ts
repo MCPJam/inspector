@@ -121,6 +121,12 @@ export function mapModelIdToTokenizerBackend(modelId: string): string | null {
       return MODEL_ID_MAPPINGS[normalized];
     }
 
+    const [provider, unprefixedModelId] = normalized.split("/", 2);
+    const mapped = MODEL_ID_MAPPINGS[unprefixedModelId];
+    if (mapped?.startsWith(`${provider}/`)) {
+      return mapped;
+    }
+
     // Provider-prefixed custom, local, and cloud model IDs are not proof that
     // ai-tokenizer supports the model. Avoid sending them to the Convex
     // tokenizer endpoint; callers can report token counting as unavailable.
