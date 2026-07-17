@@ -149,6 +149,24 @@ export function startHostedModelCatalogRefresh(): void {
 }
 
 /**
+ * Feed a freshly-fetched catalog id set into the warm cache directly. The
+ * picker proxy (`GET /api/mcp/models`) already fetches the same `/v1/models`
+ * catalog on demand, so handing its result here keeps the billing classifier
+ * current between hourly cron refreshes — without which a brand-new model can
+ * show in the picker and then mis-dispatch to BYOK because this cache hasn't
+ * refreshed yet. Empty input is ignored (never clobber a good cache with a
+ * failed/partial fetch); a non-empty set replaces the dynamic ids, matching
+ * refreshHostedModelCatalog's "fresh catalog is authoritative" semantics.
+ */
+export function ingestHostedCatalogIds(ids: Iterable<string>): void {
+  const fresh = new Set<string>();
+  for (const id of ids) {
+    if (typeof id === "string" && id.length > 0) fresh.add(id);
+  }
+  if (fresh.size > 0) catalogIds = fresh;
+}
+
+/**
  * Whether `modelId` is a MCPJam-hosted model — the classification server-side
  * billing dispatch keys on. Synchronous (reads the warm cache). Union of the
  * static seed and the dynamic backend catalog; canonicalizes the id the same

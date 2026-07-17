@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import "../../types/hono";
 import { logger } from "../../utils/logger";
+import { ingestHostedCatalogIds } from "../../services/hosted-model-catalog.js";
 
 const models = new Hono();
 
@@ -49,6 +50,14 @@ models.get("/", async (c) => {
 
     const page = (await response.json()) as { items?: unknown };
     const data = Array.isArray(page?.items) ? page.items : [];
+    // Feed the fresh catalog ids into the billing classifier's cache so a new
+    // model that just appeared in the picker can't mis-dispatch to BYOK before
+    // the hourly cron refresh catches up (see hosted-model-catalog.ts).
+    ingestHostedCatalogIds(
+      data
+        .map((m) => (m as { id?: unknown })?.id)
+        .filter((id): id is string => typeof id === "string")
+    );
     return c.json({ ok: true, data });
   } catch (error) {
     logger.error("[models] Error fetching model metadata", error);
