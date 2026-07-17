@@ -40,7 +40,7 @@ function ExpandedVideo({ entry }: { entry: ProductUpdateEntry }) {
         <video
           src={entry.previewVideoUrl}
           poster={entry.videoPosterUrl}
-          className="h-full w-full"
+          className="h-full w-full object-cover"
           autoPlay
           loop
           muted

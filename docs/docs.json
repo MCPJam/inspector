@@ -64,8 +64,7 @@
             "pages": [
               "inspector/playground",
               "inspector/evals",
-              "inspector/compatibility",
-              "inspector/host-templates"
+              "inspector/compatibility"
             ]
           },
           {
