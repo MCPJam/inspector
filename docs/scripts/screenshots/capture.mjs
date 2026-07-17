@@ -7,21 +7,46 @@
 // See docs/scripts/screenshots/README.md for the full workflow.
 
 import { readFileSync, existsSync } from "node:fs";
+import { mkdir, mkdtemp, rename } from "node:fs/promises";
+import { execFile as execFileCb, spawn } from "node:child_process";
+import { promisify } from "node:util";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { chromium } from "playwright";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // docs/scripts/screenshots -> docs
 const DOCS_ROOT = path.resolve(__dirname, "..", "..");
+// docs -> repo root, where the built CLI lives
+const REPO_ROOT = path.resolve(DOCS_ROOT, "..");
 const MANIFEST_PATH = path.join(__dirname, "manifest.json");
+const TERMINAL_TEMPLATE_PATH = path.join(__dirname, "terminal.html");
+const CLI_ENTRY = path.join(REPO_ROOT, "cli", "dist", "index.js");
+
+const execFileAsync = promisify(execFileCb);
 
 const BASE_URL = process.env.BASE_URL || "http://localhost:5173";
 const STORAGE_STATE = process.env.STORAGE_STATE || null;
 
 const VALID_KINDS = new Set(["ui", "terminal"]);
 const VALID_TIERS = new Set(["A", "B", "C"]);
+
+// The CLI switches to JSON output when stdout isn't a TTY (which it never is
+// under execFile). These ids render structured results that only look right
+// in "human" format (pretty-printed), so force it for the actual capture run.
+// The displayed prompt/title still show the command as a user would type it.
+const FORMAT_HUMAN_IDS = new Set([
+  "cli-server-doctor",
+  "cli-tools-list",
+  "cli-apps-conformance",
+  "cli-telemetry-status",
+]);
+
+const MCP_STDIO_READY_LINE = "MCPJam MCP server listening on stdio";
+const MAX_OUTPUT_LINES = 48;
 
 function parseArgs(argv) {
   const opts = {
@@ -158,8 +183,137 @@ async function captureUi(entry, { browser }) {
   throw new Error("not implemented yet");
 }
 
+// Strip the only ANSI the CLI ever emits: `\r\x1b[K` progress heartbeats and
+// `\x1b[...m` color codes (dim/reset). There is no full terminal emulation
+// here on purpose -- the CLI has no other stray control sequences.
+function stripAnsi(text) {
+  return text.replace(/\r\x1b\[K/g, "").replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+function escapeHtml(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function truncateLines(text, maxLines) {
+  const lines = text.split("\n");
+  if (lines.length <= maxLines) return text;
+  return `${lines.slice(0, maxLines).join("\n")}\n…`;
+}
+
+function combineOutput(stdout, stderr) {
+  const parts = [];
+  if (stdout && stdout.trim().length > 0) parts.push(stdout.replace(/\s+$/, ""));
+  if (stderr && stderr.trim().length > 0) parts.push(stderr.replace(/\s+$/, ""));
+  return parts.join("\n");
+}
+
+// Runs the built CLI out-of-process and returns combined stdout+stderr text.
+// A non-zero exit code is a normal, renderable result for several of these
+// commands (e.g. a failing conformance check), so we only treat it as fatal
+// when execFile couldn't capture any output at all (spawn failure).
+async function runCliCapture(entry) {
+  const execArgs = [...entry.args];
+  if (FORMAT_HUMAN_IDS.has(entry.id)) {
+    execArgs.push("--format", "human");
+  }
+
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      process.execPath,
+      [CLI_ENTRY, ...execArgs],
+      {
+        timeout: entry.timeoutMs ?? 30000,
+        env: { ...process.env, NO_COLOR: "1" },
+        cwd: REPO_ROOT,
+        maxBuffer: 10 * 1024 * 1024,
+      },
+    );
+    return combineOutput(stdout, stderr);
+  } catch (err) {
+    if (typeof err.stdout === "string" || typeof err.stderr === "string") {
+      return combineOutput(err.stdout ?? "", err.stderr ?? "");
+    }
+    throw err;
+  }
+}
+
+// `mcpjam mcp` runs forever serving JSON-RPC over stdio, so it needs a
+// special capture path: spawn it, wait for the one-line stderr readiness
+// banner, kill it, and render just that line.
+async function runMcpStdioCapture(entry) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI_ENTRY, ...entry.args], {
+      cwd: REPO_ROOT,
+      env: { ...process.env, NO_COLOR: "1" },
+    });
+
+    let settled = false;
+    let stderrBuf = "";
+
+    const timeoutMs = entry.timeoutMs ?? 3000;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      reject(new Error(`timed out waiting for the stdio ready line after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    const finish = (err, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill();
+      if (err) reject(err);
+      else resolve(value);
+    };
+
+    child.stderr.on("data", (chunk) => {
+      stderrBuf += chunk.toString("utf8");
+      if (stderrBuf.includes(MCP_STDIO_READY_LINE)) {
+        finish(null, MCP_STDIO_READY_LINE);
+      }
+    });
+
+    child.on("error", (err) => finish(err));
+    child.on("exit", () => finish(new Error("process exited before the stdio ready line appeared")));
+  });
+}
+
 async function captureTerminal(entry, { browser }) {
-  throw new Error("not implemented yet");
+  const rawOutput =
+    entry.id === "cli-mcp-stdio"
+      ? await runMcpStdioCapture(entry)
+      : await runCliCapture(entry);
+
+  const cleaned = stripAnsi(rawOutput).replace(/\s+$/, "");
+  const truncated = truncateLines(cleaned, MAX_OUTPUT_LINES);
+  const escapedOutput = escapeHtml(truncated);
+  const displayCommand = escapeHtml([entry.command, ...entry.args].join(" "));
+
+  const template = readFileSync(TERMINAL_TEMPLATE_PATH, "utf8");
+  const html = template
+    .replaceAll("<!-- COMMAND -->", displayCommand)
+    .replaceAll("<!-- OUTPUT -->", escapedOutput);
+
+  const page = await browser.newPage({
+    viewport: { width: 960, height: 700 },
+    deviceScaleFactor: 2,
+  });
+
+  try {
+    await page.setContent(html, { waitUntil: "load" });
+
+    const finalPath = path.join(REPO_ROOT, entry.output);
+    await mkdir(path.dirname(finalPath), { recursive: true });
+
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "mcpjam-screenshot-"));
+    const tmpPath = path.join(tmpDir, "capture.png");
+
+    await page.locator(".window").screenshot({ path: tmpPath });
+    await rename(tmpPath, finalPath);
+  } finally {
+    await page.close();
+  }
 }
 
 async function main() {
@@ -208,28 +362,37 @@ async function main() {
     console.log(`Storage state: ${STORAGE_STATE}`);
   }
 
-  // Playwright wiring lands in later tasks; the browser handle is left null
-  // here on purpose so captureUi/captureTerminal can be implemented without
-  // touching this dispatch loop.
-  const browser = null;
+  // Only pay for a browser launch when a selected entry actually needs one;
+  // --validate/--list return before this point, and there's no other kind yet.
+  const needsBrowser = selected.some((entry) => entry.kind === "ui" || entry.kind === "terminal");
+  // Pin the regular chromium build (not the separate chrome-headless-shell
+  // package Playwright otherwise auto-selects for headless launches) so the
+  // only setup step is `npx playwright install chromium`.
+  const browser = needsBrowser ? await chromium.launch({ channel: "chromium" }) : null;
 
   let ok = 0;
   let failed = 0;
 
-  for (const entry of selected) {
-    try {
-      if (entry.kind === "ui") {
-        await captureUi(entry, { browser });
-      } else if (entry.kind === "terminal") {
-        await captureTerminal(entry, { browser });
-      } else {
-        throw new Error(`unknown kind: ${entry.kind}`);
+  try {
+    for (const entry of selected) {
+      try {
+        if (entry.kind === "ui") {
+          await captureUi(entry, { browser });
+        } else if (entry.kind === "terminal") {
+          await captureTerminal(entry, { browser });
+        } else {
+          throw new Error(`unknown kind: ${entry.kind}`);
+        }
+        console.log(`ok    ${entry.id}`);
+        ok++;
+      } catch (err) {
+        console.error(`fail  ${entry.id}: ${err.message}`);
+        failed++;
       }
-      console.log(`ok    ${entry.id}`);
-      ok++;
-    } catch (err) {
-      console.error(`fail  ${entry.id}: ${err.message}`);
-      failed++;
+    }
+  } finally {
+    if (browser) {
+      await browser.close();
     }
   }
 
