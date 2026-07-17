@@ -485,6 +485,7 @@ describe("ServersTab shared detail modal", () => {
       serverName: "test-server",
     }),
     onRemove: vi.fn(),
+    onSaveServerConfig: vi.fn().mockResolvedValue(true),
     projects,
     activeProjectId: "project-1",
     organizationId: "org-1",

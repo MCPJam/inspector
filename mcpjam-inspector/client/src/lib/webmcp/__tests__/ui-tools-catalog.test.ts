@@ -112,12 +112,18 @@ describe("buildUiToolsCatalog", () => {
     expect(addServer.description).toContain("already exists");
   });
 
-  it("ui_add_server dispatches a draft without connecting", async () => {
+  it("ui_add_server navigates to Connect, then dispatches the draft without connecting", async () => {
     await getTool("ui_add_server").execute({
       name: "Excalidraw",
       url: "https://example.com/mcp",
     });
+    // Land on Connect first, so the new server appears where the user is
+    // looking rather than silently behind another screen.
     expect(dispatchedCommands()[0]).toMatchObject({
+      type: "navigate",
+      payload: { target: "/servers" },
+    });
+    expect(dispatchedCommands()[1]).toMatchObject({
       type: "addServer",
       payload: { draft: { name: "Excalidraw", url: "https://example.com/mcp" } },
     });
@@ -143,9 +149,22 @@ describe("buildUiToolsCatalog", () => {
       command: "npx",
       args: ["-y", "pkg", "--flag", "a b"],
     });
-    expect(dispatchedCommands()[0]).toMatchObject({
+    const addServer = dispatchedCommands().find((c) => c.type === "addServer");
+    expect(addServer).toMatchObject({
       payload: { draft: { args: ["-y", "pkg", "--flag", "a b"] } },
     });
+  });
+
+  it("ui_add_server never carries env or headers (secrets don't cross the transcript)", async () => {
+    await getTool("ui_add_server").execute({
+      name: "x",
+      transport: "stdio",
+      command: "npx",
+      env: { SECRET: "shh" },
+    } as never);
+    const addServer = dispatchedCommands().find((c) => c.type === "addServer");
+    expect(JSON.stringify(addServer)).not.toContain("SECRET");
+    expect(JSON.stringify(addServer)).not.toContain("env");
   });
 
   it("ui_open_server_form navigates to Connect first when its handler is absent", async () => {
@@ -160,7 +179,18 @@ describe("buildUiToolsCatalog", () => {
     expect(dispatchedCommands()[1]).toMatchObject({ type: "openServerForm" });
   });
 
-  it("connect/disconnect/remove require a server name and dispatch it", async () => {
+  it("ui_open_server_form opens a blank form when given no prefill", async () => {
+    // A no-arg open must not error — the form is there for the user to fill.
+    hasInspectorCommandHandlerMock.mockReturnValue(true);
+    await getTool("ui_open_server_form").execute({});
+    const open = dispatchedCommands().find((c) => c.type === "openServerForm");
+    expect(open).toMatchObject({ type: "openServerForm", payload: {} });
+    expect((open as any).payload.draft).toBeUndefined();
+  });
+
+  it("connect/disconnect/remove navigate to Connect first, then dispatch", async () => {
+    // The premise of the surface is that the user watches you work; a mutation
+    // that lands silently on another screen breaks it.
     for (const [tool, type] of [
       ["ui_connect_server", "connectServer"],
       ["ui_disconnect_server", "disconnectServer"],
@@ -180,6 +210,10 @@ describe("buildUiToolsCatalog", () => {
 
       await getTool(tool).execute({ serverName: "everything" });
       expect(dispatchedCommands()[0], tool).toMatchObject({
+        type: "navigate",
+        payload: { target: "/servers" },
+      });
+      expect(dispatchedCommands()[1], tool).toMatchObject({
         type,
         payload: { serverName: "everything" },
       });

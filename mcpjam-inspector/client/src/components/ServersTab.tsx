@@ -36,8 +36,14 @@ import {
   createInspectorCommandClientError,
   registerInspectorCommandHandler,
 } from "@/lib/inspector-command-handlers";
-import type { OpenServerFormInspectorCommand } from "@/shared/inspector-command.js";
-import { serverDraftToFormData } from "@/lib/webmcp/server-draft-adapter";
+import type {
+  AddServerInspectorCommand,
+  OpenServerFormInspectorCommand,
+} from "@/shared/inspector-command.js";
+import {
+  serverDraftToFormData,
+  serverDraftToPrefill,
+} from "@/lib/webmcp/server-draft-adapter";
 import { waitForUiCommit } from "@/lib/wait-for-ui-commit";
 import { useAppReady, useAppReadyMessage } from "@/hooks/use-app-ready";
 import { MCPIcon } from "./ui/mcp-icon";
@@ -544,6 +550,8 @@ interface ServersTabProps {
     skipAutoConnect?: boolean
   ) => Promise<ServerUpdateResult>;
   onRemove: (serverName: string) => void;
+  /** Save a server config without connecting — backs `ui_add_server`. */
+  onSaveServerConfig: (formData: ServerFormData) => Promise<boolean>;
   projects: Record<string, Project>;
   activeProjectId: string;
   organizationId: string | null;
@@ -565,6 +573,7 @@ export function ServersTab({
   onReconnect,
   onUpdate,
   onRemove,
+  onSaveServerConfig,
   projects,
   activeProjectId,
   organizationId,
@@ -1421,57 +1430,114 @@ export function ServersTab({
     setIsActionMenuOpen(false);
   };
 
-  // `openServerForm` lives HERE, not in App.tsx, because the modal's open
-  // state and the billing gate are this component's own — an agent opening
-  // the form has to go through the same door the Add button does.
-  //
-  // Registered while Connect is mounted; `ui_open_server_form` navigates
-  // here first and the bus's late-registration wait covers the gap.
+  // `openServerForm` AND `addServer` live HERE, not in App.tsx, because both
+  // CREATE a server and so must clear `BILLING_GATES.serverCreation` — a hook
+  // that only exists on this screen. The visible Add button is gated in its
+  // click handler; a command that bypassed it could exceed the plan's server
+  // limit. Registered while Connect is mounted; the tools navigate here first
+  // and the bus's late-registration wait covers the gap.
   useEffect(() => {
-    const unregister = registerInspectorCommandHandler(
+    // The gate has a loading state distinct from denied. While it's still
+    // resolving, the visible UI withholds the Add controls — so a command
+    // must treat "still loading" as "not yet allowed" rather than racing
+    // ahead of the answer.
+    const assertMayCreateServer = () => {
+      if (serverCreationGate.isLoading) {
+        throw createInspectorCommandClientError(
+          "execution_failed",
+          "Billing is still loading; try again in a moment."
+        );
+      }
+      if (serverCreationGate.isDenied) {
+        throw createInspectorCommandClientError(
+          "execution_failed",
+          serverCreationGate.denialMessage ??
+            "Upgrade required to add more servers"
+        );
+      }
+    };
+
+    const unregisterOpen = registerInspectorCommandHandler(
       "openServerForm",
       async (rawCommand) => {
         const command = rawCommand as OpenServerFormInspectorCommand;
+        assertMayCreateServer();
 
-        // Same gate as the visible button: a command may not do what a
-        // disabled action can't.
-        if (serverCreationGate.isDenied) {
+        // Lenient prefill: this command exists to open the form for the USER
+        // to finish, so a blank or partial draft is the normal case and must
+        // not be validated as a complete config. It only rejects a genuine
+        // contradiction (bad transport, url+command together).
+        const prefill = serverDraftToPrefill(command.payload?.draft);
+        if (!prefill.ok) {
           throw createInspectorCommandClientError(
-            "execution_failed",
-            serverCreationGate.denialMessage ??
-              "Upgrade required to add more servers"
+            "invalid_request",
+            prefill.error
           );
         }
-
-        const draft = command.payload?.draft;
-        if (draft) {
-          // Prefill only what the adapter accepts, so a form opened by chat
-          // and a form filled by hand can't disagree about defaults.
-          const result = serverDraftToFormData({
-            name: draft.name ?? "untitled",
-            ...draft,
-          });
-          if (!result.ok) {
-            throw createInspectorCommandClientError(
-              "invalid_request",
-              result.error
-            );
-          }
-          setPrefilledServerDraft(
-            draft.name ? result.formData : { ...result.formData, name: "" }
-          );
-        } else {
-          setPrefilledServerDraft(undefined);
-        }
-
+        setPrefilledServerDraft(prefill.prefill);
         setIsAddingServer(true);
         setIsActionMenuOpen(false);
         await waitForUiCommit();
         return { opened: true };
       }
     );
-    return unregister;
-  }, [serverCreationGate.isDenied, serverCreationGate.denialMessage]);
+
+    const unregisterAdd = registerInspectorCommandHandler(
+      "addServer",
+      async (rawCommand) => {
+        const command = rawCommand as AddServerInspectorCommand;
+        assertMayCreateServer();
+
+        const draft = command.payload?.draft;
+        if (!draft?.name) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "A server name is required."
+          );
+        }
+        const built = serverDraftToFormData(draft);
+        if (!built.ok) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            built.error
+          );
+        }
+        // Additive means additive: refuse to overwrite an existing server.
+        // Editing one is a different, destructive act that deserves its own
+        // tool rather than a silent clobber here.
+        if (projectServers[built.formData.name]) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            `A server named "${built.formData.name}" already exists. Remove it first, or pick another name.`
+          );
+        }
+
+        // Save WITHOUT connecting: it's the only action-layer call that
+        // reports success and can't wander into an OAuth redirect. The agent
+        // connects as a separate, visible step.
+        const saved = await onSaveServerConfig(built.formData);
+        await waitForUiCommit();
+        if (!saved) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            `Could not save "${built.formData.name}". The Connect screen shows why.`
+          );
+        }
+        return { serverName: built.formData.name, saved: true };
+      }
+    );
+
+    return () => {
+      unregisterOpen();
+      unregisterAdd();
+    };
+  }, [
+    serverCreationGate.isLoading,
+    serverCreationGate.isDenied,
+    serverCreationGate.denialMessage,
+    onSaveServerConfig,
+    projectServers,
+  ]);
 
   const handleImportJsonClick = () => {
     if (serverCreationGate.isDenied) {

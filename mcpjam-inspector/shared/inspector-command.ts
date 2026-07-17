@@ -150,10 +150,14 @@ export interface SnapshotAppInspectorCommand {
 /**
  * Connect-screen server config an agent can author.
  *
- * A deliberate subset of the form's `ServerFormData`, not a passthrough:
- * every field here is something a user could say out loud. Credentials,
- * OAuth client secrets, and XAA identity config are absent on purpose —
- * those belong to the human at the form, not to a chat transcript.
+ * A deliberate SUBSET of the form's `ServerFormData`, and the exclusions are
+ * a security boundary, not an oversight. No credentials, no OAuth client
+ * secrets, no XAA identity — and, per review, no `env`/`headers` either:
+ * those routinely carry API keys and bearer tokens, and everything in this
+ * draft passes through the chat/tool transcript. A server that needs secret
+ * env or headers is set up by the agent prefilling the non-secret fields via
+ * `ui_open_server_form`, then the USER typing the secrets into the form,
+ * where they never reach the transcript.
  *
  * `args` is a list rather than part of `command` because the form's parser
  * splits on whitespace with no quote handling: `npx -y pkg --flag "a b"`
@@ -169,16 +173,16 @@ export interface InspectorServerDraft {
   command?: string;
   /** STDIO only. */
   args?: string[];
-  /** STDIO only. */
-  env?: Record<string, string>;
-  /** HTTP only. */
-  headers?: Record<string, string>;
 }
 
 export interface OpenServerFormInspectorCommand {
   id: string;
   type: "openServerForm";
-  /** Optional prefill for the Add-server form. */
+  /**
+   * Optional prefill. Every field is optional — the point of this command is
+   * to open the form for the USER to finish, so a blank or partial prefill is
+   * valid and must NOT be validated as a complete server config.
+   */
   payload: { draft?: Partial<InspectorServerDraft> };
   timeoutMs?: number;
 }
@@ -186,7 +190,7 @@ export interface OpenServerFormInspectorCommand {
 export interface AddServerInspectorCommand {
   id: string;
   type: "addServer";
-  payload: { draft: InspectorServerDraft; connect?: boolean };
+  payload: { draft: InspectorServerDraft };
   timeoutMs?: number;
 }
 

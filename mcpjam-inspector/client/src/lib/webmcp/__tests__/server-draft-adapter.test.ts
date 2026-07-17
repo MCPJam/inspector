@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/config", () => ({ HOSTED_MODE: false }));
 
-import { serverDraftToFormData } from "../server-draft-adapter";
+import {
+  serverDraftToFormData,
+  serverDraftToPrefill,
+} from "../server-draft-adapter";
 
 describe("serverDraftToFormData", () => {
   it("builds an HTTP server with the form's own defaults", () => {
@@ -23,27 +26,12 @@ describe("serverDraftToFormData", () => {
     });
   });
 
-  it("emits headers through secretPatch as well as the field", () => {
-    // secretPatch is a dirty-tracking replacement patch. Omit it and the
-    // headers never reach Convex — the server would silently lose them.
-    const result = serverDraftToFormData({
-      name: "api",
-      url: "https://example.com/mcp",
-      headers: { "X-Key": "v" },
-    });
-    expect(result.ok).toBe(true);
-    const formData = (result as { formData: any }).formData;
-    expect(formData.headers).toEqual({ "X-Key": "v" });
-    expect(formData.secretPatch).toEqual({ headers: { "X-Key": "v" } });
-  });
-
   it("builds a STDIO server with pre-separated args", () => {
     const result = serverDraftToFormData({
       name: "local",
       transport: "stdio",
       command: "npx",
       args: ["-y", "@scope/pkg", "--flag", "a b"],
-      env: { TOKEN: "t" },
     });
     expect(result).toEqual({
       ok: true,
@@ -53,8 +41,6 @@ describe("serverDraftToFormData", () => {
         authMethod: "auto",
         command: "npx",
         args: ["-y", "@scope/pkg", "--flag", "a b"],
-        env: { TOKEN: "t" },
-        secretPatch: { env: { TOKEN: "t" } },
       },
     });
   });
@@ -99,12 +85,6 @@ describe("serverDraftToFormData", () => {
     expect(
       serverDraftToFormData({ name: "x", transport: "stdio", command: "npx", url: "https://e.com" }),
     ).toMatchObject({ ok: false, error: expect.stringContaining("not a url") });
-    expect(
-      serverDraftToFormData({ name: "x", url: "https://e.com", env: { A: "1" } }),
-    ).toMatchObject({ ok: false, error: expect.stringContaining("env applies to STDIO") });
-    expect(
-      serverDraftToFormData({ name: "x", transport: "stdio", command: "npx", headers: { A: "1" } }),
-    ).toMatchObject({ ok: false, error: expect.stringContaining("headers apply to HTTP") });
   });
 
   it("rejects an unknown transport", () => {
@@ -113,9 +93,9 @@ describe("serverDraftToFormData", () => {
     ).toMatchObject({ ok: false, error: expect.stringContaining("Unknown transport") });
   });
 
-  it("never emits credentials or identity config", () => {
-    // The draft type has no room for them; assert the built form data agrees,
-    // so a future field can't leak a secret from a chat transcript.
+  it("never emits credentials, identity config, OR secret-bearing env/headers", () => {
+    // The draft type has no room for any of these; assert the built form data
+    // agrees, so a future field can't leak a secret from a chat transcript.
     const result = serverDraftToFormData({
       name: "x",
       url: "https://e.com/mcp",
@@ -127,23 +107,60 @@ describe("serverDraftToFormData", () => {
       "oauthScopes",
       "xaaSubject",
       "xaaEmail",
+      "env",
+      "headers",
+      "secretPatch",
     ]) {
       expect(formData).not.toHaveProperty(key);
     }
   });
 });
 
+describe("serverDraftToPrefill", () => {
+  it("returns undefined for a blank/absent draft so the form opens empty", () => {
+    expect(serverDraftToPrefill(undefined)).toEqual({ ok: true, prefill: undefined });
+    expect(serverDraftToPrefill({})).toEqual({ ok: true, prefill: undefined });
+  });
+
+  it("shapes a partial draft WITHOUT requiring a name or endpoint", () => {
+    // The whole point of opening the form is to let the user finish — a
+    // missing name or url must not be an error here.
+    expect(serverDraftToPrefill({ name: "Excalidraw" })).toEqual({
+      ok: true,
+      prefill: { type: "http", authMethod: "auto", name: "Excalidraw" },
+    });
+    expect(serverDraftToPrefill({ url: "https://e.com/mcp" })).toEqual({
+      ok: true,
+      prefill: { type: "http", authMethod: "auto", url: "https://e.com/mcp" },
+    });
+  });
+
+  it("still rejects a genuine contradiction the user couldn't fix in the form", () => {
+    expect(
+      serverDraftToPrefill({ url: "https://e.com", command: "npx" }),
+    ).toMatchObject({ ok: false, error: expect.stringContaining("not a command") });
+    expect(
+      serverDraftToPrefill({ transport: "grpc" as never }),
+    ).toMatchObject({ ok: false, error: expect.stringContaining("Unknown transport") });
+  });
+});
+
 describe("serverDraftToFormData in hosted mode", () => {
   it("enforces the hosted HTTPS rule via the shared validator", async () => {
+    // try/finally so a failed assertion can't leak the { HOSTED_MODE: true }
+    // mock into later tests in this file.
     vi.resetModules();
     vi.doMock("@/lib/config", () => ({ HOSTED_MODE: true }));
-    const { serverDraftToFormData: hostedAdapter } = await import(
-      "../server-draft-adapter"
-    );
-    expect(hostedAdapter({ name: "x", url: "http://insecure.com/mcp" })).toEqual(
-      { ok: false, error: "Hosted mode requires HTTPS server URLs" },
-    );
-    vi.doUnmock("@/lib/config");
-    vi.resetModules();
+    try {
+      const { serverDraftToFormData: hostedAdapter } = await import(
+        "../server-draft-adapter"
+      );
+      expect(
+        hostedAdapter({ name: "x", url: "http://insecure.com/mcp" }),
+      ).toEqual({ ok: false, error: "Hosted mode requires HTTPS server URLs" });
+    } finally {
+      vi.doUnmock("@/lib/config");
+      vi.resetModules();
+    }
   });
 });

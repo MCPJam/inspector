@@ -260,7 +260,6 @@ import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
 import { publishSelectedServerNames } from "./lib/webmcp/ui-context-source";
 import type {
-  AddServerInspectorCommand,
   ConnectServerInspectorCommand,
   DisconnectServerInspectorCommand,
   NavigateInspectorCommand,
@@ -274,7 +273,6 @@ import {
   readAllSurfaceSnapshots,
   readSurfaceSnapshot,
 } from "@/lib/webmcp/surface-snapshot-registry";
-import { serverDraftToFormData } from "@/lib/webmcp/server-draft-adapter";
 
 const OCCUPATION_GATE_ROLLOUT_MS = Date.parse("2026-04-29T00:00:00.000Z");
 // Accounts created on/after this ship date are treated as "new" for the
@@ -598,6 +596,7 @@ function ServersTabBody() {
     handleReconnect,
     handleUpdate,
     handleRemoveServer,
+    saveServerConfigWithoutConnecting,
     projects,
     activeProjectId,
     activeProjectBillingOrganizationId,
@@ -621,6 +620,7 @@ function ServersTabBody() {
       onReconnect={handleReconnect}
       onUpdate={handleUpdate}
       onRemove={handleRemoveServer}
+      onSaveServerConfig={saveServerConfigWithoutConnecting}
       projects={projects}
       activeProjectId={activeProjectId}
       organizationId={activeProjectBillingOrganizationId}
@@ -2084,11 +2084,6 @@ export default function App() {
   // Action-layer handles for the Connect-screen inspector commands. Refs,
   // like the ones above, so the handler-registration effect doesn't tear
   // down and re-register on every render these identities change.
-  const saveServerConfigWithoutConnectingRef = useRef(
-    saveServerConfigWithoutConnecting
-  );
-  saveServerConfigWithoutConnectingRef.current =
-    saveServerConfigWithoutConnecting;
   const connectServerWithResultRef = useRef(connectServerWithResult);
   connectServerWithResultRef.current = connectServerWithResult;
   const handleDisconnectRef = useRef(handleDisconnectAction);
@@ -2870,52 +2865,11 @@ export default function App() {
       );
     };
 
-    const unregisterAddServer = registerInspectorCommandHandler(
-      "addServer",
-      async (rawCommand) => {
-        const command = rawCommand as AddServerInspectorCommand;
-        const draft = command.payload?.draft;
-        if (!draft?.name) {
-          throw createInspectorCommandClientError(
-            "invalid_request",
-            "A server name is required."
-          );
-        }
-
-        const built = serverDraftToFormData(draft);
-        if (!built.ok) {
-          throw createInspectorCommandClientError(
-            "invalid_request",
-            built.error
-          );
-        }
-
-        // Additive means additive: refuse to overwrite an existing server.
-        // Editing one is a different, destructive act and deserves its own
-        // tool rather than a silent clobber here.
-        if (getInspectorServerState(built.formData.name)) {
-          throw createInspectorCommandClientError(
-            "invalid_request",
-            `A server named "${built.formData.name}" already exists. Remove it first, or pick another name.`
-          );
-        }
-
-        // Save WITHOUT connecting: it's the only action-layer call that
-        // reports success, and it can't wander into an OAuth redirect. The
-        // agent connects as a separate, visible step.
-        const saved =
-          await saveServerConfigWithoutConnectingRef.current(built.formData);
-        await waitForUiCommit();
-        if (!saved) {
-          throw createInspectorCommandClientError(
-            "execution_failed",
-            `Could not save "${built.formData.name}". The Connect screen shows why.`
-          );
-        }
-
-        return { serverName: built.formData.name, saved: true };
-      }
-    );
+    // `addServer` lives in ServersTab, NOT here: creating a server has to
+    // honor `BILLING_GATES.serverCreation`, and that gate is a hook that only
+    // exists on the Connect screen. Registering it here would have bypassed
+    // the same limit the Add button enforces. connect/disconnect/remove don't
+    // create servers, so they stay App-level.
 
     const unregisterConnectServer = registerInspectorCommandHandler(
       "connectServer",
@@ -3004,7 +2958,6 @@ export default function App() {
       unregisterSelectServer();
       unregisterOpenPlayground();
       unregisterSnapshotApp();
-      unregisterAddServer();
       unregisterConnectServer();
       unregisterDisconnectServer();
       unregisterRemoveServer();

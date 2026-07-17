@@ -4740,10 +4740,14 @@ export function useServerState({
   const connectServerWithResult = useCallback(
     async (
       serverName: string,
-      options?: { forceOAuthFlow?: boolean; select?: boolean }
+      options?: { select?: boolean }
     ): Promise<EnsureServerConnectionResult> =>
       await reconnectServerInternal(serverName, {
-        forceOAuthFlow: options?.forceOAuthFlow,
+        // Deliberately NOT exposing `forceOAuthFlow`: it can drive the page
+        // into an OAuth redirect, and the whole contract of this helper is
+        // that it never navigates — it returns `reauth` and lets the user
+        // click Authorize. A caller that could force the flow would break
+        // that promise.
         allowInteractiveOAuthFlow: false,
         select: options?.select ?? true,
         suppressErrors: true,
