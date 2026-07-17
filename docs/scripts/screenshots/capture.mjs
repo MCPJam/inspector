@@ -179,8 +179,95 @@ function printList(entries) {
   }
 }
 
+// Named setup steps a manifest "ui" entry can reference by name. Later tasks
+// add entries here (connect-demo-server, connect-widget-fixture,
+// open-configure-modal, open-project-switcher, open-run-detail,
+// open-reveal-tokens, run-compat, send-excalidraw-prompt,
+// invoke-reservation-tool, open-widget-debug). Referencing an unregistered
+// name is a per-entry failure, not a crash -- see runSetupSteps below.
+const SETUP_STEPS = {};
+
+const APP_SHELL_TIMEOUT_MS = 30000;
+// The app keeps a long-lived SSE connection open (`/api/mcp/subscribe`) for
+// live updates, so a strict `networkidle` never actually fires -- Playwright
+// counts that open connection as in-flight forever. Treat it as a best-effort
+// settle with a short bound instead of the default 30s: fall through to the
+// spinner check either way, since that is the more meaningful signal that the
+// page has actually finished rendering.
+const NETWORK_IDLE_TIMEOUT_MS = 5000;
+
+async function runSetupSteps(entry, page) {
+  for (const step of entry.setup ?? []) {
+    const run = SETUP_STEPS[step];
+    if (!run) {
+      throw new Error(`unknown setup step "${step}" (no entry registered in SETUP_STEPS)`);
+    }
+    await run(page);
+  }
+}
+
+// Fails loudly if any `.animate-spin` element is still visible once the page
+// has otherwise settled -- a frozen spinner in a capture means the state we
+// meant to show hasn't actually loaded yet.
+async function assertNoVisibleSpinners(page) {
+  const spinners = page.locator(".animate-spin");
+  const count = await spinners.count();
+  for (let i = 0; i < count; i++) {
+    if (await spinners.nth(i).isVisible()) {
+      throw new Error("a .animate-spin element is still visible after settling");
+    }
+  }
+}
+
 async function captureUi(entry, { browser }) {
-  throw new Error("not implemented yet");
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 900 },
+    deviceScaleFactor: 2,
+    locale: "en-US",
+    ...(STORAGE_STATE ? { storageState: STORAGE_STATE } : {}),
+  });
+
+  // Force light theme before any app script runs, regardless of the OS/browser
+  // color-scheme preference. Also mark the first-run NUX as already completed:
+  // a fresh guest context otherwise gets redirected away from /servers (and
+  // /home, /clients, /hosts) to /playground until onboarding has been "seen"
+  // (see client/src/lib/onboarding-state.ts), which would silently capture the
+  // wrong screen for every entry that doesn't specifically want that redirect.
+  await context.addInitScript(() => {
+    localStorage.setItem("themeMode", "light");
+    localStorage.setItem(
+      "mcp-onboarding-state",
+      JSON.stringify({ status: "completed" }),
+    );
+  });
+
+  try {
+    const page = await context.newPage();
+    await page.goto(`${BASE_URL}${entry.route}`);
+    await page.getByTestId("app-shell").waitFor({ state: "visible", timeout: APP_SHELL_TIMEOUT_MS });
+
+    await runSetupSteps(entry, page);
+
+    try {
+      await page.waitForLoadState("networkidle", { timeout: NETWORK_IDLE_TIMEOUT_MS });
+    } catch {
+      // See NETWORK_IDLE_TIMEOUT_MS above -- expected, not fatal.
+    }
+    await assertNoVisibleSpinners(page);
+
+    const finalPath = path.join(REPO_ROOT, entry.output);
+    await mkdir(path.dirname(finalPath), { recursive: true });
+
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "mcpjam-screenshot-"));
+    const tmpPath = path.join(tmpDir, "capture.png");
+
+    // Viewport screenshot only (not fullPage): captures must match the fixed
+    // 1440x900 frame every time, not whatever the page's scroll height is.
+    await page.screenshot({ path: tmpPath });
+    await rename(tmpPath, finalPath);
+  } finally {
+    await context.close();
+  }
 }
 
 // Strip the only ANSI the CLI ever emits: `\r\x1b[K` progress heartbeats and
