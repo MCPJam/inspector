@@ -90,7 +90,7 @@ export function ModelCard({ model, isSelected, onSelect }: ModelCardProps) {
           <div className="flex items-center gap-2">
             <ProviderLogo
               provider={providerKey}
-              className="h-4 w-4 flex-shrink-0"
+              className="h-4 w-4 shrink-0"
               letterClassName="text-[8px]"
               hosted
             />

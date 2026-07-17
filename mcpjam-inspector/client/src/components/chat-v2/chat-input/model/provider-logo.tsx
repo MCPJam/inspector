@@ -1,4 +1,5 @@
 // The one provider logo/monogram badge, shared by chat + evals.
+import { useEffect } from "react";
 import { getProviderColor, getProviderLogo } from "@/lib/provider-registry";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/chat-utils";
@@ -36,21 +37,13 @@ export function ProviderLogo({
   const resolvedThemeMode = chatboxHostTheme ?? themeMode;
   const logoSrc = getProviderLogo(provider, resolvedThemeMode);
 
-  // No provider at all (e.g. a placeholder model while config loads):
-  // render nothing rather than a misleading badge.
-  if (!provider) {
-    return null;
-  }
-
-  if (!logoSrc) {
-    // No logo asset — first-letter monogram. Covers custom providers AND
-    // unknown catalog providers (e.g. "thinkingmachines") that ship no bundled
-    // logo, so a brand-new provider renders a legible badge with no code change.
-    if (
-      hosted &&
-      provider !== "custom" &&
-      !reportedMissingLogos.has(provider)
-    ) {
+  // A hosted model whose provider has no logo → monogram. Report it once so a
+  // brand-new vendor added by the hourly catalog is noticed between snapshot
+  // regens. In an effect (not render) — telemetry is a side effect.
+  const missingHostedLogo =
+    !!hosted && !!provider && provider !== "custom" && !logoSrc;
+  useEffect(() => {
+    if (missingHostedLogo && !reportedMissingLogos.has(provider)) {
       reportedMissingLogos.add(provider);
       try {
         track("hosted_provider_logo_missing", {
@@ -61,6 +54,18 @@ export function ProviderLogo({
         // Telemetry must never break rendering.
       }
     }
+  }, [missingHostedLogo, provider]);
+
+  // No provider at all (e.g. a placeholder model while config loads):
+  // render nothing rather than a misleading badge.
+  if (!provider) {
+    return null;
+  }
+
+  if (!logoSrc) {
+    // No logo asset — first-letter monogram. Covers custom providers AND
+    // unknown catalog providers (e.g. "thinkingmachines") that ship no bundled
+    // logo, so a brand-new provider renders a legible badge with no code change.
     const source = provider === "custom" ? customProviderName : provider;
     const letter = source?.[0]?.toUpperCase() || "?";
     const color = getProviderColor(provider);

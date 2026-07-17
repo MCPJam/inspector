@@ -15,7 +15,13 @@ export function UserModelCard({
   isSelected,
   onSelect,
 }: UserModelCardProps) {
-  const providerName = getProviderDisplayName(model.provider);
+  // For a custom provider the configured name lives in `customProviderName`;
+  // pass the `custom:<slug>` group-key form so it (not "Custom") is shown.
+  const providerName = getProviderDisplayName(
+    model.provider === "custom" && model.customProviderName
+      ? `custom:${model.customProviderName}`
+      : model.provider,
+  );
 
   return (
     <button
@@ -45,7 +51,7 @@ export function UserModelCard({
             <ProviderLogo
               provider={model.provider}
               customProviderName={model.customProviderName}
-              className="h-4 w-4 flex-shrink-0"
+              className="h-4 w-4 shrink-0"
               letterClassName="text-[8px]"
             />
             <h3 className="font-semibold text-foreground line-clamp-1">
