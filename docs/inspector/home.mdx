@@ -102,7 +102,12 @@ Actions that mutate the UI (such as running a tool call) pause for your explicit
 
 ### Tool approval
 
-The composer footer includes a **Tool approval** toggle (shield icon). When enabled, the agent pauses before each tool call and shows an Approve / Deny pill so you can review the action before it runs. Denying a call is final — the agent will not retry it automatically. The preference is saved to your browser's local storage and shared across the Home takeover and the side panel.
+The composer footer includes a **Tool approval** toggle (shield icon).
+
+- **Toggle off (default)** — Additive UI actions apply immediately. Destructive actions (those that can't be undone by looking at the screen) still pause for approval.
+- **Toggle on (strict)** — Every mutating UI action pauses before it runs.
+
+When the agent pauses, an **Approve / Deny** pill appears in the chat. Denying a call is final — the agent will not retry it automatically. The preference is saved to your browser's local storage and shared across the Home takeover and the side panel.
 
 ### Widget rendering
 
