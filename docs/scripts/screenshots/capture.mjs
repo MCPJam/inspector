@@ -179,13 +179,219 @@ function printList(entries) {
   }
 }
 
-// Named setup steps a manifest "ui" entry can reference by name. Later tasks
-// add entries here (connect-demo-server, connect-widget-fixture,
-// open-configure-modal, open-project-switcher, open-run-detail,
-// open-reveal-tokens, run-compat, send-excalidraw-prompt,
-// invoke-reservation-tool, open-widget-debug). Referencing an unregistered
-// name is a per-entry failure, not a crash -- see runSetupSteps below.
-const SETUP_STEPS = {};
+// Absolute path to the reservation MCP fixture (docs/scripts/screenshots/
+// fixtures/reservation-server.mjs), used by `connect-widget-fixture` below.
+// Forward slashes: the value is typed into a plain text input the app later
+// hands to `child_process.spawn` on Windows, which accepts either separator.
+const RESERVATION_FIXTURE_PATH = path
+  .join(__dirname, "fixtures", "reservation-server.mjs")
+  .split(path.sep)
+  .join("/");
+
+const DEMO_SERVER_NAME = "demo-everything";
+const DEMO_SERVER_COMMAND = "npx -y @modelcontextprotocol/server-everything";
+const WIDGET_FIXTURE_SERVER_NAME = "reservation-widget";
+const WIDGET_FIXTURE_COMMAND = `node ${RESERVATION_FIXTURE_PATH} --stdio`;
+
+const ADD_SERVER_COMMAND_PLACEHOLDER =
+  "npx -y @modelcontextprotocol/server-everything";
+const ADD_SERVER_NAME_PLACEHOLDER = "my-mcp-server";
+
+// Fills and submits the Add Server modal for a STDIO server. Assumes the
+// modal is not yet open. STDIO (not HTTP) is used for every tier-A setup
+// step that needs a connected server -- see the `connect-widget-fixture`
+// comment below for why HTTP add-server is not an option in this dev
+// environment right now.
+async function addStdioServer(page, { name, command }) {
+  await page.getByRole("button", { name: "Add Server" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByPlaceholder(ADD_SERVER_NAME_PLACEHOLDER).fill(name);
+  await dialog.getByRole("combobox").first().click();
+  await page.getByRole("option", { name: "STDIO" }).click();
+  await dialog
+    .getByPlaceholder(ADD_SERVER_COMMAND_PLACEHOLDER)
+    .fill(command);
+  await dialog.getByRole("button", { name: "Add Server" }).click();
+}
+
+// Connected/failed status renders as visible text on the server card
+// ("Connected" / "Failed (n)"). Waiting for the literal "Connected" text is
+// the simplest reliable signal available without a dedicated test id.
+async function waitForServerConnected(page, timeoutMs = 60000) {
+  await page
+    .getByText("Connected", { exact: true })
+    .first()
+    .waitFor({ state: "visible", timeout: timeoutMs });
+}
+
+// In-app sidebar navigation (client-side route change) -- NOT page.goto.
+// Every setup step that needs to visit /servers mid-flow must get there this
+// way and back: a full page.goto/reload tears down the live STDIO child
+// process the app just spawned, so a hard navigation here would silently
+// undo the connection this same step is trying to establish.
+//
+// The sidebar's nav items are plain <button>s (mcp-sidebar.tsx), not <a>
+// links, and this one's accessible name is "ModelContextProtocol Connect"
+// (its icon contributes alt text ahead of the visible "Connect" label) --
+// matched here with a suffix regex rather than an exact string.
+async function goToServersInApp(page) {
+  if (/\/servers(?:$|[/?#])/.test(new URL(page.url()).pathname)) return;
+  await page.getByRole("button", { name: /Connect$/ }).first().click();
+  await page.waitForURL(/\/servers/);
+}
+
+// Named setup steps a manifest "ui" entry can reference by name. Referencing
+// an unregistered name is a per-entry failure, not a crash -- see
+// runSetupSteps below.
+const SETUP_STEPS = {
+  // compat-strip (route /servers): connect the demo server and let the
+  // host-compat strip render on its own card -- no further action needed.
+  "connect-demo-server": async (page) => {
+    await goToServersInApp(page);
+    await addStdioServer(page, {
+      name: DEMO_SERVER_NAME,
+      command: DEMO_SERVER_COMMAND,
+    });
+    await waitForServerConnected(page);
+  },
+
+  // widget-debug-panel (route /playground): connect the reservation fixture
+  // over STDIO, not HTTP as originally planned. In this dev environment the
+  // web app's HTTP "Add Server" flow is blocked before it ever reaches the
+  // MCP server: the shared dev Convex backend's `servers:createServerIfMissing`
+  // / `updateServer` mutations reject the client's `authMethod` field
+  // ("ArgumentValidationError: Object contains extra field `authMethod`"),
+  // which is a pre-existing schema mismatch on that shared backend, not
+  // something this docs-only change can fix. STDIO add-server does not hit
+  // that code path and works normally, and the reservation fixture's
+  // MCP server + widget behave identically regardless of transport (see
+  // fixtures/reservation-server.mjs's `--stdio` branch), so this is a safe
+  // substitution for the capture's purposes.
+  "connect-widget-fixture": async (page) => {
+    await goToServersInApp(page);
+    await addStdioServer(page, {
+      name: WIDGET_FIXTURE_SERVER_NAME,
+      command: WIDGET_FIXTURE_COMMAND,
+    });
+    await waitForServerConnected(page);
+  },
+
+  // oauth-configure-modal (route /oauth-flow): fresh guest state has no OAuth
+  // target configured yet, so the "Configure Server to Test" modal opens
+  // automatically on mount (client/src/components/OAuthFlowTab.tsx opens it
+  // whenever `!hasProfile`) -- no click needed, just wait for it. Only click
+  // the configure trigger as a fallback for a session that already has a
+  // profile (dialog not auto-shown).
+  "open-configure-modal": async (page) => {
+    const heading = page.getByRole("heading", { name: "Configure Server to Test" });
+    // The modal auto-opens shortly after mount when there's no OAuth profile
+    // yet, but not instantly -- give it a moment before falling back to a
+    // manual click, so the click doesn't race the auto-open and end up
+    // targeting a "Configure Target" button the auto-opened dialog is
+    // already covering.
+    const autoOpened = await heading
+      .waitFor({ state: "visible", timeout: 5000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!autoOpened) {
+      await page.getByRole("button", { name: /Configure/i }).first().click();
+      await heading.waitFor({ state: "visible", timeout: 10000 });
+    }
+  },
+
+  // compatibility-report (route /compatibility): connect the demo server
+  // from /servers, then return via browser history (not page.goto -- same
+  // reason as goToServersInApp) so the live connection survives, and
+  // trigger the on-demand conformance run.
+  "run-compat": async (page) => {
+    await goToServersInApp(page);
+    await addStdioServer(page, {
+      name: DEMO_SERVER_NAME,
+      command: DEMO_SERVER_COMMAND,
+    });
+    await waitForServerConnected(page);
+    await page.goBack();
+    await page.waitForURL(/\/compatibility/);
+    await page.getByRole("button", { name: /Run checks/i }).click();
+    await page
+      .getByText(/Checking…/)
+      .first()
+      .waitFor({ state: "hidden", timeout: 30000 })
+      .catch(() => {
+        // Fine if it never renders "Checking…" at all (fast enough to skip
+        // straight to a result) -- the generic no-spinner check after setup
+        // steps still guards against a truly stuck run.
+      });
+  },
+
+  // widget-debug-panel (route /playground): invoke the reservation fixture's
+  // one UI tool manually from the Tools panel, then open the debug tabs on
+  // the resulting tool-call card.
+  "open-widget-debug": async (page) => {
+    await goToServersInApp(page);
+    await addStdioServer(page, {
+      name: WIDGET_FIXTURE_SERVER_NAME,
+      command: WIDGET_FIXTURE_COMMAND,
+    });
+    await waitForServerConnected(page);
+
+    await page.getByRole("button", { name: "Playground", exact: true }).click();
+    await page.waitForURL(/\/playground/);
+
+    await page.getByText("get-reservation", { exact: true }).click();
+    await page.getByRole("button", { name: "Run" }).click();
+
+    // The rendered tool-call card's "Data" control both expands the card and
+    // sets the active debug tab to Data in one click (tool-part.tsx's
+    // handleDebugClick: aria-label "Data" -> setUserExpanded(true) +
+    // setActiveDebugTab("data")) -- no separate "expand" click needed.
+    // The card's "Data" debug tab is already the pre-selected tab by
+    // default (tool-part.tsx's activeDebugTab starts at "data"), but the
+    // content pane under it only renders once the card itself is expanded
+    // (a separate `userExpanded` state, starts false). Click the card's own
+    // collapsible header -- a role="button" row whose accessible name is
+    // "get-reservation" followed by every child control's label -- to
+    // expand it via toggleExpanded(). Clicking the "Data" button instead
+    // would toggle activeDebugTab from "data" to null (handleDebugClick's
+    // already-active branch), collapsing the card instead of opening it.
+    const cardHeader = page
+      .locator('[role="button"][aria-expanded]')
+      .filter({ hasText: "get-reservation" })
+      .first();
+    await cardHeader.waitFor({ state: "visible", timeout: 15000 });
+    await cardHeader.click();
+    await page.locator('[role="button"][aria-expanded="true"]').filter({ hasText: "get-reservation" }).first()
+      .waitFor({ state: "visible", timeout: 5000 });
+  },
+
+  // client-focus-panel (route /hosts?template=claude): the template deep
+  // link (client/src/App.tsx's useTemplateVerifyDeepLink) creates the host
+  // and redirects from /hosts?template=claude to /hosts/:hostId itself on
+  // mount -- no click needed -- but that redirect is async (a Convex
+  // mutation), so wait for it and for the focus panel's settings to render
+  // before the generic post-setup checks run.
+  "wait-host-template-panel": async (page) => {
+    await page.waitForURL(/\/hosts\//, { timeout: 20000 });
+    await page
+      .getByText("Agent tooling", { exact: true })
+      .waitFor({ state: "visible", timeout: 20000 });
+  },
+
+  // host-compare-view (route /host-compare): a fresh visit with no stored
+  // selection defaults to comparing the ChatGPT and Claude presets
+  // (DEFAULT_COMPARE_HOST_IDS in host-compare-selection.ts) -- no host setup
+  // required. Just wait for both preset columns to render.
+  "wait-host-compare-columns": async (page) => {
+    await page
+      .getByText("ChatGPT", { exact: true })
+      .first()
+      .waitFor({ state: "visible", timeout: 20000 });
+    await page
+      .getByText("Claude", { exact: true })
+      .first()
+      .waitFor({ state: "visible", timeout: 20000 });
+  },
+};
 
 const APP_SHELL_TIMEOUT_MS = 30000;
 // The app keeps a long-lived SSE connection open (`/api/mcp/subscribe`) for

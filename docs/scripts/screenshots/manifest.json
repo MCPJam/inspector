@@ -8,11 +8,7 @@
       "page": "inspector/guided-oauth.mdx",
       "tier": "A",
       "route": "/oauth-flow",
-      "setup": [
-        "Open the OAuth Flow tab",
-        "Click Configure Server",
-        "Confirm the server URL, protocol version, and registration fields are visible"
-      ],
+      "setup": ["open-configure-modal"],
       "output": "docs/images/oauth/oauth-configure-modal.png",
       "alt": "The OAuth Flow tab with the Configure Server modal open, showing the server URL, protocol version, and registration fields."
     },
@@ -22,10 +18,7 @@
       "page": "inspector/host-compat.mdx",
       "tier": "A",
       "route": "/servers",
-      "setup": [
-        "Open the Servers view",
-        "Locate a server card that shows the host-compat strip"
-      ],
+      "setup": ["connect-demo-server"],
       "output": "docs/images/compat/compat-strip.png",
       "alt": "The Servers view showing a server card with the host-compat strip, including host logos and status dots."
     },
@@ -35,10 +28,7 @@
       "page": "inspector/compatibility.mdx",
       "tier": "A",
       "route": "/compatibility",
-      "setup": [
-        "Open the Compatibility page",
-        "Wait for the host rows, verdict badges, and conformance gate to render"
-      ],
+      "setup": ["run-compat"],
       "output": "docs/images/compat/compatibility-report.png",
       "alt": "The Compatibility page listing host rows with verdict badges and a conformance gate."
     },
@@ -47,11 +37,8 @@
       "kind": "ui",
       "page": "inspector/clients.mdx",
       "tier": "A",
-      "route": "/hosts?template=TODO-resolve",
-      "setup": [
-        "Open the Hosts view via the template deep link",
-        "Wait for the focus panel canvas diagram and settings to render"
-      ],
+      "route": "/hosts?template=claude",
+      "setup": ["wait-host-template-panel"],
       "output": "docs/images/clients/client-focus-panel.png",
       "alt": "The Hosts focus panel opened from a template deep link, showing the canvas diagram and settings."
     },
@@ -61,10 +48,7 @@
       "page": "inspector/clients.mdx",
       "tier": "A",
       "route": "/host-compare",
-      "setup": [
-        "Open the Host Compare view",
-        "Select two hosts so their columns render side by side"
-      ],
+      "setup": ["wait-host-compare-columns"],
       "output": "docs/images/clients/host-compare-view.png",
       "alt": "The Compare view with two host columns shown side by side."
     },
@@ -74,15 +58,9 @@
       "page": "inspector/debugging.mdx",
       "tier": "A",
       "route": "/playground",
-      "setup": [
-        "Open the Playground",
-        "Load the reservation fixture widget",
-        "Trigger a tool call",
-        "Open the debug panel and confirm the Data, Widget State, and Globals tabs are present",
-        "Leave the Data tab active for the capture"
-      ],
+      "setup": ["open-widget-debug"],
       "output": "docs/images/debugging/widget-debug-panel.png",
-      "alt": "The Playground tool-call debug panel showing the Data, Widget State, and Globals tabs for the reservation fixture widget."
+      "alt": "The Playground tool-call debug panel showing the Data tab for the reservation fixture widget."
     },
     {
       "id": "getting-started-first-diagram",
@@ -244,10 +222,10 @@
       "kind": "terminal",
       "page": "cli/apps-conformance.mdx",
       "command": "mcpjam",
-      "args": ["apps", "conformance", "--command", "npx", "--args", "-y", "@modelcontextprotocol/server-everything"],
+      "args": ["apps", "conformance", "--url", "http://localhost:4801/mcp"],
       "timeoutMs": 120000,
       "output": "docs/images/cli/cli-apps-conformance.png",
-      "alt": "Terminal output of mcpjam apps conformance running against the everything server."
+      "alt": "Terminal output of mcpjam apps conformance running against the reservation fixture server."
     },
     {
       "id": "cli-doctor-help",
