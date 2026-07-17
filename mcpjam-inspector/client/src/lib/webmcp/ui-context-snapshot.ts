@@ -15,6 +15,7 @@ import {
   type UiContextPayload,
 } from "@/shared/ui-context";
 import { pathnameToActiveTab } from "@/lib/app-navigation";
+import { getSelectedServerNames } from "./ui-context-source";
 
 export interface UiContextSources {
   /** Server NAMES currently selected. Names, not ids: the model speaks names. */
@@ -32,12 +33,14 @@ export function buildUiContextPayload(
     sources.pathname ??
     (typeof window !== "undefined" ? window.location.pathname : "/");
   const timestamp = new Date(sources.now?.() ?? Date.now()).toISOString();
+  // Default to the published selection when the caller didn't pass one — the
+  // agent hook can't reach app state, so App.tsx publishes it (see
+  // ui-context-source). Empty is fine and meaningful ("nothing selected").
+  const selectedServers = sources.selectedServers ?? getSelectedServerNames();
   return {
     path: pathname,
     activeTab: pathnameToActiveTab(pathname),
-    ...(sources.selectedServers
-      ? { selectedServers: sources.selectedServers }
-      : {}),
+    selectedServers,
     timestamp,
   };
 }

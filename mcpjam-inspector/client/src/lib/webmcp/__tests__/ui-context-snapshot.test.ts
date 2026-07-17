@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { afterEach } from "vitest";
 import {
   buildUiContextPart,
   buildUiContextPayload,
 } from "../ui-context-snapshot";
+import { publishSelectedServerNames } from "../ui-context-source";
+
+afterEach(() => publishSelectedServerNames([]));
 import {
   UI_CONTEXT_PART_TYPE,
   parseUiContextPayload,
@@ -13,9 +17,11 @@ const now = () => Date.parse("2026-07-15T12:00:00.000Z");
 
 describe("buildUiContextPayload", () => {
   it("resolves the active tab from the pathname", () => {
+    publishSelectedServerNames([]);
     expect(buildUiContextPayload({ pathname: "/playground", now })).toEqual({
       path: "/playground",
       activeTab: "playground",
+      selectedServers: [],
       timestamp: "2026-07-15T12:00:00.000Z",
     });
   });
@@ -41,10 +47,31 @@ describe("buildUiContextPayload", () => {
     ).toEqual(["everything", "chess"]);
   });
 
-  it("omits selectedServers entirely when not supplied", () => {
+  it("defaults selectedServers to the published selection", () => {
+    // The agent hook can't reach app state, so App.tsx publishes the current
+    // selection and the payload picks it up when the caller passes none.
+    publishSelectedServerNames(["everything"]);
     expect(
-      buildUiContextPayload({ pathname: "/servers", now }),
-    ).not.toHaveProperty("selectedServers");
+      buildUiContextPayload({ pathname: "/servers", now }).selectedServers,
+    ).toEqual(["everything"]);
+  });
+
+  it("reports an empty selection as empty, not absent", () => {
+    publishSelectedServerNames([]);
+    expect(
+      buildUiContextPayload({ pathname: "/servers", now }).selectedServers,
+    ).toEqual([]);
+  });
+
+  it("an explicit selection overrides the published one", () => {
+    publishSelectedServerNames(["published"]);
+    expect(
+      buildUiContextPayload({
+        pathname: "/servers",
+        selectedServers: ["explicit"],
+        now,
+      }).selectedServers,
+    ).toEqual(["explicit"]);
   });
 
   it("falls back to a known tab for an unknown path", () => {

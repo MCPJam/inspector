@@ -258,6 +258,7 @@ import {
 import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
 import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
+import { publishSelectedServerNames } from "./lib/webmcp/ui-context-source";
 import type {
   NavigateInspectorCommand,
   OpenPlaygroundInspectorCommand,
@@ -2046,6 +2047,16 @@ export default function App() {
   projectServersRef.current = projectServers;
   const selectedServerRef = useRef(appState.selectedServer);
   selectedServerRef.current = appState.selectedServer;
+  // Publish the current selection for the agent's per-turn orientation block,
+  // which is built in a hook that can't reach app state (ui-context-source).
+  useEffect(() => {
+    const names = appState.selectedMultipleServers.length
+      ? appState.selectedMultipleServers
+      : appState.selectedServer
+        ? [appState.selectedServer]
+        : [];
+    publishSelectedServerNames(names);
+  }, [appState.selectedMultipleServers, appState.selectedServer]);
   const persistRuntimeServerToProjectRef = useRef(
     persistRuntimeServerToProjectIfNeeded
   );
