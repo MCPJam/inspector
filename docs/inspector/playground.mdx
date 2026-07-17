@@ -338,7 +338,7 @@ When on, pauses the model before each tool call so you can approve or deny it ma
 Click the mic button (right side of the input) to record your voice. The audio is transcribed using Whisper and the resulting text is appended to whatever you've already typed in the composer. Recording stops automatically after 3 minutes. The mic is disabled when your daily voice budget is exhausted; a warning appears in the composer when the remaining budget is low. While a recording is in progress, pressing Enter does not submit the draft — use the stop button (arrow-up) to finish recording first, or the ✕ button to cancel without transcribing.
 
 **Context meter** (right side of the input)
-Open it to inspect the token breakdown for the current conversation — input, output, system prompt, and MCP tools usage.
+Open it to inspect the token breakdown for the current conversation — input, output, system prompt, and MCP tools usage. Before you send the first message, the popover shows an **MCP Tools (estimated)** row with a pre-request estimate of how many tokens your connected servers' tool descriptions will consume. This estimate is UI-only and is not used in billing or actual session usage math. Once the model responds and the provider reports real input/output token counts, the estimate is replaced by the actual usage. If token counting is not supported for a particular server or model, the popover shows a **Token count unavailable** notice for that server instead.
 
 ## Skills
 
