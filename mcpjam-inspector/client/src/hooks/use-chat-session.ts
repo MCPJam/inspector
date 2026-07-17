@@ -2830,11 +2830,8 @@ export function useChatSession(
         return;
       }
 
-      const isInitialSelection =
-        lastObservedTokenCountSelectionKeyRef.current === null &&
-        tokenCountSelectionKey !== "";
       const shouldCountTokens =
-        tokenCountSelectionKey !== "" && isInitialSelection;
+        tokenCountSelectionKey !== "" && messages.length === 0;
       const selectionChanged =
         lastObservedTokenCountSelectionKeyRef.current !== null &&
         lastObservedTokenCountSelectionKeyRef.current !== tokenCountSelectionKey;
@@ -2845,7 +2842,7 @@ export function useChatSession(
           : `${selectedModel.provider}/${selectedModel.id}`
         : undefined;
 
-      if (selectionChanged) {
+      if (selectionChanged && !shouldCountTokens) {
         setMcpToolsTokenCount(null);
         setMcpToolsTokenCountErrors(null);
       }

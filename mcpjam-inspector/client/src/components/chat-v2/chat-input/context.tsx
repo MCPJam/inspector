@@ -360,7 +360,9 @@ export const ContextMCPServerUsage = ({
           <Separator className="my-2" />
         )}
         <div className="space-y-1">
-          <div className="text-xs text-muted-foreground">MCP Tools</div>
+          <div className="text-xs text-muted-foreground">
+            MCP Tools (estimated)
+          </div>
           <div
             className={cn(
               "flex items-center justify-between text-xs",
@@ -415,7 +417,9 @@ export const ContextMCPServerUsage = ({
     <>
       {(hasInputOrOutput || hasSystemPrompt) && <Separator className="my-2" />}
       <div className="space-y-1">
-        <div className="text-xs text-muted-foreground">MCP Tools</div>
+        <div className="text-xs text-muted-foreground">
+          MCP Tools (estimated)
+        </div>
         {serversWithTokenErrors.length > 0 && (
           <div
             className={cn(
