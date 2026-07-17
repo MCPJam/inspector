@@ -11,8 +11,10 @@ const MODEL_ID_MAPPINGS: Record<string, string> = {
   "claude-opus-4-1": "anthropic/claude-opus-4.1",
   "claude-opus-4-0": "anthropic/claude-opus-4",
   "claude-sonnet-4-5": "anthropic/claude-sonnet-4.5",
+  "claude-sonnet-4.5": "anthropic/claude-sonnet-4.5",
   "claude-sonnet-4-0": "anthropic/claude-sonnet-4",
   "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
+  "claude-haiku-4.5": "anthropic/claude-haiku-4.5",
   "claude-3-7-sonnet-latest": "anthropic/claude-3.7-sonnet",
   "claude-3-5-sonnet-latest": "anthropic/claude-3.5-sonnet",
   "claude-3-5-haiku-latest": "anthropic/claude-3.5-haiku",
@@ -24,7 +26,9 @@ const MODEL_ID_MAPPINGS: Record<string, string> = {
   // Anthropic - constructed IDs (provider/model with dashes → provider/model with dots)
   "anthropic/claude-opus-4-1": "anthropic/claude-opus-4.1",
   "anthropic/claude-sonnet-4-5": "anthropic/claude-sonnet-4.5",
+  "anthropic/claude-sonnet-4.5": "anthropic/claude-sonnet-4.5",
   "anthropic/claude-haiku-4-5": "anthropic/claude-haiku-4.5",
+  "anthropic/claude-haiku-4.5": "anthropic/claude-haiku-4.5",
 
   // OpenAI models
   "gpt-4": "openai/gpt-4-turbo",
@@ -117,8 +121,10 @@ export function mapModelIdToTokenizerBackend(modelId: string): string | null {
       return MODEL_ID_MAPPINGS[normalized];
     }
 
-    // Return normalized version as-is (already has provider prefix)
-    return normalized;
+    // Provider-prefixed custom, local, and cloud model IDs are not proof that
+    // ai-tokenizer supports the model. Avoid sending them to the Convex
+    // tokenizer endpoint; callers can report token counting as unavailable.
+    return null;
   }
 
   // 3. For models without prefix, construct provider/model format
@@ -173,7 +179,7 @@ export function getFetchErrorCause(error: unknown): string | undefined {
 export async function countToolsTokens(
   tools: unknown[],
   modelId: string,
-  logPrefix = "[tools]",
+  logPrefix = "[tools]"
 ): Promise<number> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   const mappedModelId = mapModelIdToTokenizerBackend(modelId);
@@ -205,9 +211,12 @@ export async function countToolsTokens(
     // Connection-level failures (DNS, ECONNREFUSED, TLS) come from the
     // caller's network, not our backend. Log locally but don't page Sentry.
     if (isFetchConnectionFailure(error)) {
-      logger.debug(`${logPrefix} Backend unreachable, falling back to estimate`, {
-        cause: getFetchErrorCause(error),
-      });
+      logger.debug(
+        `${logPrefix} Backend unreachable, falling back to estimate`,
+        {
+          cause: getFetchErrorCause(error),
+        }
+      );
     } else {
       logger.warn(`${logPrefix} Error counting tokens`, {
         error: error instanceof Error ? error.message : String(error),

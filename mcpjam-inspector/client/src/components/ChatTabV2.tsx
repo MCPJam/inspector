@@ -138,6 +138,7 @@ interface ChatTabProps {
   onHasMessagesChange?: (hasMessages: boolean) => void;
   enableMultiModelChat?: boolean;
   minimalMode?: boolean;
+  showContextPopover?: boolean;
   hostedContext?: HostedRuntimeContext;
   executionConfig?: ExecutionConfig;
   reasoningDisplayMode?: ReasoningDisplayMode;
@@ -174,6 +175,7 @@ export function ChatTabV2({
   onHasMessagesChange,
   enableMultiModelChat = false,
   minimalMode = false,
+  showContextPopover,
   hostedContext,
   executionConfig,
   reasoningDisplayMode = "inline",
@@ -386,6 +388,7 @@ export function ChatTabV2({
     toolServerMap,
     tokenUsage,
     mcpToolsTokenCount,
+    mcpToolsTokenCountErrors,
     mcpToolsTokenCountLoading,
     systemPromptTokenCount,
     systemPromptTokenCountLoading,
@@ -2064,6 +2067,7 @@ export function ChatTabV2({
     tokenUsage,
     selectedServers: selectedConnectedServerNames,
     mcpToolsTokenCount,
+    mcpToolsTokenCountErrors,
     mcpToolsTokenCountLoading,
     connectedOrConnectingServerConfigs,
     systemPromptTokenCount,
@@ -2077,6 +2081,7 @@ export function ChatTabV2({
     requireToolApproval,
     onRequireToolApprovalChange: handleRequireToolApprovalChange,
     minimalMode,
+    showContextPopover,
     showHostStyleSelector,
     hostStyle,
     onHostStyleChange,

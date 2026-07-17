@@ -292,6 +292,7 @@ interface ChatInputProps {
   };
   selectedServers?: string[];
   mcpToolsTokenCount?: Record<string, number> | null;
+  mcpToolsTokenCountErrors?: Record<string, string> | null;
   mcpToolsTokenCountLoading?: boolean;
   connectedOrConnectingServerConfigs?: Record<string, { name: string }>;
   systemPromptTokenCount?: number | null;
@@ -309,6 +310,8 @@ interface ChatInputProps {
   onRequireToolApprovalChange?: (enabled: boolean) => void;
   /** Shared chat-only mode */
   minimalMode?: boolean;
+  /** Allow the context popover while the surrounding surface is minimal. */
+  showContextPopover?: boolean;
   /** Main chat: show the Claude/ChatGPT host-style selector in the "+" menu. */
   showHostStyleSelector?: boolean;
   /** Current host style for the selector UI. */
@@ -380,6 +383,7 @@ export function ChatInput({
   tokenUsage,
   selectedServers,
   mcpToolsTokenCount,
+  mcpToolsTokenCountErrors,
   mcpToolsTokenCountLoading = false,
   connectedOrConnectingServerConfigs,
   systemPromptTokenCount,
@@ -393,6 +397,7 @@ export function ChatInput({
   requireToolApproval = false,
   onRequireToolApprovalChange,
   minimalMode = false,
+  showContextPopover,
   showHostStyleSelector = false,
   hostStyle,
   onHostStyleChange,
@@ -1150,6 +1155,7 @@ export function ChatInput({
       ? selectedModels
       : [currentModel];
   const hideContextPopover = multiModelEnabled;
+  const contextPopoverVisible = showContextPopover ?? !minimalMode;
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     const currentCaretIndex = event.currentTarget.selectionStart;
@@ -1748,7 +1754,7 @@ export function ChatInput({
                 </Tooltip>
               )}
               {voiceInputState === "idle" &&
-                !minimalMode &&
+                contextPopoverVisible &&
                 !hideContextPopover && (
                   <Context
                     usedTokens={tokenUsage?.totalTokens ?? 0}
@@ -1773,6 +1779,7 @@ export function ChatInput({
                     modelId={`${currentModel.id}`}
                     selectedServers={selectedServers}
                     mcpToolsTokenCount={mcpToolsTokenCount}
+                    mcpToolsTokenCountErrors={mcpToolsTokenCountErrors}
                     mcpToolsTokenCountLoading={mcpToolsTokenCountLoading}
                     connectedOrConnectingServerConfigs={
                       connectedOrConnectingServerConfigs
@@ -1792,6 +1799,8 @@ export function ChatInput({
                     systemPromptTokenCountLoading ||
                     (mcpToolsTokenCount &&
                       Object.keys(mcpToolsTokenCount).length > 0) ||
+                    (mcpToolsTokenCountErrors &&
+                      Object.keys(mcpToolsTokenCountErrors).length > 0) ||
                     mcpToolsTokenCountLoading ? (
                       <ContextContent>
                         {hasMessages &&
