@@ -557,11 +557,20 @@ const SETUP_STEPS = {
   // --- Tier C (hosted logged-in session) ----------------------------------
   // The three steps below only make sense against the hosted app with a real
   // STORAGE_STATE session (see `--login` and STORAGE_STATE above) -- there is
-  // no local guest equivalent to test them against. Their selectors are
-  // therefore derived by reading the client source rather than by driving a
-  // live session, unlike every step above. Expect the capture runner to need
-  // small adjustments here the first time these actually run against the
-  // hosted app, if the live DOM has drifted from what's read below.
+  // no local guest equivalent to test them against. Their selectors were
+  // originally derived by reading the client source rather than by driving a
+  // live session, unlike every step above.
+  //
+  // 2026-07-17 capture run against the real hosted account (`STORAGE_STATE`
+  // from `--login`): all three selectors below matched the live DOM as
+  // written -- no corrections were needed. `open-run-detail` and
+  // `open-reveal-tokens` could not be exercised end-to-end on that account
+  // though, for data reasons unrelated to the selectors themselves (see each
+  // step's updated comment): the account had zero eval suites and zero
+  // connected servers. Those two entries were left uncaptured rather than
+  // shipping an empty/error state -- see docs/scripts/screenshots's task-6
+  // report for detail. Re-verify against whatever account actually has
+  // qualifying data before relying on these as "known good".
 
   // project-switcher (route /home): click the sidebar's org/project switcher
   // trigger -- SidebarContextSwitcher's SidebarMenuButton in
@@ -569,7 +578,8 @@ const SETUP_STEPS = {
   // accessible name is "Switch context: <org> / <project>" once an
   // organization is resolved, or "Switch project: <project>" before one is
   // -- then wait for the dropdown (Radix DropdownMenu.Content, which renders
-  // role="menu") to open over the sidebar.
+  // role="menu") to open over the sidebar. Verified against the live hosted
+  // DOM 2026-07-17 -- captured successfully as-is.
   "open-project-switcher": async (page) => {
     await page
       .getByRole("button", { name: /^Switch (context|project):/ })
@@ -591,6 +601,16 @@ const SETUP_STEPS = {
   // and its "Expected"/"Actual" side-by-side labels only render once a
   // name-mismatch row is expanded -- neither is guaranteed for every run
   // (a clean pass may have nothing worth expanding).
+  //
+  // 2026-07-17: could not be exercised past the first wait on the hosted
+  // account used for capture -- that account has zero eval suites (the
+  // Evals page shows the "Create your first suite" empty state), so no
+  // `[data-testid^="suite-row-"]` element exists at all and the initial
+  // waitFor times out by design, not because the selector is wrong. The
+  // click-through past the suite row (the "Open run ..." button, the
+  // ToolCallsDiffView waits) remains unverified against a live DOM. This
+  // entry was left uncaptured rather than shipping an empty state -- see
+  // the task-6 report.
   "open-run-detail": async (page) => {
     const suiteRow = page.locator('[data-testid^="suite-row-"]').first();
     await suiteRow.waitFor({ state: "visible", timeout: 20000 });
@@ -628,6 +648,16 @@ const SETUP_STEPS = {
   // (ServerInfoContent.tsx) into view. Deliberately never clicks that
   // section's "Reveal tokens" button -- captures must keep OAuth tokens
   // masked.
+  //
+  // 2026-07-17: verified against the live hosted DOM up through the card
+  // click and the Overview tab switch -- both work as written. The final
+  // "OAuth Tokens" heading wait could not be verified though: the hosted
+  // account used for capture has servers, but every one of them is
+  // Disconnected, and a disconnected server's Overview tab renders "Connect
+  // to view server overview" instead of the OAuth Tokens section (there is
+  // no `filter({ hasText: "Connected" })` match at all, so the very first
+  // `serverCard.waitFor` already times out). This entry was left uncaptured
+  // rather than shipping the "not connected" state -- see the task-6 report.
   "open-reveal-tokens": async (page) => {
     const serverCard = page
       .locator('[data-slot="card"]')
