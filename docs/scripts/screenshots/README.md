@@ -40,6 +40,7 @@ of failing, so the manifest stays usable while those ids are still pending.
 
 ```sh
 node docs/scripts/screenshots/capture.mjs [--only <id>] [--kind ui|terminal] [--tier A|B|C] [--list] [--validate]
+node docs/scripts/screenshots/capture.mjs --login
 ```
 
 - `--only <id>`: run a single entry by id.
@@ -50,6 +51,15 @@ node docs/scripts/screenshots/capture.mjs [--only <id>] [--kind ui|terminal] [--
 - `--validate`: check the manifest for structural problems (see below) and
   exit 0 with `manifest OK (N entries)`, or exit 1 with a per-entry error
   list.
+- `--login`: the one manual step in this harness. Opens a real, headed
+  Chromium window against `BASE_URL` (default `https://app.mcpjam.com`) and
+  waits for a person to log in. Press Enter in the terminal once you're
+  logged in, and it saves a Playwright storage state to
+  `.screenshot-auth/state.json` (creating the directory if needed) and exits.
+  Closing the browser window instead of pressing Enter aborts cleanly with a
+  non-zero exit code and no file written. `.screenshot-auth/` is gitignored
+  at the repo root -- the saved file is a live session credential, never
+  commit it.
 
 Filters combine: `--kind ui --tier A` runs only tier A UI entries.
 
@@ -71,7 +81,8 @@ Filters combine: `--kind ui --tier A` runs only tier A UI entries.
 - `STORAGE_STATE` (path, tier C only): path to a Playwright storage-state
   JSON file with a logged-in session for the hosted MCPJam demo account.
   Tier C entries (dashboards, evals, hosted server pages, etc.) require this;
-  tiers A and B do not.
+  tiers A and B do not. Produced by `--login` (see CLI usage above); typically
+  `.screenshot-auth/state.json`.
 
 ## Tiers (UI entries only)
 
@@ -102,12 +113,19 @@ point).
    By default the harness targets `http://localhost:5173`; set `BASE_URL` if
    your dev server runs elsewhere.
 3. For tier C entries, obtain a `STORAGE_STATE` file for the MCPJam demo
-   account (a Playwright storage-state export of a logged-in session) and
-   point `STORAGE_STATE` at it:
+   account by logging in once with `--login`:
    ```sh
-   STORAGE_STATE=/path/to/demo-storage-state.json node docs/scripts/screenshots/capture.mjs --tier C
+   node docs/scripts/screenshots/capture.mjs --login
    ```
-   Never commit a `STORAGE_STATE` file; treat it like a credential.
+   This opens a headed browser window against `BASE_URL` (default
+   `https://app.mcpjam.com`); log in there, then press Enter in the terminal.
+   It saves the session to `.screenshot-auth/state.json`. Then run the tier C
+   captures against the hosted app with `STORAGE_STATE` pointed at it:
+   ```sh
+   BASE_URL=https://app.mcpjam.com STORAGE_STATE=.screenshot-auth/state.json node docs/scripts/screenshots/capture.mjs --tier C
+   ```
+   Never commit a `STORAGE_STATE` file; treat it like a credential
+   (`.screenshot-auth/` is gitignored for exactly this reason).
 4. Run the harness, optionally scoped to what you're working on:
    ```sh
    node docs/scripts/screenshots/capture.mjs --only oauth-configure-modal
@@ -120,6 +138,29 @@ point).
    why.
 6. Review every new or changed PNG visually before referencing it from an
    `.mdx` file.
+
+## Known workaround: HTTP add-server is broken in local dev
+
+`SETUP_STEPS.connect-widget-fixture` and `connect-demo-server` in
+`capture.mjs` connect servers over STDIO, not HTTP, even though the reservation
+fixture (`fixtures/reservation-server.mjs`) speaks both. This is a deliberate
+substitution, not the original plan: in this dev environment, the web app's
+HTTP "Add Server" flow is blocked before it ever reaches the MCP server. The
+shared dev Convex backend's `servers:createServerIfMissing` / `updateServer`
+mutations reject the client's `authMethod` field
+(`ArgumentValidationError: Object contains extra field "authMethod"`), which is
+a pre-existing schema mismatch on that shared backend, not something a
+docs-only change can fix. STDIO add-server does not hit that code path and
+works normally, and the reservation fixture's MCP server + widget behave
+identically regardless of transport, so STDIO is a safe substitution for the
+capture's purposes.
+
+The one case that still needs a real HTTP server -- `send-excalidraw-prompt`,
+which connects the genuine remote Excalidraw sample server -- sidesteps the
+same bug by using the "Import Servers from JSON" modal instead of the regular
+"Add Server" form: `parseJsonConfig` builds HTTP `ServerFormData` with no
+`authMethod` field at all, so it never triggers the mutation rejection. See
+`importHttpServerViaJson` in `capture.mjs` for that path.
 
 ## Notes for implementers of the actual capture logic
 

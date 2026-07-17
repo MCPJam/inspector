@@ -88,11 +88,7 @@
       "page": "inspector/home.mdx",
       "tier": "C",
       "route": "/home",
-      "setup": [
-        "Load the session from STORAGE_STATE",
-        "Open the Home page",
-        "Wait for the greeting, org stats strip, and recommended servers and clients to load"
-      ],
+      "setup": [],
       "output": "docs/images/home/home-dashboard.png",
       "alt": "The Home page with a greeting, the org stats strip, and recommended servers and clients."
     },
@@ -102,11 +98,7 @@
       "page": "inspector/evals.mdx",
       "tier": "C",
       "route": "/evals",
-      "setup": [
-        "Load the session from STORAGE_STATE",
-        "Open the Evals page",
-        "Wait for the accuracy, runs, and cases summary to render"
-      ],
+      "setup": [],
       "output": "docs/images/evals/evals-suite-dashboard.png",
       "alt": "The Evals suite view showing accuracy, runs, and cases."
     },
@@ -116,12 +108,7 @@
       "page": "inspector/evals.mdx",
       "tier": "C",
       "route": "/evals",
-      "setup": [
-        "Load the session from STORAGE_STATE",
-        "Open the Evals page",
-        "Open an existing run",
-        "Wait for the expected vs actual tool calls to render"
-      ],
+      "setup": ["open-run-detail"],
       "output": "docs/images/evals/evals-run-detail.png",
       "alt": "An Evals run detail view comparing expected and actual tool calls."
     },
@@ -131,12 +118,7 @@
       "page": "inspector/projects.mdx",
       "tier": "C",
       "route": "/home",
-      "setup": [
-        "Load the session from STORAGE_STATE",
-        "Open the Home page",
-        "Click the org/project switcher",
-        "Wait for the menu to open over the sidebar"
-      ],
+      "setup": ["open-project-switcher"],
       "output": "docs/images/projects/project-switcher.png",
       "alt": "The org and project switcher menu open over the sidebar."
     },
@@ -146,11 +128,7 @@
       "page": "inspector/computer.mdx",
       "tier": "C",
       "route": "/computer",
-      "setup": [
-        "Load the session from STORAGE_STATE",
-        "Open the Computer tab",
-        "Wait for the web terminal and toolbar to render"
-      ],
+      "setup": [],
       "output": "docs/images/computer/computer-terminal.png",
       "alt": "The Computer tab with the web terminal and its toolbar."
     },
@@ -160,12 +138,7 @@
       "page": "hosted/overview.mdx",
       "tier": "C",
       "route": "/servers",
-      "setup": [
-        "Load the session from STORAGE_STATE",
-        "Open the Servers view",
-        "Open a hosted server's Overview tab",
-        "Locate the masked OAuth Tokens field and its Reveal control"
-      ],
+      "setup": ["open-reveal-tokens"],
       "output": "docs/images/hosted/hosted-reveal-tokens.png",
       "alt": "The Server Overview tab with masked OAuth Tokens and a Reveal control."
     },

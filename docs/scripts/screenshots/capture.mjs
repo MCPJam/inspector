@@ -3,6 +3,7 @@
 //
 // Usage:
 //   node docs/scripts/screenshots/capture.mjs [--only <id>] [--kind ui|terminal] [--tier A|B|C] [--list] [--validate]
+//   node docs/scripts/screenshots/capture.mjs --login
 //
 // See docs/scripts/screenshots/README.md for the full workflow.
 
@@ -10,6 +11,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { mkdir, mkdtemp, rename } from "node:fs/promises";
 import { execFile as execFileCb, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { createInterface } from "node:readline/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,6 +32,13 @@ const execFileAsync = promisify(execFileCb);
 
 const BASE_URL = process.env.BASE_URL || "http://localhost:5173";
 const STORAGE_STATE = process.env.STORAGE_STATE || null;
+
+// Where `--login` writes the storage state it captures, and the path tier C
+// runs are expected to point STORAGE_STATE at (see README.md). Gitignored at
+// the repo root -- this file holds a live hosted-app session, not a fixture.
+const LOGIN_BASE_URL = process.env.BASE_URL || "https://app.mcpjam.com";
+const STORAGE_STATE_DIR = path.join(REPO_ROOT, ".screenshot-auth");
+const STORAGE_STATE_OUTPUT_PATH = path.join(STORAGE_STATE_DIR, "state.json");
 
 const VALID_KINDS = new Set(["ui", "terminal"]);
 const VALID_TIERS = new Set(["A", "B", "C"]);
@@ -55,6 +64,7 @@ function parseArgs(argv) {
     tier: null,
     list: false,
     validate: false,
+    login: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -83,6 +93,9 @@ function parseArgs(argv) {
         break;
       case "--validate":
         opts.validate = true;
+        break;
+      case "--login":
+        opts.login = true;
         break;
       default:
         throw new Error(`Unknown argument: ${arg}`);
@@ -540,6 +553,97 @@ const SETUP_STEPS = {
       .first()
       .waitFor({ state: "visible", timeout: 20000 });
   },
+
+  // --- Tier C (hosted logged-in session) ----------------------------------
+  // The three steps below only make sense against the hosted app with a real
+  // STORAGE_STATE session (see `--login` and STORAGE_STATE above) -- there is
+  // no local guest equivalent to test them against. Their selectors are
+  // therefore derived by reading the client source rather than by driving a
+  // live session, unlike every step above. Expect the capture runner to need
+  // small adjustments here the first time these actually run against the
+  // hosted app, if the live DOM has drifted from what's read below.
+
+  // project-switcher (route /home): click the sidebar's org/project switcher
+  // trigger -- SidebarContextSwitcher's SidebarMenuButton in
+  // client/src/components/sidebar/sidebar-context-switcher.tsx, whose
+  // accessible name is "Switch context: <org> / <project>" once an
+  // organization is resolved, or "Switch project: <project>" before one is
+  // -- then wait for the dropdown (Radix DropdownMenu.Content, which renders
+  // role="menu") to open over the sidebar.
+  "open-project-switcher": async (page) => {
+    await page
+      .getByRole("button", { name: /^Switch (context|project):/ })
+      .click();
+    await page.getByRole("menu").waitFor({ state: "visible", timeout: 10000 });
+  },
+
+  // evals-run-detail (route /evals): click the first suite row -- each row is
+  // `[data-testid="suite-row-<id>"]` with a "Select suite: <name>" button,
+  // see SuiteOverviewRow in client/src/components/evals/evals-suite-list-sidebar.tsx
+  // -- which client-side-navigates to /evals/suite/:suiteId (router.tsx).
+  // Then click the first run row in that suite: SuiteRunsList
+  // (client/src/components/evals/suite-runs-list.tsx) sorts its rows
+  // newest-first, so the first "Open run <id>" button is always the most
+  // recent run, which navigates to /evals/suite/:suiteId/runs/:runId. Both
+  // final waits are best-effort: ToolCallsDiffView
+  // (client/src/components/evals/tool-calls-diff-view.tsx) shows a
+  // "Comparing tool calls…" banner only while grading is still in flight,
+  // and its "Expected"/"Actual" side-by-side labels only render once a
+  // name-mismatch row is expanded -- neither is guaranteed for every run
+  // (a clean pass may have nothing worth expanding).
+  "open-run-detail": async (page) => {
+    const suiteRow = page.locator('[data-testid^="suite-row-"]').first();
+    await suiteRow.waitFor({ state: "visible", timeout: 20000 });
+    await suiteRow.getByRole("button", { name: /^Select suite:/ }).click();
+    await page.waitForURL(/\/evals\/suite\//, { timeout: 20000 });
+
+    const runButton = page.getByRole("button", { name: /^Open run / }).first();
+    await runButton.waitFor({ state: "visible", timeout: 20000 });
+    await runButton.click();
+    await page.waitForURL(/\/evals\/suite\/[^/]+\/runs\//, { timeout: 20000 });
+
+    await page
+      .getByText("Comparing tool calls…")
+      .first()
+      .waitFor({ state: "hidden", timeout: 15000 })
+      .catch(() => {});
+    await page
+      .getByText("Expected", { exact: true })
+      .first()
+      .waitFor({ state: "visible", timeout: 5000 })
+      .catch(() => {});
+  },
+
+  // hosted-reveal-tokens (route /servers): open the first connected server's
+  // detail modal by clicking its card -- ServerConnectionCard
+  // (client/src/components/connection/ServerConnectionCard.tsx) renders each
+  // server as a design-system `Card` (`[data-slot="card"]`, see
+  // design-system/src/components/card.tsx), scoped here to one that shows
+  // the "Connected" status label (server-card-utils.ts's
+  // getConnectionStatusMeta) to skip past any quick-connect catalog cards on
+  // the same page. The card click opens ServerDetailModal
+  // (client/src/components/connection/ServerDetailModal.tsx) on its
+  // "Configuration" tab by default, so switch to the "Overview" tab
+  // (a Radix Tabs.Trigger, role="tab") and scroll the "OAuth Tokens" section
+  // (ServerInfoContent.tsx) into view. Deliberately never clicks that
+  // section's "Reveal tokens" button -- captures must keep OAuth tokens
+  // masked.
+  "open-reveal-tokens": async (page) => {
+    const serverCard = page
+      .locator('[data-slot="card"]')
+      .filter({ hasText: "Connected" })
+      .first();
+    await serverCard.waitFor({ state: "visible", timeout: 20000 });
+    await serverCard.click();
+
+    const dialog = page.getByRole("dialog");
+    await dialog.waitFor({ state: "visible", timeout: 20000 });
+    await dialog.getByRole("tab", { name: "Overview" }).click();
+
+    const oauthHeading = dialog.getByText("OAuth Tokens", { exact: true });
+    await oauthHeading.waitFor({ state: "visible", timeout: 20000 });
+    await oauthHeading.scrollIntoViewIfNeeded();
+  },
 };
 
 const APP_SHELL_TIMEOUT_MS = 30000;
@@ -758,6 +862,66 @@ async function captureTerminal(entry, { browser }) {
   }
 }
 
+// `--login` mode: opens a real, headed browser against the hosted app so a
+// human can log in, then saves the resulting session as a Playwright storage
+// state for later tier C runs (`STORAGE_STATE=.screenshot-auth/state.json
+// node docs/scripts/screenshots/capture.mjs --tier C` -- see README.md).
+// This is the one step in the whole harness that needs a person present.
+async function runLogin() {
+  console.log(`Opening a browser window at ${LOGIN_BASE_URL}`);
+  console.log(
+    "Log in in the opened window, then press Enter here to save the session.",
+  );
+
+  // headless: false (not the default headless launch the rest of this file
+  // uses) -- there is no way to complete a real login flow (SSO redirects,
+  // 2FA, etc.) without a visible window for the human to interact with.
+  const browser = await chromium.launch({ channel: "chromium", headless: false });
+
+  // Tracks whether the user closed the browser window themselves instead of
+  // pressing Enter -- that's a clean, expected way to abort, not a crash.
+  let browserClosedByUser = false;
+  const disconnected = new Promise((resolve) => {
+    browser.once("disconnected", () => {
+      browserClosedByUser = true;
+      resolve();
+    });
+  });
+
+  const context = await browser.newContext();
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+  try {
+    const page = await context.newPage();
+    await page.goto(LOGIN_BASE_URL);
+
+    // Whichever happens first: the user presses Enter in this terminal, or
+    // they close the browser window (disconnected fires) instead.
+    await Promise.race([
+      rl.question("Press Enter once you're logged in: "),
+      disconnected,
+    ]);
+
+    if (browserClosedByUser) {
+      throw new Error(
+        "the browser window was closed before login was confirmed -- no session was saved. Re-run --login and keep the window open until you press Enter.",
+      );
+    }
+
+    await mkdir(STORAGE_STATE_DIR, { recursive: true });
+    await context.storageState({ path: STORAGE_STATE_OUTPUT_PATH });
+    console.log(`Saved session to ${STORAGE_STATE_OUTPUT_PATH}`);
+    console.log(
+      "This file is gitignored (.screenshot-auth/) -- never commit it, it is a live session credential.",
+    );
+  } finally {
+    rl.close();
+    if (!browserClosedByUser) {
+      await browser.close();
+    }
+  }
+}
+
 async function main() {
   let opts;
   try {
@@ -765,6 +929,16 @@ async function main() {
   } catch (err) {
     console.error(err.message);
     process.exitCode = 1;
+    return;
+  }
+
+  if (opts.login) {
+    try {
+      await runLogin();
+    } catch (err) {
+      console.error(`Login failed: ${err.message}`);
+      process.exitCode = 1;
+    }
     return;
   }
 
