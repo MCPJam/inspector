@@ -8,8 +8,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import { getProviderLogo, getProviderColor } from "@/lib/provider-logos";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { getProviderDisplayName } from "@/lib/provider-registry";
+import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import { ModelDetailsModal } from "./model-details-modal";
 
 interface ModelCardProps {
@@ -47,35 +47,10 @@ function formatPrice(price: string): string {
   return `$${numPrice}/M`;
 }
 
-/**
- * Extract provider name from model ID (e.g., "openai/gpt-5" -> "OpenAI")
- */
-function getProviderFromId(modelId: string): string {
-  const parts = modelId.split("/");
-  if (parts.length < 2) return "";
-
-  const provider = parts[0];
-  const providerMap: Record<string, string> = {
-    openai: "OpenAI",
-    anthropic: "Anthropic",
-    google: "Google",
-    meta: "Meta",
-    "x-ai": "xAI",
-    moonshotai: "Moonshot AI",
-    "z-ai": "Zhipu AI",
-    qwen: "Qwen",
-    "meta-llama": "Meta",
-  };
-
-  return providerMap[provider] || provider;
-}
-
 export function ModelCard({ model, isSelected, onSelect }: ModelCardProps) {
   const [showDetails, setShowDetails] = useState(false);
-  const themeMode = usePreferencesStore((s) => s.themeMode);
-  const providerName = getProviderFromId(model.id);
   const providerKey = model.id.split("/")[0]; // e.g., "openai", "anthropic"
-  const logoSrc = getProviderLogo(providerKey, themeMode);
+  const providerName = getProviderDisplayName(providerKey);
   const contextTokens = formatNumber(model.context_length);
   const inputPrice = formatPrice(model.pricing.prompt);
   const outputPrice = formatPrice(model.pricing.completion);
@@ -113,24 +88,12 @@ export function ModelCard({ model, isSelected, onSelect }: ModelCardProps) {
         {/* Header */}
         <div className="space-y-1 pr-8">
           <div className="flex items-center gap-2">
-            {logoSrc ? (
-              <img
-                src={logoSrc}
-                alt={`${providerName} logo`}
-                className="h-4 w-4 object-contain flex-shrink-0"
-              />
-            ) : (
-              <div
-                className={cn(
-                  "h-4 w-4 rounded-sm flex items-center justify-center flex-shrink-0",
-                  getProviderColor(providerKey),
-                )}
-              >
-                <span className="text-white font-bold text-[8px]">
-                  {providerName?.charAt(0) || "?"}
-                </span>
-              </div>
-            )}
+            <ProviderLogo
+              provider={providerKey}
+              className="h-4 w-4 flex-shrink-0"
+              letterClassName="text-[8px]"
+              hosted
+            />
             <h3 className="font-semibold text-foreground line-clamp-1">
               {model.name}
             </h3>
