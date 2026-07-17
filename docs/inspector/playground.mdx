@@ -332,7 +332,12 @@ Supported file types include images, PDFs, text, JSON, CSV, XLSX, and other comm
 Edit the system prompt the model sees before your messages, and adjust the temperature slider (0 = deterministic, higher = more creative).
 
 **Tool Approval**
-When on, pauses the model before each tool call so you can approve or deny it manually.
+Controls when the agent pauses for your confirmation before running a tool.
+
+- **Off (default)** — Destructive agent actions (such as running an arbitrary MCP tool via the agent's `ui_execute_tool` capability) still pause for your approval. Non-destructive agent actions run immediately.
+- **On** — Every mutating agent action pauses for your approval before it runs. Read-only actions (such as taking a snapshot of the current app state) never require approval in either mode.
+
+A denial is final — the agent explains what it wanted to do rather than retrying the call.
 
 **Voice input**
 Click the mic button (right side of the input) to record your voice. The audio is transcribed using Whisper and the resulting text is appended to whatever you've already typed in the composer. Recording stops automatically after 3 minutes. The mic is disabled when your daily voice budget is exhausted; a warning appears in the composer when the remaining budget is low. While a recording is in progress, pressing Enter does not submit the draft — use the stop button (arrow-up) to finish recording first, or the ✕ button to cancel without transcribing.
