@@ -1442,6 +1442,17 @@ export function ServersTab({
     // must treat "still loading" as "not yet allowed" rather than racing
     // ahead of the answer.
     const assertMayCreateServer = () => {
+      // App readiness first — the same guard the visible Add/connect controls
+      // use (`isAppBootstrapping`). A command that saved during
+      // project-provisioning could write against a project that isn't set up
+      // yet; the visible UI withholds the controls until it's ready, and a
+      // command must not do what the disabled button can't.
+      if (isAppBootstrapping) {
+        throw createInspectorCommandClientError(
+          "execution_failed",
+          appReadyMessage ?? "App is still loading; try again in a moment."
+        );
+      }
       if (serverCreationGate.isLoading) {
         throw createInspectorCommandClientError(
           "execution_failed",
@@ -1532,6 +1543,8 @@ export function ServersTab({
       unregisterAdd();
     };
   }, [
+    isAppBootstrapping,
+    appReadyMessage,
     serverCreationGate.isLoading,
     serverCreationGate.isDenied,
     serverCreationGate.denialMessage,
