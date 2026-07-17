@@ -4,7 +4,7 @@ description: "Probe, diagnose, and export MCP server connectivity and capabiliti
 icon: "stethoscope"
 ---
 
-The `server` command group gives you a breadth-first view of any MCP server — connectivity, OAuth discovery, capabilities, tools, resources, and prompts — without writing code.
+The `server` command group gives you a breadth-first view of any MCP server (connectivity, OAuth discovery, capabilities, tools, resources, and prompts) without writing code.
 
 ## Quick start
 
@@ -19,7 +19,7 @@ If the server requires OAuth, doctor reports `oauth_required` with the discovery
 
 ### `server probe`
 
-Stateless HTTP probe — no full client connection. Tests transport selection, OAuth discovery, and `WWW-Authenticate` parsing.
+Stateless HTTP probe, no full client connection. Tests transport selection, OAuth discovery, and `WWW-Authenticate` parsing.
 
 ```bash
 mcpjam server probe --url https://your-server.com/mcp
@@ -36,7 +36,7 @@ Sensitive fields such as `Authorization` headers are automatically redacted to `
 
 ### `server doctor`
 
-Combined triage — runs probe, then attempts a full client connection, then sweeps tools, resources, resource templates, and prompts. Returns a single JSON artifact.
+Combined triage: runs probe, then attempts a full client connection, then sweeps tools, resources, resource templates, and prompts. Returns a single JSON artifact.
 
 ```bash
 # Human-readable summary
@@ -55,7 +55,7 @@ mcpjam server doctor --command node --args server.js --cwd /path/to/project
 - Initialization info and negotiated capabilities
 - Counts: tools, resources, resource templates, prompts
 
-The `--out <path>` flag writes the full JSON artifact to a file — useful for handoff to another engineer or agent.
+The `--out <path>` flag writes the full JSON artifact to a file, useful for handoff to another engineer or agent.
 For stdio targets, those artifacts only record the explicit env keys you passed
 via `-e/--env`; inherited shell variables are not enumerated.
 

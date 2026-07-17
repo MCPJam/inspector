@@ -69,9 +69,9 @@ These flags apply to every command.
 
 The CLI auto-detects whether stdout is a terminal:
 
-- **Interactive terminal** — defaults to `--format human`. For most commands this is pretty-printed JSON; `server doctor` and the OAuth conformance commands provide dedicated human-readable summaries.
-- **Piped or redirected** (CI, `| jq`, agent invocation) — defaults to `--format json`, the full structured result.
-- **Conformance in CI** — `protocol conformance`, `protocol conformance-suite`, `oauth conformance`, `oauth conformance-suite`, `apps conformance`, and `apps conformance-suite` support `--reporter junit-xml` and `--reporter json-summary`.
+- **Interactive terminal**: defaults to `--format human`. For most commands this is pretty-printed JSON; `server doctor` and the OAuth conformance commands provide dedicated human-readable summaries.
+- **Piped or redirected** (CI, `| jq`, agent invocation): defaults to `--format json`, the full structured result.
+- **Conformance in CI**: `protocol conformance`, `protocol conformance-suite`, `oauth conformance`, `oauth conformance-suite`, `apps conformance`, and `apps conformance-suite` support `--reporter junit-xml` and `--reporter json-summary`.
 - **Explicit `--format`** always wins over the auto-detected default.
 
 **For agents**: raw JSON is the source of truth. Human format is a lossy presentation layer. If you're parsing output programmatically, pass `--quiet --format json`.
@@ -194,10 +194,10 @@ Connections to servers under test stay open between tool calls, so agents can al
 
 ## What's next
 
-- [MCPJam as an MCP server](/cli/mcp-server) — give MCP clients the testing engine over stdio
-- [Server inspection](/cli/server-inspection) — probe, doctor, and diagnostics
-- [OAuth conformance](/cli/oauth-conformance) — test your OAuth implementation
-- [OAuth login](/cli/oauth-login) — authenticate and debug OAuth flows
-- [MCP Apps conformance](/cli/apps-conformance) — validate `_meta.ui.resourceUri` and `ui://` resource wiring
-- [Tools, resources & prompts](/cli/tools-resources-prompts) — exercise the connected surface
-- [Full command reference](/cli/reference) — every flag for every command
+- [MCPJam as an MCP server](/cli/mcp-server): give MCP clients the testing engine over stdio
+- [Server inspection](/cli/server-inspection): probe, doctor, and diagnostics
+- [OAuth conformance](/cli/oauth-conformance): test your OAuth implementation
+- [OAuth login](/cli/oauth-login): authenticate and debug OAuth flows
+- [MCP Apps conformance](/cli/apps-conformance): validate `_meta.ui.resourceUri` and `ui://` resource wiring
+- [Tools, resources & prompts](/cli/tools-resources-prompts): exercise the connected surface
+- [Full command reference](/cli/reference): every flag for every command

@@ -95,7 +95,7 @@ Uses shared connection flags, plus:
 
 | Flag | Description |
 |------|-------------|
-| `--host <id>` | Connect as this host (e.g. `claude`, `chatgpt`, `cursor`) — sends its `clientInfo`, `clientCapabilities`, and protocol version in `initialize`, and hides app-only tools its model can't see. Mutually exclusive with `--client-capabilities`. |
+| `--host <id>` | Connect as this host (e.g. `claude`, `chatgpt`, `cursor`): sends its `clientInfo`, `clientCapabilities`, and protocol version in `initialize`, and hides app-only tools its model can't see. Mutually exclusive with `--client-capabilities`. |
 | `--cursor <cursor>` | Pagination cursor |
 | `--model-id <model>` | Model ID used for token counting |
 
@@ -105,7 +105,7 @@ When `--host` is set, the output includes a `host` field and a `toolsDroppedVisi
 
 | Flag | Description |
 |------|-------------|
-| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`, and rejects app-only tools the host's model can't call. Mutually exclusive with `--client-capabilities`. |
+| `--host <id>` | Connect as this host: sends its identity/capabilities/protocol in `initialize`, and rejects app-only tools the host's model can't call. Mutually exclusive with `--client-capabilities`. |
 | `--tool-name <name>` | Name of the tool to call |
 | `--name <name>` | Legacy alias for `--tool-name` |
 | `--tool-args <json>` | Tool arguments as inline JSON, `@path`, or `-` for stdin |
@@ -184,14 +184,14 @@ Uses shared connection flags, plus:
 
 | Flag | Description |
 |------|-------------|
-| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
+| `--host <id>` | Connect as this host: sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
 | `--cursor <cursor>` | Pagination cursor |
 
 ### `resources read`
 
 | Flag | Description |
 |------|-------------|
-| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
+| `--host <id>` | Connect as this host: sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
 | `--resource-uri <uri>` | URI of the resource to read |
 | `--uri <uri>` | Legacy alias for `--resource-uri` |
 
@@ -203,7 +203,7 @@ Uses shared connection flags, plus:
 
 | Flag | Description |
 |------|-------------|
-| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
+| `--host <id>` | Connect as this host: sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
 | `--cursor <cursor>` | Pagination cursor |
 
 ---
@@ -216,14 +216,14 @@ Uses shared connection flags, plus:
 
 | Flag | Description |
 |------|-------------|
-| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
+| `--host <id>` | Connect as this host: sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
 | `--cursor <cursor>` | Pagination cursor |
 
 ### `prompts get`
 
 | Flag | Description |
 |------|-------------|
-| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
+| `--host <id>` | Connect as this host: sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
 | `--prompt-name <name>` | Name of the prompt |
 | `--name <name>` | Legacy alias for `--prompt-name` |
 | `--prompt-args <json>` | Prompt arguments as inline JSON, `@path`, or `-` for stdin |
@@ -241,12 +241,12 @@ Run the Cross-App Access (ID-JAG) debugger: self-issue an ID-JAG, redeem it at t
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
 | `--url <url>` | Yes | | Target MCP server URL (the protected resource) |
-| `--issuer-base-url <url>` | Yes | | Origin the local mock IdP issues from. It must publish the CLI's local signing key — typically a running [local inspector](/cli/xaa#before-you-run-make-the-issuer-reachable), not your real IdP |
+| `--issuer-base-url <url>` | Yes | | Origin the local mock IdP issues from. It must publish the CLI's local signing key: typically a running [local inspector](/cli/xaa#before-you-run-make-the-issuer-reachable), not your real IdP |
 | `--sub <subject>` | Yes | | Simulated end-user subject identifier |
 | `--client-id <id>` | No | | OAuth client ID. Required for `preregistered`; rejected for `dcr`/`cimd` |
 | `--registration <method>` | No | `preregistered` | `preregistered`, `dcr`, or `cimd` |
 | `--client-metadata-url <url>` | No | | CIMD only: the Client ID Metadata Document URL to present as the `client_id` |
-| `--client-auth <method>` | No | `none` | CIMD only: `none` (public) or `private-key-jwt` (confidential — generates a local EC P-256 key, publishes it via the hosted reflector, and signs a `client_assertion`) |
+| `--client-auth <method>` | No | `none` | CIMD only: `none` (public) or `private-key-jwt` (confidential: generates a local EC P-256 key, publishes it via the hosted reflector, and signs a `client_assertion`) |
 | `--cimd-metadata-origin <url>` | No | `https://app.mcpjam.com` | Confidential CIMD only: bare origin hosting the metadata-document reflector. An `http://` loopback origin is a dev-only opt-in; rejected when `--https-only` is set |
 | `--authz-server-issuer <issuer>` | No | | Target AS issuer. When set, protected-resource metadata discovery is skipped |
 | `--token-endpoint <url>` | No | | AS token endpoint. When set, AS-metadata discovery is skipped. Not valid with `dcr` or `cimd` |
@@ -262,8 +262,8 @@ Run the Cross-App Access (ID-JAG) debugger: self-issue an ID-JAG, redeem it at t
 | Strategy | Description |
 |----------|-------------|
 | `preregistered` | Supply a pre-registered `--client-id` (and optional `--client-secret`) |
-| `dcr` | Dynamic Client Registration (RFC 7591) — the CLI registers a client at the RAS each run |
-| `cimd` | Client ID Metadata Document — the client publishes its identity at a URL |
+| `dcr` | Dynamic Client Registration (RFC 7591): the CLI registers a client at the RAS each run |
+| `cimd` | Client ID Metadata Document: the client publishes its identity at a URL |
 
 #### Confidential CIMD (`--client-auth private-key-jwt`)
 
@@ -280,7 +280,7 @@ mcpjam xaa run \
   --client-auth private-key-jwt
 ```
 
-For a cloud authorization server, expose the inspector origin through a tunnel and pass the public origin as `--issuer-base-url` — see [making the issuer reachable](/cli/xaa#before-you-run-make-the-issuer-reachable).
+For a cloud authorization server, expose the inspector origin through a tunnel and pass the public origin as `--issuer-base-url`; see [making the issuer reachable](/cli/xaa#before-you-run-make-the-issuer-reachable).
 
 **Key rotation:** the key is the identity. Deleting `~/.mcpjam/xaa-client-private.pem` or changing the `XAA_CLIENT_PRIVATE_KEY` environment variable generates a new `client_id`; any RAS-side allowlisting must be updated after rotation.
 
@@ -568,7 +568,7 @@ Show an environment's builds (newest first) with their log preview.
 
 ### `env use`
 
-Boot your computer from this environment. This rebuilds the computer — installed files are wiped.
+Boot your computer from this environment. This rebuilds the computer: installed files are wiped.
 
 | Flag | Required | Description |
 |------|----------|-------------|
@@ -970,7 +970,7 @@ These commands manage your MCPJam platform session. `login` opens a browser for 
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--api-url <url>` | `https://app.mcpjam.com/api/v1` | MCPJam API base URL. The value is persisted with the session so subsequent cloud commands target the same deployment without needing `--api-url` again. Must be a valid `http(s)` URL — an invalid value exits with code `2` before any network call. |
+| `--api-url <url>` | `https://app.mcpjam.com/api/v1` | MCPJam API base URL. The value is persisted with the session so subsequent cloud commands target the same deployment without needing `--api-url` again. Must be a valid `http(s)` URL; an invalid value exits with code `2` before any network call. |
 | `--no-browser` | | Print the login URL to stderr instead of opening a browser. |
 
 The `MCPJAM_API_URL` environment variable is equivalent to `--api-url`. An invalid value in either source is a hard error (exit 2).

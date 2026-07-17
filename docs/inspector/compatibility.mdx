@@ -1,10 +1,10 @@
 ---
 title: "Compatibility"
-description: "Check whether your MCP server works on each AI host — conformance gates, per-host findings, and live widget rendering."
+description: "Check whether your MCP server works on each AI host: conformance gates, per-host findings, and live widget rendering."
 icon: "boxes"
 ---
 
-The Compatibility destination answers one question: **does my server work on this host?** It evaluates your connected server against a catalog of real AI hosts (Claude, ChatGPT, Cursor, Copilot, Codex, and others) and surfaces blockers, degraded experiences, and protocol gaps — without requiring you to deploy to each host first.
+The Compatibility destination answers one question: **does my server work on this host?** It evaluates your connected server against a catalog of real AI hosts (Claude, ChatGPT, Cursor, Copilot, Codex, and others) and surfaces blockers, degraded experiences, and protocol gaps, without requiring you to deploy to each host first.
 
 ## How to open it
 
@@ -20,23 +20,23 @@ Each host row has a verdict and, when findings exist, an expandable detail secti
 |---------|---------|
 | **Works** | No blockers or degraded findings detected. |
 | **Degraded** | The server functions but some widgets fall back to text, or a capability the widget uses isn't supported by this host. |
-| **Blocked** | One or more app-only tools are unusable on this host — they have no text fallback and the host can't render their UI. |
+| **Blocked** | One or more app-only tools are unusable on this host: they have no text fallback and the host can't render their UI. |
 | **Unknown** | Widget HTML hasn't been analyzed yet, or a required dimension couldn't be determined. |
 
 Verdicts are derived from static connect-time data (tools list + `_meta` bags + the protocol version negotiated). They update as tools load.
 
 ### Conformance gate
 
-Above the per-host rows, a **Conformance gate** shows whether the server passes the MCP protocol conformance checks. A server that fails conformance may work on some hosts but is likely to behave inconsistently. Fix conformance issues first — they affect every host.
+Above the per-host rows, a **Conformance gate** shows whether the server passes the MCP protocol conformance checks. A server that fails conformance may work on some hosts but is likely to behave inconsistently. Fix conformance issues first: they affect every host.
 
 ### Findings
 
 Expand a host row to see the full findings list, split into two lanes:
 
-- **Apps lane** — widget render failures and capability gaps. Examples: an app-only tool whose UI the host can't render, a widget that calls `ui/open-link` on a host that doesn't support it.
-- **Server lane** — protocol-version compatibility. If the server negotiated a version the host doesn't advertise, this lane surfaces it as an informational note (the host may still negotiate a shared version).
+- **Apps lane**: widget render failures and capability gaps. Examples: an app-only tool whose UI the host can't render, a widget that calls `ui/open-link` on a host that doesn't support it.
+- **Server lane**: protocol-version compatibility. If the server negotiated a version the host doesn't advertise, this lane surfaces it as an informational note (the host may still negotiate a shared version).
 
-Each finding includes a title, a detail sentence, and where applicable a **remediation** hint — for example, "Declare an MCP Apps template alongside the OpenAI one."
+Each finding includes a title, a detail sentence, and where applicable a **remediation** hint: for example, "Declare an MCP Apps template alongside the OpenAI one."
 
 ### Provenance badges
 
@@ -47,7 +47,7 @@ Findings carry a provenance label that tells you how confident the data is:
 | **Probe-captured** | Values captured from a real host via DevTools or the inspector's JSON-RPC logger. |
 | **Vendor docs** | Verified from the host vendor's published documentation. |
 | **Observed** | Stamped by a live widget render run (see below). |
-| **Best-effort preset** | Unverified — the preset was authored without a live capture. |
+| **Best-effort preset** | Unverified: the preset was authored without a live capture. |
 
 ## Live widget rendering
 
@@ -67,7 +67,7 @@ When two or more servers are connected, the page leads with a **servers × hosts
 
 ## Relationship to host templates
 
-The host profiles used for evaluation are the same presets available in the [host template picker](/inspector/host-templates). If a host you care about isn't in the catalog, you can [contribute a preset](/inspector/host-templates) — the compatibility engine will pick it up automatically.
+The host profiles used for evaluation are the same presets available in the [host template picker](/inspector/host-templates). If a host you care about isn't in the catalog, you can [contribute a preset](/inspector/host-templates). The compatibility engine will pick it up automatically.
 
 ## Relationship to conformance testing
 

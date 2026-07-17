@@ -4,13 +4,13 @@ description: "Run MCPJam as a local stdio MCP server so agents can connect to, e
 icon: "bot"
 ---
 
-`mcpjam mcp` runs MCPJam itself as an MCP server over stdio. Add it to any MCP client — Claude Desktop, Claude Code, Cursor, or your own agent — and the agent gets MCPJam's local testing engine as tools: connect to a server under test, call its tools, read its resources and prompts, watch the notifications it emits, and run diagnostic sweeps.
+`mcpjam mcp` runs MCPJam itself as an MCP server over stdio. Add it to any MCP client (Claude Desktop, Claude Code, Cursor, or your own agent) and the agent gets MCPJam's local testing engine as tools: connect to a server under test, call its tools, read its resources and prompts, watch the notifications it emits, and run diagnostic sweeps.
 
 ```bash
 npx -y @mcpjam/cli@latest mcp
 ```
 
-Everything runs locally in the spawned process. No account, login, or hosted backend is involved, and the server under test can be a local stdio process — something hosted tooling can't reach.
+Everything runs locally in the spawned process. No account, login, or hosted backend is involved, and the server under test can be a local stdio process, something hosted tooling can't reach.
 
 ## Why use this instead of the CLI?
 
@@ -90,7 +90,7 @@ Agents with shell access can already run `mcpjam` commands directly, and for one
 | Tool | Description |
 |------|-------------|
 | `list_tools` | List the target's tools (with pagination cursor) |
-| `call_tool` | Call a tool and return the target's raw `CallToolResult` — check the payload's `isError` for tool-level failures |
+| `call_tool` | Call a tool and return the target's raw `CallToolResult`. Check the payload's `isError` for tool-level failures |
 | `list_resources` | List resources, or resource templates with `templates: true` |
 | `read_resource` | Read a resource by URI |
 | `list_prompts` | List prompts |
@@ -101,25 +101,25 @@ Agents with shell access can already run `mcpjam` commands directly, and for one
 
 | Tool | Description |
 |------|-------------|
-| `server_doctor` | One-shot diagnostic sweep (HTTP or stdio target) — same checks as [`mcpjam server doctor`](/cli/server-inspection) |
-| `probe_server` | HTTP-only probe: transport selection, auth requirements, OAuth metadata discovery — same as `mcpjam server probe` |
+| `server_doctor` | One-shot diagnostic sweep (HTTP or stdio target); same checks as [`mcpjam server doctor`](/cli/server-inspection) |
+| `probe_server` | HTTP-only probe: transport selection, auth requirements, OAuth metadata discovery; same as `mcpjam server probe` |
 
 ## Example session
 
 A typical agent flow while developing a stdio server:
 
 1. `connect_server` with `{ "name": "dev", "command": "node", "args": ["dist/server.js"] }`
-2. `list_tools` with `{ "server": "dev" }` — review names, descriptions, schemas
+2. `list_tools` with `{ "server": "dev" }`: review names, descriptions, schemas
 3. `call_tool` with `{ "server": "dev", "tool": "search", "arguments": { "query": "test" } }`
-4. `get_notifications` with `{ "server": "dev" }` — did the server log what you expected? Did it emit `notifications/tools/list_changed`?
+4. `get_notifications` with `{ "server": "dev" }`: did the server log what you expected? Did it emit `notifications/tools/list_changed`?
 5. Iterate on the server code, then `disconnect_server` / `connect_server` to pick up the rebuild
 6. `server_doctor` with the same `command` for a final health sweep
 
-Tool results are JSON payloads describing the target server. Errors come back as structured `{ "error": { "code", "message" } }` payloads with `isError: true` — for example `USAGE_ERROR` for invalid input or `SERVER_UNREACHABLE` when the target is down.
+Tool results are JSON payloads describing the target server. Errors come back as structured `{ "error": { "code", "message" } }` payloads with `isError: true`, for example `USAGE_ERROR` for invalid input or `SERVER_UNREACHABLE` when the target is down.
 
 ## Relationship to the hosted MCP server
 
-MCPJam also operates a hosted MCP server at `mcp.mcpjam.com/mcp` that exposes your MCPJam **account** — projects, saved servers, eval suites and runs — behind OAuth. The two are complementary:
+MCPJam also operates a hosted MCP server at `mcp.mcpjam.com/mcp` that exposes your MCPJam **account** (projects, saved servers, eval suites and runs) behind OAuth. The two are complementary:
 
 | | `mcpjam mcp` (this page) | `mcp.mcpjam.com` |
 |---|---|---|
@@ -130,6 +130,6 @@ MCPJam also operates a hosted MCP server at `mcp.mcpjam.com/mcp` that exposes yo
 
 ## Troubleshooting
 
-- **Client says the server failed to start** — run `npx -y @mcpjam/cli@latest mcp` in a terminal; you should see `MCPJam MCP server listening on stdio` on stderr. First runs may be slow while `npx` downloads the package; pre-install with `npm i -g @mcpjam/cli` and use `mcpjam mcp` to avoid the download.
-- **`connect_server` fails with `SERVER_UNREACHABLE`** — the target URL or command is wrong, or the target crashed on startup. Try `server_doctor` against the same target for a structured diagnosis.
-- **A connection name is already taken** — `connect_server` refuses to overwrite an existing name; `disconnect_server` it first or pass a different `name`.
+- **Client says the server failed to start**: run `npx -y @mcpjam/cli@latest mcp` in a terminal; you should see `MCPJam MCP server listening on stdio` on stderr. First runs may be slow while `npx` downloads the package; pre-install with `npm i -g @mcpjam/cli` and use `mcpjam mcp` to avoid the download.
+- **`connect_server` fails with `SERVER_UNREACHABLE`**: the target URL or command is wrong, or the target crashed on startup. Try `server_doctor` against the same target for a structured diagnosis.
+- **A connection name is already taken**: `connect_server` refuses to overwrite an existing name; `disconnect_server` it first or pass a different `name`.

@@ -5,7 +5,7 @@ icon: "cloud-upload"
 ---
 
 <Warning>
-Reporting authenticates with **MCPJam API keys (`sk_…`)** from Settings → API keys. The legacy project API keys (`mcpjam_…`) are retired and no longer work anywhere — see [API keys](/reference/api-keys).
+Reporting authenticates with **MCPJam API keys (`sk_…`)** from Settings → API keys. The legacy project API keys (`mcpjam_…`) are retired and no longer work anywhere. See [API keys](/reference/api-keys).
 </Warning>
 
 After running evals, you can save results to MCPJam to track accuracy over time, compare across branches, and get visibility in the CI Evals dashboard.
@@ -24,12 +24,12 @@ export MCPJAM_API_KEY=sk_...
 export MCPJAM_PROJECT_ID=<project id>
 ```
 
-That's it — both `EvalTest` and `EvalSuite` auto-save results when this key is available. Results land in the project named by `MCPJAM_PROJECT_ID` (or the `project` option in the `mcpjam:` config), falling back to your organization's **Default** project.
+That's it: both `EvalTest` and `EvalSuite` auto-save results when this key is available. Results land in the project named by `MCPJAM_PROJECT_ID` (or the `project` option in the `mcpjam:` config), falling back to your organization's **Default** project.
 
 **Attach the connected `MCPClientManager` to [`HostRunner`](/sdk/reference/host-runner)** (or pass `agent` / `mcpClientManager` to manual reporting APIs) when you need either of the following:
 
-1. **MCP App / widget replay in Evals traces** — After each MCP App tool call, the agent uses the manager’s [`readResource`](/sdk/reference/mcp-client-manager#readresource) to fetch HTML from the tool’s `ui.resourceUri` and fills [`widgetSnapshots`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) on [`PromptResult`](/sdk/reference/prompt-result). Without the manager, traces still upload (messages + spans) but **widgets will not replay** in the dashboard. The tool’s JSON result alone is not enough for offline iframe replay.
-2. **Replay credentials (authenticated HTTP MCP)** — The SDK can persist server connection details for debugging and reruns. You do not need to build a second secret object yourself; replay config is derived automatically when the agent or manager is attached.
+1. **MCP App / widget replay in Evals traces:** After each MCP App tool call, the agent uses the manager’s [`readResource`](/sdk/reference/mcp-client-manager#readresource) to fetch HTML from the tool’s `ui.resourceUri` and fills [`widgetSnapshots`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) on [`PromptResult`](/sdk/reference/prompt-result). Without the manager, traces still upload (messages + spans) but **widgets will not replay** in the dashboard. The tool’s JSON result alone is not enough for offline iframe replay.
+2. **Replay credentials (authenticated HTTP MCP):** The SDK can persist server connection details for debugging and reruns. You do not need to build a second secret object yourself; replay config is derived automatically when the agent or manager is attached.
 
 ## Auto-Save from EvalTest
 
@@ -107,7 +107,7 @@ When a suite runs, individual `EvalTest` auto-saves are suppressed to avoid dupl
 
 ## Manual Save APIs
 
-For more control — custom test runners, CI post-steps, or framework-agnostic flows — the SDK provides dedicated APIs:
+For more control (custom test runners, CI post-steps, or framework-agnostic flows), the SDK provides dedicated APIs:
 
 ```typescript
 import {
@@ -117,14 +117,14 @@ import {
   uploadEvalArtifact,
 } from "@mcpjam/sdk";
 
-// 1) One-shot save (strict — throws on failure)
+// 1) One-shot save (strict: throws on failure)
 await reportEvalResults({
   suiteName: "Nightly",
   mcpClientManager: manager,
   results: [{ caseTitle: "healthcheck", passed: true }],
 });
 
-// 2) One-shot save (safe — returns null on failure)
+// 2) One-shot save (safe: returns null on failure)
 const result = await reportEvalResultsSafely({
   suiteName: "Nightly",
   results: [{ caseTitle: "healthcheck", passed: true }],
@@ -158,7 +158,7 @@ Most users should pass `agent` or `mcpClientManager` and let the SDK derive repl
 
 When replay configs are inferred from `agent` or `mcpClientManager`, the SDK limits them to the `serverNames` you attach to the run when `serverNames` is provided.
 
-**Manual reporters (Vitest/Jest hooks):** Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) — not only on `HostRunner` — and call **`await reporter.finalize()` before `await manager.disconnectAllServers()`** so replay config is still available at upload time. See [Replay metadata for the MCPJam UI](/sdk/reference/eval-reporting#replay-metadata-for-the-mcpjam-ui).
+**Manual reporters (Vitest/Jest hooks):** Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter), not only on `HostRunner`, and call **`await reporter.finalize()` before `await manager.disconnectAllServers()`** so replay config is still available at upload time. See [Replay metadata for the MCPJam UI](/sdk/reference/eval-reporting#replay-metadata-for-the-mcpjam-ui).
 
 ## CI Metadata
 

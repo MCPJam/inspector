@@ -32,7 +32,7 @@ new EvalSuite(options?: EvalSuiteConfig)
 | `mcpjam` | [`MCPJamReportingConfig`](/sdk/reference/eval-reporting) | No | Auto-save results to MCPJam when the suite completes |
 
 <Note>
-When an API key is available — via `mcpjam.apiKey` or the `MCPJAM_API_KEY` environment variable — all test results are consolidated into a single run and saved to MCPJam after the suite completes. Individual `EvalTest` auto-saves are suppressed to avoid duplicate uploads. Set `mcpjam.enabled: false` to disable.
+When an API key is available (via `mcpjam.apiKey` or the `MCPJAM_API_KEY` environment variable), all test results are consolidated into a single run and saved to MCPJam after the suite completes. Individual `EvalTest` auto-saves are suppressed to avoid duplicate uploads. Set `mcpjam.enabled: false` to disable.
 </Note>
 
 ### Example

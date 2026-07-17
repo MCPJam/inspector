@@ -3,7 +3,7 @@
   "info": {
     "title": "MCPJam API",
     "version": "1.0.0-preview",
-    "description": "Programmatic access to MCP servers saved in your MCPJam projects — live diagnostics (validate, inspect, export) and operations: call tools, render prompts, run eval suites asynchronously and poll their results, and import OAuth tokens.\n\n**The API is in preview**: the surface may change while we finish the design. Error `code` values are stable; error `message` strings are not. Write clients that ignore unknown response fields.",
+    "description": "Programmatic access to MCP servers saved in your MCPJam projects: live diagnostics (validate, inspect, export) and operations: call tools, render prompts, run eval suites asynchronously and poll their results, and import OAuth tokens.\n\n**The API is in preview**: the surface may change while we finish the design. Error `code` values are stable; error `message` strings are not. Write clients that ignore unknown response fields.",
     "contact": {
       "name": "MCPJam",
       "url": "https://github.com/MCPJam/inspector/issues"
@@ -70,7 +70,7 @@
           "Catalog"
         ],
         "summary": "Get the host-compat catalog",
-        "description": "The versioned host-compatibility catalog backing `mcpjam compat` verdicts. Public and unauthenticated: static host facts and creation config with no project or user scope. Always returns a catalog — `source` is `live` when the backend publish was reachable and `bundled` when serving the SDK's built-in fallback.",
+        "description": "The versioned host-compatibility catalog backing `mcpjam compat` verdicts. Public and unauthenticated: static host facts and creation config with no project or user scope. Always returns a catalog: `source` is `live` when the backend publish was reachable and `bundled` when serving the SDK's built-in fallback.",
         "security": [],
         "responses": {
           "200": {
@@ -190,7 +190,7 @@
         "operationId": "listHarnessBuiltinTools",
         "tags": ["Harness"],
         "summary": "List a harness's native built-in tools",
-        "description": "The native tools an agent harness (e.g. `claude-code`) runs INSIDE its sandbox — Bash, Read, Edit, Glob, Grep, WebSearch, and the like. Display-only: these execute via the harness's own agent loop and are NOT callable through MCPJam. Static published-package metadata; no project scope.",
+        "description": "The native tools an agent harness (e.g. `claude-code`) runs INSIDE its sandbox: Bash, Read, Edit, Glob, Grep, WebSearch, and the like. Display-only: these execute via the harness's own agent loop and are NOT callable through MCPJam. Static published-package metadata; no project scope.",
         "parameters": [{ "name": "harnessId", "in": "path", "required": true, "schema": { "type": "string", "enum": ["claude-code"] }, "description": "The harness id." }],
         "responses": {
           "200": {
@@ -209,7 +209,7 @@
         "operationId": "listComputerEnvironments",
         "tags": ["Computer environments"],
         "summary": "List a project's computer environments",
-        "description": "The custom Computer images (digest-pinned Dockerfile environments) saved in the project — your own personal drafts plus the project-shared ones.",
+        "description": "The custom Computer images (digest-pinned Dockerfile environments) saved in the project: your own personal drafts plus the project-shared ones.",
         "parameters": [{ "$ref": "#/components/parameters/projectId" }],
         "responses": {
           "200": {
@@ -313,7 +313,7 @@
         "operationId": "deleteComputerEnvironment",
         "tags": ["Computer environments"],
         "summary": "Delete a computer environment",
-        "description": "Permanently delete an environment. Computers booted from it fall back to the base image. Deleting a project-shared environment requires project admin. Bodyless — any field is rejected. Guest callers are denied (a write).",
+        "description": "Permanently delete an environment. Computers booted from it fall back to the base image. Deleting a project-shared environment requires project admin. Bodyless: any field is rejected. Guest callers are denied (a write).",
         "parameters": [
           { "$ref": "#/components/parameters/projectId" },
           { "$ref": "#/components/parameters/environmentId" }
@@ -362,7 +362,7 @@
         "operationId": "buildComputerEnvironment",
         "tags": ["Computer environments"],
         "summary": "Build a computer environment",
-        "description": "Trigger a build of the environment's image and respond `202`. The build runs asynchronously — poll the builds list for status. Bodyless. Guest callers are denied (a write).",
+        "description": "Trigger a build of the environment's image and respond `202`. The build runs asynchronously. Poll the builds list for status. Bodyless. Guest callers are denied (a write).",
         "parameters": [
           { "$ref": "#/components/parameters/projectId" },
           { "$ref": "#/components/parameters/environmentId" }
@@ -463,7 +463,7 @@
         "operationId": "listHosts",
         "tags": ["Hosts"],
         "summary": "List a project's hosts",
-        "description": "The hosts saved in the project — the named model + capability profiles you attach to chats and eval suites. Returns the `id`s the host detail/update/delete routes take.",
+        "description": "The hosts saved in the project: the named model + capability profiles you attach to chats and eval suites. Returns the `id`s the host detail/update/delete routes take.",
         "parameters": [{ "$ref": "#/components/parameters/projectId" }],
         "responses": {
           "200": {
@@ -636,7 +636,7 @@
         "operationId": "runDoctor",
         "tags": ["Server diagnostics"],
         "summary": "Run the doctor",
-        "description": "Runs the full doctor workflow — probe → connect → initialize → capabilities → primitives — and returns a step-by-step report. The richest signal for \"is this server healthy, and why not.\"",
+        "description": "Runs the full doctor workflow (probe → connect → initialize → capabilities → primitives) and returns a step-by-step report. The richest signal for \"is this server healthy, and why not.\"",
         "parameters": [
           { "$ref": "#/components/parameters/projectId" },
           { "$ref": "#/components/parameters/serverId" }
@@ -857,7 +857,7 @@
         "operationId": "exportServer",
         "tags": ["Export"],
         "summary": "Export a server snapshot",
-        "description": "Lists tools, resources, and prompts in one call and returns a single JSON snapshot — handy for diffing a server's surface over time in CI.",
+        "description": "Lists tools, resources, and prompts in one call and returns a single JSON snapshot, handy for diffing a server's surface over time in CI.",
         "parameters": [
           { "$ref": "#/components/parameters/projectId" },
           { "$ref": "#/components/parameters/serverId" }
@@ -888,7 +888,7 @@
         "operationId": "callTool",
         "tags": ["Execution"],
         "summary": "Call a tool",
-        "description": "Executes a tool on the server and returns the MCP `CallToolResult` directly. Tool-level failures (`isError: true` in the result) are **successful calls** — the server answered; only transport/auth errors use the error envelope.",
+        "description": "Executes a tool on the server and returns the MCP `CallToolResult` directly. Tool-level failures (`isError: true` in the result) are **successful calls**: the server answered; only transport/auth errors use the error envelope.",
         "parameters": [
           { "$ref": "#/components/parameters/projectId" },
           { "$ref": "#/components/parameters/serverId" }
@@ -1152,7 +1152,7 @@
         "operationId": "getEvalIterationTrace",
         "tags": ["Eval runs"],
         "summary": "Get an iteration trace",
-        "description": "Full trace envelope for one iteration: conversation messages, expected-vs-actual tool call analysis, and spans. The shape is rich and may evolve — treat it as an open document. Returns `404` with `details.reason: \"TRACE_NOT_AVAILABLE\"` when the iteration finished without a stored trace.",
+        "description": "Full trace envelope for one iteration: conversation messages, expected-vs-actual tool call analysis, and spans. The shape is rich and may evolve. Treat it as an open document. Returns `404` with `details.reason: \"TRACE_NOT_AVAILABLE\"` when the iteration finished without a stored trace.",
         "parameters": [
           { "$ref": "#/components/parameters/projectId" },
           { "$ref": "#/components/parameters/runId" },
@@ -1184,7 +1184,7 @@
         "operationId": "getEvalRunSteps",
         "tags": ["Eval runs"],
         "summary": "Get an iteration's step results",
-        "description": "One row per authored test step, in order, with `status` (`ok`/`fail`/`skipped`/`pending`), a `reason`, and any `evidence` (screenshots, replay-video offset, widget tool calls). The fastest way to see which step failed and why. Unlike `/trace`, a missing trace is not a `404` — step verdicts still return, just without evidence.",
+        "description": "One row per authored test step, in order, with `status` (`ok`/`fail`/`skipped`/`pending`), a `reason`, and any `evidence` (screenshots, replay-video offset, widget tool calls). The fastest way to see which step failed and why. Unlike `/trace`, a missing trace is not a `404`: step verdicts still return, just without evidence.",
         "parameters": [
           { "$ref": "#/components/parameters/projectId" },
           { "$ref": "#/components/parameters/runId" },
@@ -1315,7 +1315,7 @@
         "operationId": "importOAuthTokens",
         "tags": ["OAuth"],
         "summary": "Import OAuth tokens",
-        "description": "Stores OAuth tokens you obtained yourself (e.g. via the SDK's `runOAuthLogin` — interactive loopback, headless, or client-credentials) for this server, scoped to your user, project, and server. Subsequent API calls against the server inject the stored access token automatically, and `401`s from the server trigger a server-side refresh — no further caller involvement.\n\nThis closes the loop after an `OAUTH_REQUIRED` error.",
+        "description": "Stores OAuth tokens you obtained yourself (e.g. via the SDK's `runOAuthLogin`: interactive loopback, headless, or client-credentials) for this server, scoped to your user, project, and server. Subsequent API calls against the server inject the stored access token automatically, and `401`s from the server trigger a server-side refresh (no further caller involvement).\n\nThis closes the loop after an `OAUTH_REQUIRED` error.",
         "parameters": [
           { "$ref": "#/components/parameters/projectId" },
           { "$ref": "#/components/parameters/serverId" }
@@ -1418,7 +1418,7 @@
         "operationId": "listProjectServers",
         "tags": ["Catalog"],
         "summary": "List a project's servers",
-        "description": "The MCP servers saved in the project — the `serverId`s every other route takes. STDIO command/args/env and raw headers are never exposed.",
+        "description": "The MCP servers saved in the project: the `serverId`s every other route takes. STDIO command/args/env and raw headers are never exposed.",
         "parameters": [{ "$ref": "#/components/parameters/projectId" }],
         "responses": {
           "200": {
@@ -1443,7 +1443,7 @@
         "operationId": "listEvalSuites",
         "tags": ["Catalog"],
         "summary": "List a project's eval suites",
-        "description": "Eval suites in the project with latest-run summaries and pass-rate trends — the `suiteId`s the eval-run routes take.",
+        "description": "Eval suites in the project with latest-run summaries and pass-rate trends: the `suiteId`s the eval-run routes take.",
         "parameters": [{ "$ref": "#/components/parameters/projectId" }],
         "responses": {
           "200": {
@@ -1466,7 +1466,7 @@
         "operationId": "createEvalSuite",
         "tags": ["Eval runs"],
         "summary": "Create an eval suite (author-only, does not run)",
-        "description": "Creates a runnable eval suite — the suite record plus its test cases — and responds `201` **synchronously**, WITHOUT executing anything. Use this to author a suite, then run it later with `POST /eval-runs` (passing the returned `suiteId`).\n\nThis is distinct from `POST /eval-runs`, which creates a run and **detaches execution**, responding `202` with a `runId`. There is no concurrency cap here (no run is started).\n\nThe body uses an ergonomic authoring shape: a suite-level default `model` (and optional `provider`) applies to every test unless the test overrides it; `provider` is derived from a `provider/model` id when neither is supplied. Each test's case body is an ordered `steps` array (prompt / toolCall / interact / assert).\n\nGuest callers are denied (suite creation is a write).",
+        "description": "Creates a runnable eval suite (the suite record plus its test cases) and responds `201` **synchronously**, WITHOUT executing anything. Use this to author a suite, then run it later with `POST /eval-runs` (passing the returned `suiteId`).\n\nThis is distinct from `POST /eval-runs`, which creates a run and **detaches execution**, responding `202` with a `runId`. There is no concurrency cap here (no run is started).\n\nThe body uses an ergonomic authoring shape: a suite-level default `model` (and optional `provider`) applies to every test unless the test overrides it; `provider` is derived from a `provider/model` id when neither is supplied. Each test's case body is an ordered `steps` array (prompt / toolCall / interact / assert).\n\nGuest callers are denied (suite creation is a write).",
         "parameters": [{ "$ref": "#/components/parameters/projectId" }],
         "requestBody": {
           "required": true,
@@ -1590,7 +1590,7 @@
         "operationId": "listChatboxes",
         "tags": ["Chatboxes"],
         "summary": "List a project's chatboxes",
-        "description": "The chatboxes published from this project — name, access mode, attached servers, and share link. Read-only.",
+        "description": "The chatboxes published from this project: name, access mode, attached servers, and share link. Read-only.",
         "parameters": [{ "$ref": "#/components/parameters/projectId" }],
         "responses": {
           "200": {
@@ -1645,7 +1645,7 @@
         "operationId": "createTunnel",
         "tags": ["Tunnels"],
         "summary": "Create (or revive) a relay tunnel for a named project server",
-        "description": "Registers a server record named `name` if missing, mints a relay tunnel grant for it, and **persists the tunnel bearer URL (including the plaintext `?k=` secret) onto the server record's `url`** so evals and chatboxes can target the tunnel like any remote server. The plaintext persistence is a deliberate trade-off of the current tunnel MVP — the backend otherwise stores only a hash of the secret — mitigated by rotation: **every call rotates the secret, revokes the previous grant at the edge (disconnecting any live tunnel session for the server), and updates the stored URL**, so re-calling this route is also the rotation/recovery path.\n\nThe caller hosts the tunnel itself: connect a WebSocket to `relayWsUrl` (subprotocol `mcpjam-tunnel.v1`, `Authorization: Bearer <connectToken>`) and serve the relayed requests — this is what `mcpjam tunnel` does. When the host disconnects, the server record stays and calls to the public URL fail fast at the edge.",
+        "description": "Registers a server record named `name` if missing, mints a relay tunnel grant for it, and **persists the tunnel bearer URL (including the plaintext `?k=` secret) onto the server record's `url`** so evals and chatboxes can target the tunnel like any remote server. The plaintext persistence is a deliberate trade-off of the current tunnel MVP (the backend otherwise stores only a hash of the secret), mitigated by rotation: **every call rotates the secret, revokes the previous grant at the edge (disconnecting any live tunnel session for the server), and updates the stored URL**, so re-calling this route is also the rotation/recovery path.\n\nThe caller hosts the tunnel itself: connect a WebSocket to `relayWsUrl` (subprotocol `mcpjam-tunnel.v1`, `Authorization: Bearer <connectToken>`) and serve the relayed requests. This is what `mcpjam tunnel` does. When the host disconnects, the server record stays and calls to the public URL fail fast at the edge.",
         "parameters": [{ "$ref": "#/components/parameters/projectId" }],
         "requestBody": {
           "required": true,
@@ -1691,7 +1691,7 @@
         "operationId": "closeTunnel",
         "tags": ["Tunnels"],
         "summary": "Revoke a tunnel's live grant",
-        "description": "Revokes the grant at the control plane and edge: the public URL stops working immediately and any live tunnel session is disconnected. The server record — including its now-dead `url` — is intentionally left untouched, so the next create revives the tunnel with the same slug.",
+        "description": "Revokes the grant at the control plane and edge: the public URL stops working immediately and any live tunnel session is disconnected. The server record, including its now-dead `url`, is intentionally left untouched, so the next create revives the tunnel with the same slug.",
         "parameters": [
           { "$ref": "#/components/parameters/projectId" },
           { "$ref": "#/components/parameters/serverId" }
@@ -1835,7 +1835,7 @@
           },
           "message": {
             "type": "string",
-            "description": "Human-readable description. May change between releases — don't match on it."
+            "description": "Human-readable description. May change between releases. Don't match on it."
           },
           "details": {
             "type": "object",
@@ -2111,7 +2111,7 @@
           },
           "isError": {
             "type": "boolean",
-            "description": "`true` when the **tool** reported a failure. The HTTP call still succeeds — the server answered."
+            "description": "`true` when the **tool** reported a failure. The HTTP call still succeeds: the server answered."
           }
         },
         "additionalProperties": true
@@ -2356,7 +2356,7 @@
       },
       "EvalRunCreateRequest": {
         "type": "object",
-        "description": "Two valid shapes: `suiteId` (rerun an existing suite, optionally upserting inline `tests` into it), or `suiteName` + `tests` + `serverIds` (create a new suite and run it). Inline `tests` alone — without a `suiteId` or a `suiteName` — are rejected with `VALIDATION_ERROR`.",
+        "description": "Two valid shapes: `suiteId` (rerun an existing suite, optionally upserting inline `tests` into it), or `suiteName` + `tests` + `serverIds` (create a new suite and run it). Inline `tests` alone (without a `suiteId` or a `suiteName`) are rejected with `VALIDATION_ERROR`.",
         "anyOf": [
           { "required": ["suiteId"] },
           {
@@ -2383,7 +2383,7 @@
           "serverIds": {
             "type": "array",
             "minItems": 1,
-            "description": "Servers (by ID) the run connects to. Required when creating a new suite; optional on reruns — when omitted, the run connects the suite's saved server selection (the set its snapshot references). A rerun of a suite with no saved selection is rejected with `VALIDATION_ERROR` (`details.reason: \"NO_SAVED_SERVER_SELECTION\"`).",
+            "description": "Servers (by ID) the run connects to. Required when creating a new suite; optional on reruns: when omitted, the run connects the suite's saved server selection (the set its snapshot references). A rerun of a suite with no saved selection is rejected with `VALIDATION_ERROR` (`details.reason: \"NO_SAVED_SERVER_SELECTION\"`).",
             "items": { "type": "string" }
           },
           "modelApiKeys": {
@@ -2416,7 +2416,7 @@
           "status": { "type": "string", "const": "running" },
           "servers": {
             "type": "array",
-            "description": "The servers the run connects to — explicit or derived from the suite's saved selection. `name` is present when known (always, on the derived path).",
+            "description": "The servers the run connects to: explicit or derived from the suite's saved selection. `name` is present when known (always, on the derived path).",
             "items": {
               "type": "object",
               "required": ["id"],
@@ -2578,7 +2578,7 @@
           },
           "clientInformation": {
             "type": "object",
-            "description": "OAuth client used to obtain the tokens. Optional, but without it server-side refresh cannot run — always include it when you provide a `refresh_token`.",
+            "description": "OAuth client used to obtain the tokens. Optional, but without it server-side refresh cannot run. Always include it when you provide a `refresh_token`.",
             "required": ["clientId"],
             "properties": {
               "clientId": { "type": "string" },
@@ -3169,7 +3169,7 @@
       },
       "ComputerEnvironmentBuildStarted": {
         "type": "object",
-        "description": "A build was accepted (202). It runs in the background — poll the builds list for status.",
+        "description": "A build was accepted (202). It runs in the background. Poll the builds list for status.",
         "required": ["id", "buildId", "reused"],
         "properties": {
           "id": { "type": "string", "description": "The environment id." },
@@ -3221,7 +3221,7 @@
         }
       },
       "Unauthorized": {
-        "description": "Missing, invalid, revoked, or orphaned key (`UNAUTHORIZED`) — or the **target MCP server** needs an OAuth grant (`OAUTH_REQUIRED`), which is a property of the server, not your key.",
+        "description": "Missing, invalid, revoked, or orphaned key (`UNAUTHORIZED`), or the **target MCP server** needs an OAuth grant (`OAUTH_REQUIRED`), which is a property of the server, not your key.",
         "content": {
           "application/json": {
             "schema": { "$ref": "#/components/schemas/Error" },

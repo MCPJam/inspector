@@ -26,7 +26,7 @@ These come from the MCP transport itself. Numeric codes are defined by the [JSON
 
 ### Parse error
 
-`-32700 — jsonrpc/parse_error`
+`-32700` (`jsonrpc/parse_error`)
 
 The server returned a payload the client could not parse as JSON-RPC.
 
@@ -41,7 +41,7 @@ The server returned a payload the client could not parse as JSON-RPC.
 
 ### Invalid request
 
-`-32600 — jsonrpc/invalid_request`
+`-32600` (`jsonrpc/invalid_request`)
 
 The server rejected the payload as not a well-formed JSON-RPC request.
 
@@ -55,7 +55,7 @@ The server rejected the payload as not a well-formed JSON-RPC request.
 
 ### Method not found
 
-`-32601 — jsonrpc/method_not_found`
+`-32601` (`jsonrpc/method_not_found`)
 
 The server does not implement the JSON-RPC method that was called.
 
@@ -70,7 +70,7 @@ The server does not implement the JSON-RPC method that was called.
 
 ### Invalid params
 
-`-32602 — jsonrpc/invalid_params`
+`-32602` (`jsonrpc/invalid_params`)
 
 The server rejected the request parameters.
 
@@ -85,7 +85,7 @@ The server rejected the request parameters.
 
 ### Internal error
 
-`-32603 — jsonrpc/internal_error`
+`-32603` (`jsonrpc/internal_error`)
 
 The server hit an unexpected error while handling the request.
 
@@ -99,7 +99,7 @@ The server hit an unexpected error while handling the request.
 
 ### Connection closed
 
-`-32000 — jsonrpc/connection_closed`
+`-32000` (`jsonrpc/connection_closed`)
 
 The underlying transport closed before the response could be delivered.
 
@@ -112,11 +112,11 @@ The underlying transport closed before the response could be delivered.
 - Restart the server and reconnect.
 - Check the server logs for a crash or exit message.
 
-**Inspector-specific:** the inspector synthesizes this code when an active transport goes away mid-request. If you see it on every call, the server is probably exiting immediately after startup — check for a fatal log.
+**Inspector-specific:** the inspector synthesizes this code when an active transport goes away mid-request. If you see it on every call, the server is probably exiting immediately after startup. Check for a fatal log.
 
 ### Request timeout
 
-`-32001 — jsonrpc/request_timeout`
+`-32001` (`jsonrpc/request_timeout`)
 
 The server did not respond within the configured request timeout.
 
@@ -131,7 +131,7 @@ The server did not respond within the configured request timeout.
 
 ### Header mismatch
 
-`-32001 — jsonrpc/header_mismatch`
+`-32001` (`jsonrpc/header_mismatch`)
 
 The server returned an `MCP-Protocol-Version` header that does not match what the client negotiated.
 
@@ -147,7 +147,7 @@ The server returned an `MCP-Protocol-Version` header that does not match what th
 
 ### Unsupported protocol version
 
-`-32004 — jsonrpc/unsupported_protocol_version`
+`-32004` (`jsonrpc/unsupported_protocol_version`)
 
 The server does not support any protocol version this inspector offered.
 
@@ -161,7 +161,7 @@ The server does not support any protocol version this inspector offered.
 
 ### URL elicitation required
 
-`-32042 — jsonrpc/url_elicitation_required`
+`-32042` (`jsonrpc/url_elicitation_required`)
 
 The server needs the user to visit an external URL to complete the operation.
 

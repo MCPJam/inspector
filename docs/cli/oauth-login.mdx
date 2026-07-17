@@ -9,7 +9,7 @@ The `oauth` command group handles authentication against MCP servers that requir
 ## Quick start
 
 ```bash
-# Interactive login — opens a browser for consent
+# Interactive login: opens a browser for consent
 mcpjam oauth login --url https://your-server.com/mcp \
   --protocol-version 2025-11-25 \
   --registration dcr
@@ -63,7 +63,7 @@ mcpjam tools list --url https://your-server.com/mcp --credentials-file creds.jso
 mcpjam server doctor --url https://your-server.com/mcp --credentials-file creds.json
 ```
 
-The `--debug-out <path>` flag captures a structured debug artifact with full HTTP traces — useful for filing bug reports or handing off to another engineer.
+The `--debug-out <path>` flag captures a structured debug artifact with full HTTP traces, useful for filing bug reports or handing off to another engineer.
 
 ```bash
 mcpjam oauth login --url https://your-server.com/mcp \
@@ -160,7 +160,7 @@ When you already have a token from an environment variable, a secret store, or a
 mcpjam tools list --url https://your-server.com/mcp --access-token "$TOKEN"
 mcpjam server doctor --url https://your-server.com/mcp --oauth-access-token "$TOKEN"
 
-# M2M: preregistered client_credentials — token comes back on stdout
+# M2M: preregistered client_credentials; token comes back on stdout
 TOKEN=$(mcpjam oauth login --url https://your-server.com/mcp \
   --protocol-version 2025-11-25 --registration preregistered \
   --auth-mode client_credentials \

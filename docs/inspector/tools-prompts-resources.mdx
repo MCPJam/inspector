@@ -38,13 +38,13 @@ Test your MCP tools by manually invoking them with custom parameters:
 
 When a tool triggers an MCP elicitation request, a dialog appears asking you to provide additional input. The dialog renders a form built from the server's schema and supports the full MCP elicitation subset:
 
-- **Field labels and defaults** — Fields show the schema `title` when provided (the raw property key stays visible alongside it). Schema `default` values are pre-filled automatically.
-- **Field types** — Strings, numbers, integers, booleans (checkbox), single-select dropdowns, and multi-select checkbox lists are all rendered natively. Fields with `format: email`, `uri`, `date`, or `date-time` use the matching browser input type.
-- **Inline validation** — Clicking **Accept** validates all fields before submitting. Required fields, numeric `minimum`/`maximum`, string `minLength`/`maxLength`, `pattern`, and format constraints are all checked. Errors appear under the relevant field and block submission until resolved.
-- **Server identity** — The dialog header identifies which server is requesting information. When the server supplies both a name and an ID, both are shown — the ID is the trusted anchor and is always visible.
-- **Unsupported shapes** — Nested objects and other schema shapes outside the MCP elicitation spec fall back to a plain JSON textarea so you can still answer by hand.
+- **Field labels and defaults**: Fields show the schema `title` when provided (the raw property key stays visible alongside it). Schema `default` values are pre-filled automatically.
+- **Field types**: Strings, numbers, integers, booleans (checkbox), single-select dropdowns, and multi-select checkbox lists are all rendered natively. Fields with `format: email`, `uri`, `date`, or `date-time` use the matching browser input type.
+- **Inline validation**: Clicking **Accept** validates all fields before submitting. Required fields, numeric `minimum`/`maximum`, string `minLength`/`maxLength`, `pattern`, and format constraints are all checked. Errors appear under the relevant field and block submission until resolved.
+- **Server identity**: The dialog header identifies which server is requesting information. When the server supplies both a name and an ID, both are shown; the ID is the trusted anchor and is always visible.
+- **Unsupported shapes**: Nested objects and other schema shapes outside the MCP elicitation spec fall back to a plain JSON textarea so you can still answer by hand.
 
-**Decline** and **Cancel** are always available and bypass validation — they send the corresponding action to the server without any parameters.
+**Decline** and **Cancel** are always available and bypass validation: they send the corresponding action to the server without any parameters.
 
 ### Tool quality badges
 

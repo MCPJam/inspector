@@ -4,9 +4,9 @@ description: "Run the full Cross-App Access (ID-JAG) grant chain against your au
 icon: "id-card"
 ---
 
-`mcpjam xaa run` drives a complete Cross-App Access flow — the
+`mcpjam xaa run` drives a complete Cross-App Access flow, the
 [Identity Assertion Authorization Grant](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)
-(ID-JAG, an active IETF Internet-Draft) — against your authorization server and
+(ID-JAG, an active IETF Internet-Draft), against your authorization server and
 MCP server. MCPJam plays the **enterprise identity provider** (it mints and
 signs the ID-JAG) and the **client/agent** (it redeems the ID-JAG and calls
 your MCP server with the resulting access token). Your authorization server
@@ -31,7 +31,7 @@ npx skills add mcpjam/inspector --skill mcp-inspector
 ```
 
 Once installed, your agent will know how and when to invoke `mcpjam` commands
-automatically — and how to read `xaa run` output conservatively (advertisement
+automatically, and how to read `xaa run` output conservatively (advertisement
 is evidence, redemption is the verdict; an issuer it can't reach is your setup,
 not a server bug).
 
@@ -42,7 +42,7 @@ conflate. The CLI covers two of them and simulates the third:
 
 | Relationship | Who configures it | In this test |
 | --- | --- | --- |
-| Client ↔ IdP | Enterprise SSO registration | Simulated — the CLI **is** the IdP, so this leg always succeeds |
+| Client ↔ IdP | Enterprise SSO registration | Simulated: the CLI **is** the IdP, so this leg always succeeds |
 | RAS ↔ IdP | Your authorization server trusts the IdP's issuer + JWKS | **You set this up once** (see below) |
 | Client ↔ RAS | OAuth client registration at your authorization server | Exercised per run via `--registration` |
 
@@ -51,7 +51,7 @@ conflate. The CLI covers two of them and simulates the third:
 The CLI signs ID-JAGs with a local key pair (`~/.mcpjam/xaa-idp-private.pem`;
 override the directory with `XAA_IDP_KEY_DIR`). Your authorization server must
 be able to fetch the matching public key, so `--issuer-base-url` must be an
-origin that **publishes that same key** — not your real IdP's URL.
+origin that **publishes that same key**, not your real IdP's URL.
 
 The local MCPJam inspector serves exactly this: it publishes the issuer
 metadata and JWKS from the same key directory at
@@ -71,29 +71,29 @@ Then register the issuer in your authorization server: trust
 `<issuer-base-url>/xaa` as an ID-JAG issuer and point it at the JWKS URL above.
 
 The first flow step, `verify_issuer_publication`, fails fast if the issuer
-origin is unreachable or publishes a different key — nothing is sent to your
+origin is unreachable or publishes a different key. Nothing is sent to your
 servers until it passes.
 
 ## What a run checks
 
 Each run walks the grant chain and reports every step:
 
-1. **`verify_issuer_publication`** — the configured issuer publishes the CLI's
+1. **`verify_issuer_publication`**: the configured issuer publishes the CLI's
    local signing key
-2. **`discover_resource_metadata`** — protected-resource metadata
+2. **`discover_resource_metadata`**: protected-resource metadata
    ([RFC 9728](https://www.rfc-editor.org/rfc/rfc9728)) names the
    authorization server protecting `--url`
-3. **`discover_authz_metadata`** — authorization-server metadata
+3. **`discover_authz_metadata`**: authorization-server metadata
    ([RFC 8414](https://www.rfc-editor.org/rfc/rfc8414)) provides the token
    endpoint and capability advertisements
-4. **`mint_id_jag`** — the mock IdP exchanges the simulated user's identity
+4. **`mint_id_jag`**: the mock IdP exchanges the simulated user's identity
    assertion for an ID-JAG (`typ: oauth-id-jag+jwt`, audience = your
    authorization server, `resource` = your MCP server)
-5. **`redeem_id_jag`** — the ID-JAG is presented at your token endpoint via
+5. **`redeem_id_jag`**: the ID-JAG is presented at your token endpoint via
    the JWT bearer grant
    ([RFC 7523](https://www.rfc-editor.org/rfc/rfc7523)); your server
    validates it and issues its own access token
-6. **`authenticated_mcp_request`** — an MCP `initialize` with the issued
+6. **`authenticated_mcp_request`**: an MCP `initialize` with the issued
    token, advertising the
    [Enterprise-Managed Authorization extension](https://github.com/modelcontextprotocol/ext-auth/blob/main/specification/stable/enterprise-managed-authorization.mdx)
 
@@ -102,19 +102,19 @@ outcomes: whether your authorization server advertises the ID-JAG grant
 profile and the JWT bearer grant, which token-endpoint auth method was
 selected, and whether your MCP server advertises the enterprise-managed
 authorization extension back. Missing advertisements are reported as findings
-but never fail a flow that operationally succeeds — redemption is the verdict,
+but never fail a flow that operationally succeeds: redemption is the verdict,
 advertisement is evidence.
 
 Capability evidence fields are three-valued: `advertised`, `not_advertised`
 (the metadata key was present but did not include the expected value), or
 `unknown` (the metadata key was absent entirely). `unknown` is weaker evidence
-than `not_advertised` — the two are not equivalent.
+than `not_advertised`. The two are not equivalent.
 
 The decoded ID-JAG claims and a local signature-verification verdict
 (`idJag.verified`) are included in the result so you can inspect exactly what
 your authorization server received. `idJag.verified` confirms the CLI's own
 mint was well-formed and correctly signed; it is not evidence that your
-authorization server validated the assertion — the AS's behavior is in the
+authorization server validated the assertion. The AS's behavior is in the
 `redemption` block. Raw tokens, assertions, and secrets are always
 `[REDACTED]` in the output, including when a server reflects them back inside
 an error body.
@@ -128,17 +128,17 @@ server, mirroring the client-registration models MCP clients use:
 | --- | --- | --- |
 | `preregistered` (default) | `--client-id` (+ optional `--client-secret`) | Matches the draft's recommended deployment |
 | `dcr` | none | A diagnostic: the CLI performs open [RFC 7591](https://www.rfc-editor.org/rfc/rfc7591) registration and supplies the IdP→RAS client mapping itself. Each run may leave a registration behind. RFC 7591 conformance findings are reported as warnings in `registration.warnings[]` |
-| `cimd` | none | Public client by default — the run completes but is flagged: the draft recommends confidential clients |
+| `cimd` | none | Public client by default. The run completes but is flagged: the draft recommends confidential clients |
 | `cimd` + `--client-auth private-key-jwt` | none | Confidential CIMD: the CLI generates a local EC P-256 key, publishes it through the hosted reflector, and signs a `client_assertion`. The private key never leaves your machine |
 
 The `registration.warnings[]` array in the result uses these codes:
 
 | Code | Meaning | Weight |
 | --- | --- | --- |
-| `public_client` | Client authenticates with no key or secret | Posture note — the draft recommends confidential clients, but this is not itself a vulnerability |
-| `profile_metadata_not_echoed` | DCR response omitted `authorization_grant_profiles_supported` | Informational — RFC 7591 allows a server to ignore unknown metadata |
-| `grant_types_not_echoed` | DCR response omitted `grant_types` | Informational — same rationale; redemption is the real signal |
-| `missing_no_store` | DCR credential response lacked `Cache-Control: no-store` | Low compliance finding — RFC 7591 requires this header for credential-bearing responses |
+| `public_client` | Client authenticates with no key or secret | Posture note: the draft recommends confidential clients, but this is not itself a vulnerability |
+| `profile_metadata_not_echoed` | DCR response omitted `authorization_grant_profiles_supported` | Informational: RFC 7591 allows a server to ignore unknown metadata |
+| `grant_types_not_echoed` | DCR response omitted `grant_types` | Informational: same rationale; redemption is the real signal |
+| `missing_no_store` | DCR credential response lacked `Cache-Control: no-store` | Low compliance finding: RFC 7591 requires this header for credential-bearing responses |
 
 For confidential CIMD, **the key is the identity**: the reflector URL derived
 from the public key becomes the `client_id`. Deleting
@@ -150,9 +150,9 @@ be updated.
 
 `--assertion-format` selects the identity rail the simulated enterprise uses:
 
-- `oidc` (default) — the mock IdP mints an OIDC ID token as the
+- `oidc` (default): the mock IdP mints an OIDC ID token as the
   token-exchange subject token.
-- `saml` — the mock IdP mints a **SAML 2.0 assertion** as the subject token,
+- `saml`: the mock IdP mints a **SAML 2.0 assertion** as the subject token,
   and the ID-JAG carries a `saml-nameid` `sub_id` claim so a SAML-federated
   authorization server can resolve the user.
 
@@ -230,9 +230,9 @@ mcpjam xaa run \
 ## What this is not
 
 These are targeted debugging checks for the current ID-JAG draft, not a
-conformance suite. The negative-test scorecard — sending deliberately broken
+conformance suite. The negative-test scorecard, sending deliberately broken
 ID-JAGs (bad signature, wrong audience, expired, and six more) and verifying
-your authorization server rejects each — lives in the
+your authorization server rejects each, lives in the
 [inspector's XAA Debugger](/inspector/xaa-debugger), which also visualizes the
 flow and inspects the ID-JAG interactively before it is sent.
 

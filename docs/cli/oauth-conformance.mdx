@@ -4,7 +4,7 @@ description: "Test your MCP server's OAuth implementation across all registratio
 icon: "shield-check"
 ---
 
-The OAuth conformance module runs real OAuth handshakes against your MCP server — the same flows Claude Desktop, ChatGPT, and Claude Code perform — and tells you exactly where they break.
+The OAuth conformance module runs real OAuth handshakes against your MCP server (the same flows Claude Desktop, ChatGPT, and Claude Code perform) and tells you exactly where they break.
 
 ## Why you need this
 
@@ -23,7 +23,7 @@ mcpjam oauth conformance \
   --verify-tools
 ```
 
-The default `--auth-mode` is `interactive` — a browser opens for consent. Pass `--auth-mode headless` for CI against auto-consenting auth servers, or `--auth-mode client_credentials` for M2M.
+The default `--auth-mode` is `interactive`: a browser opens for consent. Pass `--auth-mode headless` for CI against auto-consenting auth servers, or `--auth-mode client_credentials` for M2M.
 
 **What success looks like:**
 
@@ -43,21 +43,21 @@ listTools: PASS (8 tools)
 
 Each conformance run walks through:
 
-1. **Initial request** — sends an unauthenticated request to trigger a 401
-2. **Discovery** — fetches resource metadata and authorization server metadata
-3. **Registration** — registers the client via CIMD, DCR, or pre-registered credentials
-4. **Authorization** — obtains an authorization code (interactive, headless, or client_credentials)
-5. **Token exchange** — exchanges the code for access/refresh tokens
-6. **Authenticated request** — retries the MCP request with the token
-7. **Post-auth verification** (optional) — connects via MCP and lists tools / calls a tool
+1. **Initial request**: sends an unauthenticated request to trigger a 401
+2. **Discovery**: fetches resource metadata and authorization server metadata
+3. **Registration**: registers the client via CIMD, DCR, or pre-registered credentials
+4. **Authorization**: obtains an authorization code (interactive, headless, or client_credentials)
+5. **Token exchange**: exchanges the code for access/refresh tokens
+6. **Authenticated request**: retries the MCP request with the token
+7. **Post-auth verification** (optional): connects via MCP and lists tools / calls a tool
 
 When `--conformance-checks` is enabled, six additional negative checks run after the flow:
-- **DCR redirect URI policy** — attempts dynamic client registration with a non-loopback `http://` redirect URI and expects rejection under the MCP authorization profile
-- **Invalid client** — confirms the auth server rejects an unknown client ID
-- **Invalid redirect at the authorization endpoint** — sends an authorization request with a mismatched `redirect_uri` and looks for rejection before the server redirects back to it
-- **Invalid token** — confirms the MCP server rejects an obviously invalid bearer token with HTTP 401
-- **Invalid redirect** — attempts a token request with a mismatched redirect URI to look for exact-match enforcement; this check may be skipped if the request is rejected for a different reason first
-- **Token format** — validates the token response has the expected fields
+- **DCR redirect URI policy**: attempts dynamic client registration with a non-loopback `http://` redirect URI and expects rejection under the MCP authorization profile
+- **Invalid client**: confirms the auth server rejects an unknown client ID
+- **Invalid redirect at the authorization endpoint**: sends an authorization request with a mismatched `redirect_uri` and looks for rejection before the server redirects back to it
+- **Invalid token**: confirms the MCP server rejects an obviously invalid bearer token with HTTP 401
+- **Invalid redirect**: attempts a token request with a mismatched redirect URI to look for exact-match enforcement; this check may be skipped if the request is rejected for a different reason first
+- **Token format**: validates the token response has the expected fields
 
 ## Scenarios
 
@@ -166,7 +166,7 @@ mcpjam oauth conformance \
   --verify-tools
 ```
 
-`--print-url` writes the consent URL to stderr (`OAUTH_CONSENT_URL: https://...`) instead of launching a browser. The local callback listener still runs — your Playwright script opens the URL, drives consent, and the CLI catches the redirect.
+`--print-url` writes the consent URL to stderr (`OAUTH_CONSENT_URL: https://...`) instead of launching a browser. The local callback listener still runs. Your Playwright script opens the URL, drives consent, and the CLI catches the redirect.
 
 ### Run the OAuth negative checks
 
@@ -185,13 +185,13 @@ This adds 6 checks after the main flow: DCR redirect URI policy, invalid client 
 
 | Strategy | Description | Protocol versions |
 |----------|-------------|-------------------|
-| `cimd` | Client ID Metadata Document — the client publishes its identity at a URL | 2025-11-25 only |
-| `dcr` | Dynamic Client Registration — the client registers itself at runtime | All |
+| `cimd` | Client ID Metadata Document: the client publishes its identity at a URL | 2025-11-25 only |
+| `dcr` | Dynamic Client Registration: the client registers itself at runtime | All |
 | `preregistered` | Pre-registered client ID and optional secret | All |
 
 **When to choose what:**
-- **CIMD** (2025-11-25): preferred for production when the auth server supports it — avoids mutable DCR state.
-- **DCR**: the default for quick testing — works everywhere, no pre-configuration needed.
+- **CIMD** (2025-11-25): preferred for production when the auth server supports it (avoids mutable DCR state).
+- **DCR**: the default for quick testing. It works everywhere, no pre-configuration needed.
 - **Preregistered**: use when the auth server doesn't support DCR, or for `client_credentials` M2M flows.
 
 When `cimd` is used without `--client-metadata-url`, the runner falls back to mcpjam's public metadata document at `https://www.mcpjam.com/.well-known/oauth/client-metadata.json`.
@@ -200,7 +200,7 @@ When `cimd` is used without `--client-metadata-url`, the runner falls back to mc
 
 | Mode | Use case | User interaction |
 |------|----------|-----------------|
-| `interactive` (default) | Local dev — opens browser for consent | Browser popup |
+| `interactive` (default) | Local dev, opens browser for consent | Browser popup |
 | `headless` | CI with auto-consenting auth servers | None |
 | `client_credentials` | Machine-to-machine service accounts | None |
 
@@ -220,9 +220,9 @@ OAuth conformance proves a token was issued. Verification proves the token is ac
 
 Three silent-failure modes this catches:
 
-1. **Token audience mismatch** — OAuth flow succeeds but `tools/list` returns 401 because `aud` doesn't match the MCP resource URL.
-2. **Scope mismatch** — token issued but the MCP tool handler requires different scopes.
-3. **Session binding** — some servers require a separate session init after auth.
+1. **Token audience mismatch**: OAuth flow succeeds but `tools/list` returns 401 because `aud` doesn't match the MCP resource URL.
+2. **Scope mismatch**: token issued but the MCP tool handler requires different scopes.
+3. **Session binding**: some servers require a separate session init after auth.
 
 | Flag | What it does |
 |------|-------------|
@@ -257,14 +257,14 @@ supported way to persist live tokens.
 |-----------------|-------------|-----|
 | `request_without_token` returned 200 | Server allows anonymous access or missing `WWW-Authenticate` | Return 401 with `WWW-Authenticate: Bearer resource_metadata="..."` |
 | `request_resource_metadata` 404 | `/.well-known/oauth-protected-resource` missing or wrong Content-Type | Ensure the endpoint exists and returns `application/json` |
-| `received_resource_metadata` — resource validation failed | Protected Resource Metadata is missing its required `resource` field, uses a non-HTTPS URL, or advertises a resource on a different origin than the server URL | Ensure your PRM document includes a `resource` field that is an HTTPS URL on the same origin as the MCP server (RFC 9728 §2) |
-| `received_resource_metadata` — AS URL mismatch | `authorization_servers` points to a URL without AS metadata | Verify the AS URL has `/.well-known/oauth-authorization-server` |
+| `received_resource_metadata` (resource validation failed) | Protected Resource Metadata is missing its required `resource` field, uses a non-HTTPS URL, or advertises a resource on a different origin than the server URL | Ensure your PRM document includes a `resource` field that is an HTTPS URL on the same origin as the MCP server (RFC 9728 §2) |
+| `received_resource_metadata` (AS URL mismatch) | `authorization_servers` points to a URL without AS metadata | Verify the AS URL has `/.well-known/oauth-authorization-server` |
 | `request_client_registration` 400 | DCR endpoint rejected the registration metadata | Check required fields; use SDK `dynamicRegistration` overrides for custom metadata |
-| `received_authorization_code` — HTML login page | Auth server requires interactive login but you used `--auth-mode headless` | Switch to `--auth-mode interactive` |
-| `received_authorization_code` — state mismatch | Stale popup or concurrent authorization flows | Close other browser tabs and retry |
+| `received_authorization_code` (HTML login page) | Auth server requires interactive login but you used `--auth-mode headless` | Switch to `--auth-mode interactive` |
+| `received_authorization_code` (state mismatch) | Stale popup or concurrent authorization flows | Close other browser tabs and retry |
 | `token_request` 401 `invalid_client` | Wrong `token_endpoint_auth_method` or client_id mismatch | Check DCR response for `token_endpoint_auth_method`; CIMD uses `none` |
 | `authenticated_mcp_request` 401 | Token `aud` doesn't match MCP resource URL | Ensure your auth server sets `aud` correctly |
-| `verify_list_tools` auth error | Token works for OAuth but MCP layer rejects it — scope issue | Check that the token's scope matches what tool handlers require |
+| `verify_list_tools` auth error | Token works for OAuth but MCP layer rejects it (scope issue) | Check that the token's scope matches what tool handlers require |
 | DCR + `client_credentials`: "Dynamic registration produced a public client" | DCR returned `token_endpoint_auth_method: "none"` | Use `--registration preregistered` with explicit credentials instead |
 
 ## CI/CD integration
@@ -346,6 +346,6 @@ oauth-conformance:
 
 ## Related
 
-- [OAuth Login & Debugging](/cli/oauth-login) — get tokens and debug OAuth flows
-- [Server Inspection](/cli/server-inspection) — probe and diagnose before testing conformance
-- [OAuth Conformance SDK Reference](/sdk/reference/oauth-conformance) — programmatic usage with `OAuthConformanceTest`
+- [OAuth Login & Debugging](/cli/oauth-login): get tokens and debug OAuth flows
+- [Server Inspection](/cli/server-inspection): probe and diagnose before testing conformance
+- [OAuth Conformance SDK Reference](/sdk/reference/oauth-conformance): programmatic usage with `OAuthConformanceTest`
