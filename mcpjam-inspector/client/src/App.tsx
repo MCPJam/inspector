@@ -263,7 +263,13 @@ import type {
   NavigateInspectorCommand,
   OpenPlaygroundInspectorCommand,
   SelectServerInspectorCommand,
+  SnapshotAppInspectorCommand,
 } from "@/shared/inspector-command.js";
+import { isAppSurfaceId } from "@/shared/app-surfaces";
+import {
+  readAllSurfaceSnapshots,
+  readSurfaceSnapshot,
+} from "@/lib/webmcp/surface-snapshot-registry";
 
 const OCCUPATION_GATE_ROLLOUT_MS = Date.parse("2026-04-29T00:00:00.000Z");
 // Accounts created on/after this ship date are treated as "new" for the
@@ -2737,12 +2743,91 @@ export default function App() {
       }
     );
 
+    // The ONE `snapshotApp` handler. Surfaces contribute via the provider
+    // registry rather than registering their own handler here: the bus
+    // dispatches newest-first and returns the first success, so a second
+    // handler would shadow this one whenever its surface happened to be
+    // mounted — a whole-app snapshot would silently become a one-screen one.
+    //
+    // Always registered, so `ui_snapshot_app` works from anywhere. It stays
+    // read-only: it never mounts a surface to observe it, which is what
+    // makes its `readOnlyHint` (and its approval exemption) honest.
+    const unregisterSnapshotApp = registerInspectorCommandHandler(
+      "snapshotApp",
+      async (rawCommand) => {
+        const command = rawCommand as SnapshotAppInspectorCommand;
+        const hasSurfaceKey =
+          command.payload != null && "surface" in command.payload;
+        const requested = command.payload?.surface;
+
+        // Handlers cast rather than parse, so the type is no guarantee. An
+        // absent `surface` means whole-app; a PRESENT surface that isn't a
+        // real id (empty string, junk) is an error, not a silent fall-through
+        // to whole-app.
+        if (hasSurfaceKey && !isAppSurfaceId(requested)) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            `Invalid surface ${JSON.stringify(requested)}. Omit it to snapshot the whole app, or pass a known screen id.`
+          );
+        }
+
+        if (requested) {
+          const result = await readSurfaceSnapshot(requested);
+          if (!result.ok) {
+            // A missing provider means the screen isn't open (recoverable by
+            // navigating); a provider that threw or timed out is a genuine
+            // execution failure. Same error string, different code — the
+            // agent reacts differently to each.
+            if (result.reason === "no_provider") {
+              throw createInspectorCommandClientError(
+                "unsupported_in_mode",
+                `${result.error} That screen is not open — navigate to it first, or omit "surface" for app-level state.`
+              );
+            }
+            throw createInspectorCommandClientError(
+              "execution_failed",
+              result.error
+            );
+          }
+          return { surface: requested, [requested]: result.data };
+        }
+
+        const pathname = window.location.pathname;
+        // "none" is the no-selection sentinel — don't report it as a server.
+        const focused =
+          selectedServerRef.current && selectedServerRef.current !== "none"
+            ? selectedServerRef.current
+            : undefined;
+        const selectedServers = appState.selectedMultipleServers?.length
+          ? appState.selectedMultipleServers
+          : focused
+            ? [focused]
+            : [];
+        return {
+          path: pathname,
+          activeTab: pathnameToActiveTab(pathname),
+          selectedServers,
+          servers: Object.entries(projectServersRef.current).map(
+            ([name, server]) => ({
+              name,
+              connectionStatus:
+                (server as { connectionStatus?: string })?.connectionStatus ??
+                "unknown",
+            })
+          ),
+          surfaces: await readAllSurfaceSnapshots(),
+        };
+      }
+    );
+
     return () => {
       unregisterNavigate();
       unregisterSelectServer();
       unregisterOpenPlayground();
+      unregisterSnapshotApp();
     };
   }, [
+    appState.selectedMultipleServers,
     getInspectorServerState,
     setSelectedServer,
     setSelectedMCPConfigs,

@@ -785,8 +785,8 @@ export function buildUiToolsSystemPrompt(
   return [
     "## MCPJam UI tools",
     "You can drive the MCPJam inspector itself with the `ui_*` tools. Every action happens in the user's open app and is immediately visible to them.",
-    "Prefer `ui_open_playground` before `ui_select_tool` / `ui_execute_tool` / `ui_snapshot_app`. `ui_execute_tool` REALLY runs a tool against the user's connected MCP server — treat it as side-effectful; when the user hasn't clearly asked to run a tool, prefill it with `ui_select_tool` instead.",
-    "`ui_snapshot_app` is read-only and needs the playground open — use it to observe state before mutating it.",
+    "Prefer `ui_open_playground` before `ui_select_tool` / `ui_execute_tool`. `ui_execute_tool` REALLY runs a tool against the user's connected MCP server — treat it as side-effectful; when the user hasn't clearly asked to run a tool, prefill it with `ui_select_tool` instead.",
+    "`ui_snapshot_app` is read-only and works from anywhere — use it to see where the user is and what is selected before acting, rather than assuming.",
     "When a `ui_*` tool returns an error, relay the reason instead of retrying blindly.",
     approvalGuidance(uiTools, opts?.requireToolApproval === true),
   ].join("\n");

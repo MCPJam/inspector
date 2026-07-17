@@ -392,38 +392,33 @@ export function buildUiToolsCatalog(): UiToolDefinition[] {
     {
       name: "ui_snapshot_app",
       description:
-        "Read the current UI Playground state (focused server, selected tool, form values, app context) without changing anything. Use this to observe before acting. Requires the playground to be open — call ui_open_playground first if it is not.",
+        "Read what the user currently sees — the open screen, the servers they have selected and their connection status, plus the detailed state of any screen that reports it (e.g. the Playground's selected tool, form values, and last result). Changes nothing. Use it to observe before acting. Pass 'surface' to read one screen; omit it for the whole app.",
       inputSchema: {
         type: "object",
-        properties: {},
+        properties: {
+          surface: {
+            type: "string",
+            description:
+              "Optional screen id to read on its own, e.g. 'playground'. Omit for the whole app.",
+          },
+        },
         additionalProperties: false,
       },
       readOnly: true,
       // The only read-only tool in the catalog: never gates, in either
-      // approval mode. That exemption is only sound because `execute` below
-      // refuses rather than auto-opening the playground.
+      // approval mode. That exemption is only sound because it observes
+      // whatever is already open and never mounts a surface to read it.
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: false,
       },
-      execute: async () => {
-        // Honor readOnly: a snapshot must never navigate or mount the
-        // playground. Unlike the mutating tools, it does NOT auto-open via
-        // ensurePlaygroundOpen — if the handler isn't registered, tell the
-        // agent to open the playground explicitly rather than changing UI
-        // state behind a tool the model (and any future approval flow)
-        // treats as side-effect-free.
-        if (!hasInspectorCommandHandler("snapshotApp")) {
-          return errorResult(
-            "The UI Playground is not open, so there is nothing to snapshot. " +
-              "Call ui_open_playground first, then ui_snapshot_app.",
-          );
-        }
+      execute: async (args) => {
+        const surface = asOptionalString(args.surface);
         const response = await dispatchInspectorCommand({
           type: "snapshotApp",
-          payload: { surface: "playground" },
+          payload: surface ? { surface: surface as never } : {},
         });
         return fromActionResult(commandResponseToActionResult(response));
       },
