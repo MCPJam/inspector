@@ -96,9 +96,9 @@
       "id": "evals-suite-dashboard",
       "kind": "ui",
       "page": "inspector/evals.mdx",
-      "tier": "C",
+      "tier": "B",
       "route": "/evals",
-      "setup": [],
+      "setup": ["seed-eval-suite"],
       "output": "docs/images/evals/evals-suite-dashboard.png",
       "alt": "The Evals suite view showing accuracy, runs, and cases."
     },
@@ -106,9 +106,9 @@
       "id": "evals-run-detail",
       "kind": "ui",
       "page": "inspector/evals.mdx",
-      "tier": "C",
+      "tier": "B",
       "route": "/evals",
-      "setup": ["open-run-detail"],
+      "setup": ["seed-eval-suite", "open-run-detail"],
       "output": "docs/images/evals/evals-run-detail.png",
       "alt": "An Evals run detail view comparing expected and actual tool calls."
     },
@@ -121,16 +121,6 @@
       "setup": ["open-project-switcher"],
       "output": "docs/images/projects/project-switcher.png",
       "alt": "The org and project switcher menu open over the sidebar."
-    },
-    {
-      "id": "computer-terminal",
-      "kind": "ui",
-      "page": "inspector/computer.mdx",
-      "tier": "C",
-      "route": "/computer",
-      "setup": [],
-      "output": "docs/images/computer/computer-terminal.png",
-      "alt": "The Computer tab with the web terminal and its toolbar."
     },
     {
       "id": "hosted-reveal-tokens",

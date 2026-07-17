@@ -206,6 +206,32 @@ const DEMO_SERVER_COMMAND = "npx -y @modelcontextprotocol/server-everything";
 const WIDGET_FIXTURE_SERVER_NAME = "reservation-widget";
 const WIDGET_FIXTURE_COMMAND = `node ${RESERVATION_FIXTURE_PATH} --stdio`;
 
+// evals-suite-dashboard / evals-run-detail (route /evals): a second, separate
+// STDIO connection to the same reservation fixture as WIDGET_FIXTURE_COMMAND
+// above, named plainly "reservation" (matching how the fixture is described
+// elsewhere in the docs task) rather than reusing WIDGET_FIXTURE_SERVER_NAME
+// -- each manifest entry gets its own fresh browser context/guest identity
+// (see seed-eval-suite's comment), so there is no naming collision risk.
+const EVAL_SERVER_NAME = "reservation";
+const EVAL_SUITE_NAME = "Reservation flows";
+// Per-suite localStorage key the "Generate" split button's config popover
+// persists to (generate-cases-config-popover.tsx / eval-generation-config.ts).
+// Setting it directly -- instead of clicking the popover's +/- steppers --
+// biases generation toward the "simple, single tool" bucket only: these
+// reliably produce a clean pass/fail signal against the fixture's two tools
+// (get-reservation, get-menu) without the slower/noisier multi-turn,
+// cross-server "complex", or intentionally-tool-less "negative" buckets the
+// default mix (2/2/1/1/2) would otherwise include.
+const EVAL_GENERATE_CONFIG_KEY_PREFIX = "mcpjam.evals.generateConfig.";
+const EVAL_GENERATE_CONFIG = {
+  simple: 3,
+  multiTool: 0,
+  multiTurn: 0,
+  complex: 0,
+  negative: 0,
+  varyUserStyles: false,
+};
+
 const ADD_SERVER_COMMAND_PLACEHOLDER =
   "npx -y @modelcontextprotocol/server-everything";
 const ADD_SERVER_NAME_PLACEHOLDER = "my-mcp-server";
@@ -354,6 +380,33 @@ async function goToServersInApp(page) {
   if (/\/servers(?:$|[/?#])/.test(new URL(page.url()).pathname)) return;
   await page.getByRole("button", { name: /Connect$/ }).first().click();
   await page.waitForURL(/\/servers/);
+}
+
+// Same in-app-only navigation constraint as goToServersInApp above, for the
+// Evaluate tab's sidebar entry (mcp-sidebar.tsx renders it as a plain
+// <button> too, accessible name "Evaluate").
+async function goToEvalsInApp(page) {
+  if (/\/evals(?:$|[/?#])/.test(new URL(page.url()).pathname)) return;
+  await page.getByRole("button", { name: "Evaluate", exact: true }).first().click();
+  await page.waitForURL(/\/evals/);
+}
+
+// Polls a button's `aria-busy` attribute back to "false" (or absent) instead
+// of guessing a fixed delay. Used for the eval suite's "Generate" button
+// (suite-header.tsx sets `aria-busy={isGeneratingTestCases}`, an LLM call
+// over the suite's connected tools that can take a while). A short initial
+// wait absorbs the gap between the click's synchronous React state update
+// and this function's first read, so a generation that finishes faster than
+// one poll interval isn't mistaken for one that never started.
+async function waitForAriaBusyToClear(locator, timeoutMs) {
+  await locator.page().waitForTimeout(400);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const busy = await locator.getAttribute("aria-busy").catch(() => null);
+    if (busy !== "true") return;
+    await locator.page().waitForTimeout(750);
+  }
+  throw new Error("timed out waiting for aria-busy to clear");
 }
 
 // Named setup steps a manifest "ui" entry can reference by name. Referencing
@@ -555,22 +608,28 @@ const SETUP_STEPS = {
   },
 
   // --- Tier C (hosted logged-in session) ----------------------------------
-  // The three steps below only make sense against the hosted app with a real
+  // The two steps below only make sense against the hosted app with a real
   // STORAGE_STATE session (see `--login` and STORAGE_STATE above) -- there is
   // no local guest equivalent to test them against. Their selectors were
   // originally derived by reading the client source rather than by driving a
   // live session, unlike every step above.
   //
   // 2026-07-17 capture run against the real hosted account (`STORAGE_STATE`
-  // from `--login`): all three selectors below matched the live DOM as
-  // written -- no corrections were needed. `open-run-detail` and
-  // `open-reveal-tokens` could not be exercised end-to-end on that account
-  // though, for data reasons unrelated to the selectors themselves (see each
-  // step's updated comment): the account had zero eval suites and zero
-  // connected servers. Those two entries were left uncaptured rather than
-  // shipping an empty/error state -- see docs/scripts/screenshots's task-6
-  // report for detail. Re-verify against whatever account actually has
-  // qualifying data before relying on these as "known good".
+  // from `--login`): both selectors below matched the live DOM as written --
+  // no corrections were needed. `open-reveal-tokens` could not be exercised
+  // end-to-end on that account though, for data reasons unrelated to the
+  // selector itself (see its updated comment below): the account had zero
+  // connected servers. That entry was left uncaptured rather than shipping
+  // an empty/error state -- see docs/scripts/screenshots's task-6 report for
+  // detail. Re-verify against whatever account actually has qualifying data
+  // before relying on it as "known good".
+  //
+  // The evals captures (evals-suite-dashboard, evals-run-detail) originally
+  // planned to reuse a hosted `open-run-detail` step here too, but that
+  // account had zero eval suites and the hosted flow needs project/host
+  // attachments this harness has no way to seed. Task 6c moved both captures
+  // to the local guest app instead -- see `seed-eval-suite` and the local
+  // `open-run-detail` below.
 
   // project-switcher (route /home): click the sidebar's org/project switcher
   // trigger -- SidebarContextSwitcher's SidebarMenuButton in
@@ -587,39 +646,166 @@ const SETUP_STEPS = {
     await page.getByRole("menu").waitFor({ state: "visible", timeout: 10000 });
   },
 
-  // evals-run-detail (route /evals): click the first suite row -- each row is
-  // `[data-testid="suite-row-<id>"]` with a "Select suite: <name>" button,
-  // see SuiteOverviewRow in client/src/components/evals/evals-suite-list-sidebar.tsx
-  // -- which client-side-navigates to /evals/suite/:suiteId (router.tsx).
-  // Then click the first run row in that suite: SuiteRunsList
-  // (client/src/components/evals/suite-runs-list.tsx) sorts its rows
-  // newest-first, so the first "Open run <id>" button is always the most
-  // recent run, which navigates to /evals/suite/:suiteId/runs/:runId. Both
-  // final waits are best-effort: ToolCallsDiffView
+  // --- Local evals seed (direct guest, no hosted account) ------------------
+  // evals-suite-dashboard and evals-run-detail (route /evals) both build on
+  // this one seeding step: connect the reservation fixture, create a real
+  // suite against it, generate a handful of real cases, and run them to
+  // completion. Every entry's captureUi() call gets its own fresh browser
+  // context, and this dev backend mints a brand-new empty guest project per
+  // context (confirmed by driving it live -- a suite created in one context
+  // is invisible from the next), so there is no cross-run state to reuse:
+  // this step always creates fresh rather than checking for an existing
+  // suite first.
+  //
+  // 2026-07-17: driven live end-to-end against this local app repeatedly
+  // while developing this step. Two real product issues surfaced along the
+  // way, worth recording so a future re-verification isn't surprised by
+  // them:
+  //   1. The manual "New case" / case-detail editor (TestTemplateEditor,
+  //      routes /evals/suite/:id/test/:testId/edit) hard-crashes for a
+  //      direct guest -- it queries `hostConfigsV2:getSuiteConfig`, which
+  //      throws "Authenticated user required" even though the guest has a
+  //      valid (non-WorkOS) Convex auth token. This step never navigates
+  //      there; it uses "Generate" instead, which persists cases via the
+  //      same `testSuites:createTestCase` mutation but does not hit that
+  //      query.
+  //   2. Generated cases stream in progressively (not atomically) --
+  //      reading the case count right after it first becomes nonzero can
+  //      catch a partial batch. This step waits for the Generate button's
+  //      `aria-busy` to clear (waitForAriaBusyToClear) before reading final
+  //      case titles, not just for the count to become nonzero.
+  "seed-eval-suite": async (page) => {
+    await goToServersInApp(page);
+    await addStdioServer(page, {
+      name: EVAL_SERVER_NAME,
+      command: WIDGET_FIXTURE_COMMAND,
+    });
+    await waitForServerConnected(page);
+
+    await goToEvalsInApp(page);
+
+    // A fresh guest project has zero suites, so /evals shows the
+    // "Create your first suite" empty hero (evals-empty-hero.tsx) with a
+    // "Create suite" button -- open the create-suite dialog from there.
+    await page.getByRole("button", { name: "Create suite", exact: true }).click();
+    const createDialog = page.getByRole("dialog");
+    await createDialog
+      .getByPlaceholder("Customer support workflows")
+      .fill(EVAL_SUITE_NAME);
+
+    // Server group: a named, project-scoped set of MCP servers every client
+    // in the suite runs against (ServerGroupPicker.tsx). The dialog starts
+    // with none, so create one containing just the reservation fixture. The
+    // default "MCPJam" client attachment is already pre-filled by the
+    // dialog itself (CreateSuiteDialog's host-attachment default effect) --
+    // no client picking needed.
+    await createDialog.getByRole("button", { name: /server group/i }).click();
+    await page.getByText(/^Create new group/).click();
+    await page.getByText(EVAL_SERVER_NAME, { exact: true }).click();
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+
+    await createDialog
+      .getByRole("button", { name: "Create suite", exact: true })
+      .click();
+    await page.waitForURL(/\/evals\/suite\/[^/]+$/, { timeout: 20000 });
+
+    // Bias generation toward the "simple, single tool" bucket only (see the
+    // section comment above for why) by pre-seeding the per-suite generation
+    // config the "Generate" button reads (generate-cases-config-popover.tsx
+    // / eval-generation-config.ts) -- equivalent to opening its config
+    // popover and adjusting every stepper, but deterministic in one write
+    // instead of several clicks.
+    const suiteId = new URL(page.url()).pathname.split("/").filter(Boolean).pop();
+    await page.evaluate(
+      ({ key, value }) => localStorage.setItem(key, value),
+      {
+        key: `${EVAL_GENERATE_CONFIG_KEY_PREFIX}${suiteId}`,
+        value: JSON.stringify(EVAL_GENERATE_CONFIG),
+      },
+    );
+
+    const generateButton = page
+      .getByRole("button", { name: "Generate", exact: true })
+      .last();
+    await generateButton.click();
+    // LLM call generating multiple cases against the fixture's tools --
+    // generous timeout (see the module header's note on LLM latency).
+    await waitForAriaBusyToClear(generateButton, 180000);
+
+    // The fixture also exposes get-menu (see fixtures/reservation-server.mjs),
+    // so a "simple" case can land on either tool. Drop any case that is
+    // purely about the menu and not about booking/reserving, so the suite
+    // stays focused on get-reservation per the task brief -- but never past
+    // the point of leaving zero cases (an all-menu generation, though
+    // unlikely with only 3 simple cases requested, is left alone rather than
+    // shipping an empty suite).
+    const caseTitles = await page
+      .locator('[aria-label^="Open test case: "]')
+      .evaluateAll((els) =>
+        els.map((el) => el.getAttribute("aria-label").slice("Open test case: ".length)),
+      );
+    const menuOnlyTitles = caseTitles.filter(
+      (title) => /menu/i.test(title) && !/reserv|book|table/i.test(title),
+    );
+    const titlesToDelete =
+      caseTitles.length - menuOnlyTitles.length >= 1 ? menuOnlyTitles : [];
+    for (const title of titlesToDelete) {
+      await page.getByRole("button", { name: `Delete ${title}` }).click();
+      const confirmDialog = page.getByRole("dialog");
+      await confirmDialog
+        .getByRole("button", { name: "Delete", exact: true })
+        .click();
+      await confirmDialog
+        .waitFor({ state: "hidden", timeout: 10000 })
+        .catch(() => {});
+    }
+
+    // "Run all" kicks off every remaining case against the LLM key configured
+    // in this local app and auto-navigates into the new run's detail view
+    // (suite-header.tsx's aria-label "Run all cases in this suite"). Wait
+    // for the run-identity badge (suite-results-split.tsx's RunStatusBadge)
+    // to reach a terminal state instead of a fixed delay -- LLM latency
+    // across several cases can genuinely take a few minutes.
+    await page
+      .getByRole("button", { name: "Run all cases in this suite" })
+      .click();
+    await page
+      .locator("span")
+      .filter({ hasText: /^(Passed|Failed|Cancelled)$/ })
+      .first()
+      .waitFor({ state: "visible", timeout: 5 * 60 * 1000 });
+
+    // Land back on the suite overview (cases + stats), not the single-run
+    // detail view "Run all" just navigated into -- evals-suite-dashboard
+    // wants the overview; evals-run-detail re-enters a specific run itself
+    // via the local `open-run-detail` step below. Scoped to the breadcrumb
+    // (`aria-label="breadcrumb"`, the Breadcrumb component's default) --
+    // the suite overview header also has its own "Reservation flows" title
+    // button (an inline-rename trigger) with the same accessible name.
+    await page
+      .getByLabel("breadcrumb")
+      .getByRole("button", { name: EVAL_SUITE_NAME, exact: true })
+      .click();
+    await page.waitForURL(/\/evals\/suite\/[^/]+$/, { timeout: 20000 });
+  },
+
+  // evals-run-detail (route /evals): from the suite overview seed-eval-suite
+  // leaves the page on, open the suite's one run. The run row in the left
+  // "RUNS" rail is a single plain button wrapping the whole card -- run id,
+  // relative time, pass-rate bar, and client count are all inside it
+  // (RunGroupItem in suite-results-split.tsx, `onClick={onSelect}`), so its
+  // accessible name is their concatenated text ("Run xs7fvvxb Just now 50%
+  // 1 client"), not just the id -- matched here by a startsWith regex
+  // instead of an exact one. Both final waits are best-effort: ToolCallsDiffView
   // (client/src/components/evals/tool-calls-diff-view.tsx) shows a
   // "Comparing tool calls…" banner only while grading is still in flight,
   // and its "Expected"/"Actual" side-by-side labels only render once a
-  // name-mismatch row is expanded -- neither is guaranteed for every run
-  // (a clean pass may have nothing worth expanding).
-  //
-  // 2026-07-17: could not be exercised past the first wait on the hosted
-  // account used for capture -- that account has zero eval suites (the
-  // Evals page shows the "Create your first suite" empty state), so no
-  // `[data-testid^="suite-row-"]` element exists at all and the initial
-  // waitFor times out by design, not because the selector is wrong. The
-  // click-through past the suite row (the "Open run ..." button, the
-  // ToolCallsDiffView waits) remains unverified against a live DOM. This
-  // entry was left uncaptured rather than shipping an empty state -- see
-  // the task-6 report.
+  // name-mismatch row is expanded -- neither is guaranteed (a clean pass may
+  // have nothing worth expanding).
   "open-run-detail": async (page) => {
-    const suiteRow = page.locator('[data-testid^="suite-row-"]').first();
-    await suiteRow.waitFor({ state: "visible", timeout: 20000 });
-    await suiteRow.getByRole("button", { name: /^Select suite:/ }).click();
-    await page.waitForURL(/\/evals\/suite\//, { timeout: 20000 });
-
-    const runButton = page.getByRole("button", { name: /^Open run / }).first();
-    await runButton.waitFor({ state: "visible", timeout: 20000 });
-    await runButton.click();
+    const runRow = page.getByRole("button", { name: /^Run [a-z0-9]+/ }).first();
+    await runRow.waitFor({ state: "visible", timeout: 20000 });
+    await runRow.click();
     await page.waitForURL(/\/evals\/suite\/[^/]+\/runs\//, { timeout: 20000 });
 
     await page
