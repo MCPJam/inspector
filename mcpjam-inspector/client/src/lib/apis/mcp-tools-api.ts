@@ -20,6 +20,7 @@ import { attachToolMetadata } from "@/lib/apis/tool-metadata";
 export type ListToolsResultWithMetadata = ListToolsResult & {
   toolsMetadata?: Record<string, Record<string, any>>;
   tokenCount?: number;
+  tokenCountError?: string;
 };
 
 export type ToolServerMap = Record<string, string>;
@@ -228,6 +229,7 @@ export interface ToolsMetadataAggregate {
   /** Bare tool names that appear on more than one server. */
   collidingToolNames: string[];
   tokenCounts: Record<string, number> | null;
+  tokenCountErrors: Record<string, string> | null;
   /**
    * Tool schemas advertised to the model (name + description + inputSchema),
    * keyed by bare tool name. Used by the Raw view when rendering rehydrated
@@ -258,6 +260,7 @@ export async function getToolsMetadata(
     scopedMetadata: {},
     collidingToolNames: [],
     tokenCounts: modelId ? {} : null,
+    tokenCountErrors: modelId ? {} : null,
     serializedTools: {},
   };
   // Track which servers have seen each tool name so we can surface collisions
@@ -291,6 +294,9 @@ export async function getToolsMetadata(
       // Collect token counts if modelId was provided
       if (modelId && data.tokenCount !== undefined && aggregate.tokenCounts) {
         aggregate.tokenCounts[serverId] = data.tokenCount;
+      }
+      if (modelId && data.tokenCountError && aggregate.tokenCountErrors) {
+        aggregate.tokenCountErrors[serverId] = data.tokenCountError;
       }
     }),
   );
