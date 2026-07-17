@@ -59,12 +59,17 @@ export function listSurfaceSnapshotProviderIds(): string[] {
 }
 
 function clampSnapshot(data: unknown): unknown {
-  let serialized: string;
+  let serialized: string | undefined;
   try {
     serialized = JSON.stringify(data);
   } catch {
     return { error: "snapshot is not JSON-serializable" };
   }
+  // `JSON.stringify` returns `undefined` (the value, not a string) for
+  // `undefined` and for functions — a provider that returns nothing hits
+  // this. Reading `.length` off it would throw, taking down the whole-app
+  // snapshot, so normalize to a benign empty result.
+  if (serialized === undefined) return { empty: true };
   if (serialized.length <= MAX_SURFACE_SNAPSHOT_CHARS) return data;
   return {
     truncated: true,

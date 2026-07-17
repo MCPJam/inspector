@@ -97,6 +97,14 @@ describe("readSurfaceSnapshot", () => {
     expect((result as { data: any }).data.truncated).toBe(true);
   });
 
+  it("does not throw when a provider returns undefined", async () => {
+    // JSON.stringify(undefined) is `undefined`, not a string — reading
+    // `.length` off it would crash the whole-app snapshot.
+    registerSurfaceSnapshotProvider("playground", () => undefined);
+    const result = await readSurfaceSnapshot("playground");
+    expect(result).toEqual({ ok: true, data: { empty: true } });
+  });
+
   it("reports an unserializable snapshot instead of throwing", async () => {
     const circular: Record<string, unknown> = {};
     circular.self = circular;
