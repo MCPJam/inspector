@@ -110,7 +110,7 @@
       "route": "/evals",
       "setup": ["seed-eval-suite", "open-run-detail"],
       "output": "docs/images/evals/evals-run-detail.png",
-      "alt": "An Evals run detail view comparing expected and actual tool calls."
+      "alt": "An Evals run detail view displaying the run header with a PASSED badge, pass-rate statistics, AI-generated run insights, per-case results, and previous runs in a side rail."
     },
     {
       "id": "project-switcher",
