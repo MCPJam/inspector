@@ -44,7 +44,10 @@ import {
   hasUnresolvedToolCalls,
   executeToolCallsFromMessages,
 } from "@/shared/http-tool-calls";
-import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
+import {
+  isClientFulfilledToolName,
+  type UiToolApprovalClassification,
+} from "@/shared/client-fulfilled-tools";
 import {
   scrubUnavailableToolHistoryForBackend,
   scrubMcpAppsToolResultsForBackend,
@@ -139,20 +142,36 @@ function isApprovalFreeMetaToolName(
 }
 
 /**
- * Union of the approval exemptions this loop honors: progressive-discovery
- * meta-tools, plus the read-only WebMCP UI tools this turn advertised
- * (`approvalFreeUiToolNames`, computed by the caller from the validated
- * `uiTools` snapshot — never from the raw name, which a third-party server
- * could spoof). Read-only UI tools observe rather than mutate, so they flow
- * through the normal client-fulfilled pause with no approval pill.
+ * Whether THIS tool call must pause for the user's approval.
+ *
+ * The turn's `requireToolApproval` flag is the rule for real MCP tools only.
+ * WebMCP `ui_*` tools carry their own per-tool policy, pre-computed by the
+ * caller into `uiToolApprovals` (from the VALIDATED snapshot's MCP
+ * annotations — never from the raw name, which a third-party server could
+ * spoof). A destructive UI tool must gate even when the flag is OFF, which is
+ * the default: writing this as `requireToolApproval && !isApprovalFree(...)`
+ * is what silently let destructive client-fulfilled calls through.
+ *
+ * Order matters. UI classification wins over the flag in both directions:
+ *   - in `requiredNames` → approval, flag or no flag;
+ *   - in `freeNames` → never (a read-only snapshot buys nothing by pausing);
+ *   - unknown name → a real tool: follow the flag, exempting meta-tools.
  */
-function isApprovalFreeToolCallName(
+function toolCallNeedsApproval(
   name: string,
   progressivePlan: ProgressiveToolPlan | undefined,
-  approvalFreeUiToolNames: ReadonlySet<string> | undefined
+  uiToolApprovals: UiToolApprovalClassification | undefined,
+  // `boolean | undefined`, not `boolean`: the callers thread through an
+  // optional `requireToolApproval`, and this file is server-side (not covered
+  // by the client typecheck), so a bare `boolean` param let `undefined` flow
+  // in and `return requireToolApproval` hand back `undefined` for a real
+  // tool. Coerce so the return is always a real boolean.
+  requireToolApproval: boolean | undefined
 ): boolean {
-  if (isApprovalFreeMetaToolName(name, progressivePlan)) return true;
-  return approvalFreeUiToolNames?.has(name) === true;
+  if (uiToolApprovals?.requiredNames.has(name)) return true;
+  if (uiToolApprovals?.freeNames.has(name)) return false;
+  if (isApprovalFreeMetaToolName(name, progressivePlan)) return false;
+  return requireToolApproval === true;
 }
 import { logger } from "./logger";
 import {
@@ -434,11 +453,13 @@ export interface MCPJamHandlerOptions {
   harnessMcpProxy?: HarnessMcpProxyStrategy;
   requireToolApproval?: boolean;
   /**
-   * Names of read-only `ui_*` tools from this turn's validated snapshot —
-   * exempt from the approval gate even when `requireToolApproval` is on
-   * (see `isApprovalFreeToolCallName`).
+   * Per-tool approval policy for the `ui_*` tools this turn advertised,
+   * classified by the caller from the validated snapshot's MCP annotations
+   * (see `classifyUiToolApprovals`). Overrides `requireToolApproval` in both
+   * directions for those names — destructive UI tools gate even when the flag
+   * is off; read-only ones never gate.
    */
-  approvalFreeUiToolNames?: ReadonlySet<string>;
+  uiToolApprovals?: UiToolApprovalClassification;
   /**
    * Host/client policy for eligible MCP tool-result content/resources.
    * Controls only model-facing tool output; raw results remain available to
@@ -612,7 +633,7 @@ interface StepContext {
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   requireToolApproval?: boolean;
-  approvalFreeUiToolNames?: ReadonlySet<string>;
+  uiToolApprovals?: UiToolApprovalClassification;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   approvalMode?: "prompt" | "auto-deny";
   stepIndex: number;
@@ -1110,7 +1131,7 @@ async function processStream(
   // supplied. Chat / synthetic omit (handler still writes the UI
   // chunk + trace event unchanged).
   onToolCall?: (event: MCPJamToolCallEvent) => void,
-  approvalFreeUiToolNames?: ReadonlySet<string>
+  uiToolApprovals?: UiToolApprovalClassification
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   let pendingText = "";
@@ -1337,11 +1358,11 @@ async function processStream(
           }
 
           if (
-            requireToolApproval &&
-            !isApprovalFreeToolCallName(
+            toolCallNeedsApproval(
               chunk.toolName,
               progressivePlan,
-              approvalFreeUiToolNames
+              uiToolApprovals,
+              requireToolApproval
             )
           ) {
             emitToolApprovalRequest(writer, {
@@ -1890,7 +1911,7 @@ async function processOneStep(
     mcpClientManager,
     selectedServers,
     requireToolApproval,
-    approvalFreeUiToolNames,
+    uiToolApprovals,
     modelVisibleMcpToolResults,
     approvalMode,
     stepIndex,
@@ -2166,7 +2187,7 @@ async function processOneStep(
     abortSignal,
     progressivePlan,
     onToolCall,
-    approvalFreeUiToolNames
+    uiToolApprovals
   );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(
@@ -2206,12 +2227,13 @@ async function processOneStep(
 
   // Check for unresolved tool calls and execute them
   if (hasUnresolvedToolCalls(messageHistory)) {
-    // Meta-tools (search_mcp_tools / load_mcp_tools) are approval-free even
-    // when the user enabled `requireToolApproval` — gating progressive
-    // discovery itself behind N approvals defeats the point. We only pause
-    // when at least one unresolved tool call is a real MCP tool. Pure-meta
+    // We only pause when at least one unresolved tool call actually needs
+    // approval this turn (`toolCallNeedsApproval`): a real MCP tool while the
+    // flag is on, or a destructive `ui_*` tool in any mode. Meta-tools
+    // (search_mcp_tools / load_mcp_tools) never qualify — gating progressive
+    // discovery itself behind N approvals defeats the point — so pure-meta
     // turns fall through to execute and continue the loop.
-    const hasUnresolvedRealToolCall = (() => {
+    const hasUnresolvedApprovalRequiredToolCall = (() => {
       const resultIds = new Set<string>();
       for (const msg of messageHistory) {
         if (msg?.role !== "tool") continue;
@@ -2227,10 +2249,11 @@ async function processOneStep(
           if (
             part.type === "tool-call" &&
             !resultIds.has(part.toolCallId) &&
-            !isApprovalFreeToolCallName(
+            toolCallNeedsApproval(
               part.toolName,
               progressivePlan,
-              approvalFreeUiToolNames
+              uiToolApprovals,
+              requireToolApproval
             )
           ) {
             return true;
@@ -2240,16 +2263,12 @@ async function processOneStep(
       return false;
     })();
 
-    if (
-      requireToolApproval &&
-      hasUnresolvedRealToolCall &&
-      approvalMode === "auto-deny"
-    ) {
+    if (hasUnresolvedApprovalRequiredToolCall && approvalMode === "auto-deny") {
       // Synthetic-session path: instead of pausing the loop for a
       // human approval that will never come, synthesize a denial
-      // tool-result for every approval-required unresolved real
-      // tool call so the model can react and continue. Meta-tool
-      // calls in the same step still execute normally below.
+      // tool-result for every approval-required unresolved tool call
+      // so the model can react and continue. Meta-tool calls in the
+      // same step still execute normally below.
       const resultIds = new Set<string>();
       for (const msg of messageHistory) {
         if (msg?.role !== "tool") continue;
@@ -2267,10 +2286,11 @@ async function processOneStep(
           if (
             part.type !== "tool-call" ||
             resultIds.has(part.toolCallId) ||
-            isApprovalFreeToolCallName(
+            !toolCallNeedsApproval(
               part.toolName,
               progressivePlan,
-              approvalFreeUiToolNames
+              uiToolApprovals,
+              requireToolApproval
             )
           ) {
             continue;
@@ -2317,11 +2337,7 @@ async function processOneStep(
       // denials count as resolved tool-results for the next step.
     }
 
-    if (
-      requireToolApproval &&
-      hasUnresolvedRealToolCall &&
-      approvalMode !== "auto-deny"
-    ) {
+    if (hasUnresolvedApprovalRequiredToolCall && approvalMode !== "auto-deny") {
       // Drain any unresolved meta-tool calls (search/load) before pausing
       // for approval on real tools. Otherwise mixed-step turns (model
       // emits a load_mcp_tools + a real tool in one assistant message)
@@ -2710,7 +2726,7 @@ export async function runChatEngineLoop(
     mcpClientManager,
     selectedServers,
     requireToolApproval,
-    approvalFreeUiToolNames,
+    uiToolApprovals,
     modelVisibleMcpToolResults,
     approvalMode,
     onConversationComplete,
@@ -2922,8 +2938,16 @@ export async function runChatEngineLoop(
 
       startHeartbeat();
 
-      // Process any pending approval responses from a previous request
-      if (requireToolApproval) {
+      // Process any pending approval responses from a previous request.
+      //
+      // The UI classification has to be honored here too, not just at the
+      // emit gate. With the flag off, a destructive `ui_*` call now pauses
+      // for approval — and DENYING it sends an approval response back (the
+      // approve path ships a tool-result instead). Gating this on
+      // `requireToolApproval` alone would leave that denial unprocessed and
+      // the tool call unresolved: the turn would hang forever, which is the
+      // exact failure the two-sided predicate exists to prevent.
+      if (requireToolApproval || (uiToolApprovals?.requiredNames.size ?? 0) > 0) {
         const handled = await handlePendingApprovals(
           safeWriter,
           messageHistory,
@@ -2966,7 +2990,7 @@ export async function runChatEngineLoop(
           mcpClientManager,
           selectedServers,
           requireToolApproval,
-          approvalFreeUiToolNames,
+          uiToolApprovals,
           modelVisibleMcpToolResults,
           approvalMode,
           stepIndex: effectiveSteps(),

@@ -59,6 +59,53 @@ describe("buildUiToolsCatalog", () => {
     expect(getTool("ui_snapshot_app").readOnly).toBe(true);
   });
 
+  it("every tool annotates readOnly/destructive/openWorld explicitly", () => {
+    // An absent `destructiveHint` reads as DESTRUCTIVE, so an unannotated
+    // tool would gate on every call rather than execute silently — safe, but
+    // wrong. Curated entries state their policy instead of inheriting it.
+    for (const tool of buildUiToolsCatalog()) {
+      const annotations = tool.annotations;
+      expect(annotations, `${tool.name} must annotate`).toBeDefined();
+      expect(typeof annotations?.readOnlyHint).toBe("boolean");
+      expect(typeof annotations?.destructiveHint).toBe("boolean");
+      expect(typeof annotations?.openWorldHint).toBe("boolean");
+      // The wire carries both; the validator 400s if they disagree.
+      expect(annotations?.readOnlyHint).toBe(tool.readOnly);
+    }
+  });
+
+  it("gates exactly ui_execute_tool as destructive", () => {
+    // It runs an arbitrary third-party MCP tool, so it confirms even with the
+    // approval toggle off. Everything else is additive: the user watches it
+    // happen in their own app, and a confirmation buys nothing.
+    const destructive = buildUiToolsCatalog()
+      .filter((t) => t.annotations?.destructiveHint === true)
+      .map((t) => t.name);
+    expect(destructive).toEqual(["ui_execute_tool"]);
+  });
+
+  it("marks only ui_execute_tool as open-world", () => {
+    // The one tool whose effects escape the browser.
+    const openWorld = buildUiToolsCatalog()
+      .filter((t) => t.annotations?.openWorldHint === true)
+      .map((t) => t.name);
+    expect(openWorld).toEqual(["ui_execute_tool"]);
+  });
+
+  it("flags only ui_execute_tool's output as untrusted for native agents", () => {
+    // Its result comes from a third-party MCP server. `openWorldHint` (MCP)
+    // doesn't convey that to a WebMCP agent; `nativeUntrustedContentHint`
+    // (projected to WebMCP's untrustedContentHint) does.
+    const untrusted = buildUiToolsCatalog()
+      .filter((t) => t.nativeUntrustedContentHint === true)
+      .map((t) => t.name);
+    expect(untrusted).toEqual(["ui_execute_tool"]);
+  });
+
+  it("does not advertise ui_navigate as idempotent (navigation adds history)", () => {
+    expect(getTool("ui_navigate").annotations?.idempotentHint).toBe(false);
+  });
+
   it("ui_navigate dispatches valid targets and errors on missing/unknown ones", async () => {
     const navigate = getTool("ui_navigate");
 

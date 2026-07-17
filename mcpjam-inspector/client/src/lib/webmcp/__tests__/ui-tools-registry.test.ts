@@ -59,6 +59,25 @@ describe("useUiToolsRegistry", () => {
     ).toThrow(/must match ui_/);
   });
 
+  it("rejects a readOnlyHint that contradicts readOnly loudly", () => {
+    // The server 400s a contradictory snapshot on every chat POST; catching
+    // it at registration turns that into an obvious local failure instead.
+    expect(() =>
+      useUiToolsRegistry.getState().registerUiTool(
+        makeTool("ui_navigate", {
+          readOnly: false,
+          annotations: { readOnlyHint: true },
+        }),
+      ),
+    ).toThrow(/must agree/);
+  });
+
+  it("accepts a definition with no annotations (legacy shape)", () => {
+    expect(() =>
+      useUiToolsRegistry.getState().registerUiTool(makeTool("ui_navigate")),
+    ).not.toThrow();
+  });
+
   it("replaces a re-registered name with a warn (HMR/StrictMode)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const first = makeTool("ui_navigate");
@@ -118,6 +137,34 @@ describe("useUiToolsRegistry", () => {
       inputSchema: { type: "object", properties: {} },
       readOnly: true,
     });
+  });
+
+  it("ships annotations so the server can classify approval", () => {
+    const annotations = {
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
+    };
+    useUiToolsRegistry
+      .getState()
+      .registerUiTool(makeTool("ui_execute_tool", { annotations }));
+
+    const [entry] = useUiToolsRegistry.getState().snapshotForChatBody();
+    expect(entry.annotations).toEqual(annotations);
+  });
+
+  it("omits the annotations key entirely when a definition has none", () => {
+    useUiToolsRegistry.getState().registerUiTool(makeTool("ui_navigate"));
+    const [entry] = useUiToolsRegistry.getState().snapshotForChatBody();
+    expect(entry).not.toHaveProperty("annotations");
+  });
+
+  it("never ships mayNavigate (client-only metadata)", () => {
+    useUiToolsRegistry
+      .getState()
+      .registerUiTool(makeTool("ui_navigate", { mayNavigate: true }));
+    const [entry] = useUiToolsRegistry.getState().snapshotForChatBody();
+    expect(entry).not.toHaveProperty("mayNavigate");
   });
 
   it("drops oversize schemas from the snapshot instead of truncating them", () => {

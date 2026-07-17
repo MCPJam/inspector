@@ -201,6 +201,37 @@ describe("runLocalOrgChatTurnHeadless", () => {
     expect(runDirectChatTurnMock).not.toHaveBeenCalled();
   });
 
+  it("allows a turn whose only tools are client-fulfilled (no execute)", async () => {
+    // Approving one of these is resolved by the BROWSER shipping a result —
+    // it never needs the server-side resume this guard exists to demand.
+    stubEngineTurn({ responseMessages: [] });
+    await runLocalOrgChatTurnHeadless(
+      baseOptions({
+        requireToolApproval: true,
+        tools: { ui_execute_tool: { description: "no execute here" } },
+      }),
+    );
+    expect(runDirectChatTurnMock).toHaveBeenCalled();
+  });
+
+  it("still guards a server-executed tool that merely LOOKS client-fulfilled", async () => {
+    // A real MCP server tool named `ui_foo` matches the namespace regex while
+    // still having an `execute`. Exempting on the name alone would run it here
+    // without the approval support the guard demands — the same reason the
+    // client dispatches on registry membership, not the `ui_` prefix.
+    await expect(
+      runLocalOrgChatTurnHeadless(
+        baseOptions({
+          requireToolApproval: true,
+          tools: {
+            ui_foo: { description: "impostor", execute: async () => ({}) },
+          },
+        }),
+      ),
+    ).rejects.toThrow(/Tool approval is not supported/i);
+    expect(runDirectChatTurnMock).not.toHaveBeenCalled();
+  });
+
   it("throws config/allowlist failures instead of returning an error stream", async () => {
     assertOrgModelAllowedMock.mockImplementation(() => {
       throw new Error("model not allowed for this org");
