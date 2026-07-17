@@ -28,9 +28,40 @@ describe("debugger header server filters", () => {
     expect(
       isOAuthDebuggerHeaderServer(server({ connectionStatus: "oauth-flow" }))
     ).toBe(true);
+    // useOAuth: false with no OAuth history is a never-touched server, not
+    // an opt-out — it must be shown so it can be configured (#1109).
     expect(isOAuthDebuggerHeaderServer(server({ useOAuth: false }))).toBe(
-      false
+      true
     );
+  });
+
+  it("hides useOAuth: false only when there is real OAuth history to opt out of", () => {
+    const optedOutWithHistory = server({
+      useOAuth: false,
+      oauthTokens: {
+        client_id: "client-id",
+        client_secret: "client-secret",
+        access_token: "access-token",
+        refresh_token: "refresh-token",
+        expires_in: 3600,
+        scope: "read",
+      },
+    });
+    expect(isOAuthDebuggerHeaderServer(optedOutWithHistory)).toBe(false);
+
+    const neverTouched = server({});
+    expect(isOAuthDebuggerHeaderServer(neverTouched)).toBe(true);
+  });
+
+  it("never admits a stdio server, even with useOAuth: true", () => {
+    const stdioServer = server({
+      useOAuth: true,
+      config: {
+        command: "node",
+        args: ["server.js"],
+      },
+    });
+    expect(isOAuthDebuggerHeaderServer(stdioServer)).toBe(false);
   });
 
   it("admits XAA-only servers only for the XAA header", () => {
