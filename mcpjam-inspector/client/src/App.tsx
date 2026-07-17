@@ -2049,10 +2049,13 @@ export default function App() {
   selectedServerRef.current = appState.selectedServer;
   // Publish the current selection for the agent's per-turn orientation block,
   // which is built in a hook that can't reach app state (ui-context-source).
+  // `selectedServer` uses the string "none" as its no-selection sentinel —
+  // excluded here so the model isn't told a server literally named "none" is
+  // selected.
   useEffect(() => {
     const names = appState.selectedMultipleServers.length
       ? appState.selectedMultipleServers
-      : appState.selectedServer
+      : appState.selectedServer && appState.selectedServer !== "none"
         ? [appState.selectedServer]
         : [];
     publishSelectedServerNames(names);
