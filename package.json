@@ -10,7 +10,8 @@
     "widget-react",
     "soundcheck",
     "quality-labeler",
-    "mcp"
+    "mcp",
+    "reference-servers/oauth-full"
   ],
   "scripts": {
     "build": "npm run build -w @mcpjam/sdk && npm run build -w @mcpjam/cli && npm run build -w @mcpjam/chat-ui && npm run build -w @mcpjam/widget-react && npm run build -w @mcpjam/inspector",

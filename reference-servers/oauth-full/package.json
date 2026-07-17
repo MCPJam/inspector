@@ -1,0 +1,26 @@
+{
+  "name": "@mcpjam/oauth-reference-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Full-capability reference MCP server gated behind OAuth, with per-client handshake capture (HP-10).",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "matrix": "node scripts/build-matrix.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/node": "2.0.0-alpha.2",
+    "@modelcontextprotocol/server": "2.0.0-alpha.2",
+    "jose": "^5.10.0",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^3.0.0"
+  }
+}
