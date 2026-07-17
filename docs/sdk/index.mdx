@@ -81,7 +81,7 @@ console.log(`Accuracy: ${(test.accuracy() * 100).toFixed(1)}%`);
 
 ## Spec-first: `Host` + `HostRuntime`
 
-For richer setups — pinning a host style/profile, applying sandbox/permission policy, or running the same configuration in CI that the MCPJam Inspector uses — start from a `Host` spec instead of constructing a runner directly:
+For richer setups (pinning a host style/profile, applying sandbox/permission policy, or running the same configuration in CI that the MCPJam Inspector uses), start from a `Host` spec instead of constructing a runner directly:
 
 ```typescript
 import { MCPClientManager, Host, EvalTest } from "@mcpjam/sdk";

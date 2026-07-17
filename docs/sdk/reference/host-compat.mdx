@@ -1,6 +1,6 @@
 ---
 title: "host-compat"
-description: "API reference for @mcpjam/sdk/host-compat — derive server requirements, evaluate host compatibility, and scan widget bridge usage."
+description: "API reference for @mcpjam/sdk/host-compat: derive server requirements, evaluate host compatibility, and scan widget bridge usage."
 icon: "book"
 ---
 
@@ -39,7 +39,7 @@ deriveServerRequirements(
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `toolsData` | `HostCompatToolsInput \| null` | Tools list from `ListToolsResult`, plus optional per-tool `_meta` metadata. |
-| `widgetUsage` | `WidgetUsage` | Capability needs derived from scanning widget HTML (from `scanWidgetSource`). Pass `undefined` when HTML hasn't been fetched yet — the result will include an `unknownDimensions` entry. |
+| `widgetUsage` | `WidgetUsage` | Capability needs derived from scanning widget HTML (from `scanWidgetSource`). Pass `undefined` when HTML hasn't been fetched yet; the result will include an `unknownDimensions` entry. |
 | `connectionFacts` | `ConnectionFacts` | Protocol version negotiated at connect time. |
 
 ### HostCompatToolsInput
@@ -70,7 +70,7 @@ import { deriveServerRequirements } from "@mcpjam/sdk/host-compat";
 const tools = await manager.listTools("my-server");
 const requirements = deriveServerRequirements(
   { tools: tools.tools },
-  undefined, // widgetUsage — not yet scanned
+  undefined, // widgetUsage: not yet scanned
   { protocolVersion: "2025-11-25" },
 );
 
@@ -182,7 +182,7 @@ const { requirements, reports } = evaluateAllHosts(
 for (const report of reports) {
   console.log(`${report.hostLabel}: ${report.verdict}`);
   for (const finding of report.findings) {
-    console.log(`  [${finding.severity}] ${finding.title} — ${finding.detail}`);
+    console.log(`  [${finding.severity}] ${finding.title} - ${finding.detail}`);
   }
 }
 ```
@@ -205,7 +205,7 @@ scanWidgetSource(html: string): WidgetUsage
 
 ### Returns: WidgetUsage
 
-A map from capability name to the list of tool names whose widgets use that capability. An empty object `{}` means the HTML was scanned and no capability usage was found — this is conclusive. `undefined` means the scan hasn't run yet.
+A map from capability name to the list of tool names whose widgets use that capability. An empty object `{}` means the HTML was scanned and no capability usage was found; this is conclusive. `undefined` means the scan hasn't run yet.
 
 ```typescript
 type WidgetUsage = Partial<Record<WidgetCapabilityNeed, string[]>>;
@@ -290,7 +290,7 @@ Describes a host's capabilities for evaluation purposes. Supply your own profile
 | `"probe"` | Captured from a real host via DevTools or the inspector. |
 | `"vendor-doc"` | Verified from vendor documentation. |
 | `"observed"` | Stamped by a live widget render run. |
-| `"assumed"` | Best-effort — unverified. |
+| `"assumed"` | Best-effort, unverified. |
 
 ### ConnectionFacts
 
@@ -302,6 +302,6 @@ Describes a host's capabilities for evaluation purposes. Supply your own profile
 
 ## Related
 
-- [Compatibility destination](/inspector/compatibility) — the Inspector UI powered by this engine
-- [Apps Conformance SDK](/sdk/reference/apps-conformance) — dynamic conformance testing
-- [Protocol Conformance SDK](/sdk/reference/protocol-conformance) — MCP protocol checks
+- [Compatibility destination](/inspector/compatibility): the Inspector UI powered by this engine
+- [Apps Conformance SDK](/sdk/reference/apps-conformance): dynamic conformance testing
+- [Protocol Conformance SDK](/sdk/reference/protocol-conformance): MCP protocol checks

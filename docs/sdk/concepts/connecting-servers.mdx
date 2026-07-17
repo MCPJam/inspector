@@ -99,7 +99,7 @@ With this configuration, the SDK:
 
 #### Custom 401 recovery with onUnauthorized
 
-Use `onUnauthorized` when you supply an `accessToken` but manage token rotation yourself — for example, when tokens come from a secrets vault or a backend service rather than a standard OAuth flow:
+Use `onUnauthorized` when you supply an `accessToken` but manage token rotation yourself; for example, when tokens come from a secrets vault or a backend service rather than a standard OAuth flow:
 
 ```typescript
 const manager = new MCPClientManager({
@@ -123,7 +123,7 @@ When the server returns HTTP 401, the SDK:
 4. If the retry also returns 401, the error is surfaced to the caller.
 
 <Note>
-`onUnauthorized` only fires on strict HTTP 401 responses — not 403. It is also skipped when `refreshToken` or `authProvider` is configured, since those patterns handle token refresh internally. Parallel 401s for the same server share a single refresh call.
+`onUnauthorized` only fires on strict HTTP 401 responses, not 403. It is also skipped when `refreshToken` or `authProvider` is configured, since those patterns handle token refresh internally. Parallel 401s for the same server share a single refresh call.
 </Note>
 
 ## Connecting and Disconnecting
@@ -184,7 +184,7 @@ const allTools = await manager.getTools();
 
 ## Executing Tools Directly
 
-You can call tools without involving an LLM—useful for unit tests:
+You can call tools without involving an LLM (useful for unit tests):
 
 ```typescript
 // Direct tool execution

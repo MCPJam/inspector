@@ -39,8 +39,8 @@ The **History** tab in the server detail modal shows a timeline of every revisio
 
 Click any revision row to expand it. The expanded panel shows:
 
-- **Diff view** (default for revisions 2 and later) — highlights tools added, removed, or updated compared to the previous revision.
-- **Snapshot view** — lists all tools captured at that revision, with each tool's name and description.
+- **Diff view** (default for revisions 2 and later): highlights tools added, removed, or updated compared to the previous revision.
+- **Snapshot view**: lists all tools captured at that revision, with each tool's name and description.
 
 A **Diff / Snapshot** toggle appears at the top of the expanded panel when a previous revision exists. Revision 1 opens directly in Snapshot view since there is nothing to diff against.
 
@@ -98,7 +98,7 @@ You can configure environment variables with STDIO. Click "Add Variable" in the 
 
 ## HTTP servers
 
-Connect to any Streamable HTTP MCP server by selecting **HTTP** in the transport dropdown and pasting in the URL — typically ending in `/mcp`.
+Connect to any Streamable HTTP MCP server by selecting **HTTP** in the transport dropdown and pasting in the URL, typically ending in `/mcp`.
 
 <Frame>
   <img
@@ -118,8 +118,8 @@ Expand **Custom Headers** to add arbitrary request headers (for example, proxy a
 MCPJam is compliant with the MCP authorization spec and supports Dynamic Client Registration (DCR), client pre-registration, and Client ID Metadata Documents (CIMD). You can:
 
 1. Choose **No Authentication**
-2. Choose **Bearer Token** — use this if you already have an API token and don't need to register an OAuth client.
-3. Choose **OAuth** — follow [MCP Authorization](https://modelcontextprotocol.io/specification/draft/basic/authorization) to obtain a bearer token. You can optionally set scopes or a custom client ID and secret. For step-by-step debugging, see the [OAuth Debugger](/inspector/guided-oauth).
+2. Choose **Bearer Token**: use this if you already have an API token and don't need to register an OAuth client.
+3. Choose **OAuth**: follow [MCP Authorization](https://modelcontextprotocol.io/specification/draft/basic/authorization) to obtain a bearer token. You can optionally set scopes or a custom client ID and secret. For step-by-step debugging, see the [OAuth Debugger](/inspector/guided-oauth).
 
 ### Request timeout
 
@@ -137,7 +137,7 @@ Each tunnel is scoped to a single server and secured at the network edge: the tu
 2. Click **Create Tunnel** on the server card you want to expose.
 3. Copy the tunnel URL from the server card and paste it into your MCP client (for example, ChatGPT's custom connector settings).
 
-The tunnel URL is stable — the base domain stays the same across sessions. If you close and recreate a tunnel for the same server, you get the same domain with a new secret key.
+The tunnel URL is stable: the base domain stays the same across sessions. If you close and recreate a tunnel for the same server, you get the same domain with a new secret key.
 
 ### Rotate the secret
 
@@ -152,7 +152,7 @@ Click the **log icon** on the tunnel pill to open the recent-requests panel. It 
 Click the **close (×) button** on the tunnel pill to stop remote access. The tunnel closes immediately and all remote connections are terminated. The domain is reserved so a future tunnel for the same server reuses it.
 
 <Warning>
-  Anyone with the full tunnel URL — including its secret key — can access this
+  Anyone with the full tunnel URL, including its secret key, can access this
   server. Share it carefully, rotate it if it leaks, and close the tunnel when
   you are done.
 </Warning>

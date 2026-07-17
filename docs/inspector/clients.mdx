@@ -8,7 +8,7 @@ icon: "user-cog"
 Open the **Connect** tab in the left sidebar to manage Clients (labelled **Servers** in some builds). The page name "Clients" refers to the configuration object, not the sidebar label.
 </Note>
 
-A **Client** is a named, reusable configuration that defines how MCPJam connects to and talks to your MCP servers when you test them in the Playground, Chatboxes, and Evals. It bundles everything that would normally be scattered across one-off settings — model, system prompt, attached servers, protocol-level knobs, and MCP App sandbox controls — behind a single picker.
+A **Client** is a named, reusable configuration that defines how MCPJam connects to and talks to your MCP servers when you test them in the Playground, Chatboxes, and Evals. It bundles everything that would normally be scattered across one-off settings (model, system prompt, attached servers, protocol-level knobs, and MCP App sandbox controls) behind a single picker.
 
 Real MCP hosts (Claude Desktop, ChatGPT, Cursor, your own product) each advertise slightly different capabilities and apply different sandbox policies to MCP Apps. Clients let you reproduce those environments in MCPJam so you can verify your server behaves correctly *before* shipping to a specific host.
 
@@ -16,9 +16,9 @@ Real MCP hosts (Claude Desktop, ChatGPT, Cursor, your own product) each advertis
 
 Without Clients, every Chat or Eval would be tied to whatever ambient settings were active when you ran it. That makes results hard to reproduce and hard to share. Clients fix this by giving you:
 
-- **Reproducibility** — A snapshot of every setting that affects a run, so a teammate hitting the same Client gets the same conditions.
-- **Host emulation** — Configure the inspector to look like Claude Desktop, ChatGPT, or your own host so you can verify your MCP server or MCP App degrades gracefully across them.
-- **Faster iteration** — Switch between configurations with one click instead of editing fields in five places.
+- **Reproducibility**: A snapshot of every setting that affects a run, so a teammate hitting the same Client gets the same conditions.
+- **Host emulation**: Configure the inspector to look like Claude Desktop, ChatGPT, or your own host so you can verify your MCP server or MCP App degrades gracefully across them.
+- **Faster iteration**: Switch between configurations with one click instead of editing fields in five places.
 
 ## What you can configure
 
@@ -28,13 +28,13 @@ A Client groups settings into two layers: the **protocol layer** (how the MCP co
 
 These map directly to fields the inspector sends during the standard MCP `initialize` handshake and on every subsequent request.
 
-- **Supported protocol versions** — The ordered list of MCP protocol versions the client advertises. The first entry is sent as `protocolVersion`; the rest form the accept-set. Useful for testing how your server handles older or newer clients.
-- **`clientInfo`** — The `name`, `version`, and any additional fields sent in `initialize.params.clientInfo`. Set this to match a real host's identifier when you want your server to take a host-specific code path.
-- **Client capabilities** — The capabilities object sent in `initialize` (sampling, roots, elicitation, experimental, etc.). Enable or disable each one to test what your server does when a capability is missing.
-- **Advertise EMA support by default** — Toggle in the **MCP Protocol** settings card that adds the `io.modelcontextprotocol/enterprise-managed-authorization` extension to the stored `clientCapabilities`. When on, the extension appears in the MCP Protocol JSON editor and host-card capability chips. This controls the stored baseline only — XAA-configured connections always advertise the extension at connect time regardless of this setting.
-- **Elicitation** — Toggle in the **MCP Protocol** settings card that controls the top-level `clientCapabilities.elicitation` key. When off, the key is absent. When on, the inspector advertises `{ form: {} }`, signalling that the client can handle elicitation requests from the server. An optional **URL mode** sub-checkbox (visible only when Elicitation is on) adds `{ url: {} }` to the elicitation object, indicating the client can also handle requests to open a URL. Enabling this before server-side elicitation support is active is safe — it is a no-op rather than a break.
-- **Request timeout** — Per-request timeout in milliseconds applied to all MCP calls (`tools/call`, `resources/read`, etc.). Lower it to verify your server handles cancellation correctly; raise it for long-running tools.
-- **Default headers** — Headers attached to every HTTP-transport request. Useful for auth tokens, tenant IDs, or anything else your server expects upstream.
+- **Supported protocol versions**: The ordered list of MCP protocol versions the client advertises. The first entry is sent as `protocolVersion`; the rest form the accept-set. Useful for testing how your server handles older or newer clients.
+- **`clientInfo`**: The `name`, `version`, and any additional fields sent in `initialize.params.clientInfo`. Set this to match a real host's identifier when you want your server to take a host-specific code path.
+- **Client capabilities**: The capabilities object sent in `initialize` (sampling, roots, elicitation, experimental, etc.). Enable or disable each one to test what your server does when a capability is missing.
+- **Advertise EMA support by default**: Toggle in the **MCP Protocol** settings card that adds the `io.modelcontextprotocol/enterprise-managed-authorization` extension to the stored `clientCapabilities`. When on, the extension appears in the MCP Protocol JSON editor and host-card capability chips. This controls the stored baseline only. XAA-configured connections always advertise the extension at connect time regardless of this setting.
+- **Elicitation**: Toggle in the **MCP Protocol** settings card that controls the top-level `clientCapabilities.elicitation` key. When off, the key is absent. When on, the inspector advertises `{ form: {} }`, signalling that the client can handle elicitation requests from the server. An optional **URL mode** sub-checkbox (visible only when Elicitation is on) adds `{ url: {} }` to the elicitation object, indicating the client can also handle requests to open a URL. Enabling this before server-side elicitation support is active is safe: it is a no-op rather than a break.
+- **Request timeout**: Per-request timeout in milliseconds applied to all MCP calls (`tools/call`, `resources/read`, etc.). Lower it to verify your server handles cancellation correctly; raise it for long-running tools.
+- **Default headers**: Headers attached to every HTTP-transport request. Useful for auth tokens, tenant IDs, or anything else your server expects upstream.
 
 ### Per-server connection overrides
 
@@ -44,34 +44,34 @@ You can override the request timeout and headers **per server** from the project
 
 These settings control how the model interacts with tools during a chat session. They appear in the **Agent** tab of the Client focus panel.
 
-- **Require tool approval** — When on, the model pauses before each tool call so you can approve or deny it manually.
-- **Respect tool visibility** — Controls whether the inspector honors the SEP-1865 `_meta.ui.visibility` field. When on (the default for all templates except Cursor), tools whose visibility is `["app"]` are hidden from the model's tool list. When off, every tool flows to the model regardless of visibility, matching hosts that don't yet implement visibility filtering (for example, real Cursor as of version 3.4.20).
-- **Progressive tools** — Three-state toggle (`On` / `Off` / `Auto`). When on, the inspector injects `search_mcp_tools` and `load_mcp_tools` meta-tools instead of sending the full tool catalog upfront, reducing context usage for large tool sets. `Auto` lets the backend decide based on catalog size.
-- **Built-in tools** — A checkbox list of host-managed built-in tools (for example, `web_search`) that the model can use on each turn. Selected tool IDs are forwarded with the chat request so the server can resolve them alongside your MCP server tools. This section only appears when the deployment has a populated built-in tool catalog; it is hidden otherwise.
+- **Require tool approval**: When on, the model pauses before each tool call so you can approve or deny it manually.
+- **Respect tool visibility**: Controls whether the inspector honors the SEP-1865 `_meta.ui.visibility` field. When on (the default for all templates except Cursor), tools whose visibility is `["app"]` are hidden from the model's tool list. When off, every tool flows to the model regardless of visibility, matching hosts that don't yet implement visibility filtering (for example, real Cursor as of version 3.4.20).
+- **Progressive tools**: Three-state toggle (`On` / `Off` / `Auto`). When on, the inspector injects `search_mcp_tools` and `load_mcp_tools` meta-tools instead of sending the full tool catalog upfront, reducing context usage for large tool sets. `Auto` lets the backend decide based on catalog size.
+- **Built-in tools**: A checkbox list of host-managed built-in tools (for example, `web_search`) that the model can use on each turn. Selected tool IDs are forwarded with the chat request so the server can resolve them alongside your MCP server tools. This section only appears when the deployment has a populated built-in tool catalog; it is hidden otherwise.
 
 ### MCP App settings (SEP-1865)
 
-When your server exposes [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) — interactive UIs delivered via `ui://` resources — the Client controls how the inspector renders and sandboxes them. These map to the fields a real host advertises in `HostCapabilities` and `HostContext`.
+When your server exposes [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) (interactive UIs delivered via `ui://` resources), the Client controls how the inspector renders and sandboxes them. These map to the fields a real host advertises in `HostCapabilities` and `HostContext`.
 
-- **Host capabilities** — The set of `HostCapabilities` keys the inspector advertises in the `ui/initialize` handshake. Each host preset reflects that host's published capability subset: for example, the **Copilot** preset advertises only `openLinks`, `serverTools`, `updateModelContext`, and `message` — matching Microsoft 365 Copilot's published Component-bridge table — and omits `serverResources` and `logging`. Use this to verify your app degrades gracefully when a capability it relies on is absent.
-- **Sandbox CSP mode** — `host-default`, `declared`, or `relaxed`. Controls the baseline Content Security Policy the inspector applies to your app's iframe.
-- **CSP restrictTo** — Per-directive intersections (`connectDomains`, `resourceDomains`, `frameDomains`, `baseUriDomains`) that further narrow what the app is allowed to fetch, embed, or set as a base URI. Restrict-only — the inspector never adds an undeclared domain.
-- **Custom CSP directives** — Verbatim source-expression overrides (e.g. `script-src: 'unsafe-eval' 'wasm-unsafe-eval'`) for cases where you need to model exactly what a particular host emits at the browser layer.
-- **Permission Policy** — Per-feature toggles for `camera`, `microphone`, `geolocation`, and `clipboard-write`. Choose `resource-declared` (grant what the app's resource metadata asks for), `deny-all`, or `custom` (your own allow map).
-- **Display modes** — Which of `inline`, `fullscreen`, and `pip` the inspector advertises in `HostContext.availableDisplayModes`. Test how your app responds when a requested mode isn't available.
-- **Theme and styles** — The CSS variables and font block the inspector injects into `HostContext.styles` so you can verify your app picks up host theming.
-- **`window.openai` injection** — Toggle whether the inspector injects the OpenAI Apps SDK `window.openai` shim into widget HTML before sandboxing. ChatGPT, Copilot, and MCPJam host presets enable this by default; Claude, Cursor, and Codex presets leave it off. You can override the preset per host using the toggle in the **Apps Extension** tab. The chip in the host capability matrix shows the current state and whether it comes from the preset or a manual override.
+- **Host capabilities**: The set of `HostCapabilities` keys the inspector advertises in the `ui/initialize` handshake. Each host preset reflects that host's published capability subset: for example, the **Copilot** preset advertises only `openLinks`, `serverTools`, `updateModelContext`, and `message` (matching Microsoft 365 Copilot's published Component-bridge table) and omits `serverResources` and `logging`. Use this to verify your app degrades gracefully when a capability it relies on is absent.
+- **Sandbox CSP mode**: `host-default`, `declared`, or `relaxed`. Controls the baseline Content Security Policy the inspector applies to your app's iframe.
+- **CSP restrictTo**: Per-directive intersections (`connectDomains`, `resourceDomains`, `frameDomains`, `baseUriDomains`) that further narrow what the app is allowed to fetch, embed, or set as a base URI. Restrict-only: the inspector never adds an undeclared domain.
+- **Custom CSP directives**: Verbatim source-expression overrides (e.g. `script-src: 'unsafe-eval' 'wasm-unsafe-eval'`) for cases where you need to model exactly what a particular host emits at the browser layer.
+- **Permission Policy**: Per-feature toggles for `camera`, `microphone`, `geolocation`, and `clipboard-write`. Choose `resource-declared` (grant what the app's resource metadata asks for), `deny-all`, or `custom` (your own allow map).
+- **Display modes**: Which of `inline`, `fullscreen`, and `pip` the inspector advertises in `HostContext.availableDisplayModes`. Test how your app responds when a requested mode isn't available.
+- **Theme and styles**: The CSS variables and font block the inspector injects into `HostContext.styles` so you can verify your app picks up host theming.
+- **`window.openai` injection**: Toggle whether the inspector injects the OpenAI Apps SDK `window.openai` shim into widget HTML before sandboxing. ChatGPT, Copilot, and MCPJam host presets enable this by default; Claude, Cursor, and Codex presets leave it off. You can override the preset per host using the toggle in the **Apps Extension** tab. The chip in the host capability matrix shows the current state and whether it comes from the preset or a manual override.
 
 #### Apps Extension tab
 
-The Apps Extension tab contains two independent capability matrices that never cross-gate — toggling a row in one has no effect on the other.
+The Apps Extension tab contains two independent capability matrices that never cross-gate: toggling a row in one has no effect on the other.
 
-**`window.openai` matrix (ChatGPT compat shim)** — Controls the `window.openai.*` surface advertised to apps using the ChatGPT compatibility shim. A master **Inject window.openai** toggle enables or disables injection entirely; a collapsed per-method disclosure lets you activate individual methods to build an exact subset from scratch. Switching on any single method turns injection on with only that method enabled; turning the last method off disables injection again.
+**`window.openai` matrix (ChatGPT compat shim)**: Controls the `window.openai.*` surface advertised to apps using the ChatGPT compatibility shim. A master **Inject window.openai** toggle enables or disables injection entirely; a collapsed per-method disclosure lets you activate individual methods to build an exact subset from scratch. Switching on any single method turns injection on with only that method enabled; turning the last method off disables injection again.
 
-**`app.*` matrix (SEP-1865 spec bridge)** — Controls the `app.*` surface advertised to apps using the primary MCP Apps protocol. A master **MCP App support** switch advertises the MCP UI client extension (`io.modelcontextprotocol/ui`). The matrix rows include:
-- **`availableDisplayModes`** — multi-checkbox cluster (`inline`, `fullscreen`, `pip`); unchecking the last mode force-enables `inline`.
-- **`widgetDisplayModeRequests`** — tri-state host policy (`accept`, `user-initiated-only`, `decline`) for widget-initiated display-mode requests.
-- **Boolean dimensions** — a flat list of all `app.*` capability flags (e.g. `toolInputPartial`, `toolCancelled`, `serverResources`, `logging`, `toolInfo`, `openLinks`, `serverTools`, `updateModelContext`, `message`). Rows that diverge from the selected host preset are stored as sparse overrides.
+**`app.*` matrix (SEP-1865 spec bridge)**: Controls the `app.*` surface advertised to apps using the primary MCP Apps protocol. A master **MCP App support** switch advertises the MCP UI client extension (`io.modelcontextprotocol/ui`). The matrix rows include:
+- **`availableDisplayModes`**: multi-checkbox cluster (`inline`, `fullscreen`, `pip`); unchecking the last mode force-enables `inline`.
+- **`widgetDisplayModeRequests`**: tri-state host policy (`accept`, `user-initiated-only`, `decline`) for widget-initiated display-mode requests.
+- **Boolean dimensions**: a flat list of all `app.*` capability flags (e.g. `toolInputPartial`, `toolCancelled`, `serverResources`, `logging`, `toolInfo`, `openLinks`, `serverTools`, `updateModelContext`, `message`). Rows that diverge from the selected host preset are stored as sparse overrides.
 
 <Note>
   Widget iframes are only rendered when the effective `clientCapabilities` advertise
@@ -103,22 +103,22 @@ The Apps Extension tab contains two independent capability matrices that never c
   there.
 </Note>
 
-The canvas on the left shows a live diagram of the Client — the model, attached servers, and any per-server overrides. Cards flash briefly when you switch between Clients so you can see what changed.
+The canvas on the left shows a live diagram of the Client: the model, attached servers, and any per-server overrides. Cards flash briefly when you switch between Clients so you can see what changed.
 
 ## Using a Client
 
 Once saved, a Client shows up in the picker at the top of every consumer:
 
-- **Chat** — Drives the model, system prompt, attached servers, and connection settings for the conversation.
-- **Chatboxes** — Same as Chat, but persisted as a saved chatbox configuration.
-- **Evals** — Every test run inside an Eval uses the selected Client, so results are reproducible across teammates.
-- **Swarms** — Journeys in the Swarms surface can target any project client, including standalone ones.
+- **Chat**: Drives the model, system prompt, attached servers, and connection settings for the conversation.
+- **Chatboxes**: Same as Chat, but persisted as a saved chatbox configuration.
+- **Evals**: Every test run inside an Eval uses the selected Client, so results are reproducible across teammates.
+- **Swarms**: Journeys in the Swarms surface can target any project client, including standalone ones.
 
 Switching the active Client in any of these views swaps the entire configuration in place. There's no separate "apply" step.
 
 ### Standalone clients (Swarms-managed)
 
-Some clients are **standalone** — they are owned by the Swarms surface and have no Chatbox or publish surface. If you select a standalone client in the Chatboxes tab, the tab shows a **"Managed by Swarms"** notice instead of a chatbox. The client picker stays visible so you can switch to a publishable client.
+Some clients are **standalone**: they are owned by the Swarms surface and have no Chatbox or publish surface. If you select a standalone client in the Chatboxes tab, the tab shows a **"Managed by Swarms"** notice instead of a chatbox. The client picker stays visible so you can switch to a publishable client.
 
 Standalone clients do not appear as options in the Chatboxes client picker dropdown. If you need a client for both Chatboxes and Swarms journeys, create a regular client from the Connect tab instead of from Swarms → Clients.
 
@@ -145,28 +145,28 @@ When you create an eval suite, you can pick a server attachment in the **Servers
 The **Servers** section on the chatbox Publish tab shows which project servers the chatbox connects to. Click **Edit servers** to open the attachment editor and update the selection.
 
 - If no servers are picked, the chatbox displays an amber warning. Chat sessions started from that chatbox will have no tools until at least one server is selected.
-- The server pick is sticky — editing the client's model or system prompt does not change it.
+- The server pick is sticky: editing the client's model or system prompt does not change it.
 
 ## Managing Clients
 
 From the Clients index page:
 
-- **Duplicate** — Copy a Client when you want a small variant (e.g. `Claude Desktop — strict CSP`) without rebuilding from scratch.
-- **Delete** — Removes the Client. The inspector blocks deletion if any chatbox or eval still depends on it; resolve those first, or use force delete if you're sure.
+- **Duplicate**: Copy a Client when you want a small variant (e.g. `Claude Desktop (strict CSP)`) without rebuilding from scratch.
+- **Delete**: Removes the Client. The inspector blocks deletion if any chatbox or eval still depends on it; resolve those first, or use force delete if you're sure.
 
 <Tip>
   Keep one Client per host you intend to ship to. Duplicate it to make scoped
-  variants for individual debugging sessions instead of editing the original —
-  that way your "known-good" baselines stay stable.
+  variants for individual debugging sessions instead of editing the original.
+  That way your "known-good" baselines stay stable.
 </Tip>
 
 ## Sharing across a project
 
-Clients are scoped to the project, like servers and views. Every member of a shared project sees the same Client list and any saves sync automatically. This means a teammate can reproduce your exact test conditions by selecting the same Client from the picker — no copy-pasting settings.
+Clients are scoped to the project, like servers and views. Every member of a shared project sees the same Client list and any saves sync automatically. This means a teammate can reproduce your exact test conditions by selecting the same Client from the picker: no copy-pasting settings.
 
 ## Comparing hosts
 
-The **Compare** view lets you see how multiple host configurations stack up side by side — useful for spotting differences in capabilities, sandbox policies, or protocol settings before you ship to a specific host.
+The **Compare** view lets you see how multiple host configurations stack up side by side, which is useful for spotting differences in capabilities, sandbox policies, or protocol settings before you ship to a specific host.
 
 ### Opening Compare
 
@@ -189,7 +189,7 @@ In the Eval Playground, the **Clients** row next to **+ Attach client** includes
 ## Best practices
 
 - **Mirror your target hosts.** Create one Client per real host you care about (`Claude Desktop`, `ChatGPT`, your own product) and keep its `clientInfo`, capabilities, and sandbox settings aligned with what that host actually advertises.
-- **Test the negative paths.** Build a "minimal" Client with most capabilities disabled and a strict CSP — running your server against it surfaces assumptions that won't hold on more restrictive hosts.
+- **Test the negative paths.** Build a "minimal" Client with most capabilities disabled and a strict CSP. Running your server against it surfaces assumptions that won't hold on more restrictive hosts.
 - **Pin Evals to a Client.** Always select a Client before running an eval suite so the results are reproducible. Evals run against ambient settings drift the moment someone toggles something elsewhere.
 - **Duplicate before debugging.** When you're chasing a bug, duplicate the Client first and tweak the copy. Your baseline stays intact for comparison.
-- **Share Compare links.** Toggle down to the hosts you care about and copy the URL — the `?hosts=` parameter preserves your selection for teammates.
+- **Share Compare links.** Toggle down to the hosts you care about and copy the URL. The `?hosts=` parameter preserves your selection for teammates.

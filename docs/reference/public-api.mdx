@@ -1,14 +1,14 @@
 ---
 title: "MCPJam API"
-description: "Programmatic access to the MCP servers in your MCPJam projects — diagnostics, tool calls, prompt rendering, and asynchronous eval runs."
+description: "Programmatic access to the MCP servers in your MCPJam projects: diagnostics, tool calls, prompt rendering, and asynchronous eval runs."
 icon: "braces"
 tag: "Preview"
 ---
 
 <Warning>
 **The MCPJam API is in preview.** It works today and we use it ourselves, but
-it has not been generally announced and the surface may change — including in
-breaking ways — while we finish the design. Pin your integration to the
+it has not been generally announced and the surface may change, including in
+breaking ways, while we finish the design. Pin your integration to the
 behaviors documented on this page, build a [tolerant
 reader](#versioning--stability), and expect to revisit it. Feedback is very
 welcome on [Discord](https://discord.gg/JEnDtz8X6z) or
@@ -26,39 +26,39 @@ welcome on [Discord](https://discord.gg/JEnDtz8X6z) or
 </Card>
 
 The MCPJam API lets you operate the MCP servers saved in your
-[hosted](/hosted/overview) projects — from CI, scripts, or your own agents —
+[hosted](/hosted/overview) projects (from CI, scripts, or your own agents)
 without opening the UI.
 
 What you can do with it today:
 
-- **Discover your resources** — list your projects, their servers, eval
+- **Discover your resources**: list your projects, their servers, eval
   suites, and chat sessions, so every ID the other routes need is
   self-serve
-- **Validate a server** — connect, initialize, and capture a capability snapshot
-- **Run the doctor** — the probe → connect → initialize → capabilities workflow
-- **Check OAuth requirements** — does this server need an OAuth grant?
-- **List tools, prompts, and resources** — the server's MCP primitives
-- **Call a tool / render a prompt** — execute primitives and get the MCP result back verbatim
+- **Validate a server**: connect, initialize, and capture a capability snapshot
+- **Run the doctor**: the probe → connect → initialize → capabilities workflow
+- **Check OAuth requirements**: does this server need an OAuth grant?
+- **List tools, prompts, and resources**: the server's MCP primitives
+- **Call a tool / render a prompt**: execute primitives and get the MCP result back verbatim
 - **Read a resource** by URI
-- **Export a full snapshot** — tools, resources, and prompts as one JSON document
-- **Manage a project's hosts** — list, read, **create** (from a built-in
+- **Export a full snapshot**: tools, resources, and prompts as one JSON document
+- **Manage a project's hosts**: list, read, **create** (from a built-in
   template like `claude`/`chatgpt`/`cursor`, or from a full host config),
   rename, and delete the named model + capability profiles you run chats and
   eval suites against
-- **List a project's chatboxes** — name, access mode, attached servers, and
-  share link — and **read one chatbox's settings**: model, system prompt,
+- **List a project's chatboxes** (name, access mode, attached servers, and
+  share link) and **read one chatbox's settings**: model, system prompt,
   tool-approval policy, and resolved servers
-- **Author eval suites** — create a runnable suite (name, default model, servers, test cases) synchronously and get a `suiteId` back; no run is started and no credits are spent
-- **Run eval suites asynchronously** — create a run from a saved suite, get a `202` + `runId`
+- **Author eval suites**: create a runnable suite (name, default model, servers, test cases) synchronously and get a `suiteId` back; no run is started and no credits are spent
+- **Run eval suites asynchronously**: create a run from a saved suite, get a `202` + `runId`
   immediately, then poll status, per-iteration results (tool calls, token
   usage, latency), and full traces. Runs appear live in the hosted UI,
   tagged `source: "api"`
-- **Import OAuth tokens** — complete OAuth yourself (e.g. the SDK's
+- **Import OAuth tokens**: complete OAuth yourself (e.g. the SDK's
   `runOAuthLogin`) and push the tokens; subsequent calls inject and refresh
   them server-side
 
 All endpoints operate on servers you have already added to a project in the
-hosted inspector. Managing API keys remains UI-only — see
+hosted inspector. Managing API keys remains UI-only; see
 [Not in the API yet](#not-in-the-api-yet).
 
 ## Base URL
@@ -88,7 +88,7 @@ curl -X POST \
    in the hosted app (the card at the top of this page takes you there
    directly).
 2. Click **Create API key**, name it, and pick the **organization** it will act in.
-3. Copy the key (`sk_…`) immediately — **it is shown exactly once** and never
+3. Copy the key (`sk_…`) immediately: **it is shown exactly once** and never
    stored by MCPJam in retrievable form.
 
 Keys can be revoked from the same page at any time. Revocation takes effect
@@ -114,7 +114,7 @@ Two deliberate restrictions while in preview:
 
 Treat an API key like a password:
 
-- Load it from an environment variable or secret manager — never commit it to
+- Load it from an environment variable or secret manager. Never commit it to
   source control or ship it in client-side code.
 - Scope keys narrowly: one key per integration, named so you can tell them apart.
 - Rotate by creating a replacement key, switching traffic, then revoking the old one.
@@ -122,13 +122,13 @@ Treat an API key like a password:
   [**Settings → API keys**](https://app.mcpjam.com/settings/api-keys).
 
 If you see `401 UNAUTHORIZED` with `details.reason: "ORPHANED_KEY"`, the key
-is no longer bound to an organization and cannot be used — create a new key
+is no longer bound to an organization and cannot be used. Create a new key
 from [Settings](https://app.mcpjam.com/settings/api-keys).
 
 ## Conventions
 
 **Requests.** Operations on servers are `POST` with a JSON body (most accept
-an empty `{}`). **Reads** — the catalog listings and eval-run polling — are
+an empty `{}`). **Reads** (the catalog listings and eval-run polling) are
 `GET` and take their options (`cursor`, `limit`, filters) as query
 parameters.
 
@@ -137,16 +137,16 @@ parameters.
 | Kind | Shape |
 | --- | --- |
 | Single resource | The resource object directly |
-| Collection | `{ "items": [...], "nextCursor": "..." }` — `nextCursor` omitted on the last page |
+| Collection | `{ "items": [...], "nextCursor": "..." }` (`nextCursor` omitted on the last page) |
 | Error | `{ "code": "...", "message": "...", "details": {...} }` with a matching HTTP status |
 
 **Pagination.** Collections are cursor-based. Pass the previous response's
 `nextCursor` as `cursor` in the next request (body field on `POST` lists,
-query parameter on `GET` lists). Cursors are opaque — don't parse them.
+query parameter on `GET` lists). Cursors are opaque; don't parse them.
 
 **Authoring vs running suites.** `POST /eval-suites` creates a runnable suite
 (the suite plus its test cases) **synchronously** and responds `201` with the
-`suiteId`, WITHOUT running anything — author once, run later. `POST /eval-runs`
+`suiteId`, WITHOUT running anything: author once, run later. `POST /eval-runs`
 is the async counterpart: it validates and creates a run synchronously, then
 detaches execution and responds `202` with a `runId`. Poll
 `GET /eval-runs/{runId}` until `status` is `completed`, `failed`, or
@@ -167,12 +167,12 @@ is stable and machine-readable; `message` is human-readable and may change;
 | Code | HTTP | Meaning |
 | --- | --- | --- |
 | `UNAUTHORIZED` | 401 | Missing, invalid, revoked, or orphaned key |
-| `OAUTH_REQUIRED` | 401 | The **target MCP server** needs an OAuth grant — distinct from a bad key |
+| `OAUTH_REQUIRED` | 401 | The **target MCP server** needs an OAuth grant (distinct from a bad key) |
 | `FORBIDDEN` | 403 | Key is valid but not allowed to do this |
 | `VALIDATION_ERROR` | 400 | Malformed body or parameters |
 | `NOT_FOUND` | 404 | Unknown project, server, or resource |
 | `FEATURE_NOT_SUPPORTED` | 422 | The target server doesn't support this MCP capability |
-| `RATE_LIMITED` | 429 | Too many requests — see [Rate limits](#rate-limits) |
+| `RATE_LIMITED` | 429 | Too many requests; see [Rate limits](#rate-limits) |
 | `SERVER_UNREACHABLE` | 502 | Could not connect to the target MCP server |
 | `TIMEOUT` | 504 | The target MCP server connected but didn't respond in time |
 | `INTERNAL_ERROR` | 500 | Something failed on our side |
@@ -198,10 +198,10 @@ to be tuned during the preview.
 
 ## Endpoints
 
-Each endpoint is fully documented — request and response schemas, examples,
-and an interactive playground — under **Endpoints** in the sidebar.
+Each endpoint is fully documented (request and response schemas, examples,
+and an interactive playground) under **Endpoints** in the sidebar.
 
-**Catalog** — discover the IDs everything else takes:
+**Catalog**: discover the IDs everything else takes:
 
 | Endpoint | What it does |
 | --- | --- |
@@ -234,13 +234,13 @@ and an interactive playground — under **Endpoints** in the sidebar.
 | Endpoint | What it does |
 | --- | --- |
 | `POST .../eval-suites` | Author-only: create a suite + its test cases from `name` + `serverIds` + a default `model` + `tests`, WITHOUT running it; responds `201` + `suiteId`. Each test's case body is an ordered `steps` array (prompt / toolCall / interact / assert); per-test `model`/`provider`/`runs` are optional and fall back to suite defaults |
-| `POST .../eval-runs` | Create a run from a `suiteId` (rerun; `serverIds` optional — defaults to the suite's saved servers) or `suiteName` + inline `tests` + `serverIds` (new suite); responds `202` + `runId` |
-| `GET .../eval-runs/{runId}` | Run status, result, and summary — poll until terminal |
+| `POST .../eval-runs` | Create a run from a `suiteId` (rerun; `serverIds` optional, defaults to the suite's saved servers) or `suiteName` + inline `tests` + `serverIds` (new suite); responds `202` + `runId` |
+| `GET .../eval-runs/{runId}` | Run status, result, and summary; poll until terminal |
 | `GET .../eval-runs/{runId}/iterations` | Per-iteration results: tool calls, token usage, latency (paginated) |
 | `GET .../eval-runs/{runId}/iterations/{iterationId}/trace` | Full trace: messages + expected-vs-actual analysis |
 | `GET .../eval-suites/{suiteId}/runs` | Recent runs for a suite, newest first |
 
-**Eval result ingestion** (`/projects/{projectId}/eval-ingest/...`) — how `@mcpjam/sdk` saves results from eval runs executed outside the platform (local dev, CI). The `{projectId}` segment accepts the literal `default` for the key org's Default project. Most users never call these directly — set `MCPJAM_API_KEY` and the [SDK reporter](/sdk/concepts/saving-results) does:
+**Eval result ingestion** (`/projects/{projectId}/eval-ingest/...`): how `@mcpjam/sdk` saves results from eval runs executed outside the platform (local dev, CI). The `{projectId}` segment accepts the literal `default` for the key org's Default project. Most users never call these directly; set `MCPJAM_API_KEY` and the [SDK reporter](/sdk/concepts/saving-results) does:
 
 | Endpoint | What it does |
 | --- | --- |
@@ -250,7 +250,7 @@ and an interactive playground — under **Endpoints** in the sidebar.
 | `POST .../eval-ingest/runs/finalize` | Finalize a chunked run (idempotent) |
 | `POST .../eval-ingest/artifacts/upload-url` | Mint an upload URL for eval artifacts (JUnit XML, Jest/Vitest JSON) |
 
-**Chatboxes** (`/projects/{projectId}/chatboxes...`) — read-only:
+**Chatboxes** (`/projects/{projectId}/chatboxes...`), read-only:
 
 | Endpoint | What it does |
 | --- | --- |
@@ -263,7 +263,7 @@ for Postman, Swagger UI, or client generation.
 
 ## Run evals from the API
 
-The shortest useful loop — create a run with one inline test, then poll:
+The shortest useful loop: create a run with one inline test, then poll:
 
 ```bash
 # 1. Create (responds 202 immediately; -f + jq -e fail fast on errors)
@@ -303,8 +303,8 @@ curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID/it
   -H "Authorization: Bearer $MCPJAM_API_KEY"
 ```
 
-`model` takes an id from the hosted catalog — `provider/name` form, e.g.
-`anthropic/claude-haiku-4.5` — and runs on your organization's credits.
+`model` takes an id from the hosted catalog (`provider/name` form, e.g.
+`anthropic/claude-haiku-4.5`) and runs on your organization's credits.
 Provider-native ids (e.g. `claude-sonnet-4-5`) are bring-your-own-key: pass
 the key in `modelApiKeys`. A model the API can't execute is rejected at
 create time with `VALIDATION_ERROR`; `details.hostedModels` lists the valid
@@ -316,7 +316,7 @@ lists the resolved `servers`). Pass `serverIds` to override the selection; a
 suite with no saved selection requires it (`VALIDATION_ERROR` with
 `details.reason: "NO_SAVED_SERVER_SELECTION"` otherwise). Per-organization
 concurrency is capped (default **2** concurrent runs); exceeding it returns
-`429` with `details.reason: "CONCURRENT_RUN_LIMIT"` — wait for an active run
+`429` with `details.reason: "CONCURRENT_RUN_LIMIT"`; wait for an active run
 to finish.
 
 If a server answers `401 OAUTH_REQUIRED`, complete the OAuth flow yourself
@@ -330,13 +330,13 @@ and refresh it server-side.
 To set expectations while in preview, these are **not** available over the API
 today (most exist in the hosted inspector UI):
 
-- Creating or revoking API keys (UI-only by design — see [Authentication](#authentication))
+- Creating or revoking API keys (UI-only by design; see [Authentication](#authentication))
 - Chat and conformance suites
 - Browser-based OAuth flows initiated by the API (use
   `oauth/import-tokens` after completing OAuth yourself)
 
 If one of these blocks you, tell us on
-[Discord](https://discord.gg/JEnDtz8X6z) — it directly shapes what we
+[Discord](https://discord.gg/JEnDtz8X6z); it directly shapes what we
 stabilize first.
 
 ## Versioning & stability
@@ -345,7 +345,7 @@ stabilize first.
   availability, breaking changes will require a new version path.
 - **During the preview**, breaking changes to v1 may still happen; we'll note
   them in the [changelog](/changelog/overview).
-- **Additive changes** — new endpoints, new optional request fields, new
-  response fields, new error codes — are considered non-breaking and can ship
+- **Additive changes** (new endpoints, new optional request fields, new
+  response fields, new error codes) are considered non-breaking and can ship
   at any time. Write clients that ignore unknown fields.
 - Error **codes** are stable identifiers; error **messages** are not.

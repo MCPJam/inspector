@@ -4,7 +4,7 @@ description: "Programmatic OAuth conformance testing with OAuthConformanceTest a
 icon: "shield-check"
 ---
 
-The OAuth Conformance SDK classes let you run the same flows the [CLI `oauth conformance`](/cli/oauth-conformance) command runs, but programmatically — for custom reporters, test frameworks, recording/replay via custom `fetchFn`, or Playwright-driven consent via `openUrl`.
+The OAuth Conformance SDK classes let you run the same flows the [CLI `oauth conformance`](/cli/oauth-conformance) command runs, but programmatically: for custom reporters, test frameworks, recording/replay via custom `fetchFn`, or Playwright-driven consent via `openUrl`.
 
 <Note>
   For CLI usage (one-liners, CI recipes, troubleshooting), see [CLI: OAuth Conformance](/cli/oauth-conformance).
@@ -67,7 +67,7 @@ type OAuthConformanceAuthConfig =
     };
 ```
 
-- `interactive.openUrl` — override how the consent URL is opened. Default launches the system browser. Use for Playwright, custom launchers, or logging the URL.
+- `interactive.openUrl`: override how the consent URL is opened. Default launches the system browser. Use for Playwright, custom launchers, or logging the URL.
 
 ### OAuthConformanceClientConfig
 
@@ -138,12 +138,12 @@ const test = new OAuthConformanceTest({
 
 When enabled, six extra checks run after a successful flow:
 
-1. **DCR redirect URI policy** — attempts dynamic client registration with a non-loopback `http://` redirect URI; expects rejection under the MCP authorization profile.
-2. **Invalid client** — sends a token request with an unknown `client_id`; expects rejection.
-3. **Invalid redirect at the authorization endpoint** — sends an authorization request with a mismatched `redirect_uri` and looks for rejection before the server redirects back to it. This step may be `skipped` if the server defers validation behind user interaction.
-4. **Invalid token** — sends an authenticated MCP initialize request with an obviously invalid bearer token; expects HTTP 401 from the MCP server.
-5. **Invalid redirect at the token endpoint** — sends a token request with a mismatched `redirect_uri` to look for redirect exact-match enforcement. This step may be `skipped` if the request is rejected for another reason before redirect validation is demonstrated.
-6. **Token format** — validates the token response includes `access_token`, `token_type`, and expiration metadata.
+1. **DCR redirect URI policy:** attempts dynamic client registration with a non-loopback `http://` redirect URI; expects rejection under the MCP authorization profile.
+2. **Invalid client:** sends a token request with an unknown `client_id`; expects rejection.
+3. **Invalid redirect at the authorization endpoint:** sends an authorization request with a mismatched `redirect_uri` and looks for rejection before the server redirects back to it. This step may be `skipped` if the server defers validation behind user interaction.
+4. **Invalid token:** sends an authenticated MCP initialize request with an obviously invalid bearer token; expects HTTP 401 from the MCP server.
+5. **Invalid redirect at the token endpoint:** sends a token request with a mismatched `redirect_uri` to look for redirect exact-match enforcement. This step may be `skipped` if the request is rejected for another reason before redirect validation is demonstrated.
+6. **Token format:** validates the token response includes `access_token`, `token_type`, and expiration metadata.
 
 ```typescript
 const test = new OAuthConformanceTest({
@@ -250,6 +250,6 @@ for (const flow of result.results) {
 
 ## Related
 
-- [CLI: OAuth Conformance](/cli/oauth-conformance) — recipes, troubleshooting, CI integration
-- [CLI: OAuth Login](/cli/oauth-login) — interactive authentication and debugging
-- [MCPClientManager](/sdk/reference/mcp-client-manager) — connecting to MCP servers programmatically
+- [CLI: OAuth Conformance](/cli/oauth-conformance): recipes, troubleshooting, CI integration
+- [CLI: OAuth Login](/cli/oauth-login): interactive authentication and debugging
+- [MCPClientManager](/sdk/reference/mcp-client-manager): connecting to MCP servers programmatically

@@ -4,7 +4,7 @@ description: "Author test cases for your MCP server, run them across models, and
 icon: "flask-conical"
 ---
 
-A benchmark score doesn't tell you whether your server holds up in production. Evaluate lets you pin down the behaviors you care about — which tools fire, with what arguments, what the final answer looks like — and run them across the models your users actually use.
+A benchmark score doesn't tell you whether your server holds up in production. Evaluate lets you pin down the behaviors you care about (which tools fire, with what arguments, what the final answer looks like) and run them across the models your users actually use.
 
 ## Requirements
 
@@ -20,23 +20,23 @@ Evals are available to both signed-in users and guests. Guests authenticate auto
     A group of cases plus the defaults they share: attached servers, models to run against, default checks, judge config, and argument-matching mode.
   </Step>
   <Step title="Case">
-    One scenario you want to verify — a prompt (or a sequence of prompts), the tools you expect to fire, an optional expected output, and the checks that decide pass/fail.
+    One scenario you want to verify: a prompt (or a sequence of prompts), the tools you expect to fire, an optional expected output, and the checks that decide pass/fail.
   </Step>
   <Step title="Run">
-    One execution of a suite. Produces **iterations** — one per case × model. Each iteration has its own transcript, tool calls, tokens, duration, and verdict.
+    One execution of a suite. Produces **iterations**: one per case × model. Each iteration has its own transcript, tool calls, tokens, duration, and verdict.
   </Step>
 </Steps>
 
 ## Authoring a case
 
-Click **New case** in the suite header (or in the empty-state screen when no cases exist yet) to open a blank case editor. The case is a draft until you press **Save** — backing out without saving leaves your suite unchanged.
+Click **New case** in the suite header (or in the empty-state screen when no cases exist yet) to open a blank case editor. The case is a draft until you press **Save**. Backing out without saving leaves your suite unchanged.
 
 Each case has four moving parts:
 
-- **Scenario** — short label so you can find it later ("Draw a rectangle", "Refuses unsafe delete").
-- **Prompt turns** — one or more user messages. Multi-turn is supported; expected tools and checks attach per turn, so you can model "ask, get a result, follow up."
-- **Expected tools** — for each turn, the tool calls the model should make. Arguments can be exact values or typed placeholders (`"string"`, `"number"`) so you're not chasing flaky literals.
-- **Expected output** — optional free-text description of what a good final answer looks like. Used by the judge.
+- **Scenario**: short label so you can find it later ("Draw a rectangle", "Refuses unsafe delete").
+- **Prompt turns**: one or more user messages. Multi-turn is supported; expected tools and checks attach per turn, so you can model "ask, get a result, follow up."
+- **Expected tools**: for each turn, the tool calls the model should make. Arguments can be exact values or typed placeholders (`"string"`, `"number"`) so you're not chasing flaky literals.
+- **Expected output**: optional free-text description of what a good final answer looks like. Used by the judge.
 
 <Note>
   A **negative case** is just a case whose checks say "this tool should *not* fire." Meta questions ("what params does `search` take?"), conversational drift, and ambiguous prompts are the usual shape.
@@ -44,13 +44,13 @@ Each case has four moving parts:
 
 ## Recording widget interactions
 
-If your MCP server uses MCP Apps (widgets rendered in a sandboxed iframe), you can record real in-widget interactions — clicks and typing — directly into a test case as `interact` steps.
+If your MCP server uses MCP Apps (widgets rendered in a sandboxed iframe), you can record real in-widget interactions (clicks and typing) directly into a test case as `interact` steps.
 
 When you arm record mode on a test case, a recorder shim is injected into the widget sandbox. Every click and text input you make in the widget is captured as a locator-stable `interact` step and appended to the case. The locator is built from stable identifiers in priority order: `data-testid` → ARIA role + accessible name → visible text → CSS path. This means the recorded step resolves to the same element when the case runs headlessly.
 
 ### Widget `ui/message` follow-ups
 
-Some widget interactions send a `ui/message` back to the host (for example, a cart button that says "Show my cart") rather than calling a tool directly. During eval execution, these follow-up messages automatically drive a continuation model turn — the same way Playground handles them live. The resulting tool call (e.g. `view-cart`) is attributed to the same `interact` step's turn, so a **Tool was called** check on that turn sees the call.
+Some widget interactions send a `ui/message` back to the host (for example, a cart button that says "Show my cart") rather than calling a tool directly. During eval execution, these follow-up messages automatically drive a continuation model turn, the same way Playground handles them live. The resulting tool call (e.g. `view-cart`) is attributed to the same `interact` step's turn, so a **Tool was called** check on that turn sees the call.
 
 This means an eval case can faithfully verify a full widget interaction sequence: prompt → widget renders → user clicks → model reacts → tool fires → assertion passes.
 
@@ -60,7 +60,7 @@ The Chat/Trace tab renders widget tool calls as the same app-attributed cards yo
 
 
 
-Checks are what actually decide pass/fail. They're pure functions of the iteration transcript, so the verdict is the same every time you replay it — which is the property you want if you're using Evaluate as a regression gate.
+Checks are what actually decide pass/fail. They're pure functions of the iteration transcript, so the verdict is the same every time you replay it, which is the property you want if you're using Evaluate as a regression gate.
 
 Set defaults on the suite; override per case with **inherit** (use suite defaults), **replace** (use only the case's list), or **extend** (suite defaults, then the case's list).
 
@@ -79,11 +79,11 @@ Set defaults on the suite; override per case with **inherit** (use suite default
 | **Widget no console errors** | The widget rendered without console errors. | Turn or case |
 | **Token budget under N** | Total token usage stayed below the cap. | Case only |
 
-When a check is authored on an individual prompt turn it is evaluated against **that turn's slice** of the transcript — tool calls, assistant message, tool errors, and widget observations for that turn only. `Token budget under N` is case-only because per-turn token usage is not reliably captured; all other checks are turn-scopable.
+When a check is authored on an individual prompt turn it is evaluated against **that turn's slice** of the transcript: tool calls, assistant message, tool errors, and widget observations for that turn only. `Token budget under N` is case-only because per-turn token usage is not reliably captured; all other checks are turn-scopable.
 
 ### Harness system tools in assertion dropdowns
 
-When a suite is configured to run under a harness host (such as Claude Code or Codex), the tool-name pickers in the case editor also offer the harness's native **system tools** — for example `bash`, `read`, `webSearch`, `WebFetch` — alongside your MCP server tools. This lets you write assertions like **Tool was never called** for `bash` or **Tool was called with…** for `read` without having to type the wire name by hand.
+When a suite is configured to run under a harness host (such as Claude Code or Codex), the tool-name pickers in the case editor also offer the harness's native **system tools** (for example `bash`, `read`, `webSearch`, `WebFetch`) alongside your MCP server tools. This lets you write assertions like **Tool was never called** for `bash` or **Tool was called with…** for `read` without having to type the wire name by hand.
 
 System tools appear only in assertion pickers. They are not available in pinned tool-call steps or widget-assertion "View (tool)" selects, because those require a tool that MCPJam can invoke directly.
 
@@ -93,9 +93,9 @@ If an MCP tool and a system tool share the same name, the MCP tool takes precede
 
 Tool-call argument comparison runs in one of three modes, configured at the suite:
 
-- **partial** *(default)* — every expected key must be present and match; extra keys in the actual call are ignored. Best for "I care about `query` and `limit`, not what else the model put in."
-- **exact** — actual args must equal expected args, key-for-key.
-- **ignore** — only the tool name is checked.
+- **partial** *(default)*: every expected key must be present and match; extra keys in the actual call are ignored. Best for "I care about `query` and `limit`, not what else the model put in."
+- **exact**: actual args must equal expected args, key-for-key.
+- **ignore**: only the tool name is checked.
 
 Type placeholders (`"string"`, `"number"`, `"boolean"`) match any value of that type, which lets you assert shape without locking in a literal.
 
@@ -107,17 +107,17 @@ Each suite has default validator settings controlling how tool calls are matched
 |-------|-------|-----------|
 | Suite default | Suite settings → Default validators | Yes |
 | Case override | Test case editor → Validators | Yes |
-| Run override | Suite header → validators (sliders) icon | No — one run |
+| Run override | Suite header → validators (sliders) icon | No (one run) |
 
 A run override shows an **override** badge; click **Reset** in the popover to clear it.
 
 ## LLM as judge
 
-For cases where "did the right tools fire" isn't enough — anything graded on the quality of the final answer — the judge grades the run against your **expected output** if you set one, and against the user prompt otherwise. It's advisory: it produces a score and a rationale, but doesn't gate the run unless you ask it to.
+For cases where "did the right tools fire" isn't enough (anything graded on the quality of the final answer), the judge grades the run against your **expected output** if you set one, and against the user prompt otherwise. It's advisory: it produces a score and a rationale, but doesn't gate the run unless you ask it to.
 
-- **On by default** at the suite level. The cost is gated by an explicit **Run judge** click on the run-detail page — it won't run for every iteration unless you turn auto-run on.
+- **On by default** at the suite level. The cost is gated by an explicit **Run judge** click on the run-detail page. It won't run for every iteration unless you turn auto-run on.
 - **Calibrate per suite.** Judge scores aren't comparable across domains; a 0.7 on one suite isn't a 0.7 on another.
-- When grading against the prompt rather than an expected output, scores are capped at 0.85 — you can't get a "perfect" without saying what perfect means.
+- When grading against the prompt rather than an expected output, scores are capped at 0.85: you can't get a "perfect" without saying what perfect means.
 
 Open a completed run and find the **LLM as Judge** panel (labelled **Goal judge** when shown inside the suite results split). Pick a judge model (default: `openai/gpt-5.4-mini`) and a threshold (default 0.7), then click **Run judge**. Each case gets a score, an advisory verdict, a one-line reason, and rubric hits. The judge never runs automatically unless you enable **Auto-run** in suite settings.
 
@@ -125,9 +125,9 @@ Open a completed run and find the **LLM as Judge** panel (labelled **Goal judge*
 
 A run needs three things, all picked from the suite header:
 
-1. **Servers** — one or more attached to the suite. Cases can attach their own subsets if they only need part of the surface.
-2. **Models** — the multi-model picker is the whole point. Each model produces its own iteration per case, so you can see where Claude passes and ChatGPT trips.
-3. **Run all** — kicks off every case × every model. **Run one** from a case row runs just that case.
+1. **Servers**: one or more attached to the suite. Cases can attach their own subsets if they only need part of the surface.
+2. **Models**: the multi-model picker is the whole point. Each model produces its own iteration per case, so you can see where Claude passes and ChatGPT trips.
+3. **Run all**: kicks off every case × every model. **Run one** from a case row runs just that case.
 
 <Tip>
   If **Run all** is disabled, a connected server is missing, no models are selected, or a run for that suite is already in progress. The header pickers will tell you which condition applies.
@@ -143,7 +143,7 @@ The first run of a suite saves the set of MCP servers used as a frozen snapshot;
   The computer environment picker is only visible when the **computers** feature flag is enabled on your account and a project is selected for the suite.
 </Note>
 
-In suite settings, the **Computer environment** select lets you pin a built Docker environment so every eval iteration boots a fresh sandbox from the same image. This keeps results comparable across runs and edits — each iteration gets an identical starting state.
+In suite settings, the **Computer environment** select lets you pin a built Docker environment so every eval iteration boots a fresh sandbox from the same image. This keeps results comparable across runs and edits: each iteration gets an identical starting state.
 
 - Choose an environment from the list. Environments that have not finished building are labelled **(not built)**; selecting one will cause the run to fail immediately.
 - Choose **None (default image)** to run without a pinned environment.
@@ -155,20 +155,20 @@ Once a run completes, the **Run detail** page shows an **Environment** row with 
 
 Each eval suite has a **Default Execution Config** section that controls the model, system prompt, temperature, tool approval, connection settings, capabilities, and host context used when running the suite.
 
-- **Model and prompt** — Set the default model ID, system prompt, and temperature for all runs in the suite. When running evals against MCP Apps that render widgets, the eval harness automatically enables browser interaction (screenshot, click, type) for any model that supports both vision and tool calling — not just Claude. Models that lack vision or tool calling run without browser interaction.
-- **Tool approval** — Toggle `requireToolApproval` to pause before each tool call during a run.
-- **Server selection** — Servers are not configured here. They come from the suite's environment. The server picker is intentionally hidden in this editor.
-- **Save / Reset** — Click **Save config** to persist changes. Click **Reset** to revert to the last saved state. Unsaved edits are preserved if the page refreshes the config from the server, but are discarded when you switch to a different suite.
+- **Model and prompt**: Set the default model ID, system prompt, and temperature for all runs in the suite. When running evals against MCP Apps that render widgets, the eval harness automatically enables browser interaction (screenshot, click, type) for any model that supports both vision and tool calling, not just Claude. Models that lack vision or tool calling run without browser interaction.
+- **Tool approval**: Toggle `requireToolApproval` to pause before each tool call during a run.
+- **Server selection**: Servers are not configured here. They come from the suite's environment. The server picker is intentionally hidden in this editor.
+- **Save / Reset**: Click **Save config** to persist changes. Click **Reset** to revert to the last saved state. Unsaved edits are preserved if the page refreshes the config from the server, but are discarded when you switch to a different suite.
 
 Changes to the suite execution config apply to future runs only. Existing run snapshots are not affected.
 
 <Note>
-  **Personal computers are not available for eval suites.** The personal computer toggle and computer-backed tools (such as Bash) are hidden and blocked in the suite execution config editor. If the project's default host config has a computer attached, resetting a suite to that default automatically strips the computer and any computer-backed tool ids — so eval runs are never aborted by the backend's computer restriction.
+  **Personal computers are not available for eval suites.** The personal computer toggle and computer-backed tools (such as Bash) are hidden and blocked in the suite execution config editor. If the project's default host config has a computer attached, resetting a suite to that default automatically strips the computer and any computer-backed tool ids, so eval runs are never aborted by the backend's computer restriction.
 </Note>
 
 ### How suite defaults apply to test cases
 
-The suite-level **system prompt** and **temperature** are runtime defaults: when a test case does not set its own system prompt or temperature, the suite values are used for that iteration. A per-case override always wins — the suite default only fills the gap.
+The suite-level **system prompt** and **temperature** are runtime defaults: when a test case does not set its own system prompt or temperature, the suite values are used for that iteration. A per-case override always wins; the suite default only fills the gap.
 
 <Note>
   If you have existing suites where test cases do not specify a system prompt, those cases will now run with the suite's system prompt applied. Cases that already set their own system prompt are unaffected.
@@ -176,7 +176,7 @@ The suite-level **system prompt** and **temperature** are runtime defaults: when
 
 ## CI tab
 
-The **CI** tab (when enabled for your project) shows only CI-active suites — suites created by the SDK or suites that CI has reported into at least once. Playground-only suites stay in the **Evaluate** tab. If a project has no CI evals yet, the CI tab shows a quickstart prompt.
+The **CI** tab (when enabled for your project) shows only CI-active suites: suites created by the SDK or suites that CI has reported into at least once. Playground-only suites stay in the **Evaluate** tab. If a project has no CI evals yet, the CI tab shows a quickstart prompt.
 
 The commit rail in the CI tab groups runs by commit SHA and only includes CI (SDK-sourced) runs. Playground runs on mixed suites are excluded from the rail so they don't appear as spurious manual-commit groups.
 
@@ -184,8 +184,8 @@ The commit rail in the CI tab groups runs by commit SHA and only includes CI (SD
 
 The metric label shown in run headers, the runs table, charts, and hero stats follows the **run's source**, not the suite's creation source:
 
-- **Pass Rate** — shown for runs submitted by the SDK (CI runs). Reflects per-case pass/fail.
-- **Accuracy** — shown for runs triggered manually from the UI, via the API, or on a schedule.
+- **Pass Rate**: shown for runs submitted by the SDK (CI runs). Reflects per-case pass/fail.
+- **Accuracy**: shown for runs triggered manually from the UI, via the API, or on a schedule.
 
 On a mixed suite (one that has received both CI and playground runs), the label updates to match the most recent run. Legacy runs without a recorded source fall back to the suite's creation source.
 
@@ -195,21 +195,21 @@ Test cases written by a CI report carry a **CI** chip next to their name in the 
 
 ### Suite deletion
 
-The delete button in the suite switcher is hidden for any suite that is CI-active — either created by the SDK or one that CI has reported into. This protects CI run history; the next CI report would recreate the suite anyway.
+The delete button in the suite switcher is hidden for any suite that is CI-active: either created by the SDK or one that CI has reported into. This protects CI run history; the next CI report would recreate the suite anyway.
 
 ## Reading results
 
 ### Suite navigation
 
-Opening the Evaluate tab takes you directly into the most recent suite's dashboard. To switch suites, use the **suite switcher** in the breadcrumb — it lists all your suites and lets you jump to one, create a new suite, or delete the current suite. If no suites exist yet, the empty-state create prompt appears instead.
+Opening the Evaluate tab takes you directly into the most recent suite's dashboard. To switch suites, use the **suite switcher** in the breadcrumb. It lists all your suites and lets you jump to one, create a new suite, or delete the current suite. If no suites exist yet, the empty-state create prompt appears instead.
 
 ### Suite view
 
-- **Suite accuracy** — pass rate of the most recent run, with the last three runs' trend so you can see whether you're improving or regressing.
-- **Run insights** — an AI-written diff against your previous completed run: which cases moved, which tools changed behavior, which models diverged. Skim this first; it usually points at the right rabbit hole.
-- **Runs tab** — every run with its summary metrics. Click in for the iteration-level breakdown.
-- **Cases tab** — every case with its latest verdict and a quick replay button.
-- **Executions tab** — a flat, filterable list of every individual test execution across all cases, sorted most-recent-first. Each row shows the case name, result (passed/failed/pending/cancelled), and timestamp. Click any row to open it in the compare view.
+- **Suite accuracy**: pass rate of the most recent run, with the last three runs' trend so you can see whether you're improving or regressing.
+- **Run insights**: an AI-written diff against your previous completed run: which cases moved, which tools changed behavior, which models diverged. Skim this first; it usually points at the right rabbit hole.
+- **Runs tab**: every run with its summary metrics. Click in for the iteration-level breakdown.
+- **Cases tab**: every case with its latest verdict and a quick replay button.
+- **Executions tab**: a flat, filterable list of every individual test execution across all cases, sorted most-recent-first. Each row shows the case name, result (passed/failed/pending/cancelled), and timestamp. Click any row to open it in the compare view.
 
 When you run a suite against multiple host configurations at once, the Runs list groups them into a single collapsible **run group** row showing mean accuracy and longest duration across all hosts. Expand it to inspect each host's individual run.
 
@@ -217,20 +217,20 @@ The **Runs / Cases** segmented control switches between the run history list and
 
 #### Cross-host matrix
 
-When two or more host configurations are attached to a suite, a **By case / By host** toggle appears. **By host** shows a matrix — one column per host, one row per case. Each cell shows pass/fail dots, pass rate, median latency, and token usage. A host detached after runs were recorded stays visible, labelled **historical**.
+When two or more host configurations are attached to a suite, a **By case / By host** toggle appears. **By host** shows a matrix: one column per host, one row per case. Each cell shows pass/fail dots, pass rate, median latency, and token usage. A host detached after runs were recorded stays visible, labelled **historical**.
 
 ### Run view
 
 - **Per-iteration row** with case, model, pass/fail, tokens, duration, and the tool calls that actually happened.
 - **Expected vs actual** tool calls side-by-side when an iteration fails. For failed iterations, a **Categorized diff** above the raw Expected/Actual grids groups discrepancies into four categories:
-  - **Missing** — expected tool calls that were never made
-  - **Extra** — actual calls that weren't expected (reported but non-fatal by default)
-  - **Out of order** — calls that happened in the wrong sequence (when order checking is enabled)
-  - **Arg mismatch** — right tool name, wrong arguments (shown side-by-side)
-- **Full trace** — every turn, every tool call, every token. This is the thing you couldn't see before; spend time here. When a turn ran through a harness (e.g. Claude Code), the trace detail pane shows an **Engine** badge — "Claude Code" for harness turns, "Emulated" for turns that ran through MCPJam's built-in chat engine — so you can tell at a glance which runtime handled each turn.
+  - **Missing**: expected tool calls that were never made
+  - **Extra**: actual calls that weren't expected (reported but non-fatal by default)
+  - **Out of order**: calls that happened in the wrong sequence (when order checking is enabled)
+  - **Arg mismatch**: right tool name, wrong arguments (shown side-by-side)
+- **Full trace**: every turn, every tool call, every token. This is the thing you couldn't see before; spend time here. When a turn ran through a harness (e.g. Claude Code), the trace detail pane shows an **Engine** badge ("Claude Code" for harness turns, "Emulated" for turns that ran through MCPJam's built-in chat engine) so you can tell at a glance which runtime handled each turn.
 - **Per-model breakdown** to compare how the same case behaves across models.
-- **Suggested fixes** — after a run completes, a **Suggested fixes** panel ranks tool-quality and workflow issues by impact. Each issue has a **Copy** button that copies a ready-to-use fix prompt (tool description + input schema) for a coding agent; **Copy top N** copies the top issues combined.
-- **Predicate Gate** — when `successPredicates` are configured on a case, an expandable Predicate Gate section in the iteration detail lists each predicate with a PASS/FAIL verdict, a one-line summary, and the evaluator's reason. Hidden when no predicates are configured.
+- **Suggested fixes**: after a run completes, a **Suggested fixes** panel ranks tool-quality and workflow issues by impact. Each issue has a **Copy** button that copies a ready-to-use fix prompt (tool description + input schema) for a coding agent; **Copy top N** copies the top issues combined.
+- **Predicate Gate**: when `successPredicates` are configured on a case, an expandable Predicate Gate section in the iteration detail lists each predicate with a PASS/FAIL verdict, a one-line summary, and the evaluator's reason. Hidden when no predicates are configured.
 
 #### Comparing two runs
 
@@ -238,23 +238,23 @@ Select any two completed runs and click **Compare**. The diff view shows per-cas
 
 ### Case view
 
-- **Pass rate across runs** — is this case stable, flaky, or trending down?
-- **Pass rate by model** — does this case only work on one model?
+- **Pass rate across runs**: is this case stable, flaky, or trending down?
+- **Pass rate by model**: does this case only work on one model?
 - Every past iteration with its trace, so you can A/B a regression against a working run.
 
 ## Promoting sessions to cases
 
 Any completed chat session can be turned into a test case without rewriting it from scratch. The full conversation is compiled into multi-turn prompt turns, and the dialog lets you pick a destination suite or create a new one.
 
-**From the Playground** — Open the **Sessions** rail, hover a session, and click **Promote to test case**.
+**From the Playground**: Open the **Sessions** rail, hover a session, and click **Promote to test case**.
 
-**From the Swarms tab** — Open a completed run, click a session row to select it, then click **Promote to test case** above the session viewer. The session must belong to a completed run attempt; sessions from in-progress runs show an error in the dialog instead of blocking at submit.
+**From the Swarms tab**: Open a completed run, click a session row to select it, then click **Promote to test case** above the session viewer. The session must belong to a completed run attempt; sessions from in-progress runs show an error in the dialog instead of blocking at submit.
 
 In both cases the dialog shows the servers recorded for that session, lets you set a case title and suite name, and (when attachment pickers are enabled) lets you configure the server attachment and client host for the new suite.
 
 ## Generating cases from your tools
 
-The **Generate** button reads your attached servers' tool catalog and drafts realistic cases — a mix of positive ("call `search` with a query") and negative ("don't call `delete_user` on a meta-question"). Treat it as a draft: skim, edit the prompts to match how your users actually talk, tighten the checks, then save.
+The **Generate** button reads your attached servers' tool catalog and drafts realistic cases: a mix of positive ("call `search` with a query") and negative ("don't call `delete_user` on a meta-question"). Treat it as a draft: skim, edit the prompts to match how your users actually talk, tighten the checks, then save.
 
 When the suite has a saved server group spanning two or more servers, the generator produces coverage for each server individually plus at least one cross-server case. Suites without a saved server group treat all available servers as a single pool.
 

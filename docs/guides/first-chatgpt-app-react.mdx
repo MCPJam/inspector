@@ -159,14 +159,14 @@ window.openai.setOpenInAppUrl({ href: "https://app.example.com/item/42" });
 
 Only `http` and `https` URLs are accepted. The link opens in a new tab with `noopener,noreferrer`.
 
-This capability is optional — hosts can turn it off, in which case `window.openai.setOpenInAppUrl` won't be defined. Guard for it before calling, for example `window.openai.setOpenInAppUrl?.({ href: "https://app.example.com/item/42" })`.
+This capability is optional; hosts can turn it off, in which case `window.openai.setOpenInAppUrl` won't be defined. Guard for it before calling, for example `window.openai.setOpenInAppUrl?.({ href: "https://app.example.com/item/42" })`.
 
 ### Content Security Policy (CSP)
 
 Widgets run in a sandboxed iframe, so you need to declare which external domains your widget can interact with. Configure these permissions in your resource's `_meta` using one of two formats:
 
-- **`_meta.ui.csp`** (preferred) — uses camelCase field names and is the standard MCP Apps format
-- **`_meta["openai/widgetCSP"]`** (legacy) — the original ChatGPT Apps format, still supported
+- **`_meta.ui.csp`** (preferred): uses camelCase field names and is the standard MCP Apps format
+- **`_meta["openai/widgetCSP"]`** (legacy): the original ChatGPT Apps format, still supported
 
 When both are present, `ui.csp` values take precedence field-by-field; any field absent from `ui.csp` falls back to `openai/widgetCSP`.
 

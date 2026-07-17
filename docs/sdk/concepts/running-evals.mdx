@@ -4,7 +4,7 @@ description: "Measure tool accuracy with statistical evaluations"
 icon: "chart-bar"
 ---
 
-LLMs are probabilistic—the same prompt might produce different results each time. Running a test once tells you it *can* work, not that it *reliably* works. Evals run the same test many times and measure statistical accuracy.
+LLMs are probabilistic: the same prompt might produce different results each time. Running a test once tells you it *can* work, not that it *reliably* works. Evals run the same test many times and measure statistical accuracy.
 
 ## Why Run Evals?
 
@@ -166,11 +166,11 @@ await test.run(agent, {
 });
 ```
 
-See [Eval reporting — Tool execution and `passed`](/sdk/reference/eval-reporting#tool-execution-and-passed) for full detail and [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) overrides.
+See [Eval reporting: Tool execution and `passed`](/sdk/reference/eval-reporting#tool-execution-and-passed) for full detail and [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) overrides.
 
 ### Predicate gate
 
-`successPredicates` lets you express richer pass/fail criteria beyond tool-call matching — without an LLM judge. Predicates are pure functions of the iteration transcript, so they produce the same verdict every time and are safe to use as a CI release gate.
+`successPredicates` lets you express richer pass/fail criteria beyond tool-call matching, without an LLM judge. Predicates are pure functions of the iteration transcript, so they produce the same verdict every time and are safe to use as a CI release gate.
 
 A case passes iff **all** predicates pass. An absent or empty list means no predicate gate.
 
@@ -275,7 +275,7 @@ if (suite.accuracy() < 0.90) {
 
 ## Bring your own host
 
-`HostRunner` is the right starting point when you just need an LLM + tools + a model string. For richer setups — pinning a host style/profile, applying sandbox/permission policy, or running the same configuration in CI that the MCPJam Inspector uses for its Playground — start from a `Host` spec instead:
+`HostRunner` is the right starting point when you just need an LLM + tools + a model string. For richer setups (pinning a host style/profile, applying sandbox/permission policy, or running the same configuration in CI that the MCPJam Inspector uses for its Playground), start from a `Host` spec instead:
 
 ```typescript
 import { MCPClientManager, Host, EvalTest } from "@mcpjam/sdk";
@@ -304,7 +304,7 @@ const test = new EvalTest({
 await test.run(runtime, { iterations: 10 });
 ```
 
-`HostRuntime` (returned by `host.withManager(...)`) snapshots the live `Host` on every `.run()`, so mutating the bound host between iterations takes effect on the next iteration. `HostRunner` snapshots once at construction — pick `HostRunner` for a static spec, `HostRuntime` when you want the spec editable across calls.
+`HostRuntime` (returned by `host.withManager(...)`) snapshots the live `Host` on every `.run()`, so mutating the bound host between iterations takes effect on the next iteration. `HostRunner` snapshots once at construction. Pick `HostRunner` for a static spec, `HostRuntime` when you want the spec editable across calls.
 
 **Personal computer.** A `Host` can declare a personal cloud workstation via the `computer` property (type `HostComputer`, exported from `@mcpjam/sdk`). When set, the chatbox surfaces a `bash` tool and a web terminal for signed-in members. Use `setComputer()` to attach or detach it fluently:
 
@@ -332,7 +332,7 @@ const host = new Host({
 });
 ```
 
-`null` and an absent `computer` field hash identically, so existing host configs are unaffected. The `computer` field is automatically stripped from eval wire configs — evals never target personal computers.
+`null` and an absent `computer` field hash identically, so existing host configs are unaffected. The `computer` field is automatically stripped from eval wire configs: evals never target personal computers.
 
 **Statelessness.** `HostRuntime.run()` does NOT auto-replay history across turns. Use `PromptOptions.context` to thread context explicitly:
 

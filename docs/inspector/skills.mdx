@@ -5,13 +5,13 @@ icon: "square-slash"
 tag: "NEW"
 ---
 
-[Skills](https://agentskills.io/what-are-skills) are an open format that provide instructions on how to use MCP tools and complete workflows. MCPJam lets you discover skills from your filesystem (local) or your project (hosted), upload new ones, and use them in the Playground — either automatically based on the user's prompt or deterministically with the `/` command.
+[Skills](https://agentskills.io/what-are-skills) are an open format that provide instructions on how to use MCP tools and complete workflows. MCPJam lets you discover skills from your filesystem (local) or your project (hosted), upload new ones, and use them in the Playground, either automatically based on the user's prompt or deterministically with the `/` command.
 
 ## Getting Started
 
 1. **Navigate to the Skills tab** in MCPJam Inspector to discover and manage skills
-2. **Load skills** — MCPJam automatically discovers skills from [supported directories](#skill-directories). You can also upload skills directly through the Skills tab, or run `npx skills` to install them
-3. **Use skills in the Playground** — the LLM discovers them automatically, or you can inject them with the `/` command
+2. **Load skills**: MCPJam automatically discovers skills from [supported directories](#skill-directories). You can also upload skills directly through the Skills tab, or run `npx skills` to install them
+3. **Use skills in the Playground**: the LLM discovers them automatically, or you can inject them with the `/` command
 
 <iframe
   className="w-full aspect-video rounded-xl"
@@ -48,7 +48,7 @@ MCPJam scans the following directories for skills. Each subdirectory is expected
 You can upload skill folders directly from the Skills tab. The upload dialog supports drag-and-drop or file browsing and validates the `SKILL.md` frontmatter in real time.
 
 - **Local:** Uploaded skills are stored in `~/.mcpjam/skills/`.
-- **Hosted (cloud):** Cloud skills are **SKILL.md-only**. Folders that contain files other than `SKILL.md` are rejected — inline any content that `SKILL.md` references directly into the file before uploading.
+- **Hosted (cloud):** Cloud skills are **SKILL.md-only**. Folders that contain files other than `SKILL.md` are rejected. Inline any content that `SKILL.md` references directly into the file before uploading.
 
 <Note>
   Uploading a skill with a name that already exists will be rejected. Delete the existing skill first if you need to replace it.
@@ -56,7 +56,7 @@ You can upload skill folders directly from the Skills tab. The upload dialog sup
 
 ## Updating Skills
 
-To pull the latest version of the `mcp-inspector` skill — which contains MCPJam's guidance for interpreting probe, doctor, OAuth, and conformance output — run:
+To pull the latest version of the `mcp-inspector` skill, which contains MCPJam's guidance for interpreting probe, doctor, OAuth, and conformance output, run:
 
 ```bash
 npx skills update mcp-inspector
@@ -76,9 +76,9 @@ When you have skills available, MCPJam injects a lightweight list of all skill n
 
 ### Deterministic Injection
 
-Type `/` in the input to open the skills popover. Select a skill to inject it directly into the conversation — this pre-loads the `SKILL.md` content before the LLM processes your message, so the skill is guaranteed to be used.
+Type `/` in the input to open the skills popover. Select a skill to inject it directly into the conversation. This pre-loads the `SKILL.md` content before the LLM processes your message, so the skill is guaranteed to be used.
 
-When you select a skill via `/`, it appears as a card above the input. You can expand the card to browse the skill's file tree and optionally select additional files to include. Only files you explicitly select are pre-loaded — by default, only the `SKILL.md` is injected.
+When you select a skill via `/`, it appears as a card above the input. You can expand the card to browse the skill's file tree and optionally select additional files to include. Only files you explicitly select are pre-loaded. By default, only the `SKILL.md` is injected.
 
 The `/` picker works in both local and hosted modes. In the hosted app, it lists your project's cloud skills.
 

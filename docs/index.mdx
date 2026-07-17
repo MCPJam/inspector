@@ -5,7 +5,7 @@ icon: "book-open"
 mode: "wide"
 ---
 
-MCPJam is the development platform for **MCP servers, MCP apps, and ChatGPT apps**. Debug every JSON-RPC message and OAuth exchange, run evaluations across multiple LLMs, and track accuracy over time — so you catch regressions early and ship with confidence.
+MCPJam is the development platform for **MCP servers, MCP apps, and ChatGPT apps**. Debug every JSON-RPC message and OAuth exchange, run evaluations across multiple LLMs, and track accuracy over time, so you catch regressions early and ship with confidence.
 
 <Frame>
   <img
@@ -32,7 +32,7 @@ MCPJam is the development platform for **MCP servers, MCP apps, and ChatGPT apps
     ```bash
     npm i -g @mcpjam/cli
     ```
-    Probe, doctor, OAuth, evals — in CI or your shell.
+    Probe, doctor, OAuth, and evals in CI or your shell.
   </Card>
 </CardGroup>
 
@@ -46,7 +46,7 @@ MCPJam is the development platform for **MCP servers, MCP apps, and ChatGPT apps
     Stateless tool for connectivity, OAuth, conformance, and tool execution. JUnit/JSON reporters built for CI.
   </Card>
   <Card title="SDK" icon="code" href="/sdk">
-    `@mcpjam/sdk` — TypeScript toolkit for unit tests, e2e tests, and evals. Works inside Jest or Vitest.
+    `@mcpjam/sdk`: TypeScript toolkit for unit tests, e2e tests, and evals. Works inside Jest or Vitest.
   </Card>
   <Card title="Hosted" icon="cloud" href="/hosted/overview">
     Run MCPJam in the browser at [app.mcpjam.com](https://app.mcpjam.com). Share servers and sessions with your team.
@@ -72,12 +72,12 @@ MCPJam is the development platform for **MCP servers, MCP apps, and ChatGPT apps
     [Guided OAuth →](/inspector/guided-oauth) · [CLI OAuth conformance →](/cli/oauth-conformance)
   </Accordion>
   <Accordion title="Run evals across LLMs and gate CI on regressions" icon="flask-conical">
-    Author cases with expected tool calls, optional expected outputs, and deterministic checks. Run across Claude, GPT, Gemini, and your own providers — or move the same suite into Jest/Vitest with `@mcpjam/sdk`.
+    Author cases with expected tool calls, optional expected outputs, and deterministic checks. Run across Claude, GPT, Gemini, and your own providers, or move the same suite into Jest/Vitest with `@mcpjam/sdk`.
 
     [Evaluate in Inspector →](/inspector/evals) · [Run evals from the SDK →](/sdk/concepts/running-evals) · [CI integration →](/cli/ci)
   </Accordion>
   <Accordion title="Auto-launch Inspector from your dev workflow" icon="code">
-    Launch the Inspector with a prefilled server URL, bearer token, and starting tab via CLI flags — wire it into your dev script or a framework integration.
+    Launch the Inspector with a prefilled server URL, bearer token, and starting tab via CLI flags; wire it into your dev script or a framework integration.
 
     [Launch from code →](/inspector/launch-from-code)
   </Accordion>
