@@ -1,16 +1,23 @@
 /**
  * MCPJam Agent — POST /api/web/mcpjam-agent
  *
- * Chat surface connected to two MCPJam-owned MCP servers:
+ * UI-ONLY chat surface: the agent ACTS exclusively by driving the inspector
+ * UI through the client-fulfilled `ui_*` tools, so every action is visible
+ * to the user in their own app. It KNOWS things via read-only sources:
  *   - the hosted docs server (`https://docs.mcpjam.com/mcp`, Mintlify) for
  *     documentation search, and
- *   - the MCPJam platform MCP worker (`https://mcp.mcpjam.com/mcp`,
- *     Cloudflare — `mcp/` in this monorepo) for the workspace catalog
- *     (projects, servers, evals, chatboxes) INCLUDING its MCP Apps widget
- *     tools (`show_servers` & co). The platform server is the single owner
- *     of those tools; the agent is a plain MCP client of it, so widget
- *     metadata, `ui://` resources, and payload tagging all flow through the
- *     standard protocol pipeline.
+ *   - the `web_search` built-in.
+ *
+ * It deliberately does NOT connect the MCPJam platform MCP worker for chat
+ * turns any more: those tools mutate the user's workspace (projects,
+ * servers, evals, chatboxes) server-side and invisibly, which is exactly
+ * what this surface is meant not to do. `MCPJAM_AGENT_PLATFORM_TOOLS=1`
+ * restores the old behavior wholesale (see `agentPlatformToolsEnabled`).
+ *
+ * The platform CONFIG and the `/widget-content` sub-route below stay: chat
+ * sessions from before the cutover still contain platform widget parts, and
+ * reloading one re-reads its `ui://` resource through that route. Removing
+ * it would break history rendering, not just new turns.
  *
  * The Home page is its first consumer; the side-panel bubble across the
  * rest of the UI hits the same endpoint.
@@ -84,6 +91,35 @@ import { getClientIp } from "../../utils/client-ip.js";
 const DOCS_SERVER_ID = "mcpjam-docs";
 const DEFAULT_DOCS_URL = "https://docs.mcpjam.com/mcp";
 const PLATFORM_SERVER_ID = MCPJAM_PLATFORM_SERVER_ID;
+
+/**
+ * Rollback switch for the UI-only agent. Restores the COMPLETE prior
+ * contract — the platform server in the manager, its preflight/selection,
+ * and its workspace-context prompt — because a half-rollback (platform tools
+ * advertised, but told to drive the UI) is a state we never shipped and
+ * never tested.
+ */
+function agentPlatformToolsEnabled(): boolean {
+  return process.env.MCPJAM_AGENT_PLATFORM_TOOLS === "1";
+}
+
+/**
+ * Who the agent is and how it acts. Static per build ON PURPOSE: this sits
+ * at the front of every turn's prompt, and anything volatile here (a
+ * projectId, a route, a timestamp) would invalidate the cacheable prefix for
+ * the whole conversation on every request. Per-turn UI state travels
+ * append-only on the user message instead.
+ *
+ * Deliberately says nothing tool-specific — `buildUiToolsSystemPrompt`
+ * (chat-v2-orchestration) owns the `ui_*` mechanics and is emitted from the
+ * validated snapshot, so the two can't drift apart.
+ */
+const AGENT_IDENTITY_PROMPT = [
+  "## You are the MCPJam in-app assistant",
+  "You are embedded in the MCPJam inspector, sitting next to the user's own screen. You act by DRIVING THAT UI with the `ui_*` tools: every action you take lands in the app the user is looking at, and they watch it happen.",
+  "Prefer navigating and showing over describing. If the user asks where something is or how to do it, take them there instead of narrating the click path.",
+  "Use the documentation and web search tools to answer knowledge questions; use the `ui_*` tools to actually do things. You have no other way to act — when something isn't reachable through a `ui_*` tool, say so plainly rather than inventing a tool or claiming you did it.",
+].join("\n");
 
 // Advertise the MCP UI extension so the platform worker registers its
 // widget-backed tools (the worker's session registrar swaps widget vs
@@ -173,10 +209,14 @@ mcpjamAgent.post("/", async (c) => {
       throw error;
     }
 
+    const platformToolsEnabled = agentPlatformToolsEnabled();
+
     manager = new MCPClientManager(
       {
         [DOCS_SERVER_ID]: buildDocsConfig(),
-        [PLATFORM_SERVER_ID]: buildPlatformConfig(bearerToken),
+        ...(platformToolsEnabled
+          ? { [PLATFORM_SERVER_ID]: buildPlatformConfig(bearerToken) }
+          : {}),
       },
       {
         defaultTimeout: WEB_STREAM_TIMEOUT_MS,
@@ -195,7 +235,9 @@ mcpjamAgent.post("/", async (c) => {
       // so the later prepare doesn't repeat the round trips. With both
       // down, the turn still runs on web_search + the bare model.
       const mcp = manager;
-      const candidateServerIds = [DOCS_SERVER_ID, PLATFORM_SERVER_ID];
+      const candidateServerIds = platformToolsEnabled
+        ? [DOCS_SERVER_ID, PLATFORM_SERVER_ID]
+        : [DOCS_SERVER_ID];
       const preflights = await Promise.allSettled(
         candidateServerIds.map((serverId) => mcp.listTools(serverId))
       );
@@ -230,7 +272,10 @@ mcpjamAgent.post("/", async (c) => {
       // this route's body, so the bridge is the system prompt: tell the
       // model what it's looking at and to pass the id explicitly. Appended
       // only while the platform server survived preflight — instructions
-      // must not reference tools the degraded turn doesn't advertise.
+      // must not reference tools the degraded turn doesn't advertise. Only
+      // reachable under the kill-switch; it embeds `projectId`, so it is
+      // per-request-volatile and would sit in front of the whole
+      // conversation in the cacheable prefix.
       const platformToolsAvailable =
         selectedServerIds.includes(PLATFORM_SERVER_ID);
       const ambientContextPrompt = platformToolsAvailable
@@ -242,7 +287,17 @@ mcpjamAgent.post("/", async (c) => {
               "explicitly asks about a different project.",
           ].join("\n")
         : undefined;
-      const effectiveSystemPrompt = [body.systemPrompt, ambientContextPrompt]
+      // The identity prompt says the `ui_*` tools are the only way to act.
+      // Under the kill-switch that becomes false — the platform tools are
+      // back — and shipping both sections would hand the model directly
+      // contradictory instructions, in the one configuration whose entire
+      // job is to behave exactly like the old one. A rollback that leaves
+      // the new prompt in place is not a rollback.
+      const effectiveSystemPrompt = [
+        body.systemPrompt,
+        platformToolsEnabled ? undefined : AGENT_IDENTITY_PROMPT,
+        ambientContextPrompt,
+      ]
         .filter((section): section is string => Boolean(section?.trim()))
         .join("\n\n");
 
