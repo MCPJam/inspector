@@ -260,8 +260,11 @@ import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
 import { publishSelectedServerNames } from "./lib/webmcp/ui-context-source";
 import type {
+  ConnectServerInspectorCommand,
+  DisconnectServerInspectorCommand,
   NavigateInspectorCommand,
   OpenPlaygroundInspectorCommand,
+  RemoveServerInspectorCommand,
   SelectServerInspectorCommand,
   SnapshotAppInspectorCommand,
 } from "@/shared/inspector-command.js";
@@ -593,6 +596,7 @@ function ServersTabBody() {
     handleReconnect,
     handleUpdate,
     handleRemoveServer,
+    saveServerConfigWithoutConnecting,
     projects,
     activeProjectId,
     activeProjectBillingOrganizationId,
@@ -616,6 +620,7 @@ function ServersTabBody() {
       onReconnect={handleReconnect}
       onUpdate={handleUpdate}
       onRemove={handleRemoveServer}
+      onSaveServerConfig={saveServerConfigWithoutConnecting}
       projects={projects}
       activeProjectId={activeProjectId}
       organizationId={activeProjectBillingOrganizationId}
@@ -1990,6 +1995,11 @@ export default function App() {
     pendingDashboardOAuth,
     isCloudSyncActive,
     persistRuntimeServerToProjectIfNeeded,
+    // Connect-screen inspector commands (`ui_add_server` & co) delegate to
+    // these — the same handles the Connect screen's own buttons use.
+    connectServerWithResult,
+    handleDisconnect: handleDisconnectAction,
+    handleRemoveServer: handleRemoveServerAction,
     activeMcpProfile,
     activeHost,
     activeHostId,
@@ -2071,6 +2081,15 @@ export default function App() {
   );
   persistRuntimeServerToProjectRef.current =
     persistRuntimeServerToProjectIfNeeded;
+  // Action-layer handles for the Connect-screen inspector commands. Refs,
+  // like the ones above, so the handler-registration effect doesn't tear
+  // down and re-register on every render these identities change.
+  const connectServerWithResultRef = useRef(connectServerWithResult);
+  connectServerWithResultRef.current = connectServerWithResult;
+  const handleDisconnectRef = useRef(handleDisconnectAction);
+  handleDisconnectRef.current = handleDisconnectAction;
+  const handleRemoveServerRef = useRef(handleRemoveServerAction);
+  handleRemoveServerRef.current = handleRemoveServerAction;
   const getInspectorServerState = useCallback((serverName: string) => {
     const runtimeServer = oauthDebuggerServersRef.current[serverName];
     const projectServer = projectServersRef.current[serverName];
@@ -2820,11 +2839,128 @@ export default function App() {
       }
     );
 
+    // --- Connect-screen commands -------------------------------------
+    // These delegate to the SAME action layer the Connect screen's own
+    // buttons use (`use-app-state`), so an agent-added server is
+    // byte-identical to a hand-added one. No DOM events, no component
+    // internals — the difference between driving the app and puppeting it.
+
+    const requireKnownServer = (serverName: string) => {
+      const state = getInspectorServerState(serverName);
+      if (!state) {
+        throw createInspectorCommandClientError(
+          "unknown_server",
+          `Unknown server "${serverName}".`
+        );
+      }
+      return state;
+    };
+
+    const readConnectionStatus = (serverName: string) => {
+      const state = getInspectorServerState(serverName);
+      return (
+        state?.runtimeServer?.connectionStatus ??
+        state?.projectServer?.connectionStatus ??
+        "disconnected"
+      );
+    };
+
+    // `addServer` lives in ServersTab, NOT here: creating a server has to
+    // honor `BILLING_GATES.serverCreation`, and that gate is a hook that only
+    // exists on the Connect screen. Registering it here would have bypassed
+    // the same limit the Add button enforces. connect/disconnect/remove don't
+    // create servers, so they stay App-level.
+
+    const unregisterConnectServer = registerInspectorCommandHandler(
+      "connectServer",
+      async (rawCommand) => {
+        const command = rawCommand as ConnectServerInspectorCommand;
+        const serverName = command.payload.serverName;
+        requireKnownServer(serverName);
+
+        const result = await connectServerWithResultRef.current(serverName);
+        await waitForUiCommit();
+
+        // Report what happened, including the outcomes that are neither
+        // success nor failure. `reauth` is the important one: the server
+        // needs the USER to authorize it, and saying "failed" would send
+        // the agent off retrying something only a human can finish.
+        if (result.status === "reauth") {
+          return {
+            serverName,
+            status: "authorization_required",
+            connectionStatus: readConnectionStatus(serverName),
+            message: `"${serverName}" needs authorization. The user must click Authorize on the Connect screen; it opens their identity provider.`,
+          };
+        }
+        if (result.status === "superseded") {
+          return {
+            serverName,
+            status: "superseded",
+            message: `Another connection attempt for "${serverName}" is already in flight; leaving it alone.`,
+          };
+        }
+        if (result.status !== "connected") {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            result.error ?? `Could not connect "${serverName}".`
+          );
+        }
+
+        return {
+          serverName,
+          status: "connected",
+          connectionStatus: readConnectionStatus(serverName),
+        };
+      }
+    );
+
+    const unregisterDisconnectServer = registerInspectorCommandHandler(
+      "disconnectServer",
+      async (rawCommand) => {
+        const command = rawCommand as DisconnectServerInspectorCommand;
+        const serverName = command.payload.serverName;
+        requireKnownServer(serverName);
+
+        await handleDisconnectRef.current(serverName);
+        await waitForUiCommit();
+        return {
+          serverName,
+          connectionStatus: readConnectionStatus(serverName),
+        };
+      }
+    );
+
+    const unregisterRemoveServer = registerInspectorCommandHandler(
+      "removeServer",
+      async (rawCommand) => {
+        const command = rawCommand as RemoveServerInspectorCommand;
+        const serverName = command.payload.serverName;
+        requireKnownServer(serverName);
+
+        await handleRemoveServerRef.current(serverName);
+        await waitForUiCommit();
+
+        // Verify rather than assume: `handleRemoveServer` resolves void and
+        // the tool result is the only thing the user will read.
+        if (getInspectorServerState(serverName)) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            `"${serverName}" is still present after the remove.`
+          );
+        }
+        return { serverName, removed: true };
+      }
+    );
+
     return () => {
       unregisterNavigate();
       unregisterSelectServer();
       unregisterOpenPlayground();
       unregisterSnapshotApp();
+      unregisterConnectServer();
+      unregisterDisconnectServer();
+      unregisterRemoveServer();
     };
   }, [
     appState.selectedMultipleServers,

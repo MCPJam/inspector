@@ -146,9 +146,14 @@ vi.mock("posthog-js/react", () => ({
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
+const mockUseAppReady = vi.fn(() => ({
+  status: "ready",
+  projectId: "ws_local",
+}));
+const mockUseAppReadyMessage = vi.fn(() => null as string | null);
 vi.mock("@/hooks/use-app-ready", () => ({
-  useAppReady: () => ({ status: "ready", projectId: "ws_local" }),
-  useAppReadyMessage: () => null,
+  useAppReady: () => mockUseAppReady(),
+  useAppReadyMessage: () => mockUseAppReadyMessage(),
 }));
 
 vi.mock("@/hooks/useAutoConnectProjectServers", () => ({
@@ -485,6 +490,7 @@ describe("ServersTab shared detail modal", () => {
       serverName: "test-server",
     }),
     onRemove: vi.fn(),
+    onSaveServerConfig: vi.fn().mockResolvedValue(true),
     projects,
     activeProjectId: "project-1",
     organizationId: "org-1",
@@ -690,6 +696,59 @@ describe("ServersTab shared detail modal", () => {
         organizationId: null,
       })
     );
+  });
+
+  it("the addServer command is denied while billing is denied", async () => {
+    const { executeInspectorCommand } = await import(
+      "@/lib/inspector-command-handlers"
+    );
+    mockUseProjectBillingGate.mockImplementation(() => ({
+      organizationId: null,
+      gate: null,
+      decision: null,
+      currentPlan: "free",
+      upgradePlan: "team",
+      canManageBilling: true,
+      isLoading: false,
+      isDenied: true,
+      denialMessage: "Upgrade required to add more servers",
+    }));
+    render(<ServersTab {...defaultProps} />);
+
+    // The command path must honor the SAME gate the visible Add button does —
+    // a chat command can't do what the disabled button can't.
+    const res = await executeInspectorCommand({
+      id: "c1",
+      type: "addServer",
+      payload: { draft: { name: "x", url: "https://e.com/mcp" } },
+    });
+    expect(res.status).toBe("error");
+    expect((res as any).error.message).toContain("Upgrade required");
+    expect(defaultProps.onSaveServerConfig).not.toHaveBeenCalled();
+  });
+
+  it("the addServer command is denied while the app is still bootstrapping", async () => {
+    mockUseAppReady.mockReturnValue({
+      status: "bootstrapping",
+      projectId: "ws_local",
+    });
+    mockUseAppReadyMessage.mockReturnValue("Finishing setup.");
+    const { executeInspectorCommand } = await import(
+      "@/lib/inspector-command-handlers"
+    );
+    render(<ServersTab {...defaultProps} />);
+
+    const res = await executeInspectorCommand({
+      id: "c2",
+      type: "addServer",
+      payload: { draft: { name: "x", url: "https://e.com/mcp" } },
+    });
+    expect(res.status).toBe("error");
+    expect((res as any).error.message).toContain("Finishing setup");
+    expect(defaultProps.onSaveServerConfig).not.toHaveBeenCalled();
+
+    mockUseAppReady.mockReturnValue({ status: "ready", projectId: "ws_local" });
+    mockUseAppReadyMessage.mockReturnValue(null);
   });
 
   it("renders Add Server actions in the hosts connect header slot when a slot container is provided", () => {
