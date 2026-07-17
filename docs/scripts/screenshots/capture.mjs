@@ -197,6 +197,109 @@ const ADD_SERVER_COMMAND_PLACEHOLDER =
   "npx -y @modelcontextprotocol/server-everything";
 const ADD_SERVER_NAME_PLACEHOLDER = "my-mcp-server";
 
+// getting-started-first-diagram (route /playground): the real Excalidraw
+// sample server -- a genuine remote HTTP MCP server (mcp.excalidraw.com),
+// not something with a local STDIO equivalent to substitute in like
+// connect-widget-fixture does. name/url match lib/excalidraw-quick-connect.ts's
+// EXCALIDRAW_SERVER_CONFIG (the same config the app's own first-run
+// onboarding auto-connects), so the connected server row looks exactly like
+// what a real user gets on first launch.
+const EXCALIDRAW_SERVER_NAME = "Excalidraw (App)";
+const EXCALIDRAW_SERVER_URL = "https://mcp.excalidraw.com/mcp";
+const EXCALIDRAW_PROMPT = "Draw me an MCP architecture diagram";
+const RESERVATION_PROMPT = "I'd like to make a reservation at Jammy Wammy.";
+
+// Fills and submits the "Import Servers from JSON" modal -- ServersTab.tsx's
+// alternate entry point next to "Add manually" in the Add Server hover
+// card (handleImportJsonClick / JsonImportModal.tsx). Used only for the
+// Excalidraw sample server: it's a genuine remote HTTP server with no local
+// STDIO fallback, and the regular "Add Server" HTTP form is blocked by the
+// same shared-backend Convex schema bug documented on connect-widget-fixture
+// below (`servers:createServerIfMissing`/`updateServer` reject the client's
+// `authMethod` field) -- confirmed by testing the HTTP form against this
+// dev backend directly. The JSON import path sidesteps it because
+// parseJsonConfig (lib/json-config-parser.ts) builds HTTP ServerFormData
+// with no `authMethod` field at all, unlike the regular form which always
+// sets one. The editor is CodeMirror-based (JsonEditor's default
+// editSurface="codemirror" -- see components/ui/json-editor/json-editor.tsx),
+// not a plain <textarea>, so it's driven by clicking the `.cm-content`
+// editable region and typing rather than `.fill()`.
+async function importHttpServerViaJson(page, { name, url }) {
+  await page.getByRole("button", { name: "Add Server" }).hover();
+  await page.getByRole("button", { name: "Import JSON" }).click();
+  const dialog = page.getByRole("dialog");
+  const configJson = JSON.stringify({
+    mcpServers: { [name]: { type: "sse", url } },
+  });
+  await dialog.locator(".cm-content").first().click();
+  await page.keyboard.type(configJson);
+  await dialog.getByRole("button", { name: "Import Servers" }).click();
+}
+
+// Types into and submits the Playground's chat composer. The textarea has
+// no stable placeholder across empty-state variants (it reads "Try a
+// prompt that could call your tools..." here, different text elsewhere), so
+// it's targeted by CSS instead -- scoped to `:visible` because the page
+// also has a hidden "Ask anything…" textarea (the global "Ask MCPJam"
+// widget) that otherwise sorts first in DOM order.
+async function sendPlaygroundMessage(page, text) {
+  const composer = page.locator("textarea:visible").first();
+  await composer.click();
+  await composer.fill(text);
+  await page.getByRole("button", { name: "Send message" }).click();
+}
+
+// Resets the Playground chat if it already has messages before this step's
+// own prompt is sent. This dev environment's guest identity is effectively
+// shared across "fresh" browser contexts (ALLOW_LOCAL_DEV_SERVICE_TOKEN=true
+// on the local backend, plus the JSON-RPC replay stream reconnecting
+// clients to server-held state) -- a new Playwright context here is not a
+// reliable guarantee of a new chat thread the way it is for e.g. onboarding
+// localStorage flags. The clear-chat control (a trash-icon button, tooltip
+// "Clear chat") only renders once the thread has messages
+// (`effectiveHasMessages` in PlaygroundMain.tsx), so its absence already
+// means there is nothing to clear.
+async function clearPlaygroundChatIfPresent(page) {
+  // Scoped to `[data-slot="tooltip-trigger"]` (the Radix Tooltip wrapper
+  // PlaygroundMain.tsx renders this button through) -- a plain
+  // `svg.lucide-trash-2` match is not unique on this page: logger-view.tsx's
+  // unrelated "Clear all messages" debug-log button uses the same icon and
+  // is present in the DOM regardless of route.
+  const clearButton = page
+    .locator('button[data-slot="tooltip-trigger"]:has(svg.lucide-trash-2)')
+    .first();
+  const hasExistingChat = await clearButton.isVisible().catch(() => false);
+  if (!hasExistingChat) return;
+  await clearButton.click();
+  await page.getByRole("button", { name: "Reset chat" }).click();
+  await clearButton.waitFor({ state: "hidden", timeout: 10000 }).catch(() => {});
+}
+
+// Waits for a tool-call card by tool name -- same collapsible-header
+// locator pattern as open-widget-debug's cardHeader below -- then for the
+// widget iframe it renders, then for the assistant's turn to finish
+// streaming (the "Stop generating" button reverts to "Send message") so the
+// capture doesn't land mid-stream on a half-drawn diagram or a pending
+// spinner. Returns the card header locator so callers can scroll it into
+// view before the final settle.
+async function waitForToolWidget(page, toolName, timeoutMs = 90000) {
+  const cardHeader = page
+    .locator('[role="button"][aria-expanded]')
+    .filter({ hasText: toolName })
+    .first();
+  await cardHeader.waitFor({ state: "visible", timeout: timeoutMs });
+  await page.locator("iframe").first().waitFor({ state: "visible", timeout: timeoutMs });
+  await page
+    .getByRole("button", { name: "Stop generating" })
+    .waitFor({ state: "hidden", timeout: timeoutMs })
+    .catch(() => {
+      // Already finished (or never showed a Stop button) by the time we
+      // checked -- not fatal, the iframe wait above already gates on real
+      // progress.
+    });
+  return cardHeader;
+}
+
 // Fills and submits the Add Server modal for a STDIO server. Assumes the
 // modal is not yet open. STDIO (not HTTP) is used for every tier-A setup
 // step that needs a connected server -- see the `connect-widget-fixture`
@@ -362,6 +465,52 @@ const SETUP_STEPS = {
     await cardHeader.click();
     await page.locator('[role="button"][aria-expanded="true"]').filter({ hasText: "get-reservation" }).first()
       .waitFor({ state: "visible", timeout: 5000 });
+  },
+
+  // getting-started-first-diagram (route /playground): connect the real
+  // Excalidraw sample server (see importHttpServerViaJson above for why
+  // JSON import instead of the regular Add Server form), then send the
+  // getting-started.mdx sample prompt and wait for the `create_view` tool
+  // call and its rendered diagram. LLM latency plus the diagram drawing
+  // element-by-element (per the tool's own description) means this needs
+  // the generous timeouts baked into waitForToolWidget.
+  "send-excalidraw-prompt": async (page) => {
+    await goToServersInApp(page);
+    await importHttpServerViaJson(page, {
+      name: EXCALIDRAW_SERVER_NAME,
+      url: EXCALIDRAW_SERVER_URL,
+    });
+    await waitForServerConnected(page);
+
+    await page.getByRole("button", { name: "Playground", exact: true }).click();
+    await page.waitForURL(/\/playground/);
+
+    await clearPlaygroundChatIfPresent(page);
+    await sendPlaygroundMessage(page, EXCALIDRAW_PROMPT);
+    const cardHeader = await waitForToolWidget(page, "create_view", 90000);
+    await cardHeader.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(2000);
+  },
+
+  // first-mcp-app-playground (route /playground): connect the reservation
+  // fixture (same STDIO substitution as connect-widget-fixture/
+  // open-widget-debug above) and prompt the model to book a table so
+  // `get-reservation` runs and its "Reservation Confirmed" widget renders.
+  "invoke-reservation-tool": async (page) => {
+    await goToServersInApp(page);
+    await addStdioServer(page, {
+      name: WIDGET_FIXTURE_SERVER_NAME,
+      command: WIDGET_FIXTURE_COMMAND,
+    });
+    await waitForServerConnected(page);
+
+    await page.getByRole("button", { name: "Playground", exact: true }).click();
+    await page.waitForURL(/\/playground/);
+
+    await clearPlaygroundChatIfPresent(page);
+    await sendPlaygroundMessage(page, RESERVATION_PROMPT);
+    await waitForToolWidget(page, "get-reservation", 90000);
+    await page.waitForTimeout(1500);
   },
 
   // client-focus-panel (route /hosts?template=claude): the template deep

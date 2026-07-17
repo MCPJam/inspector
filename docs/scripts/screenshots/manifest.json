@@ -68,12 +68,7 @@
       "page": "getting-started.mdx",
       "tier": "B",
       "route": "/playground",
-      "setup": [
-        "Open the Playground",
-        "Load the Excalidraw sample fixture",
-        "Send the message that triggers the create_view tool call",
-        "Wait for the diagram to render"
-      ],
+      "setup": ["send-excalidraw-prompt"],
       "output": "docs/images/getting-started/getting-started-first-diagram.png",
       "alt": "The Playground showing the Excalidraw sample, with the create_view tool call and the rendered diagram."
     },
@@ -83,12 +78,7 @@
       "page": "guides/first-mcp-app.mdx",
       "tier": "B",
       "route": "/playground",
-      "setup": [
-        "Open the Playground",
-        "Load the reservation widget fixture from the first-mcp-app tutorial",
-        "Trigger the tool call",
-        "Wait for the Reservation Confirmed widget to render"
-      ],
+      "setup": ["invoke-reservation-tool"],
       "output": "docs/images/guides/first-mcp-app-playground.png",
       "alt": "The Playground rendering the tutorial's reservation widget with a Reservation Confirmed message."
     },
