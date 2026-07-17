@@ -12,6 +12,7 @@ import {
   handleConsent,
   handleRegister,
   handleToken,
+  escapeHtml,
   protectedResourceMetadata,
   readBody,
   sendHtml,
@@ -307,7 +308,7 @@ function landingPage(config: ReferenceServerConfig, capture: CaptureSession): st
 <html lang="en"><head><meta charset="utf-8" /><title>MCPJam OAuth reference server</title></head>
 <body style="font-family:system-ui;max-width:44rem;margin:3rem auto;line-height:1.5">
 <h1>MCPJam OAuth reference server (HP-10)</h1>
-<p>Current capture label: <b>${capture.label}</b> — ${capture.eventCount()} events recorded.</p>
+<p>Current capture label: <b>${escapeHtml(capture.label)}</b> — ${capture.eventCount()} events recorded.</p>
 <ul>
   <li>MCP endpoint (OAuth-gated): <code>${config.publicUrl}/mcp</code></li>
   <li>Protected resource metadata: <code>/.well-known/oauth-protected-resource/mcp</code></li>

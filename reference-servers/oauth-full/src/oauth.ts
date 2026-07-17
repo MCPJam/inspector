@@ -362,7 +362,7 @@ async function resolveCimdClient(ctx: OAuthContext, clientId: string): Promise<R
 // /authorize
 // ---------------------------------------------------------------------------
 
-const escapeHtml = (value: string) =>
+export const escapeHtml = (value: string) =>
   value.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 
 export async function handleAuthorize(ctx: OAuthContext, req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
