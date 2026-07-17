@@ -6,6 +6,10 @@ icon: "wrench"
 
 Once connected (with or without auth), the `tools`, `resources`, and `prompts` command groups let you explore and exercise what the server exposes.
 
+<Frame>
+  <img className="block" src="/images/cli/cli-tools-list.png" alt="Terminal output of mcpjam tools list running against the everything server." />
+</Frame>
+
 ## Running commands as a host
 
 Add `--host <id>` to any `tools`, `resources`, or `prompts` command to connect the way a real host would — sending that host's `clientInfo`, advertised `clientCapabilities`, and protocol version in the MCP `initialize` handshake, exactly as the Inspector Playground does.

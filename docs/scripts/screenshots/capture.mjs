@@ -4,11 +4,12 @@
 // Usage:
 //   node docs/scripts/screenshots/capture.mjs [--only <id>] [--kind ui|terminal] [--tier A|B|C] [--list] [--validate]
 //   node docs/scripts/screenshots/capture.mjs --login
+//   node docs/scripts/screenshots/capture.mjs --compress
 //
 // See docs/scripts/screenshots/README.md for the full workflow.
 
-import { readFileSync, existsSync } from "node:fs";
-import { mkdir, mkdtemp, rename } from "node:fs/promises";
+import { readFileSync, existsSync, statSync } from "node:fs";
+import { mkdir, mkdtemp, rename, writeFile } from "node:fs/promises";
 import { execFile as execFileCb, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { createInterface } from "node:readline/promises";
@@ -16,6 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import sharp from "sharp";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -65,6 +67,7 @@ function parseArgs(argv) {
     list: false,
     validate: false,
     login: false,
+    compress: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -75,6 +78,9 @@ function parseArgs(argv) {
         if (!opts.only) {
           throw new Error("--only requires an id argument");
         }
+        break;
+      case "--compress":
+        opts.compress = true;
         break;
       case "--kind":
         opts.kind = argv[++i];
@@ -1138,6 +1144,54 @@ async function runLogin() {
   }
 }
 
+const MAX_PNG_BYTES = 500 * 1024;
+
+function formatKb(bytes) {
+  return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+// Re-encodes every manifest PNG that exists on disk and is over the 500 KB
+// budget with sharp, keeping the recompressed result only if it's smaller.
+// Prints a size table for every PNG on disk (not just the ones touched) so
+// the whole manifest's weight is visible in one run.
+async function runCompress(manifest) {
+  const rows = [];
+  for (const entry of manifest.entries) {
+    const fullPath = path.join(REPO_ROOT, entry.output);
+    if (!existsSync(fullPath)) continue;
+
+    const before = statSync(fullPath).size;
+    let after = before;
+    if (before > MAX_PNG_BYTES) {
+      const recompressed = await sharp(fullPath)
+        .png({ compressionLevel: 9, palette: true })
+        .toBuffer();
+      if (recompressed.length < before) {
+        await writeFile(fullPath, recompressed);
+        after = recompressed.length;
+      }
+    }
+    rows.push({ id: entry.id, before, after });
+  }
+
+  const idWidth = Math.max(2, ...rows.map((r) => r.id.length));
+  console.log(`${"id".padEnd(idWidth)}  before      after`);
+  for (const row of rows) {
+    const flag = row.after > MAX_PNG_BYTES ? "  OVER 500 KB" : "";
+    console.log(
+      `${row.id.padEnd(idWidth)}  ${formatKb(row.before).padStart(9)}  ${formatKb(row.after).padStart(9)}${flag}`,
+    );
+  }
+
+  const stillOver = rows.filter((row) => row.after > MAX_PNG_BYTES);
+  if (stillOver.length > 0) {
+    console.error(`${stillOver.length} PNG(s) still over 500 KB after compression`);
+    process.exitCode = 1;
+  } else {
+    console.log(`All ${rows.length} PNGs <= 500 KB`);
+  }
+}
+
 async function main() {
   let opts;
   try {
@@ -1145,6 +1199,11 @@ async function main() {
   } catch (err) {
     console.error(err.message);
     process.exitCode = 1;
+    return;
+  }
+
+  if (opts.compress) {
+    await runCompress(loadManifest());
     return;
   }
 

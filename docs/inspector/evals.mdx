@@ -6,6 +6,10 @@ icon: "flask-conical"
 
 A benchmark score doesn't tell you whether your server holds up in production. Evaluate lets you pin down the behaviors you care about — which tools fire, with what arguments, what the final answer looks like — and run them across the models your users actually use.
 
+<Frame>
+  <img className="block" src="/images/evals/evals-suite-dashboard.png" alt="The Evals suite view showing accuracy, runs, and cases." />
+</Frame>
+
 ## Requirements
 
 Evals are available to both signed-in users and guests. Guests authenticate automatically using their guest session, so no sign-in is required to run or generate tests.
@@ -220,6 +224,10 @@ The **Runs / Cases** segmented control switches between the run history list and
 When two or more host configurations are attached to a suite, a **By case / By host** toggle appears. **By host** shows a matrix — one column per host, one row per case. Each cell shows pass/fail dots, pass rate, median latency, and token usage. A host detached after runs were recorded stays visible, labelled **historical**.
 
 ### Run view
+
+<Frame>
+  <img className="block" src="/images/evals/evals-run-detail.png" alt="An Evals run detail view displaying the run header with a PASSED badge, pass-rate statistics, AI-generated run insights, per-case results, and previous runs in a side rail." />
+</Frame>
 
 - **Per-iteration row** with case, model, pass/fail, tokens, duration, and the tool calls that actually happened.
 - **Expected vs actual** tool calls side-by-side when an iteration fails. For failed iterations, a **Categorized diff** above the raw Expected/Actual grids groups discrepancies into four categories:

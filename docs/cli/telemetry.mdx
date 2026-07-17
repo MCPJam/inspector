@@ -8,6 +8,10 @@ icon: "activity"
 
 Telemetry is enabled by default. The first command invocation that is not opted out writes `telemetry.json` with `enabled: true` and a random install UUID.
 
+<Frame>
+  <img className="block" src="/images/cli/cli-telemetry-status.png" alt="Terminal output of mcpjam telemetry status." />
+</Frame>
+
 ## What's collected
 
 The CLI emits one `cli_command` event after a command action starts. Event properties are limited to:

@@ -12,6 +12,10 @@ A **Client** is a named, reusable configuration that defines how MCPJam connects
 
 Real MCP hosts (Claude Desktop, ChatGPT, Cursor, your own product) each advertise slightly different capabilities and apply different sandbox policies to MCP Apps. Clients let you reproduce those environments in MCPJam so you can verify your server behaves correctly *before* shipping to a specific host.
 
+<Frame>
+  <img className="block" src="/images/clients/client-focus-panel.png" alt="The Hosts focus panel opened from a template deep link, showing the canvas diagram and settings." />
+</Frame>
+
 ## Why Clients exist
 
 Without Clients, every Chat or Eval would be tied to whatever ambient settings were active when you ran it. That makes results hard to reproduce and hard to share. Clients fix this by giving you:
@@ -171,6 +175,10 @@ The **Compare** view lets you see how multiple host configurations stack up side
 ### Opening Compare
 
 Compare is the third tab in the Connect section of the sidebar (`Servers | Client | Compare`). Click **Compare** from any Connect view to open it. The `/host-compare` route is preserved, so any existing bookmarks or links continue to work.
+
+<Frame>
+  <img className="block" src="/images/clients/host-compare-view.png" alt="The Compare view with two host columns shown side by side." />
+</Frame>
 
 ### Deep-linking to a specific selection
 
