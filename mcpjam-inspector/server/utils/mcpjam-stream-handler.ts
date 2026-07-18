@@ -2670,6 +2670,8 @@ async function processOneStep(
       inputTokens: stepUsage?.inputTokens,
       outputTokens: stepUsage?.outputTokens,
       totalTokens: stepUsage?.totalTokens,
+      cachedInputTokens: stepUsage?.cachedInputTokens,
+      cacheWriteTokens: stepUsage?.cacheWriteTokens,
       messageStartIndex: stepMessageStartIndex,
       messageEndIndex: stepMessageEndIndex,
       status: "ok",
