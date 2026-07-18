@@ -237,6 +237,7 @@ export interface DirectChatTurnStepFinishEvent {
     totalTokens?: number;
     cachedInputTokens?: number;
     cacheWriteTokens?: number;
+    noCacheInputTokens?: number;
   };
   settledWithError: boolean;
   /**
@@ -476,6 +477,9 @@ function toLiveChatTraceUsage(
   const cacheWriteTokens = usage.inputTokenDetails?.cacheWriteTokens;
   if (typeof cacheWriteTokens === "number")
     next.cacheWriteTokens = cacheWriteTokens;
+  const noCacheInputTokens = usage.inputTokenDetails?.noCacheTokens;
+  if (typeof noCacheInputTokens === "number")
+    next.noCacheInputTokens = noCacheInputTokens;
   return Object.keys(next).length > 0 ? next : undefined;
 }
 
@@ -902,6 +906,12 @@ export function runDirectChatTurn(
                   : {}),
                 ...(traceTurn.turnUsage.cacheWriteTokens !== undefined
                   ? { cacheWriteTokens: traceTurn.turnUsage.cacheWriteTokens }
+                  : {}),
+                ...(traceTurn.turnUsage.noCacheInputTokens !== undefined
+                  ? {
+                      noCacheInputTokens:
+                        traceTurn.turnUsage.noCacheInputTokens,
+                    }
                   : {}),
               }
             : undefined,

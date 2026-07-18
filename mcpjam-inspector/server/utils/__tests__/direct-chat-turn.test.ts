@@ -640,6 +640,7 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
       totalTokens: 15,
       cachedInputTokens: 6,
       cacheWriteTokens: 1,
+      noCacheInputTokens: 3,
     });
   });
 
