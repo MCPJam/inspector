@@ -350,7 +350,7 @@ describe("agent-chat-instances", () => {
   describe("turn lifecycle (shared across surfaces)", () => {
     it("claims a completion exactly once — a second observer gets null", () => {
       getOrCreateAgentChat("t1");
-      markAgentTurnStarted("t1", { model: "m", provider: "p" });
+      markAgentTurnStarted("t1", { model: "m", provider: "p", messageIndex: 1 });
 
       const first = claimAgentTurnCompletion("t1");
       expect(first).not.toBeNull();
@@ -361,29 +361,64 @@ describe("agent-chat-instances", () => {
       expect(claimAgentTurnCompletion("t1")).toBeNull();
     });
 
-    it("carries submit-time attribution even if config changes mid-turn", () => {
+    it("carries submit-time attribution + message index even if config changes mid-turn", () => {
       const entry = getOrCreateAgentChat("t2");
-      markAgentTurnStarted("t2", { model: "gpt", provider: "openai" });
+      markAgentTurnStarted("t2", {
+        model: "gpt",
+        provider: "openai",
+        messageIndex: 4,
+      });
       // Simulate a config swap during streaming.
       entry.config.model = { id: "claude", provider: "anthropic" } as never;
       const claim = claimAgentTurnCompletion("t2");
-      expect(claim).toMatchObject({ model: "gpt", provider: "openai" });
+      expect(claim).toMatchObject({
+        model: "gpt",
+        provider: "openai",
+        messageIndex: 4,
+      });
     });
 
     it("a fresh submit re-arms the claim for the next turn", () => {
       getOrCreateAgentChat("t3");
-      markAgentTurnStarted("t3", { model: null, provider: null });
+      markAgentTurnStarted("t3", {
+        model: null,
+        provider: null,
+        messageIndex: 1,
+      });
       expect(claimAgentTurnCompletion("t3")).not.toBeNull();
       expect(claimAgentTurnCompletion("t3")).toBeNull();
-      markAgentTurnStarted("t3", { model: null, provider: null });
-      expect(claimAgentTurnCompletion("t3")).not.toBeNull();
+      markAgentTurnStarted("t3", {
+        model: null,
+        provider: null,
+        messageIndex: 2,
+      });
+      expect(claimAgentTurnCompletion("t3")).toMatchObject({ messageIndex: 2 });
     });
 
     it("claim on an unknown session is null, never throws", () => {
       expect(claimAgentTurnCompletion("nope")).toBeNull();
       expect(() =>
-        markAgentTurnStarted("nope", { model: null, provider: null }),
+        markAgentTurnStarted("nope", {
+          model: null,
+          provider: null,
+          messageIndex: 0,
+        }),
       ).not.toThrow();
+    });
+
+    it("a hand-off surface can claim once even with no local status edge", () => {
+      // Original surface submits (bumps seq) then unmounts WITHOUT emitting —
+      // the completion is still claimable exactly once by whoever attaches.
+      getOrCreateAgentChat("t4");
+      markAgentTurnStarted("t4", {
+        model: "m",
+        provider: "p",
+        messageIndex: 3,
+      });
+      const adopted = claimAgentTurnCompletion("t4");
+      expect(adopted).toMatchObject({ messageIndex: 3, model: "m" });
+      // No second emission from any other observer.
+      expect(claimAgentTurnCompletion("t4")).toBeNull();
     });
   });
 });

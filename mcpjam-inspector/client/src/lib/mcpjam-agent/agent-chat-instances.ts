@@ -88,6 +88,8 @@ export interface AgentTurnLifecycle {
   lastEmittedSeq: number;
   model: string | null;
   provider: string | null;
+  /** 1-based turn index snapshotted at submit (survives surface hand-off). */
+  messageIndex: number;
 }
 
 export interface AgentChatEntry {
@@ -172,7 +174,11 @@ function evictIdleInstances(excludeKey: string): void {
  */
 export function markAgentTurnStarted(
   chatSessionId: string,
-  attribution: { model: string | null; provider: string | null },
+  attribution: {
+    model: string | null;
+    provider: string | null;
+    messageIndex: number;
+  },
 ): void {
   const entry = instances.get(chatSessionId);
   if (!entry) return;
@@ -180,6 +186,7 @@ export function markAgentTurnStarted(
   entry.turn.startedAt = Date.now();
   entry.turn.model = attribution.model;
   entry.turn.provider = attribution.provider;
+  entry.turn.messageIndex = attribution.messageIndex;
 }
 
 /**
@@ -189,9 +196,12 @@ export function markAgentTurnStarted(
  * same shared Chat) gets `null` and must not emit. `null` also when no entry
  * exists. Clears `startedAt` so a stray later edge can't double-count.
  */
-export function claimAgentTurnCompletion(
-  chatSessionId: string,
-): { startedAt: number | null; model: string | null; provider: string | null } | null {
+export function claimAgentTurnCompletion(chatSessionId: string): {
+  startedAt: number | null;
+  model: string | null;
+  provider: string | null;
+  messageIndex: number;
+} | null {
   const entry = instances.get(chatSessionId);
   if (!entry) return null;
   if (entry.turn.lastEmittedSeq === entry.turn.seq) return null;
@@ -200,6 +210,7 @@ export function claimAgentTurnCompletion(
     startedAt: entry.turn.startedAt,
     model: entry.turn.model,
     provider: entry.turn.provider,
+    messageIndex: entry.turn.messageIndex,
   };
   entry.turn.startedAt = null;
   return snapshot;
@@ -299,6 +310,7 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
       lastEmittedSeq: 0,
       model: null,
       provider: null,
+      messageIndex: 0,
     },
   };
   instances.set(chatSessionId, entry);

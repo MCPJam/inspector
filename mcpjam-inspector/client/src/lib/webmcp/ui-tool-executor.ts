@@ -146,19 +146,47 @@ function emitTelemetry(
 // won't dedupe against each other, which is safe).
 const SIGNATURE_MAX_DEPTH = 6;
 const SIGNATURE_MAX_CHARS = 2048;
+// Node budget: a hard cap on how many values canonicalize will visit, so a
+// WIDE payload (huge flat array/object) is bounded the same way depth bounds
+// a deep one — the traversal stops before it can build a megabyte string.
+const SIGNATURE_MAX_NODES = 512;
 
 /**
- * Recursively sort object keys so equal args hash equal, truncating past
- * SIGNATURE_MAX_DEPTH with a marker so a deep payload can't run away.
+ * Recursively sort object keys so equal args hash equal. Bounded three ways —
+ * depth, node count, and (at the caller) serialized length — because `input`
+ * is arbitrary model output and the fingerprint is observation-only: it must
+ * never process unbounded data on the UI thread. Over-budget subtrees collapse
+ * to a deterministic marker (distinct giant inputs then simply don't dedupe,
+ * which is safe for a loop-detection heuristic).
  */
-function canonicalize(value: unknown, depth = 0): unknown {
+function canonicalize(
+  value: unknown,
+  depth: number,
+  budget: { nodes: number },
+): unknown {
+  if (budget.nodes <= 0) return "<budget>";
+  budget.nodes -= 1;
   if (depth >= SIGNATURE_MAX_DEPTH) return "<depth>";
-  if (Array.isArray(value)) return value.map((v) => canonicalize(v, depth + 1));
+  if (Array.isArray(value)) {
+    const out: unknown[] = [];
+    for (const v of value) {
+      if (budget.nodes <= 0) {
+        out.push("<budget>");
+        break;
+      }
+      out.push(canonicalize(v, depth + 1, budget));
+    }
+    return out;
+  }
   if (value && typeof value === "object") {
     const source = value as Record<string, unknown>;
     const out: Record<string, unknown> = {};
     for (const key of Object.keys(source).sort()) {
-      out[key] = canonicalize(source[key], depth + 1);
+      if (budget.nodes <= 0) {
+        out["<budget>"] = true;
+        break;
+      }
+      out[key] = canonicalize(source[key], depth + 1, budget);
     }
     return out;
   }
@@ -167,10 +195,10 @@ function canonicalize(value: unknown, depth = 0): unknown {
 
 function callSignature(toolName: string, input: unknown): string {
   try {
-    const body = JSON.stringify(canonicalize(input));
-    // Cap the retained string. A collision after truncation just means two
-    // giant distinct inputs are treated as one — acceptable for a loop-
-    // detection heuristic, and far cheaper than holding megabytes.
+    const body = JSON.stringify(canonicalize(input, 0, { nodes: SIGNATURE_MAX_NODES }));
+    // Final length cap in case the bounded traversal still produced a long
+    // string. A collision after truncation just means two giant distinct
+    // inputs are treated as one — acceptable, and far cheaper than megabytes.
     const bounded =
       body.length > SIGNATURE_MAX_CHARS
         ? `${body.slice(0, SIGNATURE_MAX_CHARS)}…<${body.length}>`
