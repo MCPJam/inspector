@@ -268,17 +268,23 @@ export const ContextInputUsage = ({
   const inputCost =
     inputUsage?.costUSD?.inputUSD ?? inputUsage?.costUSD?.totalUSD;
 
-  // Cache breakdown (present only when the provider reported cache data —
-  // see the producer plumbing in shared/live-chat-trace.ts). Rendered as
-  // muted sub-rows so the popover stays a single glanceable column.
+  // Cache breakdown, shown only when cache activity actually occurred. Some
+  // providers (the bundled Claude Code / Codex harness bridges) report
+  // cacheRead/cacheWrite as a literal 0 on cache-free turns rather than
+  // omitting them, so gate on POSITIVE counts — otherwise every cache-free
+  // response would show "Cache read 0 / Cache write 0 / Uncached = Input".
   const details = usage?.inputTokenDetails;
   const breakdown: Array<[string, number]> = [];
-  if (typeof details?.cacheReadTokens === "number") {
+  if (typeof details?.cacheReadTokens === "number" && details.cacheReadTokens > 0) {
     breakdown.push(["Cache read", details.cacheReadTokens]);
   }
-  if (typeof details?.cacheWriteTokens === "number") {
+  if (
+    typeof details?.cacheWriteTokens === "number" &&
+    details.cacheWriteTokens > 0
+  ) {
     breakdown.push(["Cache write", details.cacheWriteTokens]);
   }
+  // Uncached only alongside real cache activity (else it just equals Input).
   if (typeof details?.noCacheTokens === "number" && breakdown.length > 0) {
     breakdown.push(["Uncached", details.noCacheTokens]);
   }
