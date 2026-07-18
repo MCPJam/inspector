@@ -240,14 +240,23 @@ already mitigates ad-block loss). Revisit if funnel-grade fidelity is needed.
 
 **Path-split correlation.** `execution_path` is server-only (see `agent_turn_completed`
 above), so the client outcome events (`ui_tool_call_*`, `agent_turn_completed`) and the
-server `chat_turn_cache_usage_server` must share a **non-sensitive turn key** to join on
-— carry the existing `turnId` (already minted per turn in the stream request, see
-`mcpjam-stream-handler.ts`) on both sides. Without it the baseline dashboard's promise to
-break approval/denial/duplicate/tool-error rates down by execution path is unachievable:
-the client events know the outcomes but not the path, the server event knows the path but
-not the outcomes. (The alternative — capturing outcomes server-side — is heavier and
-loses the client-only approval/duplicate signals; the shared turn key is the cheaper
-join.)
+server `chat_turn_cache_usage_server` must share a **non-sensitive turn key** to join on.
+The catch: today's `turnId` is minted **server-side** and only forwarded to the hosted
+backend (`mcpjam-stream-handler.ts`); it never reaches the browser, and
+`use-mcpjam-agent-session.ts` — where the client events are emitted — has no turn id at
+all. So the join key does not exist yet. Two ways to create it, pick one as a prerequisite
+of the dashboard (not assumed to already work):
+  - **Client mints it.** Generate a per-turn UUID in `use-mcpjam-agent-session.ts` at
+    submit (alongside the existing `turnStartedAtRef`/lifecycle snapshot), stamp it on
+    every client outcome event, and submit it in the chat POST body so the server stamps
+    the SAME id on `chat_turn_cache_usage_server`. Preferred — the client already owns
+    the turn lifecycle.
+  - **Server propagates its id back.** Return the server `turnId` to the client over the
+    response/SSE stream so the client events can carry it. Heavier (needs a stream field)
+    and race-prone (events can fire before the id arrives).
+Until one lands, the baseline dashboard cannot split approval/denial/duplicate/tool-error
+rates by execution path — the client events know the outcomes but not the path, the server
+event knows the path but not the outcomes.
 
 ### Duplicate-call detection
 
