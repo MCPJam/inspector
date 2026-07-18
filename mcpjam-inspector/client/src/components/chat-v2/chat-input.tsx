@@ -1769,14 +1769,15 @@ export function ChatInput({
                             outputTokens: tokenUsage.outputTokens,
                             totalTokens: tokenUsage.totalTokens,
                             inputTokenDetails: {
-                              // Only derive a breakdown when the provider
-                              // actually reported cache data — otherwise keep
-                              // the previous all-undefined behavior.
+                              // Only derive the input partition when cache
+                              // READS were reported — write tokens are
+                              // orthogonal to the read/no-cache split, and
+                              // deriving from them would claim "all input
+                              // uncached" without breakdown data.
                               noCacheTokens:
-                                tokenUsage.cachedInputTokens !== undefined ||
-                                tokenUsage.cacheWriteTokens !== undefined
+                                tokenUsage.cachedInputTokens !== undefined
                                   ? tokenUsage.inputTokens -
-                                    (tokenUsage.cachedInputTokens ?? 0)
+                                    tokenUsage.cachedInputTokens
                                   : undefined,
                               cacheReadTokens: tokenUsage.cachedInputTokens,
                               cacheWriteTokens: tokenUsage.cacheWriteTokens,

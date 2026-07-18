@@ -5,7 +5,10 @@ import {
   type ToolSet,
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
-import { createLlmModel } from "../../utils/chat-helpers";
+import {
+  createLlmModel,
+  finishStepUsageMessageMetadata,
+} from "../../utils/chat-helpers";
 import {
   getCanonicalModelId,
   isMCPJamGuestAllowedModel,
@@ -243,18 +246,7 @@ function streamDirectChatWithLiveTrace(options: {
         for await (const chunk of handle.result.toUIMessageStream({
           messageMetadata: ({ part }) => {
             if (part.type === "finish-step") {
-              return {
-                inputTokens: part.usage.inputTokens,
-                outputTokens: part.usage.outputTokens,
-                totalTokens: part.usage.totalTokens,
-                // Prompt-cache measurement (additive; undefined keys drop out
-                // of the JSON wire shape, so no churn when absent).
-                cachedInputTokens:
-                  part.usage.inputTokenDetails?.cacheReadTokens ??
-                  part.usage.cachedInputTokens,
-                cacheWriteTokens:
-                  part.usage.inputTokenDetails?.cacheWriteTokens,
-              };
+              return finishStepUsageMessageMetadata(part.usage);
             }
           },
           onError: (error) => {

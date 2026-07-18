@@ -846,6 +846,8 @@ export function runDirectChatTurn(
         inputTokens: stepUsage?.inputTokens,
         outputTokens: stepUsage?.outputTokens,
         totalTokens: stepUsage?.totalTokens,
+        cachedInputTokens: stepUsage?.cachedInputTokens,
+        cacheWriteTokens: stepUsage?.cacheWriteTokens,
         messageStartIndex,
         messageEndIndex,
         finishReason: normalizeFinishReason(step?.finishReason),

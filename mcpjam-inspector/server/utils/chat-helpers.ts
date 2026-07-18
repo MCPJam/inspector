@@ -417,3 +417,35 @@ export const scrubChatGPTAppsToolResultsForBackend = (
     return { ...msg, content } as ModelMessage;
   });
 };
+
+/**
+ * The finish-step usage → UIMessage metadata projection shared by every
+ * local-execution stream route (direct chat-v2 route, local BYOK org
+ * handler). One picker so a future usage field can't silently reach only
+ * one client path. Additive: undefined keys drop out of the JSON wire
+ * shape, so the contract doesn't churn when a provider reports no cache
+ * data. Reads the AI SDK v6 `inputTokenDetails` names with the deprecated
+ * top-level `cachedInputTokens` as fallback.
+ */
+export function finishStepUsageMessageMetadata(usage: {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cachedInputTokens?: number;
+  inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
+}): {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cachedInputTokens?: number;
+  cacheWriteTokens?: number;
+} {
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    totalTokens: usage.totalTokens,
+    cachedInputTokens:
+      usage.inputTokenDetails?.cacheReadTokens ?? usage.cachedInputTokens,
+    cacheWriteTokens: usage.inputTokenDetails?.cacheWriteTokens,
+  };
+}

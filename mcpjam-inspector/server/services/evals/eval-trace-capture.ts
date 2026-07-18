@@ -33,6 +33,8 @@ type StepSpanMeta = {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  cachedInputTokens?: number;
+  cacheWriteTokens?: number;
   messageStartIndex?: number;
   messageEndIndex?: number;
   status?: EvalTraceSpanStatus;
@@ -125,6 +127,12 @@ function applyStepMeta(span: EvalTraceSpan, meta?: StepSpanMeta): void {
   }
   if (typeof meta.totalTokens === "number") {
     span.totalTokens = meta.totalTokens;
+  }
+  if (typeof meta.cachedInputTokens === "number") {
+    span.cachedInputTokens = meta.cachedInputTokens;
+  }
+  if (typeof meta.cacheWriteTokens === "number") {
+    span.cacheWriteTokens = meta.cacheWriteTokens;
   }
   if (typeof meta.messageStartIndex === "number") {
     span.messageStartIndex = meta.messageStartIndex;
@@ -363,6 +371,8 @@ export function emitAiSdkOnStepFinish(
     inputTokens: spanMeta?.inputTokens,
     outputTokens: spanMeta?.outputTokens,
     totalTokens: spanMeta?.totalTokens,
+    cachedInputTokens: spanMeta?.cachedInputTokens,
+    cacheWriteTokens: spanMeta?.cacheWriteTokens,
     messageStartIndex: spanMeta?.messageStartIndex,
     messageEndIndex: spanMeta?.messageEndIndex,
     status: spanMeta?.status ?? "ok",
@@ -388,6 +398,8 @@ export function emitAiSdkOnStepFinish(
     inputTokens: spanMeta?.inputTokens,
     outputTokens: spanMeta?.outputTokens,
     totalTokens: spanMeta?.totalTokens,
+    cachedInputTokens: spanMeta?.cachedInputTokens,
+    cacheWriteTokens: spanMeta?.cacheWriteTokens,
     messageStartIndex: spanMeta?.messageStartIndex,
     messageEndIndex: spanMeta?.messageEndIndex,
     status: spanMeta?.status ?? "ok",
