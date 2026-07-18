@@ -86,12 +86,13 @@ first catalog expansion, the third already exists.
 
 ### Layer 1 — `agent-chat-enabled`: one PostHog kill switch (PR F-1)
 
-Gates exactly three call sites:
+Gates exactly four call sites:
 
 | Site | Location | Off behavior |
 |---|---|---|
-| Home "Ask anything" hero | `client/src/components/HomeTab.tsx` (McpjamAgentHero/Thread) | not rendered |
+| Home "Ask anything" hero | `client/src/components/HomeTab.tsx` (McpjamAgentHero/Thread + the `?session=`/`?compose=` takeover) | not rendered; takeover falls through to normal home |
 | Agent side panel | `AgentSidePanelMount` at `App.tsx:3816` | not rendered (⌘\ inert) |
+| Header "Ask MCPJam" trigger | `AgentSidePanelTrigger` (rendered from `auth-upper-area.tsx`) — gates **inside the component** so every render site is covered | not rendered (no dead button toggling panel store state) |
 | Tool registration | `useRegisterUiTools` composition at `App.tsx:2051` → `enabled: !isChatboxChatRoute && agentChatEnabled` | catalog unregistered, native mirror clean |
 
 **Semantics: kill switch, fail-OPEN (`flag !== false`).** This deviates from the repo's
