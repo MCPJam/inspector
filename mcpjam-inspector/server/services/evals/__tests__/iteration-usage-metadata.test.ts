@@ -30,4 +30,33 @@ describe("buildIterationUsageMetadata", () => {
   it("omits undefined usage fields", () => {
     expect(buildIterationUsageMetadata({ totalTokens: 10 })).toEqual({});
   });
+
+  it("persists prompt-cache breakdown when present", () => {
+    expect(
+      buildIterationUsageMetadata({
+        inputTokens: 100,
+        outputTokens: 40,
+        totalTokens: 140,
+        cachedInputTokens: 60,
+        cacheWriteTokens: 10,
+        noCacheInputTokens: 30,
+      }),
+    ).toEqual({
+      inputTokens: 100,
+      outputTokens: 40,
+      cachedInputTokens: 60,
+      cacheWriteTokens: 10,
+      noCacheInputTokens: 30,
+    });
+  });
+
+  it("omits cache fields when absent (cache-free iteration)", () => {
+    expect(
+      buildIterationUsageMetadata({
+        inputTokens: 100,
+        outputTokens: 40,
+        totalTokens: 140,
+      }),
+    ).toEqual({ inputTokens: 100, outputTokens: 40 });
+  });
 });

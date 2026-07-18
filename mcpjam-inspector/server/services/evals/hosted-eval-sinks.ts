@@ -147,6 +147,21 @@ export function buildHostedEvalSinks(
         accumulatedUsage.inputTokens = baselineUsage.inputTokens + cumulativeInput;
         accumulatedUsage.outputTokens = baselineUsage.outputTokens + cumulativeOutput;
         accumulatedUsage.totalTokens = baselineUsage.totalTokens + cumulativeTotal;
+        // Cache tokens: accumulate the same baseline + cumulative way, but
+        // only set the field when there's actual cache activity so cache-free
+        // evals keep the previous 3-field usage shape (no churn).
+        const cumCacheRead =
+          (baselineUsage.cachedInputTokens ?? 0) +
+          (event.turnUsage?.cachedInputTokens ?? 0);
+        if (cumCacheRead > 0) accumulatedUsage.cachedInputTokens = cumCacheRead;
+        const cumCacheWrite =
+          (baselineUsage.cacheWriteTokens ?? 0) +
+          (event.turnUsage?.cacheWriteTokens ?? 0);
+        if (cumCacheWrite > 0) accumulatedUsage.cacheWriteTokens = cumCacheWrite;
+        const cumNoCache =
+          (baselineUsage.noCacheInputTokens ?? 0) +
+          (event.turnUsage?.noCacheInputTokens ?? 0);
+        if (cumNoCache > 0) accumulatedUsage.noCacheInputTokens = cumNoCache;
         emit({
           type: "step_finish",
           stepNumber: activeCompletedStepCount,

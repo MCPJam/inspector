@@ -28,6 +28,7 @@ import {
 import { consumeFullStreamAsEvalEvents } from "./stream-adapter.js";
 import type { BrowserSessionContext } from "../browser-session-context.js";
 import type { UsageTotals } from "./types.js";
+import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 
 export type LocalEvalTurnAcc = {
   conversationMessages: ModelMessage[];
@@ -126,6 +127,27 @@ export type DriveLocalEvalTurnParams = {
   }) => ToolCall[];
   sinks?: LocalEvalTurnSinks;
 };
+
+/**
+ * Cache-token fields for a mid-run snapshot usage object: baseline (iteration
+ * cumulative as of turn start) + this turn's cumulative `turnUsage`, only
+ * emitting a key when its total is positive so cache-free evals keep the
+ * plain 3-field usage shape.
+ */
+function cacheUsageFields(
+  baseline: { cachedInputTokens: number; cacheWriteTokens: number; noCacheInputTokens: number },
+  turnUsage: LiveChatTraceUsage | undefined,
+): Partial<UsageTotals> {
+  const out: Partial<UsageTotals> = {};
+  const read = baseline.cachedInputTokens + (turnUsage?.cachedInputTokens ?? 0);
+  if (read > 0) out.cachedInputTokens = read;
+  const write = baseline.cacheWriteTokens + (turnUsage?.cacheWriteTokens ?? 0);
+  if (write > 0) out.cacheWriteTokens = write;
+  const noCache =
+    baseline.noCacheInputTokens + (turnUsage?.noCacheInputTokens ?? 0);
+  if (noCache > 0) out.noCacheInputTokens = noCache;
+  return out;
+}
 
 async function consumeDirectChatTurnViaFullStream(
   handle: RunDirectChatTurnHandle,
@@ -264,6 +286,9 @@ export async function driveLocalEvalTurn(
     inputTokens: acc.accumulatedUsage.inputTokens ?? 0,
     outputTokens: acc.accumulatedUsage.outputTokens ?? 0,
     totalTokens: acc.accumulatedUsage.totalTokens ?? 0,
+    cachedInputTokens: acc.accumulatedUsage.cachedInputTokens ?? 0,
+    cacheWriteTokens: acc.accumulatedUsage.cacheWriteTokens ?? 0,
+    noCacheInputTokens: acc.accumulatedUsage.noCacheInputTokens ?? 0,
   };
   sinks?.onTurnStart?.();
 
@@ -336,6 +361,10 @@ export async function driveLocalEvalTurn(
             totalTokens:
               accumulatedUsageBeforeTurn.totalTokens +
               (traceTurn.turnUsage?.totalTokens ?? 0),
+            ...cacheUsageFields(
+              accumulatedUsageBeforeTurn,
+              traceTurn.turnUsage,
+            ),
           },
         });
       },
@@ -376,6 +405,20 @@ export async function driveLocalEvalTurn(
   acc.accumulatedUsage.totalTokens =
     (acc.accumulatedUsage.totalTokens ?? 0) +
     (headless.totalUsage?.totalTokens ?? 0);
+  // AI SDK totalUsage exposes cache tokens on `inputTokenDetails` (with the
+  // deprecated flat `cachedInputTokens` alias for reads). Accumulate onto the
+  // iteration usage, only setting a field when the running total is positive.
+  const td = headless.totalUsage?.inputTokenDetails;
+  const cacheRead =
+    (acc.accumulatedUsage.cachedInputTokens ?? 0) +
+    (td?.cacheReadTokens ?? headless.totalUsage?.cachedInputTokens ?? 0);
+  if (cacheRead > 0) acc.accumulatedUsage.cachedInputTokens = cacheRead;
+  const cacheWrite =
+    (acc.accumulatedUsage.cacheWriteTokens ?? 0) + (td?.cacheWriteTokens ?? 0);
+  if (cacheWrite > 0) acc.accumulatedUsage.cacheWriteTokens = cacheWrite;
+  const noCache =
+    (acc.accumulatedUsage.noCacheInputTokens ?? 0) + (td?.noCacheTokens ?? 0);
+  if (noCache > 0) acc.accumulatedUsage.noCacheInputTokens = noCache;
 
   if (promptResponseMessages.length === 0) {
     acc.iterationError =

@@ -33,5 +33,17 @@ export function buildIterationUsageMetadata(
     }
   }
 
+  // Prompt-cache breakdown — persisted only when present (cache-free
+  // iterations keep the input/output-only shape, no churn).
+  if (typeof usage.cachedInputTokens === "number") {
+    metadata.cachedInputTokens = usage.cachedInputTokens;
+  }
+  if (typeof usage.cacheWriteTokens === "number") {
+    metadata.cacheWriteTokens = usage.cacheWriteTokens;
+  }
+  if (typeof usage.noCacheInputTokens === "number") {
+    metadata.noCacheInputTokens = usage.noCacheInputTokens;
+  }
+
   return metadata;
 }

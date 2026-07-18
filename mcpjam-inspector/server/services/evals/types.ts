@@ -42,6 +42,12 @@ export type UsageTotals = {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  /** Prompt-cache READ tokens (subset of `inputTokens`). Absent when zero. */
+  cachedInputTokens?: number;
+  /** Prompt-cache CREATION (write) tokens. Absent when zero. */
+  cacheWriteTokens?: number;
+  /** Provider-reported NON-cached input tokens. Absent when zero. */
+  noCacheInputTokens?: number;
 };
 
 export type EvaluationResult = {

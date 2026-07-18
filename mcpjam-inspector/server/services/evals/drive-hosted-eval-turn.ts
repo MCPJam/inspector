@@ -98,6 +98,9 @@ export interface HostedEvalTurnSinkContext {
     inputTokens: number;
     outputTokens: number;
     totalTokens: number;
+    cachedInputTokens?: number;
+    cacheWriteTokens?: number;
+    noCacheInputTokens?: number;
   };
   /** This turn's tool-instrumentation span context (`wrapToolSetForEvalTrace`). */
   traceCtx: ReturnType<typeof createAiSdkEvalTraceContext>;
@@ -211,6 +214,9 @@ export async function driveHostedEvalTurn(
     inputTokens: acc.accumulatedUsage.inputTokens ?? 0,
     outputTokens: acc.accumulatedUsage.outputTokens ?? 0,
     totalTokens: acc.accumulatedUsage.totalTokens ?? 0,
+    cachedInputTokens: acc.accumulatedUsage.cachedInputTokens ?? 0,
+    cacheWriteTokens: acc.accumulatedUsage.cacheWriteTokens ?? 0,
+    noCacheInputTokens: acc.accumulatedUsage.noCacheInputTokens ?? 0,
   };
 
   // Per-turn tool-call accumulator. Index by `promptIndex` (get-or-create)
@@ -444,6 +450,20 @@ export async function driveHostedEvalTurn(
       baselineUsage.outputTokens + (turnResult.usage.outputTokens ?? 0);
     acc.accumulatedUsage.totalTokens =
       baselineUsage.totalTokens + (turnResult.usage.totalTokens ?? 0);
+    // Cache tokens, only set when the running total is positive (cache-free
+    // evals keep the 3-field shape).
+    const cacheRead =
+      (baselineUsage.cachedInputTokens ?? 0) +
+      (turnResult.usage.cachedInputTokens ?? 0);
+    if (cacheRead > 0) acc.accumulatedUsage.cachedInputTokens = cacheRead;
+    const cacheWrite =
+      (baselineUsage.cacheWriteTokens ?? 0) +
+      (turnResult.usage.cacheWriteTokens ?? 0);
+    if (cacheWrite > 0) acc.accumulatedUsage.cacheWriteTokens = cacheWrite;
+    const noCache =
+      (baselineUsage.noCacheInputTokens ?? 0) +
+      (turnResult.usage.noCacheInputTokens ?? 0);
+    if (noCache > 0) acc.accumulatedUsage.noCacheInputTokens = noCache;
   }
 
   // Per-turn tool calls — rebuild from the new messages only (the engine
