@@ -203,12 +203,10 @@ export const APP_SURFACES = [
     userActivities: [
       "Search the registry for a server",
       "Install a registry server into the project",
+      "Star or unstar a registry server",
     ],
-    agentTools: {
-      kind: "none",
-      reason:
-        "Tool group planned (search the registry, install a server into the project); tracked in the surface-tools rollout.",
-    },
+    hasSnapshotProvider: true,
+    agentTools: { kind: "group" },
     showInAtlas: true,
   },
   {

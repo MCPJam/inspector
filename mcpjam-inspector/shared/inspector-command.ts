@@ -39,7 +39,10 @@ export type InspectorCommandType =
   | "addServer"
   | "connectServer"
   | "disconnectServer"
-  | "removeServer";
+  | "removeServer"
+  | "connectRegistryServer"
+  | "disconnectRegistryServer"
+  | "toggleRegistryStar";
 
 export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "navigate",
@@ -55,6 +58,9 @@ export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "connectServer",
   "disconnectServer",
   "removeServer",
+  "connectRegistryServer",
+  "disconnectRegistryServer",
+  "toggleRegistryStar",
 ] as const satisfies readonly InspectorCommandType[];
 
 export interface InspectorCommandError {
@@ -215,6 +221,43 @@ export interface RemoveServerInspectorCommand {
   timeoutMs?: number;
 }
 
+/**
+ * Registry-screen commands, handled by `RegistryTab` while `/registry` is
+ * mounted (the first mount-scoped surface tool group).
+ *
+ * `serverName` is how the model addresses a catalog entry: the card's
+ * display name ("Asana"), its registry name ("com.asana.mcp"), or the
+ * project server name a variant creates ("Asana (App)"). Handlers resolve
+ * it against the loaded catalog and reject anything else as
+ * `unknown_server` — never a fuzzy guess. `variant` picks between a
+ * dual-type card's Text and App entries.
+ */
+export interface ConnectRegistryServerInspectorCommand {
+  id: string;
+  type: "connectRegistryServer";
+  payload: { serverName: string; variant?: "text" | "app" };
+  timeoutMs?: number;
+}
+
+export interface DisconnectRegistryServerInspectorCommand {
+  id: string;
+  type: "disconnectRegistryServer";
+  payload: { serverName: string; variant?: "text" | "app" };
+  timeoutMs?: number;
+}
+
+/**
+ * `starred` is the explicit TARGET state, not a toggle: the star buttons
+ * flip whatever is current, but an agent retrying a toggle would flip the
+ * state back — set-to-state keeps the command idempotent.
+ */
+export interface ToggleRegistryStarInspectorCommand {
+  id: string;
+  type: "toggleRegistryStar";
+  payload: { serverName: string; starred: boolean };
+  timeoutMs?: number;
+}
+
 export type InspectorCommand =
   | NavigateInspectorCommand
   | SelectServerInspectorCommand
@@ -228,7 +271,10 @@ export type InspectorCommand =
   | AddServerInspectorCommand
   | ConnectServerInspectorCommand
   | DisconnectServerInspectorCommand
-  | RemoveServerInspectorCommand;
+  | RemoveServerInspectorCommand
+  | ConnectRegistryServerInspectorCommand
+  | DisconnectRegistryServerInspectorCommand
+  | ToggleRegistryStarInspectorCommand;
 
 export interface InspectorCommandSuccessResponse {
   id: string;

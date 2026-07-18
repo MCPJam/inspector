@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { RegistryTab } from "../RegistryTab";
 import {
   sortRegistryVariantsAppBeforeText,
@@ -10,6 +10,12 @@ import {
   readPendingQuickConnect,
   writePendingQuickConnect,
 } from "@/lib/quick-connect-pending";
+import { executeInspectorCommand } from "@/lib/inspector-command-handlers";
+import { readSurfaceSnapshot } from "@/lib/webmcp/surface-snapshot-registry";
+import type {
+  InspectorCommand,
+  InspectorCommandResponse,
+} from "@/shared/inspector-command.js";
 
 // Mock the useRegistryServers hook
 const mockConnect = vi.fn();
@@ -966,6 +972,253 @@ describe("RegistryTab", () => {
         sourceTab: "registry",
         createdAt: expect.any(Number),
       });
+    });
+  });
+
+  describe("agent bridge handlers", () => {
+    function dualTypeCards(): EnrichedRegistryCatalogCard[] {
+      return [
+        toCatalogCard(
+          [
+            createMockServer({
+              _id: "asana-text",
+              displayName: "Asana",
+              name: "com.asana.mcp",
+              clientType: "text",
+            }),
+            createMockServer({
+              _id: "asana-app",
+              displayName: "Asana",
+              name: "com.asana.mcp",
+              clientType: "app",
+            }),
+          ],
+          "asana",
+        ),
+      ];
+    }
+
+    function renderWithCards(cards: EnrichedRegistryCatalogCard[]) {
+      mockHookReturn = { ...mockHookReturn, catalogCards: cards };
+      return render(<RegistryTab {...defaultProps} />);
+    }
+
+    let commandSeq = 0;
+    async function dispatch(command: Omit<InspectorCommand, "id">) {
+      commandSeq += 1;
+      let response!: InspectorCommandResponse;
+      // Handlers call the component's own callbacks (setConnectingIds & co),
+      // so the dispatch is a React state update and belongs inside act().
+      await act(async () => {
+        response = await executeInspectorCommand({
+          ...command,
+          id: `bridge-test-${commandSeq}`,
+        } as InspectorCommand);
+      });
+      return response;
+    }
+
+    it("connectRegistryServer drives the same handleConnect path the button uses", async () => {
+      renderWithCards([toCatalogCard([createMockServer()])]);
+
+      const response = await dispatch({
+        type: "connectRegistryServer",
+        payload: { serverName: "Test Server" },
+      });
+
+      expect(response).toMatchObject({
+        status: "success",
+        result: { status: "connecting", serverName: "Test Server" },
+      });
+      expect(mockConnect).toHaveBeenCalledWith(
+        expect.objectContaining({ _id: "server_1" }),
+      );
+      // Same side effects as a click: the quick-connect pending is written.
+      expect(readPendingQuickConnect()).toMatchObject({
+        serverName: "Test Server",
+        sourceTab: "registry",
+      });
+    });
+
+    it("connectRegistryServer reports authorization_required for OAuth servers instead of starting the flow", async () => {
+      renderWithCards([
+        toCatalogCard([
+          createMockServer({
+            transport: {
+              transportType: "http",
+              url: "https://mcp.test.com/sse",
+              useOAuth: true,
+            },
+          }),
+        ]),
+      ]);
+
+      const response = await dispatch({
+        type: "connectRegistryServer",
+        payload: { serverName: "Test Server" },
+      });
+
+      expect(response).toMatchObject({
+        status: "success",
+        result: { status: "authorization_required" },
+      });
+      // The redirect-triggering path must NOT run from an agent tool call.
+      expect(mockConnect).not.toHaveBeenCalled();
+      expect(readPendingQuickConnect()).toBeNull();
+    });
+
+    it("connectRegistryServer resolves registry names and rejects unknown ones as unknown_server", async () => {
+      renderWithCards([toCatalogCard([createMockServer()])]);
+
+      const byRegistryName = await dispatch({
+        type: "connectRegistryServer",
+        payload: { serverName: "com.test.server" },
+      });
+      expect(byRegistryName.status).toBe("success");
+
+      const unknown = await dispatch({
+        type: "connectRegistryServer",
+        payload: { serverName: "Not In Catalog" },
+      });
+      expect(unknown).toMatchObject({
+        status: "error",
+        error: { code: "unknown_server" },
+      });
+    });
+
+    it("connectRegistryServer forces an explicit variant on dual-type cards", async () => {
+      renderWithCards(dualTypeCards());
+
+      const ambiguous = await dispatch({
+        type: "connectRegistryServer",
+        payload: { serverName: "Asana" },
+      });
+      expect(ambiguous).toMatchObject({
+        status: "error",
+        error: { code: "invalid_request" },
+      });
+      expect(mockConnect).not.toHaveBeenCalled();
+
+      const explicit = await dispatch({
+        type: "connectRegistryServer",
+        payload: { serverName: "Asana", variant: "app" },
+      });
+      expect(explicit).toMatchObject({
+        status: "success",
+        result: { serverName: "Asana (App)", status: "connecting" },
+      });
+      expect(mockConnect).toHaveBeenCalledWith(
+        expect.objectContaining({ _id: "asana-app" }),
+      );
+    });
+
+    it("connectRegistryServer is a no-op report when the server is already connected", async () => {
+      renderWithCards([
+        toCatalogCard([createMockServer({ connectionStatus: "connected" })]),
+      ]);
+
+      const response = await dispatch({
+        type: "connectRegistryServer",
+        payload: { serverName: "Test Server" },
+      });
+
+      expect(response).toMatchObject({
+        status: "success",
+        result: { status: "already_connected" },
+      });
+      expect(mockConnect).not.toHaveBeenCalled();
+    });
+
+    it("disconnectRegistryServer disconnects the active variant via the button's path", async () => {
+      renderWithCards([
+        toCatalogCard([createMockServer({ connectionStatus: "connected" })]),
+      ]);
+
+      const response = await dispatch({
+        type: "disconnectRegistryServer",
+        payload: { serverName: "Test Server" },
+      });
+
+      expect(response).toMatchObject({
+        status: "success",
+        result: { status: "disconnected", serverName: "Test Server" },
+      });
+      expect(mockDisconnect).toHaveBeenCalledWith(
+        expect.objectContaining({ _id: "server_1" }),
+      );
+    });
+
+    it("disconnectRegistryServer rejects a server that is not connected or installed", async () => {
+      renderWithCards([toCatalogCard([createMockServer()])]);
+
+      const response = await dispatch({
+        type: "disconnectRegistryServer",
+        payload: { serverName: "Test Server" },
+      });
+
+      expect(response).toMatchObject({
+        status: "error",
+        error: { code: "invalid_request" },
+      });
+      expect(mockDisconnect).not.toHaveBeenCalled();
+    });
+
+    it("toggleRegistryStar sets the target state through toggleStar, and no-ops when already there", async () => {
+      const card = toCatalogCard([createMockServer()]);
+      renderWithCards([card]);
+
+      const starred = await dispatch({
+        type: "toggleRegistryStar",
+        payload: { serverName: "Test Server", starred: true },
+      });
+      expect(starred).toMatchObject({
+        status: "success",
+        result: { status: "starred", starred: true },
+      });
+      expect(mockToggleStar).toHaveBeenCalledWith(card.registryCardKey);
+
+      mockToggleStar.mockClear();
+      const unchanged = await dispatch({
+        type: "toggleRegistryStar",
+        payload: { serverName: "Test Server", starred: false },
+      });
+      expect(unchanged).toMatchObject({
+        status: "success",
+        result: { status: "unchanged", starred: false },
+      });
+      expect(mockToggleStar).not.toHaveBeenCalled();
+    });
+
+    it("snapshot reports redacted state: names and statuses, never transport URLs", async () => {
+      renderWithCards([
+        toCatalogCard([
+          createMockServer({
+            transport: {
+              transportType: "http",
+              url: "https://mcp.test.com/sse",
+              useOAuth: true,
+            },
+          }),
+        ]),
+      ]);
+
+      const snapshot = await readSurfaceSnapshot("registry");
+      expect(snapshot).toMatchObject({
+        ok: true,
+        data: {
+          totalServers: 1,
+          servers: [
+            expect.objectContaining({
+              name: "Test Server",
+              registryName: "com.test.server",
+              requiresOAuth: true,
+              starred: false,
+              variants: [{ status: "not_connected" }],
+            }),
+          ],
+        },
+      });
+      expect(JSON.stringify(snapshot)).not.toContain("https://");
     });
   });
 });

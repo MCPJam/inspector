@@ -41,9 +41,105 @@ import {
   writePendingQuickConnect,
   type PendingQuickConnectState,
 } from "@/lib/quick-connect-pending";
+import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
+import type {
+  ConnectRegistryServerInspectorCommand,
+  DisconnectRegistryServerInspectorCommand,
+  ToggleRegistryStarInspectorCommand,
+} from "@/shared/inspector-command.js";
 
 /** Drop stale registry pending when OAuth was abandoned (browser closed) without a terminal callback. */
 const REGISTRY_PENDING_OAUTH_STALE_MS = 45 * 60 * 1000;
+
+/** Cap the agent snapshot's server list — state overview, not a data dump. */
+const AGENT_SNAPSHOT_MAX_SERVERS = 30;
+
+/**
+ * How the agent addresses a catalog entry: display name ("Asana"), registry
+ * name ("com.asana.mcp"), or the project server name a variant creates
+ * ("Asana (App)"). Exact (case-insensitive) matches only — an unknown name
+ * must become `unknown_server`, never a fuzzy guess.
+ */
+function matchesRegistryServerName(
+  variant: EnrichedRegistryServer,
+  serverName: string,
+): boolean {
+  const wanted = serverName.trim().toLowerCase();
+  return (
+    variant.name.toLowerCase() === wanted ||
+    variant.displayName.toLowerCase() === wanted ||
+    getRegistryServerName(variant).toLowerCase() === wanted
+  );
+}
+
+function requireRegistryCard(
+  cards: EnrichedRegistryCatalogCard[],
+  serverName: unknown,
+): { card: EnrichedRegistryCatalogCard; serverName: string } {
+  if (typeof serverName !== "string" || serverName.trim().length === 0) {
+    throw createInspectorCommandClientError(
+      "invalid_request",
+      "Missing required 'serverName' string.",
+    );
+  }
+  const card = cards.find((c) =>
+    c.variants.some((v) => matchesRegistryServerName(v, serverName)),
+  );
+  if (!card) {
+    throw createInspectorCommandClientError(
+      "unknown_server",
+      `No registry server matches "${serverName}". Use a name from the registry catalog on this screen.`,
+    );
+  }
+  return { card, serverName };
+}
+
+/** Pin down ONE variant to connect; dual-type cards force an explicit pick. */
+function resolveConnectVariant(
+  card: EnrichedRegistryCatalogCard,
+  serverName: string,
+  variantType: "text" | "app" | undefined,
+): EnrichedRegistryServer {
+  if (variantType) {
+    const variant = card.variants.find((v) => v.clientType === variantType);
+    if (!variant) {
+      throw createInspectorCommandClientError(
+        "invalid_request",
+        `"${card.variants[0].displayName}" has no ${variantType} variant.`,
+      );
+    }
+    return variant;
+  }
+  const matching = card.variants.filter((v) =>
+    matchesRegistryServerName(v, serverName),
+  );
+  if (matching.length === 1) return matching[0];
+  throw createInspectorCommandClientError(
+    "invalid_request",
+    `"${card.variants[0].displayName}" has both Text and App variants — pass variant: "text" or "app".`,
+  );
+}
+
+/** The variant a disconnect acts on: the connected/added one, like the UI. */
+function resolveDisconnectVariant(
+  card: EnrichedRegistryCatalogCard,
+  variantType: "text" | "app" | undefined,
+): EnrichedRegistryServer {
+  const candidates = variantType
+    ? card.variants.filter((v) => v.clientType === variantType)
+    : card.variants;
+  const active =
+    candidates.find((v) => v.connectionStatus === "connected") ??
+    candidates.find((v) => v.connectionStatus === "added");
+  if (!active) {
+    throw createInspectorCommandClientError(
+      "invalid_request",
+      `"${card.variants[0].displayName}" is not connected or installed in this project.`,
+    );
+  }
+  return active;
+}
 
 interface RegistryTabProps {
   projectId: string | null;
@@ -170,6 +266,122 @@ export function RegistryTab({
     }
     await disconnect(server);
   };
+
+  const readCommandVariant = (value: unknown): "text" | "app" | undefined => {
+    if (value === undefined) return undefined;
+    if (value === "text" || value === "app") return value;
+    throw createInspectorCommandClientError(
+      "invalid_request",
+      `'variant' must be "text" or "app" when provided.`,
+    );
+  };
+
+  // Agent bridge: the registry tool group plus this screen's command
+  // handlers and snapshot. Handlers reuse the EXACT callbacks the buttons
+  // use (handleConnect / handleDisconnect / toggleStar) — same billing and
+  // OAuth posture, nothing re-implemented.
+  useSurfaceAgentBridge({
+    surfaceId: "registry",
+    handlers: {
+      connectRegistryServer: async (command) => {
+        const { payload } = command as ConnectRegistryServerInspectorCommand;
+        const { card, serverName } = requireRegistryCard(
+          catalogCards,
+          payload.serverName,
+        );
+        const variant = resolveConnectVariant(
+          card,
+          serverName,
+          readCommandVariant(payload.variant),
+        );
+        const name = getRegistryServerName(variant);
+        if (variant.connectionStatus === "connected") {
+          return { status: "already_connected", serverName: name };
+        }
+        if (
+          variant.connectionStatus === "connecting" ||
+          connectingIds.has(variant._id)
+        ) {
+          return { status: "connecting", serverName: name };
+        }
+        if (variant.transport.useOAuth) {
+          // NEVER start the OAuth flow from here: connecting an OAuth
+          // server redirects the browser, which would kill the chat turn
+          // mid-call. Report the state and leave the Authorize click — and
+          // the redirect — to the user, mirroring ui_connect_server.
+          return {
+            status: "authorization_required",
+            serverName: name,
+            message:
+              "This server requires OAuth authorization, which redirects the browser. Ask the user to click Connect on its card and complete authorization on screen.",
+          };
+        }
+        await handleConnect(variant);
+        return { status: "connecting", serverName: name };
+      },
+      disconnectRegistryServer: async (command) => {
+        const { payload } =
+          command as DisconnectRegistryServerInspectorCommand;
+        const { card } = requireRegistryCard(catalogCards, payload.serverName);
+        const variant = resolveDisconnectVariant(
+          card,
+          readCommandVariant(payload.variant),
+        );
+        await handleDisconnect(variant);
+        return {
+          status: "disconnected",
+          serverName: getRegistryServerName(variant),
+        };
+      },
+      toggleRegistryStar: async (command) => {
+        const { payload } = command as ToggleRegistryStarInspectorCommand;
+        if (typeof payload.starred !== "boolean") {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "Missing required 'starred' boolean.",
+          );
+        }
+        const { card } = requireRegistryCard(catalogCards, payload.serverName);
+        const displayName = card.variants[0].displayName;
+        if (card.isStarred === payload.starred) {
+          return {
+            status: "unchanged",
+            serverName: displayName,
+            starred: card.isStarred,
+          };
+        }
+        await toggleStar(card.registryCardKey);
+        return {
+          status: payload.starred ? "starred" : "unstarred",
+          serverName: displayName,
+          starred: payload.starred,
+        };
+      },
+    },
+    // Redacted STATE, not payloads: names and statuses only — no transport
+    // URLs, no OAuth internals, no tokens.
+    snapshot: () => ({
+      isLoading,
+      totalServers: catalogCards.length,
+      servers: catalogCards
+        .slice(0, AGENT_SNAPSHOT_MAX_SERVERS)
+        .map((card) => ({
+          name: card.variants[0].displayName,
+          registryName: card.variants[0].name,
+          starred: card.isStarred,
+          starCount: card.starCount,
+          requiresOAuth: card.variants[0].transport.useOAuth === true,
+          connecting: card.variants.some((v) => connectingIds.has(v._id)),
+          variants: card.variants.map((v) => ({
+            ...(v.clientType ? { clientType: v.clientType } : {}),
+            status: v.connectionStatus,
+          })),
+        })),
+      ...(pendingQuickConnect?.sourceTab === "registry"
+        ? { pendingConnect: { serverName: pendingQuickConnect.serverName } }
+        : {}),
+    }),
+  });
 
   if (isLoading) {
     return <LoadingSkeleton />;
