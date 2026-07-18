@@ -24,7 +24,13 @@ import type { OpenRouterModel } from "@/types/model-metadata";
  * models.
  */
 
-const STORAGE_KEY = "mcpjam.hostedModelCatalog.v1";
+// v2 invalidates pre-un-gating caches: v1 entries persisted explicit
+// `guestAllowed: false` for then-premium models, and applyGuestModelLocks reads
+// that explicit `false` as authoritative (the `?? isMCPJamGuestAllowedModel`
+// fallback only fires on null/undefined), so a stale v1 cache would keep those
+// models locked for guests despite the new un-gating. Bumping the key drops the
+// stale cache; fresh fetches and the static snapshot are both already un-gated.
+const STORAGE_KEY = "mcpjam.hostedModelCatalog.v2";
 
 export type HostedCatalogStatus = "loading" | "live" | "fallback";
 
