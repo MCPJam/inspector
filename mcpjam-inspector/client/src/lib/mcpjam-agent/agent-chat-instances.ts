@@ -75,9 +75,26 @@ export interface AgentChatConfig {
   requireToolApproval: boolean;
 }
 
+/**
+ * Turn lifecycle shared by every surface attached to this session's Chat.
+ * Timing and attribution live here, NOT in a per-hook ref, so a turn started
+ * on one surface (e.g. Home) and finishing after a hand-off to another (the
+ * side panel) still reports the correct duration — and is emitted exactly
+ * once. `seq` increments per submit; `lastEmittedSeq` is the dedupe marker.
+ */
+export interface AgentTurnLifecycle {
+  startedAt: number | null;
+  seq: number;
+  lastEmittedSeq: number;
+  model: string | null;
+  provider: string | null;
+}
+
 export interface AgentChatEntry {
   chat: Chat<UIMessage>;
   config: AgentChatConfig;
+  /** Cross-surface turn timing/attribution — see AgentTurnLifecycle. */
+  turn: AgentTurnLifecycle;
   /**
    * UI-tool-aware approval responses for this instance: Approve on a `ui_*`
    * part executes in the browser and ships the result; Deny and non-UI
@@ -146,6 +163,46 @@ function evictIdleInstances(excludeKey: string): void {
       instances.delete(key);
     }
   }
+}
+
+/**
+ * Mark a new turn started on the shared entry: bumps `seq` and snapshots the
+ * start time + model/provider AT SUBMIT, so a config change mid-stream can't
+ * misattribute the completion. No-op if the entry is gone.
+ */
+export function markAgentTurnStarted(
+  chatSessionId: string,
+  attribution: { model: string | null; provider: string | null },
+): void {
+  const entry = instances.get(chatSessionId);
+  if (!entry) return;
+  entry.turn.seq += 1;
+  entry.turn.startedAt = Date.now();
+  entry.turn.model = attribution.model;
+  entry.turn.provider = attribution.provider;
+}
+
+/**
+ * Claim the current turn's completion for emission. Returns the submit-time
+ * snapshot exactly once per turn — the first surface to observe the terminal
+ * status edge wins; a second observer (e.g. a post-handoff panel watching the
+ * same shared Chat) gets `null` and must not emit. `null` also when no entry
+ * exists. Clears `startedAt` so a stray later edge can't double-count.
+ */
+export function claimAgentTurnCompletion(
+  chatSessionId: string,
+): { startedAt: number | null; model: string | null; provider: string | null } | null {
+  const entry = instances.get(chatSessionId);
+  if (!entry) return null;
+  if (entry.turn.lastEmittedSeq === entry.turn.seq) return null;
+  entry.turn.lastEmittedSeq = entry.turn.seq;
+  const snapshot = {
+    startedAt: entry.turn.startedAt,
+    model: entry.turn.model,
+    provider: entry.turn.provider,
+  };
+  entry.turn.startedAt = null;
+  return snapshot;
 }
 
 export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
@@ -232,7 +289,18 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     telemetryScope: chatSessionId,
   });
 
-  const entry: AgentChatEntry = { chat, config, handleToolApprovalResponse };
+  const entry: AgentChatEntry = {
+    chat,
+    config,
+    handleToolApprovalResponse,
+    turn: {
+      startedAt: null,
+      seq: 0,
+      lastEmittedSeq: 0,
+      model: null,
+      provider: null,
+    },
+  };
   instances.set(chatSessionId, entry);
   evictIdleInstances(chatSessionId);
   return entry;

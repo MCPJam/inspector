@@ -15,7 +15,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { generateId } from "ai";
-import { getOrCreateAgentChat } from "@/lib/mcpjam-agent/agent-chat-instances";
+import {
+  getOrCreateAgentChat,
+  markAgentTurnStarted,
+  claimAgentTurnCompletion,
+} from "@/lib/mcpjam-agent/agent-chat-instances";
 import { fulfillOrphanedDeferredUiToolCalls } from "@/lib/webmcp/ui-tool-approval";
 import { buildUiContextPart } from "@/lib/webmcp/ui-context-snapshot";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
@@ -304,60 +308,74 @@ export function useMcpjamAgentSession(
     const prev = prevStatusRef.current;
     prevStatusRef.current = status;
     if (prev === status) return;
-    if ((prev === "submitted" || prev === "streaming") && status === "ready") {
-      const startedAt = turnStartedAtRef.current;
-      turnStartedAtRef.current = null;
-      const last = messages[messages.length - 1];
-      let toolCallCount = 0;
-      if (last && last.role === "assistant" && Array.isArray(last.parts)) {
-        toolCallCount = last.parts.filter((p) =>
-          typeof (p as { type?: unknown }).type === "string" &&
-          (p as { type: string }).type.startsWith("tool-")
-        ).length;
+    const terminal =
+      ((prev === "submitted" || prev === "streaming") && status === "ready") ||
+      status === "error";
+    if (!terminal) return;
+    // Claim the completion on the SHARED entry: the first surface to observe
+    // this turn's terminal edge wins and emits; a post-hand-off observer of
+    // the same Chat gets null and stays silent (no double count, no
+    // null-duration row). Also clears the per-hook ref for tidiness.
+    turnStartedAtRef.current = null;
+    const claim = claimAgentTurnCompletion(chatSessionId);
+    if (!claim) return;
+    const startedAt = claim.startedAt;
+    const durationMs = startedAt != null ? Date.now() - startedAt : null;
+    const last = messages[messages.length - 1];
+    // Observation-only: a throwing analytics client must never break the
+    // session's status-edge effect.
+    try {
+      if (status === "error") {
+        track("mcpjam_agent_response_error", {
+          location: "mcpjam_agent",
+          surface,
+          session_id: chatSessionId,
+          message_index: turnIndexRef.current,
+          duration_ms: durationMs,
+          error_message: error?.message ?? null,
+        });
+        track("agent_turn_completed", {
+          location: "mcpjam_agent",
+          surface,
+          session_id: chatSessionId,
+          model: claim.model,
+          provider: claim.provider,
+          ...summarizeUiToolCalls(last),
+          had_error: true,
+          ...usageTokens(last),
+          duration_ms: durationMs,
+        });
+      } else {
+        let toolCallCount = 0;
+        if (last && last.role === "assistant" && Array.isArray(last.parts)) {
+          toolCallCount = last.parts.filter((p) =>
+            typeof (p as { type?: unknown }).type === "string" &&
+            (p as { type: string }).type.startsWith("tool-")
+          ).length;
+        }
+        track("mcpjam_agent_response_finished", {
+          location: "mcpjam_agent",
+          surface,
+          session_id: chatSessionId,
+          message_index: turnIndexRef.current,
+          duration_ms: durationMs,
+          tool_call_count: toolCallCount,
+          message_count: messages.length,
+        });
+        track("agent_turn_completed", {
+          location: "mcpjam_agent",
+          surface,
+          session_id: chatSessionId,
+          model: claim.model,
+          provider: claim.provider,
+          ...summarizeUiToolCalls(last),
+          had_error: false,
+          ...usageTokens(last),
+          duration_ms: durationMs,
+        });
       }
-      track("mcpjam_agent_response_finished", {
-        location: "mcpjam_agent",
-        surface,
-        session_id: chatSessionId,
-        message_index: turnIndexRef.current,
-        duration_ms: startedAt != null ? Date.now() - startedAt : null,
-        tool_call_count: toolCallCount,
-        message_count: messages.length,
-      });
-      track("agent_turn_completed", {
-        location: "mcpjam_agent",
-        surface,
-        session_id: chatSessionId,
-        model: config.model?.id ?? null,
-        provider: config.model?.provider ?? null,
-        ...summarizeUiToolCalls(last),
-        had_error: false,
-        ...usageTokens(last),
-        duration_ms: startedAt != null ? Date.now() - startedAt : null,
-      });
-    } else if (status === "error") {
-      const startedAt = turnStartedAtRef.current;
-      turnStartedAtRef.current = null;
-      track("mcpjam_agent_response_error", {
-        location: "mcpjam_agent",
-        surface,
-        session_id: chatSessionId,
-        message_index: turnIndexRef.current,
-        duration_ms: startedAt != null ? Date.now() - startedAt : null,
-        error_message: error?.message ?? null,
-      });
-      const last = messages[messages.length - 1];
-      track("agent_turn_completed", {
-        location: "mcpjam_agent",
-        surface,
-        session_id: chatSessionId,
-        model: config.model?.id ?? null,
-        provider: config.model?.provider ?? null,
-        ...summarizeUiToolCalls(last),
-        had_error: true,
-        ...usageTokens(last),
-        duration_ms: startedAt != null ? Date.now() - startedAt : null,
-      });
+    } catch {
+      // swallow — telemetry is observation-only
     }
   }, [chatSessionId, config, error, messages, status, surface]);
 
@@ -421,6 +439,13 @@ export function useMcpjamAgentSession(
       }
       turnIndexRef.current += 1;
       turnStartedAtRef.current = Date.now();
+      // Turn timing/attribution lives on the shared Chat entry so a hand-off
+      // to another surface mid-turn still reports the right duration and
+      // emits the completion exactly once.
+      markAgentTurnStarted(chatSessionId, {
+        model: config.model?.id ?? null,
+        provider: config.model?.provider ?? null,
+      });
       track("mcpjam_agent_message_sent", {
         location: "mcpjam_agent",
         surface,

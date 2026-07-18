@@ -138,14 +138,27 @@ function emitTelemetry(
   }
 }
 
-/** Recursively sort object keys so equal args always hash equal. */
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize);
+// Bounds on the duplicate-detection fingerprint. `input` is arbitrary model
+// output, so an unbounded recursive clone + stringify of a huge or deeply
+// nested payload could freeze the tab — which would violate the
+// observation-only guarantee. Cap both traversal depth and the serialized
+// length; over-budget inputs collapse to a deterministic marker (they simply
+// won't dedupe against each other, which is safe).
+const SIGNATURE_MAX_DEPTH = 6;
+const SIGNATURE_MAX_CHARS = 2048;
+
+/**
+ * Recursively sort object keys so equal args hash equal, truncating past
+ * SIGNATURE_MAX_DEPTH with a marker so a deep payload can't run away.
+ */
+function canonicalize(value: unknown, depth = 0): unknown {
+  if (depth >= SIGNATURE_MAX_DEPTH) return "<depth>";
+  if (Array.isArray(value)) return value.map((v) => canonicalize(v, depth + 1));
   if (value && typeof value === "object") {
     const source = value as Record<string, unknown>;
     const out: Record<string, unknown> = {};
     for (const key of Object.keys(source).sort()) {
-      out[key] = canonicalize(source[key]);
+      out[key] = canonicalize(source[key], depth + 1);
     }
     return out;
   }
@@ -154,7 +167,15 @@ function canonicalize(value: unknown): unknown {
 
 function callSignature(toolName: string, input: unknown): string {
   try {
-    return `${toolName}:${JSON.stringify(canonicalize(input))}`;
+    const body = JSON.stringify(canonicalize(input));
+    // Cap the retained string. A collision after truncation just means two
+    // giant distinct inputs are treated as one — acceptable for a loop-
+    // detection heuristic, and far cheaper than holding megabytes.
+    const bounded =
+      body.length > SIGNATURE_MAX_CHARS
+        ? `${body.slice(0, SIGNATURE_MAX_CHARS)}…<${body.length}>`
+        : body;
+    return `${toolName}:${bounded}`;
   } catch {
     return `${toolName}:<unserializable>`;
   }
