@@ -181,6 +181,13 @@ function validateManifest(manifest) {
       } else if (entry.route.includes("TODO-resolve")) {
         warnings.push(`${label}: route contains an unresolved TODO-resolve placeholder: ${entry.route}`);
       }
+      // A ui entry with a missing or invalid tier would be silently skipped
+      // by every `--tier` regeneration run (see filterEntries).
+      if (!VALID_TIERS.has(entry.tier)) {
+        errors.push(`${label}: ui entries require a tier of A|B|C (got: ${entry.tier})`);
+      }
+    } else if (entry.tier !== undefined && !VALID_TIERS.has(entry.tier)) {
+      errors.push(`${label}: tier must be A|B|C when present (got: ${entry.tier})`);
     }
 
     if (entry.kind === "terminal" && !entry.command) {
@@ -998,6 +1005,15 @@ async function runCliCapture(entry) {
     );
     return combineOutput(stdout, stderr);
   } catch (err) {
+    // A killed process (timeout or maxBuffer overflow) also carries partial
+    // stdout/stderr strings, but that output stops mid-run and must never be
+    // rendered over the docs image.
+    if (err.killed || err.signal) {
+      throw new Error(
+        `${entry.id}: CLI process was killed (${err.signal ?? "timeout"}) before completing; refusing to render partial output`,
+        { cause: err },
+      );
+    }
     if (typeof err.stdout === "string" || typeof err.stderr === "string") {
       return combineOutput(err.stdout ?? "", err.stderr ?? "");
     }

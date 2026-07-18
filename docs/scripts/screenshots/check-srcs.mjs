@@ -46,7 +46,12 @@ for (const entry of manifest.entries) {
     continue;
   }
   const src = "/" + path.relative(DOCS_ROOT, onDisk).split(path.sep).join("/");
-  const pageSrcs = srcsByFile.get(entry.page) ?? [];
+  // Normalize to the same key format srcsByFile uses (relative, forward
+  // slashes) -- capture.mjs --validate tolerates a leading slash or
+  // backslashes in `page`, so tolerate them here too instead of emitting a
+  // misleading "not referenced" failure.
+  const pageKey = entry.page.replace(/\\/g, "/").replace(/^\/+/, "");
+  const pageSrcs = srcsByFile.get(pageKey) ?? [];
   if (!pageSrcs.includes(src)) {
     console.error(`FAIL: ${entry.id}: ${src} not referenced from its page (${entry.page})`);
     failures++;
