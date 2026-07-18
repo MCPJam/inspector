@@ -229,9 +229,9 @@ Lands **before** the caching canary so a baseline exists.
 | Event | Source | Emitted at | Dimensions |
 |---|---|---|---|
 | `ui_tool_call_started` | client | `ui-tool-executor.ts` (the one point where approval path + timing are known) | `tool_name`, `surface_id`, `entry_point` (`side_panel`\|`home_hero`), `needs_approval` |
-| `ui_tool_call_completed` | client | same | `tool_name`, `surface_id`, `duration_ms`, `outcome` (`success`\|`error`\|`denied`), `error_code?`, `approval` (`not_required`\|`approved`\|`denied`), `duplicate_of_previous`, `calls_since_duplicate?` |
+| `ui_tool_call_completed` | client | executor terminals **plus** the denial terminal `settleDeniedUiToolCall` (in the executor module, invoked by the approval handler in `ui-tool-approval.ts` with the approval part's persisted metadata, so a deny — even after a page reload — still emits a paired completion) | `tool_name`, `surface_id`, `duration_ms`, `outcome` (`success`\|`error`\|`denied`), `error_code?`, `approval` (`not_required`\|`approved`\|`denied`), `duplicate_of_previous`, `calls_since_duplicate?` |
 | `ui_navigation_rejected` | client | `ui-actions.ts` resolver | `segment`, `reason` (`unknown`\|`hosted_blocked`\|`flag_off`) — doubles as capability-demand and flag-friction signal |
-| `agent_turn_completed` | client | stream finish | `model`, `provider`, `execution_path`, `ui_tool_call_count`, `distinct_tool_count`, `had_error`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `duration_ms` |
+| `agent_turn_completed` | client | stream finish (session status edge) | `model`, `provider` (snapshotted at submit), `ui_tool_call_count`, `distinct_tool_count`, `had_error`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `duration_ms`. **No `execution_path`** — local-direct vs `/stream/org` is decided server-side (`web-chat-turn.ts` after `resolveOrgProviderRuntime`) and isn't known to the browser; the path-split baseline comes from `chat_turn_cache_usage_server` |
 | `chat_turn_cache_usage_server` | server (`captureServerEvent`) | turn finish, both engines | `model`, `provider`, `execution_path` (`direct`\|`hosted_stream`\|`hosted_org`), `canary_enabled`, `prefix_fingerprint`, `input_tokens`, `cache_read_tokens`, `cache_write_tokens` |
 
 No `_server` twins for the client events initially — twins are a migration/block-rate
@@ -296,10 +296,17 @@ per-turn). This workstream activates and *measures* caching without trusting it 
 New shared helper (suggested `server/utils/prompt-cache.ts`):
 `applyCacheBreakpoints({ provider, system, messages })`:
 
-- **Anthropic** — one `providerOptions.anthropic.cacheControl: { type: "ephemeral" }`
-  breakpoint at the end of the stable prefix (the `AGENT_IDENTITY_PROMPT` system
-  content; safe because volatile orientation is appended after it, never inside).
-  Never inject raw `cache_control` into every request.
+- **Anthropic** — an explicit breakpoint at the end of the stable prefix. Note the AI
+  SDK applies `providerOptions.anthropic.cacheControl: { type: "ephemeral" }` from a
+  **message (or message-part)**, not from a top-level `streamText` option — a top-level
+  option triggers request-level automatic caching, not a placed breakpoint. So the
+  identity prompt, currently passed as the `system` string
+  (`mcpjam-agent.ts` → `streamWebChatTurn`), must be promoted to a **system message**
+  whose `providerOptions.anthropic.cacheControl` carries the breakpoint (or the stable
+  prefix split into a dedicated cached system message). Safe because volatile orientation
+  rides the user message, appended after the prefix, never inside it. Never inject raw
+  `cache_control` into every request. The "exactly one breakpoint" test asserts against
+  that annotated system message.
 - **OpenAI** — no-op; caching is automatic for eligible prompts. Measure first; add a
   provider cache key only if data shows it is needed.
 - **Other/custom providers** — no-op until their caching contract is documented.
