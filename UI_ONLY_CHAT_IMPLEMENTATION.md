@@ -269,10 +269,19 @@ booleans/counts measure the observed double-`ui_snapshot_app` just as well.
 
 ### Capability-gap detection
 
-No live classifier, no new model-facing tool. SQL over `agent_turn_completed`
-(`ui_tool_call_count = 0` on action-oriented turns) intersected with
-`ui_navigation_rejected` volume, then sampled human review via hosted traces/session
-recordings. The ranked output feeds §6's surface selection.
+No live classifier, no new model-facing tool. Note the hard limit up front:
+`agent_turn_completed` carries only aggregate tool counts and **no message content**, so
+SQL over it can find `ui_tool_call_count = 0` turns but **cannot** tell an action-oriented
+turn (the agent wanted to do something) from a purely conversational one, nor whether the
+answer reported a limitation. So the SQL is only a **coarse pre-filter** — a cheap way to
+narrow the haystack — not a capability-gap signal on its own; intersecting it with
+`ui_navigation_rejected` volume (a genuine demand signal) sharpens it but still yields
+candidates, not conclusions. **Sampled human review of the pre-filtered turns via hosted
+traces/session recordings is the authoritative ranking input.** If the passive signal
+proves too noisy to rank E-1 from, add a privacy-safe post-turn outcome dimension (an
+"action-oriented, no matching tool" boolean derived server-side without logging content)
+before leaning on the SQL. The reviewed ranking — not the raw SQL — feeds §6's surface
+selection.
 
 ### Cache-usage field plumbing (prerequisite for §5)
 
@@ -384,9 +393,15 @@ turn-to-turn **is** the debugging signal for zero cache reads.
   only when the env is on; env off ⇒ byte-identical `streamText` arguments.
 - **Multi-step:** fingerprint constant across tool-calling steps within a turn;
   orientation-append-only regression (reuses #3265's tests).
-- **Cold/warm (manual protocol — CI can't hit paid APIs):** cold turn shows
-  `cache_write > 0, cache_read = 0`; warm second turn within TTL shows
-  `cache_read > 0`; agent behavior unchanged; latency and/or input cost improved.
+- **Cold/warm (manual protocol — CI can't hit paid APIs), provider-specific:**
+  - *Anthropic (explicit breakpoint path):* cold turn shows `cache_write > 0,
+    cache_read = 0`; warm second turn within TTL shows `cache_read > 0`.
+  - *OpenAI (automatic caching, no-op path):* assert on **cache-read behavior only** —
+    cold `cache_read = 0`, warm `cache_read > 0`. Do NOT require `cache_write > 0`:
+    OpenAI's automatic caching can serve reads without ever exposing an explicit
+    cache-write token count, so a working OpenAI warm cache would falsely fail a
+    provider-independent `cache_write` check.
+  - Both: agent behavior unchanged; latency and/or input cost improved on the warm turn.
 - **Zero-hit triage runbook:** check fingerprint stability first, provider/execution
   path second, provider eligibility (prompt length minimums) third. Never assume
   caching is active.
