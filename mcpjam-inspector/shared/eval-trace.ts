@@ -27,6 +27,10 @@ export type EvalTraceSpan = {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  /** Provider-reported prompt-cache READ tokens (subset of `inputTokens`). */
+  cachedInputTokens?: number;
+  /** Provider-reported prompt-cache CREATION (write) tokens. */
+  cacheWriteTokens?: number;
   /** Inclusive index of the first related trace message in the stored blob. */
   messageStartIndex?: number;
   /** Inclusive index of the last related trace message in the stored blob. */
@@ -509,6 +513,8 @@ export const evalTraceSpanZ = z.object({
   inputTokens: z.number().optional(),
   outputTokens: z.number().optional(),
   totalTokens: z.number().optional(),
+  cachedInputTokens: z.number().optional(),
+  cacheWriteTokens: z.number().optional(),
   messageStartIndex: z.number().optional(),
   messageEndIndex: z.number().optional(),
   // GenAI harness metadata — see EvalTraceSpan + OTEL_ATTR.

@@ -235,6 +235,8 @@ export interface DirectChatTurnStepFinishEvent {
     inputTokens?: number;
     outputTokens?: number;
     totalTokens?: number;
+    cachedInputTokens?: number;
+    cacheWriteTokens?: number;
   };
   settledWithError: boolean;
   /**
@@ -450,6 +452,12 @@ function toLiveChatTraceUsage(
         inputTokens?: number;
         outputTokens?: number;
         totalTokens?: number;
+        /** AI SDK v6 deprecated alias for `inputTokenDetails.cacheReadTokens`. */
+        cachedInputTokens?: number;
+        inputTokenDetails?: {
+          cacheReadTokens?: number;
+          cacheWriteTokens?: number;
+        };
       }
     | null
     | undefined,
@@ -460,6 +468,13 @@ function toLiveChatTraceUsage(
   if (typeof usage.outputTokens === "number")
     next.outputTokens = usage.outputTokens;
   if (typeof usage.totalTokens === "number") next.totalTokens = usage.totalTokens;
+  const cacheReadTokens =
+    usage.inputTokenDetails?.cacheReadTokens ?? usage.cachedInputTokens;
+  if (typeof cacheReadTokens === "number")
+    next.cachedInputTokens = cacheReadTokens;
+  const cacheWriteTokens = usage.inputTokenDetails?.cacheWriteTokens;
+  if (typeof cacheWriteTokens === "number")
+    next.cacheWriteTokens = cacheWriteTokens;
   return Object.keys(next).length > 0 ? next : undefined;
 }
 
@@ -878,6 +893,12 @@ export function runDirectChatTurn(
                   : {}),
                 ...(traceTurn.turnUsage.totalTokens !== undefined
                   ? { totalTokens: traceTurn.turnUsage.totalTokens }
+                  : {}),
+                ...(traceTurn.turnUsage.cachedInputTokens !== undefined
+                  ? { cachedInputTokens: traceTurn.turnUsage.cachedInputTokens }
+                  : {}),
+                ...(traceTurn.turnUsage.cacheWriteTokens !== undefined
+                  ? { cacheWriteTokens: traceTurn.turnUsage.cacheWriteTokens }
                   : {}),
               }
             : undefined,

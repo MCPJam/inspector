@@ -289,6 +289,10 @@ interface ChatInputProps {
     inputTokens: number;
     outputTokens: number;
     totalTokens: number;
+    /** Prompt-cache READ tokens for the latest response (subset of inputTokens). */
+    cachedInputTokens?: number;
+    /** Prompt-cache CREATION (write) tokens for the latest response. */
+    cacheWriteTokens?: number;
   };
   selectedServers?: string[];
   mcpToolsTokenCount?: Record<string, number> | null;
@@ -1765,9 +1769,17 @@ export function ChatInput({
                             outputTokens: tokenUsage.outputTokens,
                             totalTokens: tokenUsage.totalTokens,
                             inputTokenDetails: {
-                              noCacheTokens: undefined,
-                              cacheReadTokens: undefined,
-                              cacheWriteTokens: undefined,
+                              // Only derive a breakdown when the provider
+                              // actually reported cache data — otherwise keep
+                              // the previous all-undefined behavior.
+                              noCacheTokens:
+                                tokenUsage.cachedInputTokens !== undefined ||
+                                tokenUsage.cacheWriteTokens !== undefined
+                                  ? tokenUsage.inputTokens -
+                                    (tokenUsage.cachedInputTokens ?? 0)
+                                  : undefined,
+                              cacheReadTokens: tokenUsage.cachedInputTokens,
+                              cacheWriteTokens: tokenUsage.cacheWriteTokens,
                             },
                             outputTokenDetails: {
                               textTokens: undefined,

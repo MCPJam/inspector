@@ -45,6 +45,10 @@ export interface UsageTokens {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  /** Provider-reported prompt-cache READ tokens (subset of `inputTokens`). */
+  cachedInputTokens?: number;
+  /** Provider-reported prompt-cache CREATION (write) tokens. */
+  cacheWriteTokens?: number;
 }
 
 /** The `onStepFinish` payload shape both engines fire (mirrors
@@ -171,6 +175,15 @@ export class StreamTurnDriver {
                 inputTokens: this.usage.inputTokens,
                 outputTokens: this.usage.outputTokens,
                 totalTokens: this.usage.totalTokens,
+                // Conditional spread (unlike the flat picks above) so the
+                // cache keys stay ABSENT when the provider reported none —
+                // preserve-undefined convention.
+                ...(this.usage.cachedInputTokens !== undefined
+                  ? { cachedInputTokens: this.usage.cachedInputTokens }
+                  : {}),
+                ...(this.usage.cacheWriteTokens !== undefined
+                  ? { cacheWriteTokens: this.usage.cacheWriteTokens }
+                  : {}),
               },
             }
           : {}),

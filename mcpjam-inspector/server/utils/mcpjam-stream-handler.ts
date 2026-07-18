@@ -312,6 +312,8 @@ export interface MCPJamStepFinishEvent {
     inputTokens?: number;
     outputTokens?: number;
     totalTokens?: number;
+    cachedInputTokens?: number;
+    cacheWriteTokens?: number;
   };
   /**
    * **Step SETTLED, not necessarily successful.** `onStepFinish` fires
@@ -837,17 +839,23 @@ function readUsageFromFinishChunk(
   // The Convex /stream endpoint sends token data via `messageMetadata` on the
   // finish chunk (using toUIMessageStreamResponse's messageMetadata callback).
   // Fall back to `totalUsage` for compatibility with test mocks / future changes.
+  type WireUsage = {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    // Prompt-cache token fields. The flat names are our wire convention
+    // (LiveChatTraceUsage); `inputTokenDetails` covers AI-SDK-shaped
+    // `totalUsage` objects. Absent (backend not sending yet) ⇒ undefined.
+    cachedInputTokens?: number;
+    cacheWriteTokens?: number;
+    inputTokenDetails?: {
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+    };
+  };
   const chunk = finishChunk as UIMessageChunk & {
-    totalUsage?: {
-      inputTokens?: number;
-      outputTokens?: number;
-      totalTokens?: number;
-    };
-    messageMetadata?: {
-      inputTokens?: number;
-      outputTokens?: number;
-      totalTokens?: number;
-    };
+    totalUsage?: WireUsage;
+    messageMetadata?: WireUsage;
   };
   const usage = chunk.messageMetadata ?? chunk.totalUsage;
   if (!usage) {
@@ -863,6 +871,16 @@ function readUsageFromFinishChunk(
   }
   if (typeof usage.totalTokens === "number") {
     next.totalTokens = usage.totalTokens;
+  }
+  const cacheReadTokens =
+    usage.inputTokenDetails?.cacheReadTokens ?? usage.cachedInputTokens;
+  if (typeof cacheReadTokens === "number") {
+    next.cachedInputTokens = cacheReadTokens;
+  }
+  const cacheWriteTokens =
+    usage.inputTokenDetails?.cacheWriteTokens ?? usage.cacheWriteTokens;
+  if (typeof cacheWriteTokens === "number") {
+    next.cacheWriteTokens = cacheWriteTokens;
   }
 
   return Object.keys(next).length > 0 ? next : undefined;

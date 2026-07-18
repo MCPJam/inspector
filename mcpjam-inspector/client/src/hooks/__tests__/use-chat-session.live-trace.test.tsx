@@ -219,6 +219,7 @@ describe("useChatSession live trace state", () => {
           promptIndex: 0,
           usage: {
             totalTokens: 5,
+            cachedInputTokens: 2,
           },
         }),
       );
@@ -258,6 +259,8 @@ describe("useChatSession live trace state", () => {
             ],
             usage: {
               totalTokens: 3,
+              cachedInputTokens: 1,
+              cacheWriteTokens: 4,
             },
           },
         }),
@@ -292,6 +295,10 @@ describe("useChatSession live trace state", () => {
     ]);
     expect(envelope?.usage).toMatchObject({
       totalTokens: 8,
+      // Cache fields merge across turns with the same undefined-preserving
+      // semantics as the base fields (turn-1 read=2, turn-2 read=1 write=4).
+      cachedInputTokens: 3,
+      cacheWriteTokens: 4,
     });
     expect(envelope?.traceStartedAtMs).toBe(1000);
     expect(envelope?.traceEndedAtMs).toBe(1150);

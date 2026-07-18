@@ -305,6 +305,13 @@ export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  /**
+   * Prompt-cache READ tokens reported for the latest assistant response
+   * (subset of `inputTokens`). Undefined when the provider reported none.
+   */
+  cachedInputTokens?: number;
+  /** Prompt-cache CREATION (write) tokens for the latest assistant response. */
+  cacheWriteTokens?: number;
 }
 
 export interface UseChatSessionReturn {
@@ -2950,6 +2957,11 @@ export function useChatSession(
   const tokenUsage = useMemo<TokenUsage>(() => {
     let lastInputTokens = 0;
     let totalOutputTokens = 0;
+    // Cache fields follow the same "latest assistant response" semantics as
+    // `inputTokens` — they describe the last request's prompt breakdown.
+    // Undefined is preserved when the provider reported no cache data.
+    let lastCachedInputTokens: number | undefined;
+    let lastCacheWriteTokens: number | undefined;
 
     for (const message of messages) {
       if (message.role === "assistant" && message.metadata) {
@@ -2957,12 +2969,16 @@ export function useChatSession(
           | {
               inputTokens?: number;
               outputTokens?: number;
+              cachedInputTokens?: number;
+              cacheWriteTokens?: number;
             }
           | undefined;
 
         if (metadata) {
           lastInputTokens = metadata.inputTokens ?? 0;
           totalOutputTokens += metadata.outputTokens ?? 0;
+          lastCachedInputTokens = metadata.cachedInputTokens;
+          lastCacheWriteTokens = metadata.cacheWriteTokens;
         }
       }
     }
@@ -2971,6 +2987,8 @@ export function useChatSession(
       inputTokens: lastInputTokens,
       outputTokens: totalOutputTokens,
       totalTokens: lastInputTokens + totalOutputTokens,
+      cachedInputTokens: lastCachedInputTokens,
+      cacheWriteTokens: lastCacheWriteTokens,
     };
   }, [messages]);
 

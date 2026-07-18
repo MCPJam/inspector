@@ -600,7 +600,78 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
       outputTokens: 5,
       totalTokens: 8,
     });
+    // No cache signal from the provider ⇒ the cache fields never appear
+    // (preserve-undefined convention — serialized shapes must not churn).
+    expect(Object.keys(events[0].turnUsage)).not.toContain("cachedInputTokens");
+    expect(Object.keys(events[0].turnUsage)).not.toContain("cacheWriteTokens");
     expect(Array.isArray(events[0].turnSpans)).toBe(true);
+  });
+
+  it("carries prompt-cache read/write tokens from AI SDK usage into turn usage", async () => {
+    streamTextMock.mockImplementationOnce((options: any) => {
+      void options.onStepFinish({
+        response: { messages: [{ role: "assistant", content: "ok" }] },
+        usage: {
+          inputTokens: 10,
+          outputTokens: 5,
+          totalTokens: 15,
+          inputTokenDetails: {
+            noCacheTokens: 3,
+            cacheReadTokens: 6,
+            cacheWriteTokens: 1,
+          },
+        },
+        toolCalls: [],
+      });
+      return defaultStreamTextReturn();
+    });
+    const events: any[] = [];
+    runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+      onStepFinish: (event) => events.push(event),
+    });
+    expect(events[0].turnUsage).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      cachedInputTokens: 6,
+      cacheWriteTokens: 1,
+    });
+  });
+
+  it("falls back to the deprecated flat cachedInputTokens usage field", async () => {
+    streamTextMock.mockImplementationOnce((options: any) => {
+      void options.onStepFinish({
+        response: { messages: [{ role: "assistant", content: "ok" }] },
+        usage: {
+          inputTokens: 10,
+          outputTokens: 5,
+          totalTokens: 15,
+          cachedInputTokens: 4,
+        },
+        toolCalls: [],
+      });
+      return defaultStreamTextReturn();
+    });
+    const events: any[] = [];
+    runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+      onStepFinish: (event) => events.push(event),
+    });
+    expect(events[0].turnUsage).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      cachedInputTokens: 4,
+    });
   });
 
   it("fires onEngineError before onTurnError (and not on abort)", async () => {

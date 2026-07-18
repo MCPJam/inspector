@@ -6,6 +6,10 @@ export type LiveChatTraceUsage = {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  /** Provider-reported prompt-cache READ tokens (subset of `inputTokens`). */
+  cachedInputTokens?: number;
+  /** Provider-reported prompt-cache CREATION (write) tokens. */
+  cacheWriteTokens?: number;
 };
 
 export type LiveChatTraceToolCall = {
@@ -139,6 +143,10 @@ export function mergeLiveChatTraceUsage(
   const inputTokens = (base?.inputTokens ?? 0) + (delta?.inputTokens ?? 0);
   const outputTokens = (base?.outputTokens ?? 0) + (delta?.outputTokens ?? 0);
   const totalTokens = (base?.totalTokens ?? 0) + (delta?.totalTokens ?? 0);
+  const cachedInputTokens =
+    (base?.cachedInputTokens ?? 0) + (delta?.cachedInputTokens ?? 0);
+  const cacheWriteTokens =
+    (base?.cacheWriteTokens ?? 0) + (delta?.cacheWriteTokens ?? 0);
 
   if (inputTokens > 0) {
     next.inputTokens = inputTokens;
@@ -148,6 +156,12 @@ export function mergeLiveChatTraceUsage(
   }
   if (totalTokens > 0) {
     next.totalTokens = totalTokens;
+  }
+  if (cachedInputTokens > 0) {
+    next.cachedInputTokens = cachedInputTokens;
+  }
+  if (cacheWriteTokens > 0) {
+    next.cacheWriteTokens = cacheWriteTokens;
   }
 
   return Object.keys(next).length > 0 ? next : undefined;

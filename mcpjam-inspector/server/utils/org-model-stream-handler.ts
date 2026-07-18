@@ -496,6 +496,13 @@ export function handleLocalOrgChatModel(
                 inputTokens: part.usage.inputTokens,
                 outputTokens: part.usage.outputTokens,
                 totalTokens: part.usage.totalTokens,
+                // Prompt-cache measurement (additive; undefined keys drop out
+                // of the JSON wire shape, so no churn when absent).
+                cachedInputTokens:
+                  part.usage.inputTokenDetails?.cacheReadTokens ??
+                  part.usage.cachedInputTokens,
+                cacheWriteTokens:
+                  part.usage.inputTokenDetails?.cacheWriteTokens,
               };
             }
           },

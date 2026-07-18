@@ -789,6 +789,70 @@ describe("mcpjam-stream-handler", () => {
       },
     });
     expect(finishChunk).not.toHaveProperty("totalUsage");
+    // Backend sent no cache fields ⇒ they never appear (preserve-undefined).
+    expect(finishChunk.messageMetadata).not.toHaveProperty(
+      "cachedInputTokens"
+    );
+    expect(finishChunk.messageMetadata).not.toHaveProperty("cacheWriteTokens");
+  });
+
+  it("carries prompt-cache read/write tokens from the finish-chunk messageMetadata", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse([
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "Hi" },
+        { type: "text-end", id: "text-1" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: {
+            inputTokens: 10,
+            outputTokens: 5,
+            totalTokens: 15,
+            cachedInputTokens: 6,
+            cacheWriteTokens: 2,
+          },
+        },
+      ])
+    );
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "Hi" }] as any,
+      modelId: "openai/gpt-5-mini",
+      systemPrompt: "You are helpful",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+    });
+
+    await lastExecution;
+
+    const traceEvents = writtenChunks
+      .filter((chunk) => chunk?.type === "data-trace-event")
+      .map((chunk) => chunk.data);
+
+    const turnFinish = traceEvents.find((e: any) => e.type === "turn_finish");
+    expect(turnFinish.usage).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      cachedInputTokens: 6,
+      cacheWriteTokens: 2,
+    });
+
+    const finishChunk = writtenChunks.find((chunk) => chunk?.type === "finish");
+    expect(finishChunk).toMatchObject({
+      type: "finish",
+      finishReason: "stop",
+      messageMetadata: {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+        cachedInputTokens: 6,
+        cacheWriteTokens: 2,
+      },
+    });
   });
 
   it("aggregates usage across steps when emitting the final UI finish chunk", async () => {

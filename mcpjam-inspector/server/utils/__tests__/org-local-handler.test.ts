@@ -254,6 +254,67 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     expect(body.finishReason).toBe("stop");
   });
 
+  it("forwards prompt-cache read/write tokens through the usage writeback", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example";
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("{}", { status: 200 }));
+
+    const totalUsage = {
+      inputTokens: 4,
+      outputTokens: 6,
+      totalTokens: 10,
+      inputTokenDetails: {
+        noCacheTokens: 1,
+        cacheReadTokens: 3,
+        cacheWriteTokens: 2,
+      },
+    };
+    streamTextMock.mockImplementationOnce((options: any) => {
+      const r = defaultStreamTextReturn({ totalUsage });
+      queueMicrotask(() => {
+        void options.onFinish({
+          steps: [],
+          totalUsage,
+          finishReason: "stop",
+          text: "Hi",
+        });
+      });
+      return r;
+    });
+
+    const response = handleLocalOrgChatModel({
+      provider: buildResolvedProvider(),
+      projectId: "proj-123",
+      modelId: "gpt-4-turbo",
+      messages: [{ role: "user", content: "hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+    });
+
+    const reader = response.body?.getReader();
+    if (reader) {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const usageCall = fetchMock.mock.calls.find(([url]) =>
+      typeof url === "string" && url.includes("/stream/org/local-usage"),
+    );
+    expect(usageCall).toBeDefined();
+    const body = JSON.parse((usageCall![1] as any).body as string);
+    expect(body.usage).toEqual({
+      inputTokens: 4,
+      outputTokens: 6,
+      totalTokens: 10,
+      cachedInputTokens: 3,
+      cacheWriteTokens: 2,
+    });
+  });
+
   it("does NOT fire postLocalUsage on abort (silent-cancel invariant)", async () => {
     process.env.CONVEX_HTTP_URL = "https://convex.example";
     const fetchMock = vi
