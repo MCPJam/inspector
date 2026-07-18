@@ -229,7 +229,7 @@ Lands **before** the caching canary so a baseline exists.
 | Event | Source | Emitted at | Dimensions |
 |---|---|---|---|
 | `ui_tool_call_started` | client | `ui-tool-executor.ts` (the one point where approval path + timing are known) | `tool_name`, `surface_id`, `entry_point` (`side_panel`\|`home_hero`), `needs_approval` |
-| `ui_tool_call_completed` | client | executor terminals **plus** the denial terminal `settleDeniedUiToolCall` (in the executor module, invoked by the approval handler in `ui-tool-approval.ts` with the approval part's persisted metadata, so a deny — even after a page reload — still emits a paired completion) | `tool_name`, `surface_id`, `duration_ms`, `outcome` (`success`\|`error`\|`denied`), `error_code?`, `approval` (`not_required`\|`approved`\|`denied`), `duplicate_of_previous`, `calls_since_duplicate?` |
+| `ui_tool_call_completed` | client | executor terminals **plus** the denial terminal `settleDeniedUiToolCall` (in the executor module, invoked by the approval handler in `ui-tool-approval.ts` with the approval part's persisted metadata, so a deny still emits a paired completion) | `tool_name`, `surface_id` (from the current surface at emit time), `duration_ms`, `outcome` (`success`\|`error`\|`denied`), `error_code?`, `approval` (`not_required`\|`approved`\|`denied`), `duplicate_of_previous`, `calls_since_duplicate?`. **Reload caveat:** an approve/deny fulfilled after a page reload has no surviving start time (the persisted approval part carries only name/callId/state/input/approvalId — not the original defer timestamp or surface), so such **reconstructed** lifecycles emit `duration_ms: null` and the surface as-of reconstruction. Persisting the start time + entry surface with the approval part is the follow-up needed for a real reload duration. |
 | `ui_navigation_rejected` | client | `ui-actions.ts` resolver | `segment`, `reason` (`unknown`\|`hosted_blocked`\|`flag_off`) — doubles as capability-demand and flag-friction signal |
 | `agent_turn_completed` | client | stream finish (session status edge) | `model`, `provider` (snapshotted at submit), `ui_tool_call_count`, `distinct_tool_count`, `had_error`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `duration_ms`. **No `execution_path`** — local-direct vs `/stream/org` is decided server-side (`web-chat-turn.ts` after `resolveOrgProviderRuntime`) and isn't known to the browser; the path-split baseline comes from `chat_turn_cache_usage_server` |
 | `chat_turn_cache_usage_server` | server (`captureServerEvent`) | turn finish, both engines | `model`, `provider`, `execution_path` (`direct`\|`hosted_stream`\|`hosted_org`), `canary_enabled`, `prefix_fingerprint`, `input_tokens`, `cache_read_tokens`, `cache_write_tokens` |
@@ -318,14 +318,18 @@ New shared helper (suggested `server/utils/prompt-cache.ts`):
 
 - **Anthropic** — an explicit breakpoint at the end of the **full stable system
   prefix**. Two things to get right:
-  - *What's in the prefix.* The identity prompt is not the whole stable prefix:
-    `prepareChatV2` appends `buildUiToolsSystemPrompt(uiTools, …)` after the identity
-    `systemPrompt` (`chat-v2-orchestration.ts`) before the direct path sends them as one
-    `system` string. The `ui_*` guidance is stable within a catalog version and the
-    fingerprint already treats the UI-tool set as part of the prefix — so the breakpoint
-    must cover identity **+** UI-tools guidance, with only genuinely volatile additions
-    (e.g. widget context) after it. Breaking on only the identity portion caches a
-    fraction and the boundary test would validate the wrong placement.
+  - *What's in the prefix.* The identity prompt is not the whole stable prefix.
+    `prepareChatV2` concatenates, in order: the identity `systemPrompt`, the local
+    **skills** section (`getSkillToolsAndPrompt()` → `skillsPromptSection`, present on
+    non-hosted deployments, inserted between identity and UI tools), and
+    `buildUiToolsSystemPrompt(uiTools, …)` — sent as one `system` string
+    (`chat-v2-orchestration.ts`). All three are stable within a catalog/skills version, so
+    the breakpoint must cover identity **+ skills + UI-tools guidance**, and the
+    fingerprint must hash all three (see below), with only genuinely volatile additions
+    (e.g. widget context) after it. Breaking on only the identity portion — or omitting
+    the skills section from the fingerprint — caches a fraction and the boundary test
+    would validate the wrong placement. If a deployment's skills section is NOT stable,
+    place it after the breakpoint as volatile content instead.
   - *How to place it.* The AI SDK applies
     `providerOptions.anthropic.cacheControl: { type: "ephemeral" }` from a **message (or
     message-part)**, not from a top-level `streamText` option (which triggers
@@ -363,11 +367,11 @@ needed, the documented phase-2 path is client flag → request body with server 
 ### Fingerprint and dimensions
 
 `prefix_fingerprint` = hash of **everything that ends up in the cached prefix**, not just
-the identity text. Concretely: `AGENT_IDENTITY_PROMPT` + the full
-`buildUiToolsSystemPrompt(uiTools, …)` output — which means the sorted validated uiTools
-`name:description` pairs **and** `requireToolApproval` (strict mode swaps the approval
-guidance in that system text) — plus any other input `prepareChatV2` folds into the
-stable system string. Computed server-side per turn (the static portion memoized per
+the identity text. Concretely: `AGENT_IDENTITY_PROMPT` + the local `skillsPromptSection`
+(when present/stable) + the full `buildUiToolsSystemPrompt(uiTools, …)` output — which
+means the sorted validated uiTools `name:description` pairs **and** `requireToolApproval`
+(strict mode swaps the approval guidance in that system text) — plus any other input
+`prepareChatV2` folds into the stable system string. Computed server-side per turn (the static portion memoized per
 process), attached to `chat_turn_cache_usage_server` along with model, provider,
 `execution_path`, `canary_enabled`. If the fingerprint hashed only identity + tool
 names, two genuinely different prefixes (strict vs default approval) would collide and
