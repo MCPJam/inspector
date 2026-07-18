@@ -123,13 +123,22 @@ switch one click when needed.
 
 ### Layer 2 — `agentToolsFlag`: per-surface tool-group axis (specify now, build with PR E-1)
 
-For incremental catalog rollout: `agentToolsFlag?: string` on `AppSurfaceManifest`,
-directly paralleling `hostedBlocked` (`shared/app-surfaces.ts:63`). Names a PostHog flag
-(e.g. `evals-agent-tools`). Semantics: **fail-closed `=== true`** — these are genuinely
-pre-launch tool groups. When not `true`:
+For incremental catalog rollout, add TWO fields to `AppSurfaceManifest` (paralleling
+`hostedBlocked`, `shared/app-surfaces.ts:63`):
+- `agentToolsFlag?: string` — names the PostHog flag (e.g. `evals-agent-tools`).
+  Semantics: **fail-closed `=== true`** (genuinely pre-launch tool groups).
+- `agentIntroducedNavSegments?: string[]` — the nav segments **the tool group adds**, as
+  opposed to segments the surface already exposes to humans. Required because a single
+  flag string can't tell the resolver which segments are group-introduced (this is what
+  I3 keys off — see below). Omit/empty when the group introduces no new nav target (the
+  common case: a flagged tool group on an already-navigable existing surface).
+
+When the flag is not `true`:
 
 - the surface's tool group never registers (and therefore never snapshots or mirrors),
-- any nav segments the group introduces are rejected by `resolveUiNavigationTarget`,
+- only the segments listed in `agentIntroducedNavSegments` are rejected by
+  `resolveUiNavigationTarget` — a pre-existing surface's own segments stay navigable
+  (atlas case 1),
 - its snapshot providers stay silent.
 
 **Not built before the first new tool group exists.** A dead axis with zero consumers
@@ -176,7 +185,7 @@ For a tool group G gated by flag F (and, via Layer 1, the whole catalog):
 |---|---|---|---|
 | I1 | No G tool in the registry ⇒ absent from every `snapshotForChatBody` | `useRegisterUiTools` group composition | hook flag-matrix test |
 | I2 | No G tool in `document.modelContext` | 1:1 mirror disposers (follows I1) | registry abort/mirror test |
-| I3 | Nav segments **newly introduced by G** are rejected with reason `flag_off` and omitted from `listUiNavigationTargets`. Segments of a **pre-existing** surface that merely gains a flagged tool group stay navigable/observable (atlas case 1) — the flag gates the group's tools, not the human's ability to reach the screen. So `agentToolsFlag` must mark which segments are *group-introduced*; the resolver keys off that, not off surface identity | `ui-actions.ts` resolver (group-introduced segments only) | resolver unit matrix incl. an existing-surface-stays-navigable case |
+| I3 | Only the segments listed in the manifest's `agentIntroducedNavSegments` are rejected with reason `flag_off` and omitted from `listUiNavigationTargets`. A **pre-existing** surface's own segments stay navigable/observable (atlas case 1) — the flag gates the group's tools, not the human's screen access. The resolver keys off `agentIntroducedNavSegments` (explicit per-segment metadata), never off surface identity or the flag alone | `ui-actions.ts` resolver consuming `agentIntroducedNavSegments` | resolver unit matrix incl. an existing-surface-stays-navigable case |
 | I4 | G's snapshot providers never register while F is off — even when the surface is mounted (a human can navigate there; I3 gates only the agent's path) | the group's provider opt-in (its `snapshotSurfaceId` wiring) is part of the flagged group and registers only when F is `true` | integration test: mount the surface with F off ⇒ provider absent from whole-app and per-surface reads |
 | I5 | A NEW surface shipped behind its own product flag has `showInAtlas: false` until GA (atlas case 2). Existing surfaces gaining a flagged tool group keep `showInAtlas: true` — atlas case 1 applies, no contradiction | manifest data | policy test cloned from the `hostedBlocked` exact-match template (`app-surface-coverage.test.ts:133-138`), keyed on new-surface manifests only |
 | I6 | Flip on→off mid-session: the group's tools + native mirrors are unregistered, so **calls dispatched after the flip** are rejected (never hang — `shippedNames` lets an in-flight stream error). A call **already executing** (`executeResolvedUiTool` is awaiting `def.execute`) is NOT cancelled — `UiToolDefinition.execute` doesn't receive the registration `AbortSignal`, so it can still complete and emit its output. The guarantee is scoped to post-unregistration dispatch; true mid-execution cancellation would require threading an `AbortSignal` into every tool (out of scope) | AbortSignal (dispatch gate) + `shippedNames` | group-scoped test: post-flip dispatch rejected; an in-flight execute is allowed to finish |
@@ -355,8 +364,15 @@ New shared helper (suggested `server/utils/prompt-cache.ts`):
 
 Wiring:
 
-- **Direct engine** — add `providerOptions` to the `streamText` call at
-  `direct-chat-turn.ts:680-691` (currently passes none; greenfield parameter).
+- **Direct engine** — for Anthropic the breakpoint must ride a **message**, so the
+  helper's promoted system message (with `providerOptions.anthropic.cacheControl` on its
+  last part) has to be passed via the `streamText` **`messages`** array, and the separate
+  top-level `system` string dropped for that turn (leaving `system` set would send the
+  prefix twice and place no real breakpoint). A top-level `providerOptions` on the
+  `streamText` call is request-level auto-caching, NOT the deterministic breakpoint — do
+  not rely on it. Wire at `direct-chat-turn.ts:680-691` (greenfield: it passes neither
+  `providerOptions` nor a structured system message today). For non-Anthropic providers
+  the helper is a no-op and the existing `system` string is unchanged.
 - **Hosted engines** — the backend (separate repo) executes `streamText`; our lever is
   the request contract. Extend `extraBodyFields`
   (`mcpjam-stream-handler.ts:2076-2103`; precedent: `providerKey`, gateway attribution)
