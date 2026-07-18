@@ -3,6 +3,7 @@ import {
   getXaaClientPrivateKey,
   XAA_CLIENT_KID,
 } from "./client-keypair.js";
+import type { KeyObject } from "crypto";
 
 // Signs the RFC 7523 `private_key_jwt` client assertion the RAS verifies for
 // confidential CIMD. ES256 via `dsaEncoding: "ieee-p1363"`, which produces the
@@ -22,11 +23,17 @@ function base64url(input: string | Buffer): string {
  * `iss = sub = clientId` (the CIMD document URL), `aud = tokenEndpoint`, plus a
  * unique `jti` and a short `exp`.
  */
-export function signClientAssertion(args: {
+export interface SignClientAssertionArgs {
   clientId: string;
   tokenEndpoint: string;
   nowSeconds?: number;
-}): string {
+}
+
+/** Sign a confidential-CIMD assertion with an explicit P-256 client key. */
+export function signClientAssertionWithKey(
+  args: SignClientAssertionArgs,
+  privateKey: KeyObject,
+): string {
   const now = args.nowSeconds ?? Math.floor(Date.now() / 1000);
   const header = { alg: "ES256", typ: "JWT", kid: XAA_CLIENT_KID };
   const payload = {
@@ -42,8 +49,12 @@ export function signClientAssertion(args: {
     JSON.stringify(payload),
   )}`;
   const signature = cryptoSign("sha256", Buffer.from(signingInput), {
-    key: getXaaClientPrivateKey(),
+    key: privateKey,
     dsaEncoding: "ieee-p1363",
   });
   return `${signingInput}.${base64url(signature)}`;
+}
+
+export function signClientAssertion(args: SignClientAssertionArgs): string {
+  return signClientAssertionWithKey(args, getXaaClientPrivateKey());
 }

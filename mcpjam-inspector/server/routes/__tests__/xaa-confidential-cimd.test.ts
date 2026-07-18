@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { generateKeyPairSync, type JsonWebKey } from "node:crypto";
 import {
   buildConfidentialCimdUrl,
+  createDerivedConfidentialCimdProviderFactory,
   evaluateIdJagClientMetadata,
   UNVERIFIED_CONFIDENTIAL_CIMD_CLIENT_NAME,
   XAA_CONFIDENTIAL_CIMD_PATH_PREFIX,
@@ -77,6 +78,21 @@ describe("XAA confidential CIMD reflector route", () => {
     expect(document.jwks.keys[0].d).toBeUndefined();
     expect(JSON.stringify(document)).not.toContain('"d"');
     expect(JSON.stringify(document)).not.toContain("client_secret");
+  });
+
+  it("serves an org-derived URL without an org id, database, or master key", async () => {
+    // The reflector receives only the public JWK encoded in the URL. This
+    // factory call models the hosted signer; nothing from it is passed to the
+    // reflector route besides the resulting public client_id URL.
+    const clientId = createDerivedConfidentialCimdProviderFactory(
+      Buffer.alloc(32, 9),
+    )("org-derived-example").getClientIdMetadataUrl("http://localhost");
+    const response = await buildApp().request(clientId);
+
+    expect(response.status).toBe(200);
+    const document = await response.json();
+    expect(document.client_id).toBe(clientId);
+    expect(document.jwks.keys[0].d).toBeUndefined();
   });
 
   it("rejects a key carrying a private `d` field with 400 (fails closed)", async () => {

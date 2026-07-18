@@ -1364,20 +1364,18 @@ export function XAAFlowTab({
     return () => controller.abort();
   }, [organizationId, hostedIssuerKind]);
 
-  // Confidential CIMD: when the per-server config asks for private_key_jwt on a
-  // cimd run, fetch the reflector document URL that publishes the local
-  // provider's client public key. The browser can't hold the private key, so it
-  // presents this URL as its client_id and /proxy/token delegates signing to
-  // the same SDK provider. Public CIMD (the default) leaves
-  // clientIdMetadataUrl unset and uses the fixed hosted public document.
-  // Gate on !HOSTED_MODE too: only the local inspector injects a confidential
-  // provider, so an imported/migrated config carrying `private_key_jwt` must not
-  // trigger a doomed confidential run on a hosted build (the capability route is
-  // absent → fetch 404s). Hosted falls back to public CIMD.
+  // Confidential CIMD has one capability state. Hosted probes the scoped
+  // capability for signed-in members even before a server selects it, while
+  // local probes only when a run needs it. A saved private configuration must
+  // fail closed when this state cannot resolve.
   const wantsConfidentialCimd =
-    !HOSTED_MODE &&
     effectiveStrategy === "cimd" &&
     selectedServer?.xaaClientAuth === "private_key_jwt";
+  const hostedConfidentialCimdEligible =
+    HOSTED_MODE && Boolean(signedInUser && organizationId);
+  const shouldProbeConfidentialCimd = HOSTED_MODE
+    ? hostedConfidentialCimdEligible
+    : wantsConfidentialCimd;
   const [confidentialCimdUrl, setConfidentialCimdUrl] = useState<
     string | undefined
   >(undefined);
@@ -1392,7 +1390,7 @@ export function XAAFlowTab({
     []
   );
   useEffect(() => {
-    if (!wantsConfidentialCimd) {
+    if (!shouldProbeConfidentialCimd) {
       setConfidentialCimdUrl(undefined);
       setConfidentialCimdStatus("idle");
       return;
@@ -1400,7 +1398,10 @@ export function XAAFlowTab({
     const controller = new AbortController();
     setConfidentialCimdUrl(undefined);
     setConfidentialCimdStatus("loading");
-    void fetchConfidentialCimdClientUrl(controller.signal).then((url) => {
+    void fetchConfidentialCimdClientUrl({
+      organizationId: HOSTED_MODE ? organizationId : undefined,
+      signal: controller.signal,
+    }).then((url) => {
       if (controller.signal.aborted) return;
       if (url) {
         setConfidentialCimdUrl(url);
@@ -1411,18 +1412,38 @@ export function XAAFlowTab({
     });
     return () => controller.abort();
     // confidentialCimdRetry in the deps is the retry trigger.
-  }, [wantsConfidentialCimd, confidentialCimdRetry]);
+  }, [
+    shouldProbeConfidentialCimd,
+    organizationId,
+    confidentialCimdRetry,
+  ]);
+
+  // Reopening the server modal is an explicit opportunity to refresh hosted
+  // capability state after a deployment/configuration change.
+  useEffect(() => {
+    if (HOSTED_MODE && isServerModalOpen && hostedConfidentialCimdEligible) {
+      retryConfidentialCimd();
+    }
+  }, [
+    isServerModalOpen,
+    hostedConfidentialCimdEligible,
+    retryConfidentialCimd,
+  ]);
 
   // FAIL CLOSED: a confidential run must not silently fall back to public CIMD
   // (which omits the client_assertion). Block Start/Run all until the reflector
   // URL has resolved, and surface an actionable error on load/failure.
-  const confidentialCimdBlockReason: string | null = wantsConfidentialCimd
-    ? confidentialCimdStatus === "ready"
-      ? null
-      : confidentialCimdStatus === "error"
-        ? "Confidential CIMD is selected, but the reflector client URL couldn't be loaded. Retrying — click again in a moment, or switch Client authentication to Public in the server config."
-        : "Preparing the confidential CIMD client identity… try again in a moment."
-    : null;
+  const confidentialCimdBlockReason: string | null = !wantsConfidentialCimd
+    ? null
+    : HOSTED_MODE && !signedInUser
+      ? "Confidential CIMD requires a signed-in organization member. Sign in, then try again."
+      : HOSTED_MODE && !organizationId
+        ? "Confidential CIMD requires an active organization. Select an organization, then try again."
+        : confidentialCimdStatus === "ready"
+          ? null
+          : confidentialCimdStatus === "error"
+            ? "Confidential CIMD is selected, but the reflector client URL couldn't be loaded. Retrying — click again in a moment, or switch Client authentication to Public in the server config."
+            : "Preparing the confidential CIMD client identity… try again in a moment.";
 
   // A blocked click on an errored fetch actively re-triggers it, so the user can
   // recover a transient failure without changing the server config.
@@ -1928,6 +1949,11 @@ export function XAAFlowTab({
         }
         projectId={target.barServerProjectId}
         hostedServerId={target.barServerId}
+        confidentialCimdAvailable={
+          !HOSTED_MODE ||
+          (hostedConfidentialCimdEligible &&
+            confidentialCimdStatus === "ready")
+        }
         onSave={async ({ formData }) => {
           // Await so the modal can keep itself open (and preserve the entered
           // values) if the save fails. The hook reports failure by resolving
