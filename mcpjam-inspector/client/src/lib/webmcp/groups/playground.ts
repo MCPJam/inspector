@@ -1,8 +1,14 @@
 /**
- * Playground tools: open the playground, prefill a tool form, and execute a
- * tool. Global today ("global"-kind in the manifests): each mutating tool
- * auto-opens the playground when its handler isn't mounted, so it is
- * reachable from any route.
+ * Playground tools: open the playground, prefill a tool form, execute a tool,
+ * and drive the chat composer (model, system prompt, reset, stop). Global
+ * ("global"-kind in the manifests): each mutating tool auto-opens the
+ * playground when its handler isn't mounted, so it is reachable from any route.
+ *
+ * The chat-composer tools EXTEND this global catalog rather than forming a
+ * mount-scoped surface group, because the playground manifest is `kind:
+ * "global"` — the tools stay advertised app-wide and open the playground on
+ * demand, exactly like `ui_select_tool`. Their handlers read the chat session
+ * through the playground agent-controls bridge (see `use-playground-state`).
  */
 
 import type { UiToolDefinition } from "../ui-tools-registry";
@@ -163,6 +169,144 @@ export function buildPlaygroundUiTools(): UiToolDefinition[] {
               ? { parameters: asOptionalObject(args.parameters) }
               : {}),
           },
+        });
+        return fromActionResult(commandResponseToActionResult(response));
+      },
+    },
+    {
+      name: "ui_select_model",
+      description:
+        "Select the model the MCPJam UI Playground chat uses. Pass a model identifier as the picker shows it (its id, e.g. 'claude-sonnet-5', or its display name). Resolves against the available models; an unknown one is rejected. The user sees the model chip update. Opens the playground first if needed.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          model: {
+            type: "string",
+            description: "Model id or display name to select.",
+          },
+        },
+        required: ["model"],
+        additionalProperties: false,
+      },
+      readOnly: false,
+      // Switches the composer's model — a reversible UI selection the user
+      // watches happen; nothing leaves the browser.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      mayNavigate: true,
+      execute: async (args) => {
+        const model = asOptionalString(args.model);
+        if (!model) return errorResult("Missing required 'model' string.");
+        const notOpen = await ensurePlaygroundOpen("selectModel");
+        if (notOpen) return notOpen;
+        const response = await dispatchInspectorCommand({
+          type: "selectModel",
+          payload: { model },
+        });
+        return fromActionResult(commandResponseToActionResult(response));
+      },
+    },
+    {
+      name: "ui_set_system_prompt",
+      description:
+        "Set the MCPJam UI Playground chat's system prompt to the given text (the user is directing it). Pass an empty string to clear it. The prompt applies to the next turn; the user sees the system-prompt control reflect it. Opens the playground first if needed.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          prompt: {
+            type: "string",
+            description:
+              "The system prompt text to apply. Empty string clears it.",
+          },
+        },
+        required: ["prompt"],
+        additionalProperties: false,
+      },
+      readOnly: false,
+      // Replaces a composer setting the user watches change. The prompt is a
+      // user-directed INPUT; results/snapshots never echo it back beyond
+      // presence/length.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      mayNavigate: true,
+      execute: async (args) => {
+        // Free text, so accept it verbatim — including the empty string, which
+        // is the explicit "clear the prompt" request and must NOT error.
+        const prompt = typeof args.prompt === "string" ? args.prompt : undefined;
+        if (prompt === undefined) {
+          return errorResult("Missing required 'prompt' string.");
+        }
+        const notOpen = await ensurePlaygroundOpen("setSystemPrompt");
+        if (notOpen) return notOpen;
+        const response = await dispatchInspectorCommand({
+          type: "setSystemPrompt",
+          payload: { prompt },
+        });
+        return fromActionResult(commandResponseToActionResult(response));
+      },
+    },
+    {
+      name: "ui_reset_chat",
+      description:
+        "Start a new / reset the MCPJam UI Playground chat, clearing the current conversation. This LOSES the conversation — it cannot be undone. Runs the same reset the Clear-chat button does. Opens the playground first if needed.",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+      readOnly: false,
+      // Irreversible: the conversation is gone. `destructiveHint: true` shows
+      // the confirmation pill even in the default approval mode — the pill IS
+      // the confirmation, so the handler performs the reset directly.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      mayNavigate: true,
+      execute: async () => {
+        const notOpen = await ensurePlaygroundOpen("resetChat");
+        if (notOpen) return notOpen;
+        const response = await dispatchInspectorCommand({
+          type: "resetChat",
+          payload: {},
+        });
+        return fromActionResult(commandResponseToActionResult(response));
+      },
+    },
+    {
+      name: "ui_stop_generation",
+      description:
+        "Stop an in-flight response in the MCPJam UI Playground chat. Succeeds as a no-op if nothing is generating. Opens the playground first if needed.",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+      readOnly: false,
+      // Halts streaming — reversible (just send again) and browser-local.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      mayNavigate: true,
+      execute: async () => {
+        const notOpen = await ensurePlaygroundOpen("stopGeneration");
+        if (notOpen) return notOpen;
+        const response = await dispatchInspectorCommand({
+          type: "stopGeneration",
+          payload: {},
         });
         return fromActionResult(commandResponseToActionResult(response));
       },

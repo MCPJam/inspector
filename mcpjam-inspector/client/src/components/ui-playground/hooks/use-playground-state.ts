@@ -64,9 +64,12 @@ import {
 import type {
   ExecuteToolInspectorCommand,
   RenderToolResultInspectorCommand,
+  SelectModelInspectorCommand,
   SelectToolInspectorCommand,
   SetAppContextInspectorCommand,
+  SetSystemPromptInspectorCommand,
 } from "@/shared/inspector-command.js";
+import { getPlaygroundAgentControls } from "@/components/playground/playground-agent-controls-bridge";
 import { useSavedRequests, useServerKey, useToolExecution } from "./index";
 import { PANEL_SIZES } from "../constants";
 
@@ -500,6 +503,14 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   const buildPlaygroundSnapshot = useCallback(() => {
     const playgroundState = useUIPlaygroundStore.getState();
 
+    // The chat composer's state (model, system prompt, history, streaming)
+    // lives in PlaygroundMain's chat session, published through the
+    // agent-controls bridge. Absent when no chat is mounted (no connected
+    // server). Everything read here is already redacted at the bridge: model
+    // id/name only, system-prompt presence/length (never text), a bounded
+    // history count + last role (never message contents). No keys.
+    const chat = getPlaygroundAgentControls();
+
     return {
       serverName: serverName ?? null,
       selectedTool: playgroundState.selectedTool,
@@ -512,6 +523,14 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       widgetState: playgroundState.widgetState,
       executionError: playgroundState.executionError,
       isExecuting: playgroundState.isExecuting,
+      chat: chat
+        ? {
+            selectedModel: chat.selectedModel,
+            systemPrompt: chat.systemPrompt,
+            history: chat.history,
+            isGenerating: chat.isGenerating,
+          }
+        : null,
     };
   }, [serverName]);
 
@@ -773,6 +792,80 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       }
     );
 
+    // Chat-composer command handlers (the global playground catalog's
+    // ui_select_model / ui_set_system_prompt / ui_reset_chat /
+    // ui_stop_generation). They drive PlaygroundMain's chat session through
+    // the agent-controls bridge — a sibling subtree — so they read the live
+    // controls at dispatch time and fail cleanly with `unsupported_in_mode`
+    // when no chat is mounted (e.g. no connected server). Each returns the
+    // (redacted) playground snapshot so the agent can observe the result.
+    const requireChatControls = () => {
+      const controls = getPlaygroundAgentControls();
+      if (!controls) {
+        throw createInspectorCommandClientError(
+          "unsupported_in_mode",
+          "The Playground chat is not ready. Connect a server and open the Playground first.",
+        );
+      }
+      return controls;
+    };
+
+    const unregisterSelectModel = registerInspectorCommandHandler(
+      "selectModel",
+      async (rawCommand) => {
+        const command = rawCommand as SelectModelInspectorCommand;
+        const controls = requireChatControls();
+        const identifier = command.payload.model?.trim();
+        if (!identifier) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "Missing required 'model' identifier.",
+          );
+        }
+        const result = controls.selectModel(identifier);
+        if (!result.ok) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            result.error,
+          );
+        }
+        await waitForUiCommit();
+        return buildPlaygroundSnapshot();
+      },
+    );
+
+    const unregisterSetSystemPrompt = registerInspectorCommandHandler(
+      "setSystemPrompt",
+      async (rawCommand) => {
+        const command = rawCommand as SetSystemPromptInspectorCommand;
+        const controls = requireChatControls();
+        // Free text the user is directing; empty string clears the prompt.
+        controls.setSystemPrompt(command.payload.prompt ?? "");
+        await waitForUiCommit();
+        return buildPlaygroundSnapshot();
+      },
+    );
+
+    const unregisterResetChat = registerInspectorCommandHandler(
+      "resetChat",
+      async () => {
+        const controls = requireChatControls();
+        controls.resetChat();
+        await waitForUiCommit();
+        return buildPlaygroundSnapshot();
+      },
+    );
+
+    const unregisterStopGeneration = registerInspectorCommandHandler(
+      "stopGeneration",
+      async () => {
+        const controls = requireChatControls();
+        const { stopped } = controls.stopGeneration();
+        await waitForUiCommit();
+        return { ...buildPlaygroundSnapshot(), stopped };
+      },
+    );
+
     // A PROVIDER, not a `snapshotApp` command handler. The bus dispatches
     // handlers newest-first and returns the first success, so a handler here
     // would shadow the app-level one whenever the Playground is mounted —
@@ -793,6 +886,10 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       unregisterExecuteTool();
       unregisterRenderToolResult();
       unregisterSetAppContext();
+      unregisterSelectModel();
+      unregisterSetSystemPrompt();
+      unregisterResetChat();
+      unregisterStopGeneration();
       unregisterSnapshotApp?.();
     };
   }, [

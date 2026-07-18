@@ -62,7 +62,11 @@ export type InspectorCommandType =
   | "deleteComputer"
   | "publishChatbox"
   | "generateChatboxSessions"
-  | "deleteChatbox";
+  | "deleteChatbox"
+  | "selectModel"
+  | "setSystemPrompt"
+  | "resetChat"
+  | "stopGeneration";
 
 export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "navigate",
@@ -101,6 +105,10 @@ export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "publishChatbox",
   "generateChatboxSessions",
   "deleteChatbox",
+  "selectModel",
+  "setSystemPrompt",
+  "resetChat",
+  "stopGeneration",
 ] as const satisfies readonly InspectorCommandType[];
 
 export interface InspectorCommandError {
@@ -605,6 +613,68 @@ export interface DeleteChatboxInspectorCommand {
   timeoutMs?: number;
 }
 
+/**
+ * Playground CHAT-composer commands, handled by the Playground surface while
+ * `/playground` is mounted. Unlike the mount-scoped surface groups, these
+ * EXTEND the always-on global playground catalog (`groups/playground.ts`) —
+ * the playground manifest is `kind: "global"`, so its tools auto-open the
+ * playground from anywhere. They act on the ONE playground chat session; there
+ * is no target in the payload (the session is resolved from the surface, never
+ * from the agent).
+ *
+ * The handlers call the SAME functions the composer controls use (the model
+ * picker's onChange, the system-prompt setter, the Clear-chat reset flow, the
+ * stop control). Nothing about the transcript crosses the wire: `selectModel`
+ * takes a model identifier, not a conversation; `setSystemPrompt` takes the
+ * user-directed prompt as an INPUT but the snapshot only reports its
+ * presence/length; reset/stop carry no payload.
+ */
+
+/**
+ * Select the playground chat model. `model` is a model identifier as the
+ * picker addresses it (its id, or its display name). Handlers resolve it
+ * against the available models and reject anything else as `invalid_request`
+ * — never a fuzzy guess.
+ */
+export interface SelectModelInspectorCommand {
+  id: string;
+  type: "selectModel";
+  payload: { model: string };
+  timeoutMs?: number;
+}
+
+/**
+ * Set the playground chat's system prompt. `prompt` is free text the USER is
+ * directing (empty string clears it). It is an INPUT only: the prompt is never
+ * echoed back in results or snapshots beyond its presence and length.
+ */
+export interface SetSystemPromptInspectorCommand {
+  id: string;
+  type: "setSystemPrompt";
+  payload: { prompt: string };
+  timeoutMs?: number;
+}
+
+/**
+ * Start a new / reset the playground chat. Destructive (loses the current
+ * conversation) — the agent tool's own approval pill is the confirmation, so
+ * this performs the same reset the Clear-chat dialog does directly.
+ */
+export interface ResetChatInspectorCommand {
+  id: string;
+  type: "resetChat";
+  payload?: Record<string, never>;
+  timeoutMs?: number;
+}
+
+/** Stop an in-flight playground generation. No-op (success) when idle. */
+export interface StopGenerationInspectorCommand {
+  id: string;
+  type: "stopGeneration";
+  payload?: Record<string, never>;
+  timeoutMs?: number;
+}
+
 export type InspectorCommand =
   | NavigateInspectorCommand
   | SelectServerInspectorCommand
@@ -641,7 +711,11 @@ export type InspectorCommand =
   | DeleteComputerInspectorCommand
   | PublishChatboxInspectorCommand
   | GenerateChatboxSessionsInspectorCommand
-  | DeleteChatboxInspectorCommand;
+  | DeleteChatboxInspectorCommand
+  | SelectModelInspectorCommand
+  | SetSystemPromptInspectorCommand
+  | ResetChatInspectorCommand
+  | StopGenerationInspectorCommand;
 
 export interface InspectorCommandSuccessResponse {
   id: string;
