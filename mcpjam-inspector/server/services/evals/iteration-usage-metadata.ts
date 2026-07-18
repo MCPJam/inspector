@@ -13,6 +13,20 @@ export function buildIterationUsageMetadata(
     metadata.outputTokens = usage.outputTokens;
   }
 
+  // Prompt-cache breakdown — persisted only when present (cache-free
+  // iterations keep the input/output-only shape, no churn). Placed BEFORE the
+  // totalTokens early return so cache data survives even if a provider ever
+  // reports cache counts without a positive total.
+  if (typeof usage.cachedInputTokens === "number") {
+    metadata.cachedInputTokens = usage.cachedInputTokens;
+  }
+  if (typeof usage.cacheWriteTokens === "number") {
+    metadata.cacheWriteTokens = usage.cacheWriteTokens;
+  }
+  if (typeof usage.noCacheInputTokens === "number") {
+    metadata.noCacheInputTokens = usage.noCacheInputTokens;
+  }
+
   const total =
     typeof usage.totalTokens === "number" ? usage.totalTokens : undefined;
   if (total === undefined || total <= 0) {
@@ -31,18 +45,6 @@ export function buildIterationUsageMetadata(
     } else if (input === 0 && output > 0) {
       metadata.inputTokens = total - output;
     }
-  }
-
-  // Prompt-cache breakdown — persisted only when present (cache-free
-  // iterations keep the input/output-only shape, no churn).
-  if (typeof usage.cachedInputTokens === "number") {
-    metadata.cachedInputTokens = usage.cachedInputTokens;
-  }
-  if (typeof usage.cacheWriteTokens === "number") {
-    metadata.cacheWriteTokens = usage.cacheWriteTokens;
-  }
-  if (typeof usage.noCacheInputTokens === "number") {
-    metadata.noCacheInputTokens = usage.noCacheInputTokens;
   }
 
   return metadata;

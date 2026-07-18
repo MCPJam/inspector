@@ -50,6 +50,15 @@ describe("buildIterationUsageMetadata", () => {
     });
   });
 
+  it("keeps cache fields even when totalTokens is absent (defensive)", () => {
+    expect(
+      buildIterationUsageMetadata({
+        inputTokens: 100,
+        cachedInputTokens: 60,
+      }),
+    ).toEqual({ inputTokens: 100, cachedInputTokens: 60 });
+  });
+
   it("omits cache fields when absent (cache-free iteration)", () => {
     expect(
       buildIterationUsageMetadata({
