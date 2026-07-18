@@ -9,11 +9,12 @@ import {
   type LoggingLevel,
   SSEClientTransport,
   type ServerCapabilities,
-  StdioClientTransport,
   StreamableHTTPClientTransport,
   type Transport,
   type RequestOptions,
 } from "@modelcontextprotocol/client";
+// beta.4 moved the Node stdio client transport to the `/stdio` subpath.
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import type {
   MCPClientManagerConfig,
@@ -754,7 +755,11 @@ export class MCPClientManager {
           request.task.ttl !== undefined ? { ttl: request.task.ttl } : {};
         const result = await client.request(
           { method: "tools/call", params: callParams },
-          { ...mergedOptions, task: taskValue }
+          // TODO(Phase 6 / io.modelcontextprotocol/tasks): beta.4 removed the
+          // `task` field from RequestOptions (tasks moved to the extension).
+          // Cast to keep this legacy task-augmented path compiling until Phase 6
+          // rebuilds it on the new extension shape.
+          { ...mergedOptions, task: taskValue } as RequestOptions
         );
         if (!isCreateTaskResult(result)) {
           throw new TypeError(
