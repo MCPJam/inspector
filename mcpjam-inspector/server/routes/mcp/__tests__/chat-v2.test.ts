@@ -1828,35 +1828,67 @@ describe("POST /api/mcp/chat-v2", () => {
       }
     });
 
+    // Guests are no longer model-curated (the backend enforces spend caps, not
+    // an allowlist), so these formerly-gated premium models now pass through
+    // and get a guest bearer minted server-side — no 403.
     it.each([
       { id: "openai/gpt-5.4-pro", provider: "openai" },
       { id: "anthropic/claude-opus-4.6", provider: "anthropic" },
       { id: "google/gemini-3.1-pro-preview", provider: "google" },
     ])(
-      "rejects gated MCPJam guest model $id before fetching guest auth",
+      "mints a guest token for formerly-gated MCPJam model $id (no rejection)",
       async ({ id, provider }) => {
         const { getProductionGuestAuthHeader } = await import(
           "../../../utils/guest-auth.js"
         );
 
         const originalFetch = global.fetch;
-        global.fetch = vi.fn();
+        global.fetch = vi
+          .fn()
+          .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+            const url = String(input);
+            if (url === "https://test-convex.example.com/stream") {
+              return createSseResponse([
+                {
+                  type: "finish",
+                  finishReason: "stop",
+                  messageMetadata: {
+                    inputTokens: 1,
+                    outputTokens: 1,
+                    totalTokens: 2,
+                  },
+                },
+              ]);
+            }
+            if (url === "https://test-convex.example.com/ingest-chat") {
+              return new Response(null, { status: 200 });
+            }
+            throw new Error(`Unexpected fetch URL: ${url}`);
+          });
 
         try {
           const res = await postJson(app, "/api/mcp/chat-v2", {
             messages: [{ role: "user", content: "Hello" }],
             model: { id, provider },
           });
-          const { status, data } = await expectJson<ErrorResponse>(res);
+          expect(res.status).toBe(200);
+          await lastStreamExecution;
 
-          expect(status).toBe(403);
-          expect(data.error).toBe(
-            "This MCPJam model is not available for guest access. Sign in to continue."
+          // The guest bearer is minted (the path a 403 used to short-circuit).
+          expect(vi.mocked(getProductionGuestAuthHeader)).toHaveBeenCalled();
+          const streamCall = vi
+            .mocked(global.fetch)
+            .mock.calls.find(([url]) => String(url).endsWith("/stream"));
+          expect(streamCall).toBeDefined();
+          // …and that minted bearer must actually be SENT on the upstream
+          // /stream call, not merely resolved — otherwise the guest request
+          // would reach Convex unauthenticated.
+          const streamHeaders = new Headers(
+            (streamCall?.[1] as RequestInit | undefined)?.headers,
           );
-          expect(
-            vi.mocked(getProductionGuestAuthHeader)
-          ).not.toHaveBeenCalled();
-          expect(global.fetch).not.toHaveBeenCalled();
+          expect(streamHeaders.get("authorization")).toBe(
+            "Bearer guest-test-token",
+          );
         } finally {
           global.fetch = originalFetch;
         }
