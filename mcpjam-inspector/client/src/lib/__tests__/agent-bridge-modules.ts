@@ -34,4 +34,16 @@ export const BRIDGE_MODULES: Record<string, string> = {
   // Swarms-owned dead-end there. Not a shared hook (SwarmsTab is a separate
   // component), so the "chatboxes" group can't be mis-scoped.
   chatboxes: "client/src/components/ChatboxesTab.tsx",
+  // ResourcesTab owns the resource/template lists and the readResourceApi path
+  // its Read button uses; the group's ui_read_resource resolves against them.
+  resources: "client/src/components/ResourcesTab.tsx",
+  // PromptsTab owns the prompt list and the getPromptApi path its Run button
+  // uses; the group's ui_get_prompt resolves against them.
+  prompts: "client/src/components/PromptsTab.tsx",
+  // ToolsTab is SNAPSHOT-ONLY: it declares agentTools kind "none" (execution is
+  // already covered by the global ui_execute_tool, so a screen tool would
+  // duplicate it) but calls useSurfaceAgentBridge with a snapshot ONLY. The row
+  // exists so surface-snapshot-coverage can back its hasSnapshotProvider claim;
+  // agent-tool-coverage permits a non-group row exactly when it's snapshot-only.
+  tools: "client/src/components/ToolsTab.tsx",
 };

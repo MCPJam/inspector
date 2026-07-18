@@ -51,9 +51,13 @@ import { useToolQualityEnabled } from "@/hooks/useToolQualityEnabled";
 import type { ConnectionStatus } from "@/state/app-types";
 import type { ToolQualityInfo } from "./tools/ToolItem";
 import type { McpToolResultImageRenderingPolicy } from "@/lib/client-config-v2";
+import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 
 type ToolMap = Record<string, Tool>;
 type FormField = ToolFormField;
+
+/** Cap the list of tools the snapshot enumerates (names only). */
+const TOOLS_SNAPSHOT_MAX_ITEMS = 30;
 
 // Shape returned by the backend tool-quality lint query (string-named). The
 // inspector renders these purely as neutral per-tool quality badges.
@@ -758,6 +762,44 @@ export function ToolsTab({
         timestamp: activeElicitation.timestamp,
       }
     : null;
+
+  // Agent bridge: SNAPSHOT-ONLY. Tool EXECUTION is already covered by the
+  // global ui_execute_tool, so this surface adds no tool of its own — a
+  // ui_run_server_tool would just duplicate it (the plan drops it). It registers
+  // only a redacted snapshot so the agent can OBSERVE this screen. Must run
+  // before any early return (rules of hooks). Redacted STATE, not payloads: the
+  // selected server, the tool NAMES (bounded), the current selection + its
+  // parameter FIELD NAMES (never the values), and whether a result exists
+  // (presence/size only, never the content).
+  useSurfaceAgentBridge({
+    surfaceId: "tools",
+    snapshot: () => {
+      let lastResultBytes = 0;
+      if (result) {
+        try {
+          lastResultBytes = JSON.stringify(result).length;
+        } catch {
+          lastResultBytes = 0;
+        }
+      }
+      const names = Object.keys(tools);
+      return {
+        selectedServer: serverName ?? null,
+        connected: isServerConnected,
+        activeTab,
+        toolCount: names.length,
+        tools: names.slice(0, TOOLS_SNAPSHOT_MAX_ITEMS),
+        selectedTool: selectedTool || null,
+        selectedToolParameterNames: formFields.map((f) => f.name),
+        savedRequestCount: savedRequests.length,
+        lastToolName: lastToolName ?? null,
+        lastResult: {
+          present: Boolean(result),
+          approxSizeBytes: lastResultBytes,
+        },
+      };
+    },
+  });
 
   if (!serverConfig) {
     return (
