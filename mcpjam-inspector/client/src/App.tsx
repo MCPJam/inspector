@@ -268,7 +268,12 @@ import type {
   SelectServerInspectorCommand,
   SnapshotAppInspectorCommand,
 } from "@/shared/inspector-command.js";
-import { isAppSurfaceId } from "@/shared/app-surfaces";
+import {
+  getAppSurfaceByNavSegment,
+  isAppSurfaceId,
+} from "@/shared/app-surfaces";
+import { waitForUiToolNames } from "./lib/webmcp/ui-tools-readiness";
+import { listSurfaceGroupToolNames } from "./lib/webmcp/groups";
 import {
   readAllSurfaceSnapshots,
   readSurfaceSnapshot,
@@ -2662,6 +2667,22 @@ export default function App() {
 
         navigateApp(resolved.path);
         await waitForUiCommit();
+
+        // Same-turn advertisement for mount-scoped tool groups: a surface
+        // with `agentTools.kind === "group"` registers its tools in a layout
+        // effect as it mounts, and the chat pipeline drains the registry per
+        // POST — waiting here lets the auto-resume POST after this tool call
+        // already advertise the group, instead of burning a model turn
+        // before the tools appear. The boolean is deliberately ignored: on
+        // timeout the next POST simply re-snapshots whatever is registered
+        // by then (the tools are additive context, not a precondition).
+        const targetSurface = getAppSurfaceByNavSegment(resolved.tab);
+        if (targetSurface?.agentTools.kind === "group") {
+          await waitForUiToolNames(
+            listSurfaceGroupToolNames(targetSurface.id),
+            1500
+          );
+        }
 
         // Report the tab the shell actually landed on, not the requested
         // one — the gating effects below (feature flags, hosted policy)

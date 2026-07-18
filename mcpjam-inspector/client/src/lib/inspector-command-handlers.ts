@@ -30,7 +30,7 @@ export function createInspectorCommandClientError(
   return new InspectorCommandClientError(code, message, details);
 }
 
-type InspectorCommandHandler = (
+export type InspectorCommandHandler = (
   command: InspectorCommand,
 ) => Promise<unknown> | unknown;
 
