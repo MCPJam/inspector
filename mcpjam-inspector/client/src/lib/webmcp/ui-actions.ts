@@ -26,6 +26,29 @@ import {
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
 import { HOSTED_MODE } from "@/lib/config";
+import { track } from "@/lib/analytics";
+
+/**
+ * Observation-only telemetry for rejected navigation targets. Only KNOWN
+ * segments (the hosted_blocked case) are emitted verbatim; an unknown target
+ * is arbitrary model output and must never reach analytics, so it collapses
+ * to the constant "unrecognized" (the rejection count is the signal). A
+ * throwing capture must never break the action.
+ */
+function trackNavigationRejected(
+  segment: string,
+  reason: "unknown" | "hosted_blocked",
+): void {
+  try {
+    track("ui_navigation_rejected", {
+      location: "webmcp",
+      segment: reason === "unknown" ? "unrecognized" : segment,
+      reason,
+    });
+  } catch {
+    // Telemetry must never break the navigation result.
+  }
+}
 
 export type UiActionResult =
   | { ok: true; data?: unknown }
@@ -118,12 +141,14 @@ export function resolveUiNavigationTarget(
   const firstSegment = stripped.split(/[/?]/)[0] || "servers";
   const tab = normalizeHostedHashTab(firstSegment);
   if (!isKnownAppTabSegment(tab)) {
+    trackNavigationRejected(tab, "unknown");
     return {
       ok: false,
       reason: `Unknown navigation target "${rawTarget}". Valid targets: ${listUiNavigationTargets().join(", ")}.`,
     };
   }
   if (HOSTED_MODE && isHostedHashTabBlocked(tab)) {
+    trackNavigationRejected(tab, "hosted_blocked");
     return {
       ok: false,
       reason: `"${tab}" is not available in hosted mode. Valid targets: ${listUiNavigationTargets().join(", ")}.`,

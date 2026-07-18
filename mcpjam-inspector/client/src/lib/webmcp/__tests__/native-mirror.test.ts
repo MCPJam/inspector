@@ -77,6 +77,35 @@ describe("mirrorUiToolToNative", () => {
     expect(opts?.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it("projects the full MCP annotations plus WebMCP's untrustedContentHint", () => {
+    const registerTool = stubModelContext("document");
+    mirrorUiToolToNative(
+      makeTool({
+        readOnly: false,
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          openWorldHint: true,
+        },
+        nativeUntrustedContentHint: true,
+      }),
+    );
+    expect(registerTool.mock.calls[0][0].annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
+      untrustedContentHint: true,
+    });
+  });
+
+  it("omits untrustedContentHint when the tool doesn't set it", () => {
+    const registerTool = stubModelContext("document");
+    mirrorUiToolToNative(makeTool());
+    expect(
+      registerTool.mock.calls[0][0].annotations,
+    ).not.toHaveProperty("untrustedContentHint");
+  });
+
   it("disposer aborts the registration signal", () => {
     const registerTool = stubModelContext("document");
     const dispose = mirrorUiToolToNative(makeTool());

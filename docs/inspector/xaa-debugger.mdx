@@ -4,21 +4,20 @@ description: "Configure and debug Cross-App Access flows with MCPJam as the test
 icon: "shield-check"
 ---
 
+<iframe
+  className="w-full aspect-video rounded-xl"
+  src="https://www.youtube.com/embed/CP75up3NJb8"
+  title="XAA Debugger walkthrough"
+  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+  allowFullScreen
+></iframe>
+
 The XAA (Cross-App Access) Debugger tests an MCP server and its authorization setup.
 
 MCPJam acts as both:
 
 - The **identity provider**, which signs the ID token and ID-JAG.
 - The **client/agent**, which presents the ID-JAG and uses the access token.
-
-<Frame>
-  <img
-    className="block"
-    src="/images/xaa-flow.png"
-    alt="XAA debugger sequence diagram and flow log"
-    width="1000"
-  />
-</Frame>
 
 ## Before You Run the Test
 
@@ -235,8 +234,8 @@ The **Negative-test scorecard** sends invalid ID-JAGs to your authorization
 server and checks that it refuses the assertions that the ID-JAG profile
 requires it to reject. It also reports two policy-dependent probes separately.
 Run a successful flow first to unlock it.
-The scorecard reuses the client identity resolved by that flow when it was
-pre-registered or dynamically registered with DCR.
+The scorecard reuses the client identity resolved by that flow — whether it was
+pre-registered, dynamically registered with DCR, or resolved via CIMD.
 
 Click **Run negative tests** to send intentionally broken ID-JAGs to the
 authorization server's token endpoint. The MCP server is not called during

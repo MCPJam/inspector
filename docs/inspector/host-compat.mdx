@@ -17,16 +17,16 @@ Once a server is connected, a **compat strip** appears on its card: a row of hos
 | Red | **Blocked** | A hard blocker prevents the server from working in this host — for example, the host can't reach a local stdio server. |
 | Gray | **Unknown** | The report doesn't have enough information to produce a verdict for this host yet. |
 
-Hover any logo to see a tooltip with the verdict and the first finding. Click the strip to open the **Hosts** tab in the server detail modal for the full report.
+Hover any logo to see a tooltip with the verdict and the first finding. Click the strip to open the **Clients** tab in the server detail modal for the full report.
 
-## The Hosts tab
+## The Clients tab
 
-The server detail modal has a **Hosts** tab (alongside Config, Overview, Tools, and History). It shows a per-host breakdown:
+The server detail modal has a **Clients** tab (alongside Config, Overview, Tools, and History). It shows a per-host breakdown:
 
 - **Verdict** — Works / Degraded / Blocked / Unknown, with a colored dot.
 - **Provenance** — How trustworthy the host profile is. Hover the verdict dot to see one of:
   - *Verified from vendor docs* — the profile is based on a published vendor capability table.
-  - *Probe-captured from a real host* — the profile was captured from a live host session.
+  - *Probe-captured from a real client* — the profile was captured from a live client session.
   - *Best-effort preset — unverified* — the profile is a best-effort estimate.
 - **Findings** — Click the summary line to expand the full list of findings for that host. Each finding shows:
   - A severity icon (blocker, degraded, or info).
@@ -97,10 +97,10 @@ Host profiles are best-effort. The provenance label on each verdict tells you ho
 | Provenance | Source | Confidence |
 |------------|--------|------------|
 | Vendor doc | Published capability table (e.g. Microsoft's Copilot MCP Apps table) | High |
-| Probe | Captured from a live host session (e.g. Cursor 3.4.17) | High, but versioned |
+| Probe | Captured from a live client session (e.g. Cursor 3.4.17) | High, but versioned |
 | Assumed | Best-effort preset judgment | Lower — treat as a starting point |
 
-The copy in the Hosts tab always says "prototype · static checks" to make clear this is not a live test against the real host. Use the **Test** button to open the Playground and verify behavior under the host's emulated environment.
+The copy in the Clients tab always says "prototype · static checks" to make clear this is not a live test against the real host. Use the **Test** button to open the Playground and verify behavior under the host's emulated environment.
 
 ## Acting on findings
 
@@ -115,7 +115,7 @@ After updating your server, reconnect and the compat strip will re-evaluate.
 
 ### Test in an emulated host
 
-Click **Test** next to any host in the Hosts tab to:
+Click **Test** next to any host in the Clients tab to:
 
 1. Create a new host pre-configured from that host's template (Claude, ChatGPT, Cursor, Copilot, or Codex).
 2. Attach your server to it automatically.

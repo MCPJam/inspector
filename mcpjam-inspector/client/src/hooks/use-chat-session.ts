@@ -379,6 +379,7 @@ export interface UseChatSessionReturn {
   tokenUsage: TokenUsage;
   mcpToolsTokenCount: Record<string, number> | null;
   mcpToolsTokenCountLoading: boolean;
+  mcpToolsTokenCountErrors: Record<string, string> | null;
   systemPromptTokenCount: number | null;
   systemPromptTokenCountLoading: boolean;
 
@@ -1273,6 +1274,8 @@ export function useChatSession(
   > | null>(null);
   const [mcpToolsTokenCountLoading, setMcpToolsTokenCountLoading] =
     useState(false);
+  const [mcpToolsTokenCountErrors, setMcpToolsTokenCountErrors] =
+    useState<Record<string, string> | null>(null);
   const [systemPromptTokenCount, setSystemPromptTokenCount] = useState<
     number | null
   >(null);
@@ -1545,6 +1548,15 @@ export function useChatSession(
     if (!selectedModelId) return fallback;
     return resolveSelectableModel(selectedModelId) ?? fallback;
   }, [availableModels, initialModelId, selectableModels, selectedModelId]);
+
+  const tokenCountSelectionKey = useMemo(() => {
+    if (!selectedModel?.id || !selectedModel?.provider) return "";
+    const modelId = isMCPJamProvidedModelMenuItem(selectedModel)
+      ? String(selectedModel.id)
+      : `${selectedModel.provider}/${selectedModel.id}`;
+    return `${selectedServersSignature}\u0001${modelId}`;
+  }, [selectedModel, selectedServersSignature]);
+  const lastObservedTokenCountSelectionKeyRef = useRef<string | null>(null);
 
   const setSelectedModel = useCallback(
     (model: ModelDefinition) => {
@@ -1941,6 +1953,8 @@ export function useChatSession(
           // Defers mutating UI tools to the approval pill when the toggle is
           // on — must mirror the server's gate (shared predicate).
           requireToolApproval: requireToolApprovalRef.current,
+          // Duplicate detection is per chat session, not per module.
+          telemetryScope: chatSessionIdRef.current,
         })
       ) {
         return;
@@ -2116,8 +2130,10 @@ export function useChatSession(
         addToolOutput: addToolOutput as Parameters<
           typeof createUiAwareApprovalResponseHandler
         >[0]["addToolOutput"],
+        // Keeps reload-approved calls in this session's duplicate ring.
+        telemetryScope: chatSessionId,
       }),
-    [addToolApprovalResponse, addToolOutput]
+    [addToolApprovalResponse, addToolOutput, chatSessionId]
   );
 
   // Orphaned-defer fallback: a UI tool call deferred for approval whose
@@ -2794,6 +2810,7 @@ export function useChatSession(
   useEffect(() => {
     const fetchToolsMetadata = async () => {
       if (selectedServers.length === 0) {
+        lastObservedTokenCountSelectionKeyRef.current = null;
         setToolsMetadata((previous) =>
           Object.keys(previous).length > 0 ? {} : previous
         );
@@ -2806,32 +2823,56 @@ export function useChatSession(
         setMcpToolsTokenCount((previous) =>
           previous !== null ? null : previous
         );
+        setMcpToolsTokenCountErrors((previous) =>
+          previous !== null ? null : previous
+        );
         setMcpToolsTokenCountLoading((previous) =>
           previous ? false : previous
         );
         return;
       }
 
-      const shouldCountTokens = selectedModel?.id && selectedModel?.provider;
+      const shouldCountTokens =
+        tokenCountSelectionKey !== "" && messages.length === 0;
+      const selectionChanged =
+        lastObservedTokenCountSelectionKeyRef.current !== null &&
+        lastObservedTokenCountSelectionKeyRef.current !== tokenCountSelectionKey;
+      lastObservedTokenCountSelectionKeyRef.current = tokenCountSelectionKey;
       const modelIdForTokens = shouldCountTokens
         ? isMCPJamProvidedModelMenuItem(selectedModel)
           ? String(selectedModel.id)
           : `${selectedModel.provider}/${selectedModel.id}`
         : undefined;
 
-      setMcpToolsTokenCountLoading(!!modelIdForTokens);
+      if (selectionChanged && !shouldCountTokens) {
+        setMcpToolsTokenCount(null);
+        setMcpToolsTokenCountErrors(null);
+      }
+      setMcpToolsTokenCountLoading(shouldCountTokens);
 
       try {
-        const { metadata, toolServerMap, serializedTools, tokenCounts } =
-          await getToolsMetadata(selectedServers, modelIdForTokens);
+        const {
+          metadata,
+          toolServerMap,
+          serializedTools,
+          tokenCounts,
+          tokenCountErrors,
+        } = await getToolsMetadata(selectedServers, modelIdForTokens);
         setToolsMetadata(metadata);
         setToolServerMap(toolServerMap);
         setSerializedTools(serializedTools);
-        setMcpToolsTokenCount(
-          tokenCounts && Object.keys(tokenCounts).length > 0
-            ? tokenCounts
-            : null
-        );
+        if (shouldCountTokens) {
+          setMcpToolsTokenCount(
+            tokenCounts && Object.keys(tokenCounts).length > 0
+              ? tokenCounts
+              : null
+          );
+          setMcpToolsTokenCountErrors(
+            tokenCountErrors && Object.keys(tokenCountErrors).length > 0
+              ? tokenCountErrors
+              : null
+          );
+        }
       } catch (error) {
         if (!(hostedChatboxId && isAuthDeniedError(error))) {
           console.warn(
@@ -2842,7 +2883,10 @@ export function useChatSession(
         setToolsMetadata({});
         setToolServerMap({});
         setSerializedTools({});
-        setMcpToolsTokenCount(null);
+        if (shouldCountTokens) {
+          setMcpToolsTokenCount(null);
+          setMcpToolsTokenCountErrors(null);
+        }
       } finally {
         setMcpToolsTokenCountLoading(false);
       }
@@ -2852,6 +2896,7 @@ export function useChatSession(
   }, [
     selectedServersSignature,
     selectedModel,
+    tokenCountSelectionKey,
     hostedChatboxId,
     apiContextRevision,
   ]);
@@ -3063,6 +3108,7 @@ export function useChatSession(
     tokenUsage,
     mcpToolsTokenCount,
     mcpToolsTokenCountLoading,
+    mcpToolsTokenCountErrors,
     systemPromptTokenCount,
     systemPromptTokenCountLoading,
 

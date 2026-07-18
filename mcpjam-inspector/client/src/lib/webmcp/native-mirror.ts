@@ -85,7 +85,20 @@ export function mirrorUiToolToNative(
           properties: {},
           additionalProperties: false,
         },
-        annotations: { readOnlyHint: def.readOnly },
+        // MCP `ToolAnnotations`, forwarded as-is, plus WebMCP's own
+        // `untrustedContentHint`. `readOnlyHint` falls back to the legacy
+        // flag for a definition that predates annotations; the registry
+        // rejects a definition where the two disagree. `untrustedContentHint`
+        // is a NATIVE-only signal (not a valid MCP annotation), so it lives
+        // on the client def and is projected only here — it tells a
+        // browser-native agent that a tool's output is externally sourced.
+        annotations: {
+          readOnlyHint: def.readOnly,
+          ...def.annotations,
+          ...(def.nativeUntrustedContentHint
+            ? { untrustedContentHint: true }
+            : {}),
+        },
         execute: async (args: unknown) => {
           const input =
             args && typeof args === "object"

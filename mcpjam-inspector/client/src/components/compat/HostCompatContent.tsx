@@ -48,7 +48,7 @@ import { filterReportsByFeatureFlags } from "@/lib/host-compat/feature-visibilit
 const PROVENANCE_LABEL: Record<CompatProvenance, string> = {
   observed: "Observed from a live run",
   "vendor-doc": "Verified from vendor docs",
-  probe: "Probe-captured from a real host",
+  probe: "Probe-captured from a real client",
   assumed: "Best-effort preset — unverified",
 };
 
@@ -247,7 +247,7 @@ export function HostCompatContent({
       <ConformanceGate server={server} />
 
       <p className="pb-1 text-[11px] text-muted-foreground">
-        Static checks from connect-time data · best-effort host profiles
+        Static checks from connect-time data · best-effort client profiles
         {requirements.unknownDimensions.length > 0
           ? ` · incomplete (${requirements.unknownDimensions.join(", ")})`
           : ""}

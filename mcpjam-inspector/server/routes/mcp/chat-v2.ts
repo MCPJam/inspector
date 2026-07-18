@@ -48,6 +48,7 @@ import {
   validateWidgetModelContextEntries,
   WidgetModelContextValidationError,
 } from "../../utils/chat-v2-orchestration";
+import { classifyUiToolApprovals } from "@/shared/client-fulfilled-tools";
 import {
   formatProviderOverloadError,
   isProviderOverloadError,
@@ -630,6 +631,16 @@ chatV2.post("/", async (c) => {
       }
     }
 
+    // Per-tool `ui_*` approval policy for this turn. The BYOK `streamText`
+    // path reads it off each tool's `needsApproval` (set by `buildUiTools`);
+    // the MCPJam/org loops re-implement approval on top of a proxied stream,
+    // so they need the classification passed explicitly or destructive UI
+    // tools would execute unconfirmed whenever `requireToolApproval` is off.
+    const uiToolApprovals = classifyUiToolApprovals(
+      validatedUiTools,
+      requireToolApproval === true,
+    );
+
     let validatedWidgetModelContext;
     try {
       validatedWidgetModelContext = validateWidgetModelContextEntries(
@@ -847,6 +858,7 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
+        uiToolApprovals,
         modelVisibleMcpToolResults,
         ...(resolvedExecution.harness
           ? {
@@ -1065,6 +1077,7 @@ chatV2.post("/", async (c) => {
         selectedServers,
         serverIds: hostConfigServerIds,
         requireToolApproval,
+        uiToolApprovals,
         modelVisibleMcpToolResults,
         abortSignal: inboundAbortSignalOrg,
         onConversationComplete,

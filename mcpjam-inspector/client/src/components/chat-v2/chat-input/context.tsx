@@ -30,6 +30,7 @@ type ContextSchema = {
   modelId: ModelId;
   selectedServers?: string[];
   mcpToolsTokenCount?: Record<string, number> | null;
+  mcpToolsTokenCountErrors?: Record<string, string> | null;
   mcpToolsTokenCountLoading?: boolean;
   connectedOrConnectingServerConfigs?: Record<string, { name: string }>;
   systemPromptTokenCount?: number | null;
@@ -54,6 +55,7 @@ export type ContextProps = ComponentProps<typeof HoverCard> & {
   modelId: ModelId;
   selectedServers?: string[];
   mcpToolsTokenCount?: Record<string, number> | null;
+  mcpToolsTokenCountErrors?: Record<string, string> | null;
   mcpToolsTokenCountLoading?: boolean;
   connectedOrConnectingServerConfigs?: Record<string, { name: string }>;
   systemPromptTokenCount?: number | null;
@@ -67,6 +69,7 @@ export const Context = ({
   modelId,
   selectedServers,
   mcpToolsTokenCount,
+  mcpToolsTokenCountErrors,
   mcpToolsTokenCountLoading = false,
   connectedOrConnectingServerConfigs,
   systemPromptTokenCount,
@@ -85,6 +88,7 @@ export const Context = ({
         modelId,
         selectedServers,
         mcpToolsTokenCount,
+        mcpToolsTokenCountErrors,
         mcpToolsTokenCountLoading,
         connectedOrConnectingServerConfigs,
         systemPromptTokenCount,
@@ -322,10 +326,12 @@ export const ContextMCPServerUsage = ({
 }: ContextMCPServerUsageProps) => {
   const {
     mcpToolsTokenCount,
+    mcpToolsTokenCountErrors,
     mcpToolsTokenCountLoading,
     selectedServers,
     connectedOrConnectingServerConfigs,
     usage,
+    systemPromptTokenCount,
   } = useContextValue();
 
   if (children) {
@@ -337,18 +343,26 @@ export const ContextMCPServerUsage = ({
     return null;
   }
 
+  const hasInputOrOutput =
+    (usage?.inputTokens ?? 0) > 0 || (usage?.outputTokens ?? 0) > 0;
+  const hasSystemPrompt = (systemPromptTokenCount ?? 0) > 0;
+
+  // Tool-definition tokens are a pre-request estimate. Once the provider has
+  // returned real usage, do not keep showing that estimate in the breakdown.
+  if (hasInputOrOutput) {
+    return null;
+  }
+
   if (mcpToolsTokenCountLoading) {
-    const { systemPromptTokenCount } = useContextValue();
-    const hasInputOrOutput =
-      (usage?.inputTokens ?? 0) > 0 || (usage?.outputTokens ?? 0) > 0;
-    const hasSystemPrompt = (systemPromptTokenCount ?? 0) > 0;
     return (
       <>
         {(hasInputOrOutput || hasSystemPrompt) && (
           <Separator className="my-2" />
         )}
         <div className="space-y-1">
-          <div className="text-xs text-muted-foreground">MCP Tools</div>
+          <div className="text-xs text-muted-foreground">
+            MCP Tools (estimated)
+          </div>
           <div
             className={cn(
               "flex items-center justify-between text-xs",
@@ -364,33 +378,64 @@ export const ContextMCPServerUsage = ({
     );
   }
 
-  if (!mcpToolsTokenCount || Object.keys(mcpToolsTokenCount).length === 0) {
+  if (
+    (!mcpToolsTokenCount || Object.keys(mcpToolsTokenCount).length === 0) &&
+    (!mcpToolsTokenCountErrors ||
+      Object.keys(mcpToolsTokenCountErrors).length === 0)
+  ) {
     return null;
   }
 
+  const tokenCounts = mcpToolsTokenCount ?? {};
   const serversWithTokens = selectedServers
-    .filter((serverId) => (mcpToolsTokenCount[serverId] ?? 0) > 0)
+    .filter((serverId) => (tokenCounts[serverId] ?? 0) > 0)
     .map((serverId) => ({
       serverId,
       name: connectedOrConnectingServerConfigs?.[serverId]?.name || serverId,
-      tokenCount: mcpToolsTokenCount[serverId] ?? 0,
+      tokenCount: tokenCounts[serverId] ?? 0,
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  if (serversWithTokens.length === 0) {
+  const serversWithTokenErrors = selectedServers
+    .filter((serverId) => mcpToolsTokenCountErrors?.[serverId])
+    .map((serverId) => ({
+      serverId,
+      name: connectedOrConnectingServerConfigs?.[serverId]?.name || serverId,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const tokenCountErrorDescription =
+    serversWithTokenErrors.length === 1
+      ? `Could not pre-calculate tool description tokens for ${serversWithTokenErrors[0].name}.`
+      : `Could not pre-calculate tool description tokens for ${serversWithTokenErrors.length} MCP servers.`;
+
+  if (serversWithTokens.length === 0 && serversWithTokenErrors.length === 0) {
     return null;
   }
-
-  const { systemPromptTokenCount } = useContextValue();
-  const hasInputOrOutput =
-    (usage?.inputTokens ?? 0) > 0 || (usage?.outputTokens ?? 0) > 0;
-  const hasSystemPrompt = (systemPromptTokenCount ?? 0) > 0;
 
   return (
     <>
       {(hasInputOrOutput || hasSystemPrompt) && <Separator className="my-2" />}
       <div className="space-y-1">
-        <div className="text-xs text-muted-foreground">MCP Tools</div>
+        <div className="text-xs text-muted-foreground">
+          MCP Tools (estimated)
+        </div>
+        {serversWithTokenErrors.length > 0 && (
+          <div
+            className={cn(
+              "space-y-0.5 rounded-md bg-muted/50 p-2 text-xs",
+              className,
+            )}
+            {...props}
+          >
+            <div className="font-medium text-muted-foreground">
+              Token count unavailable
+            </div>
+            <div className="text-muted-foreground">
+              {tokenCountErrorDescription}
+            </div>
+          </div>
+        )}
         {serversWithTokens.map(({ serverId, name, tokenCount }) => (
           <div
             key={serverId}

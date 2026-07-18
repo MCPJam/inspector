@@ -197,7 +197,7 @@ export function HostOverlayBar({
     setIsDeleting(true);
     try {
       await deleteHost({ hostId });
-      toast.success(`Host "${host.name}" deleted`);
+      toast.success(`Client "${host.name}" deleted`);
       // Telemetry is best-effort: a posthog throw must not bubble into the
       // shared catch and surface a delete-failure toast after the client
       // has already been removed.
@@ -211,7 +211,7 @@ export function HostOverlayBar({
         // swallow — analytics must not block the success path
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to delete host";
+      const msg = err instanceof Error ? err.message : "Failed to delete client";
       if (msg.includes("consumer")) {
         toast.error(
           `${msg} — use force delete or remove dependent chatboxes/evals first`
@@ -353,7 +353,7 @@ export function HostOverlayBar({
                       <button
                         key={id}
                         type="button"
-                        aria-label={`Add ${catalogHost.label} host`}
+                        aria-label={`Add ${catalogHost.label} client`}
                         title={`Add ${catalogHost.label}`}
                         data-testid={`host-overlay-quick-add-${id}`}
                         onClick={(e) => {

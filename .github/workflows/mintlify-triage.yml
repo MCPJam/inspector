@@ -68,26 +68,53 @@ jobs:
 
             Keep the comment to a single sentence.
 
-      # The main ruleset requires 1 approving review before anything merges.
-      # If (and only if) the classifier queued auto-merge above, satisfy that
-      # requirement here so verified docs PRs can actually land. This is the
-      # second half of the MERGE action, not a general bypass: it runs only in
-      # this workflow (job-gated to mintlify[bot] PRs), only after the
-      # classifier's positive verification, and a CLOSE decision leaves no
-      # auto-merge queued so the step is a no-op. Approval is posted by
-      # github-actions[bot], never the PR author.
-      # Explicitly authorized by the repo owner (2026-07-14) to unblock the
-      # docs-PR pipeline after the July backlog.
-      - name: Approve if classifier queued a merge
+      # Assert the classifier actually reached a decision, and complete the
+      # MERGE half of it.
+      #
+      # The prompt above mandates EXACTLY ONE outcome: auto-merge queued, or
+      # the PR closed. Anything else means the classifier never ran to a
+      # decision — and that failure is silent by default: claude-code-action
+      # exits 0 when it soft-skips (e.g. its workflow-validation guard fires
+      # because this file on the PR's merge ref differs from the default
+      # branch, which happens to every in-flight bot PR whenever this workflow
+      # is edited). Without the else-branch below, that soft-skip reported a
+      # green `triage` check having triaged nothing — strictly worse than a
+      # red X, because neither a human nor the shepherd can tell it apart from
+      # a real decision. A no-outcome run must be loud.
+      #
+      # The approval is the second half of the MERGE action, not a general
+      # bypass: the main ruleset requires 1 approving review, and this runs
+      # only in this workflow (job-gated to mintlify[bot] PRs), only on the
+      # classifier's positive verification. Posted by github-actions[bot],
+      # never the PR author. Explicitly authorized by the repo owner
+      # (2026-07-14) to unblock the docs-PR pipeline after the July backlog.
+      - name: Enforce a triage outcome (and approve on MERGE)
+        # Not success(): a soft-skipped classifier exits 0, and a hard failure
+        # should still say why. Not always(): `cancel-in-progress` above means
+        # superseded runs get cancelled, and a cancelled run has legitimately
+        # reached no outcome — failing it would just add noise.
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
-          queued=$(gh api "repos/${{ github.repository }}/pulls/$PR" --jq '.auto_merge != null')
+          set -euo pipefail
+          pr=$(gh api "repos/$REPO/pulls/$PR")
+          queued=$(jq -r '.auto_merge != null' <<<"$pr")
+          merged=$(jq -r '.merged' <<<"$pr")
+          state=$(jq -r '.state' <<<"$pr")
+
           if [ "$queued" = "true" ]; then
-            gh api -X POST "repos/${{ github.repository }}/pulls/$PR/reviews" \
+            gh api -X POST "repos/$REPO/pulls/$PR/reviews" \
               -f event=APPROVE \
-              -f body="Auto-approved: the Mintlify triage classifier verified this docs-only PR against the code and queued it for merge."
+              -f body="Auto-approved: the Mintlify triage classifier verified this docs-only PR against the code and queued it for merge." >/dev/null
+            echo "Outcome: MERGE — auto-merge queued and approved."
+          elif [ "$merged" = "true" ]; then
+            echo "Outcome: MERGE — already landed; nothing to approve."
+          elif [ "$state" = "closed" ]; then
+            echo "Outcome: CLOSE — classifier rejected the PR."
           else
-            echo "No auto-merge queued (classifier closed the PR or took no action); skipping approval."
+            echo "::error title=Triage reached no outcome::PR #$PR is still open with no auto-merge queued, so the classifier never decided MERGE or CLOSE. Check the 'Classify and act' step: a soft-skip there exits 0 and would otherwise report this check green. If it logged a workflow-validation skip, this file differs from the default branch — re-run once it matches."
+            exit 1
           fi

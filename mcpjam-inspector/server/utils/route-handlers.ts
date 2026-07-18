@@ -16,7 +16,10 @@ import {
   getPrompt,
   listTools as listToolsBase,
 } from "@mcpjam/sdk/operations";
-import { countToolsTokens } from "./tokenizer-helpers.js";
+import {
+  countToolsTokens,
+  mapModelIdToTokenizerBackend,
+} from "./tokenizer-helpers.js";
 
 type Manager = InstanceType<typeof MCPClientManager>;
 
@@ -43,13 +46,22 @@ export async function listTools(
 
   const toolsMetadata = manager.getAllToolsMetadata(params.serverId);
 
-  const tokenCount = params.modelId
-    ? await countToolsTokens(result.tools, params.modelId)
+  const tokenizerModel = params.modelId
+    ? mapModelIdToTokenizerBackend(params.modelId)
     : undefined;
+  const tokenCountError =
+    params.modelId && tokenizerModel === null
+      ? "Could not pre-calculate tool description tokens for this model."
+      : undefined;
+  const tokenCount =
+    params.modelId && !tokenCountError
+      ? await countToolsTokens(result.tools, params.modelId)
+      : undefined;
 
   return {
     ...result,
     toolsMetadata,
     tokenCount,
+    tokenCountError,
   };
 }
