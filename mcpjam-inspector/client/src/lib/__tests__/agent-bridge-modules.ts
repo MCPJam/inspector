@@ -18,4 +18,9 @@ export const BRIDGE_MODULES: Record<string, string> = {
   // SwarmsTab owns its personas/journeys and the launch path; it does not
   // share state hooks with another surface, so the bridge lives here.
   swarms: "client/src/components/swarms/SwarmsTab.tsx",
+  // HostsTab owns the host list + host mutations and the project servers a
+  // set-servers call resolves against. It also wraps the /servers hub, but the
+  // bridge always registers the literal "hosts" surface id — never a shared
+  // state hook — so the group can't be mis-scoped.
+  hosts: "client/src/components/HostsTab.tsx",
 };
