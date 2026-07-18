@@ -22,7 +22,7 @@
  *   role-gated (`SwarmHostsPanel`, `canManageHosts`); the snapshot still
  *   surfaces host TARGETS (names) via the journey→hosts mapping.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, usePaginatedQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { toast } from "@/lib/toast";
@@ -276,7 +276,6 @@ export function SwarmsTab({
   );
   const journeys = useJourneys(selectedPersonaId);
   // Lifted for the agent snapshot AND the persona strip (one subscription).
-  const trackRecord = usePersonaTrackRecord(selectedPersonaId);
 
   const createPersona = useMutation("personas:createPersona" as any);
   const deletePersona = useMutation("personas:deletePersona" as any);
@@ -285,6 +284,13 @@ export function SwarmsTab({
   const selectedPersona = useMemo(
     () => personas?.find((p) => p._id === selectedPersonaId) ?? null,
     [personas, selectedPersonaId]
+  );
+  // Gate on the VALIDATED persona, not the raw URL-derived id: a copied
+  // /swarms?persona=... deep link opened while signed out (or with a stale id)
+  // must not subscribe getPersonaTrackRecord before the allowed persona list
+  // has loaded and matched — that surfaces backend authorization errors.
+  const trackRecord = usePersonaTrackRecord(
+    selectedPersona ? selectedPersonaId : null,
   );
 
   // New-journey form, lifted so `ui_open_journey_form` can open it (the
@@ -316,6 +322,49 @@ export function SwarmsTab({
   // confirmed 2xx — mirrors the Run button's `launchKeyRef` semantics.
   const launchKeysRef = useRef<Map<string, string>>(new Map());
   const launchingRef = useRef<Set<string>>(new Set());
+
+  // SINGLE per-journey launch coordinator, shared by BOTH the Run button
+  // (JourneyCard) and the agent's ui_launch_swarm_run. Sharing launchKeysRef +
+  // launchingRef is what lets the backend dedupe a concurrent button-click and
+  // agent-launch of the same journey into ONE paid run — two independent key
+  // stores would each mint a key and spawn two runs. Throws LaunchJourneyRunError
+  // (incl. 402) so each caller can shape its own error; the key is retained on
+  // ANY failure and dropped only after a confirmed 2xx.
+  const launchJourney = useCallback(
+    async (
+      journeyId: string,
+    ): Promise<
+      | { status: "launched"; runId?: string }
+      | { status: "already_launching" }
+    > => {
+      if (!projectId) {
+        throw new LaunchJourneyRunError(0, "No project is selected.");
+      }
+      if (launchingRef.current.has(journeyId)) {
+        return { status: "already_launching" };
+      }
+      let launchKey = launchKeysRef.current.get(journeyId);
+      if (!launchKey) {
+        launchKey = crypto.randomUUID();
+        launchKeysRef.current.set(journeyId, launchKey);
+      }
+      launchingRef.current.add(journeyId);
+      try {
+        const result = await launchJourneyRun({
+          journeyId,
+          projectId,
+          launchKey,
+        });
+        launchKeysRef.current.delete(journeyId); // confirmed 2xx
+        return { status: "launched", runId: result.runId };
+      } finally {
+        // Retain the key on failure (handled by the thrown error reaching the
+        // caller); only clear the in-flight marker.
+        launchingRef.current.delete(journeyId);
+      }
+    },
+    [projectId],
+  );
 
   // Exact (case-insensitive) resolution against the loaded lists — unknown or
   // ambiguous → invalid_request, never a fuzzy guess.
@@ -457,6 +506,9 @@ export function SwarmsTab({
         const goal =
           typeof payload?.goal === "string" ? payload.goal.trim() : "";
         setJourneyGoalSeed(goal);
+        // The bridge covers the whole Swarms surface incl. the Clients
+        // sub-tab; switch to Journeys so the opened form is actually visible.
+        setSwarmView("journeys");
         setJourneyFormOpen(true);
         return {
           status: "form_opened",
@@ -477,27 +529,16 @@ export function SwarmsTab({
         const { payload } = command as LaunchSwarmRunInspectorCommand;
         const journey = resolveJourney(payload.journey);
         const jid = journey._id;
-        if (launchingRef.current.has(jid)) {
-          throw createInspectorCommandClientError(
-            "execution_failed",
-            "This journey is already launching — wait for it to start.",
-          );
-        }
-        let launchKey = launchKeysRef.current.get(jid);
-        if (!launchKey) {
-          launchKey = crypto.randomUUID();
-          launchKeysRef.current.set(jid, launchKey);
-        }
-        launchingRef.current.add(jid);
+        void pid; // presence already validated above
         try {
-          // The SAME gated REST path the Run button uses. Never bypass it.
-          const result = await launchJourneyRun({
-            journeyId: jid,
-            projectId: pid,
-            launchKey,
-          });
-          // Confirmed 2xx — the ONLY place we drop the idempotency key.
-          launchKeysRef.current.delete(jid);
+          // ONE coordinator shared with the Run button — see launchJourney.
+          const result = await launchJourney(jid);
+          if (result.status === "already_launching") {
+            throw createInspectorCommandClientError(
+              "execution_failed",
+              "This journey is already launching — wait for it to start.",
+            );
+          }
           return {
             status: "run_requested",
             journeyId: jid,
@@ -505,8 +546,6 @@ export function SwarmsTab({
             note: "The run fans out in the background; observe it with ui_snapshot_app.",
           };
         } catch (e) {
-          // RETAIN the key on ANY failure (4xx/5xx/network) so a retry reuses
-          // it and the backend dedupes — no duplicate run or double spend.
           if (e instanceof LaunchJourneyRunError) {
             if (e.status === 402) {
               throw createInspectorCommandClientError(
@@ -519,12 +558,7 @@ export function SwarmsTab({
               `Could not launch the journey run: ${e.message}`,
             );
           }
-          throw createInspectorCommandClientError(
-            "execution_failed",
-            e instanceof Error ? e.message : "Failed to launch the journey run.",
-          );
-        } finally {
-          launchingRef.current.delete(jid);
+          throw e; // already an InspectorCommandClientError (e.g. already_launching)
         }
       },
     },
@@ -722,8 +756,8 @@ export function SwarmsTab({
                   <JourneyCard
                     key={j._id}
                     journey={j}
+                    onLaunch={launchJourney}
                     hosts={hosts ?? []}
-                    projectId={projectId}
                     initialRunId={deepLink.runId}
                     initialThreadId={deepLink.threadId}
                   />
@@ -784,13 +818,18 @@ function runStatusClass(status: string): string {
 function JourneyCard({
   journey,
   hosts,
-  projectId,
   initialRunId,
   initialThreadId,
+  onLaunch,
 }: {
   journey: Journey;
   hosts: HostItem[];
-  projectId: string;
+  /** Shared launch coordinator — see SwarmsTab.launchJourney. */
+  onLaunch: (
+    journeyId: string,
+  ) => Promise<
+    { status: "launched"; runId?: string } | { status: "already_launching" }
+  >;
   /** Deep-link run to auto-open (only the card that owns it reacts). */
   initialRunId?: string;
   /** Deep-link session to auto-select inside the opened run. */
@@ -811,9 +850,6 @@ function JourneyCard({
     { journeyRefId: journey._id } as any
   ) as JourneyRollup | undefined;
 
-  // One launch key per click, reused verbatim if the HTTP call is retried so a
-  // network retry can't spawn a duplicate run.
-  const launchKeyRef = useRef<string | null>(null);
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [openRunId, setOpenRunId] = useState<string | null>(null);
@@ -837,26 +873,17 @@ function JourneyCard({
     if (launching) return;
     setLaunchError(null);
     setLaunching(true);
-    if (!launchKeyRef.current) {
-      launchKeyRef.current = crypto.randomUUID();
-    }
     try {
-      await launchJourneyRun({
-        journeyId: journey._id,
-        projectId,
-        launchKey: launchKeyRef.current,
-      });
-      // Accepted (confirmed 2xx {runId}) — the ONLY place we mint a fresh key.
-      launchKeyRef.current = null;
+      // Shared coordinator: same launchKey store as the agent path, so a
+      // concurrent agent launch of this journey dedupes to one paid run.
+      const result = await onLaunch(journey._id);
+      if (result.status === "already_launching") {
+        return; // another launch of this journey is already in flight
+      }
       toast.success("Journey run started");
     } catch (e) {
-      // RETAIN the launch key after ANY unsuccessful response — 4xx, 5xx, OR a
-      // network/transport failure — and reuse it on retry. A 5xx or a dropped
-      // connection can land AFTER the backend already created the run, so
-      // minting a new key would spawn a SECOND run (duplicate spend). The
-      // backend dedupes a reused key to the existing run (or, if the create
-      // never inserted, creates exactly one). The key is cleared only on a
-      // confirmed 2xx above.
+      // The coordinator retains the key on ANY failure and reuses it on retry,
+      // so the backend dedupes rather than double-spending.
       setLaunchError(e instanceof Error ? e.message : "Failed to start run");
     } finally {
       setLaunching(false);
