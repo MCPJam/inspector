@@ -1955,6 +1955,8 @@ export function useChatSession(
           // Defers mutating UI tools to the approval pill when the toggle is
           // on — must mirror the server's gate (shared predicate).
           requireToolApproval: requireToolApprovalRef.current,
+          // Duplicate detection is per chat session, not per module.
+          telemetryScope: chatSessionIdRef.current,
         })
       ) {
         return;

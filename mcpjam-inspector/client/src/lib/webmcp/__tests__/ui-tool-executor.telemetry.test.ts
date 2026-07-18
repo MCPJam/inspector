@@ -324,5 +324,42 @@ describe("ui-tool-executor outcome telemetry", () => {
         calls_since_duplicate: 2,
       });
     });
+
+    it("identical calls in different telemetry scopes are not duplicates", async () => {
+      useUiToolsRegistry.getState().registerUiTool(makeTool());
+      const addToolOutput = vi.fn();
+
+      await handleUiToolCall({
+        toolName: "ui_navigate",
+        toolCallId: "tc-s-1",
+        input: { target: "servers" },
+        addToolOutput,
+        telemetryScope: "chat-session-a",
+      });
+      await handleUiToolCall({
+        toolName: "ui_navigate",
+        toolCallId: "tc-s-2",
+        input: { target: "servers" },
+        addToolOutput,
+        telemetryScope: "chat-session-b",
+      });
+      await handleUiToolCall({
+        toolName: "ui_navigate",
+        toolCallId: "tc-s-3",
+        input: { target: "servers" },
+        addToolOutput,
+        telemetryScope: "chat-session-a",
+      });
+
+      const completed = eventCalls("ui_tool_call_completed");
+      expect(completed).toHaveLength(3);
+      // Session B's identical call is NOT a duplicate of session A's.
+      expect(completed[1]).toMatchObject({ duplicate_of_previous: false });
+      // Session A's own repeat is, at distance 1 within its scope.
+      expect(completed[2]).toMatchObject({
+        duplicate_of_previous: true,
+        calls_since_duplicate: 1,
+      });
+    });
   });
 });

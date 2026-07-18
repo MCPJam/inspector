@@ -29,10 +29,11 @@ import { HOSTED_MODE } from "@/lib/config";
 import { track } from "@/lib/analytics";
 
 /**
- * Observation-only telemetry for rejected navigation targets. The segment is
- * an enum-ish app segment, but an unknown one is arbitrary model output —
- * truncate hard so free text can't ride along; a throwing capture must never
- * break the action.
+ * Observation-only telemetry for rejected navigation targets. Only KNOWN
+ * segments (the hosted_blocked case) are emitted verbatim; an unknown target
+ * is arbitrary model output and must never reach analytics, so it collapses
+ * to the constant "unrecognized" (the rejection count is the signal). A
+ * throwing capture must never break the action.
  */
 function trackNavigationRejected(
   segment: string,
@@ -41,7 +42,7 @@ function trackNavigationRejected(
   try {
     track("ui_navigation_rejected", {
       location: "webmcp",
-      segment: segment.slice(0, 64),
+      segment: reason === "unknown" ? "unrecognized" : segment,
       reason,
     });
   } catch {

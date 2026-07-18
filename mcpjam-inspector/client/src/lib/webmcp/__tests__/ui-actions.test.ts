@@ -65,18 +65,20 @@ describe("ui-actions (local mode)", () => {
       expect(resolveUiNavigationTarget("   ")).toMatchObject({ ok: false });
     });
 
-    it("emits ui_navigation_rejected with reason unknown (segment only, truncated)", () => {
+    it("emits reason unknown with the constant segment, never the target text", () => {
       resolveUiNavigationTarget("bogus-page");
       expect(trackMock).toHaveBeenCalledWith(
         "ui_navigation_rejected",
-        expect.objectContaining({ segment: "bogus-page", reason: "unknown" }),
+        expect.objectContaining({ segment: "unrecognized", reason: "unknown" }),
       );
 
       trackMock.mockClear();
-      const longTarget = "x".repeat(200);
-      resolveUiNavigationTarget(longTarget);
+      // Model-supplied free text (could echo anything) must not reach props.
+      const secretish = "sk-super-secret-token-value";
+      resolveUiNavigationTarget(secretish);
       const [, props] = trackMock.mock.calls[0];
-      expect((props as { segment: string }).segment).toHaveLength(64);
+      expect((props as { segment: string }).segment).toBe("unrecognized");
+      expect(JSON.stringify(props)).not.toContain(secretish);
       expect((props as { reason: string }).reason).toBe("unknown");
     });
 

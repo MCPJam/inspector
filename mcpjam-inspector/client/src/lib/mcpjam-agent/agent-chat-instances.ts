@@ -199,6 +199,8 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
           maybeHandoffToPanel(config, toolName);
         },
         requireToolApproval: config.requireToolApproval,
+        // Duplicate detection is per chat session — this instance's key.
+        telemetryScope: chatSessionId,
       });
     },
     // Resume the turn automatically once every tool call has an output —

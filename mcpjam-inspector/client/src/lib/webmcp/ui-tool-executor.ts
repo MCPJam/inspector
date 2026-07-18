@@ -47,6 +47,12 @@ export interface HandleUiToolCallOptions {
   onNavigationToolCall?: (toolName: string) => void;
   /** The turn's approval flag — defers mutating tools to the approval pill. */
   requireToolApproval?: boolean;
+  /**
+   * Duplicate-detection scope, normally the caller's chatSessionId. Calls
+   * with the same scope share one signature ring; omitting it falls back to
+   * a shared "default" ring.
+   */
+  telemetryScope?: string;
 }
 
 /**
@@ -68,7 +74,7 @@ export function __resetUiToolExecutorForTests(): void {
   settledOrInFlightToolCallIds.clear();
   deferredUiToolCalls.clear();
   telemetryByToolCallId.clear();
-  recentCallSignatures.length = 0;
+  recentCallSignaturesByScope.clear();
 }
 
 // --- Outcome telemetry ------------------------------------------------
@@ -94,13 +100,32 @@ interface UiToolCallTelemetry {
 const telemetryByToolCallId = new Map<string, UiToolCallTelemetry>();
 
 /**
- * Last N call signatures this session, oldest first, for duplicate-call
- * detection (a looping agent re-issuing the same call). Signatures include
+ * Last N call signatures PER CHAT SESSION, oldest first, for duplicate-call
+ * detection (a looping agent re-issuing the same call). Scoped by the
+ * caller's `telemetryScope` (its chatSessionId) because this executor serves
+ * both the regular chat session and the MCPJam-agent chat — a shared ring
+ * would report cross-session false duplicates. Signatures include
  * canonicalized args and therefore NEVER leave this module — only the
  * duplicate boolean and the call distance are emitted.
  */
 const RECENT_SIGNATURE_LIMIT = 20;
-const recentCallSignatures: string[] = [];
+const SIGNATURE_SCOPE_LIMIT = 8;
+const recentCallSignaturesByScope = new Map<string, string[]>();
+
+function signatureRingFor(scope: string): string[] {
+  let ring = recentCallSignaturesByScope.get(scope);
+  if (!ring) {
+    ring = [];
+    // Bound total memory: evict the oldest scope (Map preserves insertion
+    // order) once defunct sessions accumulate.
+    if (recentCallSignaturesByScope.size >= SIGNATURE_SCOPE_LIMIT) {
+      const oldest = recentCallSignaturesByScope.keys().next().value;
+      if (oldest !== undefined) recentCallSignaturesByScope.delete(oldest);
+    }
+    recentCallSignaturesByScope.set(scope, ring);
+  }
+  return ring;
+}
 
 function emitTelemetry(
   event: "ui_tool_call_started" | "ui_tool_call_completed",
@@ -150,17 +175,19 @@ function beginUiToolCallTelemetry(opts: {
   toolName: string;
   input: unknown;
   needsApproval: boolean;
+  telemetryScope?: string;
 }): void {
+  const ring = signatureRingFor(opts.telemetryScope ?? "default");
   const signature = callSignature(opts.toolName, opts.input);
-  const matchIndex = recentCallSignatures.lastIndexOf(signature);
+  const matchIndex = ring.lastIndexOf(signature);
   const duplicateOfPrevious = matchIndex >= 0;
   // Distance measured BEFORE the push mutates indices: 1 = previous call.
   const callsSinceDuplicate = duplicateOfPrevious
-    ? recentCallSignatures.length - matchIndex
+    ? ring.length - matchIndex
     : undefined;
-  recentCallSignatures.push(signature);
-  if (recentCallSignatures.length > RECENT_SIGNATURE_LIMIT) {
-    recentCallSignatures.shift();
+  ring.push(signature);
+  if (ring.length > RECENT_SIGNATURE_LIMIT) {
+    ring.shift();
   }
   const entry: UiToolCallTelemetry = {
     toolName: opts.toolName,
@@ -333,6 +360,7 @@ export async function handleUiToolCall(
         toolName,
         input,
         needsApproval: false,
+        telemetryScope: opts.telemetryScope,
       });
       addToolOutput({
         tool: toolName,
@@ -359,7 +387,13 @@ export async function handleUiToolCall(
     annotations: def.annotations,
     requireToolApproval: opts.requireToolApproval === true,
   });
-  beginUiToolCallTelemetry({ toolCallId, toolName, input, needsApproval });
+  beginUiToolCallTelemetry({
+    toolCallId,
+    toolName,
+    input,
+    needsApproval,
+    telemetryScope: opts.telemetryScope,
+  });
 
   if (needsApproval) {
     deferredUiToolCalls.set(toolCallId, { toolName, input });
