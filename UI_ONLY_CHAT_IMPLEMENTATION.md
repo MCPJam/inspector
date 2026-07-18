@@ -262,12 +262,15 @@ Additive, zero behavior change:
    sums them when present. Mirror the two fields on eval spans
    (`shared/eval-trace.ts:27-29`) and client `TokenUsage`
    (`client/src/hooks/use-chat-session.ts:304-308`).
-2. Direct producer — `toLiveChatTraceUsage` (`server/utils/direct-chat-turn.ts:447-462`)
-   reads AI SDK `usage.cachedInputTokens` plus
-   `providerMetadata.anthropic.cacheCreationInputTokens`.
+2. Direct producer — `toLiveChatTraceUsage` (`server/utils/direct-chat-turn.ts:447-462`).
+   The installed SDK is **ai v6**, where cache tokens are first-class on
+   `LanguageModelUsage.inputTokenDetails`: read
+   `inputTokenDetails.cacheReadTokens ?? cachedInputTokens` (the top-level field is a
+   deprecated alias) for reads and `inputTokenDetails.cacheWriteTokens` for writes — no
+   `providerMetadata` digging needed.
 3. Hosted producer — `readUsageFromFinishChunk`
-   (`server/utils/mcpjam-stream-handler.ts:830-866`) reads the same fields off the
-   finish chunk.
+   (`server/utils/mcpjam-stream-handler.ts:830-866`) reads the same field shapes (flat
+   wire names and `inputTokenDetails`) off the finish chunk.
 4. BYOK writeback — `postLocalUsage` (`server/utils/org-model-stream-handler.ts:738-819`)
    forwards both fields.
 5. UI — `client/src/components/chat-v2/chat-input.tsx:1759-1777` stops passing
