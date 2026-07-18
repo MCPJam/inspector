@@ -2668,26 +2668,31 @@ export default function App() {
         navigateApp(resolved.path);
         await waitForUiCommit();
 
-        // Same-turn advertisement for mount-scoped tool groups: a surface
-        // with `agentTools.kind === "group"` registers its tools in a layout
-        // effect as it mounts, and the chat pipeline drains the registry per
-        // POST — waiting here lets the auto-resume POST after this tool call
-        // already advertise the group, instead of burning a model turn
-        // before the tools appear. The boolean is deliberately ignored: on
-        // timeout the next POST simply re-snapshots whatever is registered
-        // by then (the tools are additive context, not a precondition).
-        const targetSurface = getAppSurfaceByNavSegment(resolved.tab);
-        if (targetSurface?.agentTools.kind === "group") {
+        // Resolve from where the shell ACTUALLY landed, not the requested tab:
+        // a gating effect (feature flags, hosted policy) can redirect right
+        // after the navigation commits. Using the committed tab means a
+        // redirect away from a group surface won't make us wait 1.5s for tools
+        // that will never register there.
+        const committedTab = pathnameToActiveTab(window.location.pathname);
+
+        // Same-turn advertisement for mount-scoped tool groups: a surface with
+        // `agentTools.kind === "group"` registers its tools in a layout effect
+        // as it mounts, and the chat pipeline drains the registry per POST —
+        // waiting here lets the auto-resume POST after this tool call already
+        // advertise the group, instead of burning a model turn before the
+        // tools appear. The boolean is deliberately ignored: on timeout the
+        // next POST simply re-snapshots whatever is registered by then (the
+        // tools are additive context, not a precondition).
+        const landedSurface = getAppSurfaceByNavSegment(committedTab);
+        if (landedSurface?.agentTools.kind === "group") {
           await waitForUiToolNames(
-            listSurfaceGroupToolNames(targetSurface.id),
+            listSurfaceGroupToolNames(landedSurface.id),
             1500
           );
         }
 
-        // Report the tab the shell actually landed on, not the requested
-        // one — the gating effects below (feature flags, hosted policy)
-        // can redirect immediately after the navigation commits, and the
-        // caller (SSE bus / WebMCP UI tools) plans its next step from this.
+        // Report the tab the shell actually landed on — the caller (SSE bus /
+        // WebMCP UI tools) plans its next step from this.
         return { activeTab: pathnameToActiveTab(window.location.pathname) };
       }
     );
