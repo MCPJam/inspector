@@ -228,4 +228,20 @@ describe("waitForUiToolNames", () => {
     useUiToolsRegistry.getState().registerUiTool(makeTool("ui_navigate"));
     await expect(wait).resolves.toBe(false);
   });
+
+  it("a shared def object registered twice: stale cleanup doesn't remove the live one", () => {
+    // Two registrars share ONE UiToolDefinition object (module-level def).
+    const shared = makeTool("ui_navigate");
+    const unregA = useUiToolsRegistry.getState().registerUiTool(shared);
+    // B re-registers the SAME object (prod warn+replace path, MODE!=development).
+    const unregB = useUiToolsRegistry.getState().registerUiTool(shared);
+    expect(useUiToolsRegistry.getState().resolve("ui_navigate")).toBe(shared);
+    // A's stale cleanup must NOT remove B's live registration (token guard).
+    unregA();
+    expect(useUiToolsRegistry.getState().resolve("ui_navigate")).toBe(shared);
+    // B's own cleanup removes it.
+    unregB();
+    expect(useUiToolsRegistry.getState().resolve("ui_navigate")).toBeNull();
+  });
+
 });
