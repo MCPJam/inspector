@@ -55,7 +55,7 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
-        idempotentHint: false,
+        idempotentHint: true,
         openWorldHint: false,
       },
       // Opens the /evals/create route (the dialog) on the Evaluate screen.

@@ -48,11 +48,12 @@ describe("buildEvalsUiTools", () => {
   });
 
   it("annotates every tool completely and honestly", () => {
-    // open form: prepares only (prefill-over-commit), stays inside MCPJam.
+    // open form: prepares only (prefill-over-commit), stays inside MCPJam;
+    // idempotent — a retry just restores the same create route + prefill.
     expect(getTool("ui_open_eval_suite_form").annotations).toEqual({
       readOnlyHint: false,
       destructiveHint: false,
-      idempotentHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     });
     // run: real model + MCP traffic; a retry starts another quota-spending
