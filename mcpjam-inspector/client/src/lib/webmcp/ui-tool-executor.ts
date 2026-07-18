@@ -170,6 +170,7 @@ export async function handleUiToolCall(
   if (
     uiToolCallNeedsApproval({
       readOnly: def.readOnly,
+      annotations: def.annotations,
       requireToolApproval: opts.requireToolApproval === true,
     })
   ) {

@@ -22,6 +22,8 @@ import type {
   HarnessV1NetworkSandboxSession,
   HarnessV1SandboxProvider,
 } from "@ai-sdk/harness";
+import { confineToHome } from "../computers/path-confine.js";
+import { logger } from "../logger.js";
 
 export interface E2BHarnessSandboxProviderOptions {
   /** E2B sandbox id of the host's computer — resolved via the control plane
@@ -48,6 +50,29 @@ export interface E2BHarnessSandboxProviderOptions {
 }
 
 const enc = new TextEncoder();
+
+/**
+ * Path confinement for the harness file writers — keeps every `write*` under the
+ * box home (`/home/user`), the same hygiene the `/computers/upload` route
+ * applies. Shipped LOG-ONLY by default: the Claude Code adapter writes its
+ * workdir, `.claude/skills`, and `.mcp.json` (all under `/home/user`), but this
+ * layer had zero confinement before, so a hard reject could break a turn on a
+ * legitimate write we haven't accounted for. Set
+ * `HARNESS_WRITE_CONFINE_ENFORCE=true` to reject once real traffic confirms no
+ * legitimate escapes. Like the upload route this is hygiene, not the trust
+ * boundary — the harness runs arbitrary code in the box by design.
+ */
+function enforceHarnessWritePath(path: string): void {
+  if (confineToHome(path) !== null) return;
+  const enforce = process.env.HARNESS_WRITE_CONFINE_ENFORCE === "true";
+  logger.warn("[e2b-sandbox-provider] write path escapes /home/user", {
+    path,
+    enforce,
+  });
+  if (enforce) {
+    throw new Error(`refusing to write outside /home/user: ${path}`);
+  }
+}
 
 /** E2B throws `FileNotFoundError` for a missing path; the SandboxSession
  *  contract wants `null` there, but real failures (transport / permission /
@@ -82,7 +107,7 @@ function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
 }
 
 async function streamToBytes(
-  stream: ReadableStream<Uint8Array>,
+  stream: ReadableStream<Uint8Array>
 ): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   const reader = stream.getReader();
@@ -102,7 +127,7 @@ async function streamToBytes(
 }
 
 export function createE2BHarnessSandboxProvider(
-  opts: E2BHarnessSandboxProviderOptions,
+  opts: E2BHarnessSandboxProviderOptions
 ): HarnessV1SandboxProvider {
   const bridgePort = opts.bridgePort ?? 39271;
   const cwd = opts.defaultWorkingDirectory ?? "/home/user";
@@ -117,196 +142,200 @@ export function createE2BHarnessSandboxProvider(
   // On resume the Claude Code adapter rehydrates its thread from the workdir
   // (which persists on the box) using the `resumeFrom` state; our provider just
   // has to supply the sandbox connection.
-  const connectSession =
-    async (): Promise<HarnessV1NetworkSandboxSession> => {
-      // Reuse the host's existing computer. It must already be awake — the
-      // caller wakes it via the control plane (`ensureComputerReady`) before
-      // resolving the sandboxId. We never create or kill a box here.
-      const sandbox = await Sandbox.connect(opts.sandboxId, {
-        apiKey: opts.apiKey,
-        timeoutMs: opts.connectTimeoutMs,
-      });
+  const connectSession = async (): Promise<HarnessV1NetworkSandboxSession> => {
+    // Reuse the host's existing computer. It must already be awake — the
+    // caller wakes it via the control plane (`ensureComputerReady`) before
+    // resolving the sandboxId. We never create or kill a box here.
+    const sandbox = await Sandbox.connect(opts.sandboxId, {
+      apiKey: opts.apiKey,
+      timeoutMs: opts.connectTimeoutMs,
+    });
 
-      // Mutated in place by setPorts so `session.ports` (same ref) stays live.
-      const ports: number[] = [bridgePort];
+    // Mutated in place by setPorts so `session.ports` (same ref) stays live.
+    const ports: number[] = [bridgePort];
 
-      // The @ai-sdk/harness-claude-code bootstrap shells `pnpm install` BEFORE
-      // any session hook runs. pnpm is baked into the computer template
-      // (mcpjam-backend templates/computer/e2b.Dockerfile); this idempotent
-      // guard is a stopgap for boxes provisioned before that template rebuild
-      // lands, and no-ops once pnpm is present. We do not own the box, so a
-      // failure here propagates (the control plane still owns teardown).
-      await sandbox.commands.run("command -v pnpm || npm install -g pnpm", {
-        timeoutMs: commandTimeoutMs,
-      });
+    // The @ai-sdk/harness-claude-code bootstrap shells `pnpm install` BEFORE
+    // any session hook runs. pnpm is baked into the computer template
+    // (mcpjam-backend templates/computer/e2b.Dockerfile); this idempotent
+    // guard is a stopgap for boxes provisioned before that template rebuild
+    // lands, and no-ops once pnpm is present. We do not own the box, so a
+    // failure here propagates (the control plane still owns teardown).
+    await sandbox.commands.run("command -v pnpm || npm install -g pnpm", {
+      timeoutMs: commandTimeoutMs,
+    });
 
-      const session: HarnessV1NetworkSandboxSession = {
-        id: sandbox.sandboxId,
-        defaultWorkingDirectory: cwd,
-        description:
-          `E2B sandbox ${sandbox.sandboxId} (host computer). Working dir ${cwd}. ` +
-          `Bridge port ${bridgePort} reachable at ${sandbox.getHost(bridgePort)}.`,
+    const session: HarnessV1NetworkSandboxSession = {
+      id: sandbox.sandboxId,
+      defaultWorkingDirectory: cwd,
+      description:
+        `E2B sandbox ${sandbox.sandboxId} (host computer). Working dir ${cwd}. ` +
+        `Bridge port ${bridgePort} reachable at ${sandbox.getHost(
+          bridgePort
+        )}.`,
 
-        // ── file I/O ──────────────────────────────────────────────────────
-        readTextFile: async ({ path }) => {
-          try {
-            return await sandbox.files.read(path);
-          } catch (err) {
-            return nullIfMissing(err); // null only for a genuinely missing file
-          }
-        },
-        readBinaryFile: async ({ path }) => {
-          try {
-            return await sandbox.files.read(path, { format: "bytes" });
-          } catch (err) {
-            return nullIfMissing(err);
-          }
-        },
-        readFile: async ({ path }) => {
-          try {
-            const bytes = await sandbox.files.read(path, { format: "bytes" });
-            return bytesToStream(bytes);
-          } catch (err) {
-            return nullIfMissing(err);
-          }
-        },
-        writeTextFile: async ({ path, content }) => {
-          await sandbox.files.write([{ path, data: content }]);
-        },
-        writeBinaryFile: async ({ path, content }) => {
-          await sandbox.files.write([{ path, data: u8ToArrayBuffer(content) }]);
-        },
-        writeFile: async ({ path, content }) => {
-          const bytes = await streamToBytes(content);
-          await sandbox.files.write([{ path, data: u8ToArrayBuffer(bytes) }]);
-        },
+      // ── file I/O ──────────────────────────────────────────────────────
+      readTextFile: async ({ path }) => {
+        try {
+          return await sandbox.files.read(path);
+        } catch (err) {
+          return nullIfMissing(err); // null only for a genuinely missing file
+        }
+      },
+      readBinaryFile: async ({ path }) => {
+        try {
+          return await sandbox.files.read(path, { format: "bytes" });
+        } catch (err) {
+          return nullIfMissing(err);
+        }
+      },
+      readFile: async ({ path }) => {
+        try {
+          const bytes = await sandbox.files.read(path, { format: "bytes" });
+          return bytesToStream(bytes);
+        } catch (err) {
+          return nullIfMissing(err);
+        }
+      },
+      writeTextFile: async ({ path, content }) => {
+        enforceHarnessWritePath(path);
+        await sandbox.files.write([{ path, data: content }]);
+      },
+      writeBinaryFile: async ({ path, content }) => {
+        enforceHarnessWritePath(path);
+        await sandbox.files.write([{ path, data: u8ToArrayBuffer(content) }]);
+      },
+      writeFile: async ({ path, content }) => {
+        enforceHarnessWritePath(path);
+        const bytes = await streamToBytes(content);
+        await sandbox.files.write([{ path, data: u8ToArrayBuffer(bytes) }]);
+      },
 
-        // ── exec ──────────────────────────────────────────────────────────
-        run: async ({ command, workingDirectory, env }) => {
-          try {
-            const res = await sandbox.commands.run(command, {
-              cwd: workingDirectory ?? cwd,
-              envs: env,
-              timeoutMs: commandTimeoutMs,
-            });
-            return {
-              exitCode: res.exitCode,
-              stdout: res.stdout,
-              stderr: res.stderr,
-            };
-          } catch (err) {
-            // E2B throws on non-zero exit; the contract wants the result
-            // (exitCode + streams) surfaced, not a rejection.
-            if (err instanceof CommandExitError) {
-              return {
-                exitCode: err.exitCode,
-                stdout: err.stdout,
-                stderr: err.stderr,
-              };
-            }
-            throw err;
-          }
-        },
-
-        // ── spawn (long-lived; adapt E2B callbacks → ReadableStreams) ──────
-        spawn: async ({ command, workingDirectory, env }) => {
-          let outCtl!: ReadableStreamDefaultController<Uint8Array>;
-          let errCtl!: ReadableStreamDefaultController<Uint8Array>;
-          let streamsClosed = false;
-          const closeStreams = () => {
-            if (streamsClosed) return;
-            streamsClosed = true;
-            try {
-              outCtl.close();
-            } catch {
-              /* already closed */
-            }
-            try {
-              errCtl.close();
-            } catch {
-              /* already closed */
-            }
-          };
-          const stdout = new ReadableStream<Uint8Array>({
-            start: (c) => (outCtl = c),
-          });
-          const stderr = new ReadableStream<Uint8Array>({
-            start: (c) => (errCtl = c),
-          });
-          const handle = await sandbox.commands.run(command, {
-            background: true,
+      // ── exec ──────────────────────────────────────────────────────────
+      run: async ({ command, workingDirectory, env }) => {
+        try {
+          const res = await sandbox.commands.run(command, {
             cwd: workingDirectory ?? cwd,
             envs: env,
-            // Guard against enqueue-after-close once the process ends/is killed.
-            onStdout: (d: string) => {
-              if (!streamsClosed) outCtl.enqueue(enc.encode(d));
-            },
-            onStderr: (d: string) => {
-              if (!streamsClosed) errCtl.enqueue(enc.encode(d));
-            },
+            timeoutMs: commandTimeoutMs,
           });
-          // Observe exit exactly once; normalize E2B's throw-on-nonzero into an
-          // exit code so wait() resolves (contract) instead of rejecting.
-          const exitPromise: Promise<{ exitCode: number }> = handle
-            .wait()
-            .then((r) => ({ exitCode: r.exitCode }))
-            .catch((err) => {
-              if (err instanceof CommandExitError) {
-                return { exitCode: err.exitCode };
-              }
-              throw err;
-            });
-          // Close streams when the process ends on its OWN — not only via
-          // wait()/kill() — so a consumer reading to EOF never hangs.
-          void exitPromise.then(closeStreams, closeStreams);
           return {
-            pid: handle.pid,
-            stdout,
-            stderr,
-            wait: async () => {
-              try {
-                return await exitPromise;
-              } finally {
-                closeStreams();
-              }
-            },
-            kill: async () => {
-              try {
-                await handle.kill();
-              } finally {
-                closeStreams(); // parity with wait; never leave readers hanging
-              }
-            },
+            exitCode: res.exitCode,
+            stdout: res.stdout,
+            stderr: res.stderr,
           };
-        },
+        } catch (err) {
+          // E2B throws on non-zero exit; the contract wants the result
+          // (exitCode + streams) surfaced, not a rejection.
+          if (err instanceof CommandExitError) {
+            return {
+              exitCode: err.exitCode,
+              stdout: err.stdout,
+              stderr: err.stderr,
+            };
+          }
+          throw err;
+        }
+      },
 
-        // ── infra surface ─────────────────────────────────────────────────
-        ports,
-        getPortUrl: async ({ port, protocol }) => {
-          const host = sandbox.getHost(port);
-          const scheme = protocol === "ws" ? "wss" : (protocol ?? "https");
-          return `${scheme}://${host}`;
-        },
-        // Never tear down a shared host computer: the control plane owns its
-        // lifecycle (provision / wake / hibernate / delete). Ending a harness
-        // session leaves the box running. The harness cleans up its own bridge
-        // process via the spawn handle's kill(), not via the sandbox.
-        stop: async () => {
-          /* no-op — control-plane-owned box */
-        },
-        // destroy intentionally omitted (undefined) for the same reason.
-        setPorts: async (next) => {
-          // Mutate in place so `session.ports` (same reference) reflects it.
-          ports.splice(0, ports.length, ...next);
-        },
-        // setNetworkPolicy omitted — E2B sets egress at create time; the
-        // optional-call contract treats a missing impl as a no-op.
+      // ── spawn (long-lived; adapt E2B callbacks → ReadableStreams) ──────
+      spawn: async ({ command, workingDirectory, env }) => {
+        let outCtl!: ReadableStreamDefaultController<Uint8Array>;
+        let errCtl!: ReadableStreamDefaultController<Uint8Array>;
+        let streamsClosed = false;
+        const closeStreams = () => {
+          if (streamsClosed) return;
+          streamsClosed = true;
+          try {
+            outCtl.close();
+          } catch {
+            /* already closed */
+          }
+          try {
+            errCtl.close();
+          } catch {
+            /* already closed */
+          }
+        };
+        const stdout = new ReadableStream<Uint8Array>({
+          start: (c) => (outCtl = c),
+        });
+        const stderr = new ReadableStream<Uint8Array>({
+          start: (c) => (errCtl = c),
+        });
+        const handle = await sandbox.commands.run(command, {
+          background: true,
+          cwd: workingDirectory ?? cwd,
+          envs: env,
+          // Guard against enqueue-after-close once the process ends/is killed.
+          onStdout: (d: string) => {
+            if (!streamsClosed) outCtl.enqueue(enc.encode(d));
+          },
+          onStderr: (d: string) => {
+            if (!streamsClosed) errCtl.enqueue(enc.encode(d));
+          },
+        });
+        // Observe exit exactly once; normalize E2B's throw-on-nonzero into an
+        // exit code so wait() resolves (contract) instead of rejecting.
+        const exitPromise: Promise<{ exitCode: number }> = handle
+          .wait()
+          .then((r) => ({ exitCode: r.exitCode }))
+          .catch((err) => {
+            if (err instanceof CommandExitError) {
+              return { exitCode: err.exitCode };
+            }
+            throw err;
+          });
+        // Close streams when the process ends on its OWN — not only via
+        // wait()/kill() — so a consumer reading to EOF never hangs.
+        void exitPromise.then(closeStreams, closeStreams);
+        return {
+          pid: handle.pid,
+          stdout,
+          stderr,
+          wait: async () => {
+            try {
+              return await exitPromise;
+            } finally {
+              closeStreams();
+            }
+          },
+          kill: async () => {
+            try {
+              await handle.kill();
+            } finally {
+              closeStreams(); // parity with wait; never leave readers hanging
+            }
+          },
+        };
+      },
 
-        restricted: () => session, // same resource, narrower static type
-      };
+      // ── infra surface ─────────────────────────────────────────────────
+      ports,
+      getPortUrl: async ({ port, protocol }) => {
+        const host = sandbox.getHost(port);
+        const scheme = protocol === "ws" ? "wss" : protocol ?? "https";
+        return `${scheme}://${host}`;
+      },
+      // Never tear down a shared host computer: the control plane owns its
+      // lifecycle (provision / wake / hibernate / delete). Ending a harness
+      // session leaves the box running. The harness cleans up its own bridge
+      // process via the spawn handle's kill(), not via the sandbox.
+      stop: async () => {
+        /* no-op — control-plane-owned box */
+      },
+      // destroy intentionally omitted (undefined) for the same reason.
+      setPorts: async (next) => {
+        // Mutate in place so `session.ports` (same reference) reflects it.
+        ports.splice(0, ports.length, ...next);
+      },
+      // setNetworkPolicy omitted — E2B sets egress at create time; the
+      // optional-call contract treats a missing impl as a no-op.
 
-      return session;
+      restricted: () => session, // same resource, narrower static type
     };
+
+    return session;
+  };
 
   return {
     specificationVersion: "harness-sandbox-v1",

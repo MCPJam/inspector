@@ -41,6 +41,7 @@ import { isGPT5Model, type ModelDefinition } from "@/shared/types";
 import {
   UI_TOOL_NAME_REGEX,
   uiToolCallNeedsApproval,
+  type UiToolAnnotations,
 } from "@/shared/client-fulfilled-tools";
 import { HOSTED_MODE } from "../config.js";
 import {
@@ -273,6 +274,49 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
   return out;
 }
 
+/** MCP `ToolAnnotations` hints accepted on a UI tool snapshot entry. */
+const UI_TOOL_ANNOTATION_KEYS = [
+  "readOnlyHint",
+  "destructiveHint",
+  "idempotentHint",
+  "openWorldHint",
+] as const;
+
+/**
+ * Validate the optional `annotations` object on a UI tool snapshot entry.
+ *
+ * Boolean-only, known keys only. Unknown keys are rejected rather than
+ * dropped: this snapshot drives approval policy, so a typo'd hint must not
+ * pass silently as "absent" (which, for `destructiveHint`, flips the meaning
+ * from additive to destructive).
+ */
+function validateUiToolAnnotations(
+  raw: unknown,
+  index: number
+): UiToolAnnotations | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new UiToolValidationError(
+      `uiTools[${index}].annotations must be an object`
+    );
+  }
+  const out: UiToolAnnotations = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!(UI_TOOL_ANNOTATION_KEYS as readonly string[]).includes(key)) {
+      throw new UiToolValidationError(
+        `uiTools[${index}].annotations has unknown key '${key}'`
+      );
+    }
+    if (typeof value !== "boolean") {
+      throw new UiToolValidationError(
+        `uiTools[${index}].annotations.${key} must be a boolean`
+      );
+    }
+    out[key as (typeof UI_TOOL_ANNOTATION_KEYS)[number]] = value;
+  }
+  return out;
+}
+
 /**
  * Validate and normalize the client-supplied `uiTools` snapshot.
  *
@@ -357,11 +401,24 @@ export function validateUiToolEntries(input: unknown): UiToolEntry[] {
         `uiTools[${i}].readOnly must be a boolean`
       );
     }
+    const annotations = validateUiToolAnnotations(raw.annotations, i);
+    if (
+      annotations?.readOnlyHint !== undefined &&
+      annotations.readOnlyHint !== raw.readOnly
+    ) {
+      // A snapshot that says both "read-only" and "not read-only" has no safe
+      // reading: trusting `readOnlyHint` would let a contradictory entry skip
+      // approval. Reject rather than pick a winner.
+      throw new UiToolValidationError(
+        `uiTools[${i}].annotations.readOnlyHint must equal readOnly`
+      );
+    }
     out.push({
       name,
       description: raw.description,
       inputSchema,
       readOnly: raw.readOnly,
+      ...(annotations ? { annotations } : {}),
     });
   }
   return out;
@@ -708,6 +765,7 @@ export function buildUiTools(
       inputSchema: t.inputSchema,
       needsApproval: uiToolCallNeedsApproval({
         readOnly: t.readOnly,
+        annotations: t.annotations,
         requireToolApproval: opts?.requireToolApproval === true,
       }),
     });
@@ -727,15 +785,32 @@ export function buildUiToolsSystemPrompt(
   return [
     "## MCPJam UI tools",
     "You can drive the MCPJam inspector itself with the `ui_*` tools. Every action happens in the user's open app and is immediately visible to them.",
-    "Prefer `ui_open_playground` before `ui_select_tool` / `ui_execute_tool` / `ui_snapshot_app`. `ui_execute_tool` REALLY runs a tool against the user's connected MCP server — treat it as side-effectful; when the user hasn't clearly asked to run a tool, prefill it with `ui_select_tool` instead.",
-    "`ui_snapshot_app` is read-only and needs the playground open — use it to observe state before mutating it.",
+    "Prefer `ui_open_playground` before `ui_select_tool` / `ui_execute_tool`. `ui_execute_tool` REALLY runs a tool against the user's connected MCP server — treat it as side-effectful; when the user hasn't clearly asked to run a tool, prefill it with `ui_select_tool` instead.",
+    "`ui_snapshot_app` is read-only and works from anywhere — use it to see where the user is and what is selected before acting, rather than assuming.",
     "When a `ui_*` tool returns an error, relay the reason instead of retrying blindly.",
-    ...(opts?.requireToolApproval
-      ? [
-          "Mutating `ui_*` actions pause for the user's explicit approval before they run. A denial is final — explain what you wanted to do instead of retrying the call.",
-        ]
-      : []),
+    approvalGuidance(uiTools, opts?.requireToolApproval === true),
   ].join("\n");
+}
+
+/**
+ * The approval sentence, told honestly for the snapshot that was actually
+ * sent. The destructive-pauses promise only holds when EVERY entry is
+ * annotation-aware — a legacy client sends bare `readOnly`, whose predicate
+ * with the flag off is `requireToolApproval && !readOnly`, i.e. nothing
+ * pauses. Promising a destructive gate there advertises a safety net that
+ * isn't there.
+ */
+function approvalGuidance(
+  uiTools: UiToolEntry[],
+  requireToolApproval: boolean
+): string {
+  if (requireToolApproval) {
+    return "Every mutating `ui_*` action pauses for the user's explicit approval before it runs. A denial is final — explain what you wanted to do instead of retrying the call.";
+  }
+  const annotationAware = uiTools.every((t) => t.annotations !== undefined);
+  return annotationAware
+    ? "Destructive `ui_*` actions pause for the user's explicit approval before they run; other actions apply immediately. A denial is final — explain what you wanted to do instead of retrying the call."
+    : "Every `ui_*` action applies immediately, so be deliberate about mutating ones — describe what you're about to do when it isn't obviously what the user asked for.";
 }
 
 export interface PrepareChatV2Result {

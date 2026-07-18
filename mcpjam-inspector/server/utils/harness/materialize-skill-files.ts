@@ -23,6 +23,7 @@ import { isPathWithinDirectory } from "../skill-parser.js";
 import type { RuntimeSkillFile } from "./runtime-skills.js";
 import { shellQuote } from "./shell-quote.js";
 import { logger } from "../logger.js";
+import { reserveUploadBytes } from "../computers/control-plane-client.js";
 
 const SKILLS_BASE = "/home/user/.claude/skills";
 /** Per-turn write budget across ALL skills (matches the backend per-skill cap). */
@@ -94,6 +95,39 @@ async function pruneStaleSkillFiles(
 }
 
 /**
+ * Map of on-box supporting-file abs path → byte size, gathered in one `find`
+ * sweep. Used to meter only NET-NEW bytes against the cumulative upload quota:
+ * re-materializing an unchanged file (same size) reserves nothing, so a
+ * long-lived box re-running materialization every turn can't inflate the counter
+ * past the real disk footprint. Fail-soft: on any error returns an empty map, so
+ * files are treated as net-new (conservative — over-counts toward the cap,
+ * never under).
+ */
+async function getOnBoxFileSizes(
+  session: MaterializeSession
+): Promise<Map<string, number>> {
+  const sizes = new Map<string, number>();
+  try {
+    const ls = await session.run({
+      command: `find ${shellQuote(
+        SKILLS_BASE
+      )} -mindepth 2 -type f ! -name SKILL.md -printf '%s\\t%p\\n'`,
+    });
+    if (ls.exitCode !== 0) return sizes;
+    for (const line of ls.stdout.split("\n")) {
+      const tab = line.indexOf("\t");
+      if (tab <= 0) continue;
+      const size = Number(line.slice(0, tab));
+      const path = line.slice(tab + 1).trim();
+      if (Number.isFinite(size) && path) sizes.set(path, size);
+    }
+  } catch {
+    // Best-effort — treat as no known sizes (every write counts as net-new).
+  }
+  return sizes;
+}
+
+/**
  * Write every runtime skill file onto the box under its skill dir. `skillNamesById`
  * maps skillId → on-box dir name for ALL skills delivered this turn (not only
  * those with files); a file whose skill isn't in the map is skipped (its dir
@@ -106,11 +140,20 @@ export async function materializeSkillFiles(args: {
   session: MaterializeSession;
   files: RuntimeSkillFile[];
   skillNamesById: Map<string, string>;
+  /** Convex computer row id. When present, each write reserves its NET-NEW bytes
+   *  against the computer's cumulative-upload quota (a file already on the box at
+   *  the same size reserves nothing); over quota → that file is skipped. Absent
+   *  (e.g. a non-computer host or tests) ⇒ no metering. */
+  computerId?: string;
   signal?: AbortSignal;
 }): Promise<{ written: number; skipped: number }> {
   let written = 0;
   let skipped = 0;
   let budget = MATERIALIZE_BUDGET_BYTES;
+  // Only pay for the size sweep when we're actually metering.
+  const onBoxSizes = args.computerId
+    ? await getOnBoxFileSizes(args.session)
+    : new Map<string, number>();
 
   // Every delivered skill dir is a prune candidate (even with zero files this
   // turn). Build the keep-set (valid target paths) per dir from the file list;
@@ -189,9 +232,46 @@ export async function materializeSkillFiles(args: {
         skipped += 1;
         continue;
       }
+      const targetPath = `${skillDir}/${file.path}`;
+      // Cumulative upload quota: reserve only the NET-NEW bytes (delta over any
+      // existing on-box copy) so re-materializing unchanged files each turn can't
+      // inflate the counter. Over quota → skip this file (413-style); other
+      // reserve failures (route not deployed / not configured / network) fail
+      // OPEN — the per-turn budget above still bounds the write.
+      if (args.computerId) {
+        const existing = onBoxSizes.get(targetPath) ?? 0;
+        const delta = bytes.byteLength - existing;
+        if (delta > 0) {
+          const reservation = await reserveUploadBytes({
+            computerId: args.computerId,
+            bytes: delta,
+          });
+          if (!reservation.ok) {
+            if (reservation.status === 413) {
+              logger.info(
+                "[materialize-skill-files] skip: over storage quota",
+                {
+                  skill: skillName,
+                  path: file.path,
+                }
+              );
+              skipped += 1;
+              continue;
+            }
+            logger.warn(
+              "[materialize-skill-files] quota reserve unavailable — allowing write",
+              { skill: skillName, status: reservation.status }
+            );
+          } else {
+            // Reflect the reservation locally so a repeated path in the same
+            // batch can't double-reserve.
+            onBoxSizes.set(targetPath, bytes.byteLength);
+          }
+        }
+      }
       budget -= bytes.byteLength;
       await args.session.writeBinaryFile({
-        path: `${skillDir}/${file.path}`,
+        path: targetPath,
         content: bytes,
       });
       written += 1;

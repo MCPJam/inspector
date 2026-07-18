@@ -719,7 +719,9 @@ export async function runHarnessTurn(
           ...(chatboxId ? { chatboxId } : {}),
           // Swarm continuity lane — the run + pinned host key the owner so a
           // multi-turn swarm harness session resumes ONLY its own sidecar.
-          ...(ownerType === "swarm-chat" && journeyRunId ? { journeyRunId } : {}),
+          ...(ownerType === "swarm-chat" && journeyRunId
+            ? { journeyRunId }
+            : {}),
           ...(ownerType === "swarm-chat" && hostId ? { hostId } : {}),
           // Phase 3: route owner resolution through resolveExecutionAccess so a
           // host-funded swarm guest can claim/resume their OWN lane.
@@ -939,6 +941,7 @@ export async function runHarnessTurn(
                   skillNamesById: new Map(
                     runtimeSkills.map((s) => [s.skillId, s.name])
                   ),
+                  computerId: String(computerId),
                   ...(abortSignal ? { signal: abortSignal } : {}),
                 }).catch(() => {});
               }

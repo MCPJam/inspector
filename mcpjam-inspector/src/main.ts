@@ -283,9 +283,7 @@ async function startHonoServer(): Promise<number> {
       // picking a different free port and silently desyncing CORS,
       // origin validation, and LOCAL_SERVER_ADDR from the bound port.
       port = cachedProbedPort;
-      log.info(
-        `Reusing previously-probed port ${port} for server restart`,
-      );
+      log.info(`Reusing previously-probed port ${port} for server restart`);
     } else {
       // Probe for a free port BEFORE loading server modules. server/config.ts
       // reads SERVER_PORT from process.env once, at module-init time, and that
@@ -300,10 +298,12 @@ async function startHonoServer(): Promise<number> {
         {
           onAttemptFailed: (failedPort, err) => {
             log.warn(
-              `Port ${failedPort} unavailable (${err.code ?? err.message}); trying next port`,
+              `Port ${failedPort} unavailable (${
+                err.code ?? err.message
+              }); trying next port`
             );
           },
-        },
+        }
       );
       process.env.SERVER_PORT = String(port);
       cachedProbedPort = port;
@@ -314,17 +314,20 @@ async function startHonoServer(): Promise<number> {
     // Node's cache; subsequent calls just return the cached exports, which
     // is exactly what we want now that we're reusing the same port.
     const { createHonoApp } = await import("../server/app.js");
-    const honoApp = await createHonoApp();
+    const { app: honoApp, injectWebSocket } = await createHonoApp();
 
     server = serve({
       fetch: honoApp.fetch,
       port,
       hostname,
     });
+    // Attach the computer terminal WebSocket upgrade handler (mirror of
+    // server/index.ts). Without this the Computer tab's Shell can't upgrade.
+    injectWebSocket(server);
 
     if (port !== DEFAULT_SERVER_PORT) {
       log.warn(
-        `🚀 MCPJam Server started on fallback port ${port} (default ${DEFAULT_SERVER_PORT} was unavailable)`,
+        `🚀 MCPJam Server started on fallback port ${port} (default ${DEFAULT_SERVER_PORT} was unavailable)`
       );
     } else {
       log.info(`🚀 MCPJam Server started on port ${port}`);
@@ -611,7 +614,9 @@ function pruneStaleCachesOnVersionChange(): void {
   }
 
   log.info(
-    `App version changed (${previousVersion ?? "<none>"} → ${currentVersion}); pruning stale GPU/HTTP caches`,
+    `App version changed (${
+      previousVersion ?? "<none>"
+    } → ${currentVersion}); pruning stale GPU/HTTP caches`
   );
 
   for (const sub of ["Cache", "Code Cache", "GPUCache"]) {
@@ -634,7 +639,9 @@ function summarizeInitError(error: unknown): {
   detail: string;
 } {
   const err =
-    error instanceof Error ? error : new Error(String(error ?? "Unknown error"));
+    error instanceof Error
+      ? error
+      : new Error(String(error ?? "Unknown error"));
 
   const isServerStartFailure = /bind server|EADDRINUSE|Hono/i.test(err.message);
   const message = isServerStartFailure
@@ -687,7 +694,7 @@ function showStartupFailureDialog(error: unknown): void {
     } catch (rmErr) {
       log.warn(
         "Failed to remove .last-launched-version during recovery reset:",
-        rmErr,
+        rmErr
       );
     }
     app.relaunch();
@@ -706,7 +713,9 @@ function showStartupFailureDialog(error: unknown): void {
       .openPath(app.getPath("logs"))
       .then((result) => {
         if (result) {
-          log.warn(`shell.openPath reported error opening logs folder: ${result}`);
+          log.warn(
+            `shell.openPath reported error opening logs folder: ${result}`
+          );
         }
       })
       .catch((openErr) => log.warn("Failed to open logs folder:", openErr))
@@ -763,7 +772,7 @@ app.whenReady().then(async () => {
     } catch (dialogErr) {
       log.error(
         "Failed to show startup failure dialog; quitting silently:",
-        dialogErr,
+        dialogErr
       );
       app.quit();
     }
