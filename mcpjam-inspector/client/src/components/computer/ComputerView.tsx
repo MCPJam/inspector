@@ -36,6 +36,8 @@ import {
   isComputerStartLimitError,
 } from "@/lib/billing-entitlements";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
+import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { ComputerStatusChip } from "./ComputerStatusChip";
 import { ComputerTerminal } from "./ComputerTerminal";
 import { ComputersUnavailableMessage } from "./ComputersUnavailableMessage";
@@ -205,6 +207,141 @@ export function ComputerView({
   // computer yet (the backend provisions-with-pin on first use).
   const canReset = isReady || liveStatus === "hibernating";
   const canAttach = liveStatus === null || canReset;
+
+  // --- Agent tool group (surface "computer") ----------------------------
+  //
+  // ComputerView owns the single computer's status and the lifecycle action
+  // hooks, so the tools exist exactly while /computer is mounted. Handlers call
+  // the SAME gated callbacks the buttons use, behind the SAME gates:
+  //  - unavailable here (no signed-in project, or no data plane) →
+  //    `unsupported_in_mode`, matching where the buttons are inert;
+  //  - the daily start cap is enforced server-side on reserve, so
+  //    `startComputer` reserves exactly like the Open-terminal button and
+  //    surfaces a cap rejection as `execution_failed` naming the cap.
+  // The interactive TERMINAL is deliberately not a tool — opening it mints a
+  // token and drops a human into a shell; the snapshot reports terminal-open,
+  // never the token.
+  const requireComputerProject = (): string => {
+    if (!effectiveProjectId) {
+      throw createInspectorCommandClientError(
+        "unsupported_in_mode",
+        "The Computer tools need a signed-in project — sign in and select a project first.",
+      );
+    }
+    if (dataPlaneUnavailable) {
+      throw createInspectorCommandClientError(
+        "unsupported_in_mode",
+        "Computers aren't available in this deployment (no data plane), so the Computer tools are off.",
+      );
+    }
+    return effectiveProjectId;
+  };
+
+  useSurfaceAgentBridge({
+    surfaceId: "computer",
+    handlers: {
+      startComputer: async () => {
+        const pid = requireComputerProject();
+        try {
+          // The SAME reserve path the Open-terminal button uses (minus opening
+          // the interactive terminal): the daily start cap is enforced here by
+          // the backend.
+          const view = await reserve({ projectId: pid });
+          return {
+            status: "computer_starting",
+            computerStatus: view?.status ?? liveStatus ?? "requested",
+            note: "The computer is provisioning/waking in the background — watch ui_snapshot_app for it to reach 'ready'. This did NOT open the interactive terminal (that's a human action).",
+          };
+        } catch (err) {
+          if (isComputerStartLimitError(err)) {
+            // Daily start cap hit — report the cap, never a bypass.
+            throw createInspectorCommandClientError(
+              "execution_failed",
+              getBillingErrorMessage(err, "Daily computer start limit reached."),
+            );
+          }
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            getBillingErrorMessage(err, "Could not start the computer."),
+          );
+        }
+      },
+      hibernateComputer: async () => {
+        const pid = requireComputerProject();
+        try {
+          const res = await hibernateComputer({ projectId: pid });
+          setTerminalOpen(false);
+          return {
+            status: res.hibernated ? "computer_hibernating" : "nothing_to_hibernate",
+            hibernated: res.hibernated,
+          };
+        } catch (err) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            getBillingErrorMessage(err, "Could not hibernate the computer."),
+          );
+        }
+      },
+      resetComputer: async () => {
+        const pid = requireComputerProject();
+        try {
+          const res = await resetComputer({ projectId: pid });
+          return {
+            status: res.reset ? "computer_resetting" : "nothing_to_reset",
+            reset: res.reset,
+          };
+        } catch (err) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            getBillingErrorMessage(err, "Could not reset the computer."),
+          );
+        }
+      },
+      deleteComputer: async () => {
+        const pid = requireComputerProject();
+        try {
+          const res = await deleteComputer({ projectId: pid });
+          setTerminalOpen(false);
+          return { status: "computer_deleted", deleted: res.deleted };
+        } catch (err) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            getBillingErrorMessage(err, "Could not delete the computer."),
+          );
+        }
+      },
+    },
+    // Redacted STATE only: lifecycle status, attached environment, and an
+    // availability summary. NEVER the terminal token or any credential.
+    snapshot: () => {
+      if (!effectiveProjectId) {
+        return {
+          gated: true,
+          reason: "Sign in and select a project to use the Computer tools.",
+        };
+      }
+      if (dataPlaneUnavailable) {
+        return {
+          gated: true,
+          reason: "Computers aren't available in this deployment.",
+        };
+      }
+      return {
+        status: liveStatus === undefined ? "loading" : liveStatus ?? "none",
+        hasComputer,
+        isReady,
+        hibernatedReason: hibernatedReason ?? null,
+        billingPaused: isBillingPaused,
+        environment: attachedEnvironmentId
+          ? { id: attachedEnvironmentId, name: attachedEnvName ?? null }
+          : null,
+        imageLabel,
+        terminalOpen,
+        // Short, redacted error text only (no stack, no payload).
+        lastError: status?.lastError ? status.lastError.slice(0, 300) : null,
+      };
+    },
+  });
 
   if (!isAuthenticated) {
     return <Empty>Sign in to use a personal computer for this project.</Empty>;
