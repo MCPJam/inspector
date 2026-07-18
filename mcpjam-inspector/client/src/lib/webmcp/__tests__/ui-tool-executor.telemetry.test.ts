@@ -407,6 +407,42 @@ describe("ui-tool-executor outcome telemetry", () => {
       expect(addToolOutput).not.toHaveBeenCalled();
     });
 
+    it("shipped-but-never-resolved tool: unavailable emitted once, re-emit is silent", async () => {
+      // Name was advertised (shippedNames) but the tool was never live this
+      // load (unregistered before its first onToolCall) — goes through the
+      // wasShipped/unavailable branch, which must claim the id.
+      useUiToolsRegistry.setState({
+        tools: new Map(),
+        nativeDisposers: new Map(),
+        shippedNames: new Set(["ui_navigate"]),
+      });
+      const addToolOutput = vi.fn();
+
+      const first = await handleUiToolCall({
+        toolName: "ui_navigate",
+        toolCallId: "tc-unavail-re",
+        input: { target: "servers" },
+        addToolOutput,
+      });
+      expect(first).toBe(true);
+      expect(addToolOutput).toHaveBeenCalledTimes(1);
+      expect(eventCalls("ui_tool_call_completed")).toHaveLength(1);
+
+      addToolOutput.mockClear();
+      trackMock.mockClear();
+      // SDK re-emits the same input-available part on resume/replay.
+      const second = await handleUiToolCall({
+        toolName: "ui_navigate",
+        toolCallId: "tc-unavail-re",
+        input: { target: "servers" },
+        addToolOutput,
+      });
+      expect(second).toBe(true);
+      expect(addToolOutput).not.toHaveBeenCalled();
+      expect(eventCalls("ui_tool_call_started")).toHaveLength(0);
+      expect(eventCalls("ui_tool_call_completed")).toHaveLength(0);
+    });
+
     it("re-emitted settled call with an unregistered tool emits no telemetry", async () => {
       const unregister = useUiToolsRegistry
         .getState()

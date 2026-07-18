@@ -458,6 +458,11 @@ export async function handleUiToolCall(
     // supplied or the paused server stream waits forever — same rule as
     // closed app iframes in the app-tool path.
     if (registry.wasShipped(toolName)) {
+      // Claim BEFORE emitting so a re-emitted `tool-input-available` for this
+      // same id (resume/replay) hits the settled-guard at the top and can't
+      // send a second output or a duplicate started/completed pair — same
+      // contract as executeResolvedUiTool.
+      settledOrInFlightToolCallIds.add(toolCallId);
       beginUiToolCallTelemetry({
         toolCallId,
         toolName,
