@@ -37,6 +37,13 @@ type CreateSuiteDialogProps = {
   onSubmit: (payload: CreateSuitePayload) => Promise<void>;
   hostsEnabled?: boolean;
   projectId?: string | null;
+  /**
+   * Name prefill applied when the dialog OPENS (the agent's
+   * `ui_open_eval_suite_form` prefill-over-commit path). Name only, on
+   * purpose: everything else in the form is the user's to pick. The user
+   * can still edit or clear it before submitting.
+   */
+  initialName?: string | null;
 };
 
 export function CreateSuiteDialog({
@@ -45,6 +52,7 @@ export function CreateSuiteDialog({
   onSubmit,
   hostsEnabled = false,
   projectId = null,
+  initialName = null,
 }: CreateSuiteDialogProps) {
   const [name, setName] = useState("");
   const [hostAttachments, setHostAttachments] = useState<
@@ -75,8 +83,12 @@ export function CreateSuiteDialog({
       setHostAttachments([]);
       setServerAttachmentId(null);
       setIsSaving(false);
+    } else if (initialName) {
+      // Applied on open only — typing after open must never be clobbered by
+      // a rerender (the deps stay open/initialName, not the name state).
+      setName(initialName);
     }
-  }, [open]);
+  }, [open, initialName]);
 
   useEffect(() => {
     if (!shouldFetchDefaults) return;

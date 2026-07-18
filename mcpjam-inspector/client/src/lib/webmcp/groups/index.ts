@@ -14,12 +14,14 @@
 import type { AppSurfaceId } from "@/shared/app-surfaces";
 import type { UiToolGroup } from "./types";
 import { buildRegistryUiTools } from "./registry";
+import { buildEvalsUiTools } from "./evals";
 
 export type { UiToolGroup } from "./types";
 
 export const SURFACE_TOOL_GROUPS: Partial<Record<AppSurfaceId, UiToolGroup>> =
   {
     registry: { surfaceId: "registry", buildTools: buildRegistryUiTools },
+    evals: { surfaceId: "evals", buildTools: buildEvalsUiTools },
   };
 
 /**

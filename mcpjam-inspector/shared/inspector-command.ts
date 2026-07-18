@@ -42,7 +42,12 @@ export type InspectorCommandType =
   | "removeServer"
   | "connectRegistryServer"
   | "disconnectRegistryServer"
-  | "toggleRegistryStar";
+  | "toggleRegistryStar"
+  | "openEvalSuiteForm"
+  | "runEvalSuite"
+  | "cancelEvalRun"
+  | "generateEvalTests"
+  | "deleteEvalSuite";
 
 export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "navigate",
@@ -61,6 +66,11 @@ export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "connectRegistryServer",
   "disconnectRegistryServer",
   "toggleRegistryStar",
+  "openEvalSuiteForm",
+  "runEvalSuite",
+  "cancelEvalRun",
+  "generateEvalTests",
+  "deleteEvalSuite",
 ] as const satisfies readonly InspectorCommandType[];
 
 export interface InspectorCommandError {
@@ -258,6 +268,60 @@ export interface ToggleRegistryStarInspectorCommand {
   timeoutMs?: number;
 }
 
+/**
+ * Evals-screen commands, handled by `EvalsTab` while `/evals` is mounted.
+ *
+ * `suite` is how the model addresses a suite: its id or its name as shown in
+ * the suite switcher (timestamp suffixes stripped or not). Handlers resolve
+ * it against the loaded suites overview and reject anything else as
+ * `invalid_request` — never a fuzzy guess. Runs are addressed by `runId`
+ * (full id, or the shortened form the run list displays).
+ */
+
+/**
+ * Opens the create-suite dialog for the USER to finish. Suite creation is
+ * high-entropy (model, servers/host attachments, tests), so the ONLY prefill
+ * an agent may pass is the suite name — everything else is picked by the
+ * human in the form, mirroring the `openServerForm` prefill-over-commit
+ * precedent.
+ */
+export interface OpenEvalSuiteFormInspectorCommand {
+  id: string;
+  type: "openEvalSuiteForm";
+  payload: { name?: string };
+  timeoutMs?: number;
+}
+
+/** Starts a suite run. Spends the org's eval iteration quota. */
+export interface RunEvalSuiteInspectorCommand {
+  id: string;
+  type: "runEvalSuite";
+  payload: { suite: string };
+  timeoutMs?: number;
+}
+
+export interface CancelEvalRunInspectorCommand {
+  id: string;
+  type: "cancelEvalRun";
+  payload: { runId: string };
+  timeoutMs?: number;
+}
+
+/** LLM-generates test cases into the suite. Spends money. */
+export interface GenerateEvalTestsInspectorCommand {
+  id: string;
+  type: "generateEvalTests";
+  payload: { suite: string };
+  timeoutMs?: number;
+}
+
+export interface DeleteEvalSuiteInspectorCommand {
+  id: string;
+  type: "deleteEvalSuite";
+  payload: { suite: string };
+  timeoutMs?: number;
+}
+
 export type InspectorCommand =
   | NavigateInspectorCommand
   | SelectServerInspectorCommand
@@ -274,7 +338,12 @@ export type InspectorCommand =
   | RemoveServerInspectorCommand
   | ConnectRegistryServerInspectorCommand
   | DisconnectRegistryServerInspectorCommand
-  | ToggleRegistryStarInspectorCommand;
+  | ToggleRegistryStarInspectorCommand
+  | OpenEvalSuiteFormInspectorCommand
+  | RunEvalSuiteInspectorCommand
+  | CancelEvalRunInspectorCommand
+  | GenerateEvalTestsInspectorCommand
+  | DeleteEvalSuiteInspectorCommand;
 
 export interface InspectorCommandSuccessResponse {
   id: string;

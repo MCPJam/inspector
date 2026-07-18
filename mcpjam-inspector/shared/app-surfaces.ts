@@ -287,14 +287,12 @@ export const APP_SURFACES = [
     userActivities: [
       "Create or edit an eval suite and its test cases",
       "Run a suite and watch its runs",
+      "Generate suggested test cases for a suite",
       "Open a run to inspect each step, tool call, and score",
       "Compare runs",
     ],
-    agentTools: {
-      kind: "none",
-      reason:
-        "Tool group planned (create/edit suites, start runs, open results); tracked in the surface-tools rollout.",
-    },
+    hasSnapshotProvider: true,
+    agentTools: { kind: "group" },
     showInAtlas: true,
   },
   {

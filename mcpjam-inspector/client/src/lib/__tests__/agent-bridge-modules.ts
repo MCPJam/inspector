@@ -12,4 +12,7 @@
  */
 export const BRIDGE_MODULES: Record<string, string> = {
   registry: "client/src/components/RegistryTab.tsx",
+  // EvalsTab only — NEVER use-eval-handlers or anything CiEvalsTab mounts:
+  // ci-evals stays agentTools kind "none".
+  evals: "client/src/components/EvalsTab.tsx",
 };

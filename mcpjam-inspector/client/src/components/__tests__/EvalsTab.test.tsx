@@ -1,7 +1,13 @@
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { executeInspectorCommand } from "@/lib/inspector-command-handlers";
+import { readSurfaceSnapshot } from "@/lib/webmcp/surface-snapshot-registry";
+import type {
+  InspectorCommand,
+  InspectorCommandResponse,
+} from "@/shared/inspector-command.js";
 
 const mocks = vi.hoisted(() => ({
   route: {
@@ -13,6 +19,11 @@ const mocks = vi.hoisted(() => ({
   suiteIterationsView: vi.fn(),
   updateSuiteMutation: vi.fn(),
   handleGenerateTests: vi.fn(),
+  handleRerun: vi.fn(),
+  handleCancelRun: vi.fn(),
+  confirmDelete: vi.fn(),
+  setSuiteToDelete: vi.fn(),
+  getEffectiveSuiteServers: vi.fn((..._args: unknown[]): string[] => []),
   isDirectGuest: false,
   isAuthenticated: true,
   useQuery: vi.fn(),
@@ -95,10 +106,13 @@ vi.mock("@/lib/eval-route-url", () => ({
 
 vi.mock("../evals/helpers", () => ({
   aggregateSuite: () => null,
-  // EvalsTab's `generateState` memo calls this to compute the effective
-  // server set across the suite's flat list + host attachments. Tests
-  // don't care about the result; return an empty list so the memo runs.
-  getEffectiveSuiteServers: () => [],
+  // EvalsTab's `generateState` memo and the agent bridge's generate handler
+  // call this to compute the effective server set. Configurable so the
+  // bridge tests can give a suite servers; defaults to [] for the rest.
+  getEffectiveSuiteServers: (...args: unknown[]) =>
+    mocks.getEffectiveSuiteServers(...args),
+  // The bridge's run resolver accepts the shortened display id.
+  formatRunId: (runId: string) => runId.substring(0, 8),
 }));
 
 vi.mock("../evals/create-suite-navigation", () => ({
@@ -157,7 +171,7 @@ vi.mock("../evals/use-eval-handlers", () => ({
   useEvalHandlers: () => ({
     deletingSuiteId: null,
     suiteToDelete: null,
-    setSuiteToDelete: vi.fn(),
+    setSuiteToDelete: mocks.setSuiteToDelete,
     runToDelete: null,
     setRunToDelete: vi.fn(),
     testCaseToDelete: null,
@@ -170,14 +184,14 @@ vi.mock("../evals/use-eval-handlers", () => ({
     isGeneratingTests: false,
     handleGenerateTests: mocks.handleGenerateTests,
     handleCreateTestCase: vi.fn(),
-    handleRerun: vi.fn(),
-    handleCancelRun: vi.fn(),
+    handleRerun: mocks.handleRerun,
+    handleCancelRun: mocks.handleCancelRun,
     handleDelete: vi.fn(),
     handleDeleteRun: vi.fn(),
     directDeleteRun: vi.fn().mockResolvedValue(undefined),
     directDeleteTestCase: vi.fn().mockResolvedValue(undefined),
     handleRunTestCase: vi.fn().mockResolvedValue(undefined),
-    confirmDelete: vi.fn(),
+    confirmDelete: mocks.confirmDelete,
     confirmDeleteRun: vi.fn(),
     confirmDeleteTestCase: vi.fn(),
   }),
@@ -253,6 +267,7 @@ describe("EvalsTab", () => {
     mocks.isDirectGuest = false;
     mocks.isAuthenticated = true;
     mocks.evalIterationQuota = undefined;
+    mocks.getEffectiveSuiteServers.mockImplementation(() => []);
     mocks.useQuery.mockImplementation((name: unknown) =>
       name === "billing:getEvalIterationQuota"
         ? mocks.evalIterationQuota
@@ -455,5 +470,280 @@ describe("EvalsTab", () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+
+  describe("agent bridge handlers", () => {
+    let commandSeq = 0;
+    async function dispatch(command: Omit<InspectorCommand, "id">) {
+      commandSeq += 1;
+      let response!: InspectorCommandResponse;
+      // Handlers call the component's own callbacks and setState, so the
+      // dispatch is a React state update and belongs inside act().
+      await act(async () => {
+        response = await executeInspectorCommand({
+          ...command,
+          id: `evals-bridge-${commandSeq}`,
+        } as InspectorCommand);
+      });
+      return response;
+    }
+
+    it("runEvalSuite resolves the suite and starts the run through the quota-gated wrapper", async () => {
+      render(<EvalsTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "runEvalSuite",
+        payload: { suite: "Suite suite-b" },
+      });
+
+      expect(response).toMatchObject({
+        status: "success",
+        result: { status: "run_requested", suiteId: "suite-b" },
+      });
+      expect(mocks.handleRerun).toHaveBeenCalledWith(
+        expect.objectContaining({ _id: "suite-b" }),
+      );
+    });
+
+    it("runEvalSuite refuses when the eval iteration quota is exhausted — never a bypass", async () => {
+      mocks.evalIterationQuota = {
+        used: 25,
+        allowed: 25,
+        resetsAt: Date.UTC(2026, 5, 2),
+        windowKind: "day",
+      };
+      render(<EvalsTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "runEvalSuite",
+        payload: { suite: "Suite suite-a" },
+      });
+
+      expect(response).toMatchObject({
+        status: "error",
+        error: { code: "execution_failed" },
+      });
+      const message =
+        response.status === "error" ? response.error.message : "";
+      expect(message).toMatch(/Eval iteration limit reached/);
+      expect(message).toMatch(/25\/25 eval iterations used/);
+      // The raw un-gated run path must not have been touched.
+      expect(mocks.handleRerun).not.toHaveBeenCalled();
+    });
+
+    it("rejects an unknown suite as invalid_request without touching any callback", async () => {
+      render(<EvalsTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "runEvalSuite",
+        payload: { suite: "Not A Suite" },
+      });
+
+      expect(response).toMatchObject({
+        status: "error",
+        error: { code: "invalid_request" },
+      });
+      expect(mocks.handleRerun).not.toHaveBeenCalled();
+    });
+
+    it("asks for the suite id when a name matches more than one suite", async () => {
+      mocks.useEvalQueries.mockImplementation(
+        ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
+          const first = makeSuiteEntry(["server-a"], "suite-a");
+          const second = makeSuiteEntry(["server-a"], "suite-dup");
+          second.suite.name = first.suite.name;
+          const state = makeQueryState(selectedSuiteId);
+          return { ...state, sortedSuites: [first, second] };
+        },
+      );
+      render(<EvalsTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "deleteEvalSuite",
+        payload: { suite: "Suite suite-a" },
+      });
+
+      expect(response).toMatchObject({
+        status: "error",
+        error: { code: "invalid_request" },
+      });
+      expect(response.status === "error" && response.error.message).toMatch(
+        /suite id/i,
+      );
+      expect(mocks.setSuiteToDelete).not.toHaveBeenCalled();
+      expect(mocks.confirmDelete).not.toHaveBeenCalled();
+    });
+
+    it("deleteEvalSuite stages via setSuiteToDelete and commits via confirmDelete", async () => {
+      render(<EvalsTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "deleteEvalSuite",
+        payload: { suite: "suite-b" },
+      });
+
+      expect(response).toMatchObject({
+        status: "success",
+        result: { status: "delete_requested", suiteId: "suite-b" },
+      });
+      expect(mocks.setSuiteToDelete).toHaveBeenCalledWith(
+        expect.objectContaining({ _id: "suite-b" }),
+      );
+      expect(mocks.confirmDelete).toHaveBeenCalledTimes(1);
+      // Staged before committed, and the staging dialog is closed after.
+      expect(
+        mocks.setSuiteToDelete.mock.invocationCallOrder[0],
+      ).toBeLessThan(mocks.confirmDelete.mock.invocationCallOrder[0]);
+      expect(mocks.setSuiteToDelete).toHaveBeenLastCalledWith(null);
+    });
+
+    it("cancelEvalRun cancels visible running runs and reports finished ones instead", async () => {
+      mocks.useEvalQueries.mockImplementation(
+        ({ selectedSuiteId }: { selectedSuiteId: string | null }) => ({
+          ...makeQueryState(selectedSuiteId),
+          runsForSelectedSuite: [
+            { _id: "run-live-1", status: "running" },
+            { _id: "run-done-1", status: "completed" },
+          ],
+        }),
+      );
+      render(<EvalsTab projectId="ws-1" />);
+
+      const cancelled = await dispatch({
+        type: "cancelEvalRun",
+        payload: { runId: "run-live-1" },
+      });
+      expect(cancelled).toMatchObject({
+        status: "success",
+        result: { status: "cancel_requested", runId: "run-live-1" },
+      });
+      expect(mocks.handleCancelRun).toHaveBeenCalledWith("run-live-1");
+
+      mocks.handleCancelRun.mockClear();
+      const finished = await dispatch({
+        type: "cancelEvalRun",
+        payload: { runId: "run-done-1" },
+      });
+      expect(finished).toMatchObject({
+        status: "success",
+        result: { status: "already_finished", runId: "run-done-1" },
+      });
+      expect(mocks.handleCancelRun).not.toHaveBeenCalled();
+
+      const unknown = await dispatch({
+        type: "cancelEvalRun",
+        payload: { runId: "run-nope" },
+      });
+      expect(unknown).toMatchObject({
+        status: "error",
+        error: { code: "invalid_request" },
+      });
+    });
+
+    it("generateEvalTests routes through the button's generation path with the suite's servers", async () => {
+      mocks.getEffectiveSuiteServers.mockImplementation(() => ["server-a"]);
+      render(<EvalsTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "generateEvalTests",
+        payload: { suite: "Suite suite-a" },
+      });
+
+      expect(response).toMatchObject({
+        status: "success",
+        result: { status: "generation_started", suiteId: "suite-a" },
+      });
+      // Fire-and-forget: the same handleGenerateTests callback the Generate
+      // button uses, with the suite's effective servers.
+      await waitFor(() => {
+        expect(mocks.handleGenerateTests).toHaveBeenCalledWith(
+          "suite-a",
+          ["server-a"],
+          expect.objectContaining({ generationOptions: expect.anything() }),
+        );
+      });
+    });
+
+    it("generateEvalTests rejects a suite with no servers attached", async () => {
+      render(<EvalsTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "generateEvalTests",
+        payload: { suite: "Suite suite-a" },
+      });
+
+      expect(response).toMatchObject({
+        status: "error",
+        error: { code: "invalid_request" },
+      });
+      expect(mocks.handleGenerateTests).not.toHaveBeenCalled();
+    });
+
+    it("openEvalSuiteForm opens the create dialog with a name-only prefill — no suite is created", async () => {
+      render(<EvalsTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "openEvalSuiteForm",
+        payload: { name: "Asana smoke tests" },
+      });
+
+      expect(response).toMatchObject({
+        status: "success",
+        result: { status: "form_opened", prefilledName: "Asana smoke tests" },
+      });
+      expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+        type: "create",
+      });
+      expect(mocks.createTestSuiteMutation).not.toHaveBeenCalled();
+    });
+
+    it("refuses every command as unsupported_in_mode while the tab gate blocks the screen", async () => {
+      mocks.isAuthenticated = false;
+      render(<EvalsTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "runEvalSuite",
+        payload: { suite: "Suite suite-a" },
+      });
+
+      expect(response).toMatchObject({
+        status: "error",
+        error: { code: "unsupported_in_mode" },
+      });
+      expect(mocks.handleRerun).not.toHaveBeenCalled();
+    });
+
+    it("snapshot reports redacted suite state — names, ids, quota, and counters only", async () => {
+      mocks.evalIterationQuota = {
+        used: 3,
+        allowed: 25,
+        resetsAt: Date.UTC(2026, 5, 2),
+        windowKind: "day",
+      };
+      render(<EvalsTab projectId="ws-1" />);
+
+      const snapshot = await readSurfaceSnapshot("evals");
+      expect(snapshot).toMatchObject({
+        ok: true,
+        data: {
+          view: "suite-overview",
+          quota: {
+            iterationsUsed: 3,
+            iterationsAllowed: 25,
+            windowKind: "day",
+          },
+          selectedSuite: expect.objectContaining({
+            id: "suite-a",
+            name: "Suite suite-a",
+          }),
+          totalSuites: 2,
+          suites: [
+            expect.objectContaining({ id: "suite-a", name: "Suite suite-a" }),
+            expect.objectContaining({ id: "suite-b", name: "Suite suite-b" }),
+          ],
+          isGeneratingTests: false,
+        },
+      });
+    });
   });
 });
