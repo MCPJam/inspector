@@ -692,7 +692,7 @@ export interface ServerUpdateResult {
   serverName: string;
 }
 
-type EnsureServerConnectionStatus =
+export type EnsureServerConnectionStatus =
   | "connected"
   | "failed"
   | "missing"
@@ -704,7 +704,7 @@ type EnsureServerConnectionStatus =
   // never surfaces a spurious "Failed to reconnect" toast.
   | "superseded";
 
-interface EnsureServerConnectionResult {
+export interface EnsureServerConnectionResult {
   status: EnsureServerConnectionStatus;
   error?: string;
 }
@@ -4720,6 +4720,41 @@ export function useServerState({
     [reconnectServerInternal]
   );
 
+  /**
+   * Connect a saved server and REPORT what happened.
+   *
+   * `handleConnect`/`handleReconnect` are built for buttons: they resolve to
+   * `void`, swallow failures into toasts, and may hand the page to an OAuth
+   * redirect. An agent driving the UI needs the opposite of all three — it
+   * has to tell the user the outcome, and a tool call that ends in
+   * `window.location.assign` never returns a result at all.
+   *
+   * So: `allowInteractiveOAuthFlow: false`, which makes the internal path
+   * return `reauth` instead of redirecting. The caller reports "this server
+   * needs authorization" and the user clicks Authorize themselves — the
+   * consent stays a human decision, taken with the page intact.
+   *
+   * `suppressErrors` because the caller renders the outcome; a toast on top
+   * would double-report it.
+   */
+  const connectServerWithResult = useCallback(
+    async (
+      serverName: string,
+      options?: { select?: boolean }
+    ): Promise<EnsureServerConnectionResult> =>
+      await reconnectServerInternal(serverName, {
+        // Deliberately NOT exposing `forceOAuthFlow`: it can drive the page
+        // into an OAuth redirect, and the whole contract of this helper is
+        // that it never navigates — it returns `reauth` and lets the user
+        // click Authorize. A caller that could force the flow would break
+        // that promise.
+        allowInteractiveOAuthFlow: false,
+        select: options?.select ?? true,
+        suppressErrors: true,
+      }),
+    [reconnectServerInternal]
+  );
+
   // Force a re-handshake of an ALREADY-connected server under the current
   // client identity. Unlike `ensureServersReady` (which skips servers that are
   // already connected), this always reconnects — the backend
@@ -5177,6 +5212,7 @@ export function useServerState({
     handleDisconnect,
     handleRuntimeDisconnect,
     handleReconnect,
+    connectServerWithResult,
     reconnectServerForClientSwitch,
     ensureServersReady,
     syncAgentStatus,

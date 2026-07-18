@@ -34,7 +34,9 @@ beforeAll(async () => {
   jwksDoc = { keys: [{ ...jwk, kid: KID, alg: "RS256", use: "sig" }] };
 });
 
-async function signToken(claims: Record<string, unknown> = {}): Promise<string> {
+async function signToken(
+  claims: Record<string, unknown> = {}
+): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const {
     iss = ISSUER,
@@ -112,6 +114,12 @@ function installSandboxInfoStub(
           headers: { "content-type": "application/json" },
         });
       }
+      if (path === "/computers/reserve-upload-bytes") {
+        return new Response(
+          JSON.stringify({ ok: true, total: 100, cap: 500 * 1024 * 1024 }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
       throw new Error(`unexpected path ${path}`);
     })
   );
@@ -121,7 +129,10 @@ function stubConfiguredEnv() {
   vi.stubEnv("CONVEX_HTTP_URL", CONVEX_URL);
   vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-svc-token");
   vi.stubEnv("E2B_API_KEY", "e2b_test");
-  vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "test-terminal-secret-0123456789");
+  vi.stubEnv(
+    "COMPUTERS_TERMINAL_TOKEN_SECRET",
+    "test-terminal-secret-0123456789"
+  );
 }
 
 function createApp(connectSandbox: (id: string) => Promise<UploadSandbox>) {
@@ -203,7 +214,9 @@ describe("POST /api/web/computers/upload", () => {
     const form = new FormData();
     form.append("files", new File([new Uint8Array([1, 2])], "a.txt"));
     const res = await app.request(
-      `/api/web/computers/upload?token=${encodeURIComponent(await signToken())}`,
+      `/api/web/computers/upload?token=${encodeURIComponent(
+        await signToken()
+      )}`,
       { method: "POST", body: form }
     );
     expect(res.status).toBe(401);
@@ -387,6 +400,50 @@ describe("POST /api/web/computers/upload", () => {
     ]);
     expect(res.status).toBe(401);
     expect(fake.writes).toHaveLength(0);
+  });
+
+  it("413s and writes nothing when the upload exceeds the cumulative quota", async () => {
+    stubConfiguredEnv();
+    installSandboxInfoStub((path) =>
+      path === "/computers/reserve-upload-bytes"
+        ? {
+            status: 413,
+            json: {
+              error: "Upload would exceed this computer's storage quota.",
+              total: 500 * 1024 * 1024,
+              cap: 500 * 1024 * 1024,
+            },
+          }
+        : undefined
+    );
+    const fake = fakeSandbox();
+    const app = createApp(async () => fake.sandbox);
+    const res = await uploadRequest(app, await signToken(), [
+      new File([new Uint8Array([1, 2, 3])], "a.txt"),
+    ]);
+    expect(res.status).toBe(413);
+    expect(fake.writes).toHaveLength(0);
+    const body = (await res.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/quota/i);
+  });
+
+  it("fails OPEN (still writes) when the quota reserve route is unavailable (404)", async () => {
+    // An older backend without the reserve route returns 404. The quota is a
+    // hygiene control, not the trust boundary, so the upload proceeds.
+    stubConfiguredEnv();
+    installSandboxInfoStub((path) =>
+      path === "/computers/reserve-upload-bytes"
+        ? { status: 404, json: { error: "Computer not found" } }
+        : undefined
+    );
+    const fake = fakeSandbox();
+    const app = createApp(async () => fake.sandbox);
+    const res = await uploadRequest(app, await signToken(), [
+      new File([new Uint8Array([1, 2, 3])], "a.txt"),
+    ]);
+    expect(res.status).toBe(200);
+    expect(fake.writes).toHaveLength(1);
   });
 
   it("503s when the computer is still provisioning (no providerComputerId)", async () => {
