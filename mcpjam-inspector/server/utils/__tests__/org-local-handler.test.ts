@@ -312,6 +312,7 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
       totalTokens: 10,
       cachedInputTokens: 3,
       cacheWriteTokens: 2,
+      noCacheInputTokens: 1,
     });
   });
 
