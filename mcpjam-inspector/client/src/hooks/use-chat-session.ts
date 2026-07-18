@@ -1955,6 +1955,8 @@ export function useChatSession(
           // Defers mutating UI tools to the approval pill when the toggle is
           // on — must mirror the server's gate (shared predicate).
           requireToolApproval: requireToolApprovalRef.current,
+          // Duplicate detection is per chat session, not per module.
+          telemetryScope: chatSessionIdRef.current,
         })
       ) {
         return;
@@ -2130,8 +2132,10 @@ export function useChatSession(
         addToolOutput: addToolOutput as Parameters<
           typeof createUiAwareApprovalResponseHandler
         >[0]["addToolOutput"],
+        // Keeps reload-approved calls in this session's duplicate ring.
+        telemetryScope: chatSessionId,
       }),
-    [addToolApprovalResponse, addToolOutput]
+    [addToolApprovalResponse, addToolOutput, chatSessionId]
   );
 
   // Orphaned-defer fallback: a UI tool call deferred for approval whose
