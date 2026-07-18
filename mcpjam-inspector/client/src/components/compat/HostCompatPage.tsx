@@ -4,6 +4,8 @@ import { useServerToolsData } from "@/lib/host-compat/use-host-compat";
 import { HostCompatContent } from "@/components/compat/HostCompatContent";
 import { HostCompatMatrix } from "@/components/compat/HostCompatMatrix";
 import { EmptyState } from "@/components/ui/empty-state";
+import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import { buildCompatibilitySnapshot } from "@/lib/webmcp/review-surface-snapshots";
 
 /**
  * Standalone Compatibility destination — "does my server work on these hosts?".
@@ -39,6 +41,21 @@ export function HostCompatPage({
   const detailServer =
     servers.find((s) => s.name === selectedServer?.name) ?? servers[0] ?? null;
   const toolsData = useServerToolsData(detailServer);
+
+  // Agent bridge: SNAPSHOT-ONLY (no tools). Compatibility is a read-only review
+  // screen (agentTools kind "none") that the agent may OBSERVE: which connected
+  // servers are on the matrix and which one's report is open. Must run before
+  // the early return below (rules of hooks). Redacted STATE only — server names
+  // and selection, never a server's config or the per-host findings.
+  useSurfaceAgentBridge({
+    surfaceId: "compatibility",
+    snapshot: () =>
+      buildCompatibilitySnapshot({
+        servers,
+        selectedServerName: detailServer?.name ?? null,
+        showMatrix: servers.length > 1,
+      }),
+  });
 
   if (servers.length === 0) {
     return (

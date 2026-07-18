@@ -44,6 +44,8 @@ import { STATUS_CONFIG, formatRelativeTime } from "@/lib/task-utils";
 import { useTaskElicitation } from "@/hooks/use-task-elicitation";
 import { ElicitationDialog } from "./ElicitationDialog";
 import type { DialogElicitation } from "./ToolsTab";
+import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import { buildTasksSnapshot } from "@/lib/webmcp/review-surface-snapshots";
 
 const POLL_INTERVAL_STORAGE_KEY = "mcp-inspector-tasks-poll-interval";
 const DEFAULT_POLL_INTERVAL = 3000;
@@ -458,6 +460,31 @@ export function TasksTab({
 
     return () => clearInterval(interval);
   }, [serverName, tasks, isActive]);
+
+  // Agent bridge: SNAPSHOT-ONLY (no tools). Tasks is a read-only view of a
+  // server's long-running tasks (agentTools kind "none") the agent may OBSERVE.
+  // Must run before the early return below (rules of hooks). Redacted STATE
+  // only: the selected server, task rows by id/status/created-time, and the
+  // selected task's progress fraction — NEVER a task's input, result, or status
+  // message. `hostedBlocked`, so this only registers where the screen mounts.
+  useSurfaceAgentBridge({
+    surfaceId: "tasks",
+    snapshot: () =>
+      buildTasksSnapshot({
+        selectedServer: serverName ?? null,
+        tasks: tasks.map((task) => ({
+          taskId: task.taskId,
+          status: task.status,
+          createdAt: task.createdAt,
+        })),
+        selectedTaskId: selectedTaskId || null,
+        hasActiveTasks,
+        autoRefresh,
+        selectedProgress: progress
+          ? { progress: progress.progress, total: progress.total }
+          : null,
+      }),
+  });
 
   if (!serverConfig || !serverName) {
     return (

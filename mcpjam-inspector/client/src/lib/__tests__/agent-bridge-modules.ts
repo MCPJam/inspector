@@ -46,4 +46,25 @@ export const BRIDGE_MODULES: Record<string, string> = {
   // exists so surface-snapshot-coverage can back its hasSnapshotProvider claim;
   // agent-tool-coverage permits a non-group row exactly when it's snapshot-only.
   tools: "client/src/components/ToolsTab.tsx",
+  // The read-only REVIEW surfaces below are all SNAPSHOT-ONLY (agentTools kind
+  // "none", no tool group): they give the agent OBSERVABILITY via
+  // ui_snapshot_app without letting it operate the screen.
+  //
+  // TracingTab is a thin wrapper over the SHARED LoggerView, so its provider
+  // reads the traffic-log store directly instead of bridging from that child.
+  tracing: "client/src/components/TracingTab.tsx",
+  // HostCompatPage owns the connected-servers × hosts compatibility matrix and
+  // the selected server's report.
+  compatibility: "client/src/components/compat/HostCompatPage.tsx",
+  // HostConfigCompareView owns the host-comparison selection + matrix. The
+  // `capabilities/:slug` permalink route mounts CaniuseCapabilityPage instead,
+  // which registers the same "host-compare" provider so the claim stays honest
+  // there too; this row points at the canonical destination component.
+  "host-compare": "client/src/components/hosts/comparison/HostConfigCompareView.tsx",
+  // CiEvalsTab owns the CI lens over suites/commits. The bridge lives in its
+  // OWN component with the literal "ci-evals" id — NEVER in the eval state
+  // hooks EvalsTab also mounts, which would mis-scope the provider on /evals.
+  "ci-evals": "client/src/components/CiEvalsTab.tsx",
+  // TasksTab owns the selected server's long-running MCP task list.
+  tasks: "client/src/components/TasksTab.tsx",
 };
