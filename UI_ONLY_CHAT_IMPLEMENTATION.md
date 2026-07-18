@@ -296,17 +296,24 @@ per-turn). This workstream activates and *measures* caching without trusting it 
 New shared helper (suggested `server/utils/prompt-cache.ts`):
 `applyCacheBreakpoints({ provider, system, messages })`:
 
-- **Anthropic** — an explicit breakpoint at the end of the stable prefix. Note the AI
-  SDK applies `providerOptions.anthropic.cacheControl: { type: "ephemeral" }` from a
-  **message (or message-part)**, not from a top-level `streamText` option — a top-level
-  option triggers request-level automatic caching, not a placed breakpoint. So the
-  identity prompt, currently passed as the `system` string
-  (`mcpjam-agent.ts` → `streamWebChatTurn`), must be promoted to a **system message**
-  whose `providerOptions.anthropic.cacheControl` carries the breakpoint (or the stable
-  prefix split into a dedicated cached system message). Safe because volatile orientation
-  rides the user message, appended after the prefix, never inside it. Never inject raw
-  `cache_control` into every request. The "exactly one breakpoint" test asserts against
-  that annotated system message.
+- **Anthropic** — an explicit breakpoint at the end of the **full stable system
+  prefix**. Two things to get right:
+  - *What's in the prefix.* The identity prompt is not the whole stable prefix:
+    `prepareChatV2` appends `buildUiToolsSystemPrompt(uiTools, …)` after the identity
+    `systemPrompt` (`chat-v2-orchestration.ts`) before the direct path sends them as one
+    `system` string. The `ui_*` guidance is stable within a catalog version and the
+    fingerprint already treats the UI-tool set as part of the prefix — so the breakpoint
+    must cover identity **+** UI-tools guidance, with only genuinely volatile additions
+    (e.g. widget context) after it. Breaking on only the identity portion caches a
+    fraction and the boundary test would validate the wrong placement.
+  - *How to place it.* The AI SDK applies
+    `providerOptions.anthropic.cacheControl: { type: "ephemeral" }` from a **message (or
+    message-part)**, not from a top-level `streamText` option (which triggers
+    request-level automatic caching, not a placed breakpoint). So the combined stable
+    system string must be promoted to a **system message** carrying the cacheControl on
+    its last part (volatile per-turn additions move to a later message/part). Never
+    inject raw `cache_control` into every request. The "exactly one breakpoint" test
+    asserts it sits at the end of the full stable prefix.
 - **OpenAI** — no-op; caching is automatic for eligible prompts. Measure first; add a
   provider cache key only if data shows it is needed.
 - **Other/custom providers** — no-op until their caching contract is documented.
