@@ -18,6 +18,7 @@ import { generateId } from "ai";
 import { getOrCreateAgentChat } from "@/lib/mcpjam-agent/agent-chat-instances";
 import { fulfillOrphanedDeferredUiToolCalls } from "@/lib/webmcp/ui-tool-approval";
 import { buildUiContextPart } from "@/lib/webmcp/ui-context-snapshot";
+import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 import {
   loadAgentRequireToolApproval,
   saveAgentRequireToolApproval,
@@ -36,6 +37,60 @@ import {
   transcriptToUIMessages,
 } from "@/lib/transcript-to-ui-messages";
 import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
+
+/**
+ * Count the `ui_*` client-fulfilled tool calls on the turn's assistant
+ * message. Ownership mirrors the executor's dispatch gate (registry
+ * membership / shipped names) — never the `ui_` prefix alone. Names and
+ * counts only; args/outputs never leave the message.
+ */
+function summarizeUiToolCalls(last: UIMessage | undefined): {
+  ui_tool_call_count: number;
+  distinct_tool_count: number;
+} {
+  if (!last || last.role !== "assistant" || !Array.isArray(last.parts)) {
+    return { ui_tool_call_count: 0, distinct_tool_count: 0 };
+  }
+  const registry = useUiToolsRegistry.getState();
+  const names: string[] = [];
+  for (const part of last.parts) {
+    const type = (part as { type?: unknown }).type;
+    if (typeof type !== "string" || !type.startsWith("tool-")) continue;
+    const name = type.slice("tool-".length);
+    if (registry.resolve(name) !== null || registry.wasShipped(name)) {
+      names.push(name);
+    }
+  }
+  return {
+    ui_tool_call_count: names.length,
+    distinct_tool_count: new Set(names).size,
+  };
+}
+
+/**
+ * Token usage IF the session already carries it on the assistant message's
+ * metadata. The agent route doesn't stream usage metadata today, so these
+ * are usually null — deliberately no new server plumbing here.
+ */
+function usageTokens(last: UIMessage | undefined): {
+  input_tokens: number | null;
+  output_tokens: number | null;
+} {
+  const usage =
+    last && last.role === "assistant"
+      ? (
+          last as {
+            metadata?: { usage?: { inputTokens?: unknown; outputTokens?: unknown } };
+          }
+        ).metadata?.usage
+      : undefined;
+  return {
+    input_tokens:
+      typeof usage?.inputTokens === "number" ? usage.inputTokens : null,
+    output_tokens:
+      typeof usage?.outputTokens === "number" ? usage.outputTokens : null,
+  };
+}
 
 export interface UseMcpjamAgentSessionArgs {
   /**
@@ -269,6 +324,17 @@ export function useMcpjamAgentSession(
         tool_call_count: toolCallCount,
         message_count: messages.length,
       });
+      track("agent_turn_completed", {
+        location: "mcpjam_agent",
+        surface,
+        session_id: chatSessionId,
+        model: config.model?.id ?? null,
+        provider: config.model?.provider ?? null,
+        ...summarizeUiToolCalls(last),
+        had_error: false,
+        ...usageTokens(last),
+        duration_ms: startedAt != null ? Date.now() - startedAt : null,
+      });
     } else if (status === "error") {
       const startedAt = turnStartedAtRef.current;
       turnStartedAtRef.current = null;
@@ -280,8 +346,20 @@ export function useMcpjamAgentSession(
         duration_ms: startedAt != null ? Date.now() - startedAt : null,
         error_message: error?.message ?? null,
       });
+      const last = messages[messages.length - 1];
+      track("agent_turn_completed", {
+        location: "mcpjam_agent",
+        surface,
+        session_id: chatSessionId,
+        model: config.model?.id ?? null,
+        provider: config.model?.provider ?? null,
+        ...summarizeUiToolCalls(last),
+        had_error: true,
+        ...usageTokens(last),
+        duration_ms: startedAt != null ? Date.now() - startedAt : null,
+      });
     }
-  }, [chatSessionId, error, messages, status, surface]);
+  }, [chatSessionId, config, error, messages, status, surface]);
 
   // Orphaned-defer fallback: a UI tool call deferred for approval whose
   // approval request never arrived (client/server flag disagreement for one

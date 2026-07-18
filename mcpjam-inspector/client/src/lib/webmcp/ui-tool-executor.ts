@@ -20,6 +20,9 @@
  */
 
 import { uiToolCallNeedsApproval } from "@/shared/client-fulfilled-tools.js";
+import type { InspectorCommandErrorCode } from "@/shared/inspector-command.js";
+import { track } from "@/lib/analytics";
+import { pathnameToActiveTab } from "@/lib/app-navigation";
 import {
   useUiToolsRegistry,
   type UiToolDefinition,
@@ -64,7 +67,167 @@ const deferredUiToolCalls = new Map<
 export function __resetUiToolExecutorForTests(): void {
   settledOrInFlightToolCallIds.clear();
   deferredUiToolCalls.clear();
+  telemetryByToolCallId.clear();
+  recentCallSignatures.length = 0;
 }
+
+// --- Outcome telemetry ------------------------------------------------
+//
+// Observation-only: every emit is wrapped so a throwing analytics call can
+// never break tool fulfillment (a lost output would hang the stream). HARD
+// RULE: event properties are names/booleans/counts/durations only — never
+// tool args, tool outputs, or free-text messages. Duplicate detection
+// hashes args into an in-memory signature that never leaves this module.
+
+type UiToolCallOutcome = "success" | "error" | "denied";
+type UiToolCallApproval = "not_required" | "approved" | "denied";
+
+interface UiToolCallTelemetry {
+  toolName: string;
+  surfaceId: string;
+  startedAt: number;
+  duplicateOfPrevious: boolean;
+  callsSinceDuplicate?: number;
+}
+
+/** Started-time facts carried to the (possibly much later) completed emit. */
+const telemetryByToolCallId = new Map<string, UiToolCallTelemetry>();
+
+/**
+ * Last N call signatures this session, oldest first, for duplicate-call
+ * detection (a looping agent re-issuing the same call). Signatures include
+ * canonicalized args and therefore NEVER leave this module — only the
+ * duplicate boolean and the call distance are emitted.
+ */
+const RECENT_SIGNATURE_LIMIT = 20;
+const recentCallSignatures: string[] = [];
+
+function emitTelemetry(
+  event: "ui_tool_call_started" | "ui_tool_call_completed",
+  props: Record<string, unknown>,
+): void {
+  try {
+    track(event, { location: "webmcp", ...props });
+  } catch {
+    // Telemetry must never break tool execution.
+  }
+}
+
+/** Recursively sort object keys so equal args always hash equal. */
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === "object") {
+    const source = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(source).sort()) {
+      out[key] = canonicalize(source[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+function callSignature(toolName: string, input: unknown): string {
+  try {
+    return `${toolName}:${JSON.stringify(canonicalize(input))}`;
+  } catch {
+    return `${toolName}:<unserializable>`;
+  }
+}
+
+/** Low-cardinality app segment for the surface the call ran against. */
+function currentSurfaceId(): string {
+  try {
+    if (typeof window === "undefined") return "unknown";
+    return pathnameToActiveTab(window.location.pathname);
+  } catch {
+    return "unknown";
+  }
+}
+
+function beginUiToolCallTelemetry(opts: {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  needsApproval: boolean;
+}): void {
+  const signature = callSignature(opts.toolName, opts.input);
+  const matchIndex = recentCallSignatures.lastIndexOf(signature);
+  const duplicateOfPrevious = matchIndex >= 0;
+  // Distance measured BEFORE the push mutates indices: 1 = previous call.
+  const callsSinceDuplicate = duplicateOfPrevious
+    ? recentCallSignatures.length - matchIndex
+    : undefined;
+  recentCallSignatures.push(signature);
+  if (recentCallSignatures.length > RECENT_SIGNATURE_LIMIT) {
+    recentCallSignatures.shift();
+  }
+  const entry: UiToolCallTelemetry = {
+    toolName: opts.toolName,
+    surfaceId: currentSurfaceId(),
+    startedAt: Date.now(),
+    duplicateOfPrevious,
+    ...(callsSinceDuplicate !== undefined ? { callsSinceDuplicate } : {}),
+  };
+  telemetryByToolCallId.set(opts.toolCallId, entry);
+  emitTelemetry("ui_tool_call_started", {
+    tool_name: entry.toolName,
+    surface_id: entry.surfaceId,
+    needs_approval: opts.needsApproval,
+  });
+}
+
+function completeUiToolCallTelemetry(
+  toolCallId: string,
+  outcome: UiToolCallOutcome,
+  approval: UiToolCallApproval,
+  errorCode?: string,
+): void {
+  const entry = telemetryByToolCallId.get(toolCallId);
+  // No started entry (e.g. a deny after reload, where the defer happened in
+  // a previous page load): skip rather than emit an unpaired completed.
+  if (!entry) return;
+  telemetryByToolCallId.delete(toolCallId);
+  emitTelemetry("ui_tool_call_completed", {
+    tool_name: entry.toolName,
+    surface_id: entry.surfaceId,
+    duration_ms: Date.now() - entry.startedAt,
+    outcome,
+    ...(errorCode ? { error_code: errorCode } : {}),
+    approval,
+    duplicate_of_previous: entry.duplicateOfPrevious,
+    ...(entry.callsSinceDuplicate !== undefined
+      ? { calls_since_duplicate: entry.callsSinceDuplicate }
+      : {}),
+  });
+}
+
+/**
+ * Structured error codes only: the leading `code:` prefix of a command-bus
+ * error (see `commandResponseToActionResult`), validated against the CLOSED
+ * `InspectorCommandErrorCode` set so a free-text message can never be
+ * emitted. Unrecognized error texts emit no code at all.
+ */
+const INSPECTOR_COMMAND_ERROR_CODES = new Set<string>([
+  "no_active_client",
+  "unknown_server",
+  "disconnected_server",
+  "unknown_tool",
+  "unknown_command_id",
+  "timeout",
+  "unsupported_in_mode",
+  "invalid_request",
+  "execution_failed",
+] satisfies InspectorCommandErrorCode[]);
+
+function structuredErrorCode(output: UiToolResult): string | undefined {
+  if (!output.isError) return undefined;
+  const first = output.content?.[0];
+  const text = first?.type === "text" ? first.text : "";
+  const code = text.split(":", 1)[0]?.trim();
+  return code && INSPECTOR_COMMAND_ERROR_CODES.has(code) ? code : undefined;
+}
+// --- End outcome telemetry ---------------------------------------------
 
 /** Deferred calls, for the orphaned-defer fallback (see ui-tool-approval). */
 export function listDeferredUiToolCalls(): Array<{
@@ -87,6 +250,9 @@ export function listDeferredUiToolCalls(): Array<{
 export function settleDeniedUiToolCall(toolCallId: string): void {
   settledOrInFlightToolCallIds.add(toolCallId);
   deferredUiToolCalls.delete(toolCallId);
+  // Denied approvals are terminal for the client: exactly one completed
+  // event, outcome "denied" (the server synthesizes the denial result).
+  completeUiToolCallTelemetry(toolCallId, "denied", "denied");
 }
 
 async function executeResolvedUiTool(
@@ -94,12 +260,14 @@ async function executeResolvedUiTool(
   opts: Pick<
     HandleUiToolCallOptions,
     "toolName" | "toolCallId" | "input" | "addToolOutput"
-  >
+  >,
+  approval: UiToolCallApproval,
 ): Promise<void> {
   const { toolName, toolCallId, input, addToolOutput } = opts;
   settledOrInFlightToolCallIds.add(toolCallId);
   deferredUiToolCalls.delete(toolCallId);
   let output: UiToolResult;
+  let threw = false;
   try {
     const args =
       input && typeof input === "object" && !Array.isArray(input)
@@ -107,6 +275,7 @@ async function executeResolvedUiTool(
         : {};
     output = await def.execute(args);
   } catch (error) {
+    threw = true;
     output = {
       content: [
         {
@@ -120,6 +289,12 @@ async function executeResolvedUiTool(
     };
   }
   addToolOutput({ tool: toolName, toolCallId, output });
+  completeUiToolCallTelemetry(
+    toolCallId,
+    output.isError ? "error" : "success",
+    approval,
+    threw ? "tool_threw" : structuredErrorCode(output),
+  );
 }
 
 function unavailableOutput(toolName: string): UiToolResult {
@@ -153,11 +328,23 @@ export async function handleUiToolCall(
     // supplied or the paused server stream waits forever — same rule as
     // closed app iframes in the app-tool path.
     if (registry.wasShipped(toolName)) {
+      beginUiToolCallTelemetry({
+        toolCallId,
+        toolName,
+        input,
+        needsApproval: false,
+      });
       addToolOutput({
         tool: toolName,
         toolCallId,
         output: unavailableOutput(toolName),
       });
+      completeUiToolCallTelemetry(
+        toolCallId,
+        "error",
+        "not_required",
+        "tool_unavailable",
+      );
       return true;
     }
     return false;
@@ -167,13 +354,14 @@ export async function handleUiToolCall(
   // and its output already exists in the transcript — do nothing.
   if (settledOrInFlightToolCallIds.has(toolCallId)) return true;
 
-  if (
-    uiToolCallNeedsApproval({
-      readOnly: def.readOnly,
-      annotations: def.annotations,
-      requireToolApproval: opts.requireToolApproval === true,
-    })
-  ) {
+  const needsApproval = uiToolCallNeedsApproval({
+    readOnly: def.readOnly,
+    annotations: def.annotations,
+    requireToolApproval: opts.requireToolApproval === true,
+  });
+  beginUiToolCallTelemetry({ toolCallId, toolName, input, needsApproval });
+
+  if (needsApproval) {
     deferredUiToolCalls.set(toolCallId, { toolName, input });
     return true;
   }
@@ -190,7 +378,11 @@ export async function handleUiToolCall(
     }
   }
 
-  await executeResolvedUiTool(def, { toolName, toolCallId, input, addToolOutput });
+  await executeResolvedUiTool(
+    def,
+    { toolName, toolCallId, input, addToolOutput },
+    "not_required",
+  );
   return true;
 }
 
@@ -214,6 +406,17 @@ export async function fulfillApprovedUiToolCall(opts: {
   if (!toolName) return;
   const input = opts.input !== undefined ? opts.input : stashed?.input;
 
+  // Reload case: the defer (and its started event) happened in a previous
+  // page load, so this execution attempt is where handling begins here.
+  if (!telemetryByToolCallId.has(toolCallId)) {
+    beginUiToolCallTelemetry({
+      toolCallId,
+      toolName,
+      input,
+      needsApproval: true,
+    });
+  }
+
   const registry = useUiToolsRegistry.getState();
   const def = registry.resolve(toolName);
   if (!def) {
@@ -224,6 +427,12 @@ export async function fulfillApprovedUiToolCall(opts: {
       toolCallId,
       output: unavailableOutput(toolName),
     });
+    completeUiToolCallTelemetry(
+      toolCallId,
+      "error",
+      "approved",
+      "tool_unavailable",
+    );
     return;
   }
 
@@ -238,5 +447,9 @@ export async function fulfillApprovedUiToolCall(opts: {
     }
   }
 
-  await executeResolvedUiTool(def, { toolName, toolCallId, input, addToolOutput });
+  await executeResolvedUiTool(
+    def,
+    { toolName, toolCallId, input, addToolOutput },
+    "approved",
+  );
 }
