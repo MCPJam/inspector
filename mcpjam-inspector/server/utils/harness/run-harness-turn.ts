@@ -422,7 +422,13 @@ export async function runHarnessTurn(
     ? AbortSignal.any([abortSignal, livenessAbort.signal])
     : livenessAbort.signal;
   let usage:
-    | { inputTokens?: number; outputTokens?: number; totalTokens?: number }
+    | {
+        inputTokens?: number;
+        outputTokens?: number;
+        totalTokens?: number;
+        cachedInputTokens?: number;
+        cacheWriteTokens?: number;
+      }
     | undefined;
   let turnFinishReason: FinishReason = "stop";
   let capturedTurnTrace: PersistedTurnTrace | undefined;
@@ -1617,17 +1623,44 @@ export async function runHarnessTurn(
               (part as { totalUsage?: unknown; usage?: unknown }).totalUsage ??
               (part as { usage?: unknown }).usage;
             if (u && typeof u === "object") {
+              // Two shapes reach here: the AI SDK's flat LanguageModelUsage
+              // numbers, and the harness V1 usage where inputTokens /
+              // outputTokens are OBJECTS ({ total, noCache, cacheRead,
+              // cacheWrite } / { total, text, reasoning }). Handle both, or
+              // harness turns lose their token (and cache) counts entirely.
               const ur = u as Record<string, unknown>;
+              const objTotal = (v: unknown, key: string): number | undefined => {
+                if (!v || typeof v !== "object") return undefined;
+                const n = (v as Record<string, unknown>)[key];
+                return typeof n === "number" ? n : undefined;
+              };
+              const inputTokens =
+                typeof ur.inputTokens === "number"
+                  ? ur.inputTokens
+                  : objTotal(ur.inputTokens, "total");
+              const outputTokens =
+                typeof ur.outputTokens === "number"
+                  ? ur.outputTokens
+                  : objTotal(ur.outputTokens, "total");
+              const totalTokens =
+                typeof ur.totalTokens === "number"
+                  ? ur.totalTokens
+                  : inputTokens !== undefined && outputTokens !== undefined
+                    ? inputTokens + outputTokens
+                    : undefined;
+              const cachedInputTokens =
+                typeof ur.cachedInputTokens === "number"
+                  ? ur.cachedInputTokens
+                  : objTotal(ur.inputTokens, "cacheRead");
+              const cacheWriteTokens = objTotal(ur.inputTokens, "cacheWrite");
               usage = {
-                ...(typeof ur.inputTokens === "number"
-                  ? { inputTokens: ur.inputTokens }
+                ...(inputTokens !== undefined ? { inputTokens } : {}),
+                ...(outputTokens !== undefined ? { outputTokens } : {}),
+                ...(totalTokens !== undefined ? { totalTokens } : {}),
+                ...(cachedInputTokens !== undefined
+                  ? { cachedInputTokens }
                   : {}),
-                ...(typeof ur.outputTokens === "number"
-                  ? { outputTokens: ur.outputTokens }
-                  : {}),
-                ...(typeof ur.totalTokens === "number"
-                  ? { totalTokens: ur.totalTokens }
-                  : {}),
+                ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
               };
             }
           }

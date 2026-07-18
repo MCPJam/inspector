@@ -268,14 +268,45 @@ export const ContextInputUsage = ({
   const inputCost =
     inputUsage?.costUSD?.inputUSD ?? inputUsage?.costUSD?.totalUSD;
 
+  // Cache breakdown (present only when the provider reported cache data —
+  // see the producer plumbing in shared/live-chat-trace.ts). Rendered as
+  // muted sub-rows so the popover stays a single glanceable column.
+  const details = usage?.inputTokenDetails;
+  const breakdown: Array<[string, number]> = [];
+  if (typeof details?.cacheReadTokens === "number") {
+    breakdown.push(["Cache read", details.cacheReadTokens]);
+  }
+  if (typeof details?.cacheWriteTokens === "number") {
+    breakdown.push(["Cache write", details.cacheWriteTokens]);
+  }
+  if (typeof details?.noCacheTokens === "number" && breakdown.length > 0) {
+    breakdown.push(["Uncached", details.noCacheTokens]);
+  }
+
   return (
-    <div
-      className={cn("flex items-center justify-between text-xs", className)}
-      {...props}
-    >
-      <span className="text-muted-foreground">Input</span>
-      <TokensWithCost costUSD={inputCost} tokens={inputTokens} />
-    </div>
+    <>
+      <div
+        className={cn("flex items-center justify-between text-xs", className)}
+        {...props}
+      >
+        <span className="text-muted-foreground">Input</span>
+        <TokensWithCost costUSD={inputCost} tokens={inputTokens} />
+      </div>
+      {breakdown.map(([label, tokens]) => (
+        <div
+          key={label}
+          className={cn(
+            "flex items-center justify-between text-xs",
+            className,
+          )}
+        >
+          <span className="pl-3 text-muted-foreground/70">{label}</span>
+          <span className="text-muted-foreground/70">
+            <TokensWithCost tokens={tokens} />
+          </span>
+        </div>
+      ))}
+    </>
   );
 };
 
