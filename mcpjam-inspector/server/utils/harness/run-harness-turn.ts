@@ -1219,6 +1219,12 @@ export async function runHarnessTurn(
                     ...(typeof usage.totalTokens === "number"
                       ? { totalTokens: usage.totalTokens }
                       : {}),
+                    ...(typeof usage.cachedInputTokens === "number"
+                      ? { cachedInputTokens: usage.cachedInputTokens }
+                      : {}),
+                    ...(typeof usage.cacheWriteTokens === "number"
+                      ? { cacheWriteTokens: usage.cacheWriteTokens }
+                      : {}),
                   }
                 : {}),
             });
