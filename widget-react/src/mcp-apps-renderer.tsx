@@ -32,10 +32,7 @@ import {
   type McpUiResourceCsp,
   type McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type {
-  CallToolResult,
-  ContentBlock,
-} from "@modelcontextprotocol/client";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 // Framework-free runtime helpers shared with the inspector + eval harness.
 import {
   registerHostBridgeHandlers,
@@ -3066,10 +3063,13 @@ export function MCPAppsRendererSurface({
             if (!onCallToolRef.current) {
               throw new Error("Tool calls not supported");
             }
+            // Apps-compat seam (§1D): the host returns a v2-client
+            // CallToolResult; the bridge's onCallTool expects its own nominal
+            // type (ext-apps v1-sdk peer). Erase across the version boundary.
             return (await onCallToolRef.current(
               name,
               invocationInput
-            )) as CallToolResult;
+            )) as never;
           },
           onAppToolInvocation: (update) => {
             onAppToolInvocationChangeRef.current?.(update);

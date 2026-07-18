@@ -1,7 +1,9 @@
 // Minimal stdio MCP server used as the target under test for `mcpjam mcp`
 // tests: one echoing tool that emits a log notification, one resource, and
 // one prompt.
-import { McpServer, StdioServerTransport } from "@modelcontextprotocol/server";
+import { McpServer } from "@modelcontextprotocol/server";
+// beta.4 moved the stdio server transport to the `/stdio` subpath.
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 
 const server = new McpServer(
