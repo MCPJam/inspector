@@ -86,6 +86,19 @@ describe("ingestHostedCatalogIds — picker-proxy warms the classifier", () => {
     ingestHostedCatalogIds([]);
     expect(billingSource(CATALOG_ONLY_MODEL)).toBe("mcpjam");
   });
+
+  it("a truncated/partial proxy fetch never drops previously-warmed ids", () => {
+    // Two models warmed from a full picker fetch…
+    ingestHostedCatalogIds([CATALOG_ONLY_MODEL, "openai/some-new-model"]);
+    expect(billingSource(CATALOG_ONLY_MODEL)).toBe("mcpjam");
+    expect(billingSource("openai/some-new-model")).toBe("mcpjam");
+    // …then a NON-EMPTY but truncated fetch that omits one of them. Additive
+    // ingest must keep the omitted model classified as hosted (no BYOK
+    // mis-dispatch); only the authoritative hourly refresh prunes.
+    ingestHostedCatalogIds([CATALOG_ONLY_MODEL]);
+    expect(billingSource(CATALOG_ONLY_MODEL)).toBe("mcpjam");
+    expect(billingSource("openai/some-new-model")).toBe("mcpjam");
+  });
 });
 
 describe("refreshHostedModelCatalog — fetch + fail-soft", () => {
