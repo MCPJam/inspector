@@ -238,6 +238,17 @@ No `_server` twins for the client events initially — twins are a migration/blo
 device for established funnels, not a requirement for new events (and the `/relay` proxy
 already mitigates ad-block loss). Revisit if funnel-grade fidelity is needed.
 
+**Path-split correlation.** `execution_path` is server-only (see `agent_turn_completed`
+above), so the client outcome events (`ui_tool_call_*`, `agent_turn_completed`) and the
+server `chat_turn_cache_usage_server` must share a **non-sensitive turn key** to join on
+— carry the existing `turnId` (already minted per turn in the stream request, see
+`mcpjam-stream-handler.ts`) on both sides. Without it the baseline dashboard's promise to
+break approval/denial/duplicate/tool-error rates down by execution path is unachievable:
+the client events know the outcomes but not the path, the server event knows the path but
+not the outcomes. (The alternative — capturing outcomes server-side — is heavier and
+loses the client-only approval/duplicate signals; the shared turn key is the cheaper
+join.)
+
 ### Duplicate-call detection
 
 Compute `signature = tool_name + canonicalJSON(args)` **client-side, in memory, per
@@ -342,11 +353,17 @@ needed, the documented phase-2 path is client flag → request body with server 
 
 ### Fingerprint and dimensions
 
-`prefix_fingerprint` = hash of (`AGENT_IDENTITY_PROMPT` text + sorted validated uiTools
-`name:description` pairs), computed server-side per turn (static part memoized per
+`prefix_fingerprint` = hash of **everything that ends up in the cached prefix**, not just
+the identity text. Concretely: `AGENT_IDENTITY_PROMPT` + the full
+`buildUiToolsSystemPrompt(uiTools, …)` output — which means the sorted validated uiTools
+`name:description` pairs **and** `requireToolApproval` (strict mode swaps the approval
+guidance in that system text) — plus any other input `prepareChatV2` folds into the
+stable system string. Computed server-side per turn (the static portion memoized per
 process), attached to `chat_turn_cache_usage_server` along with model, provider,
-`execution_path`, `canary_enabled`. A fingerprint that churns turn-to-turn **is** the
-debugging signal for zero cache reads.
+`execution_path`, `canary_enabled`. If the fingerprint hashed only identity + tool
+names, two genuinely different prefixes (strict vs default approval) would collide and
+the zero-hit triage would wrongly report a "stable prefix." A fingerprint that churns
+turn-to-turn **is** the debugging signal for zero cache reads.
 
 ### Test matrix
 
