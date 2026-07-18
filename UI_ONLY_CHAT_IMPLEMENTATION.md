@@ -81,9 +81,10 @@ There is no flag story today: the agent chat is entirely unflagged (side panel m
 unconditionally at `App.tsx:3816`, Home hero unflagged), the server never reads PostHog
 (`server/utils/analytics.ts:32` — posthog-node can only ingest), and a PostHog-flagged-off
 screen is still fully visible and reachable by the agent. Three layers fix this; only the
-first is built now.
+first is being implemented now (PR F-1 — see §7), the second is specified for the
+first catalog expansion, the third already exists.
 
-### Layer 1 — `agent-chat-enabled`: one PostHog kill switch (build now, PR F-1)
+### Layer 1 — `agent-chat-enabled`: one PostHog kill switch (PR F-1)
 
 Gates exactly three call sites:
 
@@ -173,8 +174,8 @@ For a tool group G gated by flag F (and, via Layer 1, the whole catalog):
 | I1 | No G tool in the registry ⇒ absent from every `snapshotForChatBody` | `useRegisterUiTools` group composition | hook flag-matrix test |
 | I2 | No G tool in `document.modelContext` | 1:1 mirror disposers (follows I1) | registry abort/mirror test |
 | I3 | G's nav segments rejected with reason `flag_off`; omitted from `listUiNavigationTargets` | `ui-actions.ts` resolver | resolver unit matrix |
-| I4 | G's snapshot providers silent (I3 blocks the agent-side mount path) | mount-driven provider registry | `ui_snapshot_app` integration test |
-| I5 | Any manifest with `agentToolsFlag` set has `showInAtlas: false` until GA | manifest data | policy test cloned from the `hostedBlocked` exact-match template (`app-surface-coverage.test.ts:133-138`) |
+| I4 | G's snapshot providers never register while F is off — even when the surface is mounted (a human can navigate there; I3 gates only the agent's path) | the group's provider opt-in (its `snapshotSurfaceId` wiring) is part of the flagged group and registers only when F is `true` | integration test: mount the surface with F off ⇒ provider absent from whole-app and per-surface reads |
+| I5 | A NEW surface shipped behind its own product flag has `showInAtlas: false` until GA (atlas case 2). Existing surfaces gaining a flagged tool group keep `showInAtlas: true` — atlas case 1 applies, no contradiction | manifest data | policy test cloned from the `hostedBlocked` exact-match template (`app-surface-coverage.test.ts:133-138`), keyed on new-surface manifests only |
 | I6 | Flip on→off mid-session: tools + mirrors gone; in-flight calls ERROR, never hang | AbortSignal + `shippedNames` | group-scoped abort test |
 | I7 | Flip off→on mid-session: tools appear in the next POST | full-set snapshot semantics | register-after-snapshot test |
 | I8 | Flags never touch `uiToolCallNeedsApproval`; approval parity is flag-independent | leave `shared/client-fulfilled-tools.ts` untouched | no-flag-import assertion + existing parity tests |

@@ -9,7 +9,7 @@ inspector UI**, so every action is visible to the user in their own app instead 
 invisibly through backend tools. The user chats; the agent navigates, adds/connects servers,
 runs tools in the playground, and observes app state — all through the `ui_*` WebMCP catalog.
 
-## Status: all 6 PRs merged; both review rounds addressed; core loop proven in hosted
+## Status: all 6 PRs merged; both review rounds addressed; core loop exercised in hosted (evidence capture pending)
 
 ### The six PRs (merged, in stack order)
 
@@ -98,14 +98,19 @@ not expand the tool catalog while a correctness or safety failure remains open.
 Land this before enabling caching or choosing the next surface.
 
 - [ ] **Preserve cache usage end to end** — extend the shared/live trace usage shape beyond
-      input/output/total tokens to carry cache-read, cache-write, and non-cached input tokens.
-      Preserve the fields through both execution engines: direct AI SDK `streamText` and the
-      hosted Convex `/stream` / `/stream/org` path.
+      input/output/total tokens with optional `cachedInputTokens` (cache read) and
+      `cacheWriteTokens` (cache creation); the UI derives non-cached input from them (field
+      spec in the implementation plan, §4). Preserve the fields through both execution
+      engines: direct AI SDK `streamText` and the hosted Convex `/stream` / `/stream/org` path.
 - [ ] **Record UI-tool outcomes** — for every `ui_*` attempt and completion, capture the tool name,
       current surface/route, duration, result/error code, whether approval was requested, and the
       approval outcome. Do not log raw arguments, outputs, headers, env, or other possible secrets.
-- [ ] **Detect duplicate work** — attach a safe call signature so repeated read-only calls such as
-      the observed double `ui_snapshot_app` can be measured before changing prompts or behavior.
+- [ ] **Detect duplicate work** — detect repeats client-side with an in-memory, per-session
+      call signature that never leaves the browser, emitting only a duplicate boolean and
+      call distance (the implementation plan deliberately rejects emitting signatures or
+      hashes of args — low-entropy hashes are reversible), so repeated read-only calls such
+      as the observed double `ui_snapshot_app` can be measured before changing prompts or
+      behavior.
 - [ ] **Define capability-gap telemetry** — "the agent wanted an unavailable action" is not
       directly observable. Start with a post-turn classifier/sampled review for action-oriented
       user turns where no matching `ui_*` tool ran and the answer reported a limitation. Keep the
