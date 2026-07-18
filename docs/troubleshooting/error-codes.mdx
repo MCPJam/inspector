@@ -145,9 +145,23 @@ The server returned an `MCP-Protocol-Version` header that does not match what th
 - Verify the server's protocol-version pinning in the connection settings.
 - If you set an explicit protocol version per server, ensure it matches what the server advertises.
 
+### Missing required client capability
+
+`-32021 — jsonrpc/missing_required_client_capability`
+
+The server refused the request because the client did not advertise a capability the operation requires.
+
+**Likely causes**
+- A server-initiated input request (elicitation, sampling) needs a client capability MCPJam did not declare.
+- The connection advertised a capability set the server considers insufficient for this operation.
+
+**Next steps**
+- Enable the required client capability in the connection's Client settings.
+- Check the server's documentation for which client capabilities it requires.
+
 ### Unsupported protocol version
 
-`-32004 — jsonrpc/unsupported_protocol_version`
+`-32022 — jsonrpc/unsupported_protocol_version`
 
 The server does not support any protocol version this inspector offered.
 
@@ -157,7 +171,7 @@ The server does not support any protocol version this inspector offered.
 
 **Next steps**
 - Update the inspector to a newer build.
-- Check the supported versions list in the server's `initialize` response.
+- Check the supported versions list in the server's `server/discover` result (modern) or `initialize` response (legacy).
 
 ### URL elicitation required
 
