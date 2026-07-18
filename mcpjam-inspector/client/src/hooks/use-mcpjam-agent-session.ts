@@ -57,6 +57,19 @@ import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
  * output-error. Any tool part not in a terminal output state means the turn
  * is mid-flight.
  */
+/**
+ * The assistant message THIS turn produced, or undefined. On an error before
+ * the SDK appended the turn's own assistant message, `last` is the previous
+ * turn's answer (same id as the pre-submit boundary) — return undefined so its
+ * tools/usage aren't misattributed to the failed turn.
+ */
+export function turnAssistantMessage(
+  last: UIMessage | undefined,
+  boundaryMessageId: string | null,
+): UIMessage | undefined {
+  return last && last.id !== boundaryMessageId ? last : undefined;
+}
+
 export function lastAssistantHasUnresolvedToolParts(
   last: UIMessage | undefined,
 ): boolean {
@@ -354,6 +367,12 @@ export function useMcpjamAgentSession(
     turnStartedAtRef.current = null;
     const startedAt = claim.startedAt;
     const durationMs = startedAt != null ? Date.now() - startedAt : null;
+    // Only attribute tool counts / usage to an assistant message THIS turn
+    // produced. On an error before the SDK appended the turn's assistant
+    // message, `last` is the previous turn's answer — attributing its tools
+    // to the failed turn would corrupt the experiment. A new message has an
+    // id different from the pre-submit boundary.
+    const turnAssistant = turnAssistantMessage(last, claim.boundaryMessageId);
     // Observation-only: a throwing analytics client must never break the
     // session's effect.
     try {
@@ -372,15 +391,19 @@ export function useMcpjamAgentSession(
           session_id: chatSessionId,
           model: claim.model,
           provider: claim.provider,
-          ...summarizeUiToolCalls(last),
+          ...summarizeUiToolCalls(turnAssistant),
           had_error: true,
-          ...usageTokens(last),
+          ...usageTokens(turnAssistant),
           duration_ms: durationMs,
         });
       } else {
         let toolCallCount = 0;
-        if (last && last.role === "assistant" && Array.isArray(last.parts)) {
-          toolCallCount = last.parts.filter((p) =>
+        if (
+          turnAssistant &&
+          turnAssistant.role === "assistant" &&
+          Array.isArray(turnAssistant.parts)
+        ) {
+          toolCallCount = turnAssistant.parts.filter((p) =>
             typeof (p as { type?: unknown }).type === "string" &&
             (p as { type: string }).type.startsWith("tool-")
           ).length;
@@ -400,9 +423,9 @@ export function useMcpjamAgentSession(
           session_id: chatSessionId,
           model: claim.model,
           provider: claim.provider,
-          ...summarizeUiToolCalls(last),
+          ...summarizeUiToolCalls(turnAssistant),
           had_error: false,
-          ...usageTokens(last),
+          ...usageTokens(turnAssistant),
           duration_ms: durationMs,
         });
       }
@@ -474,10 +497,16 @@ export function useMcpjamAgentSession(
       // Turn timing/attribution lives on the shared Chat entry so a hand-off
       // to another surface mid-turn still reports the right duration and
       // emits the completion exactly once.
+      const priorMessages = messagesForDeferRef.current;
+      const boundaryMessageId =
+        priorMessages.length > 0
+          ? (priorMessages[priorMessages.length - 1]?.id ?? null)
+          : null;
       markAgentTurnStarted(chatSessionId, {
         model: config.model?.id ?? null,
         provider: config.model?.provider ?? null,
         messageIndex: turnIndexRef.current,
+        boundaryMessageId,
       });
       track("mcpjam_agent_message_sent", {
         location: "mcpjam_agent",

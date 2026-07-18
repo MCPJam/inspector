@@ -350,7 +350,12 @@ describe("agent-chat-instances", () => {
   describe("turn lifecycle (shared across surfaces)", () => {
     it("claims a completion exactly once — a second observer gets null", () => {
       getOrCreateAgentChat("t1");
-      markAgentTurnStarted("t1", { model: "m", provider: "p", messageIndex: 1 });
+      markAgentTurnStarted("t1", {
+        model: "m",
+        provider: "p",
+        messageIndex: 1,
+        boundaryMessageId: null,
+      });
 
       const first = claimAgentTurnCompletion("t1");
       expect(first).not.toBeNull();
@@ -367,6 +372,7 @@ describe("agent-chat-instances", () => {
         model: "gpt",
         provider: "openai",
         messageIndex: 4,
+        boundaryMessageId: "prev-msg",
       });
       // Simulate a config swap during streaming.
       entry.config.model = { id: "claude", provider: "anthropic" } as never;
@@ -375,6 +381,7 @@ describe("agent-chat-instances", () => {
         model: "gpt",
         provider: "openai",
         messageIndex: 4,
+        boundaryMessageId: "prev-msg",
       });
     });
 
@@ -384,6 +391,7 @@ describe("agent-chat-instances", () => {
         model: null,
         provider: null,
         messageIndex: 1,
+        boundaryMessageId: null,
       });
       expect(claimAgentTurnCompletion("t3")).not.toBeNull();
       expect(claimAgentTurnCompletion("t3")).toBeNull();
@@ -391,6 +399,7 @@ describe("agent-chat-instances", () => {
         model: null,
         provider: null,
         messageIndex: 2,
+        boundaryMessageId: null,
       });
       expect(claimAgentTurnCompletion("t3")).toMatchObject({ messageIndex: 2 });
     });
@@ -402,6 +411,7 @@ describe("agent-chat-instances", () => {
           model: null,
           provider: null,
           messageIndex: 0,
+          boundaryMessageId: null,
         }),
       ).not.toThrow();
     });
@@ -414,6 +424,7 @@ describe("agent-chat-instances", () => {
         model: "m",
         provider: "p",
         messageIndex: 3,
+        boundaryMessageId: "boundary-1",
       });
       const adopted = claimAgentTurnCompletion("t4");
       expect(adopted).toMatchObject({ messageIndex: 3, model: "m" });

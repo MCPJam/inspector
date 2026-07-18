@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { lastAssistantHasUnresolvedToolParts } from "../use-mcpjam-agent-session";
+import {
+  lastAssistantHasUnresolvedToolParts,
+  turnAssistantMessage,
+} from "../use-mcpjam-agent-session";
 import type { UIMessage } from "ai";
 
 const msg = (parts: unknown[]): UIMessage =>
@@ -68,5 +71,31 @@ describe("lastAssistantHasUnresolvedToolParts", () => {
         parts: [{ type: "tool-x", state: "input-available" }],
       } as unknown as UIMessage),
     ).toBe(false);
+  });
+});
+
+describe("turnAssistantMessage", () => {
+  const withId = (id: string): UIMessage =>
+    ({ id, role: "assistant", parts: [] } as unknown as UIMessage);
+
+  it("returns the message when it's new (id differs from the boundary)", () => {
+    const m = withId("assistant-2");
+    expect(turnAssistantMessage(m, "assistant-1")).toBe(m);
+  });
+
+  it("returns undefined when last is the pre-submit boundary (stale)", () => {
+    // Error before the turn produced its own assistant message: `last` is the
+    // previous answer, whose id equals the boundary → not this turn's.
+    const stale = withId("assistant-1");
+    expect(turnAssistantMessage(stale, "assistant-1")).toBeUndefined();
+  });
+
+  it("returns the message on a fresh session (null boundary)", () => {
+    const m = withId("assistant-1");
+    expect(turnAssistantMessage(m, null)).toBe(m);
+  });
+
+  it("returns undefined when there is no last message", () => {
+    expect(turnAssistantMessage(undefined, "x")).toBeUndefined();
   });
 });

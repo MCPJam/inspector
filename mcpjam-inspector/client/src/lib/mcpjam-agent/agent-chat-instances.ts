@@ -90,6 +90,14 @@ export interface AgentTurnLifecycle {
   provider: string | null;
   /** 1-based turn index snapshotted at submit (survives surface hand-off). */
   messageIndex: number;
+  /**
+   * Id of the last message BEFORE this turn was submitted. Completion only
+   * attributes tool counts / usage to an assistant message whose id differs
+   * from this — so an error that fires before the turn produced its own
+   * assistant message can't inherit the PREVIOUS turn's tools. `null` when
+   * the session had no messages yet.
+   */
+  boundaryMessageId: string | null;
 }
 
 export interface AgentChatEntry {
@@ -178,6 +186,7 @@ export function markAgentTurnStarted(
     model: string | null;
     provider: string | null;
     messageIndex: number;
+    boundaryMessageId: string | null;
   },
 ): void {
   const entry = instances.get(chatSessionId);
@@ -187,6 +196,7 @@ export function markAgentTurnStarted(
   entry.turn.model = attribution.model;
   entry.turn.provider = attribution.provider;
   entry.turn.messageIndex = attribution.messageIndex;
+  entry.turn.boundaryMessageId = attribution.boundaryMessageId;
 }
 
 /**
@@ -201,6 +211,7 @@ export function claimAgentTurnCompletion(chatSessionId: string): {
   model: string | null;
   provider: string | null;
   messageIndex: number;
+  boundaryMessageId: string | null;
 } | null {
   const entry = instances.get(chatSessionId);
   if (!entry) return null;
@@ -211,6 +222,7 @@ export function claimAgentTurnCompletion(chatSessionId: string): {
     model: entry.turn.model,
     provider: entry.turn.provider,
     messageIndex: entry.turn.messageIndex,
+    boundaryMessageId: entry.turn.boundaryMessageId,
   };
   entry.turn.startedAt = null;
   return snapshot;
@@ -311,6 +323,7 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
       model: null,
       provider: null,
       messageIndex: 0,
+      boundaryMessageId: null,
     },
   };
   instances.set(chatSessionId, entry);
